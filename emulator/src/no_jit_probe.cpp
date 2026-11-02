@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <chrono>
+#include <algorithm>
+#include <cstdlib>
+#include <sstream>
+#include <memory>
 #include <array>
 #include <fstream>
 #include <iostream>
@@ -10,7 +14,32 @@
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
 #include "core/frontend/emu_window.h"
+#include "core/frontend/input.h"
 #include "core/settings.h"
+
+class ScriptButton final : public Input::ButtonDevice {
+    unsigned code;
+    const unsigned& frame;
+    const std::vector<unsigned>& presses;
+public:
+    ScriptButton(unsigned code_, const unsigned& frame_, const std::vector<unsigned>& presses_)
+        : code(code_), frame(frame_), presses(presses_) {}
+    bool GetStatus() const override {
+        if (code != Settings::NativeButton::A) return false;
+        return std::any_of(presses.begin(), presses.end(), [&](unsigned at) {
+            return frame >= at && frame - at < 6;
+        });
+    }
+};
+class ScriptButtonFactory final : public Input::Factory<Input::ButtonDevice> {
+    const unsigned& frame;
+    const std::vector<unsigned>& presses;
+public:
+    ScriptButtonFactory(const unsigned& frame_, const std::vector<unsigned>& presses_) : frame(frame_), presses(presses_) {}
+    std::unique_ptr<Input::ButtonDevice> Create(const Common::ParamPackage& params) override {
+        return std::make_unique<ScriptButton>(unsigned(params.Get("code", 0)), frame, presses);
+    }
+};
 
 class ProbeWindow final : public Frontend::EmuWindow {
 public:
@@ -33,8 +62,15 @@ public:
             for (u8 byte : rgba) { hash ^= byte; hash *= 1099511628211ULL; }
             hashes << frames << ' ' << screen << ' ' << width << ' ' << height << ' ' << hash << '\n';
         }
-        if (frames == 1 || frames % 30 == 0) {
-            std::ofstream image(output + "/screen-" + std::to_string(screen) + ".ppm", std::ios::binary);
+        const char* burst_start_env = std::getenv("CARA_CAPTURE_BURST_START");
+        const unsigned burst_start = burst_start_env ? unsigned(std::max(0L, std::strtol(burst_start_env, nullptr, 10))) : 0;
+        const char* burst_count_env = std::getenv("CARA_CAPTURE_BURST_COUNT");
+        const unsigned burst_count = burst_count_env ? unsigned(std::clamp(std::strtol(burst_count_env, nullptr, 10), 1L, 120L)) : 36;
+        const bool burst = burst_start_env && frames >= burst_start && frames - burst_start < burst_count;
+        if (frames == 1 || frames % 30 == 0 || burst) {
+            const std::string filename = burst ? "/frame-" + std::to_string(frames) + "-screen-" + std::to_string(screen) + ".ppm"
+                                               : "/screen-" + std::to_string(screen) + ".ppm";
+            std::ofstream image(output + filename, std::ios::binary);
             image << "P6\n" << width << " " << height << "\n255\n";
             for (size_t i = 0; i < rgba.size(); i += 4)
                 image.write(reinterpret_cast<const char*>(rgba.data() + i), 3);
@@ -98,6 +134,20 @@ int main(int argc, char** argv) {
     Settings::Apply();
     Frontend::RegisterDefaultApplets();
     ProbeWindow window(output, target_frames != 0);
+    std::vector<unsigned> scripted_presses;
+    if (const char* value = target_frames ? std::getenv("CARA_TEST_PRESS_A_FRAMES") : nullptr) {
+        std::istringstream stream(value);
+        std::string item;
+        while (std::getline(stream, item, ',')) {
+            const long at = std::strtol(item.c_str(), nullptr, 10);
+            if (at > 0 && at < target_frames) scripted_presses.push_back(unsigned(at));
+        }
+    }
+    if (!scripted_presses.empty()) {
+        Input::RegisterFactory<Input::ButtonDevice>("probe-script", std::make_shared<ScriptButtonFactory>(window.frames, scripted_presses));
+        for (unsigned button = 0; button < Settings::NativeButton::NumButtons; ++button)
+            s.current_input_profile.buttons[button] = "engine:probe-script,code:" + std::to_string(button);
+    }
     auto& system = Core::System::GetInstance();
     const auto loaded = system.Load(window, argv[1]);
     std::cout << "Load result: " << static_cast<unsigned>(loaded) << std::endl;

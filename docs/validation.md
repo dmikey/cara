@@ -82,7 +82,7 @@ scene with audio off; display FPS does not establish the game's unique-frame
 rate or full-game performance. Captures and benchmark receipts remain local.
 
 For repeated physical-device benchmarks, `CARA_TEST_KEEP_AWAKE=1` optionally
-keeps the app awake for five minutes after a frame-count test finishes. Normal
+keeps the app awake for fifteen minutes after a frame-count test finishes. Normal
 play and ordinary test shutdown behavior are unchanged.
 
 A subsequent 3,600-frame paced iPad run completed in 60.385 seconds (59.6175
@@ -121,7 +121,7 @@ The old frontend updated the same 4 MiB input texture for every draw.
 The native GLES3 path now retains separate vertex-input textures for each draw
 in three rotating frame banks. Texture heights follow the required input data,
 rounded to a power of two. Each bank retains at most 32 MiB of texture data and
-1,536 textures; draws beyond these limits use fresh-storage uploads. OpenGL
+4,096 textures; draws beyond these limits use fresh-storage uploads. OpenGL
 continues to preserve in-flight data if a bank is reused before the GPU finishes.
 This changes upload storage and lifetime, not vertex values, shaders, guest CPU
 execution or emulated depth behavior.
@@ -161,3 +161,60 @@ For temporal-artifact diagnosis only, `CARA_CAPTURE_BURST_START` and
 requiring `CITRA_CAPTURE_FRAMES`. Burst images are written to the app's private
 `Documents/capture-burst` directory. PNG capture can affect timing, so these
 bursts are excluded from performance comparisons.
+
+
+## Later-scene packing and titan rendering investigation
+
+The 16-register vertex-input upload was reduced to the registers mapped by the
+current PICA program. Native shaders fetch a packed layout from a 128-texel-wide
+atlas; the layout mask is part of the shader cache key. Frame banks reclaim
+unused tail allocations before falling back, while retaining the 32 MiB per-bank
+budget. `CARA_VERTEX_UPLOAD_MAX_DRAWS` overrides the default 4,096 slots for
+measurement (clamped to 1–8,192).
+
+On the physical M4 iPad, the later 120-frame window ending at display frame 7,680
+improved from 50.665703 ms to 33.738624 ms. Vertex uploads fell from 16.11057 ms
+to 0.828586 ms, with no fallback uploads and about 69.2 MiB of retained input
+textures. All 48 captured frames at 7,440–7,487 matched the previous layout
+pixel-for-pixel. This still leaves roughly 30 display FPS in that window;
+interpreted guest execution remains a substantial limit. The automatic replay
+later stalls, separately from the user's report of slow but moving animation.
+Neither measurement establishes full-game compatibility.
+
+The ROM-free physical GPU vertex fixture now checks 99 vertices, crossing atlas
+rows, with full, sparse and missing input registers. It covers branches, loops,
+quaternion sign correction, primary color and PICA clip-space limits. PICA's
+[-w, 0] Z range is mapped to GLES' [-w, w] range; the fixture rejected a positive-Z
+triangle only after this correction. The correction alone did not resolve the
+user's titan flicker.
+
+`CARA_DEPTH_SELF_TEST=1` checks D16 and D24 depth ties against an integer PICA
+reference. Raw GL depth failed both cases on the M4; explicit truncation passed
+both. Native fragment shaders enable that conversion by default; `CARA_RAW_DEPTH=1`
+restores the old behavior for comparison.
+The user reports reduced, but still visible, overlapping-surface flicker with
+this option. It is not a complete rendering fix. A lighting-table CPU-staging
+experiment produced identical pixels across 48 matched titan frames and was
+removed. Private software-rendered reference frames are being used to investigate
+the remaining differences; ROMs and game captures are not shipped in the repo.
+
+
+Native vertex positions now round screen X/Y to the software PICA rasterizer's
+1/16-pixel grid, before converting back to clip coordinates. This applies to
+both GPU-programmable and interpreted-vertex shaders, using the guest's viewport
+corner and half-sizes. It retains GPU rendering and does not enable host JIT.
+The user reported the physical-iPad vertex-rounding candidate was "much much
+better" during the titan sequence. This is a visual improvement report, not proof
+that every surface is correct. `CARA_UNSNAPPED_VERTICES=1` restores the old path
+for controlled comparisons. The physical vertex fixture compares rounded
+positions using a fractional viewport as well as register/branch/color results.
+Direct-depth interpolation changed few pixels and the optional custom clipping
+plane changed none of the 48 matched titan frames; those experiments were removed.
+
+
+The final default candidate passed the 99-vertex physical GPU fixture, including
+fractional-viewport rounding, and the integer-depth tie fixture. Zelda completed
+1,200 display frames at 80.0278 FPS uncapped with no CPU vertex fallback or CPU
+JIT, and a visually complete title scene. Rounding changes edge pixels, so this
+capture is not pixel-identical to the older unrounded renderer. macOS regression
+checks and audits of both linked products passed locally.

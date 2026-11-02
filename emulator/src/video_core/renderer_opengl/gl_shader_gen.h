@@ -54,6 +54,9 @@ struct PicaFSConfigState {
     u8 combiner_buffer_input;
 
     Pica::RasterizerRegs::DepthBuffering depthmap_enable;
+#ifdef CITRA_IOS_GLES
+    u32 depth_bits;
+#endif
     Pica::TexturingRegs::FogMode fog_mode;
     bool fog_flip;
 
@@ -207,7 +210,8 @@ std::string GenerateTrivialVertexShader(bool separable_shader);
  * @returns String of the shader source code; boost::none on failure
  */
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
-                                 bool separable_shader, const PicaFixedGSConfig* ios_output = nullptr);
+                                 bool separable_shader, const PicaFixedGSConfig* ios_output = nullptr,
+                                 u16 ios_input_mask = 0xffff);
 
 /*
  * Generates the GLSL fixed geometry shader program source code for non-GS PICA pipeline

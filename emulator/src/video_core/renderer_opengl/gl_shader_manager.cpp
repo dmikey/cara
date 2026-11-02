@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
@@ -188,6 +189,8 @@ public:
         u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
 #ifdef CITRA_IOS_GLES
         const PicaFixedGSConfig ios_output(regs);
+        const u16 ios_input_mask = IOSVertexInputLayout::MaskFromRegs(regs.vs);
+        key_hash ^= Common::ComputeHash64(&ios_input_mask, sizeof(ios_input_mask));
         // Output semantics are part of a fused ES vertex program, not a separate GS.
         key_hash ^= Common::ComputeHash64(&ios_output, sizeof(ios_output));
         if (failed_ios_vertex_shaders.count(key_hash)) return false;
@@ -196,7 +199,7 @@ public:
         if (iter_ref == shaders_ref.end()) {
             std::string vs_code = GenerateVertexShader(setup, key, separable
 #ifdef CITRA_IOS_GLES
-                , &ios_output
+                , &ios_output, ios_input_mask
 #endif
             );
             if (vs_code.empty()) {

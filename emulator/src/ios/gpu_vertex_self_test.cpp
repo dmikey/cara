@@ -2,16 +2,19 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <map>
+#include <vector>
 #include <nihstro/inline_assembly.h>
 #include "ios/gpu_vertex_self_test.h"
 #include "video_core/regs.h"
 #include "video_core/renderer_opengl/gl_resource_manager.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
+#include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/shader/shader_interpreter.h"
 
-bool RunGPUVertexSelfTest(std::string& error) {
+static bool RunVertexLayoutFixture(u16 input_mask, std::string& error) {
     using namespace OpenGL;
     using S = nihstro::SourceRegister;
     using D = nihstro::DestRegister;
@@ -22,9 +25,9 @@ bool RunGPUVertexSelfTest(std::string& error) {
     const auto binary = nihstro::InlineAsm::CompileToRawBinary({
         {O::Id::MOV, D::MakeOutput(0), S::MakeInput(0)},
         {O::Id::MOV, D::MakeOutput(1), S::MakeInput(1)},
-        {O::Id::MOV, D::MakeTemporary(0), S::MakeInput(2)},
+        {O::Id::MOV, D::MakeTemporary(0), S::MakeInput(7)},
         {O::Id::NOP}, {O::Id::NOP},
-        {O::Id::ADD, D::MakeTemporary(0), S::MakeTemporary(0), S::MakeInput(2)},
+        {O::Id::ADD, D::MakeTemporary(0), S::MakeTemporary(0), S::MakeInput(7)},
         {O::Id::NOP},
         {O::Id::MOV, D::MakeOutput(2), S::MakeTemporary(0)},
         {O::Id::END},
@@ -46,7 +49,7 @@ bool RunGPUVertexSelfTest(std::string& error) {
     Pica::Regs regs{};
     regs.vs.output_mask.Assign(7);
     regs.vs.max_input_attribute_index.Assign(2);
-    regs.vs.input_attribute_to_register_map_low = 0x210;
+    regs.vs.input_attribute_to_register_map_low = 0x710;
     regs.vs.int_uniforms[0].x.Assign(1);
     regs.vs.int_uniforms[0].z.Assign(1);
     regs.rasterizer.vs_output_total.Assign(3);
@@ -63,7 +66,7 @@ bool RunGPUVertexSelfTest(std::string& error) {
     const PicaVSConfig config(regs, setup);
     const PicaFixedGSConfig output(regs);
     OGLShader vertex, fragment;
-    vertex.Create(GenerateVertexShader(setup, config, false, &output).c_str(), GL_VERTEX_SHADER);
+    vertex.Create(GenerateVertexShader(setup, config, false, &output, input_mask).c_str(), GL_VERTEX_SHADER);
     fragment.Create("out vec4 color; void main() { color = vec4(1.0); }", GL_FRAGMENT_SHADER);
     if (!vertex.handle || !fragment.handle) { error = "fixture shader compilation failed"; return false; }
     const GLuint program = glCreateProgram();
@@ -73,20 +76,42 @@ bool RunGPUVertexSelfTest(std::string& error) {
     glLinkProgram(program);
     GLint linked = 0; glGetProgramiv(program, GL_LINK_STATUS, &linked);
     if (!linked) { glDeleteProgram(program); error = "fixture shader linkage failed"; return false; }
-    std::array<GLvec4, 256> inputs{};
+    constexpr size_t vertex_count = 99;
+    constexpr size_t feedback_floats = vertex_count * 12;
+    std::vector<GLvec4> inputs(vertex_count * 16);
     inputs[0] = {-0.5f, -0.5f, -0.5f, 1}; inputs[16] = {0.5f, -0.5f, -0.5f, 1}; inputs[32] = {0, 0.5f, -0.5f, 1};
     inputs[1] = {1, 0, 0, 0}; inputs[17] = {-1, 0, 0, 0}; inputs[33] = {0, 1, 0, 0};
-    inputs[2] = {-0.25f, 0.125f, 0.5f, 1}; inputs[18] = {0.125f, -0.5f, 1.5f, 1}; inputs[34] = {0.25f, 0.5f, -0.125f, 1};
+    inputs[7] = {-0.25f, 0.125f, 0.5f, 1}; inputs[23] = {0.125f, -0.5f, 1.5f, 1}; inputs[39] = {0.25f, 0.5f, -0.125f, 1};
+    for (size_t v = 3; v < vertex_count; ++v) {
+        for (size_t reg = 0; reg < 16; ++reg) inputs[v * 16 + reg] = inputs[(v % 3) * 16 + reg];
+        inputs[v * 16][0] += float(v / 3) / 1024.0f;
+    }
+    const IOSVertexInputLayout layout(input_mask);
+    const size_t texture_rows = (vertex_count * layout.stride + IOS_VERTEX_INPUT_WIDTH - 1) / IOS_VERTEX_INPUT_WIDTH;
+    std::vector<GLvec4> packed(texture_rows * IOS_VERTEX_INPUT_WIDTH);
+    for (size_t v = 0; v < vertex_count; ++v)
+        for (unsigned reg = 0; reg < layout.offsets.size(); ++reg)
+            if (layout.offsets[reg] >= 0) packed[v * layout.stride + layout.offsets[reg]] = inputs[v * 16 + reg];
     OGLTexture texture; texture.Create();
     glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D, texture.handle);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, 1, 0, GL_RGBA, GL_FLOAT, inputs.data());
-    OGLBuffer uniform_buffer, feedback_buffer; uniform_buffer.Create(); feedback_buffer.Create();
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, static_cast<GLsizei>(texture_rows), 0, GL_RGBA, GL_FLOAT, packed.data());
+    OGLBuffer uniform_buffer, feedback_buffer, raster_uniforms; uniform_buffer.Create(); feedback_buffer.Create(); raster_uniforms.Create();
     OGLVertexArray vao; vao.Create(); glBindVertexArray(vao.handle);
     glUseProgram(program);
     glUniform1i(glGetUniformLocation(program, "citra_vertex_inputs"), 7);
     glUniformBlockBinding(program, glGetUniformBlockIndex(program, "vs_config"), 0);
+    const GLvec4 viewport = {13.0f, 7.0f, 200.25f, 120.125f};
+    UniformData raster_data{};
+    raster_data.citra_viewport = viewport;
+    const GLuint raster_block = glGetUniformBlockIndex(program, "shader_data");
+    if (raster_block != GL_INVALID_INDEX) {
+        glUniformBlockBinding(program, raster_block, 1);
+        glBindBuffer(GL_UNIFORM_BUFFER, raster_uniforms.handle);
+        glBufferData(GL_UNIFORM_BUFFER, sizeof(raster_data), &raster_data, GL_STREAM_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 1, raster_uniforms.handle);
+    }
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, uniform_buffer.handle);
     glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, feedback_buffer.handle);
     glEnable(GL_RASTERIZER_DISCARD);
@@ -97,20 +122,28 @@ bool RunGPUVertexSelfTest(std::string& error) {
         glBindBuffer(GL_UNIFORM_BUFFER, uniform_buffer.handle);
         glBufferData(GL_UNIFORM_BUFFER, sizeof(uniforms), &uniforms, GL_STREAM_DRAW);
         glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, feedback_buffer.handle);
-        glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, 36 * sizeof(float), nullptr, GL_STREAM_READ);
-        glBeginTransformFeedback(GL_TRIANGLES); glDrawArrays(GL_TRIANGLES, 0, 3); glEndTransformFeedback();
-        const float* actual = static_cast<const float*>(glMapBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 36 * sizeof(float), GL_MAP_READ_BIT));
+        glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, feedback_floats * sizeof(float), nullptr, GL_STREAM_READ);
+        glBeginTransformFeedback(GL_TRIANGLES); glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count)); glEndTransformFeedback();
+        const float* actual = static_cast<const float*>(glMapBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER, 0, feedback_floats * sizeof(float), GL_MAP_READ_BIT));
         if (!actual) { passed = false; error = "fixture readback failed"; break; }
-        for (size_t v = 0; v < 3; ++v) {
+        for (size_t v = 0; v < vertex_count; ++v) {
             Pica::Shader::UnitState state;
-            for (size_t reg = 0; reg < 3; ++reg)
+            for (size_t reg = 0; reg < 16; ++reg)
                 for (size_t c = 0; c < 4; ++c)
-                    state.registers.input[reg][c] = Pica::float24::FromFloat32(inputs[v * 16 + reg][c]);
+                    state.registers.input[reg][c] = Pica::float24::FromFloat32((input_mask & (1u << reg)) ? inputs[v * 16 + reg][c] : 0.0f);
             Pica::Shader::InterpreterEngine interpreter;
             interpreter.SetupBatch(setup, 0); interpreter.Run(setup, state);
             for (size_t c = 0; c < 4; ++c) {
-                const float expected[] = {state.registers.output[0][c].ToFloat32(),
-                    state.registers.output[1][c].ToFloat32() * (v == 1 ? -1 : 1),
+                float position = state.registers.output[0][c].ToFloat32();
+                if (c < 2 && !std::getenv("CARA_UNSNAPPED_VERTICES")) {
+                    const float w = state.registers.output[0][3].ToFloat32();
+                    const float screen = (position / w + 1.0f) * viewport[c + 2] + viewport[c];
+                    position = ((std::round(screen * 16.0f) / 16.0f - viewport[c]) / viewport[c + 2] - 1.0f) * w;
+                }
+                if (c == 2)
+                    position = 2.0f * position + state.registers.output[0][3].ToFloat32();
+                const float expected[] = {position,
+                    state.registers.output[1][c].ToFloat32() * (v % 3 == 1 ? -1 : 1),
                     std::min(1.0f, std::abs(state.registers.output[2][c].ToFloat32()))};
                 for (size_t field = 0; field < 3; ++field)
                     if (!std::isfinite(actual[v * 12 + field * 4 + c]) ||
@@ -122,9 +155,55 @@ bool RunGPUVertexSelfTest(std::string& error) {
         if (!glUnmapBuffer(GL_TRANSFORM_FEEDBACK_BUFFER)) { passed = false; error = "fixture buffer corrupted"; }
     }
     glDisable(GL_RASTERIZER_DISCARD);
+    // PICA accepts -w <= z <= 0. GLES must reject the entire positive-z triangle.
+    GLint old_draw = 0, old_read = 0;
+    std::array<GLint, 4> old_viewport{};
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &old_draw);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &old_read);
+    glGetIntegerv(GL_VIEWPORT, old_viewport.data());
+    OGLFramebuffer clip_fbo; clip_fbo.Create();
+    OGLTexture clip_color; clip_color.Create();
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, clip_color.handle);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindFramebuffer(GL_FRAMEBUFFER, clip_fbo.handle);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, clip_color.handle, 0);
+    glViewport(0, 0, 1, 1);
+    glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D, texture.handle);
+    for (bool outside : {false, true}) {
+        for (size_t v = 0; v < vertex_count; ++v)
+            packed[v * layout.stride + layout.offsets[0]][2] = outside ? 0.125f : -0.5f;
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH,
+                        static_cast<GLsizei>(texture_rows), GL_RGBA, GL_FLOAT, packed.data());
+        glClearColor(0, 0, 0, 0); glClear(GL_COLOR_BUFFER_BIT);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
+        std::array<u8, 4> pixel{};
+        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+        const u8 expected = outside ? 0 : 255;
+        if (pixel[0] != expected || pixel[1] != expected || pixel[2] != expected) {
+            passed = false;
+            error = outside ? "PICA positive-z clipping plane missing" : "PICA in-range triangle incorrectly clipped";
+        }
+    }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(old_draw));
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(old_read));
+    glViewport(old_viewport[0], old_viewport[1], old_viewport[2], old_viewport[3]);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, 0); glActiveTexture(GL_TEXTURE7);
     glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0); glBindBufferBase(GL_UNIFORM_BUFFER, 0, 0);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 1, 0);
     glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0); glBindBuffer(GL_UNIFORM_BUFFER, 0);
     glBindVertexArray(0); glUseProgram(0); glDeleteProgram(program);
     glBindTexture(GL_TEXTURE_2D, 0); glActiveTexture(GL_TEXTURE0);
     return passed;
+}
+
+bool RunGPUVertexSelfTest(std::string& error) {
+    for (u16 mask : {u16(0xffff), u16(0x0083), u16(0x0003)}) {
+        if (!RunVertexLayoutFixture(mask, error)) {
+            error += " input mask=" + std::to_string(mask);
+            return false;
+        }
+    }
+    return true;
 }

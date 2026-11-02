@@ -8,6 +8,7 @@
 #include <glad/glad.h>
 #include "video_core/renderer_opengl/gl_state.h"
 #include "ios/gpu_vertex_self_test.h"
+#include "ios/gpu_depth_self_test.h"
 #endif
 #include <atomic>
 #include "ios/button_state.h"
@@ -464,8 +465,9 @@ public:
 #ifdef CITRA_IOS_GLES
     [self.view layoutIfNeeded];
     emuWindow->drawable_layer = (CAEAGLLayer*)gpuSurface.layer;
-    emuWindow->frame_presented = [weakSelf](unsigned frame) {
+    emuWindow->frame_presented = [weakSelf,user](unsigned frame) {
         if (frame % 60 != 0) return;
+        const auto timing = Common::FrameTiming::counters;
         dispatch_async(dispatch_get_main_queue(), ^{
             EmulatorController* controller = weakSelf;
             if (!controller || !controller->running) return;
@@ -474,6 +476,13 @@ public:
             const double fps = (frame - controller->lastHUDFrame) / std::max(elapsed, 0.001);
             controller->lastHUDTime = now; controller->lastHUDFrame = frame;
             controller->status.text = [NSString stringWithFormat:@"No JIT · GPU GLES3 · %.1f FPS · audio off", fps];
+            if (timing.enabled) {
+                std::ofstream report(user + "runtime-status.json");
+                report << "{\"frame\":" << frame << ",\"display_fps\":" << fps
+                       << ",\"thermal_state\":" << long(NSProcessInfo.processInfo.thermalState)
+                       << ",\"gpu_vertex_draws\":" << timing.gpu_vertex_draws
+                       << ",\"cpu_vertex_draws\":" << timing.cpu_vertex_draws << "}\n";
+            }
         });
     };
 #endif
@@ -528,8 +537,26 @@ public:
                 const bool passed = RunGPUVertexSelfTest(error);
                 std::ofstream report(user + "gpu-vertex-self-test.json");
                 report << "{\"passed\":" << (passed ? "true" : "false")
-                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color\"}\n";
+                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color_packed_sparse_zero_clipping\"}\n";
+                LOG_INFO(Frontend, "GPU vertex fixture passed={} detail={}", passed, error);
                 if (!passed) emuWindow->graphics_error = error;
+            }
+#endif
+#ifdef CITRA_IOS_GLES
+            if (std::getenv("CARA_DEPTH_SELF_TEST") && emuWindow->graphics_error.empty()) {
+                std::string raw_error, quantized_error;
+                std::array<bool, 2> raw_formats{}, quantized_formats{};
+                const bool raw = RunGPUDepthSelfTest(false, raw_error, &raw_formats);
+                const bool quantized = RunGPUDepthSelfTest(true, quantized_error, &quantized_formats);
+                std::ofstream report(user + "gpu-depth-self-test.json");
+                report << "{\"raw_matches_integer_pica\":" << (raw ? "true" : "false")
+                       << ",\"quantized_matches_integer_pica\":" << (quantized ? "true" : "false")
+                       << ",\"raw_d16\":" << (raw_formats[0] ? "true" : "false")
+                       << ",\"raw_d24\":" << (raw_formats[1] ? "true" : "false")
+                       << ",\"quantized_d16\":" << (quantized_formats[0] ? "true" : "false")
+                       << ",\"quantized_d24\":" << (quantized_formats[1] ? "true" : "false") << "}\n";
+                LOG_INFO(Frontend, "Depth fixture raw={} {} quantized={} {}", raw, raw_error, quantized, quantized_error);
+                if (!quantized) emuWindow->graphics_error = quantized_error;
             }
 #endif
             if (!emuWindow->graphics_error.empty()) {
@@ -625,6 +652,10 @@ public:
                                 ",\"vertex_prepare_ms_per_frame\":" + std::to_string((current.vertex_prepare_seconds - previous_counters.vertex_prepare_seconds) * 1000 / count) +
                                 ",\"vertex_upload_ms_per_frame\":" + std::to_string((current.vertex_upload_seconds - previous_counters.vertex_upload_seconds) * 1000 / count) +
                                 ",\"draw_submit_ms_per_frame\":" + std::to_string((current.draw_submit_seconds - previous_counters.draw_submit_seconds) * 1000 / count) +
+                                ",\"vertex_upload_fallbacks\":" + std::to_string(current.vertex_upload_fallbacks - previous_counters.vertex_upload_fallbacks) +
+                                ",\"vertex_pool_peak_bytes\":" + std::to_string(current.vertex_pool_peak_bytes) +
+                                ",\"guest_pc\":[" + std::to_string(current.last_guest_pc[0]) + "," + std::to_string(current.last_guest_pc[1]) + "," + std::to_string(current.last_guest_pc[2]) + "," + std::to_string(current.last_guest_pc[3]) + "]" +
+                                ",\"guest_core_ticks\":[" + std::to_string(current.guest_core_ticks[0] - previous_counters.guest_core_ticks[0]) + "," + std::to_string(current.guest_core_ticks[1] - previous_counters.guest_core_ticks[1]) + "," + std::to_string(current.guest_core_ticks[2] - previous_counters.guest_core_ticks[2]) + "," + std::to_string(current.guest_core_ticks[3] - previous_counters.guest_core_ticks[3]) + "]" +
                                 ",\"guest_ticks\":" + std::to_string(current.guest_ticks - previous_counters.guest_ticks) +
                                 ",\"readback_ms_per_frame\":" + std::to_string((current.readback_seconds - previous_counters.readback_seconds) * 1000 / count) +
                                 ",\"present_ms_per_frame\":" + std::to_string((current.present_seconds - previous_counters.present_seconds) * 1000 / count) +
@@ -677,7 +708,7 @@ public:
                 self->openButton.enabled = YES;
                 const bool keepAwake = target_frames && std::getenv("CARA_TEST_KEEP_AWAKE");
                 UIApplication.sharedApplication.idleTimerDisabled = keepAwake;
-                if (keepAwake) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                if (keepAwake) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 900 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                     if (!self->running) UIApplication.sharedApplication.idleTimerDisabled = NO;
                 });
                 if (result != Core::System::ResultStatus::Success)

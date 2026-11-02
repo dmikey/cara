@@ -55,6 +55,9 @@ struct UniformData {
     alignas(16) GLvec4 const_color[6]; // A vec4 color for each of the six tev stages
     alignas(16) GLvec4 tev_combiner_buffer_color;
     alignas(16) GLvec4 clip_coef;
+#ifdef CITRA_IOS_GLES
+    alignas(16) GLvec4 citra_viewport;
+#endif
 };
 
 struct UniformLightData {
@@ -66,7 +69,11 @@ struct UniformLightData {
 };
 
 static_assert(
+#ifdef CITRA_IOS_GLES
+    sizeof(UniformData) == 0x100,
+#else
     sizeof(UniformData) == 0xF0,
+#endif
     "The size of the UniformData structure has changed, update the structure in the shader");
 static_assert(sizeof(UniformData) < 0x4000,
               "UniformData structure must be less than 16kb as per the OpenGL spec");

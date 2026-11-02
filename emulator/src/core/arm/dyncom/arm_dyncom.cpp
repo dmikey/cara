@@ -158,7 +158,15 @@ void ARM_DynCom::ExecuteInstructions(u64 num_instructions) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GuestCPU);
     state->NumInstrsToExecute = num_instructions;
     unsigned ticks_executed = InterpreterMainLoop(state.get(), timer.get());
-    if (Common::FrameTiming::counters.enabled) Common::FrameTiming::counters.guest_ticks += ticks_executed;
+    if (Common::FrameTiming::counters.enabled) {
+        auto& counters = Common::FrameTiming::counters;
+        counters.guest_ticks += ticks_executed;
+        const auto core_id = GetID();
+        if (core_id < counters.last_guest_pc.size()) {
+            counters.last_guest_pc[core_id] = state->Reg[15];
+            counters.guest_core_ticks[core_id] += ticks_executed;
+        }
+    }
     timer->AddTicks(ticks_executed);
     state->ServeBreak();
 }

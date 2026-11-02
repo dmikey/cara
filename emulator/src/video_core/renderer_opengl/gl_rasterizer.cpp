@@ -1,9 +1,9 @@
-#include "video_core/renderer_opengl/gl_ios_compat.h"
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -29,7 +29,9 @@
 #include "video_core/regs_framebuffer.h"
 #include "video_core/regs_rasterizer.h"
 #include "video_core/regs_texturing.h"
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
+#include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -481,9 +483,9 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         assembler.SubmitVertex(vertex, triangle);
     }
     if (ios_triangle_indices.empty()) return false;
-    // 16 input registers per vertex, packed into a 256-wide float texture.
-    const size_t rows = (ios_triangle_indices.size() * 16 + 255) / 256;
-    ios_vertex_inputs.resize(rows * 256);
+    const IOSVertexInputLayout layout(regs.vs);
+    const size_t rows = (ios_triangle_indices.size() * layout.stride + IOS_VERTEX_INPUT_WIDTH - 1) / IOS_VERTEX_INPUT_WIDTH;
+    ios_vertex_inputs.resize(rows * IOS_VERTEX_INPUT_WIDTH);
     Pica::VertexLoader loader(pipeline);
     Pica::DebugUtils::MemoryAccessTracker accesses;
     // Expanded triangles reuse source vertices, especially strips/fans. Cache only
@@ -494,21 +496,22 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     for (size_t i = 0; i < ios_triangle_indices.size(); ++i) {
         const u32 vertex = ios_triangle_indices[i];
         const u32 slot = vertex & 63;
-        if (valid[slot] && ids[slot] == vertex) {
-            std::copy_n(inputs[slot].data(), 16, ios_vertex_inputs.data() + i * 16);
-            continue;
+        if (!valid[slot] || ids[slot] != vertex) {
+            Pica::Shader::AttributeBuffer input{};
+            loader.LoadVertex(base, static_cast<int>(i), vertex, input, accesses);
+            auto& registers = inputs[slot];
+            registers.fill(GLvec4{});
+            for (u32 attr = 0; attr <= regs.vs.max_input_attribute_index; ++attr) {
+                const auto& value = input.attr[attr];
+                registers[regs.vs.GetRegisterForAttribute(attr)] = {
+                    value.x.ToFloat32(), value.y.ToFloat32(), value.z.ToFloat32(), value.w.ToFloat32()};
+            }
+            ids[slot] = vertex; valid[slot] = true;
         }
-        Pica::Shader::AttributeBuffer input{};
-        loader.LoadVertex(base, static_cast<int>(i), vertex, input, accesses);
-        GLvec4* registers = ios_vertex_inputs.data() + i * 16;
-        std::fill_n(registers, 16, GLvec4{});
-        for (u32 attr = 0; attr <= regs.vs.max_input_attribute_index; ++attr) {
-            const auto& value = input.attr[attr];
-            registers[regs.vs.GetRegisterForAttribute(attr)] = {
-                value.x.ToFloat32(), value.y.ToFloat32(), value.z.ToFloat32(), value.w.ToFloat32()};
+        for (u32 reg = 0; reg < layout.offsets.size(); ++reg) {
+            if (layout.offsets[reg] >= 0)
+                ios_vertex_inputs[i * layout.stride + layout.offsets[reg]] = inputs[slot][reg];
         }
-        std::copy_n(registers, 16, inputs[slot].data());
-        ids[slot] = vertex; valid[slot] = true;
     }
     return true;
 }
@@ -542,7 +545,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     if (!state.draw.shader_program) return false;
     state.Apply();
     glActiveTexture(GL_TEXTURE7);
-    const unsigned upload_rows = static_cast<unsigned>(ios_vertex_inputs.size() / 256);
+    const unsigned upload_rows = static_cast<unsigned>(ios_vertex_inputs.size() / IOS_VERTEX_INPUT_WIDTH);
     OGLTexture* selected_texture = &ios_vertex_fallback_texture;
     unsigned storage_rows = upload_rows;
     bool resize_storage = false;
@@ -555,16 +558,28 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const size_t bank = frame % ios_vertex_frame_uploads.size();
     auto& uploads = ios_vertex_frame_uploads[bank];
     // Keep each draw's inputs separate until earlier frames have consumed them.
-    // Bound retained storage to 32 MiB and 1,536 textures in each of three banks.
+    // Bound retained storage to 32 MiB and 4,096 textures in each of three banks.
     // Work beyond either limit uses fresh storage instead of growing the pool.
-    if (ios_vertex_upload_index < 1536) {
+    static const unsigned max_upload_draws = [] {
+        const char* value = std::getenv("CARA_VERTEX_UPLOAD_MAX_DRAWS");
+        return value ? unsigned(std::clamp(std::strtol(value, nullptr, 10), 1L, 8192L)) : 4096u;
+    }();
+    if (ios_vertex_upload_index < max_upload_draws) {
         if (uploads.size() <= ios_vertex_upload_index) uploads.emplace_back();
         auto& upload = uploads[ios_vertex_upload_index++];
         unsigned rows = 1;
         while (rows < upload_rows) rows *= 2;
-        const size_t bytes = rows * 256 * sizeof(GLvec4);
-        const size_t previous_bytes = upload.rows * 256 * sizeof(GLvec4);
-        const size_t bank_bytes = ios_vertex_frame_bytes[bank] - previous_bytes + bytes;
+        const size_t bytes = rows * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
+        const size_t previous_bytes = upload.rows * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
+        size_t bank_bytes = ios_vertex_frame_bytes[bank] - previous_bytes + bytes;
+        // Later frames may need fewer, differently sized draws. Reclaim unused
+        // tail slots from the bank's earlier frame before falling back. Slots
+        // already submitted in this frame (including upload) remain untouched.
+        while (bank_bytes > 32 * 1024 * 1024 && uploads.size() > ios_vertex_upload_index) {
+            ios_vertex_frame_bytes[bank] -= uploads.back().rows * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
+            uploads.pop_back();
+            bank_bytes = ios_vertex_frame_bytes[bank] - previous_bytes + bytes;
+        }
         if (bank_bytes <= 32 * 1024 * 1024) {
             ios_vertex_frame_bytes[bank] = bank_bytes;
             resize_storage = upload.rows != rows;
@@ -573,6 +588,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             selected_texture = &upload.texture;
             orphan_upload = false;
         }
+    }
+    if (Common::FrameTiming::counters.enabled) {
+        auto& counters = Common::FrameTiming::counters;
+        if (orphan_upload) ++counters.vertex_upload_fallbacks;
+        const auto bytes = ios_vertex_frame_bytes[0] + ios_vertex_frame_bytes[1] + ios_vertex_frame_bytes[2];
+        counters.vertex_pool_peak_bytes = std::max<std::uint64_t>(counters.vertex_pool_peak_bytes, bytes);
     }
     OGLTexture& input_texture = *selected_texture;
     if (!input_texture.handle) {
@@ -590,14 +611,14 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         if (orphan_upload) {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, upload_rows, 0,
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, upload_rows, 0,
                          GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
         } else {
             if (resize_storage) {
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, storage_rows, 0,
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, storage_rows, 0,
                              GL_RGBA, GL_FLOAT, nullptr);
             }
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, upload_rows,
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
                             GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
         }
     }
@@ -894,6 +915,18 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     state.viewport.width = static_cast<GLsizei>(viewport_rect_unscaled.GetWidth() * res_scale);
     state.viewport.height = static_cast<GLsizei>(viewport_rect_unscaled.GetHeight() * res_scale);
 
+#ifdef CITRA_IOS_GLES
+    const GLvec4 native_viewport = {
+        static_cast<float>(regs.rasterizer.viewport_corner.x),
+        static_cast<float>(regs.rasterizer.viewport_corner.y),
+        Pica::float24::FromRaw(regs.rasterizer.viewport_size_x).ToFloat32(),
+        Pica::float24::FromRaw(regs.rasterizer.viewport_size_y).ToFloat32()};
+    if (uniform_block_data.data.citra_viewport != native_viewport) {
+        uniform_block_data.data.citra_viewport = native_viewport;
+        uniform_block_data.dirty = true;
+    }
+#endif
+
     // Bind the framebuffer surfaces
     OpenGLState::BindDrawFramebuffer(framebuffer.handle);
 
@@ -1172,8 +1205,13 @@ void RasterizerOpenGL::NotifyPicaRegisterChanged(u32 id) {
         SyncStencilWriteMask();
         break;
     case PICA_REG_INDEX(framebuffer.output_merger.stencil_test.raw_op):
+        SyncStencilTest();
+        break;
     case PICA_REG_INDEX(framebuffer.framebuffer.depth_format):
         SyncStencilTest();
+#ifdef CITRA_IOS_GLES
+        shader_dirty = true;
+#endif
         break;
 
     // Sync GL depth test + depth and color write mask
@@ -2135,10 +2173,11 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     std::size_t bytes_used = 0;
 #ifdef CITRA_IOS_GLES
     const GLuint previous_vertex_buffer = OpenGLState::BindVertexBuffer(texture_lf_buffer.GetHandle());
+    std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
 #else
     glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_lf_buffer.GetHandle());
-#endif
     std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
+#endif
 
     // Sync the lighting luts
     if (uniform_block_data.lighting_lut_dirty_any || invalidate) {
@@ -2193,9 +2232,11 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
 #ifdef CITRA_IOS_GLES
     UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG, offset, buffer, bytes_used);
 #endif
-    texture_lf_buffer.Unmap(bytes_used);
 #ifdef CITRA_IOS_GLES
+    texture_lf_buffer.Unmap(bytes_used);
     OpenGLState::BindVertexBuffer(previous_vertex_buffer);
+#else
+    texture_lf_buffer.Unmap(bytes_used);
 #endif
 }
 
@@ -2217,10 +2258,11 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
     std::size_t bytes_used = 0;
 #ifdef CITRA_IOS_GLES
     const GLuint previous_vertex_buffer = OpenGLState::BindVertexBuffer(texture_buffer.GetHandle());
+    std::tie(buffer, offset, invalidate) = texture_buffer.Map(max_size, sizeof(GLvec4));
 #else
     glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_buffer.GetHandle());
-#endif
     std::tie(buffer, offset, invalidate) = texture_buffer.Map(max_size, sizeof(GLvec4));
+#endif
 
     // helper function for SyncProcTexNoiseLUT/ColorMap/AlphaMap
     auto SyncProcTexValueLUT = [this, buffer, offset, invalidate, &bytes_used](
@@ -2316,9 +2358,11 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
     UploadIOSLUT(texture_buffer_lut_rg.handle, TextureUnits::TextureBufferLUT_RG.id, GL_RG, offset, buffer, bytes_used);
     UploadIOSLUT(texture_buffer_lut_rgba.handle, TextureUnits::TextureBufferLUT_RGBA.id, GL_RGBA, offset, buffer, bytes_used);
 #endif
-    texture_buffer.Unmap(bytes_used);
 #ifdef CITRA_IOS_GLES
+    texture_buffer.Unmap(bytes_used);
     OpenGLState::BindVertexBuffer(previous_vertex_buffer);
+#else
+    texture_buffer.Unmap(bytes_used);
 #endif
 }
 

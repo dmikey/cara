@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <string_view>
 #include <fmt/format.h>
 #include "common/assert.h"
@@ -20,6 +21,7 @@
 #include "video_core/renderer_opengl/gl_shader_decompiler.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_shader_util.h"
+#include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/video_core.h"
 
@@ -72,7 +74,11 @@ layout (std140) uniform shader_data {
     vec4 const_color[NUM_TEV_STAGES];
     vec4 tev_combiner_buffer_color;
     vec4 clip_coef;
-};
+)"
+#ifdef CITRA_IOS_GLES
+    "    vec4 citra_viewport;\n"
+#endif
+R"(};
 
 layout (std140) uniform shader_light_data {
     ivec4 lighting_lut_offset[NUM_LIGHTING_SAMPLERS / 4];
@@ -133,6 +139,9 @@ PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs) {
     state.scissor_test_mode = regs.rasterizer.scissor_test.mode;
 
     state.depthmap_enable = regs.rasterizer.depthmap_enable;
+#ifdef CITRA_IOS_GLES
+    state.depth_bits = regs.framebuffer.framebuffer.depth_format == Pica::FramebufferRegs::DepthFormat::D16 ? 16 : 24;
+#endif
 
     /*if (GLES && (GLAD_GL_ARM_shader_framebuffer_fetch || GLAD_GL_EXT_shader_framebuffer_fetch) &&
         regs.framebuffer.output_merger.alphablend_enable == 0) {*/
@@ -1602,11 +1611,15 @@ vec4 secondary_fragment_color = vec4(0.0);
                "gl_FragCoord.y < float(scissor_y2))) discard;\n";
     }
 
-    // After perspective divide, OpenGL transform z_over_w from [-1, 1] to [near, far]. Here we use
-    // default near = 0 and far = 1, and undo the transformation to get the original z_over_w, then
-    // do our own transformation according to PICA specification.
-    out += "float z_over_w = 2.0 * gl_FragCoord.z - 1.0;\n"
-           "float depth = z_over_w * depth_scale + depth_offset;\n";
+    // Recover PICA z/w before applying its depth scale/offset. Native GLES maps
+    // PICA's [-w, 0] clip range to the full GL clip range in the vertex shader;
+    // other backends retain the original position and undo GL's default mapping.
+#ifdef CITRA_IOS_GLES
+    out += "float z_over_w = gl_FragCoord.z - 1.0;\n";
+#else
+    out += "float z_over_w = 2.0 * gl_FragCoord.z - 1.0;\n";
+#endif
+    out += "float depth = z_over_w * depth_scale + depth_offset;\n";
     if (state.depthmap_enable == RasterizerRegs::DepthBuffering::WBuffering) {
         out += "depth /= gl_FragCoord.w;\n";
     }
@@ -1703,7 +1716,13 @@ do {
 } while ((old = imageAtomicCompSwap(shadow_buffer, image_coord, old, new)) != old2);
 )";
     } else {
-        out += "gl_FragDepth = depth;\n";
+#ifdef CITRA_IOS_GLES
+        if (!std::getenv("CARA_RAW_DEPTH")) {
+            const u32 levels = (1u << state.depth_bits) - 1;
+            out += fmt::format("gl_FragDepth = floor(clamp(depth, 0.0, 1.0) * {0}.0) / {0}.0;\n", levels);
+        } else
+#endif
+            out += "gl_FragDepth = depth;\n";
 
         if (shader_logic_ops) {
             AppendProcLogicOp(out, state.logic_op);
@@ -1737,8 +1756,25 @@ do {
     return out;
 }
 
+static std::string NativeVertexSnapCode() {
+#ifdef CITRA_IOS_GLES
+    if (!std::getenv("CARA_UNSNAPPED_VERTICES"))
+        return R"(
+if (gl_Position.w > 0.0 && all(greaterThan(citra_viewport.zw, vec2(0.0)))) {
+    vec2 screen_xy = (gl_Position.xy / gl_Position.w + vec2(1.0)) * citra_viewport.zw + citra_viewport.xy;
+    vec2 raster_xy = floor(screen_xy * 16.0 + vec2(0.5)) / 16.0;
+    gl_Position.xy = ((raster_xy - citra_viewport.xy) / citra_viewport.zw - vec2(1.0)) * gl_Position.w;
+}
+)";
+#endif
+    return {};
+}
+
 std::string GenerateTrivialVertexShader(bool separable_shader) {
     std::string out;
+#ifdef CITRA_IOS_GLES
+    out += "#define CARA_FULL_DEPTH_RANGE 1\n";
+#endif
     if (separable_shader) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
@@ -1775,18 +1811,22 @@ void main() {
     normquat = vert_normquat;
     view = vert_view;
     gl_Position = vert_position;
+#if defined(CARA_FULL_DEPTH_RANGE)
+    gl_Position.z = 2.0 * gl_Position.z + gl_Position.w;
+#endif
 #if !defined(CITRA_GLES) || defined(GL_EXT_clip_cull_distance)
     gl_ClipDistance[0] = -vert_position.z; // fixed PICA clipping plane z <= 0
     gl_ClipDistance[1] = dot(clip_coef, vert_position);
 #endif // !defined(CITRA_GLES) || defined(GL_EXT_clip_cull_distance)
-}
 )";
+    out += NativeVertexSnapCode();
+    out += "}\n";
 
     return out;
 }
 
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
-                                 bool separable_shader, const PicaFixedGSConfig* ios_output) {
+                                 bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask) {
     std::string out;
     if (separable_shader) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
@@ -1865,9 +1905,14 @@ layout (std140) uniform vs_config {
         out += "uniform highp sampler2D citra_vertex_inputs;\n";
         out += program_source;
         out += "void citra_run_vertex(int vertex_id) {\n";
+        const IOSVertexInputLayout layout(ios_input_mask);
         for (u32 i = 0; i < used_regs.size(); ++i) {
             if (used_regs[i]) {
-                out += fmt::format("int index{0} = vertex_id * 16 + {0};\nvs_in_reg{0} = texelFetch(citra_vertex_inputs, ivec2(index{0} & 255, index{0} >> 8), 0);\n", i);
+                if (layout.offsets[i] >= 0) {
+                    out += fmt::format("int index{0} = vertex_id * {1} + {2};\nvs_in_reg{0} = texelFetch(citra_vertex_inputs, ivec2(index{0} % {3}, index{0} / {3}), 0);\n", i, layout.stride, layout.offsets[i], IOS_VERTEX_INPUT_WIDTH);
+                } else {
+                    out += fmt::format("vs_in_reg{} = vec4(0.0);\n", i);
+                }
             }
         }
         out += "conditional_code = bvec2(false);\naddress_registers = ivec3(0);\n";
@@ -1881,6 +1926,9 @@ layout (std140) uniform vs_config {
         out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
         out += "gl_Position = " + vector("vec4", {VSOutputAttributes::POSITION_X, VSOutputAttributes::POSITION_Y,
             VSOutputAttributes::POSITION_Z, VSOutputAttributes::POSITION_W}) + ";\n";
+        // Map PICA's [-w, 0] clip range onto GLES' [-w, w] range.
+        out += "gl_Position.z = 2.0 * gl_Position.z + gl_Position.w;\n";
+        out += NativeVertexSnapCode();
         out += "primary_color = min(abs(" + vector("vec4", {VSOutputAttributes::COLOR_R, VSOutputAttributes::COLOR_G,
             VSOutputAttributes::COLOR_B, VSOutputAttributes::COLOR_A}) + "), vec4(1.0));\n";
         out += "texcoord0 = " + vector("vec2", {VSOutputAttributes::TEXCOORD0_U, VSOutputAttributes::TEXCOORD0_V}) + ";\n";
