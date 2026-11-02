@@ -12,6 +12,11 @@ if (APPLE)
     add_definitions(-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION)
 endif()
 
+option(CITRA_INTERPRETER_GUEST_DEBUG "Enable guest GDB checks inside the CPU interpreter" ON)
+if (NOT CITRA_INTERPRETER_GUEST_DEBUG)
+    add_definitions(-DCITRA_NO_GUEST_DEBUGGER=1)
+endif()
+
 option(CITRA_IOS_HARDWARE_RENDERER "Experimental native iOS GLES3 graphics" OFF)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_definitions(-DCITRA_IOS=1)

@@ -249,3 +249,43 @@ fallbacks. `CARA_GPU_WAIT_TIMING=1` additionally calls glFinish once per display
 frame while timing is enabled. That diagnostic changes CPU/GPU overlap, so its
 FPS must not be presented as ordinary-play performance. None of these timing
 clocks or GPU waits run in the default launch.
+
+
+## CPU interpreter overhead experiments
+
+The supplied build commands now select `CITRA_INTERPRETER_GUEST_DEBUG=OFF`.
+The core keeps its upstream guest-debugger path when that option is ON; use
+`tools/build.py ... --guest-debugger` to request it. With polling omitted, the
+ARM/Thumb state bit is synchronized at decoded-block boundaries instead of on
+every instruction. Instruction-set transitions end a block, and explicit status
+reads and interpreter exits still save the CPU flags.
+
+A 1,024-entry, per-core direct-mapped cache precedes the existing decoded-block
+hash map. Each entry stores the complete guest PC, a decoded-data offset and the
+shared arena generation. A collision falls back to the original map, and global
+invalidation rejects stale entries on every core. The cache contains no host
+machine code. `CARA_DISABLE_FAST_DECODE_LOOKUP=1` restores hash lookups for
+comparisons without changing interpreter execution.
+
+The ROM-free CPU check now covers colliding cache tags, rewritten code after
+invalidation, cross-core resets, ARM/Thumb transitions in one slice and through
+single stepping, MRS/status flags and arithmetic loops. `--benchmark` adds
+20-million-instruction branch and arithmetic microbenchmarks. The host release
+variant without guest polling reduced arithmetic-test time from about 0.134 s
+to 0.107 s. In a separate paired run, direct lookup reduced the branch test from
+about 0.24–0.26 s to 0.19 s. These are host microbenchmarks, not iPad game FPS.
+A template-based debugger-specialization prototype was slower than the original
+host build and was rejected before device deployment.
+
+
+Immediate arithmetic operands now use the same immediate shifter helper directly
+instead of an indirect function-pointer call; register shifters retain their
+existing path. The helper uses masked rotation counts so a zero-bit rotation
+never shifts a 32-bit value by 32. All 4,096 ARM immediate encodings with both
+incoming carry values (8,192 cases) are checked against an independent 64-bit
+rotation oracle, including N/Z/C and preserved V flags.
+
+A physical-iPad scheduling experiment successfully changed the emulation worker
+from default QoS (21) to user-interactive QoS (33). The 24 matching heavy-intro
+windows changed only from 30.042533 ms to 29.707080 ms on average, about 1%.
+That scheduling experiment was not retained in the default implementation.

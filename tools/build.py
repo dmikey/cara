@@ -14,6 +14,7 @@ def main():
     parser.add_argument('platform', choices=['mac', 'ios', 'simulator'])
     parser.add_argument('--renderer', choices=['software', 'gles3'], default='software')
     parser.add_argument('--jobs', type=int, default=3)
+    parser.add_argument('--guest-debugger', action='store_true', help='Include per-instruction guest GDB checks')
     args = parser.parse_args()
     source = ROOT / 'emulator'
     if not (source / 'VENDORED_SOURCE.json').exists():
@@ -37,6 +38,7 @@ def main():
     build = ROOT / 'work' / ('build-' + args.platform + suffix)
     command = [cmake, '-S', str(source), '-B', str(build), '-G', 'Ninja',
                '-DCMAKE_MAKE_PROGRAM=' + ninja, '-DCMAKE_BUILD_TYPE=Release',
+               '-DCITRA_INTERPRETER_GUEST_DEBUG=' + ('ON' if args.guest_debugger else 'OFF'),
                '-DCITRA_ENABLE_JIT=OFF', '-DCITRA_SOFTWARE_PRESENTATION=ON',
                '-DENABLE_QT=OFF', '-DENABLE_SDL2=OFF', '-DENABLE_WEB_SERVICE=OFF',
                '-DENABLE_CUBEB=OFF', '-DBOOST_ROOT=' + str(source / 'externals/boost'),

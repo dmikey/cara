@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
@@ -81,7 +82,8 @@ static bool CondPassed(const ARMul_State* cpu, unsigned int cond) {
 static unsigned int DPO(Immediate)(ARMul_State* cpu, unsigned int sht_oper) {
     unsigned int immed_8 = BITS(sht_oper, 0, 7);
     unsigned int rotate_imm = BITS(sht_oper, 8, 11);
-    unsigned int shifter_operand = ROTATE_RIGHT_32(immed_8, rotate_imm * 2);
+    const unsigned shift = rotate_imm * 2;
+    unsigned int shifter_operand = (immed_8 >> shift) | (immed_8 << ((32 - shift) & 31));
     if (rotate_imm == 0)
         cpu->shifter_carry_out = cpu->CFlag;
     else
@@ -923,6 +925,7 @@ MICROPROFILE_DEFINE(DynCom_Execute, "DynCom", "Execute", MP_RGB(255, 0, 0));
 
 unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
     MICROPROFILE_SCOPE(DynCom_Execute);
+    static const bool use_fast_lookup = std::getenv("CARA_DISABLE_FAST_DECODE_LOOKUP") == nullptr;
 
     /// Nearest upcoming GDB code execution breakpoint, relative to the last dispatch's address.
     GDBStub::BreakpointAddress breakpoint_data;
@@ -944,7 +947,8 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
 #define RDLO cpu->Reg[inst_cream->RdLo]
 #define LINK_RTN_ADDR (cpu->Reg[14] = cpu->Reg[15] + 4)
 #define SET_PC (cpu->Reg[15] = cpu->Reg[15] + 8 + inst_cream->signed_immed_24)
-#define SHIFTER_OPERAND inst_cream->shtop_func(cpu, inst_cream->shifter_operand)
+#define SHIFTER_OPERAND (inst_cream->I ? DPO(Immediate)(cpu, inst_cream->shifter_operand) : \
+                         inst_cream->shtop_func(cpu, inst_cream->shifter_operand))
 
 #define FETCH_INST                                                                                 \
     if (inst_base->br != TransExtData::NON_BRANCH)                                                 \
@@ -954,7 +958,7 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
 #define INC_PC(l) ptr += sizeof(arm_inst) + l
 #define INC_PC_STUB ptr += sizeof(arm_inst)
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(CITRA_NO_GUEST_DEBUGGER)
 #define GDB_BP_CHECK
 #else
 #define GDB_BP_CHECK                                                                               \
@@ -1634,6 +1638,11 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
 
     LOAD_NZCVT;
 DISPATCH : {
+#ifdef CITRA_NO_GUEST_DEBUGGER
+    // ARM/Thumb transitions end decoded blocks. Keep T visible to system calls
+    // without repeating the same CPSR store after every guest instruction.
+    cpu->Cpsr = (cpu->Cpsr & ~0x20u) | (cpu->TFlag << 5);
+#endif
     if (!cpu->NirqSig) {
         if (!(cpu->Cpsr & 0x80)) {
             goto END;
@@ -1649,19 +1658,25 @@ DISPATCH : {
         cpu->instruction_cache.clear();
         cpu->instruction_cache_generation = trans_cache_generation;
     }
-    // Find the cached instruction cream, otherwise translate it...
-    auto itr = cpu->instruction_cache.find(cpu->Reg[15]);
-    if (itr != cpu->instruction_cache.end()) {
-        ptr = itr->second;
-    } else if (cpu->NumInstrsToExecute != 1) {
-        if (InterpreterTranslateBlock(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
-            goto END;
+    // This cache stores offsets into decoded instruction data, never host code.
+    // The shared arena generation invalidates entries across all CPU cores.
+    const u32 pc = cpu->Reg[15];
+    auto& fast = cpu->fast_decoded_blocks[((pc >> 2) ^ (pc >> 12)) & 1023];
+    if (use_fast_lookup && fast.pc == pc && fast.generation == trans_cache_generation) {
+        ptr = fast.offset;
     } else {
-        if (InterpreterTranslateSingle(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
-            goto END;
+        auto itr = cpu->instruction_cache.find(pc);
+        if (itr != cpu->instruction_cache.end()) {
+            ptr = itr->second;
+        } else if (cpu->NumInstrsToExecute != 1) {
+            if (InterpreterTranslateBlock(cpu, ptr, pc) == FETCH_EXCEPTION) goto END;
+        } else {
+            if (InterpreterTranslateSingle(cpu, ptr, pc) == FETCH_EXCEPTION) goto END;
+        }
+        if (use_fast_lookup) fast = {pc, ptr, trans_cache_generation};
     }
 
-#ifndef ANDROID
+#if !defined(ANDROID) && !defined(CITRA_NO_GUEST_DEBUGGER)
     // Find breakpoint if one exists within the block
     if (GDBStub::IsConnected()) {
         breakpoint_data =

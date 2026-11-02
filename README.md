@@ -60,6 +60,10 @@ work/build-mac/bin/citra-no-jit-probe /absolute/path/to/game.3ds work/local-prob
 
 The probe writes logs, isolated user data, and PPM screen captures only under the output directory you provide. `work/` is ignored. Game files are never fetched by the tools or CI.
 
+The supplied builds omit guest GDB polling from the interpreter's inner loop.
+Use `--guest-debugger` with `tools/build.py` when building for guest breakpoints.
+This setting is separate from Xcode device debugging and CPU JIT remains disabled.
+
 `python3 tools/build.py simulator` also configures an ARM64 simulator build; this target is not part of the initial CI matrix.
 
 `tools/prepare.py` validates the bundled files without fetching anything. Game-specific shader caches and proprietary system/game assets are excluded. System dumps may be imported locally when a game requires them; the loader code remains present.

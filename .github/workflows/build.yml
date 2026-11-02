@@ -47,6 +47,7 @@ jobs:
         run: |
           work/build-mac/bin/citra-no-jit-probe --self-test work/io-self-test
           work/build-mac/bin/citra-core-cache-self-test
+          CARA_DISABLE_FAST_DECODE_LOOKUP=1 work/build-mac/bin/citra-core-cache-self-test
           work/build-mac/bin/citra-interval-cache-self-test
           work/build-mac/bin/citra-input-self-test
           CARA_RASTER_THREADS=1 work/build-mac/bin/citra-raster-self-test

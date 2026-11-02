@@ -256,6 +256,12 @@ public:
     // process for our purposes), not per ARMul_State (which tracks CPU core state).
     std::unordered_map<u32, std::size_t> instruction_cache;
     u64 instruction_cache_generation = 0;
+    struct FastDecodedBlock {
+        u32 pc = 0;
+        std::size_t offset = 0;
+        u64 generation = 0;
+    };
+    std::array<FastDecodedBlock, 1024> fast_decoded_blocks{};
 
 private:
     void ResetMPCoreCP15Registers();
