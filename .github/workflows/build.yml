@@ -1,0 +1,49 @@
+name: No-JIT builds
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    name: ${{ matrix.platform }} / ARM64 / no JIT
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, mac]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned build tools
+        run: |
+          python3 -m venv work/tools
+          work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+          xcodebuild -version
+          uname -m
+      - name: Prepare exact upstream source and dependencies
+        run: python3 tools/prepare.py
+      - name: Build
+        run: python3 tools/build.py '${{ matrix.platform }}' --jobs 3
+      - name: Audit linked no-JIT binary
+        run: python3 tools/audit_no_jit.py '${{ matrix.platform }}'
+      - name: Native file I/O regression check (no ROM required)
+        if: matrix.platform == 'mac'
+        run: work/build-mac/bin/citra-no-jit-probe --self-test work/io-self-test
+      - name: Package unsigned iOS app
+        if: matrix.platform == 'ios'
+        run: ditto -c -k --norsrc --noextattr --keepParent work/build-ios/bin/citra-ios.app work/Cara-iOS-unsigned.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cara-${{ matrix.platform }}-no-jit
+          if-no-files-found: error
+          path: |
+            work/Cara-iOS-unsigned.zip
+            work/build-${{ matrix.platform }}/bin/citra-no-jit-probe
+            work/build-${{ matrix.platform }}/no-jit-audit.json

@@ -1,0 +1,12 @@
+Cara is experimental iOS port work based on Citra MMJ.
+
+Citra MMJ: https://github.com/weihuoya/citra
+Baseline: 302b0c3bc4312bc96489c11584a97664894b343f
+Citra Emulator Project and its contributors retain copyright in upstream code.
+The patch contains modifications of GPL-2.0-or-later Citra code. Cara port additions
+are provided under GPL-2.0-or-later as well; see LICENSE. Third-party dependencies
+retain their own licenses in the separately fetched source tree.
+
+No game ROMs, Nintendo firmware, keys, game screenshots, signing credentials,
+provisioning profiles or signed app packages are included in this repository.
+Cara is not affiliated with Nintendo or the Citra/MMJ developers.

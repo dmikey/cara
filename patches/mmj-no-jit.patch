@@ -1,0 +1,695 @@
+diff --git a/.gitmodules b/.gitmodules
+index 80183a2..e304657 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -1,12 +1,12 @@
+ [submodule "boost"]
+     path = externals/boost
+-    url = https://github.com/citra-emu/ext-boost.git
++    url = https://github.com/azahar-emu/ext-boost.git
+ [submodule "nihstro"]
+     path = externals/nihstro
+     url = https://github.com/neobrain/nihstro.git
+ [submodule "soundtouch"]
+     path = externals/soundtouch
+-    url = https://github.com/citra-emu/ext-soundtouch.git
++    url = https://github.com/DaMan69/ext-soundtouch.git
+ [submodule "catch"]
+     path = externals/catch
+     url = https://github.com/philsquared/Catch.git
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index abf07d8..bdb2950 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -7,6 +7,27 @@ include(CMakeDependentOption)
+ 
+ project(citra)
+ 
++if (APPLE)
++    # Boost 1.70 uses the C++14 function base classes removed from newer libc++.
++    add_definitions(-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION)
++endif()
++
++option(CITRA_SOFTWARE_PRESENTATION "Present CPU-rendered LCDs without OpenGL" OFF)
++if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
++    set(CITRA_SOFTWARE_PRESENTATION ON CACHE BOOL "Present CPU-rendered LCDs without OpenGL" FORCE)
++endif()
++if (CITRA_SOFTWARE_PRESENTATION)
++    add_definitions(-DCITRA_SOFTWARE_PRESENTATION=1)
++endif()
++
++option(CITRA_ENABLE_JIT "Build CPU and host shader JIT backends" ON)
++if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
++    set(CITRA_ENABLE_JIT OFF CACHE BOOL "Build CPU and host shader JIT backends" FORCE)
++endif()
++if (CITRA_ENABLE_JIT)
++    add_definitions(-DCITRA_ENABLE_JIT=1)
++endif()
++
+ # Set bundled sdl2/qt as dependent options.
+ # OFF by default, but if ENABLE_SDL2 and MSVC are true then ON
+ option(ENABLE_SDL2 "Enable the SDL2 frontend" ON)
+@@ -206,7 +227,9 @@ endif()
+ # Platform-specific library requirements
+ # ======================================
+ 
+-if (APPLE)
++if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
++    set(PLATFORM_LIBRARIES "-framework Foundation")
++elseif (APPLE)
+     # Umbrella framework for everything GUI-related
+     find_library(COCOA_LIBRARY Cocoa)
+     set(PLATFORM_LIBRARIES ${COCOA_LIBRARY} ${IOKIT_LIBRARY} ${COREVIDEO_LIBRARY})
+@@ -311,7 +334,7 @@ git_describe(GIT_DESC --always --long --dirty)
+ git_branch_name(GIT_BRANCH)
+ get_timestamp(BUILD_DATE)
+ 
+-if(NOT ANDROID)
++if(NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+     enable_testing()
+     add_subdirectory(dist/installer)
+ endif()
+diff --git a/externals/CMakeLists.txt b/externals/CMakeLists.txt
+index 19f766f..ef77afc 100644
+--- a/externals/CMakeLists.txt
++++ b/externals/CMakeLists.txt
+@@ -12,7 +12,7 @@ target_include_directories(catch-single-include INTERFACE catch/single_include)
+ add_subdirectory(cryptopp)
+ 
+ # Dynarmic
+-if (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64)
++if (CITRA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
+     if (ARCHITECTURE_x86_64)
+         # Dynarmic will skip defining xbyak if it's already defined, we then define it below
+         add_library(xbyak INTERFACE)
+@@ -50,6 +50,10 @@ target_include_directories(microprofile INTERFACE ./microprofile)
+ # Nihstro
+ add_library(nihstro-headers INTERFACE)
+ target_include_directories(nihstro-headers INTERFACE ./nihstro/include)
++# Legacy nihstro customizes make_unsigned for its packed register types.
++if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
++    target_compile_options(nihstro-headers INTERFACE -Wno-invalid-specialization)
++endif()
+ 
+ # Open Source Archives
+ add_subdirectory(open_source_archives)
+@@ -68,7 +72,9 @@ add_subdirectory(teakra)
+ # Xbyak
+ if (ARCHITECTURE_x86_64)
+     # Defined before "dynarmic" above
+-    # add_library(xbyak INTERFACE)
++    if (NOT TARGET xbyak)
++        add_library(xbyak INTERFACE)
++    endif()
+     target_include_directories(xbyak INTERFACE ./xbyak/xbyak)
+     target_compile_definitions(xbyak INTERFACE XBYAK_NO_OP_NAMES)
+ endif()
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index b77ac2b..30c8ef4 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -98,7 +98,7 @@ add_subdirectory(audio_core)
+ add_subdirectory(network)
+ add_subdirectory(input_common)
+ 
+-if(NOT ANDROID)
++if(NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+     add_subdirectory(tests)
+ endif()
+ 
+@@ -111,10 +111,27 @@ if (ENABLE_QT)
+ endif()
+ if (ANDROID)
+     add_subdirectory(android/jni)
+-else()
++elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+     add_subdirectory(dedicated_room)
+ endif()
+ 
+ if (ENABLE_WEB_SERVICE)
+     add_subdirectory(web_service)
+ endif()
++
++if (CITRA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
++    add_executable(citra-no-jit-probe no_jit_probe.cpp)
++    target_link_libraries(citra-no-jit-probe PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
++endif()
++
++if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
++    enable_language(OBJCXX)
++    add_executable(citra-ios MACOSX_BUNDLE ios/main.mm)
++    target_compile_options(citra-ios PRIVATE -fobjc-arc)
++    target_link_libraries(citra-ios PRIVATE core common Threads::Threads
++        "-framework Foundation" "-lobjc" "-framework UIKit" "-framework CoreGraphics" "-framework UniformTypeIdentifiers")
++    set_target_properties(citra-ios PROPERTIES
++        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist"
++        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
++        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
++endif()
+diff --git a/src/audio_core/dsp_interface.cpp b/src/audio_core/dsp_interface.cpp
+index 9c34921..9d2e08e 100644
+--- a/src/audio_core/dsp_interface.cpp
++++ b/src/audio_core/dsp_interface.cpp
+@@ -74,7 +74,7 @@ void DspInterface::OutputCallback(s16* buffer, std::size_t num_frames) {
+     }
+ 
+     // Implementation of the hardware volume slider with a dynamic range of 60 dB
+-    const float linear_volume = std::clamp(Settings::values.volume, 0.0f, 1.0f);
++    const float linear_volume = std::clamp(Settings::values.audio_volume, 0.0f, 1.0f);
+     if (linear_volume != 1.0) {
+         const float volume_scale_factor =
+             linear_volume == 0 ? 0 : std::exp(6.90775f * linear_volume) * 0.001f;
+diff --git a/src/citra/config.cpp b/src/citra/config.cpp
+index 400c655..9acb89a 100644
+--- a/src/citra/config.cpp
++++ b/src/citra/config.cpp
+@@ -182,13 +182,13 @@ void Config::ReadValues() {
+ 
+     // Audio
+     Settings::values.enable_dsp_lle = sdl2_config->GetBoolean("Audio", "enable_dsp_lle", false);
+-    Settings::values.enable_dsp_lle_multithread =
++    Settings::values.dsp_lle_multithread =
+         sdl2_config->GetBoolean("Audio", "enable_dsp_lle_multithread", false);
+     Settings::values.sink_id = sdl2_config->GetString("Audio", "output_engine", "auto");
+     Settings::values.enable_audio_stretching =
+         sdl2_config->GetBoolean("Audio", "enable_audio_stretching", true);
+     Settings::values.audio_device_id = sdl2_config->GetString("Audio", "output_device", "auto");
+-    Settings::values.volume = static_cast<float>(sdl2_config->GetReal("Audio", "volume", 1));
++    Settings::values.audio_volume = static_cast<float>(sdl2_config->GetReal("Audio", "volume", 1));
+     Settings::values.mic_input_device =
+         sdl2_config->GetString("Audio", "mic_input_device", Frontend::Mic::default_device_name);
+     Settings::values.mic_input_type =
+diff --git a/src/common/file_util.cpp b/src/common/file_util.cpp
+index 8290517..78f3775 100644
+--- a/src/common/file_util.cpp
++++ b/src/common/file_util.cpp
+@@ -88,12 +88,16 @@ u64 GetSize(const std::string& filename) {
+ }
+ 
+ u64 GetFileModificationTimestamp(const std::string& filename) {
+-    struct stat64 file_info;
+-    if (stat64(filename.c_str(), &file_info) != 0) {
++    struct stat file_info;
++    if (stat(filename.c_str(), &file_info) != 0) {
+         LOG_ERROR(Common_Filesystem, "failed {}: No such file", filename);
+         return 0;
+     }
++#ifdef __APPLE__
++    return static_cast<u64>(file_info.st_mtimespec.tv_sec);
++#else
+     return static_cast<u64>(file_info.st_mtim.tv_sec);
++#endif
+ }
+ 
+ bool Delete(const std::string& filename) {
+@@ -404,11 +408,18 @@ void SetUserPath(const std::string& path) {
+         g_paths.emplace(UserPath::ConfigDir, user_path + CONFIG_DIR DIR_SEP);
+         g_paths.emplace(UserPath::CacheDir, user_path + CACHE_DIR DIR_SEP);
+     } else {
++#ifdef ANDROID
+         if (FileUtil::Exists(ROOT_DIR DIR_SEP SDCARD_DIR)) {
+             user_path = ROOT_DIR DIR_SEP SDCARD_DIR DIR_SEP EMU_DATA_DIR DIR_SEP;
+             g_paths.emplace(UserPath::ConfigDir, user_path + CONFIG_DIR DIR_SEP);
+             g_paths.emplace(UserPath::CacheDir, user_path + CACHE_DIR DIR_SEP);
+         }
++#else
++        user_path = ROOT_DIR DIR_SEP USERDATA_DIR DIR_SEP;
++        CreateFullPath(user_path);
++        g_paths.emplace(UserPath::ConfigDir, user_path + CONFIG_DIR DIR_SEP);
++        g_paths.emplace(UserPath::CacheDir, user_path + CACHE_DIR DIR_SEP);
++#endif
+     }
+     g_paths.emplace(UserPath::SDMCDir, user_path + SDMC_DIR DIR_SEP);
+     g_paths.emplace(UserPath::NANDDir, user_path + NAND_DIR DIR_SEP);
+@@ -518,6 +529,33 @@ std::string_view GetFilename(std::string_view path) {
+     return path.substr(name_index + 1);
+ }
+ 
++namespace {
++class NativeIOHandler final : public IOHandler {
++public:
++    explicit NativeIOHandler(std::FILE* handle) : file(handle) {}
++    ~NativeIOHandler() override { std::fclose(file); }
++    std::size_t Read(void* p, std::size_t size, std::size_t count) override {
++        return std::fread(p, size, count, file);
++    }
++    std::size_t Write(const void* p, std::size_t size, std::size_t count) override {
++        return std::fwrite(p, size, count, file);
++    }
++    bool Seek(s64 offset, int whence) override { return fseeko(file, offset, whence) == 0; }
++    u64 Tell() override { const auto offset = ftello(file); return offset < 0 ? 0 : offset; }
++    u64 GetSize() override {
++        struct stat info{};
++        return fstat(fileno(file), &info) == 0 ? info.st_size : 0;
++    }
++    bool Resize(u64 size) override {
++        return size <= static_cast<u64>(std::numeric_limits<off_t>::max()) &&
++               ftruncate(fileno(file), static_cast<off_t>(size)) == 0;
++    }
++    bool Flush() override { return std::fflush(file) == 0; }
++private:
++    std::FILE* file;
++};
++}
++
+ IOFile::IOFile(const std::string& filename, const char openmode[]) {
+     Open(filename, openmode);
+ }
+@@ -532,7 +570,13 @@ IOFile::IOFile(IOFile&& other) noexcept {
+ }
+ 
+ bool IOFile::Open(const std::string& filename, const char openmode[]) {
+-    m_file = s_io_factory->Open(filename, openmode);
++    if (s_io_factory) {
++        m_file = s_io_factory->Open(filename, openmode);
++    } else {
++        m_file.reset();
++        if (auto* handle = std::fopen(filename.c_str(), openmode))
++            m_file = std::make_unique<NativeIOHandler>(handle);
++    }
+     m_good = m_file != nullptr;
+     return m_good;
+ }
+diff --git a/src/common/file_util.h b/src/common/file_util.h
+index 14b2150..8f1e3ef 100644
+--- a/src/common/file_util.h
++++ b/src/common/file_util.h
+@@ -261,7 +261,7 @@ public:
+     }
+ 
+     u64 Tell() const {
+-        m_file->Tell();
++        return m_file->Tell();
+     }
+ 
+     u64 GetSize() const {
+diff --git a/src/common/logging/backend.cpp b/src/common/logging/backend.cpp
+index 1395e9a..8098ace 100644
+--- a/src/common/logging/backend.cpp
++++ b/src/common/logging/backend.cpp
+@@ -11,7 +11,9 @@
+ #include <regex>
+ #include <thread>
+ #include <vector>
++#ifdef ANDROID
+ #include <android/log.h>
++#endif
+ 
+ #ifdef _WIN32
+ #include <share.h>   // For _SH_DENYWR
+@@ -296,14 +298,15 @@ Backend* GetBackend(std::string_view backend_name) {
+ void FmtLogMessageImpl(Class log_class, Level log_level, const char* filename,
+                        unsigned int line_num, const char* function, const char* format,
+                        const fmt::format_args& args) {
+-    // auto& instance = Impl::Instance();
+-    // const auto& filter = instance.GetGlobalFilter();
+-    // if (!filter.CheckMessage(log_class, log_level))
+-    //    return;
+-
++#ifdef ANDROID
+     __android_log_print(ANDROID_LOG_INFO, "citra", "%s", fmt::vformat(format, args).c_str());
+-    // instance.PushEntry(log_class, log_level, filename, line_num, function,
+-    //                   fmt::vformat(format, args));
++#else
++    auto& instance = Impl::Instance();
++    if (instance.GetGlobalFilter().CheckMessage(log_class, log_level)) {
++        instance.PushEntry(log_class, log_level, filename, line_num, function,
++                           fmt::vformat(format, args));
++    }
++#endif
+ }
+ 
+ int64_t GetTimeNsec() {
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 4bc0ff6..3782df1 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -471,7 +471,7 @@ if (ENABLE_WEB_SERVICE)
+     target_link_libraries(core PRIVATE web_service)
+ endif()
+ 
+-if (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64)
++if (CITRA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
+     target_sources(core PRIVATE
+         arm/dynarmic/arm_dynarmic.cpp
+         arm/dynarmic/arm_dynarmic.h
+@@ -480,3 +480,6 @@ if (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64)
+     )
+     target_link_libraries(core PRIVATE dynarmic)
+ endif()
++
++# Boost 1.70's Apple detection predates C++20's removal of std::result_of.
++target_compile_definitions(core PRIVATE BOOST_ASIO_HAS_STD_INVOKE_RESULT=1)
+diff --git a/src/core/arm/dyncom/arm_dyncom_interpreter.cpp b/src/core/arm/dyncom/arm_dyncom_interpreter.cpp
+index e88c48d..4e0946d 100644
+--- a/src/core/arm/dyncom/arm_dyncom_interpreter.cpp
++++ b/src/core/arm/dyncom/arm_dyncom_interpreter.cpp
+@@ -3871,7 +3871,7 @@ SUB_INST : {
+ SWI_INST : {
+     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
+         swi_inst* const inst_cream = (swi_inst*)inst_base->component;
+-        num_instrs = std::max(num_instrs, Settings::values.core_ticks_hack);
++        num_instrs = static_cast<unsigned int>(std::max<s64>(num_instrs, Settings::values.core_ticks_hack));
+         timer->AddTicks(num_instrs);
+         cpu->NumInstrsToExecute =
+             num_instrs >= cpu->NumInstrsToExecute ? 0 : cpu->NumInstrsToExecute - num_instrs;
+diff --git a/src/core/cache_file.cpp b/src/core/cache_file.cpp
+index 2de1554..408f806 100644
+--- a/src/core/cache_file.cpp
++++ b/src/core/cache_file.cpp
+@@ -1,5 +1,4 @@
+ 
+-#include <android/log.h>
+ #include <minilzo.h>
+ 
+ #include "core/cache_file.h"
+diff --git a/src/core/core.cpp b/src/core/core.cpp
+index 84b4980..7c2b924 100644
+--- a/src/core/core.cpp
++++ b/src/core/core.cpp
+@@ -9,7 +9,7 @@
+ #include "audio_core/lle/lle.h"
+ #include "common/logging/log.h"
+ #include "core/arm/arm_interface.h"
+-#if defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64)
++#if defined(CITRA_ENABLE_JIT) && (defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64))
+ #include "core/arm/dynarmic/arm_dynarmic.h"
+ #endif
+ #include "core/arm/dyncom/arm_dyncom.h"
+@@ -408,7 +408,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
+     kernel = std::make_unique<Kernel::KernelSystem>(*memory, *timing, system_mode, n3ds_mode);
+ 
+     if (Settings::values.use_cpu_jit) {
+-#if defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64)
++#if defined(CITRA_ENABLE_JIT) && (defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64))
+         for (u32 i = 0; i < 4; ++i) {
+             cpu_cores[i] = std::make_shared<ARM_Dynarmic>(this, i, timing->GetTimer(i));
+             kernel->GetThreadManager(i).SetCPU(cpu_cores[i].get());
+@@ -433,7 +433,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
+ 
+     if (Settings::values.enable_dsp_lle) {
+         dsp_core = std::make_unique<AudioCore::DspLle>(*memory,
+-                                                       Settings::values.enable_dsp_lle_multithread);
++                                                       Settings::values.dsp_lle_multithread);
+     } else {
+         dsp_core = std::make_unique<AudioCore::DspHle>(*memory);
+     }
+@@ -445,7 +445,9 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
+ 
+     telemetry_session = std::make_unique<Core::TelemetrySession>();
+ 
++#ifndef CITRA_SOFTWARE_PRESENTATION
+     rpc_server = std::make_unique<RPC::RPCServer>();
++#endif
+ 
+     service_manager = std::make_unique<Service::SM::ServiceManager>(*this);
+     archive_manager = std::make_unique<Service::FS::ArchiveManager>(*this);
+diff --git a/src/core/frontend/emu_window.h b/src/core/frontend/emu_window.h
+index ce7a7e8..e6c43ea 100644
+--- a/src/core/frontend/emu_window.h
++++ b/src/core/frontend/emu_window.h
+@@ -7,6 +7,7 @@
+ #include <memory>
+ #include <tuple>
+ #include <utility>
++#include <vector>
+ #include "common/common_types.h"
+ #include "core/frontend/framebuffer_layout.h"
+ 
+@@ -44,6 +45,11 @@ public:
+     /// Swap buffers to display the next frame
+     virtual void SwapBuffers() = 0;
+ 
++    /// Receives upright RGBA8 LCD pixels from the software presentation backend.
++    /// Called on the emulation thread; consumers must copy before returning.
++    virtual void PresentSoftwareFrame(unsigned screen, unsigned width, unsigned height,
++                                      const std::vector<u8>& pixels) {}
++
+     /**
+      * Signal that a touch pressed event has occurred (e.g. mouse click pressed)
+      * @param framebuffer_x Framebuffer x-coordinate that was pressed
+diff --git a/src/core/hle/service/apt/apt.cpp b/src/core/hle/service/apt/apt.cpp
+index 46544f6..bb5d695 100644
+--- a/src/core/hle/service/apt/apt.cpp
++++ b/src/core/hle/service/apt/apt.cpp
+@@ -366,7 +366,8 @@ void Module::APTInterface::IsRegistered(Kernel::HLERequestContext& ctx) {
+     AppletId app_id = rp.PopEnum<AppletId>();
+     IPC::RequestBuilder rb = rp.MakeBuilder(2, 0);
+     rb.Push(RESULT_SUCCESS); // No error
+-    rb.Push(apt->applet_manager->IsRegistered(app_id));
++    const bool registered = apt->applet_manager->IsRegistered(app_id);
++    rb.Push(registered);
+ 
+     LOG_DEBUG(Service_APT, "APT IsRegistered called app_id={:#010X}, registered: {}", static_cast<u32>(app_id), registered);
+ }
+diff --git a/src/core/hle/service/err_f.cpp b/src/core/hle/service/err_f.cpp
+index 3f70a3f..24d5464 100644
+--- a/src/core/hle/service/err_f.cpp
++++ b/src/core/hle/service/err_f.cpp
+@@ -154,7 +154,7 @@ void ERR_F::ThrowFatalError(Kernel::HLERequestContext& ctx) {
+     LOG_CRITICAL(Service_ERR, "Fatal error");
+     const ErrInfo errinfo = rp.PopRaw<ErrInfo>();
+     const std::string errdetail = GetErrType(errinfo.errinfo_common.specifier);
+-    LOG_CRITICAL(Service_ERR, "Fatal error type: {}", );
++    LOG_CRITICAL(Service_ERR, "Fatal error type: {}", errdetail);
+     system.SetStatus(Core::System::ResultStatus::ErrorUnknown, errdetail.c_str());
+ 
+     // Generic Info
+diff --git a/src/core/hle/service/hid/hid.cpp b/src/core/hle/service/hid/hid.cpp
+index 7360d29..5420e1c 100644
+--- a/src/core/hle/service/hid/hid.cpp
++++ b/src/core/hle/service/hid/hid.cpp
+@@ -359,7 +359,7 @@ void Module::Interface::GetGyroscopeLowCalibrateParam(Kernel::HLERequestContext&
+ void Module::Interface::GetSoundVolume(Kernel::HLERequestContext& ctx) {
+     IPC::RequestParser rp{ctx, 0x17, 0, 0};
+ 
+-    const u8 volume = static_cast<u8>(0x3F * Settings::values.volume);
++    const u8 volume = static_cast<u8>(0x3F * Settings::values.audio_volume);
+ 
+     IPC::RequestBuilder rb = rp.MakeBuilder(2, 0);
+     rb.Push(RESULT_SUCCESS);
+diff --git a/src/core/hle/service/service.cpp b/src/core/hle/service/service.cpp
+index ab2cecd..9aa3f05 100644
+--- a/src/core/hle/service/service.cpp
++++ b/src/core/hle/service/service.cpp
+@@ -153,15 +153,14 @@ void ServiceFrameworkBase::ReportUnimplementedFunction(u32* cmd_buf, const Funct
+     int num_params = header.normal_params_size + header.translate_params_size;
+     std::string function_name = info == nullptr ? fmt::format("{:#08x}", cmd_buf[0]) : info->name;
+ 
+-    fmt::memory_buffer buf;
+-    fmt::format_to(buf, "function '{}': port='{}' cmd_buf={{[0]={:#x}", function_name, service_name,
++    std::string buf = fmt::format( "function '{}': port='{}' cmd_buf={{[0]={:#x}", function_name, service_name,
+                    cmd_buf[0]);
+     for (int i = 1; i <= num_params; ++i) {
+-        fmt::format_to(buf, ", [{}]={:#x}", i, cmd_buf[i]);
++        buf += fmt::format( ", [{}]={:#x}", i, cmd_buf[i]);
+     }
+     buf.push_back('}');
+ 
+-    LOG_ERROR(Service, "unknown / unimplemented {}", fmt::to_string(buf));
++    LOG_ERROR(Service, "unknown / unimplemented {}", buf);
+     // TODO(bunnei): Hack - ignore error
+     header.normal_params_size.Assign(1);
+     header.translate_params_size.Assign(0);
+diff --git a/src/core/settings.cpp b/src/core/settings.cpp
+index 6bb86ce..70f6df7 100644
+--- a/src/core/settings.cpp
++++ b/src/core/settings.cpp
+@@ -19,6 +19,10 @@ namespace Settings {
+ Values values{};
+ 
+ void Apply() {
++#ifndef CITRA_ENABLE_JIT
++    values.use_cpu_jit = false;
++    values.use_shader_jit = false;
++#endif
+     auto& system = Core::System::GetInstance();
+     if (system.IsPoweredOn()) {
+         VideoCore::SettingUpdate();
+@@ -71,7 +75,7 @@ void LogSettings() {
+     LogSetting("Layout_SwapScreen", Settings::values.swap_screen);
+     LogSetting("Utility_CustomTextures", Settings::values.custom_textures);
+     LogSetting("Audio_EnableDspLle", Settings::values.enable_dsp_lle);
+-    LogSetting("Audio_EnableDspLleMultithread", Settings::values.enable_dsp_lle_multithread);
++    LogSetting("Audio_EnableDspLleMultithread", Settings::values.dsp_lle_multithread);
+     LogSetting("Audio_OutputEngine", Settings::values.sink_id);
+     LogSetting("Audio_EnableAudioStretching", Settings::values.enable_audio_stretching);
+     LogSetting("Audio_OutputDevice", Settings::values.audio_device_id);
+diff --git a/src/core/settings.h b/src/core/settings.h
+index 6340fa7..a92b973 100644
+--- a/src/core/settings.h
++++ b/src/core/settings.h
+@@ -211,6 +211,10 @@ struct Values {
+     bool async_shader_compile;
+     bool use_separable_shader;
+     bool shadow_rendering;
++    // Legacy renderer switches still referenced by MMJ's published renderer.
++    bool allow_shadow = false;
++    bool display_transfer_hack = false;
++    bool use_linear_filter = false;
+     bool use_shader_cache;
+     bool skip_slow_draw;
+     bool skip_cpu_write;
+@@ -220,6 +224,9 @@ struct Values {
+     bool disable_clip_coef;
+     bool stream_buffer_hack;
+     bool y2r_event_delay;
++    bool y2r_perform_hack = false;
++    bool preload_textures = false;
++    bool enable_telemetry = false;
+     bool use_present_thread;
+     bool use_direct_display;
+     bool use_fence_sync;
+diff --git a/src/input_common/CMakeLists.txt b/src/input_common/CMakeLists.txt
+index 2520ba3..4ddd3f2 100644
+--- a/src/input_common/CMakeLists.txt
++++ b/src/input_common/CMakeLists.txt
+@@ -28,3 +28,5 @@ endif()
+ 
+ create_target_directory_groups(input_common)
+ target_link_libraries(input_common PUBLIC core PRIVATE common ${Boost_LIBRARIES})
++
++target_compile_definitions(input_common PRIVATE BOOST_ASIO_HAS_STD_INVOKE_RESULT=1)
+diff --git a/src/tests/CMakeLists.txt b/src/tests/CMakeLists.txt
+index c6b222e..e3ec855 100644
+--- a/src/tests/CMakeLists.txt
++++ b/src/tests/CMakeLists.txt
+@@ -14,7 +14,7 @@ add_executable(tests
+     tests.cpp
+ )
+ 
+-if (ARCHITECTURE_x86_64)
++if (CITRA_ENABLE_JIT AND ARCHITECTURE_x86_64)
+     target_sources(tests
+         PRIVATE
+             video_core/shader/shader_jit_x64_compiler.cpp
+diff --git a/src/video_core/CMakeLists.txt b/src/video_core/CMakeLists.txt
+index f34fd26..00013e9 100644
+--- a/src/video_core/CMakeLists.txt
++++ b/src/video_core/CMakeLists.txt
+@@ -21,6 +21,8 @@ add_library(video_core STATIC
+     regs_rasterizer.h
+     regs_shader.h
+     regs_texturing.h
++    renderer_software.cpp
++    renderer_software.h
+     renderer_base.cpp
+     renderer_base.h
+     renderer_opengl/gl_rasterizer.cpp
+@@ -82,7 +84,7 @@ add_library(video_core STATIC
+     video_core.h
+ )
+ 
+-if(ARCHITECTURE_x86_64)
++if(CITRA_ENABLE_JIT AND ARCHITECTURE_x86_64)
+     target_sources(video_core
+         PRIVATE
+             shader/shader_jit_x64.cpp
+@@ -98,6 +100,6 @@ create_target_directory_groups(video_core)
+ target_link_libraries(video_core PUBLIC common core)
+ target_link_libraries(video_core PRIVATE glad nihstro-headers)
+ 
+-if (ARCHITECTURE_x86_64)
++if (CITRA_ENABLE_JIT AND ARCHITECTURE_x86_64)
+     target_link_libraries(video_core PUBLIC xbyak)
+ endif()
+diff --git a/src/video_core/renderer_opengl/gl_rasterizer.cpp b/src/video_core/renderer_opengl/gl_rasterizer.cpp
+index 81af42f..daa7650 100644
+--- a/src/video_core/renderer_opengl/gl_rasterizer.cpp
++++ b/src/video_core/renderer_opengl/gl_rasterizer.cpp
+@@ -9,7 +9,6 @@
+ #include <utility>
+ #include <glad/glad.h>
+ #ifdef ARCHITECTURE_ARM64
+-#include <android/log.h>
+ #include <arm_neon.h>
+ #endif
+ #include "common/alignment.h"
+diff --git a/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp b/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp
+index b5f130a..139621b 100644
+--- a/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp
++++ b/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp
+@@ -12,7 +12,6 @@
+ #include <unordered_set>
+ #include <utility>
+ #include <vector>
+-#include <android/log.h>
+ #include <boost/range/iterator_range.hpp>
+ #include <glad/glad.h>
+ #include "common/alignment.h"
+diff --git a/src/video_core/shader/shader.cpp b/src/video_core/shader/shader.cpp
+index e757d21..fac35d5 100644
+--- a/src/video_core/shader/shader.cpp
++++ b/src/video_core/shader/shader.cpp
+@@ -12,7 +12,7 @@
+ #include "video_core/regs_shader.h"
+ #include "video_core/shader/shader.h"
+ #include "video_core/shader/shader_interpreter.h"
+-#ifdef ARCHITECTURE_x86_64
++#if defined(CITRA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
+ #include "video_core/shader/shader_jit_x64.h"
+ #endif // ARCHITECTURE_x86_64
+ #include "video_core/video_core.h"
+@@ -134,13 +134,13 @@ void GSUnitState::ConfigOutput(const ShaderRegs& config) {
+ 
+ MICROPROFILE_DEFINE(GPU_Shader, "GPU", "Shader", MP_RGB(50, 50, 240));
+ 
+-#ifdef ARCHITECTURE_x86_64
++#if defined(CITRA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
+ static std::unique_ptr<JitX64Engine> jit_engine;
+ #endif // ARCHITECTURE_x86_64
+ static InterpreterEngine interpreter_engine;
+ 
+ ShaderEngine* GetEngine() {
+-#ifdef ARCHITECTURE_x86_64
++#if defined(CITRA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
+     // TODO(yuriks): Re-initialize on each change rather than being persistent
+     if (VideoCore::g_shader_jit_enabled) {
+         if (jit_engine == nullptr) {
+@@ -154,7 +154,7 @@ ShaderEngine* GetEngine() {
+ }
+ 
+ void Shutdown() {
+-#ifdef ARCHITECTURE_x86_64
++#if defined(CITRA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
+     jit_engine = nullptr;
+ #endif // ARCHITECTURE_x86_64
+ }
+diff --git a/src/video_core/video_core.cpp b/src/video_core/video_core.cpp
+index 10cb0b2..cee89e8 100644
+--- a/src/video_core/video_core.cpp
++++ b/src/video_core/video_core.cpp
+@@ -8,6 +8,7 @@
+ #include "core/settings.h"
+ #include "video_core/pica.h"
+ #include "video_core/renderer_base.h"
++#include "video_core/renderer_software.h"
+ #include "video_core/renderer_opengl/gl_rasterizer.h"
+ #include "video_core/renderer_opengl/gl_vars.h"
+ #include "video_core/renderer_opengl/renderer_opengl.h"
+@@ -59,7 +60,13 @@ ResultStatus Init(Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
+     g_memory = &memory;
+     Pica::Init();
+ 
++#ifdef CITRA_SOFTWARE_PRESENTATION
++    Settings::values.use_hw_renderer = false;
++    Settings::values.use_hw_shader = false;
++    g_renderer = std::make_unique<RendererSoftware>(window);
++#else
+     g_renderer = std::make_unique<OpenGL::RendererOpenGL>(window, Settings::values.use_gles);
++#endif
+     ResultStatus result = g_renderer->Init();
+     if (result == ResultStatus::Success) {
+         if (Settings::values.use_hw_renderer) {
+diff --git a/src/video_core/video_core.h b/src/video_core/video_core.h
+index 0eebbbf..76ac822 100644
+--- a/src/video_core/video_core.h
++++ b/src/video_core/video_core.h
+@@ -5,6 +5,7 @@
+ #pragma once
+ 
+ #include <atomic>
++#include <functional>
+ #include <memory>
+ #include <vector>
+ 
