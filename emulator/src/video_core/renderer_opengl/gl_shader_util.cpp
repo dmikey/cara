@@ -9,6 +9,7 @@
 
 #include "common/assert.h"
 #include "common/file_util.h"
+#include "common/frame_timing.h"
 #include "common/logging/log.h"
 #include "video_core/renderer_opengl/gl_shader_util.h"
 #include "video_core/renderer_opengl/gl_vars.h"
@@ -16,6 +17,7 @@
 namespace OpenGL {
 
 GLuint LoadShader(const char* source, GLenum type) {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ShaderCompile);
     std::string version = GLES ? R"(#version 320 es
 
 #define CITRA_GLES
@@ -108,6 +110,7 @@ vec4 CitraLUTFetch(sampler2D lut, int index) {
 }
 
 GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ShaderCompile);
     // Link the program
     LOG_DEBUG(Render_OpenGL, "Linking program...");
 

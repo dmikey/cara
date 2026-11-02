@@ -16,10 +16,20 @@ struct Counters {
     double vertex_prepare_seconds = 0;
     double vertex_upload_seconds = 0;
     double draw_submit_seconds = 0;
+    double surface_download_seconds = 0;
+    double shader_compile_seconds = 0;
+    double gpu_wait_seconds = 0;
+    std::uint64_t surface_download_calls = 0;
+    std::uint64_t surface_download_bytes = 0;
+    std::uint64_t cpu_surface_invalidations = 0;
+    std::uint64_t shader_compile_calls = 0;
+    std::uint64_t lit_draws = 0;
+    std::uint64_t active_light_sum = 0;
     std::uint64_t guest_ticks = 0;
     std::array<std::uint32_t, 4> last_guest_pc{};
     std::array<std::uint64_t, 4> guest_core_ticks{};
     std::uint64_t vertex_upload_fallbacks = 0;
+    std::uint64_t vertex_storage_allocations = 0;
     std::uint64_t vertex_pool_peak_bytes = 0;
     double readback_seconds = 0;
     double present_seconds = 0;
@@ -30,7 +40,7 @@ struct Counters {
 };
 inline thread_local Counters counters;
 
-enum class Phase { Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, DrawSubmit };
+enum class Phase { Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
 class Scope {
 public:
     explicit Scope(Phase phase_) : phase(phase_), active(counters.enabled) {
@@ -54,6 +64,13 @@ public:
             counters.vertex_upload_seconds += seconds;
         } else if (phase == Phase::DrawSubmit) {
             counters.draw_submit_seconds += seconds;
+        } else if (phase == Phase::SurfaceDownload) {
+            counters.surface_download_seconds += seconds;
+        } else if (phase == Phase::ShaderCompile) {
+            counters.shader_compile_seconds += seconds;
+            ++counters.shader_compile_calls;
+        } else if (phase == Phase::GPUWait) {
+            counters.gpu_wait_seconds += seconds;
         } else {
             counters.present_seconds += seconds;
         }

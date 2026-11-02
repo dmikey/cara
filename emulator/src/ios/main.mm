@@ -201,6 +201,10 @@ public:
                 OpenGL::OpenGLState::BindDrawFramebuffer(previous_draw);
                 OpenGL::OpenGLState::BindReadFramebuffer(previous_read);
             }
+            if (Common::FrameTiming::counters.enabled && std::getenv("CARA_GPU_WAIT_TIMING")) {
+                Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GPUWait);
+                glFinish();
+            }
             ++frames;
             if (frame_presented) frame_presented(frames);
             // Readback is only used for explicitly requested diagnostic screen captures.
@@ -652,7 +656,17 @@ public:
                                 ",\"vertex_prepare_ms_per_frame\":" + std::to_string((current.vertex_prepare_seconds - previous_counters.vertex_prepare_seconds) * 1000 / count) +
                                 ",\"vertex_upload_ms_per_frame\":" + std::to_string((current.vertex_upload_seconds - previous_counters.vertex_upload_seconds) * 1000 / count) +
                                 ",\"draw_submit_ms_per_frame\":" + std::to_string((current.draw_submit_seconds - previous_counters.draw_submit_seconds) * 1000 / count) +
+                                ",\"surface_download_ms_per_frame\":" + std::to_string((current.surface_download_seconds - previous_counters.surface_download_seconds) * 1000 / count) +
+                                ",\"shader_compile_ms_per_frame\":" + std::to_string((current.shader_compile_seconds - previous_counters.shader_compile_seconds) * 1000 / count) +
+                                ",\"gpu_wait_ms_per_frame\":" + std::to_string((current.gpu_wait_seconds - previous_counters.gpu_wait_seconds) * 1000 / count) +
+                                ",\"surface_download_calls\":" + std::to_string(current.surface_download_calls - previous_counters.surface_download_calls) +
+                                ",\"surface_download_bytes\":" + std::to_string(current.surface_download_bytes - previous_counters.surface_download_bytes) +
+                                ",\"cpu_surface_invalidations\":" + std::to_string(current.cpu_surface_invalidations - previous_counters.cpu_surface_invalidations) +
+                                ",\"shader_compile_calls\":" + std::to_string(current.shader_compile_calls - previous_counters.shader_compile_calls) +
+                                ",\"lit_draws\":" + std::to_string(current.lit_draws - previous_counters.lit_draws) +
+                                ",\"active_light_sum\":" + std::to_string(current.active_light_sum - previous_counters.active_light_sum) +
                                 ",\"vertex_upload_fallbacks\":" + std::to_string(current.vertex_upload_fallbacks - previous_counters.vertex_upload_fallbacks) +
+                                ",\"vertex_storage_allocations\":" + std::to_string(current.vertex_storage_allocations - previous_counters.vertex_storage_allocations) +
                                 ",\"vertex_pool_peak_bytes\":" + std::to_string(current.vertex_pool_peak_bytes) +
                                 ",\"guest_pc\":[" + std::to_string(current.last_guest_pc[0]) + "," + std::to_string(current.last_guest_pc[1]) + "," + std::to_string(current.last_guest_pc[2]) + "," + std::to_string(current.last_guest_pc[3]) + "]" +
                                 ",\"guest_core_ticks\":[" + std::to_string(current.guest_core_ticks[0] - previous_counters.guest_core_ticks[0]) + "," + std::to_string(current.guest_core_ticks[1] - previous_counters.guest_core_ticks[1]) + "," + std::to_string(current.guest_core_ticks[2] - previous_counters.guest_core_ticks[2]) + "," + std::to_string(current.guest_core_ticks[3] - previous_counters.guest_core_ticks[3]) + "]" +

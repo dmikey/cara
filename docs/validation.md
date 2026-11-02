@@ -218,3 +218,34 @@ fractional-viewport rounding, and the integer-depth tie fixture. Zelda completed
 JIT, and a visually complete title scene. Rounding changes edge pixels, so this
 capture is not pixel-identical to the older unrounded renderer. macOS regression
 checks and audits of both linked products passed locally.
+
+
+## Automatic idle-intro upload pressure
+
+The user reported low FPS when the title screen automatically enters its intro
+after being left idle. This differs from the three-A-press benchmark, which can
+advance past portions of the sequence. The title must be left untouched when
+reproducing this report.
+
+An opt-in physical-iPad profile captured a 60-frame slow window at 35.142297 ms
+per display frame. Vertex uploads consumed 9.321077 ms, with 3,147 fresh-storage
+fallbacks in the window and all three 32 MiB banks full. GPU completion after
+presentation took 0.813692 ms; surface downloads and shader compilation were
+idle. The iPad reported nominal thermal state. This points to upload storage
+pressure rather than expensive fragment lighting in that measured window.
+
+Native upload banks pool textures by power-of-two height, with a 64 MiB payload
+budget per bank (192 MiB total). Changing draw order reuses matching allocations
+without resizing. Under pressure, unused tails in the largest size classes are
+released first; inputs already submitted in the current frame remain untouched.
+`CARA_VERTEX_UPLOAD_BANK_MIB` selects 16–128 MiB per bank for comparisons. These
+limits count texel payload, not the driver's entire memory footprint. A rejected
+per-draw-position capacity-retention experiment filled the larger budget and
+increased fallback uploads; it is not included in the implementation.
+
+Opt-in timing reports now separate surface downloads, shader compile/link time,
+CPU surface invalidations, lit draws, texture storage allocations and upload
+fallbacks. `CARA_GPU_WAIT_TIMING=1` additionally calls glFinish once per displayed
+frame while timing is enabled. That diagnostic changes CPU/GPU overlap, so its
+FPS must not be presented as ordinary-play performance. None of these timing
+clocks or GPU waits run in the default launch.

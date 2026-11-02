@@ -274,8 +274,14 @@ private:
         OGLTexture texture;
         unsigned rows = 0;
     };
-    std::array<std::vector<IOSVertexUpload>, 3> ios_vertex_frame_uploads;
-    std::array<size_t, 3> ios_vertex_frame_bytes{};
+    struct IOSVertexFrameUploads {
+        // The input atlas has at most 2,048 rows at the expanded-vertex limit.
+        std::array<std::vector<IOSVertexUpload>, 12> sizes;
+        std::array<size_t, 12> used{};
+        size_t bytes = 0;
+        size_t textures = 0;
+    };
+    std::array<IOSVertexFrameUploads, 3> ios_vertex_frame_uploads;
     unsigned ios_vertex_upload_frame = ~0u;
     size_t ios_vertex_upload_index = 0;
     std::vector<u32> ios_triangle_indices;

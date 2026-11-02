@@ -18,6 +18,7 @@
 #include "common/bit_field.h"
 #include "common/color.h"
 #include "common/hash.h"
+#include "common/frame_timing.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
 #include "common/microprofile.h"
@@ -702,7 +703,12 @@ void CachedSurface::UploadGLTexture(const Common::Rectangle<u32>& rect) {
 }
 
 void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceDownload);
     u32 bytes_per_pixel = GetGLBytesPerPixel(pixel_format);
+    if (Common::FrameTiming::counters.enabled) {
+        ++Common::FrameTiming::counters.surface_download_calls;
+        Common::FrameTiming::counters.surface_download_bytes += u64(rect.GetWidth()) * rect.GetHeight() * bytes_per_pixel;
+    }
     const FormatTuple& tuple = GetFormatTuple(pixel_format);
     if (gl_buffer.empty()) {
         gl_buffer.resize(stride * height * bytes_per_pixel);
@@ -1707,6 +1713,8 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
                 }
                 FlushRegion(cached_surface->addr, cached_surface->size, cached_surface);
                 remove_surfaces.emplace(cached_surface);
+                if (Common::FrameTiming::counters.enabled)
+                    ++Common::FrameTiming::counters.cpu_surface_invalidations;
                 LOG_WARNING(Render_OpenGL, "invalidate region by cpu");
                 continue;
             }

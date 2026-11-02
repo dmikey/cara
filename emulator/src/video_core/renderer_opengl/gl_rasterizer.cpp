@@ -551,40 +551,55 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     bool resize_storage = false;
     bool orphan_upload = true;
     const unsigned frame = VideoCore::GetCurrentFrame();
+    auto& bank = ios_vertex_frame_uploads[frame % ios_vertex_frame_uploads.size()];
     if (frame != ios_vertex_upload_frame) {
         ios_vertex_upload_frame = frame;
         ios_vertex_upload_index = 0;
+        bank.used.fill(0);
     }
-    const size_t bank = frame % ios_vertex_frame_uploads.size();
-    auto& uploads = ios_vertex_frame_uploads[bank];
-    // Keep each draw's inputs separate until earlier frames have consumed them.
-    // Bound retained storage to 32 MiB and 4,096 textures in each of three banks.
-    // Work beyond either limit uses fresh storage instead of growing the pool.
+    // Pool textures by exact power-of-two height, rather than by draw position.
+    // Adjacent frames can reorder small and large draws without reallocating or
+    // retaining large storage for a draw that now needs only a few rows.
     static const unsigned max_upload_draws = [] {
         const char* value = std::getenv("CARA_VERTEX_UPLOAD_MAX_DRAWS");
         return value ? unsigned(std::clamp(std::strtol(value, nullptr, 10), 1L, 8192L)) : 4096u;
     }();
-    if (ios_vertex_upload_index < max_upload_draws) {
-        if (uploads.size() <= ios_vertex_upload_index) uploads.emplace_back();
-        auto& upload = uploads[ios_vertex_upload_index++];
-        unsigned rows = 1;
-        while (rows < upload_rows) rows *= 2;
+    static const size_t max_bank_bytes = [] {
+        const char* value = std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB");
+        const size_t mib = value ? size_t(std::clamp(std::strtol(value, nullptr, 10), 16L, 128L)) : 64u;
+        return mib * 1024 * 1024;
+    }();
+    unsigned size_class = 0;
+    unsigned rows = 1;
+    while (rows < upload_rows) { rows *= 2; ++size_class; }
+    if (ios_vertex_upload_index++ < max_upload_draws && size_class < bank.sizes.size()) {
+        auto& pool = bank.sizes[size_class];
         const size_t bytes = rows * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
-        const size_t previous_bytes = upload.rows * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
-        size_t bank_bytes = ios_vertex_frame_bytes[bank] - previous_bytes + bytes;
-        // Later frames may need fewer, differently sized draws. Reclaim unused
-        // tail slots from the bank's earlier frame before falling back. Slots
-        // already submitted in this frame (including upload) remain untouched.
-        while (bank_bytes > 32 * 1024 * 1024 && uploads.size() > ios_vertex_upload_index) {
-            ios_vertex_frame_bytes[bank] -= uploads.back().rows * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
-            uploads.pop_back();
-            bank_bytes = ios_vertex_frame_bytes[bank] - previous_bytes + bytes;
+        if (bank.used[size_class] == pool.size()) {
+            // Reclaim only allocations not yet used in this frame. Largest sizes
+            // first free space promptly, without modifying in-flight draw inputs.
+            for (size_t i = bank.sizes.size(); i-- > 0 &&
+                 (bank.bytes + bytes > max_bank_bytes || bank.textures >= max_upload_draws);) {
+                auto& unused = bank.sizes[i];
+                const size_t allocation_bytes = (size_t(1) << i) * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
+                while (unused.size() > bank.used[i] &&
+                       (bank.bytes + bytes > max_bank_bytes || bank.textures >= max_upload_draws)) {
+                    unused.pop_back();
+                    bank.bytes -= allocation_bytes;
+                    --bank.textures;
+                }
+            }
+            if (bank.bytes + bytes <= max_bank_bytes && bank.textures < max_upload_draws) {
+                pool.emplace_back();
+                pool.back().rows = rows;
+                bank.bytes += bytes;
+                ++bank.textures;
+                resize_storage = true;
+            }
         }
-        if (bank_bytes <= 32 * 1024 * 1024) {
-            ios_vertex_frame_bytes[bank] = bank_bytes;
-            resize_storage = upload.rows != rows;
-            upload.rows = rows;
-            storage_rows = rows;
+        if (bank.used[size_class] < pool.size()) {
+            auto& upload = pool[bank.used[size_class]++];
+            storage_rows = upload.rows;
             selected_texture = &upload.texture;
             orphan_upload = false;
         }
@@ -592,7 +607,9 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     if (Common::FrameTiming::counters.enabled) {
         auto& counters = Common::FrameTiming::counters;
         if (orphan_upload) ++counters.vertex_upload_fallbacks;
-        const auto bytes = ios_vertex_frame_bytes[0] + ios_vertex_frame_bytes[1] + ios_vertex_frame_bytes[2];
+        if (orphan_upload || resize_storage) ++counters.vertex_storage_allocations;
+        size_t bytes = 0;
+        for (const auto& frame_bank : ios_vertex_frame_uploads) bytes += frame_bank.bytes;
         counters.vertex_pool_peak_bytes = std::max<std::uint64_t>(counters.vertex_pool_peak_bytes, bytes);
     }
     OGLTexture& input_texture = *selected_texture;
@@ -1032,6 +1049,11 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     state.scissor.y = draw_rect.bottom;
     state.scissor.width = draw_rect.GetWidth();
     state.scissor.height = draw_rect.GetHeight();
+
+    if (Common::FrameTiming::counters.enabled && !regs.lighting.disable) {
+        ++Common::FrameTiming::counters.lit_draws;
+        Common::FrameTiming::counters.active_light_sum += regs.lighting.max_light_index + 1;
+    }
 
     // Draw the vertex batch
     bool succeeded = true;
