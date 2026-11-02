@@ -179,6 +179,24 @@ index 400c655..9acb89a 100644
      Settings::values.mic_input_device =
          sdl2_config->GetString("Audio", "mic_input_device", Frontend::Mic::default_device_name);
      Settings::values.mic_input_type =
+diff --git a/src/common/CMakeLists.txt b/src/common/CMakeLists.txt
+index 9a80984..44ba0e1 100644
+--- a/src/common/CMakeLists.txt
++++ b/src/common/CMakeLists.txt
+@@ -12,9 +12,12 @@ if ($ENV{CI})
+   elseif($ENV{BITRISE_IO})
+     set(BUILD_REPOSITORY "$ENV{BITRISEIO_GIT_REPOSITORY_OWNER}/$ENV{BITRISEIO_GIT_REPOSITORY_SLUG}")
+     set(BUILD_TAG $ENV{BITRISE_GIT_TAG})
++  elseif(DEFINED ENV{GITHUB_REPOSITORY})
++    set(BUILD_REPOSITORY "$ENV{GITHUB_REPOSITORY}")
++    set(BUILD_TAG "$ENV{GITHUB_REF_NAME}")
+   endif()
+   # regex capture the string nightly or canary into CMAKE_MATCH_1
+-  string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR ${BUILD_REPOSITORY})
++  string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR "${BUILD_REPOSITORY}")
+   if (${CMAKE_MATCH_COUNT} GREATER 0)
+     # capitalize the first letter of each word in the repo name.
+     string(REPLACE "-" ";" REPO_NAME_LIST ${CMAKE_MATCH_1})
 diff --git a/src/common/file_util.cpp b/src/common/file_util.cpp
 index 8290517..78f3775 100644
 --- a/src/common/file_util.cpp
