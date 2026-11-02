@@ -6,6 +6,10 @@
 #include <array>
 #include <cmath>
 #include <tuple>
+#include <cstdlib>
+#ifdef __APPLE__
+#include <dispatch/dispatch.h>
+#endif
 #include "common/assert.h"
 #include "common/bit_field.h"
 #include "common/color.h"
@@ -215,14 +219,120 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
     auto textures = regs.texturing.GetTextures();
     auto tev_stages = regs.texturing.GetTevStages();
 
+    using Tev = TexturingRegs::TevStageConfig;
+    const auto ArgumentCount = [](Tev::Operation op) {
+        switch (op) {
+        case Tev::Operation::Replace: return 1u;
+        case Tev::Operation::Modulate:
+        case Tev::Operation::Add:
+        case Tev::Operation::AddSigned:
+        case Tev::Operation::Subtract:
+        case Tev::Operation::Dot3_RGB:
+        case Tev::Operation::Dot3_RGBA: return 2u;
+        default: return 3u;
+        }
+    };
+    std::array<unsigned, 6> color_args{}, alpha_args{};
+    std::array<bool, 6> color_passthrough{}, alpha_passthrough{};
+    for (unsigned i = 0; i < tev_stages.size(); ++i) {
+        const auto& t = tev_stages[i];
+        color_args[i] = ArgumentCount(t.color_op);
+        alpha_args[i] = ArgumentCount(t.alpha_op);
+        color_passthrough[i] = t.color_op == Tev::Operation::Replace &&
+            t.color_source1 == Tev::Source::Previous &&
+            t.color_modifier1 == Tev::ColorModifier::SourceColor && t.GetColorMultiplier() == 1;
+        alpha_passthrough[i] = t.alpha_op == Tev::Operation::Replace &&
+            t.alpha_source1 == Tev::Source::Previous &&
+            t.alpha_modifier1 == Tev::AlphaModifier::SourceAlpha && t.GetAlphaMultiplier() == 1;
+    }
+
+    unsigned tev_stage_count = static_cast<unsigned>(tev_stages.size());
+    while (tev_stage_count && color_passthrough[tev_stage_count - 1] && alpha_passthrough[tev_stage_count - 1])
+        --tev_stage_count;
+    std::array<Common::Vec4<u8>, 6> constants{};
+    std::array<unsigned, 6> color_multipliers{}, alpha_multipliers{};
+    bool needs_primary_color = false;
+    bool needs_fragment_color = false;
+    const auto MarkSource = [&](Tev::Source source) {
+        needs_primary_color |= source == Tev::Source::PrimaryColor;
+        needs_fragment_color |= source == Tev::Source::PrimaryFragmentColor || source == Tev::Source::SecondaryFragmentColor;
+    };
+    for (unsigned i = 0; i < tev_stage_count; ++i) {
+        const auto& t = tev_stages[i];
+        constants[i] = Common::MakeVec(t.const_r.Value(), t.const_g.Value(), t.const_b.Value(), t.const_a.Value()).Cast<u8>();
+        color_multipliers[i] = t.GetColorMultiplier();
+        alpha_multipliers[i] = t.GetAlphaMultiplier();
+        const std::array<Tev::Source, 3> cs{t.color_source1, t.color_source2, t.color_source3};
+        const std::array<Tev::Source, 3> as{t.alpha_source1, t.alpha_source2, t.alpha_source3};
+        for (unsigned j = 0; j < color_args[i]; ++j) MarkSource(cs[j]);
+        if (t.color_op != Tev::Operation::Dot3_RGBA)
+            for (unsigned j = 0; j < alpha_args[i]; ++j) MarkSource(as[j]);
+    }
+    const auto output_merger = regs.framebuffer.output_merger;
+    const auto blend_params = output_merger.alpha_blending;
+    using BlendFactor = FramebufferRegs::BlendFactor;
+    using BlendEquation = FramebufferRegs::BlendEquation;
+    const bool copy_output = output_merger.alphablend_enable
+        ? blend_params.blend_equation_rgb == BlendEquation::Add && blend_params.blend_equation_a == BlendEquation::Add &&
+          blend_params.factor_source_rgb == BlendFactor::One && blend_params.factor_dest_rgb == BlendFactor::Zero &&
+          blend_params.factor_source_a == BlendFactor::One && blend_params.factor_dest_a == BlendFactor::Zero
+        : output_merger.logic_op == FramebufferRegs::LogicOp::Copy;
+    const bool straight_alpha_blend = output_merger.alphablend_enable &&
+        blend_params.blend_equation_rgb == BlendEquation::Add && blend_params.blend_equation_a == BlendEquation::Add &&
+        blend_params.factor_source_rgb == BlendFactor::SourceAlpha && blend_params.factor_dest_rgb == BlendFactor::OneMinusSourceAlpha &&
+        blend_params.factor_source_a == BlendFactor::One && blend_params.factor_dest_a == BlendFactor::Zero;
+    const bool dest_required = !copy_output || !output_merger.red_enable || !output_merger.green_enable ||
+                              !output_merger.blue_enable || !output_merger.alpha_enable;
+    const float depth_scale = float24::FromRaw(regs.rasterizer.viewport_depth_range).ToFloat32();
+    const float depth_offset = float24::FromRaw(regs.rasterizer.viewport_depth_near_plane).ToFloat32();
+
     bool stencil_action_enable =
         g_state.regs.framebuffer.output_merger.stencil_test.enable &&
         g_state.regs.framebuffer.framebuffer.depth_format == FramebufferRegs::DepthFormat::D24S8;
     const auto stencil_test = g_state.regs.framebuffer.output_merger.stencil_test;
 
-    // Enter rasterization loop, starting at the center of the topleft bounding box corner.
-    // TODO: Not sure if looping through x first might be faster
-    for (u16 y = min_y + 8; y < max_y; y += 0x10) {
+    // Complete each primitive before the caller can mutate registers or memory.
+    // Only disjoint scanline ranges run concurrently, preserving primitive order.
+    unsigned lanes = 1;
+#ifdef __APPLE__
+    static const unsigned configured_lanes = [] {
+        const char* value = std::getenv("CARA_RASTER_THREADS");
+        return value ? static_cast<unsigned>(std::clamp(std::strtol(value, nullptr, 10), 1L, 8L)) : 4u;
+    }();
+    const unsigned rows = max_y > min_y ? (max_y - min_y) / 16 : 0;
+    const unsigned columns = max_x > min_x ? (max_x - min_x) / 16 : 0;
+    bool independent = true;
+    const auto& fb = regs.framebuffer.framebuffer;
+    const u64 color_start = fb.GetColorBufferPhysicalAddress();
+    const u64 depth_start = fb.GetDepthBufferPhysicalAddress();
+    const u64 fb_span = u64(fb.GetWidth()) * fb.GetHeight() * 4;
+    const auto Overlap = [](u64 a, u64 size_a, u64 b, u64 size_b) {
+        return a && b && a < b + size_b && b < a + size_a;
+    };
+    if (Overlap(color_start, fb_span, depth_start, fb_span)) independent = false;
+    for (unsigned i = 0; i < textures.size(); ++i) {
+        const auto& texture = textures[i];
+        if (!texture.enabled) continue;
+        if (i == 0 && texture.config.type != TexturingRegs::TextureConfig::Texture2D) {
+            independent = false;
+            break;
+        }
+        const u64 address = texture.config.GetPhysicalAddress();
+        const u64 size = u64(texture.config.width.Value()) * texture.config.height.Value() * 4;
+        if (Overlap(address, size, color_start, fb_span) || Overlap(address, size, depth_start, fb_span)) {
+            independent = false;
+            break;
+        }
+    }
+    if (independent && rows >= 32 && rows * columns >= 4096) lanes = configured_lanes;
+#endif
+    const unsigned total_rows = max_y > min_y ? (max_y - min_y) / 16 : 0;
+    const unsigned rows_per_lane = ((total_rows + lanes * 8 - 1) / (lanes * 8)) * 8;
+    const auto RasterizeRows = [&](std::size_t lane) {
+      const unsigned first = lane * rows_per_lane;
+      const unsigned last = std::min(total_rows, first + rows_per_lane);
+      for (unsigned row = first; row < last; ++row) {
+        const u16 y = static_cast<u16>(min_y + 8 + row * 16);
         for (u16 x = min_x + 8; x < max_x; x += 0x10) {
 
             // Do not process the pixel if it's inside the scissor box and the scissor mode is set
@@ -257,9 +367,6 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
 
             // Not fully accurate. About 3 bits in precision are missing.
             // Z-Buffer (z / w * scale + offset)
-            float depth_scale = float24::FromRaw(regs.rasterizer.viewport_depth_range).ToFloat32();
-            float depth_offset =
-                float24::FromRaw(regs.rasterizer.viewport_depth_near_plane).ToFloat32();
             float depth = interpolated_z_over_w * depth_scale + depth_offset;
 
             // Potentially switch to W-Buffer
@@ -294,7 +401,8 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
                 return interpolated_attr_over_w * interpolated_w_inverse;
             };
 
-            Common::Vec4<u8> primary_color{
+            Common::Vec4<u8> primary_color{};
+            if (needs_primary_color) primary_color = {
                 static_cast<u8>(round(
                     GetInterpolatedAttribute(v0.color.r(), v1.color.r(), v2.color.r()).ToFloat32() *
                     255)),
@@ -456,7 +564,7 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
             Common::Vec4<u8> primary_fragment_color = {0, 0, 0, 0};
             Common::Vec4<u8> secondary_fragment_color = {0, 0, 0, 0};
 
-            if (!g_state.regs.lighting.disable) {
+            if (needs_fragment_color && !g_state.regs.lighting.disable) {
                 Common::Quaternion<float> normquat =
                     Common::Quaternion<float>{
                         {GetInterpolatedAttribute(v0.quat.x, v1.quat.x, v2.quat.x).ToFloat32(),
@@ -475,7 +583,7 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
                     g_state.regs.lighting, g_state.lighting, normquat, view, texture_color);
             }
 
-            for (unsigned tev_stage_index = 0; tev_stage_index < tev_stages.size();
+            for (unsigned tev_stage_index = 0; tev_stage_index < tev_stage_count;
                  ++tev_stage_index) {
                 const auto& tev_stage = tev_stages[tev_stage_index];
                 using Source = TexturingRegs::TevStageConfig::Source;
@@ -507,9 +615,7 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
                         return combiner_buffer;
 
                     case Source::Constant:
-                        return Common::MakeVec(tev_stage.const_r.Value(), tev_stage.const_g.Value(),
-                                               tev_stage.const_b.Value(), tev_stage.const_a.Value())
-                            .Cast<u8>();
+                        return constants[tev_stage_index];
 
                     case Source::Previous:
                         return combiner_output;
@@ -526,38 +632,38 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
                 //       stage as input. Hence, we currently don't directly write the result to
                 //       combiner_output.rgb(), but instead store it in a temporary variable until
                 //       alpha combining has been done.
-                Common::Vec3<u8> color_result[3] = {
-                    GetColorModifier(tev_stage.color_modifier1, GetSource(tev_stage.color_source1)),
-                    GetColorModifier(tev_stage.color_modifier2, GetSource(tev_stage.color_source2)),
-                    GetColorModifier(tev_stage.color_modifier3, GetSource(tev_stage.color_source3)),
-                };
-                auto color_output = ColorCombine(tev_stage.color_op, color_result);
+                Common::Vec3<u8> color_output = combiner_output.rgb();
+                if (!color_passthrough[tev_stage_index]) {
+                    Common::Vec3<u8> color_result[3]{};
+                    color_result[0] = GetColorModifier(tev_stage.color_modifier1, GetSource(tev_stage.color_source1));
+                    if (color_args[tev_stage_index] > 1)
+                        color_result[1] = GetColorModifier(tev_stage.color_modifier2, GetSource(tev_stage.color_source2));
+                    if (color_args[tev_stage_index] > 2)
+                        color_result[2] = GetColorModifier(tev_stage.color_modifier3, GetSource(tev_stage.color_source3));
+                    color_output = ColorCombine(tev_stage.color_op, color_result);
+                }
 
-                u8 alpha_output;
-                if (tev_stage.color_op == TexturingRegs::TevStageConfig::Operation::Dot3_RGBA) {
-                    // result of Dot3_RGBA operation is also placed to the alpha component
+                u8 alpha_output = combiner_output.a();
+                if (tev_stage.color_op == Tev::Operation::Dot3_RGBA) {
                     alpha_output = color_output.x;
-                } else {
-                    // alpha combiner
-                    std::array<u8, 3> alpha_result = {{
-                        GetAlphaModifier(tev_stage.alpha_modifier1,
-                                         GetSource(tev_stage.alpha_source1)),
-                        GetAlphaModifier(tev_stage.alpha_modifier2,
-                                         GetSource(tev_stage.alpha_source2)),
-                        GetAlphaModifier(tev_stage.alpha_modifier3,
-                                         GetSource(tev_stage.alpha_source3)),
-                    }};
+                } else if (!alpha_passthrough[tev_stage_index]) {
+                    std::array<u8, 3> alpha_result{};
+                    alpha_result[0] = GetAlphaModifier(tev_stage.alpha_modifier1, GetSource(tev_stage.alpha_source1));
+                    if (alpha_args[tev_stage_index] > 1)
+                        alpha_result[1] = GetAlphaModifier(tev_stage.alpha_modifier2, GetSource(tev_stage.alpha_source2));
+                    if (alpha_args[tev_stage_index] > 2)
+                        alpha_result[2] = GetAlphaModifier(tev_stage.alpha_modifier3, GetSource(tev_stage.alpha_source3));
                     alpha_output = AlphaCombine(tev_stage.alpha_op, alpha_result);
                 }
 
                 combiner_output[0] =
-                    std::min((unsigned)255, color_output.r() * tev_stage.GetColorMultiplier());
+                    std::min((unsigned)255, color_output.r() * color_multipliers[tev_stage_index]);
                 combiner_output[1] =
-                    std::min((unsigned)255, color_output.g() * tev_stage.GetColorMultiplier());
+                    std::min((unsigned)255, color_output.g() * color_multipliers[tev_stage_index]);
                 combiner_output[2] =
-                    std::min((unsigned)255, color_output.b() * tev_stage.GetColorMultiplier());
+                    std::min((unsigned)255, color_output.b() * color_multipliers[tev_stage_index]);
                 combiner_output[3] =
-                    std::min((unsigned)255, alpha_output * tev_stage.GetAlphaMultiplier());
+                    std::min((unsigned)255, alpha_output * alpha_multipliers[tev_stage_index]);
 
                 combiner_buffer = next_combiner_buffer;
 
@@ -574,7 +680,6 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
                 }
             }
 
-            const auto& output_merger = regs.framebuffer.output_merger;
 
             if (output_merger.fragment_operation_mode ==
                 FramebufferRegs::FragmentOperationMode::Shadow) {
@@ -780,11 +885,18 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
             if (stencil_action_enable)
                 UpdateStencil(stencil_test.action_depth_pass);
 
-            auto dest = GetPixel(x >> 4, y >> 4);
+            const auto dest = dest_required ? GetPixel(x >> 4, y >> 4) : Common::Vec4<u8>{};
             Common::Vec4<u8> blend_output = combiner_output;
 
-            if (output_merger.alphablend_enable) {
-                auto params = output_merger.alpha_blending;
+            if (copy_output) {
+                // Source already is the complete result for opaque copies.
+            } else if (straight_alpha_blend) {
+                const unsigned alpha = combiner_output.a();
+                for (unsigned channel = 0; channel < 3; ++channel)
+                    blend_output[channel] = static_cast<u8>((unsigned(combiner_output[channel]) * alpha +
+                        unsigned(dest[channel]) * (255 - alpha)) / 255);
+            } else if (output_merger.alphablend_enable) {
+                auto params = blend_params;
 
                 auto LookupFactor = [&](unsigned channel,
                                         FramebufferRegs::BlendFactor factor) -> u8 {
@@ -888,6 +1000,19 @@ static void ProcessTriangleInternal(const Vertex& v0, const Vertex& v1, const Ve
             if (regs.framebuffer.framebuffer.allow_color_write != 0)
                 DrawPixel(x >> 4, y >> 4, result);
         }
+      }
+    };
+#ifdef __APPLE__
+    if (lanes > 1) {
+        dispatch_apply_f(lanes, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+                         const_cast<void*>(static_cast<const void*>(&RasterizeRows)),
+                         [](void* context, std::size_t lane) {
+                             (*static_cast<const decltype(RasterizeRows)*>(context))(lane);
+                         });
+    } else
+#endif
+    {
+        RasterizeRows(0);
     }
 }
 

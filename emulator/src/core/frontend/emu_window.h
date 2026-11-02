@@ -44,6 +44,7 @@ public:
 
     /// Swap buffers to display the next frame
     virtual void SwapBuffers() = 0;
+    virtual unsigned GetDefaultFramebuffer() const { return 0; }
 
     /// Receives upright RGBA8 LCD pixels from the software presentation backend.
     /// Called on the emulation thread; consumers must copy before returning.

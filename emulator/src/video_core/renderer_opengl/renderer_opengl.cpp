@@ -400,6 +400,7 @@ void RendererOpenGL::SwapBuffers() {
     if (Settings::values.use_present_thread) {
         RenderToMailbox(layout);
     } else {
+        OpenGLState::BindDrawFramebuffer(render_window.GetDefaultFramebuffer());
         DrawScreens(layout);
         render_window.SwapBuffers();
     }
@@ -714,8 +715,8 @@ void RendererOpenGL::InitOpenGLObjects() {
                         linear_mag_filter ? GL_LINEAR : GL_NEAREST);
     glSamplerParameteri(filter_sampler.handle, GL_TEXTURE_MIN_FILTER,
                         linear_min_filter ? GL_LINEAR : GL_NEAREST);
-    glSamplerParameteri(filter_sampler.handle, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glSamplerParameteri(filter_sampler.handle, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glSamplerParameteri(filter_sampler.handle, GL_TEXTURE_WRAP_S, GLES ? GL_CLAMP_TO_EDGE : GL_CLAMP_TO_BORDER);
+    glSamplerParameteri(filter_sampler.handle, GL_TEXTURE_WRAP_T, GLES ? GL_CLAMP_TO_EDGE : GL_CLAMP_TO_BORDER);
     state.texture_units[0].sampler = filter_sampler.handle;
 
     // apply
@@ -928,7 +929,11 @@ VideoCore::ResultStatus RendererOpenGL::Init() {
         return VideoCore::ResultStatus::ErrorGenericDrivers;
     }
 
+#ifdef CITRA_IOS_GLES
+    if (!GLAD_GL_ES_VERSION_3_0) {
+#else
     if (!(GLAD_GL_VERSION_3_3 || GLAD_GL_ES_VERSION_3_1)) {
+#endif
         return VideoCore::ResultStatus::ErrorBelowGL33;
     }
 

@@ -10,13 +10,22 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    name: ${{ matrix.platform }} / ARM64 / no JIT
+    name: ${{ matrix.platform }} / ${{ matrix.renderer }} / ARM64 / no JIT
     runs-on: macos-15
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        platform: [ios, mac]
+        include:
+          - platform: ios
+            renderer: software
+            suffix: ''
+          - platform: ios
+            renderer: gles3
+            suffix: '-gles3'
+          - platform: mac
+            renderer: software
+            suffix: ''
     steps:
       - uses: actions/checkout@v4
       - name: Install pinned build tools
@@ -30,20 +39,23 @@ jobs:
       - name: Validate bundled source (no fetch)
         run: python3 tools/prepare.py
       - name: Build
-        run: python3 tools/build.py '${{ matrix.platform }}' --jobs 3
+        run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
       - name: Audit linked no-JIT binary
-        run: python3 tools/audit_no_jit.py '${{ matrix.platform }}'
+        run: python3 tools/audit_no_jit.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}'
       - name: Native file I/O regression check (no ROM required)
         if: matrix.platform == 'mac'
-        run: work/build-mac/bin/citra-no-jit-probe --self-test work/io-self-test
+        run: |
+          work/build-mac/bin/citra-no-jit-probe --self-test work/io-self-test
+          CARA_RASTER_THREADS=1 work/build-mac/bin/citra-raster-self-test
+          CARA_RASTER_THREADS=4 work/build-mac/bin/citra-raster-self-test
       - name: Package unsigned iOS app
         if: matrix.platform == 'ios'
-        run: ditto -c -k --norsrc --noextattr --keepParent work/build-ios/bin/citra-ios.app work/Cara-iOS-unsigned.zip
+        run: ditto -c -k --norsrc --noextattr --keepParent 'work/build-ios${{ matrix.suffix }}/bin/citra-ios.app' 'work/Cara-iOS-${{ matrix.renderer }}-unsigned.zip'
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-${{ matrix.platform }}-no-jit
+          name: cara-${{ matrix.platform }}-${{ matrix.renderer }}-no-jit
           if-no-files-found: error
           path: |
-            work/Cara-iOS-unsigned.zip
-            work/build-${{ matrix.platform }}/bin/citra-no-jit-probe
-            work/build-${{ matrix.platform }}/no-jit-audit.json
+            work/Cara-iOS-*-unsigned.zip
+            work/build-${{ matrix.platform }}${{ matrix.suffix }}/bin/citra-no-jit-probe
+            work/build-${{ matrix.platform }}${{ matrix.suffix }}/no-jit-audit.json

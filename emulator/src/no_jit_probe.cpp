@@ -16,7 +16,9 @@ class ProbeWindow final : public Frontend::EmuWindow {
 public:
     unsigned frames = 0;
     std::string output;
-    explicit ProbeWindow(std::string path) : output(std::move(path)) {
+    std::ofstream hashes;
+    explicit ProbeWindow(std::string path, bool record_hashes) : output(std::move(path)) {
+        if (record_hashes) hashes.open(output + "/frame-hashes.txt");
         UpdateFramebufferLayout(400, 480);
     }
     void PollEvents() override {}
@@ -26,6 +28,11 @@ public:
     void PresentSoftwareFrame(unsigned screen, unsigned width, unsigned height,
                               const std::vector<u8>& rgba) override {
         if (screen == 0) ++frames;
+        if (hashes.is_open()) {
+            u64 hash = 14695981039346656037ULL;
+            for (u8 byte : rgba) { hash ^= byte; hash *= 1099511628211ULL; }
+            hashes << frames << ' ' << screen << ' ' << width << ' ' << height << ' ' << hash << '\n';
+        }
         if (frames == 1 || frames % 30 == 0) {
             std::ofstream image(output + "/screen-" + std::to_string(screen) + ".ppm", std::ios::binary);
             image << "P6\n" << width << " " << height << "\n255\n";
@@ -62,7 +69,7 @@ static int SelfTest(const std::string& output) {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "Usage: citra-no-jit-probe ROM OUTPUT_DIRECTORY [seconds]\n";
+        std::cerr << "Usage: citra-no-jit-probe ROM OUTPUT_DIRECTORY [seconds] [target_frames]\n";
         return 2;
     }
     if (std::string(argv[1]) == "--self-test") return SelfTest(argv[2]);
@@ -82,13 +89,15 @@ int main(int argc, char** argv) {
     s.region_value = Settings::REGION_VALUE_AUTO_SELECT;
     s.resolution_factor = 1;
     s.frame_limit = 100;
-    s.init_clock = Settings::InitClock::SystemTime;
+    const unsigned target_frames = argc > 4 ? std::stoul(argv[4]) : 0;
+    s.init_clock = target_frames ? Settings::InitClock::FixedTime : Settings::InitClock::SystemTime;
+    s.init_time = 946684801;
     s.sink_id = "null";
     s.audio_volume = 1.0f;
     s.shared_font_type = Settings::SharedFontType::Auto;
     Settings::Apply();
     Frontend::RegisterDefaultApplets();
-    ProbeWindow window(output);
+    ProbeWindow window(output, target_frames != 0);
     auto& system = Core::System::GetInstance();
     const auto loaded = system.Load(window, argv[1]);
     std::cout << "Load result: " << static_cast<unsigned>(loaded) << std::endl;
@@ -96,7 +105,8 @@ int main(int argc, char** argv) {
     const auto start = std::chrono::steady_clock::now();
     const auto duration = std::chrono::seconds(argc > 3 ? std::stoi(argv[3]) : 30);
     unsigned loops = 0;
-    while (std::chrono::steady_clock::now() - start < duration) {
+    while (std::chrono::steady_clock::now() - start < duration &&
+           (!target_frames || window.frames < target_frames)) {
         const auto result = system.RunLoop();
         ++loops;
         if (result != Core::System::ResultStatus::Success) {
@@ -105,7 +115,9 @@ int main(int argc, char** argv) {
             return 4;
         }
     }
-    std::cout << "Run loops: " << loops << "; LCD frames: " << window.frames << std::endl;
+    const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    std::cout << "Run loops: " << loops << "; LCD frames: " << window.frames
+              << "; elapsed: " << elapsed << "; FPS: " << window.frames / elapsed << std::endl;
     system.Shutdown();
     return window.frames ? 0 : 5;
 }

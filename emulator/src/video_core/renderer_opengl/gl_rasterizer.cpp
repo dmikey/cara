@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -152,11 +153,23 @@ RasterizerOpenGL::RasterizerOpenGL()
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, null_data);
 
     glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
+#ifdef CITRA_IOS_GLES
+    AllocateIOSLUT(GL_RG32F, texture_lf_buffer.GetSize());
+#else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_lf_buffer.GetHandle());
+#endif
     glActiveTexture(TextureUnits::TextureBufferLUT_RG.Enum());
+#ifdef CITRA_IOS_GLES
+    AllocateIOSLUT(GL_RG32F, texture_buffer.GetSize());
+#else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_buffer.GetHandle());
+#endif
     glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
+#ifdef CITRA_IOS_GLES
+    AllocateIOSLUT(GL_RGBA32F, texture_buffer.GetSize());
+#else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, texture_buffer.GetHandle());
+#endif
 
     // restore
     state.texture_units[0].texture_2d = 0;
@@ -1975,7 +1988,11 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     GLintptr offset;
     bool invalidate;
     std::size_t bytes_used = 0;
-    glBindBuffer(GL_TEXTURE_BUFFER, texture_lf_buffer.GetHandle());
+#ifdef CITRA_IOS_GLES
+    const GLuint previous_vertex_buffer = OpenGLState::BindVertexBuffer(texture_lf_buffer.GetHandle());
+#else
+    glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_lf_buffer.GetHandle());
+#endif
     std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
 
     // Sync the lighting luts
@@ -2028,7 +2045,13 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         uniform_block_data.fog_lut_dirty = false;
     }
 
+#ifdef CITRA_IOS_GLES
+    UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG, offset, buffer, bytes_used);
+#endif
     texture_lf_buffer.Unmap(bytes_used);
+#ifdef CITRA_IOS_GLES
+    OpenGLState::BindVertexBuffer(previous_vertex_buffer);
+#endif
 }
 
 void RasterizerOpenGL::SyncAndUploadLUTs() {
@@ -2047,7 +2070,11 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
     GLintptr offset;
     bool invalidate;
     std::size_t bytes_used = 0;
-    glBindBuffer(GL_TEXTURE_BUFFER, texture_buffer.GetHandle());
+#ifdef CITRA_IOS_GLES
+    const GLuint previous_vertex_buffer = OpenGLState::BindVertexBuffer(texture_buffer.GetHandle());
+#else
+    glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_buffer.GetHandle());
+#endif
     std::tie(buffer, offset, invalidate) = texture_buffer.Map(max_size, sizeof(GLvec4));
 
     // helper function for SyncProcTexNoiseLUT/ColorMap/AlphaMap
@@ -2140,7 +2167,14 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
         uniform_block_data.proctex_diff_lut_dirty = false;
     }
 
+#ifdef CITRA_IOS_GLES
+    UploadIOSLUT(texture_buffer_lut_rg.handle, TextureUnits::TextureBufferLUT_RG.id, GL_RG, offset, buffer, bytes_used);
+    UploadIOSLUT(texture_buffer_lut_rgba.handle, TextureUnits::TextureBufferLUT_RGBA.id, GL_RGBA, offset, buffer, bytes_used);
+#endif
     texture_buffer.Unmap(bytes_used);
+#ifdef CITRA_IOS_GLES
+    OpenGLState::BindVertexBuffer(previous_vertex_buffer);
+#endif
 }
 
 void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {

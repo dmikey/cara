@@ -445,7 +445,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
 
     telemetry_session = std::make_unique<Core::TelemetrySession>();
 
-#ifndef CITRA_SOFTWARE_PRESENTATION
+#if !defined(CITRA_SOFTWARE_PRESENTATION) && !defined(CITRA_IOS)
     rpc_server = std::make_unique<RPC::RPCServer>();
 #endif
 

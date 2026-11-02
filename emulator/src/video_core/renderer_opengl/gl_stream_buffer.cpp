@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 // Copyright 2018 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -12,7 +13,7 @@
 
 namespace OpenGL {
 
-OGLStreamBuffer::OGLStreamBuffer(GLenum target, GLsizeiptr size) : gl_target(target), buffer_size(size) {
+OGLStreamBuffer::OGLStreamBuffer(GLenum target, GLsizeiptr size) : gl_target(StreamBufferTarget(target)), buffer_size(size) {
     gl_buffer.Create();
     glBindBuffer(gl_target, gl_buffer.handle);
     // prefer `glBufferData` than `glBufferStorage` on mobile device

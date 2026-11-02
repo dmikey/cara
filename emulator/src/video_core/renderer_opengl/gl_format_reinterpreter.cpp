@@ -478,6 +478,10 @@ class CopyImageSubData final : public FormatReinterpreterBase {
 };
 
 FormatReinterpreterOpenGL::FormatReinterpreterOpenGL() {
+#ifdef CITRA_IOS_GLES
+    // Unsupported reinterpretations use the existing cache flush/reload path.
+    return;
+#endif
     std::string_view vendor{reinterpret_cast<const char*>(glGetString(GL_VENDOR))};
     if (vendor.find("NVIDIA") != vendor.npos) {
         reinterpreters.emplace_back(PixelFormat::RGBA8, PixelFormat::D24S8,

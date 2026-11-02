@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -188,20 +189,20 @@ void OpenGLState::Apply() const {
     // Texture buffer LUTs
     if (texture_buffer_lut_lf.texture_buffer != cur_state.texture_buffer_lut_lf.texture_buffer) {
         glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
-        glBindTexture(GL_TEXTURE_BUFFER, texture_buffer_lut_lf.texture_buffer);
+        glBindTexture(LUTTextureTarget(), texture_buffer_lut_lf.texture_buffer);
     }
 
     // Texture buffer LUTs
     if (texture_buffer_lut_rg.texture_buffer != cur_state.texture_buffer_lut_rg.texture_buffer) {
         glActiveTexture(TextureUnits::TextureBufferLUT_RG.Enum());
-        glBindTexture(GL_TEXTURE_BUFFER, texture_buffer_lut_rg.texture_buffer);
+        glBindTexture(LUTTextureTarget(), texture_buffer_lut_rg.texture_buffer);
     }
 
     // Texture buffer LUTs
     if (texture_buffer_lut_rgba.texture_buffer !=
         cur_state.texture_buffer_lut_rgba.texture_buffer) {
         glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
-        glBindTexture(GL_TEXTURE_BUFFER, texture_buffer_lut_rgba.texture_buffer);
+        glBindTexture(LUTTextureTarget(), texture_buffer_lut_rgba.texture_buffer);
     }
 
     // Shadow Images
@@ -339,6 +340,20 @@ GLuint OpenGLState::BindVertexArray(GLuint array) {
     GLuint previous = cur_state.draw.vertex_array;
     glBindVertexArray(array);
     cur_state.draw.vertex_array = array;
+    return previous;
+}
+
+GLuint OpenGLState::BindVertexBuffer(GLuint buffer) {
+    const GLuint previous = cur_state.draw.vertex_buffer;
+    glBindBuffer(GL_ARRAY_BUFFER, buffer);
+    cur_state.draw.vertex_buffer = buffer;
+    return previous;
+}
+
+GLuint OpenGLState::BindRenderbuffer(GLuint buffer) {
+    const GLuint previous = cur_state.renderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, buffer);
+    cur_state.renderbuffer = buffer;
     return previous;
 }
 

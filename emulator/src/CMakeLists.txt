@@ -120,6 +120,8 @@ if (ENABLE_WEB_SERVICE)
 endif()
 
 if (CITRA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(citra-raster-self-test raster_self_test.cpp)
+    target_link_libraries(citra-raster-self-test PRIVATE core common nihstro-headers ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(citra-no-jit-probe no_jit_probe.cpp)
     target_link_libraries(citra-no-jit-probe PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
 endif()
@@ -128,6 +130,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJCXX)
     add_executable(citra-ios MACOSX_BUNDLE ios/main.mm)
     target_compile_options(citra-ios PRIVATE -fobjc-arc)
+    if (CITRA_IOS_HARDWARE_RENDERER)
+        target_link_libraries(citra-ios PRIVATE glad "-framework OpenGLES")
+    endif()
     target_link_libraries(citra-ios PRIVATE core common Threads::Threads
         "-framework Foundation" "-lobjc" "-framework UIKit" "-framework CoreGraphics" "-framework UniformTypeIdentifiers")
     set_target_properties(citra-ios PROPERTIES

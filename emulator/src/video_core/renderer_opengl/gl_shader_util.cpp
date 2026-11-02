@@ -16,7 +16,7 @@
 namespace OpenGL {
 
 GLuint LoadShader(const char* source, GLenum type) {
-    const std::string version = GLES ? R"(#version 320 es
+    std::string version = GLES ? R"(#version 320 es
 
 #define CITRA_GLES
 
@@ -30,6 +30,27 @@ GLuint LoadShader(const char* source, GLenum type) {
 )"
                                      : "#version 330\n";
 
+    std::string compatible_source(source);
+#ifdef CITRA_IOS_GLES
+    version = R"(#version 300 es
+#define CITRA_GLES
+precision highp int;
+precision highp float;
+precision highp sampler2D;
+vec4 CitraLUTFetch(sampler2D lut, int index) {
+    return texelFetch(lut, ivec2(index & 1023, index >> 10), 0);
+}
+)";
+    const auto ReplaceAll = [&](const std::string& from, const std::string& to) {
+        std::size_t pos = 0;
+        while ((pos = compatible_source.find(from, pos)) != std::string::npos) {
+            compatible_source.replace(pos, from.size(), to); pos += to.size();
+        }
+    };
+    ReplaceAll("samplerBuffer", "sampler2D");
+    ReplaceAll("precision highp uimage2D;", "");
+    ReplaceAll("texelFetch(texture_buffer_lut_", "CitraLUTFetch(texture_buffer_lut_");
+#endif
     const char* debug_type;
     switch (type) {
     case GL_VERTEX_SHADER:
@@ -48,7 +69,7 @@ GLuint LoadShader(const char* source, GLenum type) {
         UNREACHABLE();
     }
 
-    std::array<const char*, 2> src_arr{version.data(), source};
+    std::array<const char*, 2> src_arr{version.data(), compatible_source.c_str()};
     GLuint shader_id = glCreateShader(type);
     LOG_DEBUG(Render_OpenGL, "Compiling {} shader: {}", debug_type, shader_id);
     glShaderSource(shader_id, static_cast<GLsizei>(src_arr.size()), src_arr.data(), nullptr);

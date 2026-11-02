@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#ifdef CITRA_IOS_GLES
+#import <OpenGLES/EAGL.h>
+#include <dlfcn.h>
+#include <glad/glad.h>
+#include "video_core/renderer_opengl/gl_state.h"
+#endif
 #include <atomic>
 #include <algorithm>
 #include <mutex>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
+#include <fstream>
 #include <thread>
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
@@ -17,6 +25,13 @@
 #include "core/frontend/input.h"
 #include "core/settings.h"
 
+static NSString* GraphicsLabel() {
+#ifdef CITRA_IOS_GLES
+    return @"GPU GLES3";
+#else
+    return @"software graphics";
+#endif
+}
 static std::atomic<uint32_t> buttons{0};
 static std::atomic<bool> paused{false};
 class Button final : public Input::ButtonDevice {
@@ -44,7 +59,14 @@ class StickFactory final : public Input::Factory<Input::AnalogDevice> {
 };
 class IOSWindow final : public Frontend::EmuWindow {
 public:
-    std::function<void(unsigned, unsigned, unsigned, const std::vector<u8>&)> present;
+    std::function<void(unsigned, unsigned, unsigned, const std::vector<u8>&, unsigned)> present;
+    unsigned frames = 0;
+    std::string graphics_error;
+#ifdef CITRA_IOS_GLES
+    EAGLContext* __strong graphics_context = nil;
+    GLuint framebuffer = 0;
+    GLuint renderbuffer = 0;
+#endif
     std::atomic<int> touch{-1};
     IOSWindow() { UpdateFramebufferLayout(400, 480); }
     void PollEvents() override {
@@ -52,11 +74,64 @@ public:
         if (value < 0) TouchReleased();
         else TouchPressed((value & 0xffff) + 40, (value >> 16) + 240);
     }
-    void MakeCurrent() override {}
-    void DoneCurrent() override {}
-    void SwapBuffers() override {}
+    void MakeCurrent() override {
+#ifdef CITRA_IOS_GLES
+        if (!graphics_context) graphics_context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+        if (!graphics_context || ![EAGLContext setCurrentContext:graphics_context]) {
+            graphics_error = "Unable to create an iOS GLES3 context"; return;
+        }
+        if (!framebuffer) {
+            static void* library = dlopen("/System/Library/Frameworks/OpenGLES.framework/OpenGLES", RTLD_LAZY | RTLD_LOCAL);
+            if (!gladLoadGLES2Loader([](const char* name) { return dlsym(library, name); })) {
+                graphics_error = "Unable to load iOS GLES3 functions"; return;
+            }
+            glGenFramebuffers(1, &framebuffer);
+            glGenRenderbuffers(1, &renderbuffer);
+            glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+            glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 400, 480);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                graphics_error = "Unable to create iOS GPU presentation framebuffer";
+            std::ofstream capabilities(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "gpu-capabilities.txt");
+            capabilities << "vendor=" << reinterpret_cast<const char*>(glGetString(GL_VENDOR))
+                         << "\nrenderer=" << reinterpret_cast<const char*>(glGetString(GL_RENDERER))
+                         << "\nversion=" << reinterpret_cast<const char*>(glGetString(GL_VERSION)) << "\n";
+        }
+#endif
+    }
+    void DoneCurrent() override {
+#ifdef CITRA_IOS_GLES
+        [EAGLContext setCurrentContext:nil];
+#endif
+    }
+    unsigned GetDefaultFramebuffer() const override {
+#ifdef CITRA_IOS_GLES
+        return framebuffer;
+#else
+        return 0;
+#endif
+    }
+    void SwapBuffers() override {
+#ifdef CITRA_IOS_GLES
+        const auto previous = OpenGL::OpenGLState::BindReadFramebuffer(framebuffer);
+        std::vector<u8> image(400 * 480 * 4);
+        glReadPixels(0, 0, 400, 480, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
+        OpenGL::OpenGLState::BindReadFramebuffer(previous);
+        for (unsigned screen = 0; screen < 2; ++screen) {
+            const unsigned width = screen == 0 ? 400 : 320;
+            const unsigned x = screen == 0 ? 0 : 40;
+            const unsigned top = screen == 0 ? 0 : 240;
+            std::vector<u8> pixels(width * 240 * 4);
+            for (unsigned y = 0; y < 240; ++y)
+                std::copy_n(image.data() + ((479 - top - y) * 400 + x) * 4, width * 4, pixels.data() + y * width * 4);
+            PresentSoftwareFrame(screen, width, 240, pixels);
+        }
+#endif
+    }
     void PresentSoftwareFrame(unsigned s, unsigned w, unsigned h, const std::vector<u8>& p) override {
-        if (present) present(s, w, h, p);
+        if (s == 0) ++frames;
+        if (present) present(s, w, h, p, frames);
     }
 };
 
@@ -106,10 +181,10 @@ public:
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1];
     stop = false; running = false; framePending[0] = false; framePending[1] = false;
-    UILabel* title = [UILabel new]; title.text = @"Citra · No JIT";
+    UILabel* title = [UILabel new]; title.text = @"Cara · No JIT";
     title.textColor = UIColor.whiteColor;
     title.font = [UIFont boldSystemFontOfSize:24];
-    status = [UILabel new]; status.text = @"Interpreter test · software graphics · audio off";
+    status = [UILabel new]; status.text = [NSString stringWithFormat:@"Interpreter test · %@ · audio off", GraphicsLabel()];
     status.font = [UIFont systemFontOfSize:13]; status.textColor = UIColor.lightGrayColor;
     status.numberOfLines = 2;
     top = [UIImageView new]; bottom = [UIImageView new];
@@ -193,8 +268,10 @@ public:
     if (worker.joinable()) worker.join();
     [self startROM:url];
 }
-- (void)showFrame:(unsigned)screen width:(unsigned)width height:(unsigned)height pixels:(const std::vector<u8>&)pixels {
-    if (framePending[screen].exchange(true)) return;
+- (void)showFrame:(unsigned)screen width:(unsigned)width height:(unsigned)height pixels:(const std::vector<u8>&)pixels frame:(unsigned)emulatedFrame {
+    const bool captureCheckpoint = emulatedFrame % 600 == 0 &&
+        [NSProcessInfo.processInfo.environment[@"CITRA_CAPTURE_FRAMES"] isEqualToString:@"1"];
+    if (framePending[screen].exchange(true) && !captureCheckpoint) return;
     NSData* data = [NSData dataWithBytes:pixels.data() length:pixels.size()];
     __weak EmulatorController* weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -206,9 +283,14 @@ public:
         UIImage* displayImage = [UIImage imageWithCGImage:image];
         (screen == 0 ? controller->top : controller->bottom).image = displayImage;
         if (screen == 0) ++controller->frameCount;
+        if (captureCheckpoint) {
+            NSString* documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+            NSString* filename = [NSString stringWithFormat:@"frame-%u-screen-%u.png",emulatedFrame,screen];
+            [UIImagePNGRepresentation(displayImage) writeToFile:[documents stringByAppendingPathComponent:filename] atomically:YES];
+        }
         if (controller->frameCount % 60 == 0) {
             double elapsed = CFAbsoluteTimeGetCurrent() - controller->startedAt;
-            controller->status.text = [NSString stringWithFormat:@"No JIT · software · %.1f FPS average · audio off", controller->frameCount / std::max(elapsed, 0.001)];
+            controller->status.text = [NSString stringWithFormat:@"No JIT · %@ · %.1f FPS average · audio off", GraphicsLabel(), controller->frameCount / std::max(elapsed, 0.001)];
             if ([NSProcessInfo.processInfo.environment[@"CITRA_CAPTURE_FRAMES"] isEqualToString:@"1"]) {
                 NSString* documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
                 [UIImagePNGRepresentation(displayImage) writeToFile:[documents stringByAppendingPathComponent:[NSString stringWithFormat:@"latest-screen-%u.png",screen]] atomically:YES];
@@ -230,8 +312,8 @@ public:
     __weak EmulatorController* weakSelf = self;
     emuWindow.reset();
     emuWindow = std::make_unique<IOSWindow>();
-    emuWindow->present = [weakSelf](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p) {
-        [weakSelf showFrame:s width:w height:h pixels:p];
+    emuWindow->present = [weakSelf](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
+        [weakSelf showFrame:s width:w height:h pixels:p frame:frame];
     };
     worker = std::thread([self,rom,user] {
         @autoreleasepool {
@@ -247,9 +329,20 @@ public:
             auto& s = Settings::values;
             s.use_cpu_jit = false; s.use_shader_jit = false;
             s.use_hw_renderer = false; s.use_hw_shader = false;
+#ifdef CITRA_IOS_GLES
+            s.use_gles = true;
+            s.use_hw_renderer = true;
+            s.use_separable_shader = false;
+            s.allow_shadow = false;
+            s.shadow_rendering = false;
+            s.use_shader_cache = false;
+#endif
             s.use_virtual_sd = true; s.region_value = Settings::REGION_VALUE_AUTO_SELECT;
             s.resolution_factor = 1; s.frame_limit = 100;
-            s.init_clock = Settings::InitClock::SystemTime;
+            const char* target_env = std::getenv("CITRA_BENCHMARK_FRAMES");
+            const unsigned target_frames = target_env ? static_cast<unsigned>(std::clamp(std::strtol(target_env, nullptr, 10), 1L, 18000L)) : 0;
+            s.init_clock = target_frames ? Settings::InitClock::FixedTime : Settings::InitClock::SystemTime;
+            s.init_time = 946684801;
             s.sink_id = "null"; s.audio_volume = 1; s.shared_font_type = Settings::SharedFontType::Auto;
             for (unsigned i=0; i<Settings::NativeButton::NumButtons; ++i)
                 s.current_input_profile.buttons[i] = "engine:ios,code:" + std::to_string(i);
@@ -257,20 +350,53 @@ public:
             s.current_input_profile.touch_device = "engine:emu_window";
             Settings::Apply(); Frontend::RegisterDefaultApplets();
             auto& system = Core::System::GetInstance();
+            FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::LogDir));
+            emuWindow->MakeCurrent();
+            if (!emuWindow->graphics_error.empty()) {
+                NSString* message = [NSString stringWithUTF8String:emuWindow->graphics_error.c_str()];
+                running = false;
+                dispatch_async(dispatch_get_main_queue(), ^{ self->status.text = message; self->openButton.enabled = YES; });
+                return;
+            }
+            if (target_frames) FileUtil::Delete(user + "benchmark-status.json");
             auto result = system.Load(*emuWindow,rom);
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (result == Core::System::ResultStatus::Success)
-                    self->status.text = @"Running · no JIT · software graphics · audio off";
+                    self->status.text = [NSString stringWithFormat:@"Running · no JIT · %@ · audio off", GraphicsLabel()];
                 else self->status.text = [NSString stringWithFormat:@"Load failed (code %u). See Documents/citra/emulator.log",unsigned(result)];
             });
             if (result == Core::System::ResultStatus::Success) {
-                while (!stop) {
-                    if (paused) { std::this_thread::sleep_for(std::chrono::milliseconds(30)); continue; }
+                const auto benchmark_start = std::chrono::steady_clock::now();
+                auto next_frame_time = benchmark_start;
+                unsigned paced_frame = 0;
+                bool was_paused = false;
+                while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
+                    if (paused) { was_paused = true; std::this_thread::sleep_for(std::chrono::milliseconds(30)); continue; }
+                    if (was_paused) { next_frame_time = std::chrono::steady_clock::now(); was_paused = false; }
                     result = system.RunLoop();
                     if (result != Core::System::ResultStatus::Success) break;
+                    if (!target_frames && emuWindow->frames != paced_frame) {
+                        paced_frame = emuWindow->frames;
+                        next_frame_time += std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / 59.833997376556916));
+                        const auto now = std::chrono::steady_clock::now();
+                        if (now - next_frame_time > std::chrono::milliseconds(100)) next_frame_time = now;
+                        std::this_thread::sleep_until(next_frame_time);
+                    }
+                }
+                if (target_frames) {
+                    const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - benchmark_start).count();
+                    std::ofstream report(user + "benchmark-status.json");
+                    report << "{\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"elapsed_seconds\":" << elapsed
+                           << ",\"fps\":" << emuWindow->frames / elapsed
+#ifdef CITRA_IOS_GLES
+                           << ",\"jit\":false,\"software_renderer\":false,\"gpu_backend\":\"native_gles3\"}\n";
+#else
+                           << ",\"jit\":false,\"software_renderer\":true}\n";
+#endif
                 }
                 system.Shutdown();
             }
+            emuWindow->DoneCurrent();
             running = false;
             dispatch_async(dispatch_get_main_queue(), ^{
                 self->openButton.enabled = YES;
