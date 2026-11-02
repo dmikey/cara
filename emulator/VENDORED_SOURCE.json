@@ -1,0 +1,102 @@
+{
+  "upstream": "https://github.com/weihuoya/citra",
+  "revision": "302b0c3bc4312bc96489c11584a97664894b343f",
+  "dependencies": [
+    {
+      "path": "externals/boost",
+      "source": "https://github.com/azahar-emu/ext-boost.git",
+      "revision": "36603a1e665e849d29b1735a12c0a51284a10dd0",
+      "bundled": true
+    },
+    {
+      "path": "externals/catch",
+      "source": "https://github.com/philsquared/Catch.git",
+      "revision": "15cf3caaceb21172ea42a24e595a2eb58c3ec960",
+      "bundled": true
+    },
+    {
+      "path": "externals/cpp-jwt",
+      "source": "https://github.com/arun11299/cpp-jwt.git",
+      "revision": "6e27aa4c8671e183f11e327a2e1f556c64fdc4a9",
+      "bundled": true
+    },
+    {
+      "path": "externals/cryptopp/cryptopp",
+      "source": "https://github.com/weidai11/cryptopp.git",
+      "revision": "f320e7d92a33ee80ae42deef79da78cfc30868af",
+      "bundled": true
+    },
+    {
+      "path": "externals/cubeb",
+      "source": "https://github.com/kinetiknz/cubeb.git",
+      "revision": "44341a1e0658a3939d29c0b5a230ca095ae63dd3",
+      "bundled": true
+    },
+    {
+      "path": "externals/discord-rpc",
+      "source": "https://github.com/discordapp/discord-rpc.git",
+      "revision": "3d3ae7129d17643bc706da0a2eea85aafd10ab3a",
+      "bundled": true
+    },
+    {
+      "path": "externals/enet",
+      "source": "https://github.com/lsalzman/enet.git",
+      "revision": "39a72ab1990014eb399cee9d538fd529df99c6a0",
+      "bundled": true
+    },
+    {
+      "path": "externals/fmt",
+      "source": "https://github.com/fmtlib/fmt.git",
+      "revision": "4b8f8fac96a7819f28f4be523ca10a2d5d8aaaf2",
+      "bundled": true
+    },
+    {
+      "path": "externals/inih/inih",
+      "source": "https://github.com/benhoyt/inih.git",
+      "revision": "2023872dfffb38b6a98f2c45a0eb25652aaea91f",
+      "bundled": true
+    },
+    {
+      "path": "externals/libyuv",
+      "source": "https://github.com/lemenkov/libyuv.git",
+      "revision": "5b3351bd07e83f9f9a4cb6629561331ecdb7c546",
+      "bundled": true
+    },
+    {
+      "path": "externals/nihstro",
+      "source": "https://github.com/neobrain/nihstro.git",
+      "revision": "fd69de1a1b960ec296cc67d32257b0f9e2d89ac6",
+      "bundled": true
+    },
+    {
+      "path": "externals/soundtouch",
+      "source": "https://github.com/DaMan69/ext-soundtouch.git",
+      "revision": "060181eaf273180d3a7e87349895bd0cb6ccbf4a",
+      "bundled": true
+    },
+    {
+      "path": "externals/teakra",
+      "source": "https://github.com/wwylele/teakra.git",
+      "revision": "e6ea0eae656c022d7878ffabc4e016b3e6f0c536",
+      "bundled": true
+    },
+    {
+      "path": "externals/xbyak",
+      "source": "https://github.com/herumi/xbyak.git",
+      "revision": "1de435ed04c8e74775804da944d176baf0ce56e2",
+      "bundled": true
+    }
+  ],
+  "excluded_non_source": [
+    "cache/",
+    "src/android/app/src/main/assets/nand/",
+    "src/android/app/src/main/assets/sdmc/",
+    "src/android/app/src/main/assets/sysdata/",
+    "keys.tar.enc"
+  ],
+  "excluded_unused_dependencies": [
+    "externals/dynarmic",
+    "externals/libressl"
+  ],
+  "note": "No-JIT iOS/macOS builds require no source fetch. Dependency licenses are retained at their source paths."
+}

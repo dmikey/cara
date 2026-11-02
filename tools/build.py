@@ -14,9 +14,9 @@ def main():
     parser.add_argument('platform', choices=['mac', 'ios', 'simulator'])
     parser.add_argument('--jobs', type=int, default=3)
     args = parser.parse_args()
-    source = ROOT / 'work' / 'citra-mmj'
-    if not (source / '.git' / 'cara-source-stamp').exists():
-        raise SystemExit('Run python3 tools/prepare.py first.')
+    source = ROOT / 'emulator'
+    if not (source / 'VENDORED_SOURCE.json').exists():
+        raise SystemExit('Bundled emulator source is missing.')
     env = os.environ.copy()
     if not env.get('DEVELOPER_DIR'):
         for app in ['/Applications/Xcode.app', '/Volumes/Fast/Applications/Xcode.app']:

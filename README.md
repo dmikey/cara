@@ -8,17 +8,20 @@ A development build has booted a user-provided game on a physical M4 iPad. Early
 
 ## Repository contents
 
-- `port/`: iOS app, software screen presentation, and a ROM-free host diagnostic.
-- `patches/`: no-JIT switches and portability fixes against the exact upstream revision.
-- `upstream.lock.json`: pinned MMJ source revision.
-- `tools/`: reproducible source preparation, builds, and linked-binary audit.
+- `emulator/`: the complete emulator source needed by the iOS/macOS builds, with Cara changes applied directly.
+- `emulator/src/ios/`: native app shell.
+- `emulator/externals/`: bundled library source, including the previously unavailable MMJ-specific forks.
+- `emulator/VENDORED_SOURCE.json`: original source revisions and the excluded non-source assets.
+- `tools/`: local builds, source validation, and linked-binary audits.
 - `.github/workflows/build.yml`: independent ARM64 iOS and macOS builds.
 
-No ROMs, game screenshots, firmware, keys, signing credentials, profiles, or signed app packages belong in this repository. Upstream code and the changes here retain their applicable GPL licensing; see [NOTICE](NOTICE) and [LICENSE](LICENSE).
+An ordinary clone contains the emulator and dependency sources. No build step clones MMJ, downloads patches, or initializes source submodules. Xcode, Python, CMake and Ninja are standard external build tools. Their availability does not depend on the original MMJ repository.
+
+No ROMs, game screenshots, Nintendo NAND/firmware data, shared fonts, PKSM sprite assets, signing credentials, profiles, or signed app packages belong in this repository. Upstream code and the changes here retain their applicable licenses; see [NOTICE](NOTICE), [LICENSE](LICENSE), and each dependency's license.
 
 ## Build on macOS
 
-Install full Xcode and select it, or set `DEVELOPER_DIR` to its `Contents/Developer` directory. Python 3, Git, and network access to the public dependency repositories are required.
+Install full Xcode and select it, or set `DEVELOPER_DIR` to its `Contents/Developer` directory. Python 3 and Git are required. Network access is needed only to clone Cara and install standard build tools.
 
 ```sh
 python3 -m venv work/tools
@@ -48,7 +51,7 @@ The probe writes logs, isolated user data, and PPM screen captures only under th
 
 `python3 tools/build.py simulator` also configures an ARM64 simulator build; this target is not part of the initial CI matrix.
 
-Source preparation refuses to overwrite an existing unmarked checkout or silently discard local changes after port inputs change. Preserve your edits and move `work/citra-mmj` aside before preparing updated inputs. Upstream submodules are checked against their exact pinned commits. Unavailable JIT/web-service dependencies are excluded from the no-JIT build.
+`tools/prepare.py` validates the bundled files without fetching anything. Game-specific shader caches and proprietary system/game assets are excluded. System dumps may be imported locally when a game requires them; the loader code remains present.
 
 ## Current limits
 
@@ -56,4 +59,4 @@ The iOS shell provides file import, both screens, basic button/circle-pad contro
 
 ## GitHub builds
 
-Every push and pull request builds the unsigned ARM64 iOS app and the native macOS probe. Both jobs audit the final binaries for excluded JIT and executable-memory facilities; the macOS job also runs the file I/O regression check. Successful runs upload the unsigned iOS app or macOS probe plus the no-JIT audit report as workflow artifacts. No commercial game is required for CI.
+Every push and pull request validates the bundled source and builds the unsigned ARM64 iOS app and the native macOS probe. Both jobs audit the final binaries for excluded JIT and executable-memory facilities; the macOS job also runs the file I/O regression check. Successful runs upload the unsigned iOS app or macOS probe plus the no-JIT audit report as workflow artifacts. No commercial game is required for CI.

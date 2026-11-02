@@ -15,6 +15,6 @@ The measurements vary by scene and do not establish full-game performance. Gamep
 
 ## Continuous integration
 
-The workflow builds from the pinned public upstream source and Cara patches, rather than relying on a developer's prepared checkout. It produces unsigned artifacts and audits the actual linked products. The native I/O self-test exercises write, flush, tell, seek, resize, read, invalid seek, and reopen behavior without a ROM.
+The workflow builds from the emulator and dependency source committed inside Cara. Source validation rejects external git submodules and excluded game/system assets; no MMJ repository or dependency mirror is fetched. It produces unsigned artifacts and audits the actual linked products. The native I/O self-test exercises write, flush, tell, seek, resize, read, invalid seek, and reopen behavior without a ROM.
 
 A green CI result proves compilation, linkage, the no-JIT audit, and the host I/O regression check. It does not prove iOS simulator execution, physical-device installation, or commercial-game compatibility.

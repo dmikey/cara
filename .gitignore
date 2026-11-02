@@ -19,3 +19,5 @@ __pycache__/
 *.pem
 *.key
 *.entitlements
+
+/emulator/src/common/scm_rev.cpp

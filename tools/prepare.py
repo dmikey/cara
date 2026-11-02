@@ -1,61 +1,33 @@
 #!/usr/bin/env python3
-"""Fetch the pinned public source, apply Cara's patch, and add port files."""
-import hashlib
+"""Validate bundled source. This step never fetches upstream repositories."""
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'work' / 'citra-mmj'
-DEPENDENCIES = [
-    'externals/boost', 'externals/soundtouch', 'externals/cryptopp/cryptopp',
-    'externals/fmt', 'externals/nihstro', 'externals/teakra', 'externals/enet',
-    'externals/inih/inih', 'externals/libyuv', 'externals/catch', 'externals/xbyak',
-]
-
-
-def run(*args, cwd=SOURCE):
-    subprocess.run(args, cwd=cwd, check=True)
+SOURCE = ROOT / 'emulator'
 
 
 def prepare():
-    lock = json.loads((ROOT / 'upstream.lock.json').read_text())
-    patch = ROOT / 'patches' / 'mmj-no-jit.patch'
-    overlays = sorted(p for p in (ROOT / 'port').rglob('*') if p.is_file())
-    digest = hashlib.sha256((ROOT / 'upstream.lock.json').read_bytes() + patch.read_bytes())
-    for path in overlays:
-        digest.update(str(path.relative_to(ROOT / 'port')).encode())
-        digest.update(path.read_bytes())
-    stamp = digest.hexdigest()
-    marker = SOURCE / '.git' / 'cara-source-stamp'
-    if marker.exists():
-        if marker.read_text().strip() != stamp:
-            raise SystemExit('Port inputs changed. Preserve any work in work/citra-mmj, then move that folder aside and rerun preparation.')
-    else:
-        if SOURCE.exists() and any(SOURCE.iterdir()):
-            raise SystemExit('Refusing to overwrite an existing unmarked work/citra-mmj tree.')
-        SOURCE.mkdir(parents=True, exist_ok=True)
-        run('git', 'init')
-        run('git', 'remote', 'add', 'origin', lock['repository'])
-        run('git', 'fetch', '--depth', '1', 'origin', lock['revision'])
-        run('git', 'checkout', '--detach', 'FETCH_HEAD')
-        run('git', 'apply', '--check', str(patch))
-        run('git', 'apply', str(patch))
-        for path in overlays:
-            target = SOURCE / path.relative_to(ROOT / 'port')
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, target)
-        marker.write_text(stamp + '\n')
-    run('git', 'submodule', 'sync')
-    # Dynarmic is excluded; LibreSSL is unused with ENABLE_WEB_SERVICE=OFF.
-    run('git', 'submodule', 'update', '--init', '--depth', '1', *DEPENDENCIES)
-    for path in DEPENDENCIES:
-        expected = subprocess.check_output(['git', 'ls-tree', 'HEAD', path], cwd=SOURCE, text=True).split()[2]
-        actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=SOURCE / path, text=True).strip()
-        if actual != expected:
-            raise SystemExit('Dependency revision mismatch: ' + path)
-    print('Prepared pinned source:', SOURCE)
+    provenance = json.loads((SOURCE / 'VENDORED_SOURCE.json').read_text())
+    required = ['CMakeLists.txt', 'src/core/core.cpp', 'src/ios/main.mm',
+                'src/video_core/renderer_software.cpp', 'license.txt']
+    for name in required:
+        if not (SOURCE / name).is_file():
+            raise SystemExit('Missing bundled source: ' + name)
+    for dep in provenance['dependencies']:
+        path = SOURCE / dep['path']
+        if not path.is_dir() or not any(path.iterdir()):
+            raise SystemExit('Missing bundled dependency: ' + dep['path'])
+    for name in provenance['excluded_non_source']:
+        if (SOURCE / name).exists():
+            raise SystemExit('Excluded non-source assets are present: ' + name)
+    # Reject gitlinks: an ordinary checkout must contain the actual source files.
+    entries = subprocess.check_output(['git', 'ls-files', '--stage'], cwd=ROOT, text=True)
+    gitlinks = [line for line in entries.splitlines() if line.startswith('160000 ')]
+    if gitlinks:
+        raise SystemExit('External source submodules are not allowed: ' + repr(gitlinks))
+    print('Bundled emulator and', len(provenance['dependencies']), 'dependency source trees verified; no network fetch.')
     return SOURCE
 
 
