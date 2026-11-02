@@ -149,6 +149,7 @@ public:
     std::atomic<bool> framePending[2];
     unsigned frameCount;
     CFTimeInterval startedAt;
+    CFTimeInterval backgroundAt;
     bool autoStarted;
 }
 - (UIButton*)button:(NSString*)title code:(NSInteger)code {
@@ -237,8 +238,11 @@ public:
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(foreground) name:UIApplicationDidBecomeActiveNotification object:nil];
 }
 - (void)stopGame { stop = true; buttons = 0; status.text = @"Stopping…"; }
-- (void)background { paused = true; buttons = 0; }
-- (void)foreground { paused = false; }
+- (void)background { backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; buttons = 0; }
+- (void)foreground {
+    if (backgroundAt > 0 && running) startedAt += CFAbsoluteTimeGetCurrent() - backgroundAt;
+    backgroundAt = 0; paused = false;
+}
 - (void)touchScreen:(UIGestureRecognizer*)gesture {
     if (!running || !emuWindow) return;
     CGPoint p = [gesture locationInView:bottom];
@@ -294,7 +298,7 @@ public:
             if ([NSProcessInfo.processInfo.environment[@"CITRA_CAPTURE_FRAMES"] isEqualToString:@"1"]) {
                 NSString* documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
                 [UIImagePNGRepresentation(displayImage) writeToFile:[documents stringByAppendingPathComponent:[NSString stringWithFormat:@"latest-screen-%u.png",screen]] atomically:YES];
-                NSString* evidence = [NSString stringWithFormat:@"frames=%u elapsed=%.3f average_fps=%.3f cpu_jit=false shader_jit=false software_renderer=true",controller->frameCount,elapsed,controller->frameCount/std::max(elapsed,0.001)];
+                NSString* evidence = [NSString stringWithFormat:@"frames=%u elapsed=%.3f average_fps=%.3f cpu_jit=false shader_jit=false backend=%@",controller->frameCount,elapsed,controller->frameCount/std::max(elapsed,0.001),GraphicsLabel()];
                 [evidence writeToFile:[documents stringByAppendingPathComponent:@"run-status.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
             }
         }
@@ -305,6 +309,7 @@ public:
 - (void)startROM:(NSURL*)url {
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
     running = true; stop = false; openButton.enabled = NO;
+    UIApplication.sharedApplication.idleTimerDisabled = YES;
     status.text = @"Loading with CPU interpreter…";
     std::string rom = url.path.UTF8String;
     NSString* documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
@@ -355,7 +360,7 @@ public:
             if (!emuWindow->graphics_error.empty()) {
                 NSString* message = [NSString stringWithUTF8String:emuWindow->graphics_error.c_str()];
                 running = false;
-                dispatch_async(dispatch_get_main_queue(), ^{ self->status.text = message; self->openButton.enabled = YES; });
+                dispatch_async(dispatch_get_main_queue(), ^{ self->status.text = message; self->openButton.enabled = YES; UIApplication.sharedApplication.idleTimerDisabled = NO; });
                 return;
             }
             if (target_frames) FileUtil::Delete(user + "benchmark-status.json");
@@ -370,9 +375,18 @@ public:
                 auto next_frame_time = benchmark_start;
                 unsigned paced_frame = 0;
                 bool was_paused = false;
+                auto pause_started = benchmark_start;
+                std::chrono::steady_clock::duration paused_duration{};
                 while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
-                    if (paused) { was_paused = true; std::this_thread::sleep_for(std::chrono::milliseconds(30)); continue; }
-                    if (was_paused) { next_frame_time = std::chrono::steady_clock::now(); was_paused = false; }
+                    if (paused) {
+                        if (!was_paused) pause_started = std::chrono::steady_clock::now();
+                        was_paused = true; std::this_thread::sleep_for(std::chrono::milliseconds(30)); continue;
+                    }
+                    if (was_paused) {
+                        const auto resumed = std::chrono::steady_clock::now();
+                        paused_duration += resumed - pause_started;
+                        next_frame_time = resumed; was_paused = false;
+                    }
                     result = system.RunLoop();
                     if (result != Core::System::ResultStatus::Success) break;
                     if (!target_frames && emuWindow->frames != paced_frame) {
@@ -384,9 +398,11 @@ public:
                     }
                 }
                 if (target_frames) {
-                    const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - benchmark_start).count();
+                    const double wall_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - benchmark_start).count();
+                    const double pause_elapsed = std::chrono::duration<double>(paused_duration).count();
+                    const double elapsed = std::max(0.001, wall_elapsed - pause_elapsed);
                     std::ofstream report(user + "benchmark-status.json");
-                    report << "{\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"elapsed_seconds\":" << elapsed
+                    report << "{\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
                            << ",\"fps\":" << emuWindow->frames / elapsed
 #ifdef CITRA_IOS_GLES
                            << ",\"jit\":false,\"software_renderer\":false,\"gpu_backend\":\"native_gles3\"}\n";
@@ -400,6 +416,7 @@ public:
             running = false;
             dispatch_async(dispatch_get_main_queue(), ^{
                 self->openButton.enabled = YES;
+                UIApplication.sharedApplication.idleTimerDisabled = NO;
                 if (result != Core::System::ResultStatus::Success)
                     self->status.text = [NSString stringWithFormat:@"Emulation ended (code %u). See emulator.log",unsigned(result)];
                 else self->status.text = @"Stopped · interpreter test · audio off";
