@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+#include <chrono>
+#include <cstdint>
+
+namespace Common::FrameTiming {
+
+// Opt-in diagnostics on the emulation thread. No clocks are read during normal play.
+struct Counters {
+    bool enabled = false;
+    double shader_seconds = 0;
+    double readback_seconds = 0;
+    double present_seconds = 0;
+    std::uint64_t shader_calls = 0;
+};
+inline thread_local Counters counters;
+
+enum class Phase { Shader, Readback, Present };
+class Scope {
+public:
+    explicit Scope(Phase phase_) : phase(phase_), active(counters.enabled) {
+        if (active) started = std::chrono::steady_clock::now();
+    }
+    ~Scope() {
+        if (!active) return;
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        if (phase == Phase::Shader) {
+            counters.shader_seconds += seconds;
+            ++counters.shader_calls;
+        } else if (phase == Phase::Readback) {
+            counters.readback_seconds += seconds;
+        } else {
+            counters.present_seconds += seconds;
+        }
+    }
+    Scope(const Scope&) = delete;
+    Scope& operator=(const Scope&) = delete;
+private:
+    Phase phase;
+    bool active;
+    std::chrono::steady_clock::time_point started;
+};
+} // namespace Common::FrameTiming

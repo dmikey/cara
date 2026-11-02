@@ -11,6 +11,7 @@
 #include <nihstro/shader_bytecode.h>
 #include "common/assert.h"
 #include "common/common_types.h"
+#include "common/frame_timing.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
 #include "common/vector_math.h"
@@ -674,7 +675,7 @@ void InterpreterEngine::SetupBatch(ShaderSetup& setup, unsigned int entry_point)
 MICROPROFILE_DECLARE(GPU_Shader);
 
 void InterpreterEngine::Run(const ShaderSetup& setup, UnitState& state) const {
-
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::Shader);
     MICROPROFILE_SCOPE(GPU_Shader);
 
     DebugData<false> dummy_debug_data;
