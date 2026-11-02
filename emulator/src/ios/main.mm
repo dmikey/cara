@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <glad/glad.h>
 #include "video_core/renderer_opengl/gl_state.h"
+#include "ios/gpu_vertex_self_test.h"
 #endif
 #include <atomic>
 #include <algorithm>
@@ -472,6 +473,7 @@ public:
 #ifdef CITRA_IOS_GLES
             s.use_gles = true;
             s.use_hw_renderer = true;
+            s.use_hw_shader = std::getenv("CARA_CPU_VERTEX") == nullptr;
             s.use_separable_shader = false;
             s.allow_shadow = false;
             s.shadow_rendering = false;
@@ -481,6 +483,7 @@ public:
             s.resolution_factor = 1; s.frame_limit = 100;
             const char* target_env = std::getenv("CITRA_BENCHMARK_FRAMES");
             const unsigned target_frames = target_env ? static_cast<unsigned>(std::clamp(std::strtol(target_env, nullptr, 10), 1L, 18000L)) : 0;
+            const bool pace_frames = !target_frames || std::getenv("CARA_PACED_BENCHMARK") != nullptr;
             Common::FrameTiming::counters = {};
             Common::FrameTiming::counters.enabled = std::getenv("CARA_FRAME_TIMING") != nullptr;
             s.init_clock = target_frames ? Settings::InitClock::FixedTime : Settings::InitClock::SystemTime;
@@ -494,6 +497,16 @@ public:
             auto& system = Core::System::GetInstance();
             FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::LogDir));
             emuWindow->MakeCurrent();
+#ifdef CITRA_IOS_GLES
+            if (std::getenv("CARA_VERTEX_SELF_TEST") && emuWindow->graphics_error.empty()) {
+                std::string error;
+                const bool passed = RunGPUVertexSelfTest(error);
+                std::ofstream report(user + "gpu-vertex-self-test.json");
+                report << "{\"passed\":" << (passed ? "true" : "false")
+                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color\"}\n";
+                if (!passed) emuWindow->graphics_error = error;
+            }
+#endif
             if (!emuWindow->graphics_error.empty()) {
                 NSString* message = [NSString stringWithUTF8String:emuWindow->graphics_error.c_str()];
                 running = false;
@@ -512,6 +525,7 @@ public:
                 const auto benchmark_start = std::chrono::steady_clock::now();
                 auto next_frame_time = benchmark_start;
                 unsigned paced_frame = 0;
+                unsigned late_paced_frames = 0;
                 bool was_paused = false;
                 auto pause_started = benchmark_start;
                 std::chrono::steady_clock::duration paused_duration{};
@@ -559,20 +573,24 @@ public:
                                 ",\"cpu_shader_ms_per_frame\":" + std::to_string((current.shader_seconds - previous_counters.shader_seconds) * 1000 / count) +
                                 ",\"readback_ms_per_frame\":" + std::to_string((current.readback_seconds - previous_counters.readback_seconds) * 1000 / count) +
                                 ",\"present_ms_per_frame\":" + std::to_string((current.present_seconds - previous_counters.present_seconds) * 1000 / count) +
-                                ",\"shader_calls\":" + std::to_string(current.shader_calls - previous_counters.shader_calls) + "}");
+                                ",\"shader_calls\":" + std::to_string(current.shader_calls - previous_counters.shader_calls) +
+                                ",\"gpu_vertex_draws\":" + std::to_string(current.gpu_vertex_draws - previous_counters.gpu_vertex_draws) +
+                                ",\"gpu_vertices\":" + std::to_string(current.gpu_vertices - previous_counters.gpu_vertices) +
+                                ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + "}");
                             previous_counters = current;
                             frame_times.clear();
                             std::ofstream timing_report(user + "frame-timing.json");
-                            timing_report << "{\"instrumented\":true,\"uncapped\":" << (target_frames ? "true" : "false") << ",\"windows\":[";
+                            timing_report << "{\"instrumented\":true,\"uncapped\":" << (pace_frames ? "false" : "true") << ",\"windows\":[";
                             for (size_t i = 0; i < timing_windows.size(); ++i)
                                 timing_report << (i ? "," : "") << timing_windows[i];
                             timing_report << "]}\n";
                         }
                     }
-                    if (!target_frames && emuWindow->frames != paced_frame) {
+                    if (pace_frames && emuWindow->frames != paced_frame) {
                         paced_frame = emuWindow->frames;
                         next_frame_time += std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / 59.833997376556916));
                         const auto now = std::chrono::steady_clock::now();
+                        if (now > next_frame_time + std::chrono::milliseconds(1)) ++late_paced_frames;
                         if (now - next_frame_time > std::chrono::milliseconds(100)) next_frame_time = now;
                         std::this_thread::sleep_until(next_frame_time);
                     }
@@ -584,7 +602,12 @@ public:
                     std::ofstream report(user + "benchmark-status.json");
                     report << "{\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
                            << ",\"fps\":" << emuWindow->frames / elapsed
+                           << ",\"paced\":" << (pace_frames ? "true" : "false")
+                           << ",\"late_paced_frames\":" << late_paced_frames
 #ifdef CITRA_IOS_GLES
+                           << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
+                           << ",\"gpu_vertices\":" << Common::FrameTiming::counters.gpu_vertices
+                           << ",\"cpu_vertex_draws\":" << Common::FrameTiming::counters.cpu_vertex_draws
                            << ",\"jit\":false,\"software_renderer\":false,\"gpu_backend\":\"native_gles3\"}\n";
 #else
                            << ",\"jit\":false,\"software_renderer\":true}\n";

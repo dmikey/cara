@@ -859,10 +859,22 @@ float rsq_safe(float x) {
                 shader.AddLine("while (true) {");
                 ++shader.scope;
 
+#ifdef CITRA_IOS_GLES
+                // Apple's GLES linker crashes on some generated switch/fallthrough trees.
+                // A single-iteration loop preserves switch breaks and case fallthrough.
+                shader.AddLine("do {");
+                shader.AddLine("bool citra_case_active = false;");
+#else
                 shader.AddLine("switch (jmp_to) {");
+#endif
 
                 for (auto label : labels) {
+#ifdef CITRA_IOS_GLES
+                    shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) citra_case_active = true;");
+                    shader.AddLine("if (citra_case_active) {");
+#else
                     shader.AddLine("case " + std::to_string(label) + "u: {");
+#endif
                     ++shader.scope;
 
                     auto next_it = labels.lower_bound(label + 1);
@@ -879,8 +891,13 @@ float rsq_safe(float x) {
                     shader.AddLine("}");
                 }
 
+#ifdef CITRA_IOS_GLES
+                shader.AddLine("return false;");
+                shader.AddLine("} while (false);");
+#else
                 shader.AddLine("default: return false;");
                 shader.AddLine("}");
+#endif
 
                 --shader.scope;
                 shader.AddLine("}");

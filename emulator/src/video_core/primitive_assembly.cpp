@@ -83,5 +83,6 @@ PipelineRegs::TriangleTopology PrimitiveAssembler<VertexType>::GetTopology() con
 
 // explicitly instantiate use cases
 template struct PrimitiveAssembler<Shader::OutputVertex>;
+template struct PrimitiveAssembler<u32>;
 
 } // namespace Pica

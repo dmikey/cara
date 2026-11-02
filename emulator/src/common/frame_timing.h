@@ -13,6 +13,9 @@ struct Counters {
     double readback_seconds = 0;
     double present_seconds = 0;
     std::uint64_t shader_calls = 0;
+    std::uint64_t gpu_vertex_draws = 0;
+    std::uint64_t gpu_vertices = 0;
+    std::uint64_t cpu_vertex_draws = 0;
 };
 inline thread_local Counters counters;
 

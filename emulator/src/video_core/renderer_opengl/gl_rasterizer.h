@@ -267,6 +267,12 @@ private:
 
     /// Setup geometry shader for AccelerateDrawBatch
     bool SetupGeometryShader();
+#ifdef CITRA_IOS_GLES
+    bool PrepareIOSVertices(bool is_indexed);
+    OGLTexture ios_vertex_texture;
+    std::vector<u32> ios_triangle_indices;
+    std::vector<GLvec4> ios_vertex_inputs;
+#endif
 
     OpenGLState state;
 

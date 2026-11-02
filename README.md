@@ -4,7 +4,7 @@
 
 An experimental iOS port of Citra MMJ using an ARM interpreter, with software and experimental native GLES3 rendering. The emulator libraries are statically linked; Apple system frameworks remain dynamic. CPU and host shader JIT backends are excluded at build time.
 
-A development build has booted a user-provided game on a physical M4 iPad. The optimized software path reached 41.2 FPS in a 600-frame device test; the first native GLES3 GPU test reached 107.8 FPS uncapped in the same early scene. Direct GPU presentation subsequently reached 58.1 FPS in an instrumented 3,600-frame sequence; heavier scenes remain below native speed. Longer gameplay compatibility is still being checked. Audio is disabled. These are bounded tests, not full-game performance claims.
+A development build has booted a user-provided game on a physical M4 iPad. The optimized software path reached 41.2 FPS in a 600-frame device test; the first native GLES3 GPU test reached 107.8 FPS uncapped in the same early scene. Direct GPU presentation followed by GPU vertex processing reached 79.5 FPS uncapped in a 3,600-frame sequence. Some frames still exceed the native frame budget; this is not a locked-60 claim. Longer gameplay compatibility is still being checked. Audio is disabled. These are bounded tests, not full-game performance claims.
 
 ## Repository contents
 

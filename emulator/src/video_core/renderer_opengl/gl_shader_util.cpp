@@ -49,6 +49,7 @@ vec4 CitraLUTFetch(sampler2D lut, int index) {
     };
     ReplaceAll("samplerBuffer", "sampler2D");
     ReplaceAll("precision highp uimage2D;", "");
+    ReplaceAll("#define fma_safe(x, y, z) fma(x, y, z)", "#define fma_safe(x, y, z) ((x) * (y) + (z))");
     ReplaceAll("texelFetch(texture_buffer_lut_", "CitraLUTFetch(texture_buffer_lut_");
 #endif
     const char* debug_type;
@@ -140,7 +141,14 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
         }
     }
 
+#ifdef CITRA_IOS_GLES
+    if (result != GL_TRUE) {
+        glDeleteProgram(program_id);
+        return 0;
+    }
+#else
     ASSERT_MSG(result == GL_TRUE, "Shader not linked");
+#endif
 
     for (GLuint shader : shaders) {
         if (shader != 0) {

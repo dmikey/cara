@@ -131,6 +131,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(citra-ios MACOSX_BUNDLE ios/main.mm)
     target_compile_options(citra-ios PRIVATE -fobjc-arc)
     if (CITRA_IOS_HARDWARE_RENDERER)
+        target_sources(citra-ios PRIVATE ios/gpu_vertex_self_test.cpp)
+        target_link_libraries(citra-ios PRIVATE nihstro-headers)
         target_link_libraries(citra-ios PRIVATE glad "-framework OpenGLES" "-framework QuartzCore")
     endif()
     target_link_libraries(citra-ios PRIVATE core common Threads::Threads

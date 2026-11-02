@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 #include "core/cache_file.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
@@ -54,6 +55,9 @@ static void SetShaderSamplerBindings(GLuint shader) {
     SetShaderSamplerBinding(shader, "tex1", TextureUnits::PicaTexture(1));
     SetShaderSamplerBinding(shader, "tex2", TextureUnits::PicaTexture(2));
     SetShaderSamplerBinding(shader, "tex_cube", TextureUnits::TextureCube);
+#ifdef CITRA_IOS_GLES
+    SetShaderSamplerBinding(shader, "citra_vertex_inputs", TextureUnits::TextureUnit{7});
+#endif
 
     // Set the texture samplers to correspond to different lookup table texture units
     SetShaderSamplerBinding(shader, "texture_buffer_lut_lf", TextureUnits::TextureBufferLUT_LF);
@@ -181,10 +185,20 @@ public:
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup) {
         bool result = false;
         const PicaVSConfig key(regs, setup);
-        const u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
+        u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
+#ifdef CITRA_IOS_GLES
+        const PicaFixedGSConfig ios_output(regs);
+        // Output semantics are part of a fused ES vertex program, not a separate GS.
+        key_hash ^= Common::ComputeHash64(&ios_output, sizeof(ios_output));
+        if (failed_ios_vertex_shaders.count(key_hash)) return false;
+#endif
         const auto iter_ref = shaders_ref.find(key_hash);
         if (iter_ref == shaders_ref.end()) {
-            std::string vs_code = GenerateVertexShader(setup, key, separable);
+            std::string vs_code = GenerateVertexShader(setup, key, separable
+#ifdef CITRA_IOS_GLES
+                , &ios_output
+#endif
+            );
             if (vs_code.empty()) {
                 LOG_WARNING(Render_OpenGL, "generate programmable vertex shader failed!");
                 current_shaders.vs = nullptr;
@@ -200,6 +214,9 @@ public:
             current_shaders.vs = iter_ref->second;
             result = true;
         }
+#ifdef CITRA_IOS_GLES
+        if (!result) failed_ios_vertex_shaders.insert(key_hash);
+#endif
         return result;
     }
 
@@ -257,11 +274,23 @@ public:
                 current_shaders.fs->GetHash(),
             };
             u64 hash = Common::ComputeHash64(bundle.data(), bundle.size() * sizeof(u64));
+#ifdef CITRA_IOS_GLES
+            if (failed_ios_programs.count(hash)) {
+                state.draw.shader_program = 0;
+                state.draw.program_pipeline = 0;
+                return;
+            }
+#endif
             auto& cached_program = program_cache[hash];
             if (cached_program.handle == 0) {
                 CreateProgram(cached_program, hash, vs, gs, fs);
-                SetShaderUniformBlockBindings(cached_program.handle);
-                SetShaderSamplerBindings(cached_program.handle);
+                if (cached_program.handle) {
+                    SetShaderUniformBlockBindings(cached_program.handle);
+                    SetShaderSamplerBindings(cached_program.handle);
+                }
+#ifdef CITRA_IOS_GLES
+                else { failed_ios_programs.insert(hash); }
+#endif
             }
             state.draw.shader_program = cached_program.handle;
             state.draw.program_pipeline = 0;
@@ -468,6 +497,10 @@ private:
     OGLShaderStage trivial_vertex_shader;
     OGLShaderStage trivial_geometry_shader;
     std::unordered_map<u64, OGLShaderStage*> shaders_ref;
+#ifdef CITRA_IOS_GLES
+    std::unordered_set<u64> failed_ios_vertex_shaders;
+    std::unordered_set<u64> failed_ios_programs;
+#endif
     std::unordered_map<u64, OGLShaderStage> shaders;
 
     OGLPipeline pipeline;

@@ -1786,7 +1786,7 @@ void main() {
 }
 
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
-                                 bool separable_shader) {
+                                 bool separable_shader, const PicaFixedGSConfig* ios_output) {
     std::string out;
     if (separable_shader) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
@@ -1828,7 +1828,8 @@ layout (std140) uniform vs_config {
     // input attributes declaration
     for (std::size_t i = 0; i < used_regs.size(); ++i) {
         if (used_regs[i]) {
-            out += fmt::format("layout(location = {0}) in vec4 vs_in_reg{0};\n", i);
+            out += ios_output ? fmt::format("vec4 vs_in_reg{};\n", i) :
+                fmt::format("layout(location = {0}) in vec4 vs_in_reg{0};\n", i);
         }
     }
     out += '\n';
@@ -1836,7 +1837,58 @@ layout (std140) uniform vs_config {
     // output attributes declaration
     for (u32 i = 0; i < config.state.num_outputs; ++i) {
         out += (separable_shader ? "layout(location = " + std::to_string(i) + ")" : std::string{}) +
-               " out vec4 vs_out_attr" + std::to_string(i) + ";\n";
+               (ios_output ? " vec4 vs_out_attr" : " out vec4 vs_out_attr") + std::to_string(i) + ";\n";
+    }
+
+    if (ios_output) {
+        // ES 3.0 has no geometry stage. Expand to independent triangles on the CPU,
+        // then fold the fixed output mapping into this vertex program. Re-evaluating
+        // vertex zero preserves the per-triangle quaternion sign rule exactly.
+        const auto& fixed = ios_output->state;
+        const auto semantic = [&](VSOutputAttributes::Semantic slot) -> std::string {
+            const auto& map = fixed.semantic_maps[static_cast<u32>(slot)];
+            if (map.attribute_index >= config.state.num_outputs) return "0.0";
+            return fmt::format("vs_out_attr{}.{}", map.attribute_index, "xyzw"[map.component_index]);
+        };
+        const auto vector = [&](const char* type, std::initializer_list<VSOutputAttributes::Semantic> slots) {
+            std::string result = std::string(type) + "(";
+            bool first = true;
+            for (auto slot : slots) {
+                result += (first ? "" : ", ") + semantic(slot); first = false;
+            }
+            return result + ")";
+        };
+        const std::string quaternion = vector("vec4", {VSOutputAttributes::QUATERNION_X,
+            VSOutputAttributes::QUATERNION_Y, VSOutputAttributes::QUATERNION_Z, VSOutputAttributes::QUATERNION_W});
+        out += GetVertexInterfaceDeclaration(true, false);
+        out += UniformBlockDef;
+        out += "uniform highp sampler2D citra_vertex_inputs;\n";
+        out += program_source;
+        out += "void citra_run_vertex(int vertex_id) {\n";
+        for (u32 i = 0; i < used_regs.size(); ++i) {
+            if (used_regs[i]) {
+                out += fmt::format("int index{0} = vertex_id * 16 + {0};\nvs_in_reg{0} = texelFetch(citra_vertex_inputs, ivec2(index{0} & 255, index{0} >> 8), 0);\n", i);
+            }
+        }
+        out += "conditional_code = bvec2(false);\naddress_registers = ivec3(0);\n";
+        for (u32 i = 0; i < 16; ++i)
+            out += fmt::format("reg_tmp{} = vec4(0.0, 0.0, 0.0, 1.0);\n", i);
+        for (u32 i = 0; i < config.state.num_outputs; ++i)
+            out += fmt::format("vs_out_attr{} = vec4(0.0, 0.0, 0.0, 1.0);\n", i);
+        out += "exec_shader();\n}\nvoid main() {\nvec4 first_quat = vec4(0.0);\n";
+        out += "if (gl_VertexID % 3 != 0) { citra_run_vertex(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
+        out += "citra_run_vertex(gl_VertexID);\nnormquat = " + quaternion + ";\n";
+        out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
+        out += "gl_Position = " + vector("vec4", {VSOutputAttributes::POSITION_X, VSOutputAttributes::POSITION_Y,
+            VSOutputAttributes::POSITION_Z, VSOutputAttributes::POSITION_W}) + ";\n";
+        out += "primary_color = min(abs(" + vector("vec4", {VSOutputAttributes::COLOR_R, VSOutputAttributes::COLOR_G,
+            VSOutputAttributes::COLOR_B, VSOutputAttributes::COLOR_A}) + "), vec4(1.0));\n";
+        out += "texcoord0 = " + vector("vec2", {VSOutputAttributes::TEXCOORD0_U, VSOutputAttributes::TEXCOORD0_V}) + ";\n";
+        out += "texcoord1 = " + vector("vec2", {VSOutputAttributes::TEXCOORD1_U, VSOutputAttributes::TEXCOORD1_V}) + ";\n";
+        out += "texcoord2 = " + vector("vec2", {VSOutputAttributes::TEXCOORD2_U, VSOutputAttributes::TEXCOORD2_V}) + ";\n";
+        out += "texcoord0_w = " + semantic(VSOutputAttributes::TEXCOORD0_W) + ";\n";
+        out += "view = " + vector("vec3", {VSOutputAttributes::VIEW_X, VSOutputAttributes::VIEW_Y, VSOutputAttributes::VIEW_Z}) + ";\n}\n";
+        return out;
     }
 
     out += "\nvoid main() {\n";

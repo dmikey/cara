@@ -207,7 +207,7 @@ std::string GenerateTrivialVertexShader(bool separable_shader);
  * @returns String of the shader source code; boost::none on failure
  */
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
-                                 bool separable_shader);
+                                 bool separable_shader, const PicaFixedGSConfig* ios_output = nullptr);
 
 /*
  * Generates the GLSL fixed geometry shader program source code for non-GS PICA pipeline

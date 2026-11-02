@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 #include "common/assert.h"
+#include "common/frame_timing.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
 #include "common/vector_math.h"
@@ -287,6 +288,9 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
             break;
         }
 
+#ifdef CITRA_IOS_GLES
+        ++Common::FrameTiming::counters.cpu_vertex_draws;
+#endif
         // Processes information about internal vertex attributes to figure out how a vertex is
         // loaded.
         // Later, these can be compiled and cached.

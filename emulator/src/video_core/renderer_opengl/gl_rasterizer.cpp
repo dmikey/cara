@@ -14,6 +14,7 @@
 #endif
 #include "common/alignment.h"
 #include "common/assert.h"
+#include "common/frame_timing.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
 #include "common/microprofile.h"
@@ -22,6 +23,9 @@
 #include "core/hw/gpu.h"
 #include "core/settings.h"
 #include "video_core/pica_state.h"
+#include "video_core/debug_utils/debug_utils.h"
+#include "video_core/primitive_assembly.h"
+#include "video_core/vertex_loader.h"
 #include "video_core/regs_framebuffer.h"
 #include "video_core/regs_rasterizer.h"
 #include "video_core/regs_texturing.h"
@@ -423,7 +427,11 @@ bool RasterizerOpenGL::SetupGeometryShader() {
     MICROPROFILE_SCOPE(OpenGL_GS);
     const auto& regs = Pica::g_state.regs;
     if (regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No) {
+#ifdef CITRA_IOS_GLES
+        shader_program_manager->UseTrivialGeometryShader();
+#else
         shader_program_manager->UseFixedGeometryShader(regs);
+#endif
         return true;
     } else {
         LOG_ERROR(Render_OpenGL, "Accelerate draw doesn't support geometry shader");
@@ -436,15 +444,74 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if (regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No) {
         return false;
     }
-
     if (!SetupVertexShader())
         return false;
+#ifdef CITRA_IOS_GLES
+    if (!PrepareIOSVertices(is_indexed)) return false;
+#endif
 
     if (!SetupGeometryShader())
         return false;
 
     return Draw(true, is_indexed);
 }
+
+#ifdef CITRA_IOS_GLES
+bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
+    constexpr u32 MAX_VERTICES = 16384;
+    const auto& regs = Pica::g_state.regs;
+    const auto& pipeline = regs.pipeline;
+    const u32 count = pipeline.num_vertices;
+    const auto topology = Pica::g_state.primitive_assembler.GetTopology();
+    const bool strip = topology == Pica::PipelineRegs::TriangleTopology::Strip ||
+                       topology == Pica::PipelineRegs::TriangleTopology::Fan;
+    if (count < 3 || count > (strip ? MAX_VERTICES / 3 : MAX_VERTICES)) return false;
+    const u32 base = pipeline.vertex_attributes.GetPhysicalBaseAddress();
+    const u8* indices = is_indexed ? VideoCore::Memory()->GetPhysicalPointer(base + pipeline.index_array.offset) : nullptr;
+    if (is_indexed && !indices) return false;
+    ios_triangle_indices.clear();
+    Pica::PrimitiveAssembler<u32> assembler(topology);
+    const auto triangle = [this](u32 a, u32 b, u32 c) {
+        ios_triangle_indices.insert(ios_triangle_indices.end(), {a, b, c});
+    };
+    for (u32 i = 0; i < count; ++i) {
+        const u32 vertex = !is_indexed ? i + pipeline.vertex_offset :
+            pipeline.index_array.format ? reinterpret_cast<const u16*>(indices)[i] : indices[i];
+        assembler.SubmitVertex(vertex, triangle);
+    }
+    if (ios_triangle_indices.empty()) return false;
+    // 16 input registers per vertex, packed into a 256-wide float texture.
+    const size_t rows = (ios_triangle_indices.size() * 16 + 255) / 256;
+    ios_vertex_inputs.resize(rows * 256);
+    Pica::VertexLoader loader(pipeline);
+    Pica::DebugUtils::MemoryAccessTracker accesses;
+    // Expanded triangles reuse source vertices, especially strips/fans. Cache only
+    // their decoded inputs within this draw; GPU shader evaluation remains unchanged.
+    std::array<bool, 64> valid{};
+    std::array<u32, 64> ids;
+    std::array<std::array<GLvec4, 16>, 64> inputs;
+    for (size_t i = 0; i < ios_triangle_indices.size(); ++i) {
+        const u32 vertex = ios_triangle_indices[i];
+        const u32 slot = vertex & 63;
+        if (valid[slot] && ids[slot] == vertex) {
+            std::copy_n(inputs[slot].data(), 16, ios_vertex_inputs.data() + i * 16);
+            continue;
+        }
+        Pica::Shader::AttributeBuffer input{};
+        loader.LoadVertex(base, static_cast<int>(i), vertex, input, accesses);
+        GLvec4* registers = ios_vertex_inputs.data() + i * 16;
+        std::fill_n(registers, 16, GLvec4{});
+        for (u32 attr = 0; attr <= regs.vs.max_input_attribute_index; ++attr) {
+            const auto& value = input.attr[attr];
+            registers[regs.vs.GetRegisterForAttribute(attr)] = {
+                value.x.ToFloat32(), value.y.ToFloat32(), value.z.ToFloat32(), value.w.ToFloat32()};
+        }
+        std::copy_n(registers, 16, inputs[slot].data());
+        ids[slot] = vertex; valid[slot] = true;
+    }
+    return true;
+}
+#endif
 
 void RasterizerOpenGL::CheckForConfigChanges() {
     u16 scale_factor = VideoCore::GetResolutionScaleFactor();
@@ -468,6 +535,33 @@ static GLenum GetCurrentPrimitiveMode() {
 }
 
 bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+#ifdef CITRA_IOS_GLES
+    state.draw.vertex_array = hw_vao.handle;
+    shader_program_manager->ApplyTo(state);
+    if (!state.draw.shader_program) return false;
+    state.Apply();
+    glActiveTexture(GL_TEXTURE7);
+    if (!ios_vertex_texture.handle) {
+        ios_vertex_texture.Create();
+        glBindTexture(GL_TEXTURE_2D, ios_vertex_texture.handle);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, 1024, 0, GL_RGBA, GL_FLOAT, nullptr);
+    } else {
+        glBindTexture(GL_TEXTURE_2D, ios_vertex_texture.handle);
+    }
+    glBindSampler(7, 0);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, static_cast<GLsizei>(ios_vertex_inputs.size() / 256),
+                    GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(ios_triangle_indices.size()));
+    ++Common::FrameTiming::counters.gpu_vertex_draws;
+    Common::FrameTiming::counters.gpu_vertices += ios_triangle_indices.size();
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    return true;
+#else
     const auto& regs = Pica::g_state.regs;
     GLenum primitive_mode = GetCurrentPrimitiveMode();
 
@@ -514,6 +608,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     }
 
     return true;
+#endif
 }
 
 void RasterizerOpenGL::DrawTriangles() {
