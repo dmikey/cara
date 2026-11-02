@@ -10,6 +10,7 @@
 #include "ios/gpu_vertex_self_test.h"
 #endif
 #include <atomic>
+#include "ios/button_state.h"
 #include <algorithm>
 #include <mutex>
 #include <chrono>
@@ -53,13 +54,18 @@ static NSString* GraphicsLabel() {
     return @"software graphics";
 #endif
 }
-static std::atomic<uint32_t> buttons{0};
+static Cara::ButtonState buttons;
 static std::atomic<bool> paused{false};
 class Button final : public Input::ButtonDevice {
     unsigned index;
 public:
     explicit Button(unsigned i) : index(i) {}
-    bool GetStatus() const override { return (buttons.load() & (1u << index)) != 0; }
+    bool GetStatus() const override {
+        const bool pressed = buttons.Poll(index);
+        if (pressed && std::getenv("CARA_INPUT_TRACE"))
+            LOG_INFO(Frontend, "Guest HID read button {}", index);
+        return pressed;
+    }
 };
 class ButtonFactory final : public Input::Factory<Input::ButtonDevice> {
     std::unique_ptr<Input::ButtonDevice> Create(const Common::ParamPackage& p) override {
@@ -68,7 +74,7 @@ class ButtonFactory final : public Input::Factory<Input::ButtonDevice> {
 };
 class Stick final : public Input::AnalogDevice {
     std::tuple<float, float> GetStatus() const override {
-        auto b = buttons.load();
+        auto b = buttons.Held();
         return {float(bool(b & (1u << Settings::NativeButton::Right))) - float(bool(b & (1u << Settings::NativeButton::Left))),
                 float(bool(b & (1u << Settings::NativeButton::Up))) - float(bool(b & (1u << Settings::NativeButton::Down)))};
     }
@@ -263,8 +269,11 @@ public:
         else status.text = @"Test ROM is not present in Documents.";
     }
 }
-- (void)press:(UIButton*)b { buttons.fetch_or(1u << b.tag); }
-- (void)releaseButton:(UIButton*)b { buttons.fetch_and(~(1u << b.tag)); }
+- (void)press:(UIButton*)b {
+    buttons.Press(unsigned(b.tag));
+    if (std::getenv("CARA_INPUT_TRACE")) LOG_INFO(Frontend, "UIKit pressed button {}", int(b.tag));
+}
+- (void)releaseButton:(UIButton*)b { buttons.Release(unsigned(b.tag)); }
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1];
@@ -320,6 +329,8 @@ public:
     stack.axis = UILayoutConstraintAxisVertical; stack.spacing = 10;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     UIScrollView* scroll = [UIScrollView new]; scroll.translatesAutoresizingMaskIntoConstraints = NO;
+    scroll.delaysContentTouches = NO;
+    scroll.canCancelContentTouches = NO;
     [self.view addSubview:scroll]; [scroll addSubview:stack];
     UILayoutGuide* safe = self.view.safeAreaLayoutGuide;
     NSLayoutConstraint* preferredWidth = [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-24];
@@ -336,8 +347,8 @@ public:
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(background) name:UIApplicationWillResignActiveNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(foreground) name:UIApplicationDidBecomeActiveNotification object:nil];
 }
-- (void)stopGame { stop = true; buttons = 0; status.text = @"Stopping…"; }
-- (void)background { backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; buttons = 0; }
+- (void)stopGame { stop = true; buttons.Clear(); status.text = @"Stopping…"; }
+- (void)background { backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; buttons.Clear(); }
 - (void)foreground {
     if (backgroundAt > 0 && running) {
         const double duration = CFAbsoluteTimeGetCurrent() - backgroundAt;

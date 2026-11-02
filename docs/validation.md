@@ -94,3 +94,18 @@ or CPU JIT.
 The same iPad build also completed Zelda's 1,200-frame compatibility test in
 13.6097 seconds (88.1726 display FPS uncapped), rendering the title scene with
 zero paused time, no CPU vertex draws and no CPU JIT.
+
+## iOS quick-tap input repair
+
+After the scenery repair, the user reported that A/Start did not advance
+Xenoblade. The frontend now delivers control touches without the scroll view's
+default delay, and retains each press until the emulated HID device polls it.
+Releases still end held input normally. Stop/background clears both held and
+pending input. `citra-input-self-test` covers taps that begin and end between HID
+updates, holds, simultaneous buttons and resets; it runs in host CI.
+
+On the physical iPad, temporary input tracing showed UIKit A presses reaching
+emulated HID reads, and the user confirmed that the game now advances. Input
+tracing is opt-in (`CARA_INPUT_TRACE`) and ordinary launches do not enable it.
+The user subsequently reported about 16 FPS in cutscenes: title-scene averages
+above do not establish gameplay or cutscene performance.

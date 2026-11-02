@@ -120,6 +120,7 @@ if (ENABLE_WEB_SERVICE)
 endif()
 
 if (CITRA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(citra-input-self-test input_self_test.cpp)
     add_executable(citra-interval-cache-self-test interval_cache_self_test.cpp)
     target_link_libraries(citra-interval-cache-self-test PRIVATE Boost::boost)
     add_executable(citra-core-cache-self-test core_cache_self_test.cpp)
