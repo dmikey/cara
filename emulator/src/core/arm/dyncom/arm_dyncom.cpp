@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include "common/frame_timing.h"
 #include "core/arm/dyncom/arm_dyncom.h"
 #include "core/arm/dyncom/arm_dyncom_interpreter.h"
 #include "core/arm/dyncom/arm_dyncom_trans.h"
@@ -154,8 +155,10 @@ void ARM_DynCom::SetCP15Register(CP15Register reg, u32 value) {
 }
 
 void ARM_DynCom::ExecuteInstructions(u64 num_instructions) {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GuestCPU);
     state->NumInstrsToExecute = num_instructions;
     unsigned ticks_executed = InterpreterMainLoop(state.get(), timer.get());
+    if (Common::FrameTiming::counters.enabled) Common::FrameTiming::counters.guest_ticks += ticks_executed;
     timer->AddTicks(ticks_executed);
     state->ServeBreak();
 }

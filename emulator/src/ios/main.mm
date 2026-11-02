@@ -18,6 +18,7 @@
 #include <functional>
 #include <fstream>
 #include <thread>
+#include <sstream>
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
@@ -46,6 +47,15 @@
 }
 @end
 #endif
+
+static bool CaptureBurst(unsigned frame) {
+    const char* start_env = std::getenv("CARA_CAPTURE_BURST_START");
+    if (!start_env) return false;
+    const unsigned start = unsigned(std::max(0L, std::strtol(start_env, nullptr, 10)));
+    const char* count_env = std::getenv("CARA_CAPTURE_BURST_COUNT");
+    const unsigned count = count_env ? unsigned(std::clamp(std::strtol(count_env, nullptr, 10), 1L, 120L)) : 36;
+    return frame >= start && frame - start < count;
+}
 
 static NSString* GraphicsLabel() {
 #ifdef CITRA_IOS_GLES
@@ -193,7 +203,7 @@ public:
             ++frames;
             if (frame_presented) frame_presented(frames);
             // Readback is only used for explicitly requested diagnostic screen captures.
-            if (!std::getenv("CITRA_CAPTURE_FRAMES") || frames % 60 != 0) return;
+            if (!std::getenv("CITRA_CAPTURE_FRAMES") || (frames % 60 != 0 && !CaptureBurst(frames))) return;
         }
         const auto previous = OpenGL::OpenGLState::BindReadFramebuffer(framebuffer);
         std::vector<u8> image(400 * 480 * 4);
@@ -395,7 +405,7 @@ public:
     [self startROM:url];
 }
 - (void)showFrame:(unsigned)screen width:(unsigned)width height:(unsigned)height pixels:(const std::vector<u8>&)pixels frame:(unsigned)emulatedFrame {
-    const bool captureCheckpoint = emulatedFrame % 600 == 0 &&
+    const bool captureCheckpoint = (emulatedFrame % 600 == 0 || CaptureBurst(emulatedFrame)) &&
         [NSProcessInfo.processInfo.environment[@"CITRA_CAPTURE_FRAMES"] isEqualToString:@"1"];
     if (framePending[screen].exchange(true) && !captureCheckpoint) return;
     NSData* data = [NSData dataWithBytes:pixels.data() length:pixels.size()];
@@ -411,8 +421,11 @@ public:
         if (screen == 0) ++controller->frameCount;
         if (captureCheckpoint) {
             NSString* documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+            NSString* folder = CaptureBurst(emulatedFrame)
+                ? [documents stringByAppendingPathComponent:@"capture-burst"] : documents;
+            [NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
             NSString* filename = [NSString stringWithFormat:@"frame-%u-screen-%u.png",emulatedFrame,screen];
-            [UIImagePNGRepresentation(displayImage) writeToFile:[documents stringByAppendingPathComponent:filename] atomically:YES];
+            [UIImagePNGRepresentation(displayImage) writeToFile:[folder stringByAppendingPathComponent:filename] atomically:YES];
         }
         const unsigned reportedFrame =
 #ifdef CITRA_IOS_GLES
@@ -546,6 +559,22 @@ public:
                 std::vector<double> frame_times;
                 std::vector<std::string> timing_windows;
                 auto previous_counters = Common::FrameTiming::counters;
+                std::vector<unsigned> test_press_frames;
+                const char* press_frames_env = std::getenv("CARA_TEST_PRESS_A_FRAMES");
+                if (target_frames && press_frames_env) {
+                    std::istringstream stream(press_frames_env);
+                    std::string item;
+                    while (std::getline(stream, item, ',')) {
+                        const long value = std::strtol(item.c_str(), nullptr, 10);
+                        if (value > 0 && value < target_frames) test_press_frames.push_back(unsigned(value));
+                    }
+                    std::sort(test_press_frames.begin(), test_press_frames.end());
+                    test_press_frames.erase(std::unique(test_press_frames.begin(), test_press_frames.end()), test_press_frames.end());
+                }
+                size_t next_test_press = 0;
+                unsigned active_test_press = 0;
+                const char* window_env = std::getenv("CARA_TIMING_WINDOW_FRAMES");
+                const unsigned window_frames = window_env ? unsigned(std::clamp(std::strtol(window_env, nullptr, 10), 60L, 600L)) : 600;
                 while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
                     if (paused) {
                         if (!was_paused) pause_started = std::chrono::steady_clock::now();
@@ -557,6 +586,14 @@ public:
                         last_frame_time += resumed - pause_started;
                         next_frame_time = resumed; was_paused = false;
                     }
+                    if (active_test_press && emuWindow->frames >= active_test_press + 6) {
+                        buttons.Release(Settings::NativeButton::A); active_test_press = 0;
+                    }
+                    if (!active_test_press && next_test_press < test_press_frames.size() &&
+                        emuWindow->frames >= test_press_frames[next_test_press]) {
+                        buttons.Press(Settings::NativeButton::A);
+                        active_test_press = emuWindow->frames; ++next_test_press;
+                    }
                     result = system.RunLoop();
                     if (!emuWindow->graphics_error.empty()) result = Core::System::ResultStatus::ErrorVideoCore;
                     if (result != Core::System::ResultStatus::Success) break;
@@ -565,7 +602,7 @@ public:
                         frame_times.push_back(std::chrono::duration<double, std::milli>(now - last_frame_time).count());
                         last_frame_time = now;
                         timed_frame = emuWindow->frames;
-                        if (frame_times.size() == 600 || (target_frames && timed_frame == target_frames)) {
+                        if (frame_times.size() == window_frames || (target_frames && timed_frame == target_frames)) {
                             double total_ms = 0;
                             unsigned late = 0;
                             for (double ms : frame_times) {
@@ -583,6 +620,12 @@ public:
                                 ",\"max_ms\":" + std::to_string(frame_times.back()) +
                                 ",\"over_budget_frames\":" + std::to_string(late) +
                                 ",\"cpu_shader_ms_per_frame\":" + std::to_string((current.shader_seconds - previous_counters.shader_seconds) * 1000 / count) +
+                                ",\"guest_cpu_ms_per_frame\":" + std::to_string((current.guest_cpu_seconds - previous_counters.guest_cpu_seconds) * 1000 / count) +
+                                ",\"draw_ms_per_frame\":" + std::to_string((current.draw_seconds - previous_counters.draw_seconds) * 1000 / count) +
+                                ",\"vertex_prepare_ms_per_frame\":" + std::to_string((current.vertex_prepare_seconds - previous_counters.vertex_prepare_seconds) * 1000 / count) +
+                                ",\"vertex_upload_ms_per_frame\":" + std::to_string((current.vertex_upload_seconds - previous_counters.vertex_upload_seconds) * 1000 / count) +
+                                ",\"draw_submit_ms_per_frame\":" + std::to_string((current.draw_submit_seconds - previous_counters.draw_submit_seconds) * 1000 / count) +
+                                ",\"guest_ticks\":" + std::to_string(current.guest_ticks - previous_counters.guest_ticks) +
                                 ",\"readback_ms_per_frame\":" + std::to_string((current.readback_seconds - previous_counters.readback_seconds) * 1000 / count) +
                                 ",\"present_ms_per_frame\":" + std::to_string((current.present_seconds - previous_counters.present_seconds) * 1000 / count) +
                                 ",\"shader_calls\":" + std::to_string(current.shader_calls - previous_counters.shader_calls) +

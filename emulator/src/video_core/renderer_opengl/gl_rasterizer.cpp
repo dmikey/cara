@@ -458,6 +458,7 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
 
 #ifdef CITRA_IOS_GLES
 bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexPrepare);
     constexpr u32 MAX_VERTICES = 16384;
     const auto& regs = Pica::g_state.regs;
     const auto& pipeline = regs.pipeline;
@@ -541,21 +542,69 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     if (!state.draw.shader_program) return false;
     state.Apply();
     glActiveTexture(GL_TEXTURE7);
-    if (!ios_vertex_texture.handle) {
-        ios_vertex_texture.Create();
-        glBindTexture(GL_TEXTURE_2D, ios_vertex_texture.handle);
+    const unsigned upload_rows = static_cast<unsigned>(ios_vertex_inputs.size() / 256);
+    OGLTexture* selected_texture = &ios_vertex_fallback_texture;
+    unsigned storage_rows = upload_rows;
+    bool resize_storage = false;
+    bool orphan_upload = true;
+    const unsigned frame = VideoCore::GetCurrentFrame();
+    if (frame != ios_vertex_upload_frame) {
+        ios_vertex_upload_frame = frame;
+        ios_vertex_upload_index = 0;
+    }
+    const size_t bank = frame % ios_vertex_frame_uploads.size();
+    auto& uploads = ios_vertex_frame_uploads[bank];
+    // Keep each draw's inputs separate until earlier frames have consumed them.
+    // Bound retained storage to 32 MiB and 1,536 textures in each of three banks.
+    // Work beyond either limit uses fresh storage instead of growing the pool.
+    if (ios_vertex_upload_index < 1536) {
+        if (uploads.size() <= ios_vertex_upload_index) uploads.emplace_back();
+        auto& upload = uploads[ios_vertex_upload_index++];
+        unsigned rows = 1;
+        while (rows < upload_rows) rows *= 2;
+        const size_t bytes = rows * 256 * sizeof(GLvec4);
+        const size_t previous_bytes = upload.rows * 256 * sizeof(GLvec4);
+        const size_t bank_bytes = ios_vertex_frame_bytes[bank] - previous_bytes + bytes;
+        if (bank_bytes <= 32 * 1024 * 1024) {
+            ios_vertex_frame_bytes[bank] = bank_bytes;
+            resize_storage = upload.rows != rows;
+            upload.rows = rows;
+            storage_rows = rows;
+            selected_texture = &upload.texture;
+            orphan_upload = false;
+        }
+    }
+    OGLTexture& input_texture = *selected_texture;
+    if (!input_texture.handle) {
+        input_texture.Create();
+        glBindTexture(GL_TEXTURE_2D, input_texture.handle);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, 1024, 0, GL_RGBA, GL_FLOAT, nullptr);
+        if (!orphan_upload) resize_storage = true;
     } else {
-        glBindTexture(GL_TEXTURE_2D, ios_vertex_texture.handle);
+        glBindTexture(GL_TEXTURE_2D, input_texture.handle);
     }
     glBindSampler(7, 0);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, static_cast<GLsizei>(ios_vertex_inputs.size() / 256),
-                    GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
-    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(ios_triangle_indices.size()));
+    {
+        Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
+        if (orphan_upload) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, upload_rows, 0,
+                         GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
+        } else {
+            if (resize_storage) {
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, storage_rows, 0,
+                             GL_RGBA, GL_FLOAT, nullptr);
+            }
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, upload_rows,
+                            GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
+        }
+    }
+    {
+        Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::DrawSubmit);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(ios_triangle_indices.size()));
+    }
     ++Common::FrameTiming::counters.gpu_vertex_draws;
     Common::FrameTiming::counters.gpu_vertices += ios_triangle_indices.size();
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -677,6 +726,7 @@ void RasterizerOpenGL::BindFramebufferDepth(OpenGLState& state, const Surface& s
 }
 
 bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::Draw);
     const auto& regs = Pica::g_state.regs;
     const bool shadow_rendering = regs.framebuffer.IsShadowRendering();
     if (shadow_rendering && !AllowShadow) {

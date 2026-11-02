@@ -269,7 +269,15 @@ private:
     bool SetupGeometryShader();
 #ifdef CITRA_IOS_GLES
     bool PrepareIOSVertices(bool is_indexed);
-    OGLTexture ios_vertex_texture;
+    OGLTexture ios_vertex_fallback_texture;
+    struct IOSVertexUpload {
+        OGLTexture texture;
+        unsigned rows = 0;
+    };
+    std::array<std::vector<IOSVertexUpload>, 3> ios_vertex_frame_uploads;
+    std::array<size_t, 3> ios_vertex_frame_bytes{};
+    unsigned ios_vertex_upload_frame = ~0u;
+    size_t ios_vertex_upload_index = 0;
     std::vector<u32> ios_triangle_indices;
     std::vector<GLvec4> ios_vertex_inputs;
 #endif

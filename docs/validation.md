@@ -109,3 +109,55 @@ emulated HID reads, and the user confirmed that the game now advances. Input
 tracing is opt-in (`CARA_INPUT_TRACE`) and ordinary launches do not enable it.
 The user subsequently reported about 16 FPS in cutscenes: title-scene averages
 above do not establish gameplay or cutscene performance.
+
+## Cutscene vertex-upload optimization
+
+The user reported approximately 16 FPS after entering Xenoblade's cutscenes.
+Built-in timing reproduced a 61.37 ms average display-frame window. GPU vertex
+processing stayed active; CPU vertex fallback was not responsible. More detailed
+timing identified synchronous vertex-input texture uploads as the largest cost.
+The old frontend updated the same 4 MiB input texture for every draw.
+
+The native GLES3 path now retains separate vertex-input textures for each draw
+in three rotating frame banks. Texture heights follow the required input data,
+rounded to a power of two. Each bank retains at most 32 MiB of texture data and
+1,536 textures; draws beyond these limits use fresh-storage uploads. OpenGL
+continues to preserve in-flight data if a bank is reused before the GPU finishes.
+This changes upload storage and lifetime, not vertex values, shaders, guest CPU
+execution or emulated depth behavior.
+
+A physical-M4-iPad comparison used the same 6,000 display frames, fixed RTC, and
+scripted A presses at frames 1,200, 1,800 and 2,400. The old upload path took
+129.295 seconds (46.4053 display FPS uncapped); the frame-bank implementation took
+89.4333 seconds (67.0891 display FPS). Both processed exactly 691,947 GPU vertex
+batches and 148,031,280 expanded vertices, with zero CPU vertex batches, pauses or
+CPU JIT. The baseline's slowest 120-frame window, ending at frame 4,440, improved
+from 59.6817 ms (16.76 FPS) to approximately 18.08 ms (55.3 FPS). Vertex-upload
+call time in that window dropped from 36.1757 ms to about 1.08 ms per frame.
+Top-screen captures at frames 3,600, 4,800 and 6,000 and the bottom-screen capture
+at frame 6,000 matched pixel-for-pixel. Captures and detailed reports remain local.
+
+Diagnostic timing now also records guest CPU execution, input preparation,
+vertex upload and draw submission. Guest CPU timing includes HLE calls and nested
+drawing, so those fields must not be added together. `CARA_TIMING_WINDOW_FRAMES`
+selects windows from 60 to 600 frames (default 600).
+`CARA_TEST_PRESS_A_FRAMES` provides comma-separated A-press frames only during an
+explicit frame-count benchmark; ordinary play never injects input.
+
+These are bounded opening-cutscene measurements with audio off, not a guarantee
+of locked 60 FPS throughout the game. Shader first-use, CPU interpretation and
+other scenes still need further performance work.
+
+The final default implementation completed the same 6,000-frame paced sequence
+in 104.848 seconds (57.2255 display FPS), with 3,328 frames over 1 ms late. It
+therefore improves cutscene speed substantially but does not establish locked
+60 FPS. Zelda's 1,200-frame check completed at 87.2773 display FPS uncapped,
+with a top-screen capture pixel-identical to the prior verified build. Both
+linked products passed their no-JIT audits; host input, interval-cache,
+multicore-cache, native I/O and raster checks passed.
+
+For temporal-artifact diagnosis only, `CARA_CAPTURE_BURST_START` and
+`CARA_CAPTURE_BURST_COUNT` capture 1–120 consecutive frames (default 36),
+requiring `CITRA_CAPTURE_FRAMES`. Burst images are written to the app's private
+`Documents/capture-burst` directory. PNG capture can affect timing, so these
+bursts are excluded from performance comparisons.
