@@ -621,7 +621,11 @@ public:
             running = false;
             dispatch_async(dispatch_get_main_queue(), ^{
                 self->openButton.enabled = YES;
-                UIApplication.sharedApplication.idleTimerDisabled = NO;
+                const bool keepAwake = target_frames && std::getenv("CARA_TEST_KEEP_AWAKE");
+                UIApplication.sharedApplication.idleTimerDisabled = keepAwake;
+                if (keepAwake) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                    if (!self->running) UIApplication.sharedApplication.idleTimerDisabled = NO;
+                });
                 if (result != Core::System::ResultStatus::Success)
                     self->status.text = [NSString stringWithFormat:@"Emulation ended (code %u). See emulator.log",unsigned(result)];
                 else self->status.text = @"Stopped · interpreter test · audio off";

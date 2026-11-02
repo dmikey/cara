@@ -6,7 +6,14 @@
       "path": "externals/boost",
       "source": "https://github.com/azahar-emu/ext-boost.git",
       "revision": "36603a1e665e849d29b1735a12c0a51284a10dd0",
-      "bundled": true
+      "bundled": true,
+      "local_patches": [
+        {
+          "upstream": "https://github.com/boostorg/icl",
+          "revision": "b587925c05ab626436822a5d5e3317a5da97f320",
+          "description": "Backport interval map/set heterogeneous lookup adaptors for libc++ 22; adapt include selection to bundled Boost impl_config. See externals/boost/CARA_PATCHES.md."
+        }
+      ]
     },
     {
       "path": "externals/catch",

@@ -41,7 +41,7 @@ def main():
                '-DENABLE_QT=OFF', '-DENABLE_SDL2=OFF', '-DENABLE_WEB_SERVICE=OFF',
                '-DENABLE_CUBEB=OFF', '-DBOOST_ROOT=' + str(source / 'externals/boost'),
                '-DBoost_NO_SYSTEM_PATHS=ON', '-DBoost_NO_BOOST_CMAKE=ON']
-    targets = ['citra-no-jit-probe', 'citra-raster-self-test', 'citra-core-cache-self-test']
+    targets = ['citra-no-jit-probe', 'citra-raster-self-test', 'citra-core-cache-self-test', 'citra-interval-cache-self-test']
     if args.platform != 'mac':
         command += ['-DCMAKE_SYSTEM_NAME=iOS', '-DCMAKE_OSX_ARCHITECTURES=arm64',
                     '-DCMAKE_OSX_SYSROOT=' + ('iphoneos' if args.platform == 'ios' else 'iphonesimulator'),

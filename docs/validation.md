@@ -56,3 +56,41 @@ A user-supplied Xenoblade Chronicles 3D USA Rev 1 dump (`000400000F700100`) sele
 The shared arena now has an invalidation generation, checked before each block lookup. A synthetic two-core regression runs distinct ARM `MOV` instructions at the same guest address, overwrites the shared arena, then resumes the first core. Without the generation check it deterministically returns the second core's value (29 rather than 17); with the fix all 17 executions pass. This is decoded instruction data, not generated executable code. `citra-core-cache-self-test` now runs in host CI.
 
 After the fix, a local macOS software-renderer test completed 436 display frames in 30.1064 seconds (14.482 FPS), returning success and rendering a loading animation. This establishes progress past the original crash, not physical-iPad or GPU performance for Xenoblade. Its 4 GB dump was copied successfully into private app storage after a transfer retry. Device execution must be validated separately. iOS benchmark receipts now include `new_3ds`, and each ROM startup resets the frontend mode before title overrides are applied.
+
+## Native GLES3 depth-cache repair
+
+Xenoblade booted on the M4 iPad after the interpreter fix, but most of the title
+scene was black. Switching to interpreted vertices did not fix it. Disabling depth
+testing revealed the scenery; a diagnostic depth reset restored the complete
+scene. Neither workaround is shipped.
+
+Tracing the game's actual memory fills showed depth clears arriving normally,
+but an expanded cached depth surface was missing from part of its registered
+address range. A ROM-free reproduction reduced this to two cached intervals
+separated by a gap and one larger overlapping insertion. The old Boost ICL
+headers fail this test with the current Apple compiler, losing coverage at
+address 100. This matches the upstream libc++ 22 interval-lookup compatibility
+issue. Cara backports Boost's maintained map/set adaptors, with source revision
+and license retained in `externals/boost/CARA_PATCHES.md`; no runtime download is
+required. The regression now runs in host CI.
+
+With this repair, the physical iPad's 1,200-frame Xenoblade test rendered the
+sky, sword and grass with normal depth testing. It completed in 15.8431 seconds
+(75.743 display FPS uncapped), with New 3DS mode, zero paused time, 67,236 GPU
+vertex batches and no CPU vertex draws or CPU JIT. This is a bounded boot/title
+scene with audio off; display FPS does not establish the game's unique-frame
+rate or full-game performance. Captures and benchmark receipts remain local.
+
+For repeated physical-device benchmarks, `CARA_TEST_KEEP_AWAKE=1` optionally
+keeps the app awake for five minutes after a frame-count test finishes. Normal
+play and ordinary test shutdown behavior are unchanged.
+
+A subsequent 3,600-frame paced iPad run completed in 60.385 seconds (59.6175
+display FPS), with zero pauses and a complete title scene at the final capture.
+It recorded 1,836 frames more than 1 ms late, so this is not a locked-frame-time
+claim. GPU vertex processing remained active throughout, with no CPU vertex draws
+or CPU JIT.
+
+The same iPad build also completed Zelda's 1,200-frame compatibility test in
+13.6097 seconds (88.1726 display FPS uncapped), rendering the title scene with
+zero paused time, no CPU vertex draws and no CPU JIT.
