@@ -468,6 +468,7 @@ public:
                 Input::RegisterFactory<Input::AnalogDevice>("ios",std::make_shared<StickFactory>());
             });
             auto& s = Settings::values;
+            s.is_new_3ds = false; // Core selects New 3DS mode for recognized titles on load.
             s.use_cpu_jit = false; s.use_shader_jit = false;
             s.use_hw_renderer = false; s.use_hw_shader = false;
 #ifdef CITRA_IOS_GLES
@@ -604,6 +605,7 @@ public:
                            << ",\"fps\":" << emuWindow->frames / elapsed
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"late_paced_frames\":" << late_paced_frames
+                           << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
 #ifdef CITRA_IOS_GLES
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
                            << ",\"gpu_vertices\":" << Common::FrameTiming::counters.gpu_vertices

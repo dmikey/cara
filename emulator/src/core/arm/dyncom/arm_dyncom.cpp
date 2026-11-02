@@ -85,7 +85,10 @@ void ARM_DynCom::Step() {
 
 void ARM_DynCom::ClearInstructionCache() {
     state->instruction_cache.clear();
-    trans_cache_buf_top = 0;
+    // The decoded-instruction arena is shared by all interpreted cores. Rewinding
+    // it invalidates every core's offsets, not only this core's lookup table.
+    InvalidateDynComDecodedCache();
+    state->instruction_cache_generation = trans_cache_generation;
 }
 
 void ARM_DynCom::InvalidateCacheRange(u32, std::size_t) {

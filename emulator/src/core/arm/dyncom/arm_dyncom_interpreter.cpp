@@ -1645,6 +1645,10 @@ DISPATCH : {
     else
         cpu->Reg[15] &= 0xfffffffc;
 
+    if (cpu->instruction_cache_generation != trans_cache_generation) {
+        cpu->instruction_cache.clear();
+        cpu->instruction_cache_generation = trans_cache_generation;
+    }
     // Find the cached instruction cream, otherwise translate it...
     auto itr = cpu->instruction_cache.find(cpu->Reg[15]);
     if (itr != cpu->instruction_cache.end()) {

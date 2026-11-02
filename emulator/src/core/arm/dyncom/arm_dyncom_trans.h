@@ -496,3 +496,5 @@ extern const std::size_t arm_instruction_trans_len;
 #define TRANS_CACHE_SIZE (64 * 1024 * 2000)
 extern char trans_cache_buf[TRANS_CACHE_SIZE];
 extern std::size_t trans_cache_buf_top;
+extern u64 trans_cache_generation;
+void InvalidateDynComDecodedCache();

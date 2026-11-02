@@ -120,6 +120,8 @@ if (ENABLE_WEB_SERVICE)
 endif()
 
 if (CITRA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(citra-core-cache-self-test core_cache_self_test.cpp)
+    target_link_libraries(citra-core-cache-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(citra-raster-self-test raster_self_test.cpp)
     target_link_libraries(citra-raster-self-test PRIVATE core common nihstro-headers ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(citra-no-jit-probe no_jit_probe.cpp)

@@ -46,6 +46,7 @@ jobs:
         if: matrix.platform == 'mac'
         run: |
           work/build-mac/bin/citra-no-jit-probe --self-test work/io-self-test
+          work/build-mac/bin/citra-core-cache-self-test
           CARA_RASTER_THREADS=1 work/build-mac/bin/citra-raster-self-test
           CARA_RASTER_THREADS=4 work/build-mac/bin/citra-raster-self-test
       - name: Package unsigned iOS app

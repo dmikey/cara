@@ -8,6 +8,12 @@
 
 char trans_cache_buf[TRANS_CACHE_SIZE];
 size_t trans_cache_buf_top = 0;
+u64 trans_cache_generation = 1;
+
+void InvalidateDynComDecodedCache() {
+    trans_cache_buf_top = 0;
+    ++trans_cache_generation;
+}
 
 static void* AllocBuffer(std::size_t size) {
     std::size_t start = trans_cache_buf_top;

@@ -255,6 +255,7 @@ public:
     // TODO(bunnei): Move this cache to a better place - it should be per codeset (likely per
     // process for our purposes), not per ARMul_State (which tracks CPU core state).
     std::unordered_map<u32, std::size_t> instruction_cache;
+    u64 instruction_cache_generation = 0;
 
 private:
     void ResetMPCoreCP15Registers();
