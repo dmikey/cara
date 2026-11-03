@@ -1,0 +1,325 @@
+{
+  "name": "Cara Carbon Duo",
+  "identifier": "com.dmikey.cara.carbon-duo.ipad.landscape.v1",
+  "gameTypeIdentifier": "com.dmikey.cara.game.3ds",
+  "debug": false,
+  "representations": {
+    "ipad": {
+      "standard": {
+        "landscape": {
+          "assets": {
+            "resizable": "carbon-duo-landscape.pdf"
+          },
+          "mappingSize": {
+            "width": 2420,
+            "height": 1668
+          },
+          "items": [
+            {
+              "inputs": [
+                "zl"
+              ],
+              "frame": {
+                "x": 130,
+                "y": 300,
+                "width": 240,
+                "height": 96
+              },
+              "extendedEdges": {
+                "top": 18,
+                "bottom": 18,
+                "left": 18,
+                "right": 18
+              }
+            },
+            {
+              "inputs": [
+                "l"
+              ],
+              "frame": {
+                "x": 130,
+                "y": 430,
+                "width": 240,
+                "height": 96
+              },
+              "extendedEdges": {
+                "top": 18,
+                "bottom": 18,
+                "left": 18,
+                "right": 18
+              }
+            },
+            {
+              "inputs": [
+                "zr"
+              ],
+              "frame": {
+                "x": 2050,
+                "y": 300,
+                "width": 240,
+                "height": 96
+              },
+              "extendedEdges": {
+                "top": 18,
+                "bottom": 18,
+                "left": 18,
+                "right": 18
+              }
+            },
+            {
+              "inputs": [
+                "r"
+              ],
+              "frame": {
+                "x": 2050,
+                "y": 430,
+                "width": 240,
+                "height": 96
+              },
+              "extendedEdges": {
+                "top": 18,
+                "bottom": 18,
+                "left": 18,
+                "right": 18
+              }
+            },
+            {
+              "inputs": {
+                "x": "circlePadX",
+                "y": "circlePadY"
+              },
+              "frame": {
+                "x": 164,
+                "y": 604,
+                "width": 292,
+                "height": 292
+              },
+              "extendedEdges": {
+                "top": 14,
+                "bottom": 14,
+                "left": 14,
+                "right": 14
+              },
+              "thumbstick": {
+                "name": "thumbstick.png",
+                "width": 175.2,
+                "height": 175.2
+              }
+            },
+            {
+              "inputs": {
+                "x": "cStickX",
+                "y": "cStickY"
+              },
+              "frame": {
+                "x": 2014,
+                "y": 654,
+                "width": 192,
+                "height": 192
+              },
+              "extendedEdges": {
+                "top": 14,
+                "bottom": 14,
+                "left": 14,
+                "right": 14
+              },
+              "thumbstick": {
+                "name": "thumbstick.png",
+                "width": 115.19999999999999,
+                "height": 115.19999999999999
+              }
+            },
+            {
+              "inputs": {
+                "up": "up",
+                "down": "down",
+                "left": "left",
+                "right": "right"
+              },
+              "frame": {
+                "x": 165,
+                "y": 1095,
+                "width": 290,
+                "height": 290
+              },
+              "extendedEdges": {
+                "top": 18,
+                "bottom": 18,
+                "left": 18,
+                "right": 18
+              }
+            },
+            {
+              "inputs": [
+                "x"
+              ],
+              "frame": {
+                "x": 2050,
+                "y": 1030,
+                "width": 120,
+                "height": 120
+              },
+              "extendedEdges": {
+                "top": 16,
+                "bottom": 16,
+                "left": 16,
+                "right": 16
+              }
+            },
+            {
+              "inputs": [
+                "a"
+              ],
+              "frame": {
+                "x": 2200,
+                "y": 1180,
+                "width": 120,
+                "height": 120
+              },
+              "extendedEdges": {
+                "top": 16,
+                "bottom": 16,
+                "left": 16,
+                "right": 16
+              }
+            },
+            {
+              "inputs": [
+                "b"
+              ],
+              "frame": {
+                "x": 2050,
+                "y": 1330,
+                "width": 120,
+                "height": 120
+              },
+              "extendedEdges": {
+                "top": 16,
+                "bottom": 16,
+                "left": 16,
+                "right": 16
+              }
+            },
+            {
+              "inputs": [
+                "y"
+              ],
+              "frame": {
+                "x": 1900,
+                "y": 1180,
+                "width": 120,
+                "height": 120
+              },
+              "extendedEdges": {
+                "top": 16,
+                "bottom": 16,
+                "left": 16,
+                "right": 16
+              }
+            },
+            {
+              "inputs": [
+                "select"
+              ],
+              "frame": {
+                "x": 940,
+                "y": 1570,
+                "width": 160,
+                "height": 60
+              },
+              "extendedEdges": {
+                "top": 16,
+                "bottom": 16,
+                "left": 16,
+                "right": 16
+              }
+            },
+            {
+              "inputs": [
+                "menu"
+              ],
+              "frame": {
+                "x": 1130,
+                "y": 1570,
+                "width": 160,
+                "height": 60
+              },
+              "extendedEdges": {
+                "top": 16,
+                "bottom": 16,
+                "left": 16,
+                "right": 16
+              }
+            },
+            {
+              "inputs": [
+                "start"
+              ],
+              "frame": {
+                "x": 1320,
+                "y": 1570,
+                "width": 160,
+                "height": 60
+              },
+              "extendedEdges": {
+                "top": 16,
+                "bottom": 16,
+                "left": 16,
+                "right": 16
+              }
+            },
+            {
+              "inputs": {
+                "x": "touchScreenX",
+                "y": "touchScreenY"
+              },
+              "frame": {
+                "x": 794,
+                "y": 900,
+                "width": 832,
+                "height": 624
+              },
+              "extendedEdges": {
+                "top": 0,
+                "bottom": 0,
+                "left": 0,
+                "right": 0
+              }
+            }
+          ],
+          "screens": [
+            {
+              "inputFrame": {
+                "x": 0,
+                "y": 0,
+                "width": 400,
+                "height": 240
+              },
+              "outputFrame": {
+                "x": 610,
+                "y": 120,
+                "width": 1200,
+                "height": 720
+              }
+            },
+            {
+              "inputFrame": {
+                "x": 40,
+                "y": 240,
+                "width": 320,
+                "height": 240
+              },
+              "outputFrame": {
+                "x": 794,
+                "y": 900,
+                "width": 832,
+                "height": 624
+              }
+            }
+          ],
+          "translucent": false
+        }
+      }
+    }
+  }
+}

@@ -12,7 +12,7 @@
 #include "video_core/regs_shader.h"
 #include "video_core/shader/shader.h"
 #include "video_core/shader/shader_interpreter.h"
-#if defined(CITRA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
+#if defined(CARA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
 #include "video_core/shader/shader_jit_x64.h"
 #endif // ARCHITECTURE_x86_64
 #include "video_core/video_core.h"
@@ -134,13 +134,13 @@ void GSUnitState::ConfigOutput(const ShaderRegs& config) {
 
 MICROPROFILE_DEFINE(GPU_Shader, "GPU", "Shader", MP_RGB(50, 50, 240));
 
-#if defined(CITRA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
+#if defined(CARA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
 static std::unique_ptr<JitX64Engine> jit_engine;
 #endif // ARCHITECTURE_x86_64
 static InterpreterEngine interpreter_engine;
 
 ShaderEngine* GetEngine() {
-#if defined(CITRA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
+#if defined(CARA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
     // TODO(yuriks): Re-initialize on each change rather than being persistent
     if (VideoCore::g_shader_jit_enabled) {
         if (jit_engine == nullptr) {
@@ -154,7 +154,7 @@ ShaderEngine* GetEngine() {
 }
 
 void Shutdown() {
-#if defined(CITRA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
+#if defined(CARA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
     jit_engine = nullptr;
 #endif // ARCHITECTURE_x86_64
 }

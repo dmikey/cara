@@ -75,7 +75,7 @@ layout (std140) uniform shader_data {
     vec4 tev_combiner_buffer_color;
     vec4 clip_coef;
 )"
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     "    vec4 citra_viewport;\n"
 #endif
 R"(};
@@ -139,7 +139,7 @@ PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs) {
     state.scissor_test_mode = regs.rasterizer.scissor_test.mode;
 
     state.depthmap_enable = regs.rasterizer.depthmap_enable;
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     state.depth_bits = regs.framebuffer.framebuffer.depth_format == Pica::FramebufferRegs::DepthFormat::D16 ? 16 : 24;
 #endif
 
@@ -1614,7 +1614,7 @@ vec4 secondary_fragment_color = vec4(0.0);
     // Recover PICA z/w before applying its depth scale/offset. Native GLES maps
     // PICA's [-w, 0] clip range to the full GL clip range in the vertex shader;
     // other backends retain the original position and undo GL's default mapping.
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     out += "float z_over_w = gl_FragCoord.z - 1.0;\n";
 #else
     out += "float z_over_w = 2.0 * gl_FragCoord.z - 1.0;\n";
@@ -1716,7 +1716,7 @@ do {
 } while ((old = imageAtomicCompSwap(shadow_buffer, image_coord, old, new)) != old2);
 )";
     } else {
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
         if (!std::getenv("CARA_RAW_DEPTH")) {
             const u32 levels = (1u << state.depth_bits) - 1;
             out += fmt::format("gl_FragDepth = floor(clamp(depth, 0.0, 1.0) * {0}.0) / {0}.0;\n", levels);
@@ -1757,7 +1757,7 @@ do {
 }
 
 static std::string NativeVertexSnapCode() {
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     if (!std::getenv("CARA_UNSNAPPED_VERTICES"))
         return R"(
 if (gl_Position.w > 0.0 && all(greaterThan(citra_viewport.zw, vec2(0.0)))) {
@@ -1772,7 +1772,7 @@ if (gl_Position.w > 0.0 && all(greaterThan(citra_viewport.zw, vec2(0.0)))) {
 
 std::string GenerateTrivialVertexShader(bool separable_shader) {
     std::string out;
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     out += "#define CARA_FULL_DEPTH_RANGE 1\n";
 #endif
     if (separable_shader) {
@@ -1902,14 +1902,14 @@ layout (std140) uniform vs_config {
             VSOutputAttributes::QUATERNION_Y, VSOutputAttributes::QUATERNION_Z, VSOutputAttributes::QUATERNION_W});
         out += GetVertexInterfaceDeclaration(true, false);
         out += UniformBlockDef;
-        out += "uniform highp sampler2D citra_vertex_inputs;\n";
+        out += "uniform highp sampler2D cara_vertex_inputs;\n";
         out += program_source;
         out += "void citra_run_vertex(int vertex_id) {\n";
         const IOSVertexInputLayout layout(ios_input_mask);
         for (u32 i = 0; i < used_regs.size(); ++i) {
             if (used_regs[i]) {
                 if (layout.offsets[i] >= 0) {
-                    out += fmt::format("int index{0} = vertex_id * {1} + {2};\nvs_in_reg{0} = texelFetch(citra_vertex_inputs, ivec2(index{0} % {3}, index{0} / {3}), 0);\n", i, layout.stride, layout.offsets[i], IOS_VERTEX_INPUT_WIDTH);
+                    out += fmt::format("int index{0} = vertex_id * {1} + {2};\nvs_in_reg{0} = texelFetch(cara_vertex_inputs, ivec2(index{0} % {3}, index{0} / {3}), 0);\n", i, layout.stride, layout.offsets[i], IOS_VERTEX_INPUT_WIDTH);
                 } else {
                     out += fmt::format("vs_in_reg{} = vec4(0.0);\n", i);
                 }

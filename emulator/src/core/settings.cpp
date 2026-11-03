@@ -19,7 +19,7 @@ namespace Settings {
 Values values{};
 
 void Apply() {
-#ifndef CITRA_ENABLE_JIT
+#ifndef CARA_ENABLE_JIT
     values.use_cpu_jit = false;
     values.use_shader_jit = false;
 #endif

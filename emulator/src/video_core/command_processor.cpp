@@ -288,7 +288,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
             break;
         }
 
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
         ++Common::FrameTiming::counters.cpu_vertex_draws;
 #endif
         // Processes information about internal vertex attributes to figure out how a vertex is

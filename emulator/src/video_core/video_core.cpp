@@ -60,7 +60,7 @@ ResultStatus Init(Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
     g_memory = &memory;
     Pica::Init();
 
-#ifdef CITRA_SOFTWARE_PRESENTATION
+#ifdef CARA_SOFTWARE_PRESENTATION
     Settings::values.use_hw_renderer = false;
     Settings::values.use_hw_shader = false;
     g_renderer = std::make_unique<RendererSoftware>(window);

@@ -100,7 +100,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error) {
     OGLBuffer uniform_buffer, feedback_buffer, raster_uniforms; uniform_buffer.Create(); feedback_buffer.Create(); raster_uniforms.Create();
     OGLVertexArray vao; vao.Create(); glBindVertexArray(vao.handle);
     glUseProgram(program);
-    glUniform1i(glGetUniformLocation(program, "citra_vertex_inputs"), 7);
+    glUniform1i(glGetUniformLocation(program, "cara_vertex_inputs"), 7);
     glUniformBlockBinding(program, glGetUniformBlockIndex(program, "vs_config"), 0);
     const GLvec4 viewport = {13.0f, 7.0f, 200.25f, 120.125f};
     UniformData raster_data{};

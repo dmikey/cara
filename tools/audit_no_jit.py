@@ -12,10 +12,10 @@ parser.add_argument('platform', choices=['mac', 'ios', 'simulator'])
 parser.add_argument('--renderer', choices=['software', 'gles3'], default='software')
 args = parser.parse_args()
 build = ROOT / 'work' / ('build-' + args.platform + ('-gles3' if args.renderer == 'gles3' else ''))
-binary = build / 'bin' / ('citra-no-jit-probe' if args.platform == 'mac' else 'citra-ios.app/citra-ios')
+binary = build / 'bin' / ('cara-no-jit-probe' if args.platform == 'mac' else 'cara-ios.app/cara-ios')
 cache = (build / 'CMakeCache.txt').read_text()
-assert 'CITRA_ENABLE_JIT:BOOL=OFF' in cache, 'JIT is not disabled in the cache'
-assert ('CITRA_SOFTWARE_PRESENTATION:BOOL=' + ('ON' if args.renderer == 'software' else 'OFF')) in cache
+assert 'CARA_ENABLE_JIT:BOOL=OFF' in cache, 'JIT is not disabled in the cache'
+assert ('CARA_SOFTWARE_PRESENTATION:BOOL=' + ('ON' if args.renderer == 'software' else 'OFF')) in cache
 commands = (build / 'build.ninja').read_text()
 for excluded in ['arm/dynarmic/arm_dynarmic.cpp.o', 'shader/shader_jit_x64.cpp.o']:
     assert excluded not in commands, 'Unexpected JIT object: ' + excluded

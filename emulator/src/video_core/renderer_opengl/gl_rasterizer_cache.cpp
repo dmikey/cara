@@ -342,7 +342,7 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
 
 static void BlitTextures(const Surface& src, const Common::Rectangle<u32>& src_rect,
                          const Surface& dst, const Common::Rectangle<u32>& dst_rect) {
-#ifndef CITRA_IOS_GLES
+#ifndef CARA_IOS_GLES
     if (src->pixel_format == dst->pixel_format &&
         src->pixel_format < SurfaceParams::PixelFormat::IA8 && src_rect.bottom < src_rect.top) {
         // same color format, same size, don't flip vertically
@@ -784,7 +784,7 @@ GLuint CachedSurface::GetTextureCopyHandle() {
         texture_copy.Create();
         AllocateSurfaceTexture(texture_copy.handle, GetFormatTuple(pixel_format), GetScaledWidth(), GetScaledHeight());
     }
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     const Common::Rectangle<u32> rect{0, GetScaledHeight(), GetScaledWidth(), 0};
     BlitTextures(texture.handle, rect, texture_copy.handle, rect, type);
 #else

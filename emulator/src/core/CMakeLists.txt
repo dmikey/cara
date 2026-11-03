@@ -471,7 +471,7 @@ if (ENABLE_WEB_SERVICE)
     target_link_libraries(core PRIVATE web_service)
 endif()
 
-if (CITRA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
+if (CARA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
     target_sources(core PRIVATE
         arm/dynarmic/arm_dynarmic.cpp
         arm/dynarmic/arm_dynarmic.h

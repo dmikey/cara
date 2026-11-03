@@ -9,7 +9,7 @@
 #include "audio_core/lle/lle.h"
 #include "common/logging/log.h"
 #include "core/arm/arm_interface.h"
-#if defined(CITRA_ENABLE_JIT) && (defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64))
+#if defined(CARA_ENABLE_JIT) && (defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64))
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #endif
 #include "core/arm/dyncom/arm_dyncom.h"
@@ -408,7 +408,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
     kernel = std::make_unique<Kernel::KernelSystem>(*memory, *timing, system_mode, n3ds_mode);
 
     if (Settings::values.use_cpu_jit) {
-#if defined(CITRA_ENABLE_JIT) && (defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64))
+#if defined(CARA_ENABLE_JIT) && (defined(ARCHITECTURE_x86_64) || defined(ARCHITECTURE_ARM64))
         for (u32 i = 0; i < 4; ++i) {
             cpu_cores[i] = std::make_shared<ARM_Dynarmic>(this, i, timing->GetTimer(i));
             kernel->GetThreadManager(i).SetCPU(cpu_cores[i].get());
@@ -445,7 +445,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
 
     telemetry_session = std::make_unique<Core::TelemetrySession>();
 
-#if !defined(CITRA_SOFTWARE_PRESENTATION) && !defined(CITRA_IOS)
+#if !defined(CARA_SOFTWARE_PRESENTATION) && !defined(CARA_IOS)
     rpc_server = std::make_unique<RPC::RPCServer>();
 #endif
 

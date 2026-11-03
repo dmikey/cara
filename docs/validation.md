@@ -37,7 +37,7 @@ An uninterrupted 3,600-frame run of the earlier GLES3 frontend completed in 71.4
 
 A larger per-draw vertex cache matched all 1,200 host screen hashes but barely reduced shader calls in the title scene; it was not retained. Further work should target GPU vertex processing and remaining CPU/driver costs, then validate real gameplay and sustained performance. CPU JIT remains excluded.
 
-For local, uncapped timing, launch a development app with `CITRA_BENCHMARK_FRAMES=3600` and `CARA_FRAME_TIMING=1`. `Documents/citra/frame-timing.json` records 600-frame windows with mean, median, p95, maximum, over-budget frame count, shader calls, and time in interpreted PICA shaders, GPU readback, and native presentation. Timers are opt-in and add measurement overhead; shader/readback/presentation timings are wall-clock scopes on the emulation thread, not hardware GPU timestamps. Normal play is paced to the emulated display rate of approximately 59.834 Hz.
+For local, uncapped timing, launch a development app with `CARA_BENCHMARK_FRAMES=3600` and `CARA_FRAME_TIMING=1`. `Documents/citra/frame-timing.json` records 600-frame windows with mean, median, p95, maximum, over-budget frame count, shader calls, and time in interpreted PICA shaders, GPU readback, and native presentation. Timers are opt-in and add measurement overhead; shader/readback/presentation timings are wall-clock scopes on the emulation thread, not hardware GPU timestamps. Normal play is paced to the emulated display rate of approximately 59.834 Hz.
 
 ## GLES3 GPU vertex processing
 
@@ -47,13 +47,13 @@ Apple's GLES linker crashed on the first generated vertex program's switch/fallt
 
 The GPU-vertex 3,600-frame test completed in 45.6867 seconds (78.7975 FPS uncapped), followed by 45.2674 seconds (79.5274 FPS) with decoded-input reuse. Both runs recorded 382,984 accepted accelerated batches, 125,132,880 expanded vertices, zero CPU vertex draws and zero paused seconds, with CPU JIT disabled. In the latter run, the final 600 frames averaged 15.27 ms, but p95 was 18.47 ms and 112 frames exceeded the 16.71 ms budget. The opening-600 top image was pixel-identical to the earlier renderer; the frame-3600 top image matched 99.88% of pixels exactly, with a maximum channel difference of 9/255. These are bounded boot/title tests with audio off, not a full-game locked-60 claim.
 
-`CITRA_BENCHMARK_FRAMES` remains uncapped unless `CARA_PACED_BENCHMARK=1` is also present. Paced benchmark receipts report `paced` and `late_paced_frames` (frames that finished more than 1 ms after their scheduled deadline). In paced timing reports, frame intervals include intentional sleep, so use uncapped reports to measure rendering headroom. Shader compilation can still cause first-use hitches. The next validation target is sustained playable scenes, followed by shader warmup/cache work and audio.
+`CARA_BENCHMARK_FRAMES` remains uncapped unless `CARA_PACED_BENCHMARK=1` is also present. Paced benchmark receipts report `paced` and `late_paced_frames` (frames that finished more than 1 ms after their scheduled deadline). In paced timing reports, frame intervals include intentional sleep, so use uncapped reports to measure rendering headroom. Shader compilation can still cause first-use hitches. The next validation target is sustained playable scenes, followed by shader warmup/cache work and audio.
 
 ## New 3DS interpreter cache regression
 
 A user-supplied Xenoblade Chronicles 3D USA Rev 1 dump (`000400000F700100`) selects MMJ's existing New 3DS override and multicore scheduling path. The initial host interpreter run crashed during startup after its first display frame. The interpreter stored decoded instructions in one shared arena but retained independent per-core lookup tables. Resetting the arena on one core left another core's offsets pointing into overwritten records.
 
-The shared arena now has an invalidation generation, checked before each block lookup. A synthetic two-core regression runs distinct ARM `MOV` instructions at the same guest address, overwrites the shared arena, then resumes the first core. Without the generation check it deterministically returns the second core's value (29 rather than 17); with the fix all 17 executions pass. This is decoded instruction data, not generated executable code. `citra-core-cache-self-test` now runs in host CI.
+The shared arena now has an invalidation generation, checked before each block lookup. A synthetic two-core regression runs distinct ARM `MOV` instructions at the same guest address, overwrites the shared arena, then resumes the first core. Without the generation check it deterministically returns the second core's value (29 rather than 17); with the fix all 17 executions pass. This is decoded instruction data, not generated executable code. `cara-core-cache-self-test` now runs in host CI.
 
 After the fix, a local macOS software-renderer test completed 436 display frames in 30.1064 seconds (14.482 FPS), returning success and rendering a loading animation. This establishes progress past the original crash, not physical-iPad or GPU performance for Xenoblade. Its 4 GB dump was copied successfully into private app storage after a transfer retry. Device execution must be validated separately. iOS benchmark receipts now include `new_3ds`, and each ROM startup resets the frontend mode before title overrides are applied.
 
@@ -101,7 +101,7 @@ After the scenery repair, the user reported that A/Start did not advance
 Xenoblade. The frontend now delivers control touches without the scroll view's
 default delay, and retains each press until the emulated HID device polls it.
 Releases still end held input normally. Stop/background clears both held and
-pending input. `citra-input-self-test` covers taps that begin and end between HID
+pending input. `cara-input-self-test` covers taps that begin and end between HID
 updates, holds, simultaneous buttons and resets; it runs in host CI.
 
 On the physical iPad, temporary input tracing showed UIKit A presses reaching
@@ -158,7 +158,7 @@ multicore-cache, native I/O and raster checks passed.
 
 For temporal-artifact diagnosis only, `CARA_CAPTURE_BURST_START` and
 `CARA_CAPTURE_BURST_COUNT` capture 1–120 consecutive frames (default 36),
-requiring `CITRA_CAPTURE_FRAMES`. Burst images are written to the app's private
+requiring `CARA_CAPTURE_FRAMES`. Burst images are written to the app's private
 `Documents/capture-burst` directory. PNG capture can affect timing, so these
 bursts are excluded from performance comparisons.
 
@@ -253,7 +253,7 @@ clocks or GPU waits run in the default launch.
 
 ## CPU interpreter overhead experiments
 
-The supplied build commands now select `CITRA_INTERPRETER_GUEST_DEBUG=OFF`.
+The supplied build commands now select `CARA_INTERPRETER_GUEST_DEBUG=OFF`.
 The core keeps its upstream guest-debugger path when that option is ON; use
 `tools/build.py ... --guest-debugger` to request it. With polling omitted, the
 ARM/Thumb state bit is synchronized at decoded-block boundaries instead of on
@@ -289,3 +289,22 @@ A physical-iPad scheduling experiment successfully changed the emulation worker
 from default QoS (21) to user-interactive QoS (33). The 24 matching heavy-intro
 windows changed only from 30.042533 ms to 29.707080 ms on average, about 1%.
 That scheduling experiment was not retained in the default implementation.
+
+## Files, skins, and folder-based save sync
+
+ROM-free host checks: `cara-skin-self-test` validates the bundled archive,
+unsafe ZIP rejection, layout geometry and analog/touch mapping;
+`cara-save-sync-self-test` uses two local device roots and one shared folder to
+check bidirectional transfer, ancestry, conflicting edits, backup restoration,
+deletions, corrupt downloads, and ROM/path exclusion. These are local-folder
+simulations, not evidence of iCloud server upload or physical finger input.
+Both checks are included in the macOS GitHub build.
+
+Device checks: import a skin and open a game through Files, exercise simultaneous
+buttons/analog/touch controls, select an iCloud Drive folder, save and stop the
+game, then verify the snapshot arrives on a second device. Edit both devices
+offline to verify conflict UI. An installed app or successful local folder write
+alone does not establish cloud sync. `CARA_SKIN_SELF_TEST=1` writes a synthetic
+UIKit/HID check; `CARA_CAPTURE_SKIN_UI=1` writes a UIKit composite using diagnostic
+game frames. Neither should be described as a physical touch test or literal
+screen recording.

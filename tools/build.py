@@ -38,19 +38,21 @@ def main():
     build = ROOT / 'work' / ('build-' + args.platform + suffix)
     command = [cmake, '-S', str(source), '-B', str(build), '-G', 'Ninja',
                '-DCMAKE_MAKE_PROGRAM=' + ninja, '-DCMAKE_BUILD_TYPE=Release',
-               '-DCITRA_INTERPRETER_GUEST_DEBUG=' + ('ON' if args.guest_debugger else 'OFF'),
-               '-DCITRA_ENABLE_JIT=OFF', '-DCITRA_SOFTWARE_PRESENTATION=ON',
+               '-DCARA_INTERPRETER_GUEST_DEBUG=' + ('ON' if args.guest_debugger else 'OFF'),
+               '-DCARA_ENABLE_JIT=OFF', '-DCARA_SOFTWARE_PRESENTATION=ON',
                '-DENABLE_QT=OFF', '-DENABLE_SDL2=OFF', '-DENABLE_WEB_SERVICE=OFF',
                '-DENABLE_CUBEB=OFF', '-DBOOST_ROOT=' + str(source / 'externals/boost'),
                '-DBoost_NO_SYSTEM_PATHS=ON', '-DBoost_NO_BOOST_CMAKE=ON']
-    targets = ['citra-no-jit-probe', 'citra-raster-self-test', 'citra-core-cache-self-test', 'citra-interval-cache-self-test', 'citra-input-self-test']
+    targets = ['cara-no-jit-probe', 'cara-raster-self-test', 'cara-core-cache-self-test', 'cara-interval-cache-self-test', 'cara-input-self-test']
+    if args.platform == 'mac':
+        targets.extend(['cara-skin-self-test', 'cara-save-sync-self-test'])
     if args.platform != 'mac':
         command += ['-DCMAKE_SYSTEM_NAME=iOS', '-DCMAKE_OSX_ARCHITECTURES=arm64',
                     '-DCMAKE_OSX_SYSROOT=' + ('iphoneos' if args.platform == 'ios' else 'iphonesimulator'),
                     '-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0',
                     '-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY',
-                    '-DCITRA_IOS_HARDWARE_RENDERER=' + ('ON' if args.renderer == 'gles3' else 'OFF')]
-        targets = ['citra-ios']
+                    '-DCARA_IOS_HARDWARE_RENDERER=' + ('ON' if args.renderer == 'gles3' else 'OFF')]
+        targets = ['cara-ios']
     subprocess.run(command, check=True, env=env)
     subprocess.run([cmake, '--build', str(build), '--target', *targets, '-j', str(args.jobs)], check=True, env=env)
 

@@ -105,7 +105,7 @@ static int SelfTest(const std::string& output) {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "Usage: citra-no-jit-probe ROM OUTPUT_DIRECTORY [seconds] [target_frames]\n";
+        std::cerr << "Usage: cara-no-jit-probe ROM OUTPUT_DIRECTORY [seconds] [target_frames]\n";
         return 2;
     }
     if (std::string(argv[1]) == "--self-test") return SelfTest(argv[2]);

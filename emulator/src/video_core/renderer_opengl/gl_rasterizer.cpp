@@ -159,19 +159,19 @@ RasterizerOpenGL::RasterizerOpenGL()
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, null_data);
 
     glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     AllocateIOSLUT(GL_RG32F, texture_lf_buffer.GetSize());
 #else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_lf_buffer.GetHandle());
 #endif
     glActiveTexture(TextureUnits::TextureBufferLUT_RG.Enum());
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     AllocateIOSLUT(GL_RG32F, texture_buffer.GetSize());
 #else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_buffer.GetHandle());
 #endif
     glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     AllocateIOSLUT(GL_RGBA32F, texture_buffer.GetSize());
 #else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, texture_buffer.GetHandle());
@@ -429,7 +429,7 @@ bool RasterizerOpenGL::SetupGeometryShader() {
     MICROPROFILE_SCOPE(OpenGL_GS);
     const auto& regs = Pica::g_state.regs;
     if (regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No) {
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
         shader_program_manager->UseTrivialGeometryShader();
 #else
         shader_program_manager->UseFixedGeometryShader(regs);
@@ -448,7 +448,7 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     }
     if (!SetupVertexShader())
         return false;
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     if (!PrepareIOSVertices(is_indexed)) return false;
 #endif
 
@@ -458,7 +458,7 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     return Draw(true, is_indexed);
 }
 
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
 bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexPrepare);
     constexpr u32 MAX_VERTICES = 16384;
@@ -539,7 +539,7 @@ static GLenum GetCurrentPrimitiveMode() {
 }
 
 bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     state.draw.vertex_array = hw_vao.handle;
     shader_program_manager->ApplyTo(state);
     if (!state.draw.shader_program) return false;
@@ -932,7 +932,7 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     state.viewport.width = static_cast<GLsizei>(viewport_rect_unscaled.GetWidth() * res_scale);
     state.viewport.height = static_cast<GLsizei>(viewport_rect_unscaled.GetHeight() * res_scale);
 
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     const GLvec4 native_viewport = {
         static_cast<float>(regs.rasterizer.viewport_corner.x),
         static_cast<float>(regs.rasterizer.viewport_corner.y),
@@ -1231,7 +1231,7 @@ void RasterizerOpenGL::NotifyPicaRegisterChanged(u32 id) {
         break;
     case PICA_REG_INDEX(framebuffer.framebuffer.depth_format):
         SyncStencilTest();
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
         shader_dirty = true;
 #endif
         break;
@@ -2193,7 +2193,7 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     GLintptr offset;
     bool invalidate;
     std::size_t bytes_used = 0;
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     const GLuint previous_vertex_buffer = OpenGLState::BindVertexBuffer(texture_lf_buffer.GetHandle());
     std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
 #else
@@ -2251,10 +2251,10 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         uniform_block_data.fog_lut_dirty = false;
     }
 
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG, offset, buffer, bytes_used);
 #endif
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     texture_lf_buffer.Unmap(bytes_used);
     OpenGLState::BindVertexBuffer(previous_vertex_buffer);
 #else
@@ -2278,7 +2278,7 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
     GLintptr offset;
     bool invalidate;
     std::size_t bytes_used = 0;
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     const GLuint previous_vertex_buffer = OpenGLState::BindVertexBuffer(texture_buffer.GetHandle());
     std::tie(buffer, offset, invalidate) = texture_buffer.Map(max_size, sizeof(GLvec4));
 #else
@@ -2376,11 +2376,11 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
         uniform_block_data.proctex_diff_lut_dirty = false;
     }
 
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     UploadIOSLUT(texture_buffer_lut_rg.handle, TextureUnits::TextureBufferLUT_RG.id, GL_RG, offset, buffer, bytes_used);
     UploadIOSLUT(texture_buffer_lut_rgba.handle, TextureUnits::TextureBufferLUT_RGBA.id, GL_RGBA, offset, buffer, bytes_used);
 #endif
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     texture_buffer.Unmap(bytes_used);
     OpenGLState::BindVertexBuffer(previous_vertex_buffer);
 #else

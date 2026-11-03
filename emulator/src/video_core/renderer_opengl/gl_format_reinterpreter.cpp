@@ -478,7 +478,7 @@ class CopyImageSubData final : public FormatReinterpreterBase {
 };
 
 FormatReinterpreterOpenGL::FormatReinterpreterOpenGL() {
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     // Unsupported reinterpretations use the existing cache flush/reload path.
     return;
 #endif

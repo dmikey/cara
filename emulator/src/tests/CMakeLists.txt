@@ -14,7 +14,7 @@ add_executable(tests
     tests.cpp
 )
 
-if (CITRA_ENABLE_JIT AND ARCHITECTURE_x86_64)
+if (CARA_ENABLE_JIT AND ARCHITECTURE_x86_64)
     target_sources(tests
         PRIVATE
             video_core/shader/shader_jit_x64_compiler.cpp

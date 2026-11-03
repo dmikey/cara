@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_opengl/gl_ios_compat.h"
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
 #include <algorithm>
 
 namespace OpenGL {

@@ -267,7 +267,7 @@ private:
 
     /// Setup geometry shader for AccelerateDrawBatch
     bool SetupGeometryShader();
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     bool PrepareIOSVertices(bool is_indexed);
     OGLTexture ios_vertex_fallback_texture;
     struct IOSVertexUpload {

@@ -38,24 +38,24 @@ python3 tools/build.py ios --renderer gles3
 python3 tools/audit_no_jit.py ios --renderer gles3
 ```
 
-Its unsigned app is at `work/build-ios-gles3/bin/citra-ios.app`. This uses iOS's native GLES3 driver and keeps the guest ARM interpreter. GPU shader compilation is separate from CPU JIT.
+Its unsigned app is at `work/build-ios-gles3/bin/cara-ios.app`. This uses iOS's native GLES3 driver and keeps the guest ARM interpreter. GPU shader compilation is separate from CPU JIT.
 
-The unsigned app is at `work/build-ios/bin/citra-ios.app`. Signing and physical-device installation are separate local steps using your own Apple development credentials. CI never signs or installs apps.
+The unsigned app is at `work/build-ios/bin/cara-ios.app`. Signing and physical-device installation are separate local steps using your own Apple development credentials. CI never signs or installs apps.
 
 For the host probe and its ROM-free file I/O regression check:
 
 ```sh
 python3 tools/build.py mac
 python3 tools/audit_no_jit.py mac
-work/build-mac/bin/citra-no-jit-probe --self-test work/io-self-test
-CARA_RASTER_THREADS=1 work/build-mac/bin/citra-raster-self-test
-CARA_RASTER_THREADS=4 work/build-mac/bin/citra-raster-self-test
+work/build-mac/bin/cara-no-jit-probe --self-test work/io-self-test
+CARA_RASTER_THREADS=1 work/build-mac/bin/cara-raster-self-test
+CARA_RASTER_THREADS=4 work/build-mac/bin/cara-raster-self-test
 ```
 
 Optionally test a game you supply locally:
 
 ```sh
-work/build-mac/bin/citra-no-jit-probe /absolute/path/to/game.3ds work/local-probe 30
+work/build-mac/bin/cara-no-jit-probe /absolute/path/to/game.3ds work/local-probe 30
 ```
 
 The probe writes logs, isolated user data, and PPM screen captures only under the output directory you provide. `work/` is ignored. Game files are never fetched by the tools or CI.
@@ -75,3 +75,39 @@ The iOS shell provides file import, both screens, basic button/circle-pad contro
 ## GitHub builds
 
 Every push and pull request validates the bundled source and builds both unsigned ARM64 iOS renderer variants and the native macOS probe. All jobs audit the final binaries for excluded JIT and executable-memory facilities; the macOS job also runs the file I/O check and synthetic rasterization checks with one and four workers. Successful runs upload the unsigned iOS app or macOS probe plus the no-JIT audit report as workflow artifacts. No commercial game is required for CI.
+
+### Files, controller skins, and save sync
+
+Cara can open extracted `.3ds`, `.cci`, `.cxi`, `.3dsx`, and `.elf` files from
+**Menu → Open game**, or from **Open in Cara** in Files. Archives must be extracted
+first. Files are opened in place; keep the provider and original file available.
+**Open recent game** retains Files access with a system bookmark.
+
+**Menu → Choose iCloud save folder** opens the native folder picker. Select a
+folder in iCloud Drive on each device to share saves. Cara writes a `Cara Saves`
+subfolder there; iCloud Drive handles its upload and download. A successful local
+folder write does not confirm server upload. This also works with local folders
+and other writable Files providers, without CloudKit credentials.
+
+Only SD/NAND game save and extdata files are included. ROMs, title content,
+shader caches, and controller skins are excluded. Cara snapshots committed saves
+at an emulation boundary after a short quiet period and again after shutdown.
+Before opening a game, it checks cloud versions while the emulator is stopped.
+Stop the game to use **Sync saves now** or change folders. Concurrent edits prompt
+for a version; no conflict silently overwrites local saves. Checksummed immutable
+cloud snapshots and local `Documents/cara/SaveBackups` preserve recovery copies.
+History is retained rather than automatically pruned. Keep the app foregrounded
+long enough for pending provider writes; offline/provider failures remain visible
+and can be retried with Sync saves now.
+
+The included original **Carbon Duo** skin uses Delta's ZIP/`info.json`/PDF layout
+format with Cara's 3DS controls (Circle Pad, C-stick, ZL/ZR). Import `.deltaskin`
+or `.caraskin` from the menu or Files. Compatible DS layouts can be used as a
+starting point; Cara fits the native 3DS screens inside their display windows.
+This format support does not add 3DS emulation to Delta itself. Regenerate the
+bundled artwork/archive with `tools/make_skin.py` (ReportLab and Pillow required
+only for regeneration). All shipped skin assets are included in this repository.
+
+The shipping app and Cara-owned targets use the Cara name and bundle identifier
+`com.dmikey.cara`. Its bundled emulator engine is derived from Citra MMJ; upstream
+copyrights, GPL license notices, and provenance remain in the source.

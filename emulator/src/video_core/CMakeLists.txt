@@ -86,7 +86,7 @@ add_library(video_core STATIC
     video_core.h
 )
 
-if(CITRA_ENABLE_JIT AND ARCHITECTURE_x86_64)
+if(CARA_ENABLE_JIT AND ARCHITECTURE_x86_64)
     target_sources(video_core
         PRIVATE
             shader/shader_jit_x64.cpp
@@ -102,6 +102,6 @@ create_target_directory_groups(video_core)
 target_link_libraries(video_core PUBLIC common core)
 target_link_libraries(video_core PRIVATE glad nihstro-headers)
 
-if (CITRA_ENABLE_JIT AND ARCHITECTURE_x86_64)
+if (CARA_ENABLE_JIT AND ARCHITECTURE_x86_64)
     target_link_libraries(video_core PUBLIC xbyak)
 endif()

@@ -54,7 +54,7 @@ struct PicaFSConfigState {
     u8 combiner_buffer_input;
 
     Pica::RasterizerRegs::DepthBuffering depthmap_enable;
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     u32 depth_bits;
 #endif
     Pica::TexturingRegs::FogMode fog_mode;

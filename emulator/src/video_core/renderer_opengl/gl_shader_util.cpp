@@ -33,13 +33,13 @@ GLuint LoadShader(const char* source, GLenum type) {
                                      : "#version 330\n";
 
     std::string compatible_source(source);
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     version = R"(#version 300 es
 #define CITRA_GLES
 precision highp int;
 precision highp float;
 precision highp sampler2D;
-vec4 CitraLUTFetch(sampler2D lut, int index) {
+vec4 CaraLUTFetch(sampler2D lut, int index) {
     return texelFetch(lut, ivec2(index & 1023, index >> 10), 0);
 }
 )";
@@ -52,7 +52,7 @@ vec4 CitraLUTFetch(sampler2D lut, int index) {
     ReplaceAll("samplerBuffer", "sampler2D");
     ReplaceAll("precision highp uimage2D;", "");
     ReplaceAll("#define fma_safe(x, y, z) fma(x, y, z)", "#define fma_safe(x, y, z) ((x) * (y) + (z))");
-    ReplaceAll("texelFetch(texture_buffer_lut_", "CitraLUTFetch(texture_buffer_lut_");
+    ReplaceAll("texelFetch(texture_buffer_lut_", "CaraLUTFetch(texture_buffer_lut_");
 #endif
     const char* debug_type;
     switch (type) {
@@ -144,7 +144,7 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
         }
     }
 
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     if (result != GL_TRUE) {
         glDeleteProgram(program_id);
         return 0;

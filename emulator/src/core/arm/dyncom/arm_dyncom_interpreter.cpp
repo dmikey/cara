@@ -958,7 +958,7 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
 #define INC_PC(l) ptr += sizeof(arm_inst) + l
 #define INC_PC_STUB ptr += sizeof(arm_inst)
 
-#if defined(ANDROID) || defined(CITRA_NO_GUEST_DEBUGGER)
+#if defined(ANDROID) || defined(CARA_NO_GUEST_DEBUGGER)
 #define GDB_BP_CHECK
 #else
 #define GDB_BP_CHECK                                                                               \
@@ -1638,7 +1638,7 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
 
     LOAD_NZCVT;
 DISPATCH : {
-#ifdef CITRA_NO_GUEST_DEBUGGER
+#ifdef CARA_NO_GUEST_DEBUGGER
     // ARM/Thumb transitions end decoded blocks. Keep T visible to system calls
     // without repeating the same CPSR store after every guest instruction.
     cpu->Cpsr = (cpu->Cpsr & ~0x20u) | (cpu->TFlag << 5);
@@ -1676,7 +1676,7 @@ DISPATCH : {
         if (use_fast_lookup) fast = {pc, ptr, trans_cache_generation};
     }
 
-#if !defined(ANDROID) && !defined(CITRA_NO_GUEST_DEBUGGER)
+#if !defined(ANDROID) && !defined(CARA_NO_GUEST_DEBUGGER)
     // Find breakpoint if one exists within the block
     if (GDBStub::IsConnected()) {
         breakpoint_data =

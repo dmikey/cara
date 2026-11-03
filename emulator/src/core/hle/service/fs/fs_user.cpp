@@ -1,3 +1,4 @@
+#include "common/save_events.h"
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -350,6 +351,7 @@ void FS_USER::ControlArchive(Kernel::HLERequestContext& ctx) {
             result = ResultCode(FileSys::ErrCodes::ArchiveNotMounted, ErrorModule::FS,
                                 ErrorSummary::NotFound, ErrorLevel::Status);
         }
+        else Cara::save_commit_generation.fetch_add(1, std::memory_order_relaxed);
     } else if (action == 1) {
         // Action 1 : Retrieves a file's last-modified timestamp.
         u64 timestamp = 0;

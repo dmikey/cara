@@ -45,21 +45,23 @@ jobs:
       - name: Native file I/O regression check (no ROM required)
         if: matrix.platform == 'mac'
         run: |
-          work/build-mac/bin/citra-no-jit-probe --self-test work/io-self-test
-          work/build-mac/bin/citra-core-cache-self-test
-          CARA_DISABLE_FAST_DECODE_LOOKUP=1 work/build-mac/bin/citra-core-cache-self-test
-          work/build-mac/bin/citra-interval-cache-self-test
-          work/build-mac/bin/citra-input-self-test
-          CARA_RASTER_THREADS=1 work/build-mac/bin/citra-raster-self-test
-          CARA_RASTER_THREADS=4 work/build-mac/bin/citra-raster-self-test
+          work/build-mac/bin/cara-no-jit-probe --self-test work/io-self-test
+          work/build-mac/bin/cara-core-cache-self-test
+          CARA_DISABLE_FAST_DECODE_LOOKUP=1 work/build-mac/bin/cara-core-cache-self-test
+          work/build-mac/bin/cara-interval-cache-self-test
+          work/build-mac/bin/cara-input-self-test
+          work/build-mac/bin/cara-save-sync-self-test
+          work/build-mac/bin/cara-skin-self-test
+          CARA_RASTER_THREADS=1 work/build-mac/bin/cara-raster-self-test
+          CARA_RASTER_THREADS=4 work/build-mac/bin/cara-raster-self-test
       - name: Package unsigned iOS app
         if: matrix.platform == 'ios'
-        run: ditto -c -k --norsrc --noextattr --keepParent 'work/build-ios${{ matrix.suffix }}/bin/citra-ios.app' 'work/Cara-iOS-${{ matrix.renderer }}-unsigned.zip'
+        run: ditto -c -k --norsrc --noextattr --keepParent 'work/build-ios${{ matrix.suffix }}/bin/cara-ios.app' 'work/Cara-iOS-${{ matrix.renderer }}-unsigned.zip'
       - uses: actions/upload-artifact@v4
         with:
           name: cara-${{ matrix.platform }}-${{ matrix.renderer }}-no-jit
           if-no-files-found: error
           path: |
             work/Cara-iOS-*-unsigned.zip
-            work/build-${{ matrix.platform }}${{ matrix.suffix }}/bin/citra-no-jit-probe
+            work/build-${{ matrix.platform }}${{ matrix.suffix }}/bin/cara-no-jit-probe
             work/build-${{ matrix.platform }}${{ matrix.suffix }}/no-jit-audit.json
