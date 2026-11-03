@@ -929,7 +929,7 @@ VideoCore::ResultStatus RendererOpenGL::Init() {
         return VideoCore::ResultStatus::ErrorGenericDrivers;
     }
 
-#ifdef CITRA_IOS_GLES
+#ifdef CARA_IOS_GLES
     if (!GLAD_GL_ES_VERSION_3_0) {
 #else
     if (!(GLAD_GL_VERSION_3_3 || GLAD_GL_ES_VERSION_3_1)) {

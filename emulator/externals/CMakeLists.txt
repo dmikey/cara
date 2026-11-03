@@ -12,7 +12,7 @@ target_include_directories(catch-single-include INTERFACE catch/single_include)
 add_subdirectory(cryptopp)
 
 # Dynarmic
-if (CITRA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
+if (CARA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
     if (ARCHITECTURE_x86_64)
         # Dynarmic will skip defining xbyak if it's already defined, we then define it below
         add_library(xbyak INTERFACE)

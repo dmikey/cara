@@ -13,6 +13,12 @@ parser.add_argument('--renderer', choices=['software', 'gles3'], default='softwa
 args = parser.parse_args()
 build = ROOT / 'work' / ('build-' + args.platform + ('-gles3' if args.renderer == 'gles3' else ''))
 binary = build / 'bin' / ('cara-no-jit-probe' if args.platform == 'mac' else 'cara-ios.app/cara-ios')
+# Stale platform guards can compile but select desktop GL requirements on iOS.
+obsolete = re.compile(rb'\bCITRA_(?:IOS(?:_GLES|_HARDWARE_RENDERER)?|ENABLE_JIT|SOFTWARE_PRESENTATION|INTERPRETER_GUEST_DEBUG|NO_GUEST_DEBUGGER)\b')
+source_files = [p for p in (ROOT / 'emulator/src').rglob('*') if p.suffix in ('.cpp', '.h', '.mm', '.txt')]
+source_files.append(ROOT / 'emulator/externals/CMakeLists.txt')
+for source in source_files:
+    assert not obsolete.search(source.read_bytes()), 'Obsolete build switch in ' + str(source)
 cache = (build / 'CMakeCache.txt').read_text()
 assert 'CARA_ENABLE_JIT:BOOL=OFF' in cache, 'JIT is not disabled in the cache'
 assert ('CARA_SOFTWARE_PRESENTATION:BOOL=' + ('ON' if args.renderer == 'software' else 'OFF')) in cache
