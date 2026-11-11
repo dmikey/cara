@@ -21,5 +21,5 @@ void SetIOSAudioMuted(bool muted);
 bool IsIOSAudioMuted();
 bool IOSAudioOutputFailed();
 // Diagnostic snapshots are written by the emulation thread, never the playback callback.
-void WriteIOSAudioDiagnostics(const std::string& path);
+void WriteIOSAudioDiagnostics(const std::string& path, u64 requested, u64 supplied, u64 underruns);
 } // namespace AudioCore

@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <cstddef>
+#include <cstdlib>
 #include "audio_core/dsp_interface.h"
 #include "audio_core/sink.h"
 #include "audio_core/sink_details.h"
@@ -11,7 +12,7 @@
 
 namespace AudioCore {
 
-DspInterface::DspInterface() = default;
+DspInterface::DspInterface() : audio_diagnostics(std::getenv("CARA_AUDIO_DIAGNOSTICS") != nullptr) {}
 DspInterface::~DspInterface() {
     // Stop and join the output callback before its FIFO and time stretcher are destroyed.
     sink.reset();
@@ -67,6 +68,11 @@ void DspInterface::OutputCallback(s16* buffer, std::size_t num_frames) {
         frames_written = fifo.Pop(buffer, num_frames);
     }
 
+    if (audio_diagnostics) {
+        requested_frames.fetch_add(num_frames,std::memory_order_relaxed);
+        supplied_frames.fetch_add(frames_written,std::memory_order_relaxed);
+        underrun_callbacks.fetch_add(frames_written < num_frames,std::memory_order_relaxed);
+    }
     if (frames_written > 0) {
         std::memcpy(&last_frame[0], buffer + 2 * (frames_written - 1), 2 * sizeof(s16));
     }

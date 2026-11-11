@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <cstdlib>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <mutex>
@@ -34,6 +35,7 @@ struct Playback {
     const bool diagnostics=std::getenv("CARA_AUDIO_DIAGNOSTICS")!=nullptr;
     std::atomic<int> error{0};
     std::atomic<uint64_t> callbacks{0}, frames_submitted{0}, nonzero_frames{0}, changing_frames{0};
+    std::atomic<uint64_t> fill_nanoseconds{0}, max_fill_nanoseconds{0};
     s16 last_left=0,last_right=0;
     std::atomic<unsigned> peak{0};
 
@@ -46,11 +48,18 @@ struct Playback {
     void Fill(AudioQueueBufferRef buffer) noexcept {
         if (stopping.load(std::memory_order_acquire)) return;
         auto* output=static_cast<s16*>(buffer->mAudioData);
+        const auto fill_started=diagnostics?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
         try {
             if (callback) callback(output,buffer_frames);
             else std::fill_n(output,buffer_frames*2,0);
         } catch (...) {
             std::fill_n(output,buffer_frames*2,0); error.store(-1);
+        }
+        if (diagnostics) {
+            const auto ns=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-fill_started).count());
+            fill_nanoseconds.fetch_add(ns,std::memory_order_relaxed);
+            auto old=max_fill_nanoseconds.load();
+            while(ns>old && !max_fill_nanoseconds.compare_exchange_weak(old,ns)) {}
         }
         if (muted.load(std::memory_order_relaxed)) std::fill_n(output,buffer_frames*2,0);
         if (diagnostics) {
@@ -218,14 +227,17 @@ void SetIOSAudioPaused(bool paused) { if (auto state=Active()) state->SetPaused(
 void SetIOSAudioMuted(bool value) { muted.store(value,std::memory_order_relaxed); if (auto state=Active()) state->ApplyMute(); }
 bool IsIOSAudioMuted() { return muted.load(std::memory_order_relaxed); }
 bool IOSAudioOutputFailed() { if (auto state=Active()) return state->error.load()!=0; return false; }
-void WriteIOSAudioDiagnostics(const std::string& path) {
+void WriteIOSAudioDiagnostics(const std::string& path, u64 requested, u64 supplied, u64 underruns) {
     auto state=Active(); if (!state) return;
     UInt32 running=0,size=sizeof(running);
     { std::lock_guard<std::mutex> lock(state->control); if (state->queue) AudioQueueGetProperty(state->queue,kAudioQueueProperty_IsRunning,&running,&size); }
     @autoreleasepool {
         AVAudioSession* session=AVAudioSession.sharedInstance;
         NSString* route=session.currentRoute.outputs.firstObject.portType?:@"";
-        NSDictionary* report=@{@"backend":@"ios_audio_queue",@"sample_rate":@(native_sample_rate),
+        NSDictionary* report=@{@"backend":@"ios_audio_queue",@"dsp_requested_frames":@(requested),
+            @"dsp_supplied_frames":@(supplied),@"dsp_underrun_callbacks":@(underruns),
+            @"dsp_fill_total_ms":@(double(state->fill_nanoseconds.load())/1e6),
+            @"dsp_fill_max_ms":@(double(state->max_fill_nanoseconds.load())/1e6),@"sample_rate":@(native_sample_rate),
             @"channels":@2,@"frames_per_buffer":@(buffer_frames),@"buffers":@3,@"queue_running":@(running!=0),
             @"muted":@(IsIOSAudioMuted()),@"callbacks":@(state->callbacks.load()),
             @"frames_submitted":@(state->frames_submitted.load()),@"nonzero_frames":@(state->nonzero_frames.load()),

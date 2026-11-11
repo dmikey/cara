@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <vector>
 #include "audio_core/audio_types.h"
@@ -96,6 +97,10 @@ public:
     void SetSink(const std::string& sink_id, const std::string& audio_device_id);
     /// Get the current sink
     Sink& GetSink();
+    struct OutputCounters { u64 requested, supplied, underruns; };
+    OutputCounters GetOutputCounters() const {
+        return {requested_frames.load(), supplied_frames.load(), underrun_callbacks.load()};
+    }
     /// Enable/Disable audio stretching.
     void EnableStretching(bool enable);
 
@@ -107,6 +112,8 @@ private:
     void FlushResidualStretcherAudio();
     void OutputCallback(s16* buffer, std::size_t num_frames);
 
+    const bool audio_diagnostics;
+    std::atomic<u64> requested_frames{0}, supplied_frames{0}, underrun_callbacks{0};
     std::unique_ptr<Sink> sink;
     std::atomic<bool> perform_time_stretching = false;
     std::atomic<bool> flushing_time_stretcher = false;

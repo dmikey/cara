@@ -758,7 +758,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
             Common::FrameTiming::counters.enabled = std::getenv("CARA_FRAME_TIMING") != nullptr;
             s.init_clock = target_frames ? Settings::InitClock::FixedTime : Settings::InitClock::SystemTime;
             s.init_time = 946684801;
-            s.sink_id = std::getenv("CARA_AUDIO_DISABLED") ? "null" : "ios"; s.audio_volume = 1; s.enable_audio_stretching = true; s.shared_font_type = Settings::SharedFontType::Auto;
+            s.sink_id = std::getenv("CARA_AUDIO_DISABLED") ? "null" : "ios"; s.audio_volume = 1; s.enable_audio_stretching = std::getenv("CARA_AUDIO_NO_STRETCH")==nullptr; s.shared_font_type = Settings::SharedFontType::Auto;
             for (unsigned i=0; i<Settings::NativeButton::NumButtons; ++i)
                 s.current_input_profile.buttons[i] = "engine:ios,code:" + std::to_string(i);
             s.current_input_profile.analogs[0] = "engine:ios,index:0";
@@ -867,7 +867,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                     if (saveFrame && emuWindow->frames>=saveFrame) { saveFrame=0; std::fflush(nullptr); [saveSync captureCommittedSave]; }
                     result = system.RunLoop();
                     if (audio_diagnostics && emuWindow->frames >= audio_report_frame+60) {
-                        AudioCore::WriteIOSAudioDiagnostics(user+"audio-status.json"); audio_report_frame=emuWindow->frames;
+                        const auto audio=system.DSP().GetOutputCounters();
+                        AudioCore::WriteIOSAudioDiagnostics(user+"audio-status.json",audio.requested,audio.supplied,audio.underruns); audio_report_frame=emuWindow->frames;
                     }
                     if (!emuWindow->graphics_error.empty()) result = Core::System::ResultStatus::ErrorVideoCore;
                     if (result != Core::System::ResultStatus::Success) break;
