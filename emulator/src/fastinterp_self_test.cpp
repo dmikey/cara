@@ -5,6 +5,7 @@
 #include <memory>
 #include "core/arm/fastinterp/fastinterp.h"
 #include "core/arm/dyncom/arm_dyncom_interpreter.h"
+#include "core/arm/dyncom/arm_dyncom_trans.h"
 #include "core/arm/skyeye_common/armstate.h"
 #include "core/core.h"
 
@@ -28,7 +29,7 @@ int main() {
         old->Cpsr = cpsr; fast->SetCPSR(cpsr);
         for (unsigned i = 0; i < 15; ++i) { old->Reg[i] = random(); fast->SetReg(i, old->Reg[i]); }
         old->Reg[15] = 0x1000; fast->SetPC(0x1000 | thumb);
-        old->instruction_cache.clear(); fast->ClearInstructionCache();
+        InvalidateDynComDecodedCache(); old->instruction_cache.clear(); fast->ClearInstructionCache();
         old->NumInstrsToExecute = 1;
         InterpreterMainLoop(old.get(), timing.GetTimer(0).get()); fast->Step();
         for (int i = 0; i < 16; ++i) {
@@ -57,6 +58,25 @@ int main() {
         u32 ins = (random() & 1) ? (0x2000 | (random() & 0x1FFF)) : (0x4000 | (random() & 0x3FF));
         if (!check(ins, true)) return 1;
     }
+    // Whole-block execution exercises fusion, chaining and a finite ARM loop.
+    const std::array<u32, 6> loop{0xE3A00000, 0xE3A01014, 0xE0800001, 0xE2511001, 0x1AFFFFFC, 0xEAFFFFFE};
+    std::copy(loop.begin(), loop.end(), code.begin());
+    fast->ClearInstructionCache(); fast->SetCPSR(0x10); fast->SetPC(0x1000);
+    timing.GetTimer(0)->Advance(2000); fast->Run();
+    if (fast->GetReg(0) != 210 || fast->GetReg(1) != 0 || fast->GetPC() != 0x1014) {
+        std::cerr << "fused loop failed sum=" << fast->GetReg(0) << " remaining=" << fast->GetReg(1) << " pc=" << std::hex << fast->GetPC() << '\n';return 1;
+    }
+    // Separate backing allocations make out-of-page host reads/writes observable.
+    std::array<u8, 4096> page_a{}, page_b{};
+    table->attributes[3] = table->attributes[4] = Memory::PageType::Memory;
+    table->pointers[3] = page_a.data(); table->pointers[4] = page_b.data();
+    page_a[4095] = 0x12; page_b[0] = 0x34; page_b[1] = 0x56; page_b[2] = 0x78;
+    code[0] = 0xE5910000; // LDR r0, [r1], including a page crossing
+    fast->ClearInstructionCache(); fast->SetCPSR(0x10); fast->SetPC(0x1000); fast->SetReg(1, 0x3FFF); fast->Step();
+    if (fast->GetReg(0) != 0x78563412) { std::cerr << "cross-page load failed\n"; return 1; }
+    code[0] = 0xE5810000; // STR r0, [r1]
+    fast->ClearInstructionCache(); fast->SetPC(0x1000); fast->SetReg(0, 0xAABBCCDD); fast->Step();
+    if (page_a[4095] != 0xDD || page_b[0] != 0xCC || page_b[1] != 0xBB || page_b[2] != 0xAA) { std::cerr << "cross-page store failed\n";return 1; }
     auto context = fast->NewContext(); fast->SaveContext(context);
     const u32 saved = fast->GetReg(7), saved_flags = fast->GetCPSR();
     fast->SetReg(7, ~saved); fast->SetCPSR(0x10); fast->LoadContext(context);
@@ -67,5 +87,5 @@ int main() {
     second->pointers[1] = reinterpret_cast<u8*>(other.data());
     memory.SetCurrentPageTable(second.get()); fast->SetPageTable(second.get()); fast->SetCPSR(0x10); fast->SetPC(0x1000); fast->Step();
     if (fast->GetReg(0) != 42) return 1;
-    std::cout << count << " ARM/Thumb differential instruction cases, context round-trip and address-space switch passed\n";
+    std::cout << count << " ARM/Thumb differential instruction cases, fused loop, cross-page RAM, context round-trip and address-space switch passed\n";
 }

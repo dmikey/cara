@@ -75,6 +75,28 @@ private:
 
 namespace Core::FastInterp {
 
+// MMJ's scalar memory API assumes an access fits within one host page.
+// Keep the common path direct; split uncommon unaligned page crossings explicitly.
+template <typename T>
+static T ReadCoherent(Memory::MemorySystem& memory, u32 addr) {
+    if ((addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - (sizeof(T) - 1)) {
+        if constexpr (sizeof(T) == 2) return memory.Read16(addr);
+        else return memory.Read32(addr);
+    }
+    T value = 0;
+    for (u32 i = 0; i < sizeof(T); ++i) value |= static_cast<T>(memory.Read8(addr + i)) << (8 * i);
+    return value;
+}
+template <typename T>
+static void WriteCoherent(Memory::MemorySystem& memory, u32 addr, T value) {
+    if ((addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - (sizeof(T) - 1)) {
+        if constexpr (sizeof(T) == 2) memory.Write16(addr, value);
+        else memory.Write32(addr, value);
+        return;
+    }
+    for (u32 i = 0; i < sizeof(T); ++i) memory.Write8(addr + i, static_cast<u8>(value >> (8 * i)));
+}
+
 // Never-null page table. When no page table is set, page_pointers points at
 // this zero-initialized array (8MB of BSS nullptrs, zero-fill-on-demand, touched
 // only if the guest runs without a page table), so the MEM_* fast paths and the
@@ -722,7 +744,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         if (__builtin_expect(_page != nullptr && (_addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 1, 1)) {                                               \
             std::memcpy(&(result), &_page[_addr & FASTINTERP_PAGE_MASK], 2);                       \
         } else {                                                                                   \
-            (result) = memory_.Read16(_addr);                                                      \
+            (result) = ReadCoherent<u16>(memory_, _addr);                                                      \
         }                                                                                          \
     } while (0)
 
@@ -733,7 +755,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         if (__builtin_expect(_page != nullptr && (_addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 3, 1)) {                                               \
             std::memcpy(&(result), &_page[_addr & FASTINTERP_PAGE_MASK], 4);                       \
         } else {                                                                                   \
-            (result) = memory_.Read32(_addr);                                                      \
+            (result) = ReadCoherent<u32>(memory_, _addr);                                                      \
         }                                                                                          \
     } while (0)
 
@@ -758,7 +780,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         if (__builtin_expect(_page != nullptr && (_addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 1, 1)) {                                               \
             std::memcpy(&_page[_addr & FASTINTERP_PAGE_MASK], &_val, 2);                           \
         } else {                                                                                   \
-            memory_.Write16(_addr, _val);                                                          \
+            WriteCoherent<u16>(memory_, _addr, _val);                                                          \
         }                                                                                          \
     } while (0)
 
@@ -770,7 +792,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         if (__builtin_expect(_page != nullptr && (_addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 3, 1)) {                                               \
             std::memcpy(&_page[_addr & FASTINTERP_PAGE_MASK], &_val, 4);                           \
         } else {                                                                                   \
-            memory_.Write32(_addr, _val);                                                          \
+            WriteCoherent<u32>(memory_, _addr, _val);                                                          \
         }                                                                                          \
     } while (0)
 
@@ -791,7 +813,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
             std::memcpy(&value, &page[addr & FASTINTERP_PAGE_MASK], 2);
             return value;
         }
-        return memory_.Read16(addr);
+        return ReadCoherent<u16>(memory_, addr);
     };
 
     auto MemRead32 = [this, local_page_ptrs](u32 addr) -> u32 {
@@ -801,7 +823,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
             std::memcpy(&value, &page[addr & FASTINTERP_PAGE_MASK], 4);
             return value;
         }
-        return memory_.Read32(addr);
+        return ReadCoherent<u32>(memory_, addr);
     };
 
     auto MemWrite8 = [this, local_page_ptrs](u32 addr, u8 value) {
@@ -819,7 +841,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
             std::memcpy(&page[addr & FASTINTERP_PAGE_MASK], &value, 2);
             return;
         }
-        memory_.Write16(addr, value);
+        WriteCoherent<u16>(memory_, addr, value);
     };
 
     auto MemWrite32 = [this, local_page_ptrs](u32 addr, u32 value) {
@@ -828,7 +850,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
             std::memcpy(&page[addr & FASTINTERP_PAGE_MASK], &value, 4);
             return;
         }
-        memory_.Write32(addr, value);
+        WriteCoherent<u32>(memory_, addr, value);
     };
 
     // Entry guard: poisoned blocks (inst_count = 0 from InvalidateRange/Clear)
