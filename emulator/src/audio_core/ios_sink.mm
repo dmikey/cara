@@ -2,6 +2,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <UIKit/UIKit.h>
+#import <dispatch/dispatch.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -25,6 +26,7 @@ std::weak_ptr<Playback> active_playback;
 struct Playback {
     std::mutex control;
     AudioQueueRef queue = nullptr;
+    dispatch_queue_t callback_queue=dispatch_queue_create("com.dmikey.cara.audio",DISPATCH_QUEUE_SERIAL);
     std::array<AudioQueueBufferRef,3> buffers{};
     std::function<void(s16*,std::size_t)> callback;
     std::atomic<bool> stopping{false};
@@ -81,7 +83,8 @@ struct Playback {
         format.mFormatFlags=kLinearPCMFormatFlagIsSignedInteger|kAudioFormatFlagIsPacked|kAudioFormatFlagsNativeEndian;
         format.mBytesPerPacket=format.mBytesPerFrame=2*sizeof(s16);
         format.mFramesPerPacket=1; format.mChannelsPerFrame=2; format.mBitsPerChannel=16;
-        OSStatus status=AudioQueueNewOutput(&format,&Playback::Output,this,nullptr,nullptr,0,&queue);
+        OSStatus status=AudioQueueNewOutputWithDispatchQueue(&queue,&format,0,callback_queue,
+            ^(AudioQueueRef output,AudioQueueBufferRef buffer) { Playback::Output(this,output,buffer); });
         if (!status) for (auto& buffer:buffers) {
             status=AudioQueueAllocateBuffer(queue,buffer_bytes,&buffer);
             if (status) break;
@@ -113,7 +116,7 @@ struct Playback {
         if (stopping.load() || background || interrupted || manually_paused || !callback || playing) return;
         if (!ActivateSessionLocked() || !CreateLocked()) return;
         if (!primed) {
-            for (auto buffer:buffers) Fill(buffer);
+            dispatch_sync(callback_queue,^{ for (auto buffer:buffers) Fill(buffer); });
             primed=true;
         }
         const OSStatus status=AudioQueueStart(queue,nullptr);
@@ -128,7 +131,7 @@ struct Playback {
         std::lock_guard<std::mutex> lock(control);
         if (stopping.load()) return;
         stopping.store(true,std::memory_order_release);
-        if (queue) { AudioQueueStop(queue,true); AudioQueueDispose(queue,true); }
+        if (queue) { AudioQueueStop(queue,true); AudioQueueDispose(queue,true); dispatch_sync(callback_queue,^{}); }
         queue=nullptr; buffers.fill(nullptr); playing=false; primed=false;
         stopping.store(false,std::memory_order_release);
         ResumeLocked();
@@ -136,7 +139,7 @@ struct Playback {
     void SetCallback(std::function<void(s16*,std::size_t)> next) {
         std::lock_guard<std::mutex> lock(control);
         stopping.store(true,std::memory_order_release);
-        if (queue) AudioQueueStop(queue,true);
+        if (queue) { AudioQueueStop(queue,true); dispatch_sync(callback_queue,^{}); }
         playing=false; primed=false; callback=std::move(next);
         stopping.store(false,std::memory_order_release);
         ResumeLocked();
@@ -160,7 +163,7 @@ struct Playback {
     void Shutdown() {
         std::lock_guard<std::mutex> lock(control);
         if (stopping.exchange(true,std::memory_order_acq_rel)) return;
-        if (queue) { AudioQueueStop(queue,true); AudioQueueDispose(queue,true); }
+        if (queue) { AudioQueueStop(queue,true); AudioQueueDispose(queue,true); dispatch_sync(callback_queue,^{}); }
         queue=nullptr; buffers.fill(nullptr); callback={}; playing=false; primed=false;
         bool another_sink=false;
         { std::lock_guard<std::mutex> active_lock(active_mutex);
