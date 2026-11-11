@@ -127,6 +127,50 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // CMP followed by conditional B/BL must preserve flags, both branch outcomes,
+    // link semantics, and exact stopping at either instruction boundary.
+    const auto condition = [](unsigned c,u32 f) {
+        const bool n=f>>31, z=(f&0x40000000)!=0, carry=(f&0x20000000)!=0, v=(f&0x10000000)!=0;
+        switch(c) {
+        case 0:return z; case 1:return !z; case 2:return carry; case 3:return !carry;
+        case 4:return n; case 5:return !n; case 6:return v; case 7:return !v;
+        case 8:return carry&&!z; case 9:return !carry||z; case 10:return n==v;
+        case 11:return n!=v; case 12:return !z&&(n==v); case 13:return z||(n!=v);
+        default:return true;
+        }
+    };
+    std::array<u32,1024> compare_code{};
+    compare_code[2]=0xE3A01001; compare_code[3]=0xEAFFFFFE;
+    compare_code[4]=0xE3A01002; compare_code[5]=0xEAFFFFFE;
+    first_table->attributes[8]=Memory::PageType::Memory;
+    first_table->pointers[8]=reinterpret_cast<u8*>(compare_code.data());
+    memory.SetCurrentPageTable(first_table.get());
+    for (u32 lhs:{0u,1u,0xffffffffu,0x80000000u,0x7fffffffu})
+    for (u32 rhs:{0u,1u,255u}) for (unsigned cmp_cond:{14u,0u})
+    for (unsigned branch_cond=0;branch_cond<15;++branch_cond) for (bool link:{false,true})
+    for (unsigned budget:{0u,1u,2u,3u}) {
+        compare_code[0]=(cmp_cond<<28)|0x03500000|rhs;
+        compare_code[1]=(branch_cond<<28)|0x0A000001|(link?0x01000000:0);
+        InvalidateDynComDecodedCache();
+        first->Cpsr=USER32MODE|0x20000000; first->Reg[0]=lhs;
+        first->Reg[1]=0x12345678; first->Reg[14]=0x11223344;
+        first->Reg[15]=0x8000; first->NumInstrsToExecute=budget;
+        const u32 result=lhs-rhs;
+        const u32 cmp_flags=(result&0x80000000)|(result==0?0x40000000:0)|
+            (lhs>=rhs?0x20000000:0)|(((lhs^rhs)&(lhs^result)&0x80000000)?0x10000000:0);
+        const u32 flags=(budget&&cmp_cond==14)?cmp_flags:0x20000000;
+        const bool taken=condition(branch_cond,flags);
+        const u32 expected_pc=budget==0?0x8000:budget==1?0x8004:
+            budget==2?(taken?0x8010:0x8008):(taken?0x8014:0x800c);
+        const unsigned count=InterpreterMainLoop(first.get(),timing.GetTimer(0).get());
+        if (count!=budget || first->Reg[15]!=expected_pc || first->Reg[0]!=lhs ||
+            first->Reg[1]!=(budget==3?(taken?2u:1u):0x12345678) ||
+            first->Reg[14]!=((budget>=2&&taken&&link)?0x8008:0x11223344) ||
+            first->Cpsr!=(USER32MODE|flags)) {
+            std::cerr << "CMP/branch dispatch state or instruction boundary mismatch\n"; return 10;
+        }
+    }
+    std::cout << "CMP/B/BL conditions, flags, links and exact instruction budgets passed\n";
     if (argc == 2 && std::string(argv[1]) == "--benchmark") {
         first->Reg[15] = 0x3088;
         first->NumInstrsToExecute = 20000000;

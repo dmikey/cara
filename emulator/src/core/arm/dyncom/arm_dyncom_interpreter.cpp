@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include "common/common_types.h"
+#include "common/assert.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
 #include "core/arm/dyncom/arm_dyncom_dec.h"
@@ -1629,6 +1630,23 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
                          &&DISPATCH,
                          &&INIT_INST_LENGTH,
                          &&END};
+    // This guarded index avoids an indirect host jump for the common CMP/Bcc pair.
+    // Both guest instructions retain their original handlers and execution checks.
+    constexpr unsigned compare_branch_index = 196;
+    static_assert(sizeof(InstLabel) / sizeof(InstLabel[0]) > compare_branch_index);
+    ASSERT(InstLabel[compare_branch_index] == &&BBL_INST);
+#ifndef PROFILE_CURRENT_DISPATCH
+#define PROFILE_CURRENT_DISPATCH
+#endif
+#define GOTO_AFTER_COMPARE                                                                        \
+    GDB_BP_CHECK;                                                                                 \
+    if (num_instrs >= cpu->NumInstrsToExecute) goto END;                                            \
+    num_instrs++;                                                                                 \
+    PROFILE_CURRENT_DISPATCH;                                                                     \
+    if (inst_base->idx == compare_branch_index) goto BBL_INST;                                      \
+    goto* InstLabel[inst_base->idx]
+#else
+#define GOTO_AFTER_COMPARE GOTO_NEXT_INST
 #endif
     arm_inst* inst_base;
     unsigned int addr;
@@ -1967,7 +1985,7 @@ CMP_INST : {
     cpu->Reg[15] += cpu->GetInstructionSize();
     INC_PC(sizeof(cmp_inst));
     FETCH_INST;
-    GOTO_NEXT_INST;
+    GOTO_AFTER_COMPARE;
 }
 CPS_INST : {
     cps_inst* inst_cream = (cps_inst*)inst_base->component;
