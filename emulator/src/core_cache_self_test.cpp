@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <iostream>
 #include <memory>
@@ -53,6 +54,18 @@ int main(int argc, char** argv) {
     for (unsigned i = 0; i < 100; ++i) {
         if (!execute(*first, first_table.get(), 43, 0x200c)) return 2;
         if (!execute(*first, first_table.get(), 17)) return 2;
+    }
+    if (std::getenv("CARA_DISABLE_FAST_DECODE_LOOKUP") == nullptr) {
+        // Warm colliding entries, then remove the hash-map fallback. A victim hit
+        // must reuse decoded data rather than translating the instructions again.
+        first->instruction_cache.clear();
+        if (!execute(*first, first_table.get(), 43, 0x200c) ||
+            !execute(*first, first_table.get(), 17) ||
+            !execute(*first, first_table.get(), 43, 0x200c) ||
+            !first->instruction_cache.empty()) {
+            std::cerr << "victim lookup failed to reuse a colliding block\n"; return 4;
+        }
+        // Leave the first PC in the victim cache before invalidating the arena.
     }
     first_code[0] = 0xE3A00047;
     InvalidateDynComDecodedCache();

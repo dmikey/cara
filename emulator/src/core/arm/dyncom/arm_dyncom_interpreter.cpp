@@ -1665,15 +1665,25 @@ DISPATCH : {
     if (use_fast_lookup && fast.pc == pc && fast.generation == trans_cache_generation) {
         ptr = fast.offset;
     } else {
-        auto itr = cpu->instruction_cache.find(pc);
-        if (itr != cpu->instruction_cache.end()) {
-            ptr = itr->second;
-        } else if (cpu->NumInstrsToExecute != 1) {
-            if (InterpreterTranslateBlock(cpu, ptr, pc) == FETCH_EXCEPTION) goto END;
+        const auto& victim = cpu->victim_decoded_blocks[((pc >> 2) ^ (pc >> 10)) & 63];
+        if (use_fast_lookup && victim.pc == pc && victim.generation == trans_cache_generation) {
+            ptr = victim.offset;
         } else {
-            if (InterpreterTranslateSingle(cpu, ptr, pc) == FETCH_EXCEPTION) goto END;
+            auto itr = cpu->instruction_cache.find(pc);
+            if (itr != cpu->instruction_cache.end()) {
+                ptr = itr->second;
+            } else if (cpu->NumInstrsToExecute != 1) {
+                if (InterpreterTranslateBlock(cpu, ptr, pc) == FETCH_EXCEPTION) goto END;
+            } else {
+                if (InterpreterTranslateSingle(cpu, ptr, pc) == FETCH_EXCEPTION) goto END;
+            }
         }
-        if (use_fast_lookup) fast = {pc, ptr, trans_cache_generation};
+        if (use_fast_lookup) {
+            const auto displaced = fast;
+            fast = {pc, ptr, trans_cache_generation};
+            if (displaced.generation == trans_cache_generation && displaced.pc != pc)
+                cpu->victim_decoded_blocks[((displaced.pc >> 2) ^ (displaced.pc >> 10)) & 63] = displaced;
+        }
     }
 
 #if !defined(ANDROID) && !defined(CARA_NO_GUEST_DEBUGGER)

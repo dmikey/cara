@@ -262,6 +262,8 @@ public:
         u64 generation = 0;
     };
     std::array<FastDecodedBlock, 1024> fast_decoded_blocks{};
+    // Recently displaced decoded-data entries; generation tags guard arena reuse.
+    std::array<FastDecodedBlock, 64> victim_decoded_blocks{};
 
 private:
     void ResetMPCoreCP15Registers();
