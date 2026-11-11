@@ -969,7 +969,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                            << ",\"fps\":" << emuWindow->frames / elapsed
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"late_paced_frames\":" << late_paced_frames
-                           << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "fastinterp") == 0) ? "fastinterp" : "dyncom") << "\""
+                           << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "dyncom") == 0) ? "dyncom" : "fastinterp") << "\""
                            << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
 #ifdef CARA_IOS_GLES
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws

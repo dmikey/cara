@@ -8,6 +8,6 @@
     "Legacy memory exclusive-store coherence adapter",
     "Cross-page memory fast-path guards",
     "Existing CPU timing instrumentation",
-    "Runtime CARA_CPU_BACKEND=fastinterp opt-in; DynCom fallback retained"
+    "Default FastInterp; runtime CARA_CPU_BACKEND=dyncom fallback retained"
   ]
 }

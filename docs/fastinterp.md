@@ -1,11 +1,11 @@
-# Experimental FastInterp backend
+# FastInterp backend
 
 FastInterp is bundled from Azahar 2127.0-rc2 at the revision in
 fastinterp-upstream.json. No upstream download is needed to build Cara.
 Copyright and GPL-2.0-or-later notices are retained.
 
-Set CARA_CPU_BACKEND=fastinterp when launching to opt in. Without this setting,
-Cara retains its tested DynCom backend. Both are compiled into the same signed
+FastInterp is the default no-JIT CPU backend. Set CARA_CPU_BACKEND=dyncom
+when launching to use the previous backend for compatibility or comparison. Both are compiled into the same signed
 binary, with CPU and vertex-shader JIT disabled. FastInterp decodes instructions
 into data records and dispatches to precompiled C++/ARM64 handlers; the block
 cache does not contain newly generated native executable code.

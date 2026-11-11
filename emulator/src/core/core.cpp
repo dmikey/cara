@@ -418,7 +418,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
         }
 #else
         for (u32 i = 0; i < 4; ++i) {
-            if (const char* backend = std::getenv("CARA_CPU_BACKEND"); backend && std::strcmp(backend, "fastinterp") == 0) {
+            if (const char* backend = std::getenv("CARA_CPU_BACKEND"); !backend || std::strcmp(backend, "dyncom") != 0) {
                 cpu_cores[i] = std::make_shared<Core::FastInterp::ARM_FastInterp>(*this, *memory, i, timing->GetTimer(i));
             } else {
                 cpu_cores[i] = std::make_shared<ARM_DynCom>(this, i, timing->GetTimer(i));
@@ -429,7 +429,7 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
 #endif
     } else {
         for (u32 i = 0; i < 4; ++i) {
-            if (const char* backend = std::getenv("CARA_CPU_BACKEND"); backend && std::strcmp(backend, "fastinterp") == 0) {
+            if (const char* backend = std::getenv("CARA_CPU_BACKEND"); !backend || std::strcmp(backend, "dyncom") != 0) {
                 cpu_cores[i] = std::make_shared<Core::FastInterp::ARM_FastInterp>(*this, *memory, i, timing->GetTimer(i));
             } else {
                 cpu_cores[i] = std::make_shared<ARM_DynCom>(this, i, timing->GetTimer(i));
