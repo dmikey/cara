@@ -262,6 +262,14 @@ public:
         u64 generation = 0;
     };
     std::array<FastDecodedBlock, 1024> fast_decoded_blocks{};
+#ifdef CARA_PROFILE_DISPATCH
+    std::array<u64, 256> profile_opcodes{};
+    std::array<u64, 256 * 256> profile_pairs{};
+    u64 profile_samples = 0, profile_written_samples = 0;
+    unsigned profile_countdown = 251;
+    unsigned profile_previous = 256;
+#endif
+
 
 private:
     void ResetMPCoreCP15Registers();

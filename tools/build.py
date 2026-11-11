@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--renderer', choices=['software', 'gles3'], default='software')
     parser.add_argument('--jobs', type=int, default=3)
     parser.add_argument('--guest-debugger', action='store_true', help='Include per-instruction guest GDB checks')
+    parser.add_argument("--profile-dispatch", action="store_true", help="Compile diagnostic instruction sampling; not for performance comparisons")
     args = parser.parse_args()
     source = ROOT / 'emulator'
     if not (source / 'VENDORED_SOURCE.json').exists():
@@ -39,7 +40,7 @@ def main():
     command = [cmake, '-S', str(source), '-B', str(build), '-G', 'Ninja',
                '-DCMAKE_MAKE_PROGRAM=' + ninja, '-DCMAKE_BUILD_TYPE=Release',
                '-DCARA_INTERPRETER_GUEST_DEBUG=' + ('ON' if args.guest_debugger else 'OFF'),
-               '-DCARA_ENABLE_JIT=OFF', '-DCARA_SOFTWARE_PRESENTATION=ON',
+               '-DCARA_PROFILE_DISPATCH=' + ('ON' if args.profile_dispatch else 'OFF'), '-DCARA_ENABLE_JIT=OFF', '-DCARA_SOFTWARE_PRESENTATION=ON',
                '-DENABLE_QT=OFF', '-DENABLE_SDL2=OFF', '-DENABLE_WEB_SERVICE=OFF',
                '-DENABLE_CUBEB=OFF', '-DBOOST_ROOT=' + str(source / 'externals/boost'),
                '-DBoost_NO_SYSTEM_PATHS=ON', '-DBoost_NO_BOOST_CMAKE=ON']

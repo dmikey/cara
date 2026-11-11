@@ -8,6 +8,10 @@
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
+#ifdef CARA_PROFILE_DISPATCH
+#include <fstream>
+#include "common/file_util.h"
+#endif
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
@@ -923,9 +927,34 @@ static int clz(unsigned int x) {
 
 MICROPROFILE_DEFINE(DynCom_Execute, "DynCom", "Execute", MP_RGB(255, 0, 0));
 
+#ifdef CARA_PROFILE_DISPATCH
+// Sample decoded instruction identities, never guest memory or host machine code.
+// This diagnostic build has overhead and must not be used for FPS comparisons.
+static void WriteDispatchProfile(ARMul_State* cpu) {
+    if (cpu->profile_samples - cpu->profile_written_samples < 65536) return;
+    const std::string path = FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
+        "dispatch-profile-" + std::to_string(reinterpret_cast<std::uintptr_t>(cpu)) + ".json";
+    std::ofstream out(path + ".tmp");
+    out << "{\"sample_period\":251,\"samples\":" << cpu->profile_samples << ",\"opcodes\":[";
+    for (unsigned i=0; i<256; ++i) out << (i ? "," : "") << cpu->profile_opcodes[i];
+    out << "],\"within_block_pairs\":[";
+    bool comma=false;
+    for (unsigned i=0; i<256*256; ++i) if (cpu->profile_pairs[i]) {
+        out << (comma ? "," : "") << "[" << (i >> 8) << "," << (i & 255) << "," << cpu->profile_pairs[i] << "]";
+        comma=true;
+    }
+    out << "]}\n"; out.close();
+    if (out) std::rename((path + ".tmp").c_str(), path.c_str());
+    cpu->profile_written_samples = cpu->profile_samples;
+}
+#endif
+
 unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
     MICROPROFILE_SCOPE(DynCom_Execute);
     static const bool use_fast_lookup = std::getenv("CARA_DISABLE_FAST_DECODE_LOOKUP") == nullptr;
+#ifdef CARA_PROFILE_DISPATCH
+    static const bool profile_dispatch = std::getenv("CARA_DISPATCH_PROFILE") != nullptr;
+#endif
 
     /// Nearest upcoming GDB code execution breakpoint, relative to the last dispatch's address.
     GDBStub::BreakpointAddress breakpoint_data;
@@ -975,6 +1004,25 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
     }
 #endif
 
+#ifdef CARA_PROFILE_DISPATCH
+#define PROFILE_CURRENT_DISPATCH                                                                  \
+    if (profile_dispatch) {                                                                       \
+        const unsigned profile_index = inst_base->idx;                                             \
+        if (--cpu->profile_countdown == 0) {                                                       \
+            if (profile_index < 256) {                                                            \
+                ++cpu->profile_opcodes[profile_index];                                             \
+                if (cpu->profile_previous < 256)                                                   \
+                    ++cpu->profile_pairs[cpu->profile_previous * 256 + profile_index];             \
+                ++cpu->profile_samples;                                                           \
+            }                                                                                     \
+            cpu->profile_countdown = 251;                                                         \
+        }                                                                                         \
+        cpu->profile_previous = profile_index;                                                    \
+    }
+#else
+#define PROFILE_CURRENT_DISPATCH
+#endif
+
 // GCC and Clang have a C++ extension to support a lookup table of labels. Otherwise, fallback to a
 // clunky switch statement.
 #if defined __GNUC__ || defined __clang__
@@ -983,6 +1031,7 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
     if (num_instrs >= cpu->NumInstrsToExecute)                                                     \
         goto END;                                                                                  \
     num_instrs++;                                                                                  \
+    PROFILE_CURRENT_DISPATCH;                                                                     \
     goto* InstLabel[inst_base->idx]
 #else
 #define GOTO_NEXT_INST                                                                             \
@@ -990,6 +1039,7 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
     if (num_instrs >= cpu->NumInstrsToExecute)                                                     \
         goto END;                                                                                  \
     num_instrs++;                                                                                  \
+    PROFILE_CURRENT_DISPATCH;                                                                     \
     switch (inst_base->idx) {                                                                      \
     case 0:                                                                                        \
         goto VMLA_INST;                                                                            \
@@ -1420,6 +1470,25 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
 
 #define PC (cpu->Reg[15])
 
+#ifdef CARA_PROFILE_DISPATCH
+#define PROFILE_CURRENT_DISPATCH                                                                  \
+    if (profile_dispatch) {                                                                       \
+        const unsigned profile_index = inst_base->idx;                                             \
+        if (--cpu->profile_countdown == 0) {                                                       \
+            if (profile_index < 256) {                                                            \
+                ++cpu->profile_opcodes[profile_index];                                             \
+                if (cpu->profile_previous < 256)                                                   \
+                    ++cpu->profile_pairs[cpu->profile_previous * 256 + profile_index];             \
+                ++cpu->profile_samples;                                                           \
+            }                                                                                     \
+            cpu->profile_countdown = 251;                                                         \
+        }                                                                                         \
+        cpu->profile_previous = profile_index;                                                    \
+    }
+#else
+#define PROFILE_CURRENT_DISPATCH
+#endif
+
 // GCC and Clang have a C++ extension to support a lookup table of labels. Otherwise, fallback
 // to a clunky switch statement.
 #if defined __GNUC__ || defined __clang__
@@ -1638,6 +1707,9 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
 
     LOAD_NZCVT;
 DISPATCH : {
+#ifdef CARA_PROFILE_DISPATCH
+    if (profile_dispatch) cpu->profile_previous = 256;
+#endif
 #ifdef CARA_NO_GUEST_DEBUGGER
     // ARM/Thumb transitions end decoded blocks. Keep T visible to system calls
     // without repeating the same CPSR store after every guest instruction.
@@ -4605,6 +4677,9 @@ YIELD_INST : {
 #undef VFP_INTERPRETER_IMPL
 
 END : {
+#ifdef CARA_PROFILE_DISPATCH
+    if (profile_dispatch) WriteDispatchProfile(cpu);
+#endif
     SAVE_NZCVT;
     cpu->NumInstrsToExecute = 0;
     return num_instrs;

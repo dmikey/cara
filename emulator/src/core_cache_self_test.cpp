@@ -2,6 +2,7 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <iostream>
 #include <memory>
@@ -127,6 +128,24 @@ int main(int argc, char** argv) {
             }
         }
     }
+#ifdef CARA_PROFILE_DISPATCH
+    if (std::getenv("CARA_DISPATCH_PROFILE")) {
+        // A branch-only block must produce exactly 100 samples and no within-block pairs.
+        // Every branch ends its block; sampling must not join separate blocks or slices.
+        auto profiled = std::make_unique<ARMul_State>(system, memory, USER32MODE);
+        std::array<u32, 1024> profile_code{0xEAFFFFFE};
+        first_table->attributes[7] = Memory::PageType::Memory;
+        first_table->pointers[7] = reinterpret_cast<u8*>(profile_code.data());
+        memory.SetCurrentPageTable(first_table.get()); InvalidateDynComDecodedCache();
+        profiled->Reg[15]=0x7000; profiled->NumInstrsToExecute=25100;
+        if (InterpreterMainLoop(profiled.get(), timing.GetTimer(0).get()) != 25100 ||
+            profiled->profile_samples != 100 || profiled->Reg[15] != 0x7000) return 8;
+        u64 counts=0, pairs=0; unsigned nonzero=0;
+        for (auto count:profiled->profile_opcodes) { counts+=count; nonzero+=(count!=0); }
+        for (auto count:profiled->profile_pairs) pairs+=count;
+        if (counts!=100 || nonzero!=1 || pairs!=0) return 9;
+    }
+#endif
     if (argc == 2 && std::string(argv[1]) == "--benchmark") {
         first->Reg[15] = 0x3088;
         first->NumInstrsToExecute = 20000000;

@@ -36,6 +36,11 @@ if (CARA_SOFTWARE_PRESENTATION)
     add_definitions(-DCARA_SOFTWARE_PRESENTATION=1)
 endif()
 
+option(CARA_PROFILE_DISPATCH "Compile diagnostic instruction sampling (has overhead)" OFF)
+if (CARA_PROFILE_DISPATCH)
+    add_definitions(-DCARA_PROFILE_DISPATCH=1)
+endif()
+
 option(CARA_ENABLE_JIT "Build CPU and host shader JIT backends" OFF)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(CARA_ENABLE_JIT OFF CACHE BOOL "Build CPU and host shader JIT backends" FORCE)
