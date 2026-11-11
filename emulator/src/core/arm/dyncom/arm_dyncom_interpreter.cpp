@@ -1661,7 +1661,7 @@ DISPATCH : {
     // This cache stores offsets into decoded instruction data, never host code.
     // The shared arena generation invalidates entries across all CPU cores.
     const u32 pc = cpu->Reg[15];
-    auto& fast = cpu->fast_decoded_blocks[((pc >> 2) ^ (pc >> 12)) & 1023];
+    auto& fast = cpu->fast_decoded_blocks[((pc >> 2) ^ (pc >> 12)) & 4095];
     if (use_fast_lookup && fast.pc == pc && fast.generation == trans_cache_generation) {
         ptr = fast.offset;
     } else {

@@ -261,7 +261,7 @@ public:
         std::size_t offset = 0;
         u64 generation = 0;
     };
-    std::array<FastDecodedBlock, 1024> fast_decoded_blocks{};
+    std::array<FastDecodedBlock, 4096> fast_decoded_blocks{};
 
 private:
     void ResetMPCoreCP15Registers();

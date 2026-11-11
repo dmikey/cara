@@ -46,12 +46,14 @@ int main(int argc, char** argv) {
         if (!execute(*first, first_table.get(), 17)) return 1;
     }
     // These PCs collide in the direct-mapped lookup; a tag mismatch must fall back.
+    static_assert((((0x1000u >> 2) ^ (0x1000u >> 12)) & 4095) ==
+                  (((0x5010u >> 2) ^ (0x5010u >> 12)) & 4095));
     std::array<u32, 1024> collision_code{};
-    collision_code[3] = 0xE3A0002B; collision_code[4] = 0xEAFFFFFE;
-    first_table->attributes[2] = Memory::PageType::Memory;
-    first_table->pointers[2] = reinterpret_cast<u8*>(collision_code.data());
+    collision_code[4] = 0xE3A0002B; collision_code[5] = 0xEAFFFFFE;
+    first_table->attributes[5] = Memory::PageType::Memory;
+    first_table->pointers[5] = reinterpret_cast<u8*>(collision_code.data());
     for (unsigned i = 0; i < 100; ++i) {
-        if (!execute(*first, first_table.get(), 43, 0x200c)) return 2;
+        if (!execute(*first, first_table.get(), 43, 0x5010)) return 2;
         if (!execute(*first, first_table.get(), 17)) return 2;
     }
     first_code[0] = 0xE3A00047;
