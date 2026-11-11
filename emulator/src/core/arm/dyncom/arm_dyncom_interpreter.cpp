@@ -1976,7 +1976,14 @@ CMP_INST : {
         // CMP needs subtraction flags, not the general three-input addition helper.
         // Keep unsigned arithmetic so wraparound is defined for every guest operand;
         // the compiler can lower these comparisons directly to host flag operations.
-        const u32 operand = SHIFTER_OPERAND;
+        u32 operand;
+        if (inst_cream->I) {
+            operand = inst_cream->immediate;
+            cpu->shifter_carry_out = (inst_cream->shifter_operand & 0xf00)
+                ? operand >> 31 : cpu->CFlag;
+        } else {
+            operand = SHIFTER_OPERAND;
+        }
         const u32 result = rn_val - operand;
         UPDATE_NFLAG(result);
         UPDATE_ZFLAG(result);

@@ -214,6 +214,21 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << "CMP register flags: all predicates, initial NZCV, boundary and random operands passed\n";
+    // Every ARM rotated-immediate encoding, including zero rotation/carry preservation.
+    for (u32 encoding=0;encoding<4096;++encoding) {
+        flag_code[0]=0xE3500000|encoding;InvalidateDynComDecodedCache();
+        u32 operand=encoding&255;
+        const unsigned rotation=((encoding>>8)&15)*2;
+        for (unsigned bit=0;bit<rotation;++bit) operand=(operand>>1)|(operand<<31);
+        for (u32 lhs:flag_edges) {
+            const unsigned initial=encoding&15;
+            if (!verify_compare(lhs,operand,14,initial) ||
+                first->shifter_carry_out!=(rotation?operand>>31:(initial>>1)&1)) {
+                std::cerr << "CMP decoded immediate or shifter carry mismatch\n";return 12;
+            }
+        }
+    }
+    std::cout << "CMP all 4096 rotated immediate encodings and shifter carry passed\n";
     if (argc == 2 && std::string(argv[1]) == "--benchmark") {
         first->Reg[15] = 0x3088;
         first->NumInstrsToExecute = 20000000;

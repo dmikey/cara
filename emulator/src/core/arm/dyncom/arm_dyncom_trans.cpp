@@ -241,6 +241,10 @@ static ARM_INST_PTR INTERPRETER_TRANSLATE(cmp)(unsigned int inst, int index) {
     inst_cream->Rn = BITS(inst, 16, 19);
     inst_cream->shifter_operand = BITS(inst, 0, 11);
     inst_cream->shtop_func = GetShifterOp(inst);
+    const unsigned rotation = BITS(inst, 8, 11) * 2;
+    const unsigned literal = BITS(inst, 0, 7);
+    inst_cream->immediate = (literal >> rotation) | (literal << ((32 - rotation) & 31));
+
 
     return inst_base;
 }
