@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import "ios/skin_controls.h"
 #include "audio_core/ios_sink.h"
+#include "audio_core/dsp_interface.h"
 #import "ios/save_sync.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #ifdef CARA_IOS_GLES
