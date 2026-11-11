@@ -46,6 +46,7 @@ jobs:
         if: matrix.platform == 'mac'
         run: |
           work/build-mac/bin/cara-no-jit-probe --self-test work/io-self-test
+          work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-core-cache-self-test
           work/build-mac/bin/cara-audio-buffer-self-test
           CARA_DISABLE_FAST_DECODE_LOOKUP=1 work/build-mac/bin/cara-core-cache-self-test

@@ -10,8 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('platform', choices=['mac', 'ios', 'simulator'])
 parser.add_argument('--renderer', choices=['software', 'gles3'], default='software')
+parser.add_argument('--build-dir', type=Path)
 args = parser.parse_args()
 build = ROOT / 'work' / ('build-' + args.platform + ('-gles3' if args.renderer == 'gles3' else ''))
+if args.build_dir:
+    build = args.build_dir.resolve()
 binary = build / 'bin' / ('cara-no-jit-probe' if args.platform == 'mac' else 'cara-ios.app/cara-ios')
 # Stale platform guards can compile but select desktop GL requirements on iOS.
 obsolete = re.compile(rb'\bCITRA_(?:IOS(?:_GLES|_HARDWARE_RENDERER)?|ENABLE_JIT|SOFTWARE_PRESENTATION|INTERPRETER_GUEST_DEBUG|NO_GUEST_DEBUGGER)\b')

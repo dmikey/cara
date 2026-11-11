@@ -11,3 +11,8 @@ in emulator/VENDORED_SOURCE.json.
 No game ROMs, Nintendo firmware, keys, game screenshots, signing credentials,
 provisioning profiles or signed app packages are included in this repository.
 Cara is not affiliated with Nintendo or the Citra/MMJ developers.
+
+FastInterp CPU interpreter: Copyright 2026 Citra Emulator Project / Azahar Emulator Project.
+Vendored from Azahar 2127.0-rc2, revision 6b4e7f2e694514fdf2f72dc20368609b7cd4912e.
+FastInterp and its timing/atomic helpers are GPL-2.0-or-later; see
+emulator/misc/licenses/gplv2.txt and docs/fastinterp-upstream.json.

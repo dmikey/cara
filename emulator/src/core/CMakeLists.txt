@@ -1,4 +1,7 @@
 add_library(core STATIC
+    arm/fastinterp/fastinterp.cpp
+    arm/fastinterp/fastinterp_decode.cpp
+    arm/fastinterp/arm_tick_counts.cpp
     3ds.h
     announce_multiplayer_session.cpp
     announce_multiplayer_session.h

@@ -3,6 +3,10 @@
 #import <QuartzCore/QuartzCore.h>
 #import "ios/skin_controls.h"
 #include "audio_core/ios_sink.h"
+#ifdef CARA_PGO_GENERATE
+extern "C" void __llvm_profile_set_filename(const char*);
+extern "C" int __llvm_profile_write_file(void);
+#endif
 #include "audio_core/dsp_interface.h"
 #import "ios/save_sync.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -367,7 +371,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
 }
 - (void)viewDidLoad {
     [super viewDidLoad]; self.view.backgroundColor=UIColor.blackColor;
-    AudioCore::SetIOSAudioMuted([NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
+    const bool benchmarkMute=std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_BENCHMARK_AUDIO");
+    AudioCore::SetIOSAudioMuted(benchmarkMute || [NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
     stretchAudio=[NSUserDefaults.standardUserDefaults boolForKey:@"audioStretching"]; stretchAudioDirty=false;
     NSURL* saveDocuments=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     saveSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES]];
@@ -737,6 +742,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
         @autoreleasepool {
             Common::DetachedTasks tasks;
             FileUtil::SetUserPath(user);
+#ifdef CARA_PGO_GENERATE
+            const std::string pgo_path=user+"cpu-training.profraw";
+            __llvm_profile_set_filename(pgo_path.c_str());
+#endif
             static std::once_flag logging;
             std::call_once(logging,[&] {
                 Log::SetGlobalFilter(Log::Filter(Log::Level::Info));
@@ -960,6 +969,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                            << ",\"fps\":" << emuWindow->frames / elapsed
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"late_paced_frames\":" << late_paced_frames
+                           << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "fastinterp") == 0) ? "fastinterp" : "dyncom") << "\""
                            << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
 #ifdef CARA_IOS_GLES
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
@@ -973,6 +983,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                 system.Shutdown();
                 [saveSync captureCommittedSave];
             }
+#ifdef CARA_PGO_GENERATE
+            const int pgo_status=__llvm_profile_write_file();
+            std::ofstream(user+"cpu-training-status.json") << "{\"write_status\":" << pgo_status << "}\n";
+            __llvm_profile_set_filename("/dev/null");
+#endif
             AudioCore::SetIOSAudioPaused(true);
             emuWindow->DoneCurrent();
             running = false;

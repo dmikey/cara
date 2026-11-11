@@ -3,6 +3,8 @@
 // Refer to the license.txt file included.
 
 #include <memory>
+#include <cstdlib>
+#include <cstring>
 #include <utility>
 #include "audio_core/dsp_interface.h"
 #include "audio_core/hle/hle.h"
@@ -13,6 +15,7 @@
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #endif
 #include "core/arm/dyncom/arm_dyncom.h"
+#include "core/arm/fastinterp/fastinterp.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/core_timing.h"
@@ -415,14 +418,22 @@ System::ResultStatus System::Init(Frontend::EmuWindow& emu_window, u32 system_mo
         }
 #else
         for (u32 i = 0; i < 4; ++i) {
-            cpu_cores[i] = std::make_shared<ARM_DynCom>(this, i, timing->GetTimer(i));
+            if (const char* backend = std::getenv("CARA_CPU_BACKEND"); backend && std::strcmp(backend, "fastinterp") == 0) {
+                cpu_cores[i] = std::make_shared<Core::FastInterp::ARM_FastInterp>(*this, *memory, i, timing->GetTimer(i));
+            } else {
+                cpu_cores[i] = std::make_shared<ARM_DynCom>(this, i, timing->GetTimer(i));
+            }
             kernel->GetThreadManager(i).SetCPU(cpu_cores[i].get());
         }
         LOG_WARNING(Core, "CPU JIT requested, but Dynarmic not available");
 #endif
     } else {
         for (u32 i = 0; i < 4; ++i) {
-            cpu_cores[i] = std::make_shared<ARM_DynCom>(this, i, timing->GetTimer(i));
+            if (const char* backend = std::getenv("CARA_CPU_BACKEND"); backend && std::strcmp(backend, "fastinterp") == 0) {
+                cpu_cores[i] = std::make_shared<Core::FastInterp::ARM_FastInterp>(*this, *memory, i, timing->GetTimer(i));
+            } else {
+                cpu_cores[i] = std::make_shared<ARM_DynCom>(this, i, timing->GetTimer(i));
+            }
             kernel->GetThreadManager(i).SetCPU(cpu_cores[i].get());
         }
     }

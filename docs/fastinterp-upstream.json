@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/azahar-emu/azahar",
+  "revision": "6b4e7f2e694514fdf2f72dc20368609b7cd4912e",
+  "tag": "2127.0-rc2",
+  "license": "GPL-2.0-or-later",
+  "adaptations": [
+    "Legacy ThreadContext/page-table interface",
+    "Legacy memory exclusive-store coherence adapter",
+    "Cross-page memory fast-path guards",
+    "Existing CPU timing instrumentation",
+    "Runtime CARA_CPU_BACKEND=fastinterp opt-in; DynCom fallback retained"
+  ]
+}
