@@ -3,6 +3,10 @@
 // Refer to the license.txt file included.
 
 #include "audio_core/hle/decoder.h"
+#ifdef CARA_IOS
+#include <atomic>
+#include <cstdlib>
+#endif
 
 namespace AudioCore::HLE {
 
@@ -47,6 +51,12 @@ std::optional<BinaryResponse> NullDecoder::ProcessRequest(const BinaryRequest& r
         response.unknown1 = 0x0;
         return response;
     case DecoderCommand::Decode:
+#ifdef CARA_IOS
+        if (std::getenv("CARA_AUDIO_DIAGNOSTICS")) {
+            static std::atomic<bool> warned{false};
+            if (!warned.exchange(true)) LOG_WARNING(Audio_DSP, "Cara audio diagnostics: game requested AAC but this build has no AAC decoder");
+        }
+#endif
         response.codec = request.codec;
         response.cmd = DecoderCommand::Decode;
         response.num_channels = 2; // Just assume stereo here

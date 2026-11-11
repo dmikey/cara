@@ -12,7 +12,10 @@
 namespace AudioCore {
 
 DspInterface::DspInterface() = default;
-DspInterface::~DspInterface() = default;
+DspInterface::~DspInterface() {
+    // Stop and join the output callback before its FIFO and time stretcher are destroyed.
+    sink.reset();
+}
 
 void DspInterface::SetSink(const std::string& sink_id, const std::string& audio_device_id) {
     if (current_sink_id == sink_id && current_audio_device_id == audio_device_id) {
@@ -21,9 +24,9 @@ void DspInterface::SetSink(const std::string& sink_id, const std::string& audio_
     current_sink_id = sink_id;
     current_audio_device_id = audio_device_id;
     sink = CreateSinkFromID(sink_id, audio_device_id);
+    time_stretcher.SetOutputSampleRate(sink->GetNativeSampleRate());
     sink->SetCallback(
         [this](s16* buffer, std::size_t num_frames) { OutputCallback(buffer, num_frames); });
-    time_stretcher.SetOutputSampleRate(sink->GetNativeSampleRate());
 }
 
 Sink& DspInterface::GetSink() {

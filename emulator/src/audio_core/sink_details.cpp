@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 #include "audio_core/null_sink.h"
+#ifdef CARA_IOS
+#include "audio_core/ios_sink.h"
+#endif
 #include "audio_core/sink_details.h"
 #ifdef HAVE_SDL2
 #include "audio_core/sdl2_sink.h"
@@ -32,6 +35,11 @@ struct SinkDetails {
 
 // sink_details is ordered in terms of desirability, with the best choice at the top.
 constexpr SinkDetails sink_details[] = {
+#ifdef CARA_IOS
+    SinkDetails{"ios", [](std::string_view device) -> std::unique_ptr<Sink> {
+        return std::make_unique<IOSAudioSink>(device);
+    }, [] { return std::vector<std::string>{"auto"}; }},
+#endif
 #ifdef HAVE_CUBEB
     SinkDetails{"cubeb",
                 [](std::string_view device_id) -> std::unique_ptr<Sink> {

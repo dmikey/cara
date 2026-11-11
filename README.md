@@ -111,3 +111,20 @@ only for regeneration). All shipped skin assets are included in this repository.
 The shipping app and Cara-owned targets use the Cara name and bundle identifier
 `com.dmikey.cara`. Its bundled emulator engine is derived from Citra MMJ; upstream
 copyrights, GPL license notices, and provenance remain in the source.
+
+### iOS sound and speed display
+
+Cara outputs the DSP’s stereo PCM16 stream through native iOS Audio Queue playback
+at the 3DS sample rate (32,728 Hz). Audio follows game/menu/background pauses and
+system interruptions. **Mute sound** in the menu is remembered between launches.
+Audio stretching is enabled to reduce breakup when emulation falls below full speed.
+The existing PCM/ADPCM DSP mixer is used; the optional AAC decoder is still absent
+in the bundled iOS configuration and must be verified separately for titles using AAC.
+
+The HUD reports emulation **speed**, with 100% corresponding to about 59.834
+emulated display refreshes per second. Xenoblade Chronicles 3D targets about 30
+unique game frames per second; display refresh count is not unique game FPS.
+For diagnostics, `CARA_AUDIO_DIAGNOSTICS=1` writes native queue/callback/PCM
+activity to `Documents/cara/audio-status.json` from the emulation thread. No
+recorded game audio is included. `CARA_AUDIO_DISABLED=1` selects the silent sink
+for controlled performance comparisons. Neither setting enables host JIT.

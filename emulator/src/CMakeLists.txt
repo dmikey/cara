@@ -1,3 +1,7 @@
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    enable_language(OBJCXX)
+endif()
+
 # Enable modules to include each other's files
 include_directories(.)
 

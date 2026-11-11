@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import "ios/skin_controls.h"
+#include "audio_core/ios_sink.h"
 #import "ios/save_sync.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #ifdef CARA_IOS_GLES
@@ -283,6 +284,13 @@ public:
     }
 };
 
+static NSString* CaraSpeedLabel(double refreshesPerSecond) {
+    NSString* value=[NSString stringWithFormat:@"%.0f%% speed",refreshesPerSecond*100.0/59.833997];
+    if (AudioCore::IOSAudioOutputFailed()) return [value stringByAppendingString:@" · Audio unavailable"];
+    if (AudioCore::IsIOSAudioMuted()) return [value stringByAppendingString:@" · Muted"];
+    return value;
+}
+
 @interface EmulatorController : UIViewController <UIDocumentPickerDelegate>
 @end
 @implementation EmulatorController {
@@ -356,6 +364,7 @@ public:
 }
 - (void)viewDidLoad {
     [super viewDidLoad]; self.view.backgroundColor=UIColor.blackColor;
+    AudioCore::SetIOSAudioMuted([NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
     NSURL* saveDocuments=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     saveSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES]];
     stop=false; running=false; framePending[0]=false; framePending[1]=false;
@@ -426,15 +435,20 @@ public:
     const auto convert=[&](CGRect r) { return CGRectMake(canvas.origin.x+r.origin.x/mapping.width*canvas.size.width,canvas.origin.y+r.origin.y/mapping.height*canvas.size.height,r.size.width/mapping.width*canvas.size.width,r.size.height/mapping.height*canvas.size.height); };
     top.frame=convert(skinControls.upperScreen); bottom.frame=convert(skinControls.lowerScreen);
     status.frame=convert(CGRectMake(80,215,420,64));
+    status.adjustsFontSizeToFitWidth=YES; status.minimumScaleFactor=0.7;
 #ifdef CARA_IOS_GLES
     if (emuWindow) emuWindow->SetDisplayLayout(top.frame,bottom.frame,self.view.bounds.size,gpuSurface.contentScaleFactor);
 #endif
 }
-- (void)resumeFromMenu { modalPaused=NO; paused=false; }
+- (void)resumeFromMenu { modalPaused=NO; paused=false; AudioCore::SetIOSAudioPaused(stop || !running); }
 - (void)showMenu {
     if (openingGame) return;
-    modalPaused=YES; paused=true; [self resetSkinInput];
+    modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
     UIAlertController* menu=[UIAlertController alertControllerWithTitle:@"Cara" message:saveSync.status preferredStyle:UIAlertControllerStyleActionSheet];
+    [menu addAction:[UIAlertAction actionWithTitle:(AudioCore::IsIOSAudioMuted()?@"Unmute sound":@"Mute sound") style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        const bool muted=!AudioCore::IsIOSAudioMuted(); AudioCore::SetIOSAudioMuted(muted);
+        [NSUserDefaults.standardUserDefaults setBool:muted forKey:@"audioMuted"]; [self resumeFromMenu];
+    }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Open game…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { self->pickingSkin=NO; [self openROM]; }]];
     NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
     if (recent) [menu addAction:[UIAlertAction actionWithTitle:@"Open recent game" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
@@ -469,15 +483,15 @@ public:
     } else { menu.popoverPresentationController.sourceView=menuFallback; menu.popoverPresentationController.sourceRect=menuFallback.bounds; }
     [self presentViewController:menu animated:YES completion:nil];
 }
-- (void)stopGame { stop=true; [self resetSkinInput]; status.text=@"Stopping…"; }
-- (void)background { backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; [self resetSkinInput]; }
+- (void)stopGame { stop=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; status.text=@"Stopping…"; }
+- (void)background { backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; }
 - (void)foreground {
     if (backgroundAt > 0 && running) {
         const double duration = CFAbsoluteTimeGetCurrent() - backgroundAt;
         startedAt += duration;
         lastHUDTime += duration;
     }
-    backgroundAt = 0; paused = modalPaused;
+    backgroundAt = 0; paused = modalPaused; AudioCore::SetIOSAudioPaused(paused);
 }
 - (void)openROM {
     UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:pickingSkin];
@@ -591,7 +605,12 @@ public:
         if (reportedFrame % 60 == 0) {
             double elapsed = CFAbsoluteTimeGetCurrent() - controller->startedAt;
 #ifndef CARA_IOS_GLES
-            controller->status.text = [NSString stringWithFormat:@"%.1f FPS", reportedFrame / std::max(elapsed, 0.001)];
+            if (screen==0 && reportedFrame>controller->lastHUDFrame) {
+                const double now=CFAbsoluteTimeGetCurrent();
+                const double refresh=(reportedFrame-controller->lastHUDFrame)/std::max(now-controller->lastHUDTime,0.001);
+                controller->lastHUDTime=now; controller->lastHUDFrame=reportedFrame;
+                controller->status.text=CaraSpeedLabel(refresh);
+            }
 #endif
             if ([NSProcessInfo.processInfo.environment[@"CARA_CAPTURE_FRAMES"] isEqualToString:@"1"]) {
                 NSString* documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
@@ -692,7 +711,7 @@ public:
             const double elapsed = now - controller->lastHUDTime;
             const double fps = (frame - controller->lastHUDFrame) / std::max(elapsed, 0.001);
             controller->lastHUDTime = now; controller->lastHUDFrame = frame;
-            controller->status.text = [NSString stringWithFormat:@"%.1f FPS", fps];
+            controller->status.text = CaraSpeedLabel(fps);
             if (timing.enabled) {
                 std::ofstream report(user + "runtime-status.json");
                 report << "{\"frame\":" << frame << ",\"display_fps\":" << fps
@@ -739,7 +758,7 @@ public:
             Common::FrameTiming::counters.enabled = std::getenv("CARA_FRAME_TIMING") != nullptr;
             s.init_clock = target_frames ? Settings::InitClock::FixedTime : Settings::InitClock::SystemTime;
             s.init_time = 946684801;
-            s.sink_id = "null"; s.audio_volume = 1; s.shared_font_type = Settings::SharedFontType::Auto;
+            s.sink_id = std::getenv("CARA_AUDIO_DISABLED") ? "null" : "ios"; s.audio_volume = 1; s.enable_audio_stretching = true; s.shared_font_type = Settings::SharedFontType::Auto;
             for (unsigned i=0; i<Settings::NativeButton::NumButtons; ++i)
                 s.current_input_profile.buttons[i] = "engine:ios,code:" + std::to_string(i);
             s.current_input_profile.analogs[0] = "engine:ios,index:0";
@@ -820,6 +839,8 @@ public:
                 unsigned active_test_press = 0;
                 const char* window_env = std::getenv("CARA_TIMING_WINDOW_FRAMES");
                 const unsigned window_frames = window_env ? unsigned(std::clamp(std::strtol(window_env, nullptr, 10), 60L, 600L)) : 600;
+                const bool audio_diagnostics=std::getenv("CARA_AUDIO_DIAGNOSTICS")!=nullptr;
+                unsigned audio_report_frame=0;
                 while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
                     if (paused) {
                         if (!was_paused) pause_started = std::chrono::steady_clock::now();
@@ -845,6 +866,9 @@ public:
                     if (generation!=observedSave) { observedSave=generation; saveFrame=emuWindow->frames+120; }
                     if (saveFrame && emuWindow->frames>=saveFrame) { saveFrame=0; std::fflush(nullptr); [saveSync captureCommittedSave]; }
                     result = system.RunLoop();
+                    if (audio_diagnostics && emuWindow->frames >= audio_report_frame+60) {
+                        AudioCore::WriteIOSAudioDiagnostics(user+"audio-status.json"); audio_report_frame=emuWindow->frames;
+                    }
                     if (!emuWindow->graphics_error.empty()) result = Core::System::ResultStatus::ErrorVideoCore;
                     if (result != Core::System::ResultStatus::Success) break;
                     if (Common::FrameTiming::counters.enabled && emuWindow->frames != timed_frame) {
@@ -936,6 +960,7 @@ public:
                 system.Shutdown();
                 [saveSync captureCommittedSave];
             }
+            AudioCore::SetIOSAudioPaused(true);
             emuWindow->DoneCurrent();
             running = false;
             dispatch_async(dispatch_get_main_queue(), ^{
