@@ -1635,18 +1635,24 @@ unsigned InterpreterMainLoop(ARMul_State* cpu, Core::Timing::Timer* timer) {
     constexpr unsigned compare_branch_index = 196;
     static_assert(sizeof(InstLabel) / sizeof(InstLabel[0]) > compare_branch_index);
     ASSERT(InstLabel[compare_branch_index] == &&BBL_INST);
+    constexpr unsigned load_compare_index = 130;
+    static_assert(sizeof(InstLabel) / sizeof(InstLabel[0]) > load_compare_index);
+    ASSERT(InstLabel[load_compare_index] == &&CMP_INST);
 #ifndef PROFILE_CURRENT_DISPATCH
 #define PROFILE_CURRENT_DISPATCH
 #endif
-#define GOTO_AFTER_COMPARE                                                                        \
+#define GOTO_EXPECTED_INSTRUCTION(expected_index, expected_label)                                  \
     GDB_BP_CHECK;                                                                                 \
     if (num_instrs >= cpu->NumInstrsToExecute) goto END;                                            \
     num_instrs++;                                                                                 \
     PROFILE_CURRENT_DISPATCH;                                                                     \
-    if (inst_base->idx == compare_branch_index) goto BBL_INST;                                      \
+    if (inst_base->idx == expected_index) goto expected_label;                                      \
     goto* InstLabel[inst_base->idx]
+#define GOTO_AFTER_COMPARE GOTO_EXPECTED_INSTRUCTION(compare_branch_index, BBL_INST)
+#define GOTO_AFTER_LOAD GOTO_EXPECTED_INSTRUCTION(load_compare_index, CMP_INST)
 #else
 #define GOTO_AFTER_COMPARE GOTO_NEXT_INST
+#define GOTO_AFTER_LOAD GOTO_NEXT_INST
 #endif
     arm_inst* inst_base;
     unsigned int addr;
@@ -2178,7 +2184,7 @@ LDR_INST : {
     cpu->Reg[15] += cpu->GetInstructionSize();
     INC_PC(sizeof(ldst_inst));
     FETCH_INST;
-    GOTO_NEXT_INST;
+    GOTO_AFTER_LOAD;
 }
 LDRCOND_INST : {
     if (CondPassed(cpu, inst_base->cond)) {

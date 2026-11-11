@@ -171,6 +171,49 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << "CMP/B/BL conditions, flags, links and exact instruction budgets passed\n";
+    // Load/compare/branch chains retain memory reads, predication, links, and
+    // exact stopping boundaries; a load into PC must continue through DISPATCH.
+    std::array<u32,1024> load_code{}, load_data{};
+    load_code[3]=0xE3A01001; load_code[4]=0xEAFFFFFE;
+    load_code[5]=0xE3A01002; load_code[6]=0xEAFFFFFE;
+    first_table->attributes[9]=first_table->attributes[10]=Memory::PageType::Memory;
+    first_table->pointers[9]=reinterpret_cast<u8*>(load_code.data());
+    first_table->pointers[10]=reinterpret_cast<u8*>(load_data.data());
+    for (u32 lhs:{0u,1u,0xffffffffu,0x80000000u,0x7fffffffu})
+    for (u32 rhs:{0u,1u,255u}) for (unsigned load_cond:{14u,0u})
+    for (unsigned branch_cond=0;branch_cond<15;++branch_cond) for (bool link:{false,true})
+    for (unsigned budget:{0u,1u,2u,3u,4u}) {
+        load_data[0]=lhs;
+        load_code[0]=(load_cond<<28)|0x05920000; // LDR r0, [r2]
+        load_code[1]=0xE3500000|rhs;
+        load_code[2]=(branch_cond<<28)|0x0A000001|(link?0x01000000:0);
+        InvalidateDynComDecodedCache();
+        first->Cpsr=USER32MODE|0x20000000; first->Reg[0]=0x12345678;
+        first->Reg[1]=0x12345678; first->Reg[2]=0xa000; first->Reg[14]=0x11223344;
+        first->Reg[15]=0x9000; first->NumInstrsToExecute=budget;
+        const u32 value=(budget&&load_cond==14)?lhs:0x12345678;
+        const u32 result=value-rhs;
+        const u32 cmp_flags=(result&0x80000000)|(result==0?0x40000000:0)|
+            (value>=rhs?0x20000000:0)|(((value^rhs)&(value^result)&0x80000000)?0x10000000:0);
+        const u32 flags=budget>=2?cmp_flags:0x20000000;
+        const bool taken=condition(branch_cond,flags);
+        const u32 expected_pc=budget==0?0x9000:budget==1?0x9004:budget==2?0x9008:
+            budget==3?(taken?0x9014:0x900c):(taken?0x9018:0x9010);
+        const unsigned count=InterpreterMainLoop(first.get(),timing.GetTimer(0).get());
+        if (count!=budget || first->Reg[15]!=expected_pc || first->Reg[0]!=value ||
+            first->Reg[1]!=(budget==4?(taken?2u:1u):0x12345678) ||
+            first->Reg[14]!=((budget>=3&&taken&&link)?0x900c:0x11223344) ||
+            first->Cpsr!=(USER32MODE|flags)) {
+            std::cerr << "LDR/CMP/branch dispatch state or boundary mismatch\n"; return 11;
+        }
+    }
+    load_code[0]=0xE592F000; // LDR pc, [r2]
+    load_data[0]=0x9014; InvalidateDynComDecodedCache();
+    first->Cpsr=USER32MODE; first->Reg[2]=0xa000; first->Reg[1]=0;
+    first->Reg[15]=0x9000; first->NumInstrsToExecute=2;
+    if (InterpreterMainLoop(first.get(),timing.GetTimer(0).get())!=2 ||
+        first->Reg[1]!=2 || first->Reg[15]!=0x9018) return 12;
+    std::cout << "LDR/CMP/branch and load-to-PC dispatch checks passed\n";
     if (argc == 2 && std::string(argv[1]) == "--benchmark") {
         first->Reg[15] = 0x3088;
         first->NumInstrsToExecute = 20000000;
