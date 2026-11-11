@@ -1973,14 +1973,22 @@ CMP_INST : {
         if (inst_cream->Rn == 15)
             rn_val += 2 * cpu->GetInstructionSize();
 
-        bool carry;
-        bool overflow;
-        u32 result = AddWithCarry(rn_val, ~SHIFTER_OPERAND, 1, &carry, &overflow);
-
+        // CMP needs subtraction flags, not the general three-input addition helper.
+        // Keep unsigned arithmetic so wraparound is defined for every guest operand;
+        // the compiler can lower these comparisons directly to host flag operations.
+        u32 operand;
+        if (inst_cream->I) {
+            operand = inst_cream->immediate;
+            cpu->shifter_carry_out = (inst_cream->shifter_operand & 0xf00)
+                ? operand >> 31 : cpu->CFlag;
+        } else {
+            operand = SHIFTER_OPERAND;
+        }
+        const u32 result = rn_val - operand;
         UPDATE_NFLAG(result);
         UPDATE_ZFLAG(result);
-        cpu->CFlag = carry;
-        cpu->VFlag = overflow;
+        cpu->CFlag = rn_val >= operand; // ARM carry means no borrow on subtraction.
+        cpu->VFlag = ((rn_val ^ operand) & (rn_val ^ result)) >> 31;
     }
     cpu->Reg[15] += cpu->GetInstructionSize();
     INC_PC(sizeof(cmp_inst));

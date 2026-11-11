@@ -1,3 +1,7 @@
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    enable_language(OBJCXX)
+endif()
+
 # Enable modules to include each other's files
 include_directories(.)
 
@@ -121,6 +125,7 @@ endif()
 
 if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(cara-input-self-test input_self_test.cpp)
+    add_executable(cara-audio-buffer-self-test audio_buffer_self_test.cpp)
     add_executable(cara-interval-cache-self-test interval_cache_self_test.cpp)
     target_link_libraries(cara-interval-cache-self-test PRIVATE Boost::boost)
     add_executable(cara-core-cache-self-test core_cache_self_test.cpp)

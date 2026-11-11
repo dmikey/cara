@@ -4,9 +4,11 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <vector>
 #include "audio_core/audio_types.h"
+#include "audio_core/raw_audio_buffer.h"
 #include "audio_core/time_stretch.h"
 #include "common/common_types.h"
 #include "common/ring_buffer.h"
@@ -96,6 +98,10 @@ public:
     void SetSink(const std::string& sink_id, const std::string& audio_device_id);
     /// Get the current sink
     Sink& GetSink();
+    struct OutputCounters { u64 requested, supplied, underruns; };
+    OutputCounters GetOutputCounters() const {
+        return {requested_frames.load(), supplied_frames.load(), underrun_callbacks.load()};
+    }
     /// Enable/Disable audio stretching.
     void EnableStretching(bool enable);
 
@@ -107,12 +113,17 @@ private:
     void FlushResidualStretcherAudio();
     void OutputCallback(s16* buffer, std::size_t num_frames);
 
+    const bool audio_diagnostics;
+    std::atomic<u64> requested_frames{0}, supplied_frames{0}, underrun_callbacks{0};
     std::unique_ptr<Sink> sink;
     std::atomic<bool> perform_time_stretching = false;
     std::atomic<bool> flushing_time_stretcher = false;
     Common::RingBuffer<s16, 0x2000, 2> fifo;
     std::array<s16, 2> last_frame{};
     TimeStretcher time_stretcher;
+#ifdef CARA_IOS
+    RawAudioBuffer raw_audio;
+#endif
     std::string current_sink_id;
     std::string current_audio_device_id;
 };

@@ -183,6 +183,7 @@ struct cmp_inst {
     unsigned int I;
     unsigned int Rn;
     unsigned int shifter_operand;
+    unsigned int immediate; // Decoded once; occupies existing padding on ARM64.
     shtop_fp_t shtop_func;
 };
 

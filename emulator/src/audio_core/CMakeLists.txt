@@ -81,3 +81,11 @@ if(ENABLE_CUBEB)
     target_link_libraries(audio_core PRIVATE cubeb)
     target_compile_definitions(audio_core PUBLIC HAVE_CUBEB)
 endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(audio_core PRIVATE ios_sink.mm ios_sink.h)
+    target_compile_options(audio_core PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+    target_link_libraries(audio_core PRIVATE "-framework AudioToolbox" "-framework AVFoundation" "-framework Foundation" "-framework UIKit")
+endif()
+
+target_sources(audio_core PRIVATE raw_audio_buffer.h)

@@ -4,7 +4,7 @@
 
 An experimental iOS port of Citra MMJ using an ARM interpreter, with software and experimental native GLES3 rendering. The emulator libraries are statically linked; Apple system frameworks remain dynamic. CPU and host shader JIT backends are excluded at build time.
 
-A development build has booted a user-provided game on a physical M4 iPad. The optimized software path reached 41.2 FPS in a 600-frame device test; the first native GLES3 GPU test reached 107.8 FPS uncapped in the same early scene. Direct GPU presentation followed by GPU vertex processing reached 79.5 FPS uncapped in a 3,600-frame sequence. Some frames still exceed the native frame budget; this is not a locked-60 claim. Longer gameplay compatibility is still being checked. Audio is disabled. These are bounded tests, not full-game performance claims.
+A development build has booted a user-provided game on a physical M4 iPad. The optimized software path reached 41.2 FPS in a 600-frame device test; the first native GLES3 GPU test reached 107.8 FPS uncapped in the same early scene. Direct GPU presentation followed by GPU vertex processing reached 79.5 FPS uncapped in a 3,600-frame sequence. These older counters measure emulated display refreshes, not unique game frames. The app now shows speed percentage; 100% is full emulation speed. Some scenes still fall below full speed. Longer gameplay compatibility is still being checked. Native iOS audio is available; direct playback is the default, with optional audio stretching. These are bounded tests, not full-game performance claims.
 
 ## Repository contents
 
@@ -111,3 +111,22 @@ only for regeneration). All shipped skin assets are included in this repository.
 The shipping app and Cara-owned targets use the Cara name and bundle identifier
 `com.dmikey.cara`. Its bundled emulator engine is derived from Citra MMJ; upstream
 copyrights, GPL license notices, and provenance remain in the source.
+
+### iOS sound and speed display
+
+Cara outputs the DSP’s stereo PCM16 stream through native iOS Audio Queue playback
+at the 3DS sample rate (32,728 Hz). Audio follows game/menu/background pauses and
+system interruptions. **Mute sound** in the menu is remembered between launches.
+Direct playback is the default to avoid stretching artifacts at full speed. The menu
+can enable audio stretching when emulation is slow; that choice is remembered.
+Direct playback uses a short source prebuffer and fades on underrun/recovery.
+The existing PCM/ADPCM DSP mixer is used; the optional AAC decoder is still absent
+in the bundled iOS configuration and must be verified separately for titles using AAC.
+
+The HUD reports emulation **speed**, with 100% corresponding to about 59.834
+emulated display refreshes per second. Xenoblade Chronicles 3D targets about 30
+unique game frames per second; display refresh count is not unique game FPS.
+For diagnostics, `CARA_AUDIO_DIAGNOSTICS=1` writes native queue/callback/PCM
+activity to `Documents/cara/audio-status.json` from the emulation thread. No
+recorded game audio is included. `CARA_AUDIO_DISABLED=1` selects the silent sink
+for controlled performance comparisons. Neither setting enables host JIT.

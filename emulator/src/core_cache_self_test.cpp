@@ -171,6 +171,87 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << "CMP/B/BL conditions, flags, links and exact instruction budgets passed\n";
+    // Exercise the real register CMP handler, using widened arithmetic as an
+    // independent reference. Include every predicate and initial NZCV combination.
+    std::array<u32,1024> flag_code{0xE1500001,0xEAFFFFFE}; // CMP r0,r1; B .
+    first_table->attributes[9]=Memory::PageType::Memory;
+    first_table->pointers[9]=reinterpret_cast<u8*>(flag_code.data());
+    const std::array<u32,9> flag_edges{0,1,2,0x7ffffffe,0x7fffffff,
+        0x80000000,0x80000001,0xfffffffe,0xffffffff};
+    const auto verify_compare = [&](u32 lhs,u32 rhs,unsigned predicate,unsigned initial) {
+        const u32 initial_flags=initial<<28;
+        const bool executes=condition(predicate,initial_flags);
+        const u64 widened_unsigned=u64(lhs)+u64(~rhs)+1;
+        const s64 widened_signed=s64(s32(lhs))-s64(s32(rhs));
+        const u32 result=u32(widened_unsigned);
+        const u32 expected_flags=(result&0x80000000)|(result==0?0x40000000:0)|
+            ((widened_unsigned>>32)?0x20000000:0)|
+            ((widened_signed < -2147483648LL || widened_signed > 2147483647LL)?0x10000000:0);
+        first->Cpsr=USER32MODE|initial_flags;
+        first->Reg[0]=lhs;first->Reg[1]=rhs;first->Reg[15]=0x9000;
+        first->NumInstrsToExecute=1;
+        const auto count=InterpreterMainLoop(first.get(),timing.GetTimer(0).get());
+        return count==1 && first->Reg[15]==0x9004 && first->Reg[0]==lhs &&
+            first->Reg[1]==rhs && first->Cpsr==(USER32MODE|(executes?expected_flags:initial_flags));
+    };
+    for (unsigned predicate=0;predicate<15;++predicate) {
+        flag_code[0]=(predicate<<28)|0x01500001;
+        InvalidateDynComDecodedCache();
+        for (u32 lhs:flag_edges) for (u32 rhs:flag_edges) for (unsigned initial=0;initial<16;++initial)
+            if (!verify_compare(lhs,rhs,predicate,initial)) {
+                std::cerr << "CMP boundary flags or predication mismatch\n";return 11;
+            }
+    }
+    flag_code[0]=0xE1500001;InvalidateDynComDecodedCache();
+    u32 flag_seed=0x4a17b603;
+    const auto random_flag_input = [&]() {
+        flag_seed^=flag_seed<<13;flag_seed^=flag_seed>>17;flag_seed^=flag_seed<<5;return flag_seed;
+    };
+    for (unsigned i=0;i<4096;++i) {
+        const u32 lhs=random_flag_input(),rhs=random_flag_input();
+        if (!verify_compare(lhs,rhs,14,i&15)) {
+            std::cerr << "CMP randomized flags mismatch\n";return 11;
+        }
+    }
+    std::cout << "CMP register flags: all predicates, initial NZCV, boundary and random operands passed\n";
+    // Every ARM rotated-immediate encoding, including zero rotation/carry preservation.
+    for (u32 encoding=0;encoding<4096;++encoding) {
+        flag_code[0]=0xE3500000|encoding;InvalidateDynComDecodedCache();
+        u32 operand=encoding&255;
+        const unsigned rotation=((encoding>>8)&15)*2;
+        for (unsigned bit=0;bit<rotation;++bit) operand=(operand>>1)|(operand<<31);
+        for (u32 lhs:flag_edges) {
+            const unsigned initial=encoding&15;
+            if (!verify_compare(lhs,operand,14,initial) ||
+                first->shifter_carry_out!=(rotation?operand>>31:(initial>>1)&1)) {
+                std::cerr << "CMP decoded immediate or shifter carry mismatch\n";return 12;
+            }
+        }
+    }
+    std::cout << "CMP all 4096 rotated immediate encodings and shifter carry passed\n";
+    // RAM reads must follow the currently selected table and live pointer entries.
+    std::array<u8,4096> ram_a{},ram_b{};
+    ram_a[0]=0x12;ram_a[1]=0x34;ram_a[2]=0x56;ram_a[3]=0x78;
+    ram_b[0]=0x98;ram_b[1]=0xba;ram_b[2]=0xdc;ram_b[3]=0xfe;
+    first_table->attributes[11]=second_table->attributes[11]=Memory::PageType::Memory;
+    first_table->pointers[11]=ram_a.data();second_table->pointers[11]=ram_b.data();
+    for(unsigned turn=0;turn<100;++turn) {
+        memory.SetCurrentPageTable((turn&1)?first_table.get():second_table.get());
+        if(memory.Read32(0xb000)!=((turn&1)?0x78563412u:0xfedcba98u)) {
+            std::cerr << "RAM read retained a stale address-space pointer\n";return 13;
+        }
+    }
+    memory.SetCurrentPageTable(first_table.get());
+    first_table->pointers[11]=ram_b.data();
+    if(memory.Read32(0xb000)!=0xfedcba98u) return 13;
+    memory.UnmapRegion(*first_table,0xb000,Memory::PAGE_SIZE);
+    if(memory.Read32(0xb000)!=0) {std::cerr << "RAM read bypassed unmapped fallback\n";return 13;}
+    memory.MapMemoryRegion(*first_table,0xb000,Memory::PAGE_SIZE,ram_a.data());
+    memory.Write32(0xbffc,0xa1b2c3d4);
+    if(memory.Read32(0xbffc)!=0xa1b2c3d4 || ram_a[4092]!=0xd4 || ram_a[4095]!=0xa1) return 13;
+    memory.Write8(0xb000,0xef);
+    if(memory.Read32(0xb000)!=0x785634efu) return 13;
+    std::cout << "RAM read table switches, remapping, unmapped fallback and byte order passed\n";
     if (argc == 2 && std::string(argv[1]) == "--benchmark") {
         first->Reg[15] = 0x3088;
         first->NumInstrsToExecute = 20000000;
