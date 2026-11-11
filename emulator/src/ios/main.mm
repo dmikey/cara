@@ -766,7 +766,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
             Common::FrameTiming::counters.enabled = std::getenv("CARA_FRAME_TIMING") != nullptr;
             s.init_clock = target_frames ? Settings::InitClock::FixedTime : Settings::InitClock::SystemTime;
             s.init_time = 946684801;
-            s.sink_id = std::getenv("CARA_AUDIO_DISABLED") ? "null" : "ios"; s.audio_volume = 1; s.enable_audio_stretching = controller->stretchAudio.load() && std::getenv("CARA_AUDIO_NO_STRETCH")==nullptr; s.shared_font_type = Settings::SharedFontType::Auto;
+            s.sink_id = std::getenv("CARA_AUDIO_DISABLED") ? "null" : "ios"; s.audio_volume = 1; s.enable_audio_stretching = self->stretchAudio.load() && std::getenv("CARA_AUDIO_NO_STRETCH")==nullptr; s.shared_font_type = Settings::SharedFontType::Auto;
             for (unsigned i=0; i<Settings::NativeButton::NumButtons; ++i)
                 s.current_input_profile.buttons[i] = "engine:ios,code:" + std::to_string(i);
             s.current_input_profile.analogs[0] = "engine:ios,index:0";
@@ -850,8 +850,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                 const bool audio_diagnostics=std::getenv("CARA_AUDIO_DIAGNOSTICS")!=nullptr;
                 unsigned audio_report_frame=0;
                 while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
-                    if (controller->stretchAudioDirty.exchange(false)) {
-                        s.enable_audio_stretching=controller->stretchAudio.load();
+                    if (self->stretchAudioDirty.exchange(false)) {
+                        s.enable_audio_stretching=self->stretchAudio.load();
                         system.DSP().EnableStretching(s.enable_audio_stretching);
                     }
                     if (paused) {
