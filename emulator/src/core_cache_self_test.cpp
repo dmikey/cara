@@ -171,6 +171,49 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << "CMP/B/BL conditions, flags, links and exact instruction budgets passed\n";
+    // Exercise the real register CMP handler, using widened arithmetic as an
+    // independent reference. Include every predicate and initial NZCV combination.
+    std::array<u32,1024> flag_code{0xE1500001,0xEAFFFFFE}; // CMP r0,r1; B .
+    first_table->attributes[9]=Memory::PageType::Memory;
+    first_table->pointers[9]=reinterpret_cast<u8*>(flag_code.data());
+    const std::array<u32,9> flag_edges{0,1,2,0x7ffffffe,0x7fffffff,
+        0x80000000,0x80000001,0xfffffffe,0xffffffff};
+    const auto verify_compare = [&](u32 lhs,u32 rhs,unsigned predicate,unsigned initial) {
+        const u32 initial_flags=initial<<28;
+        const bool executes=condition(predicate,initial_flags);
+        const u64 widened_unsigned=u64(lhs)+u64(~rhs)+1;
+        const s64 widened_signed=s64(s32(lhs))-s64(s32(rhs));
+        const u32 result=u32(widened_unsigned);
+        const u32 expected_flags=(result&0x80000000)|(result==0?0x40000000:0)|
+            ((widened_unsigned>>32)?0x20000000:0)|
+            ((widened_signed < -2147483648LL || widened_signed > 2147483647LL)?0x10000000:0);
+        first->Cpsr=USER32MODE|initial_flags;
+        first->Reg[0]=lhs;first->Reg[1]=rhs;first->Reg[15]=0x9000;
+        first->NumInstrsToExecute=1;
+        const auto count=InterpreterMainLoop(first.get(),timing.GetTimer(0).get());
+        return count==1 && first->Reg[15]==0x9004 && first->Reg[0]==lhs &&
+            first->Reg[1]==rhs && first->Cpsr==(USER32MODE|(executes?expected_flags:initial_flags));
+    };
+    for (unsigned predicate=0;predicate<15;++predicate) {
+        flag_code[0]=(predicate<<28)|0x01500001;
+        InvalidateDynComDecodedCache();
+        for (u32 lhs:flag_edges) for (u32 rhs:flag_edges) for (unsigned initial=0;initial<16;++initial)
+            if (!verify_compare(lhs,rhs,predicate,initial)) {
+                std::cerr << "CMP boundary flags or predication mismatch\n";return 11;
+            }
+    }
+    flag_code[0]=0xE1500001;InvalidateDynComDecodedCache();
+    u32 flag_seed=0x4a17b603;
+    const auto random_flag_input = [&]() {
+        flag_seed^=flag_seed<<13;flag_seed^=flag_seed>>17;flag_seed^=flag_seed<<5;return flag_seed;
+    };
+    for (unsigned i=0;i<4096;++i) {
+        const u32 lhs=random_flag_input(),rhs=random_flag_input();
+        if (!verify_compare(lhs,rhs,14,i&15)) {
+            std::cerr << "CMP randomized flags mismatch\n";return 11;
+        }
+    }
+    std::cout << "CMP register flags: all predicates, initial NZCV, boundary and random operands passed\n";
     if (argc == 2 && std::string(argv[1]) == "--benchmark") {
         first->Reg[15] = 0x3088;
         first->NumInstrsToExecute = 20000000;
