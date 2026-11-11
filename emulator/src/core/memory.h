@@ -6,10 +6,12 @@
 
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
 #include "common/common_types.h"
+#include "common/swap.h"
 
 class ARM_Interface;
 
@@ -223,7 +225,15 @@ public:
 
     u8 Read8(VAddr addr);
     u16 Read16(VAddr addr);
-    u32 Read32(VAddr addr);
+    u32 Read32(VAddr addr) {
+        // A null entry retains the existing unmapped/rasterizer-coherence path.
+        if (const u8* page = current_page_table->pointers[addr >> PAGE_BITS]) {
+            u32_le value;
+            std::memcpy(&value, page + (addr & PAGE_MASK), sizeof(value));
+            return value;
+        }
+        return Read32Slow(addr);
+    }
     u64 Read64(VAddr addr);
 
     void Write8(VAddr addr, u8 data);
@@ -272,6 +282,9 @@ public:
     void SetDSP(AudioCore::DspInterface& dsp);
 
 private:
+    u32 Read32Slow(VAddr addr);
+    PageTable* current_page_table = nullptr;
+
     template <typename T>
     T Read(const VAddr vaddr);
 

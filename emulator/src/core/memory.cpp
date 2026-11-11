@@ -62,7 +62,6 @@ public:
     std::unique_ptr<u8[]> vram = std::make_unique<u8[]>(Memory::VRAM_SIZE);
     std::unique_ptr<u8[]> n3ds_extra_ram = std::make_unique<u8[]>(Memory::N3DS_EXTRA_RAM_SIZE);
 
-    PageTable* current_page_table = nullptr;
     RasterizerCacheMarker cache_marker;
     std::vector<PageTable*> page_table_list;
 
@@ -73,11 +72,11 @@ MemorySystem::MemorySystem() : impl(std::make_unique<Impl>()) {}
 MemorySystem::~MemorySystem() = default;
 
 void MemorySystem::SetCurrentPageTable(PageTable* page_table) {
-    impl->current_page_table = page_table;
+    current_page_table = page_table;
 }
 
 PageTable* MemorySystem::GetCurrentPageTable() const {
-    return impl->current_page_table;
+    return current_page_table;
 }
 
 void MemorySystem::MapPages(PageTable& page_table, u32 base, u32 size, u8* memory, PageType type) {
@@ -142,7 +141,7 @@ void MemorySystem::UnregisterPageTable(PageTable* page_table) {
 
 template <typename T>
 T MemorySystem::Read(const VAddr vaddr) {
-    const u8* page_pointer = impl->current_page_table->pointers[vaddr >> PAGE_BITS];
+    const u8* page_pointer = current_page_table->pointers[vaddr >> PAGE_BITS];
     if (page_pointer) {
         // NOTE: Avoid adding any extra logic to this fast-path block
         T value;
@@ -150,7 +149,7 @@ T MemorySystem::Read(const VAddr vaddr) {
         return value;
     }
 
-    PageType type = impl->current_page_table->attributes[vaddr >> PAGE_BITS];
+    PageType type = current_page_table->attributes[vaddr >> PAGE_BITS];
     switch (type) {
     case PageType::Unmapped:
         LOG_ERROR(HW_Memory, "unmapped Read{} @ 0x{:08X}", sizeof(T) * 8, vaddr);
@@ -171,14 +170,14 @@ T MemorySystem::Read(const VAddr vaddr) {
 
 template <typename T>
 void MemorySystem::Write(const VAddr vaddr, const T data) {
-    u8* page_pointer = impl->current_page_table->pointers[vaddr >> PAGE_BITS];
+    u8* page_pointer = current_page_table->pointers[vaddr >> PAGE_BITS];
     if (page_pointer) {
         // NOTE: Avoid adding any extra logic to this fast-path block
         std::memcpy(&page_pointer[vaddr & PAGE_MASK], &data, sizeof(T));
         return;
     }
 
-    PageType type = impl->current_page_table->attributes[vaddr >> PAGE_BITS];
+    PageType type = current_page_table->attributes[vaddr >> PAGE_BITS];
     switch (type) {
     case PageType::Unmapped:
         LOG_ERROR(HW_Memory, "unmapped Write{} 0x{:08X} @ 0x{:08X}", sizeof(data) * 8, (u32)data,
@@ -215,12 +214,12 @@ bool MemorySystem::IsValidPhysicalAddress(const PAddr paddr) {
 }
 
 u8* MemorySystem::GetPointer(const VAddr vaddr) {
-    u8* page_pointer = impl->current_page_table->pointers[vaddr >> PAGE_BITS];
+    u8* page_pointer = current_page_table->pointers[vaddr >> PAGE_BITS];
     if (page_pointer) {
         return page_pointer + (vaddr & PAGE_MASK);
     }
 
-    if (impl->current_page_table->attributes[vaddr >> PAGE_BITS] ==
+    if (current_page_table->attributes[vaddr >> PAGE_BITS] ==
         PageType::RasterizerCachedMemory) {
         return GetPointerForRasterizerCache(vaddr);
     }
@@ -232,7 +231,7 @@ u8* MemorySystem::GetPointer(const VAddr vaddr) {
 std::string MemorySystem::ReadCString(VAddr vaddr, u32 max_length) {
     std::string result;
     while (max_length > 0) {
-        const u8* page_pointer = impl->current_page_table->pointers[vaddr >> PAGE_BITS];
+        const u8* page_pointer = current_page_table->pointers[vaddr >> PAGE_BITS];
         if (page_pointer) {
             char value = page_pointer[vaddr & PAGE_MASK];
             if (value == 0) {
@@ -388,7 +387,7 @@ u16 MemorySystem::Read16(const VAddr addr) {
     return Read<u16_le>(addr);
 }
 
-u32 MemorySystem::Read32(const VAddr addr) {
+u32 MemorySystem::Read32Slow(const VAddr addr) {
     return Read<u32_le>(addr);
 }
 

@@ -171,6 +171,29 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << "CMP/B/BL conditions, flags, links and exact instruction budgets passed\n";
+    // RAM reads must follow the currently selected table and live pointer entries.
+    std::array<u8,4096> ram_a{},ram_b{};
+    ram_a[0]=0x12;ram_a[1]=0x34;ram_a[2]=0x56;ram_a[3]=0x78;
+    ram_b[0]=0x98;ram_b[1]=0xba;ram_b[2]=0xdc;ram_b[3]=0xfe;
+    first_table->attributes[11]=second_table->attributes[11]=Memory::PageType::Memory;
+    first_table->pointers[11]=ram_a.data();second_table->pointers[11]=ram_b.data();
+    for(unsigned turn=0;turn<100;++turn) {
+        memory.SetCurrentPageTable((turn&1)?first_table.get():second_table.get());
+        if(memory.Read32(0xb000)!=((turn&1)?0x78563412u:0xfedcba98u)) {
+            std::cerr << "RAM read retained a stale address-space pointer\n";return 13;
+        }
+    }
+    memory.SetCurrentPageTable(first_table.get());
+    first_table->pointers[11]=ram_b.data();
+    if(memory.Read32(0xb000)!=0xfedcba98u) return 13;
+    memory.UnmapRegion(*first_table,0xb000,Memory::PAGE_SIZE);
+    if(memory.Read32(0xb000)!=0) {std::cerr << "RAM read bypassed unmapped fallback\n";return 13;}
+    memory.MapMemoryRegion(*first_table,0xb000,Memory::PAGE_SIZE,ram_a.data());
+    memory.Write32(0xbffc,0xa1b2c3d4);
+    if(memory.Read32(0xbffc)!=0xa1b2c3d4 || ram_a[4092]!=0xd4 || ram_a[4095]!=0xa1) return 13;
+    memory.Write8(0xb000,0xef);
+    if(memory.Read32(0xb000)!=0x785634efu) return 13;
+    std::cout << "RAM read table switches, remapping, unmapped fallback and byte order passed\n";
     if (argc == 2 && std::string(argv[1]) == "--benchmark") {
         first->Reg[15] = 0x3088;
         first->NumInstrsToExecute = 20000000;
