@@ -27,5 +27,5 @@ These results compare whole apps and do not isolate a single renderer or CPU
 optimization. They are historical measurements, not a guarantee for current
 builds or other games.
 
-See [validation](validation.md) and the [hardware investigation](hardware-investigation.md)
-for additional tests, measurement constraints, and optimization work.
+See [validation](validation.md) for additional tests, measurement constraints,
+and optimization work.

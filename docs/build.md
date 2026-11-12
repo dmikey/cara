@@ -12,6 +12,5 @@ python3 tools/audit_no_jit.py ios --renderer gles3
 The unsigned app is written to `work/build-ios-gles3/bin/cara-ios.app`.
 Device installation requires development signing.
 
-See the guides for [save states](save-states.md),
-[adaptive CPU clock](adaptive-clock.md), and [validation](validation.md).
+See the guides for [save states](save-states.md) and [validation](validation.md).
 
