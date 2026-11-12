@@ -17,23 +17,16 @@ Development is active; compatibility and performance vary by game.
 
 ## What makes Cara different
 
-Cara starts from **Citra MMJ**, weihuoya's Android-focused performance fork.
-MMJ's appeal was its work on making 3DS emulation practical on mobile hardware:
-GPU-accelerated OpenGL ES rendering, shader reuse, and controls for expensive
-rendering and memory operations. That mobile graphics foundation is what Cara
-borrows from MMJ.
+Cara builds on **Citra MMJ**, weihuoya's performance-focused Android fork.
+MMJ brought a mobile-first approach to 3DS rendering. Cara carries that foundation
+forward for Apple hardware with its own GPU pipeline, memory optimizations, and
+native presentation.
 
-| MMJ's mobile foundation | How Cara uses it |
+| MMJ's mobile foundation | Cara's Apple-focused enhancements |
 |---|---|
-| **Hardware-accelerated draws and generated GPU shaders** | Cara builds on the command processor, shader generator/decompiler, and OpenGL renderer, with a custom Apple vertex pipeline and native presentation. |
-| **Shader and program caching** | MMJ reuses generated shaders and compiled programs to reduce repeated compilation. Cara retains the source foundation; its iOS frontend currently disables persistent shader caching, and Android-generated program binaries are excluded. |
-| **Renderer performance controls** | MMJ exposes options such as Skip Slow Draw and Skip CPU Access to trade rendering or memory work for speed. Cara's Apple work targets less repeated work and fewer transfers while preserving correct output; those shortcuts are not the basis of its reported gains. |
-
-The inherited implementation is documented in MMJ's
-[shader manager](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/renderer_opengl/gl_shader_manager.cpp),
-[draw processing](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/command_processor.cpp),
-and [surface cache](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp).
-Cara adds two further pieces:
+| **Mobile GPU rendering** | A custom Apple vertex pipeline builds on MMJ's OpenGL ES renderer, putting more graphics work on the GPU. |
+| **Shader generation and reuse** | MMJ's shader foundation powers Cara's custom Apple GPU shaders, moving vertex processing and packed-data decoding off the CPU. |
+| **Mobile performance tuning** | Cara extends that performance focus with prepared-input reuse, bounded GPU caches, and fewer CPU/GPU transfers. |
 
 - **Azahar FastInterp.** Cara adapts Azahar's ARM interpreter for execution without
   CPU JIT. Guest instructions become decoded data dispatched to precompiled
