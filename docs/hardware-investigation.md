@@ -456,6 +456,44 @@ when packed inputs are enabled. Smaller devices retain the no-shadow path until
 measured. `CARA_VERTEX_UPLOAD_REUSE=0` explicitly disables it for comparisons.
 The core remains opt-in through the same environment setting.
 
+### Grass gameplay replay
+
+The Secret Path grass scene is a separate, user-captured gameplay checkpoint,
+not the opening dialogue. The private Slot 1 file was copied and verified before
+restarting. An initial launch was rejected by the title check because the recent
+bookmark pointed to Dark Moon; subsequent runs pin the existing Stories filename
+with `--rom 'Monster Hunter Stories (USA).3ds'`.
+
+The frontend now reapplies its selected CPU policy immediately after loading a
+profiling state. Otherwise a state captured with adaptive CPU at 50% could retain
+that scaling while the newly initialized HUD says 100%. The earlier opening
+checkpoints were captured at 100%; this correction is required for the grass
+checkpoint. Save-state compatibility checks remain unchanged.
+
+`--circle-segments 300:600:0:1,600:900:0:-1,900:1200:0:1` scripts walking, with neutral
+input between segments. Segments must be ordered, nonoverlapping and within the
+run; axes must be finite and in [-1,1]. The screenshot confirms movement into
+the Secret Path clearing. With first 300 refreshes excluded and sound enabled:
+
+| Grass gameplay, 100% guest clock | Elapsed | Emulation-thread CPU | Input preparation | Upload |
+|---|---:|---:|---:|---:|
+| Packed inputs, upload every use | 48.480 ms | 43.686 ms | 6.357 ms | 18.486 ms |
+| Packed inputs, exact upload reuse | 33.539 ms | 28.987 ms | 6.483 ms | 2.379 ms |
+
+Both runs matched 54,913.6 GPU draws and 137,045,135.2 expanded vertices per
+60-refresh window, with identical final full RGB screenshots. Reuse avoided
+869.85 MB of the 1,042.57 MB upload payload per window, but movement changed more
+inputs than the stationary scene. Thermal state remained nominal; both audio
+reports were unmuted with last_error=0. The 44.6% throughput gain does not reach
+native refresh speed. Most remaining elapsed time is still CPU work on the
+emulation thread; guest_cpu_ms includes synchronous renderer/service calls and
+must not be presented as pure ARM interpretation time.
+
+The next candidate is exact-byte-validated reuse of prepared triangle/index
+streams. This targets the measured preparation cost while leaving guest clock,
+shader evaluation, effects and draw order intact. It is not implemented in this
+measurement. Keep the grass checkpoint and the opening checkpoint separately.
+
 ### Device tooling
 
 CoreDevice screenshot capture works without adding GPU readback to Cara:

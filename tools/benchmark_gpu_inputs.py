@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--device', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--bundle', default='com.dmikey.cara')
+    parser.add_argument('--rom', help='Pin a ROM filename already present in the app Documents directory')
     parser.add_argument('--frames', type=int, default=1200)
     parser.add_argument('--warmup', type=int, default=300)
     parser.add_argument('--timeout', type=int, default=240)
@@ -24,6 +25,8 @@ def main():
     parser.add_argument('--press-a-frames', default='0',
                         help='Comma-separated emulated frames for six-frame A presses; 0 disables')
     parser.add_argument('--host-cpu-timing', action='store_true')
+    parser.add_argument('--circle-segments', default='',
+                        help='Comma-separated begin:end:x:y stick movements; neutral between segments')
     args = parser.parse_args()
     if args.frames <= args.warmup or args.frames % 60 or args.warmup % 60:
         parser.error('frames and warmup must be multiples of 60, with frames > warmup')
@@ -33,6 +36,20 @@ def main():
         parser.error('press-a-frames must contain integers')
     if any(value < 0 or value >= args.frames for value in press_frames):
         parser.error('A press frames must be within the run')
+    import math
+    circle_segments = []
+    try:
+        for item in filter(None, args.circle_segments.split(',')):
+            begin, end, x, y = item.split(':')
+            begin, end, x, y = int(begin), int(end), float(x), float(y)
+            if not (0 <= begin < end <= args.frames and math.isfinite(x) and math.isfinite(y)
+                    and abs(x) <= 1 and abs(y) <= 1):
+                raise ValueError('invalid circle segment')
+            if circle_segments and begin < circle_segments[-1][1]:
+                raise ValueError('segments must be ordered and nonoverlapping')
+            circle_segments.append((begin, end, x, y))
+    except ValueError:
+        parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
         if (not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
@@ -58,7 +75,7 @@ def main():
     checkpoint = args.output / 'profile-comparison.carastate'
     if not copy(checkpoint.name, checkpoint):
         raise RuntimeError('Capture a comparison checkpoint in Cara before running this tool')
-    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'press_a_frames': press_frames, 'touch_input_locked': True, 'runs': []}
+    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'runs': []}
 
     def launch(config, benchmark=True):
         settings = {'CARA_FRAME_TIMING': '1', 'CARA_AUDIO_DIAGNOSTICS': '1',
@@ -66,6 +83,7 @@ def main():
                     'CARA_CPU_BACKEND': 'fastinterp', 'CARA_PROFILE_LOAD': '1',
                     'CARA_TEST_PRESS_A_FRAMES': args.press_a_frames if benchmark else '0',
                     'CARA_BENCHMARK_INPUT_LOCK': '1' if benchmark else '0',
+                    'CARA_TEST_CIRCLE_SEGMENTS': args.circle_segments if benchmark else '',
                     'CARA_TEST_HOLD_START_FRAME': '0',
                     'CARA_PROFILE_SAVE_FRAME': '0',
                     'CARA_GPU_PACKED_INPUTS': '1' if config['packed'] else '0',
@@ -77,8 +95,12 @@ def main():
         if benchmark:
             settings['CARA_BENCHMARK_FRAMES'] = str(args.frames)
             settings['CARA_BENCHMARK_AUDIO'] = '1'
+        arguments = []
+        if args.rom:
+            settings.pop('CARA_OPEN_RECENT')
+            arguments = ['--', '-rom', Path(args.rom).name]
         run(['device', 'process', 'launch', '--device', args.device, '--terminate-existing',
-             '--environment-variables', json.dumps(settings), args.bundle]).check_returncode()
+             '--environment-variables', json.dumps(settings), args.bundle, *arguments]).check_returncode()
 
     for config in configs:
         launch(config)

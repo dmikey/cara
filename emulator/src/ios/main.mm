@@ -969,6 +969,22 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                     std::sort(test_press_frames.begin(), test_press_frames.end());
                     test_press_frames.erase(std::unique(test_press_frames.begin(), test_press_frames.end()), test_press_frames.end());
                 }
+                struct TestCircleSegment { unsigned begin,end; float x,y; };
+                std::vector<TestCircleSegment> test_circle_segments;
+                if (target_frames) {
+                    if (const char* movement=std::getenv("CARA_TEST_CIRCLE_SEGMENTS")) {
+                        std::istringstream stream(movement); std::string item;
+                        while (std::getline(stream,item,',')) {
+                            TestCircleSegment segment{}; char trailing{};
+                            if (std::sscanf(item.c_str(),"%u:%u:%f:%f%c",&segment.begin,&segment.end,&segment.x,&segment.y,&trailing)==4 &&
+                                segment.begin<segment.end && segment.end<=target_frames &&
+                                std::isfinite(segment.x) && std::isfinite(segment.y) &&
+                                std::abs(segment.x)<=1 && std::abs(segment.y)<=1)
+                                test_circle_segments.push_back(segment);
+                        }
+                    }
+                }
+                unsigned test_circle_frame=~0u;
                 size_t next_test_press = 0;
                 unsigned active_test_press = 0;
                 const char* window_env = std::getenv("CARA_TIMING_WINDOW_FRAMES");
@@ -987,6 +1003,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                     if (system.IsPoweredOn()) system.CoreTiming().UpdateClockSpeed(clock_control.Percent());
                     self->guestClock=clock_control.Percent();
                 };
+                // A restored state may carry an adaptive underclock. Apply the current
+                // frontend policy before the first slice, including fixed-clock tests.
+                reset_clock_samples();
+                LOG_INFO(Frontend,"Session guest CPU policy: {}%",clock_control.Percent());
                 const auto state_test_frame=[](const char* name) -> unsigned {
                     const char* value=std::getenv(name);
                     return value?unsigned(std::clamp(std::strtol(value,nullptr,10),0L,100000L)):0;
@@ -1084,6 +1104,16 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                         emuWindow->frames >= test_press_frames[next_test_press]) {
                         buttons.Press(Settings::NativeButton::A);
                         active_test_press = emuWindow->frames; ++next_test_press;
+                    }
+                    if (!test_circle_segments.empty() && test_circle_frame!=emuWindow->frames) {
+                        test_circle_frame=emuWindow->frames;
+                        float x=0,y=0;
+                        for (const auto& segment:test_circle_segments) {
+                            if (test_circle_frame>=segment.begin && test_circle_frame<segment.end) {
+                                x=segment.x; y=segment.y; break;
+                            }
+                        }
+                        circleX=x; circleY=y;
                     }
                     static uint64_t observedSave=0;
                     static unsigned saveFrame=0;
