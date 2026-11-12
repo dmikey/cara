@@ -206,7 +206,7 @@ MemorySystem::~MemorySystem() = default;
 
 template <class Archive>
 void MemorySystem::serialize(Archive& ar, const unsigned int file_version) {
-    if (Archive::is_loading::value) phys_mem_region_info_cache = {};
+    if (Archive::is_loading::value) phys_mem_region_cache.store(4, std::memory_order_relaxed);
     ar&* impl.get();
     if (Archive::is_loading::value) {
         // These flags describe host renderer resources, which are rebuilt after a
@@ -427,10 +427,6 @@ std::string MemorySystem::ReadCString(VAddr vaddr, std::size_t max_length) {
 // Direct-pointer path adapted from Azahar commit 47cd41cc58a4671147ad5f7727fc7ccb0b194826.
 // Keep Cara's existing null-at-end bounds and owning MemoryRef behavior.
 MemorySystem::PhysMemRegionInfo MemorySystem::GetPhysMemRegionInfo(PAddr address) {
-    if (address >= phys_mem_region_info_cache.region_start &&
-        address < phys_mem_region_info_cache.region_end) {
-        return phys_mem_region_info_cache;
-    }
     struct MemoryArea {
         PAddr paddr_base;
         u32 size;
@@ -443,7 +439,13 @@ MemorySystem::PhysMemRegionInfo MemorySystem::GetPhysMemRegionInfo(PAddr address
         {N3DS_EXTRA_RAM_PADDR, N3DS_EXTRA_RAM_SIZE},
     };
 
-    const auto area =
+    const unsigned cached = phys_mem_region_cache.load(std::memory_order_relaxed);
+    // Software raster workers can look up different regions concurrently. Cache
+    // an atomic index, never a partially updated pointer/start/end tuple.
+    const bool hit = cached < std::size(memory_areas) &&
+                     address >= memory_areas[cached].paddr_base &&
+                     address < memory_areas[cached].paddr_base + memory_areas[cached].size;
+    const auto area = hit ? std::begin(memory_areas) + cached :
         std::find_if(std::begin(memory_areas), std::end(memory_areas), [&](const auto& area) {
             // Note: the region end check is inclusive because the user can pass in an address that
             // represents an open right bound
@@ -452,7 +454,7 @@ MemorySystem::PhysMemRegionInfo MemorySystem::GetPhysMemRegionInfo(PAddr address
 
     if (area == std::end(memory_areas)) {
         LOG_ERROR(HW_Memory, "unknown GetPhysicalPointer @ 0x{:08X}", address);
-        phys_mem_region_info_cache = {};
+        phys_mem_region_cache.store(4, std::memory_order_relaxed);
         return {};
     }
 
@@ -476,14 +478,15 @@ MemorySystem::PhysMemRegionInfo MemorySystem::GetPhysMemRegionInfo(PAddr address
         UNREACHABLE();
     }
     if (offset_into_region >= (*target_mem)->GetSize()) {
-        phys_mem_region_info_cache = {};
+        phys_mem_region_cache.store(4, std::memory_order_relaxed);
         return {};
     }
 
-    phys_mem_region_info_cache = {
-        target_mem, area->paddr_base,
-        area->paddr_base + static_cast<PAddr>((*target_mem)->GetSize())};
-    return phys_mem_region_info_cache;
+    if (!hit)
+        phys_mem_region_cache.store(static_cast<unsigned>(area - std::begin(memory_areas)),
+                                    std::memory_order_relaxed);
+    return {target_mem, area->paddr_base,
+            area->paddr_base + static_cast<PAddr>((*target_mem)->GetSize())};
 }
 
 u8* MemorySystem::GetPhysicalPointer(PAddr address) {

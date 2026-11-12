@@ -343,11 +343,13 @@ reduced clock. CPU clock, raster, 22,000 ARM/Thumb differential cases, New 3DS
 
 Cara adapts Azahar PR #1587 (`47cd41cc58a4671147ad5f7727fc7ccb0b194826`)
 to avoid temporary `MemoryRef`/`shared_ptr` ownership during raw physical RAM
-lookups. The last-region cache borrows the owning field, retains Cara's existing
-bounds checks, and is cleared before state deserialization. Owning `MemoryRef`
+lookups. The last-region cache stores an atomic region index; each caller resolves its
+own borrowed owner field and retains Cara's existing bounds checks. It is
+cleared before state deserialization. Owning `MemoryRef`
 requests still retain their backing memory. Native tests compare raw and owning
 pointers, writes, region ends and interleaved region accesses before and after
-save-state restoration, including DSP RAM and New 3DS RAM.
+save-state restoration, including DSP RAM and New 3DS RAM. Four concurrent workers
+also exercise 80,000 interleaved raw/owning lookups per check.
 
 The GLES input staging path also packs attributes directly into texture order,
 removing the full intermediate register clear/scatter and sixteen-register scan

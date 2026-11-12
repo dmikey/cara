@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <memory>
@@ -396,7 +397,8 @@ private:
         PAddr region_end = 0;
     };
     PhysMemRegionInfo GetPhysMemRegionInfo(PAddr address);
-    PhysMemRegionInfo phys_mem_region_info_cache{};
+    // Only the region index is shared; each lookup resolves its own owner slot.
+    std::atomic<unsigned> phys_mem_region_cache{4};
 
     class Impl;
 

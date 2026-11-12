@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <array>
+#include <atomic>
+#include <thread>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -55,6 +57,25 @@ static void CheckPhysicalPointers(Memory::MemorySystem& memory) {
         {Memory::FCRAM_PADDR,Memory::FCRAM_N3DS_SIZE},
         {Memory::N3DS_EXTRA_RAM_PADDR,Memory::N3DS_EXTRA_RAM_SIZE},
     }};
+    std::array<MemoryRef,4> owners;
+    for (unsigned i=0;i<regions.size();++i) owners[i]=memory.GetPhysicalRef(regions[i].first);
+    std::atomic<bool> mismatch{false};
+    std::array<std::thread,4> workers;
+    for (unsigned worker=0;worker<workers.size();++worker) {
+        workers[worker]=std::thread([&,worker] {
+            for (unsigned i=0;i<20000;++i) {
+                const unsigned region=(i+worker)%regions.size();
+                const auto [base,size]=regions[region];
+                const u32 offset=(i*7919)%size;
+                const u8* expected=owners[region].GetPtr()+offset;
+                if (memory.GetPhysicalPointer(base+offset)!=expected ||
+                    memory.GetPhysicalRef(base+offset).GetPtr()!=expected)
+                    mismatch.store(true,std::memory_order_relaxed);
+            }
+        });
+    }
+    for (auto& worker:workers) worker.join();
+    if (mismatch.load()) throw std::runtime_error("Concurrent physical-region lookup mismatch");
     // Interleave regions and revisit boundaries to exercise cached hits/misses.
     for (u32 trial=0;trial<32;++trial) {
         for (const auto& [base,size]:regions) {
