@@ -655,3 +655,29 @@ Open questions: exact Stories conversion cost; whether completion timing changes
 its workload; total GPU execution time versus CPU-driver stalls; M4 thermal and
 memory behavior during sustained gameplay; and which costs remain at a fixed
 100% guest CPU clock. Record negative experiments too.
+
+## iPad persistent shader-cache capability (2026-11-12)
+
+The iOS frontend still sets `use_shader_cache = false`. The upstream cache
+contains program binaries, generated GLSL and shader-reference tables; simply
+enabling it would use the old per-title format without Cara engine/driver
+identity and save only during renderer destruction.
+
+A physical M4 iPad GLES3 probe returned `GL_NUM_PROGRAM_BINARY_FORMATS = 0`.
+The GPU fixture suite passed in that same run. This device/context cannot
+export/reload program binaries through GLES; Android binaries cannot solve that.
+The probe was a temporary frontend diagnostic on engine commit `742b539`,
+with unchanged engine fingerprint and the normal final build restored afterward.
+Reproduce on a current EAGL context with:
+
+```cpp
+GLint formats = 0;
+glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats);
+```
+
+A future disk cache can retain Cara-generated source plus valid program-pair
+references and prewarm them before gameplay. It must key by engine/layout and
+renderer identity, bound and validate reads, write atomically, and persist before
+iOS suspension rather than depending on a clean shutdown. This moves compile
+work to loading; it does not eliminate compilation or explain the measured warm
+grass slowdown. No persistent shader cache has been enabled in this change.
