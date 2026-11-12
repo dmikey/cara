@@ -437,6 +437,14 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     values[1].textColor=speed<95?CaraOrange():[UIColor colorWithRed:.75 green:.83 blue:.63 alpha:1];
     self.accessibilityLabel=[NSString stringWithFormat:@"%@ game frames per second, %.0f percent speed, guest CPU %u percent%@",values[0].text,speed,clock,adaptive?@", adaptive":@""];
 }
+- (void)showInactiveGuestClock:(unsigned)clock adaptive:(BOOL)adaptive {
+    values[0].text=@"—"; values[1].text=@"—";
+    values[2].text=adaptive?@"AUTO":[NSString stringWithFormat:@"%u%%",clock];
+    labels[2].text=@"GUEST CPU";
+    values[1].textColor=UIColor.secondaryLabelColor;
+    self.accessibilityLabel=adaptive?@"No live game metrics, adaptive guest CPU":
+        [NSString stringWithFormat:@"No live game metrics, configured guest CPU %u percent",clock];
+}
 @end
 
 @implementation CaraQuickSettingsController {

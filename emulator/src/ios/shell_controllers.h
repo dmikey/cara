@@ -28,6 +28,7 @@
 
 @interface CaraStatsView : UIView
 - (void)updateGameFPS:(double)fps speed:(double)speed guestClock:(unsigned)clock adaptive:(BOOL)adaptive;
+- (void)showInactiveGuestClock:(unsigned)clock adaptive:(BOOL)adaptive;
 @end
 
 @interface CaraQuickSettingsController : UIViewController <UIAdaptivePresentationControllerDelegate>
