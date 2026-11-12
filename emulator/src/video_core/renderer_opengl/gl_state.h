@@ -160,6 +160,9 @@ public:
 
     /// Apply this state as the current OpenGL state
     void Apply() const;
+    /// Call after context replacement or manual mutations of tracked raster state.
+    /// Resource bindings remain governed by Bind*/Reset* and are not invalidated.
+    static void InvalidateRasterState();
 
     void SubApply() const;
 

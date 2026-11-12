@@ -33,6 +33,7 @@
 namespace OpenGL {
 
 class FormatReinterpreterOpenGL;
+class SurfaceRemapper;
 
 using SurfaceSet = std::set<Surface>;
 
@@ -142,6 +143,7 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
     }
 
     std::vector<u8> gl_buffer;
+    std::vector<u8> rgba_readback_buffer;
 
     // Read/Write data in 3DS memory to/from gl_buffer
     void LoadGLBuffer(PAddr load_start, PAddr load_end);
@@ -153,6 +155,9 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
     // Upload/Download data in gl_buffer in/to this surface's texture
     void UploadGLTexture(const Common::Rectangle<u32>& rect);
     void DownloadGLTexture(const Common::Rectangle<u32>& rect);
+    double last_download_wait_seconds = 0;
+    double last_download_read_seconds = 0;
+    double last_download_pack_seconds = 0;
 
     void DumpToFile();
     GLuint GetTextureCopyHandle();
@@ -200,6 +205,9 @@ class RasterizerCacheOpenGL : NonCopyable {
 public:
     RasterizerCacheOpenGL();
     ~RasterizerCacheOpenGL();
+
+    // ROM-free GPU/cache oracle; invoke before guest execution on an unused scratch page.
+    bool RunSmallWriteSelfTest(std::string& error);
 
     /// Blit one surface's texture to another
     bool BlitSurfaces(const Surface& src_surface, const Common::Rectangle<u32>& src_rect,
@@ -280,6 +288,32 @@ private:
 
     /// Increase/decrease the number of surface in pages touching the specified region
     void UpdatePagesCachedCount(PAddr addr, u32 size, int delta);
+
+    enum class FlushReason : u32 { External, Validation, SmallCPUWrite, All };
+    struct FlushTraceFrame {
+        std::uintptr_t address{}, image_base{};
+        std::string image, symbol;
+    };
+    struct FlushTrace {
+        FlushReason reason{};
+        u32 requested_bytes{}, surface_address{}, pixel_format{}, width{}, height{};
+        u64 calls{}, readback_bytes{};
+        double seconds{}, wait_seconds{}, read_seconds{}, pack_seconds{};
+        std::vector<FlushTraceFrame> stack;
+        SurfaceParams source_params{}, destination_params{};
+        u32 copy_reject_bits{};
+    };
+    bool trace_flushes = false;
+    bool retain_small_cpu_writes = false;
+    bool gpu_surface_remap = false;
+    std::unique_ptr<SurfaceRemapper> surface_remapper;
+    bool TryRemapSurface(const Surface& destination, const SurfaceParams& params);
+    FlushReason flush_reason = FlushReason::External;
+    std::vector<FlushTrace> flush_trace;
+    SurfaceParams validation_destination{};
+    void RecordFlush(const Surface& surface, u32 requested_bytes, u32 width, u32 height,
+                     double seconds);
+    void WriteFlushTrace() const;
 
     u16 resolution_scale_factor = 1;
 

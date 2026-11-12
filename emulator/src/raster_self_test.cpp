@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <algorithm>
+#include "video_core/renderer_opengl/gl_color_readback.h"
 #include <array>
 #include <iostream>
 #include <unordered_map>
@@ -167,7 +168,22 @@ static bool CheckVertexIndexCache() {
     return true;
 }
 
+static bool CheckPackedColorReadback() {
+    const auto normalized=[](u32 value,u32 max) { return u8((value*255+max/2)/max); };
+    for (u32 packed=0;packed<=0xffff;++packed) {
+        const std::array<u8,4> rgb565{normalized((packed>>11)&31,31),normalized((packed>>5)&63,63),normalized(packed&31,31),255};
+        const std::array<u8,4> rgb5a1{normalized((packed>>11)&31,31),normalized((packed>>6)&31,31),normalized((packed>>1)&31,31),normalized(packed&1,1)};
+        const std::array<u8,4> rgba4{normalized((packed>>12)&15,15),normalized((packed>>8)&15,15),normalized((packed>>4)&15,15),normalized(packed&15,15)};
+        if (OpenGL::ColorReadback::PackRGB565(rgb565.data())!=packed ||
+            OpenGL::ColorReadback::PackRGB5A1(rgb5a1.data())!=packed ||
+            OpenGL::ColorReadback::PackRGBA4(rgba4.data())!=packed) return false;
+    }
+    std::cout << "196608 normalized packed-color round trips passed\n";
+    return true;
+}
+
 int main() {
+    if (!CheckPackedColorReadback()) return 1;
     if (!CheckVertexIndexCache()) { std::cerr << "Vertex index cache regression\n"; return 1; }
     if (!CheckVertexSourceMap()) { std::cerr << "Source vertex map regression\n"; return 1; }
     if (!CheckPackedVertexInputs()) return 1;

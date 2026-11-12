@@ -59,6 +59,7 @@ static void SetShaderSamplerBindings(GLuint shader) {
 #ifdef CARA_IOS_GLES
     SetShaderSamplerBinding(shader, "cara_vertex_inputs", TextureUnits::TextureUnit{7});
     SetShaderSamplerBinding(shader, "cara_vertex_indices", TextureUnits::TextureUnit{8});
+    SetShaderSamplerBinding(shader, "cara_vertex_outputs", TextureUnits::TextureUnit{9});
 #endif
 
     // Set the texture samplers to correspond to different lookup table texture units
@@ -303,6 +304,38 @@ public:
         }
     }
 
+#ifdef CARA_IOS_GLES
+    GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup) {
+        const PicaVSConfig vertex_config(regs,setup);
+        const PicaFixedGSConfig output_config(regs);
+        const u16 input_mask=IOSVertexInputLayout::MaskFromRegs(regs.vs);
+        const std::array<u64,3> parts={Common::ComputeHash64(&vertex_config,sizeof(vertex_config)),
+            Common::ComputeHash64(&output_config,sizeof(output_config)),input_mask};
+        const u64 key=Common::ComputeHash64(parts.data(),sizeof(parts));
+        auto [entry,inserted]=feedback_programs.try_emplace(key);
+        if (!inserted) return entry->second.handle;
+        const std::string source=GenerateVertexShader(setup,vertex_config,false,&output_config,input_mask,4);
+        if (source.empty()) return 0;
+        OGLShader vertex; vertex.Create(source.c_str(),GL_VERTEX_SHADER);
+        if (!vertex.handle) return 0;
+        if (!feedback_fragment.handle)
+            feedback_fragment.Create("out vec4 color; void main() { color=vec4(1.0); }",GL_FRAGMENT_SHADER);
+        if (!feedback_fragment.handle) return 0;
+        GLuint program=glCreateProgram();
+        glAttachShader(program,vertex.handle); glAttachShader(program,feedback_fragment.handle);
+        const char* varyings[]={"cara_feedback0","cara_feedback1","cara_feedback2",
+                                "cara_feedback3","cara_feedback4","cara_feedback5"};
+        glTransformFeedbackVaryings(program,6,varyings,GL_INTERLEAVED_ATTRIBS);
+        glLinkProgram(program);
+        GLint linked=0; glGetProgramiv(program,GL_LINK_STATUS,&linked);
+        if (!linked) { glDeleteProgram(program); return 0; }
+        entry->second.handle=program;
+        SetShaderUniformBlockBindings(program);
+        SetShaderSamplerBindings(program);
+        return program;
+    }
+#endif
+
     void CreateProgram(OGLProgram& program, u64 hash, GLuint vs, GLuint gs, GLuint fs) {
         auto iter = binary_cache.find(hash);
         // load opengl program binary cache
@@ -504,6 +537,8 @@ private:
     OGLShaderStage trivial_geometry_shader;
     std::unordered_map<u64, OGLShaderStage*> shaders_ref;
 #ifdef CARA_IOS_GLES
+    std::unordered_map<u64,OGLProgram> feedback_programs;
+    OGLShader feedback_fragment;
     std::unordered_set<u64> failed_ios_vertex_shaders;
     std::unordered_set<u64> failed_ios_programs;
 #endif
@@ -538,6 +573,13 @@ void ShaderProgramManager::UseTrivialGeometryShader() {
 void ShaderProgramManager::UseFragmentShader(const Pica::Regs& regs) {
     impl->UseFragmentShader(regs);
 }
+
+#ifdef CARA_IOS_GLES
+GLuint ShaderProgramManager::GetIOSVertexFeedbackProgram(const Pica::Regs& regs,
+                                                        Pica::Shader::ShaderSetup& setup) {
+    return impl->GetIOSVertexFeedbackProgram(regs,setup);
+}
+#endif
 
 void ShaderProgramManager::ApplyTo(OpenGLState& state) {
     impl->ApplyTo(state);

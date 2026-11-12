@@ -59,6 +59,8 @@ RasterizerOpenGL::RasterizerOpenGL()
       texture_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 11264 : TEXTURE_BUFFER_SIZE),
       texture_lf_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE) {
 
+    OpenGLState::InvalidateRasterState();
+
 #ifdef CARA_IOS_GLES
     glGetIntegerv(GL_MAX_TEXTURE_SIZE,&ios_vertex_max_texture_size);
     LOG_INFO(Render_OpenGL,"GLES vertex atlas: width={} max_texture={} max_vertices={}",
@@ -197,6 +199,7 @@ RasterizerOpenGL::RasterizerOpenGL()
     const bool use_separable_shader = Settings::values.use_separable_shader;
     shader_program_manager = std::make_unique<ShaderProgramManager>(use_separable_shader);
 
+    OpenGLState::InvalidateRasterState();
     // init opengl state
     glEnable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
@@ -432,7 +435,7 @@ bool RasterizerOpenGL::SetupVertexShader() {
     return shader_program_manager->UseProgrammableVertexShader(Pica::g_state.regs,
                                                                Pica::g_state.vs
 #ifdef CARA_IOS_GLES
-                                                               , ios_indexed_vertex_inputs
+                                                               , ios_feedback_vertex_reuse ? 5u : ios_direct_vertex_reuse ? 3u : ios_indexed_vertex_inputs
 #endif
     );
 }
@@ -469,6 +472,14 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if (regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No) return reject("geometry shader");
 #ifdef CARA_IOS_GLES
     if (!PrepareIOSVertices(is_indexed)) return reject("vertex input preparation");
+    static const bool direct_reuse=[] { const char* v=std::getenv("CARA_GPU_VERTEX_REUSE"); return v && std::strcmp(v,"1")==0; }();
+    // Quaternion orientation is irrelevant only when fragment lighting is disabled.
+    ios_direct_vertex_reuse=direct_reuse && ios_indexed_vertex_inputs==2 && regs.lighting.disable;
+    static const bool feedback_reuse=[] { const char* v=std::getenv("CARA_GPU_LIT_VERTEX_REUSE"); return v && std::strcmp(v,"1")==0; }();
+    ios_feedback_vertex_reuse=feedback_reuse && ios_indexed_vertex_inputs==2 && !regs.lighting.disable &&
+        ios_vertex_input_span>=128 && ios_vertex_input_span<=3072 &&
+        ios_vertex_input_span==ios_vertex_input_records &&
+        IOSTriangles().size()>=size_t(ios_vertex_input_span)*3;
 #endif
     if (!SetupVertexShader()) return reject("vertex shader translation");
     if (!SetupGeometryShader()) return reject("geometry setup");
@@ -557,6 +568,7 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
         std::fill(ios_vertex_input_indices.begin()+triangles.size(),ios_vertex_input_indices.end(),0);
     }
     ios_vertex_input_records=static_cast<u32>(unique);
+    ios_vertex_input_span=last-first+1;
     static const bool verify=std::getenv("CARA_PACKED_VERIFY")!=nullptr;
     if (verify) {
         ios_vertex_source_map.BeginDraw();
@@ -764,6 +776,14 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 #ifdef CARA_IOS_GLES
     const auto& input_indices=IOSInputIndices();
     const auto& triangles=IOSTriangles();
+    GLuint feedback_program=0;
+    if (ios_feedback_vertex_reuse) {
+        feedback_program=shader_program_manager->GetIOSVertexFeedbackProgram(Pica::g_state.regs,Pica::g_state.vs);
+        if (!feedback_program) {
+            ios_feedback_vertex_reuse=false;
+            if (!SetupVertexShader()) return false;
+        }
+    }
     state.draw.vertex_array = hw_vao.handle;
     shader_program_manager->ApplyTo(state);
     if (!state.draw.shader_program) return false;
@@ -772,7 +792,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const GLint input_internal = raw_inputs ? GL_RGBA32UI : GL_RGBA32F;
     const GLenum input_format = raw_inputs ? GL_RGBA_INTEGER : GL_RGBA;
     const GLenum input_type = raw_inputs ? GL_UNSIGNED_INT : GL_FLOAT;
-    if (raw_inputs) glUniform4iv(glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
+    if (raw_inputs) {
+        static const bool reuse_layout=[] { const char* v=std::getenv("CARA_GL_STATE_REUSE"); return v && std::strcmp(v,"1")==0; }();
+        if (reuse_layout) {
+            auto& cached=ios_layout_uniforms[state.draw.shader_program];
+            if (!cached.initialized) cached.location=glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]");
+            if (!cached.initialized || cached.values!=ios_packed_layout) {
+                glUniform4iv(cached.location,16,ios_packed_layout[0].data());
+                cached.values=ios_packed_layout; cached.initialized=true;
+            }
+        } else glUniform4iv(glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
+    }
     glActiveTexture(GL_TEXTURE7);
     const unsigned upload_rows = static_cast<unsigned>(ios_vertex_inputs.size() / IOS_VERTEX_INPUT_WIDTH);
     OGLTexture* selected_texture = &ios_vertex_fallback_texture;
@@ -804,9 +834,9 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     unsigned size_class = 0;
     unsigned rows = 1;
     while (rows < std::max(upload_rows, index_rows)) { rows *= 2; ++size_class; }
-    const unsigned height_classes = static_cast<unsigned>(bank.sizes.size() / 3);
+    const unsigned height_classes = static_cast<unsigned>(bank.sizes.size() / 4);
     const bool supported_class = size_class < height_classes;
-    size_class += ios_indexed_vertex_inputs * height_classes;
+    size_class += (ios_direct_vertex_reuse?3:ios_indexed_vertex_inputs) * height_classes;
     if (supported_class && ios_vertex_upload_index++ < max_upload_draws && size_class < bank.sizes.size() &&
         rows<=unsigned(ios_vertex_max_texture_size)) {
         auto& pool = bank.sizes[size_class];
@@ -817,7 +847,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             // first free space promptly, without modifying in-flight draw inputs.
             for (size_t order = bank.sizes.size(); order-- > 0 &&
                  (bank.bytes + bytes > max_bank_bytes || bank.textures >= max_upload_draws);) {
-                const size_t i = (order % 3) * height_classes + order / 3;
+                const size_t i = (order % 4) * height_classes + order / 4;
                 auto& unused = bank.sizes[i];
                 const size_t allocation_bytes = (size_t(1) << (i % height_classes)) * IOS_VERTEX_INPUT_WIDTH *
                     (sizeof(GLvec4) + (i >= height_classes ? sizeof(u16) : 0));
@@ -873,7 +903,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         glBindTexture(GL_TEXTURE_2D, input_texture.handle);
     }
     glBindSampler(7, 0);
-    if (ios_indexed_vertex_inputs) {
+    if (ios_indexed_vertex_inputs && !ios_direct_vertex_reuse) {
         glActiveTexture(GL_TEXTURE8);
         if (!selected_indices->handle) {
             selected_indices->Create();
@@ -931,7 +961,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                             input_format, input_type, ios_vertex_inputs.data());
         }
     }
-    if (ios_indexed_vertex_inputs && !reuse_index) {
+    if (ios_indexed_vertex_inputs && !ios_direct_vertex_reuse && !reuse_index) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         glActiveTexture(GL_TEXTURE8);
         if (orphan_upload) {
@@ -952,6 +982,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                             GL_RED_INTEGER, GL_UNSIGNED_SHORT, input_indices.data());
         }
     }
+    OGLBuffer* elements=nullptr;
+    if (ios_direct_vertex_reuse) {
+        elements=selected_upload?&selected_upload->elements:&ios_vertex_element_fallback;
+        const bool created=!elements->handle;
+        if (created) elements->Create();
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,elements->handle);
+        if (created || !reuse_index) {
+            Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,index_bytes,input_indices.data(),GL_STREAM_DRAW);
+        }
+    }
     if (cache_inputs) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
         if (!reuse_input) {
@@ -963,20 +1004,73 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             selected_upload->index_shadow.assign(data,data+index_bytes);
         }
     }
+    if (ios_feedback_vertex_reuse) {
+        // Re-evaluate every draw: only the current draw's transformed outputs are
+        // reused. Storage is orphaned before GPU writes, with no CPU readback.
+        const GLsizei rows=static_cast<GLsizei>((ios_vertex_input_span*6+IOS_VERTEX_INPUT_WIDTH-1)/IOS_VERTEX_INPUT_WIDTH);
+        const GLsizeiptr bytes=GLsizeiptr(rows)*IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4);
+        if (!ios_feedback_buffer.handle) ios_feedback_buffer.Create();
+        if (!ios_feedback_texture.handle) {
+            ios_feedback_texture.Create();
+            glActiveTexture(GL_TEXTURE9); glBindTexture(GL_TEXTURE_2D,ios_feedback_texture.handle);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+        } else { glActiveTexture(GL_TEXTURE9); glBindTexture(GL_TEXTURE_2D,ios_feedback_texture.handle); }
+        glBindSampler(9,0);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,IOS_VERTEX_INPUT_WIDTH,rows,0,GL_RGBA,GL_FLOAT,nullptr);
+        glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,ios_feedback_buffer.handle);
+        glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER,bytes,nullptr,GL_STREAM_COPY);
+        glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,ios_feedback_buffer.handle);
+        OpenGLState::BindShaderProgram(feedback_program);
+        glUniform4iv(glGetUniformLocation(feedback_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
+        glEnable(GL_RASTERIZER_DISCARD);
+        glBeginTransformFeedback(GL_POINTS);
+        glDrawArrays(GL_POINTS,0,static_cast<GLsizei>(ios_vertex_input_span));
+        glEndTransformFeedback();
+        glDisable(GL_RASTERIZER_DISCARD);
+        glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,0);
+        glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,0);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER,ios_feedback_buffer.handle);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
+        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,IOS_VERTEX_INPUT_WIDTH,rows,GL_RGBA,GL_FLOAT,nullptr);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+        OpenGLState::BindShaderProgram(state.draw.shader_program);
+        ++Common::FrameTiming::counters.gpu_feedback_vertex_draws;
+        Common::FrameTiming::counters.gpu_feedback_source_vertices+=ios_vertex_input_span;
+    }
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::DrawSubmit);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
+        if (ios_direct_vertex_reuse) {
+            glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(triangles.size()),GL_UNSIGNED_SHORT,nullptr);
+            ++Common::FrameTiming::counters.gpu_direct_vertex_draws;
+            Common::FrameTiming::counters.gpu_direct_vertices+=triangles.size();
+            Common::FrameTiming::counters.gpu_direct_unique_inputs+=ios_vertex_input_records;
+        } else glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
     }
+    if (elements) glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,index_buffer.GetHandle());
     ++Common::FrameTiming::counters.gpu_vertex_draws;
     Common::FrameTiming::counters.gpu_vertices += triangles.size();
     Common::FrameTiming::counters.gpu_input_records += ios_vertex_input_records;
     if (ios_indexed_vertex_inputs) ++Common::FrameTiming::counters.gpu_indexed_input_draws;
     if (ios_indexed_vertex_inputs==2) ++Common::FrameTiming::counters.gpu_packed_input_draws;
-    if (ios_indexed_vertex_inputs) {
+    static const bool retain_input_bindings = [] {
+        const char* value = std::getenv("CARA_GPU_RETAIN_INPUT_BINDINGS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    // Units 7/8 belong exclusively to this input path. Every draw still binds
+    // its selected textures explicitly; deleting a pooled texture unbinds it in
+    // GL, so no cached object IDs can survive deletion or name reuse.
+    if (!retain_input_bindings && ios_indexed_vertex_inputs && !ios_direct_vertex_reuse) {
         glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D, 0);
     }
-    glActiveTexture(GL_TEXTURE7);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    if (ios_feedback_vertex_reuse) { glActiveTexture(GL_TEXTURE9); glBindTexture(GL_TEXTURE_2D,0); }
+    if (!retain_input_bindings) {
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
     glActiveTexture(GL_TEXTURE0);
     return true;
 #else
@@ -2720,11 +2814,25 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
 }
 
 void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
-    // glBindBufferRange below also changes the generic buffer binding point, so we sync the state
-    // first
-    OpenGLState::BindUniformBuffer(uniform_buffer.GetHandle());
-
-    const bool sync_vs = accelerate_draw;
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::UniformUpload);
+    static const bool reuse_vs=[] {
+        const char* value=std::getenv("CARA_VS_UNIFORM_REUSE");
+        return value && std::strcmp(value,"1")==0;
+    }();
+    VSUniformData vs_uniforms{};
+    bool sync_vs=accelerate_draw;
+    if (accelerate_draw) {
+        vs_uniforms.uniforms.SetFromRegs(Pica::g_state.regs.vs,Pica::g_state.vs);
+        if (reuse_vs && previous_vs_uniforms_valid) {
+            const auto& a=vs_uniforms.uniforms;
+            const auto& b=previous_vs_uniforms.uniforms;
+            bool same=std::memcmp(a.i.data(),b.i.data(),sizeof(a.i))==0 &&
+                      std::memcmp(a.f.data(),b.f.data(),sizeof(a.f))==0;
+            for (unsigned i=0;i<a.bools.size() && same;++i) same=a.bools[i].b==b.bools[i].b;
+            // Compare meaningful fields only: std140 BoolAligned has padding.
+            sync_vs=!same;
+        }
+    }
     const bool sync_fs = uniform_block_data.dirty;
     const bool sync_light = uniform_block_data.light_dirty;
 
@@ -2741,18 +2849,25 @@ void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
     if (uniform_size == 0) {
         return;
     }
+    // Bind only when there is work; BindBufferRange also changes this generic binding.
+    OpenGLState::BindUniformBuffer(uniform_buffer.GetHandle());
 
     std::size_t used_bytes = 0;
     u8* uniforms;
     GLintptr offset;
     bool invalidate;
+    // A wrap invalidates the entire buffer, so even clean fragment/light
+    // blocks must be copied again. Reserve their space before Map can wrap;
+    // Unmap advances by only the bytes actually written.
+    const std::size_t reservation=uniform_size_aligned_vs+uniform_size_aligned_fs+uniform_size_aligned_light;
     std::tie(uniforms, offset, invalidate) =
-        uniform_buffer.Map(uniform_size, uniform_buffer_alignment);
+        uniform_buffer.Map(reservation, uniform_buffer_alignment);
 
-    if (sync_vs) {
-        VSUniformData vs_uniforms;
-        vs_uniforms.uniforms.SetFromRegs(Pica::g_state.regs.vs, Pica::g_state.vs);
+    if (invalidate) previous_vs_uniforms_valid=false;
+    if (sync_vs || (accelerate_draw && invalidate)) {
         std::memcpy(uniforms + used_bytes, &vs_uniforms, sizeof(vs_uniforms));
+        previous_vs_uniforms=vs_uniforms;
+        previous_vs_uniforms_valid=true;
         glBindBufferRange(GL_UNIFORM_BUFFER, static_cast<GLuint>(UniformBindings::VS),
                           uniform_buffer.GetHandle(), offset + used_bytes, sizeof(VSUniformData));
         used_bytes += uniform_size_aligned_vs;

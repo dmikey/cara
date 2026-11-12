@@ -40,7 +40,18 @@ struct Counters {
     std::uint64_t vertex_reuse_attribute_bytes = 0;
     std::uint64_t vertex_reuse_unique_attribute_bytes = 0;
     std::uint64_t vertex_reuse_invalid_draws = 0;
+    double stream_map_seconds = 0;
+    double stream_unmap_seconds = 0;
+    std::uint64_t stream_map_calls = 0;
+    std::uint64_t stream_unmap_calls = 0;
+    std::uint64_t stream_mapped_bytes = 0;
+    double uniform_upload_seconds = 0;
+    double state_apply_seconds = 0;
     double draw_submit_seconds = 0;
+    double surface_remap_seconds = 0;
+    std::uint64_t surface_remap_calls = 0;
+    std::uint64_t surface_remap_bytes = 0;
+    double surface_pack_seconds = 0;
     double surface_download_seconds = 0;
     double shader_compile_seconds = 0;
     double gpu_wait_seconds = 0;
@@ -59,13 +70,18 @@ struct Counters {
     double readback_seconds = 0;
     double present_seconds = 0;
     std::uint64_t shader_calls = 0;
+    std::uint64_t gpu_feedback_vertex_draws = 0;
+    std::uint64_t gpu_feedback_source_vertices = 0;
+    std::uint64_t gpu_direct_vertex_draws = 0;
+    std::uint64_t gpu_direct_vertices = 0;
+    std::uint64_t gpu_direct_unique_inputs = 0;
     std::uint64_t gpu_vertex_draws = 0;
     std::uint64_t gpu_vertices = 0;
     std::uint64_t cpu_vertex_draws = 0;
 };
 inline thread_local Counters counters;
 
-enum class Phase { Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
+enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
 class Scope {
 public:
     explicit Scope(Phase phase_) : phase(phase_), active(counters.enabled) {
@@ -74,7 +90,21 @@ public:
     ~Scope() {
         if (!active) return;
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-        if (phase == Phase::Shader) {
+        if (phase == Phase::SurfaceRemap) {
+            counters.surface_remap_seconds += seconds;
+        } else if (phase == Phase::SurfacePack) {
+            counters.surface_pack_seconds += seconds;
+        } else if (phase == Phase::UniformUpload) {
+            counters.uniform_upload_seconds += seconds;
+        } else if (phase == Phase::StreamMap) {
+            counters.stream_map_seconds += seconds;
+            ++counters.stream_map_calls;
+        } else if (phase == Phase::StreamUnmap) {
+            counters.stream_unmap_seconds += seconds;
+            ++counters.stream_unmap_calls;
+        } else if (phase == Phase::StateApply) {
+            counters.state_apply_seconds += seconds;
+        } else if (phase == Phase::Shader) {
             counters.shader_seconds += seconds;
             ++counters.shader_calls;
         } else if (phase == Phase::Readback) {

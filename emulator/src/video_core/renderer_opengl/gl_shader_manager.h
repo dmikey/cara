@@ -121,6 +121,9 @@ public:
 
     void UseFragmentShader(const Pica::Regs& regs);
 
+#ifdef CARA_IOS_GLES
+    GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup);
+#endif
     void ApplyTo(OpenGLState& state);
 
 private:

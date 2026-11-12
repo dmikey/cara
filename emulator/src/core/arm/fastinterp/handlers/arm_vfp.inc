@@ -79,6 +79,115 @@ handle_VmulS:
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
+// Four independent unconditional scalar VMULs, decoded only after alias checks.
+handle_Vmul4S: {
+#ifdef __aarch64__
+    const auto vector = vreinterpretq_f32_u32(vld1q_u32(&state_.vfp_regs[inst->vfp.sn]));
+    const auto scalar = vreinterpretq_f32_u32(vdupq_n_u32(state_.vfp_regs[inst->vfp.sm]));
+    float32x4_t result;
+    // Preserve operand order for NaN payload propagation; Clang may commute intrinsics.
+    if (inst->vfp.flags)
+        asm("fmul %0.4s, %1.4s, %2.4s" : "=w"(result) : "w"(scalar), "w"(vector));
+    else
+        asm("fmul %0.4s, %1.4s, %2.4s" : "=w"(result) : "w"(vector), "w"(scalar));
+    vst1q_u32(&state_.vfp_regs[inst->vfp.sd], vreinterpretq_u32_f32(result));
+#else
+    for (unsigned i = 0; i < 4; ++i) {
+        const float a = std::bit_cast<float>(state_.vfp_regs[inst->vfp.sn + i]);
+        const float b = std::bit_cast<float>(state_.vfp_regs[inst->vfp.sm]);
+        state_.vfp_regs[inst->vfp.sd + i] = std::bit_cast<u32>(inst->vfp.flags ? b * a : a * b);
+    }
+#endif
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    inst += 3; // Original slots remain reserved to preserve block/event boundaries.
+    DISPATCH();
+}
+
+// The decoder rejects every read-after-write dependency. Gather inputs before
+// writing outputs; scatter in guest instruction order for repeated destinations.
+handle_Vmul4Gather: {
+#ifdef __aarch64__
+    const uint32x4_t n{state_.vfp_regs[inst->vfp4.sn[0]], state_.vfp_regs[inst->vfp4.sn[1]],
+                      state_.vfp_regs[inst->vfp4.sn[2]], state_.vfp_regs[inst->vfp4.sn[3]]};
+    const uint32x4_t m{state_.vfp_regs[inst->vfp4.sm[0]], state_.vfp_regs[inst->vfp4.sm[1]],
+                      state_.vfp_regs[inst->vfp4.sm[2]], state_.vfp_regs[inst->vfp4.sm[3]]};
+    float32x4_t result;
+    // Keep NaN operand priority identical to the scalar FMUL handler.
+    asm("fmul %0.4s, %1.4s, %2.4s" : "=w"(result)
+        : "w"(vreinterpretq_f32_u32(n)), "w"(vreinterpretq_f32_u32(m)));
+    const auto bits = vreinterpretq_u32_f32(result);
+    state_.vfp_regs[inst->vfp4.sd[0]] = vgetq_lane_u32(bits, 0);
+    state_.vfp_regs[inst->vfp4.sd[1]] = vgetq_lane_u32(bits, 1);
+    state_.vfp_regs[inst->vfp4.sd[2]] = vgetq_lane_u32(bits, 2);
+    state_.vfp_regs[inst->vfp4.sd[3]] = vgetq_lane_u32(bits, 3);
+#else
+    for (unsigned i = 0; i < 4; ++i) {
+        const auto n = VFP_S_READ(inst->vfp4.sn[i]);
+        const auto m = VFP_S_READ(inst->vfp4.sm[i]);
+        VFP_S_WRITE(inst->vfp4.sd[i], n * m);
+    }
+#endif
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    inst += 3; // Original slots remain reserved to preserve block/event boundaries.
+    DISPATCH();
+}
+
+handle_Vmla4S: {
+#ifdef __aarch64__
+    const auto vector = vreinterpretq_f32_u32(vld1q_u32(&state_.vfp_regs[inst->vfp.sn]));
+    const auto scalar = vreinterpretq_f32_u32(vdupq_n_u32(state_.vfp_regs[inst->vfp.sm]));
+    float32x4_t result = vreinterpretq_f32_u32(vld1q_u32(&state_.vfp_regs[inst->vfp.sd]));
+    // Preserve operand order for NaN payload propagation; Clang may commute intrinsics.
+    if (inst->vfp.flags)
+        asm("fmla %0.4s, %1.4s, %2.4s" : "+w"(result) : "w"(scalar), "w"(vector));
+    else
+        asm("fmla %0.4s, %1.4s, %2.4s" : "+w"(result) : "w"(vector), "w"(scalar));
+    vst1q_u32(&state_.vfp_regs[inst->vfp.sd], vreinterpretq_u32_f32(result));
+#else
+    for (unsigned i = 0; i < 4; ++i) {
+        const float a = std::bit_cast<float>(state_.vfp_regs[inst->vfp.sn + i]);
+        const float b = std::bit_cast<float>(state_.vfp_regs[inst->vfp.sm]);
+        state_.vfp_regs[inst->vfp.sd + i] = std::bit_cast<u32>(std::bit_cast<float>(state_.vfp_regs[inst->vfp.sd + i]) + (inst->vfp.flags ? b * a : a * b));
+    }
+#endif
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    inst += 3; // Original slots remain reserved to preserve block/event boundaries.
+    DISPATCH();
+}
+
+handle_Vmla4Gather: {
+#ifdef __aarch64__
+    const uint32x4_t n{state_.vfp_regs[inst->vfp4.sn[0]], state_.vfp_regs[inst->vfp4.sn[1]],
+                      state_.vfp_regs[inst->vfp4.sn[2]], state_.vfp_regs[inst->vfp4.sn[3]]};
+    const uint32x4_t m{state_.vfp_regs[inst->vfp4.sm[0]], state_.vfp_regs[inst->vfp4.sm[1]],
+                      state_.vfp_regs[inst->vfp4.sm[2]], state_.vfp_regs[inst->vfp4.sm[3]]};
+    const uint32x4_t d{state_.vfp_regs[inst->vfp4.sd[0]], state_.vfp_regs[inst->vfp4.sd[1]],
+                      state_.vfp_regs[inst->vfp4.sd[2]], state_.vfp_regs[inst->vfp4.sd[3]]};
+    float32x4_t result = vreinterpretq_f32_u32(d);
+    // Keep NaN operand priority identical to the scalar FMADD handler.
+    asm("fmla %0.4s, %1.4s, %2.4s" : "+w"(result)
+        : "w"(vreinterpretq_f32_u32(n)), "w"(vreinterpretq_f32_u32(m)));
+    const auto bits = vreinterpretq_u32_f32(result);
+    state_.vfp_regs[inst->vfp4.sd[0]] = vgetq_lane_u32(bits, 0);
+    state_.vfp_regs[inst->vfp4.sd[1]] = vgetq_lane_u32(bits, 1);
+    state_.vfp_regs[inst->vfp4.sd[2]] = vgetq_lane_u32(bits, 2);
+    state_.vfp_regs[inst->vfp4.sd[3]] = vgetq_lane_u32(bits, 3);
+#else
+    for (unsigned i = 0; i < 4; ++i) {
+        const auto n = VFP_S_READ(inst->vfp4.sn[i]);
+        const auto m = VFP_S_READ(inst->vfp4.sm[i]);
+        VFP_S_WRITE(inst->vfp4.sd[i], VFP_S_READ(inst->vfp4.sd[i]) + n * m);
+    }
+#endif
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    inst += 3; // Original slots remain reserved to preserve block/event boundaries.
+    DISPATCH();
+}
+
 handle_VdivS:
     CHECK_COND();
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) / VFP_S_READ(inst->vfp.sm));
@@ -406,9 +515,16 @@ handle_VldmS:
         u32 base = state_.regs[inst->vfp.rn];
         u32 addr = decrement ? (base - count * 4) : base;
 
-        for (u32 i = 0; i < count; i++) {
-            VFP_S_WRITE_U32(first_reg + i, MemRead32(addr));
-            addr += 4;
+        const u8* page = local_page_ptrs[addr >> FASTINTERP_PAGE_BITS];
+        const u32 bytes = count * 4;
+        if (ram_burst_ && page && count && first_reg + count <= state_.vfp_regs.size() &&
+            (addr & FASTINTERP_PAGE_MASK) + bytes <= FASTINTERP_PAGE_MASK + 1) {
+            std::memcpy(&state_.vfp_regs[first_reg], page + (addr & FASTINTERP_PAGE_MASK), bytes);
+        } else {
+            for (u32 i = 0; i < count; i++) {
+                VFP_S_WRITE_U32(first_reg + i, MemRead32(addr));
+                addr += 4;
+            }
         }
 
         if (writeback) {
@@ -427,9 +543,16 @@ handle_VstmS:
         u32 base = state_.regs[inst->vfp.rn];
         u32 addr = decrement ? (base - count * 4) : base;
 
-        for (u32 i = 0; i < count; i++) {
-            MemWrite32(addr, VFP_S_READ_U32(first_reg + i));
-            addr += 4;
+        u8* page = local_page_ptrs[addr >> FASTINTERP_PAGE_BITS];
+        const u32 bytes = count * 4;
+        if (ram_burst_ && page && count && first_reg + count <= state_.vfp_regs.size() &&
+            (addr & FASTINTERP_PAGE_MASK) + bytes <= FASTINTERP_PAGE_MASK + 1) {
+            std::memcpy(page + (addr & FASTINTERP_PAGE_MASK), &state_.vfp_regs[first_reg], bytes);
+        } else {
+            for (u32 i = 0; i < count; i++) {
+                MemWrite32(addr, VFP_S_READ_U32(first_reg + i));
+                addr += 4;
+            }
         }
 
         if (writeback) {
@@ -448,10 +571,17 @@ handle_VldmD:
         u32 base = state_.regs[inst->vfp.rn];
         u32 addr = decrement ? (base - count * 8) : base;
 
-        for (u32 i = 0; i < count; i++) {
-            state_.vfp_regs[(first_reg + i) * 2] = MemRead32(addr);
-            state_.vfp_regs[(first_reg + i) * 2 + 1] = MemRead32(addr + 4);
-            addr += 8;
+        const u8* page = local_page_ptrs[addr >> FASTINTERP_PAGE_BITS];
+        const u32 bytes = count * 8;
+        if (ram_burst_ && page && count && first_reg * 2 + count * 2 <= state_.vfp_regs.size() &&
+            (addr & FASTINTERP_PAGE_MASK) + bytes <= FASTINTERP_PAGE_MASK + 1) {
+            std::memcpy(&state_.vfp_regs[first_reg * 2], page + (addr & FASTINTERP_PAGE_MASK), bytes);
+        } else {
+            for (u32 i = 0; i < count; i++) {
+                state_.vfp_regs[(first_reg + i) * 2] = MemRead32(addr);
+                state_.vfp_regs[(first_reg + i) * 2 + 1] = MemRead32(addr + 4);
+                addr += 8;
+            }
         }
 
         if (writeback) {
@@ -470,10 +600,17 @@ handle_VstmD:
         u32 base = state_.regs[inst->vfp.rn];
         u32 addr = decrement ? (base - count * 8) : base;
 
-        for (u32 i = 0; i < count; i++) {
-            MemWrite32(addr, state_.vfp_regs[(first_reg + i) * 2]);
-            MemWrite32(addr + 4, state_.vfp_regs[(first_reg + i) * 2 + 1]);
-            addr += 8;
+        u8* page = local_page_ptrs[addr >> FASTINTERP_PAGE_BITS];
+        const u32 bytes = count * 8;
+        if (ram_burst_ && page && count && first_reg * 2 + count * 2 <= state_.vfp_regs.size() &&
+            (addr & FASTINTERP_PAGE_MASK) + bytes <= FASTINTERP_PAGE_MASK + 1) {
+            std::memcpy(page + (addr & FASTINTERP_PAGE_MASK), &state_.vfp_regs[first_reg * 2], bytes);
+        } else {
+            for (u32 i = 0; i < count; i++) {
+                MemWrite32(addr, state_.vfp_regs[(first_reg + i) * 2]);
+                MemWrite32(addr + 4, state_.vfp_regs[(first_reg + i) * 2 + 1]);
+                addr += 8;
+            }
         }
 
         if (writeback) {

@@ -1829,6 +1829,36 @@ void main() {
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
                                  bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs) {
     std::string out;
+    if (ios_output && ios_indexed_inputs==5) {
+        out=GetVertexInterfaceDeclaration(true,false);
+        out+=R"(
+uniform highp sampler2D cara_vertex_outputs;
+uniform highp usampler2D cara_vertex_indices;
+int cara_source_id(int vertex) {
+    return int(texelFetch(cara_vertex_indices,ivec2(vertex%128,vertex/128),0).r);
+}
+vec4 cara_output(int vertex,int field) {
+    int texel=vertex*6+field;
+    return texelFetch(cara_vertex_outputs,ivec2(texel%128,texel/128),0);
+}
+void main() {
+    int vertex=cara_source_id(gl_VertexID);
+    gl_Position=cara_output(vertex,0);
+    normquat=cara_output(vertex,1);
+    if (gl_VertexID%3!=0) {
+        vec4 first_quat=cara_output(cara_source_id(gl_VertexID-gl_VertexID%3),1);
+        if (dot(first_quat,normquat)<0.0) normquat=-normquat;
+    }
+    primary_color=cara_output(vertex,2);
+    vec4 uv01=cara_output(vertex,3);
+    texcoord0=uv01.xy; texcoord1=uv01.zw;
+    vec4 uv2w=cara_output(vertex,4);
+    texcoord2=uv2w.xy; texcoord0_w=uv2w.z;
+    view=cara_output(vertex,5).xyz;
+}
+)";
+        return out;
+    }
     if (separable_shader) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
@@ -1901,19 +1931,63 @@ layout (std140) uniform vs_config {
         };
         const std::string quaternion = vector("vec4", {VSOutputAttributes::QUATERNION_X,
             VSOutputAttributes::QUATERNION_Y, VSOutputAttributes::QUATERNION_Z, VSOutputAttributes::QUATERNION_W});
+        // Outputs cannot be read by a PICA program. Omitting unrelated output
+        // writes therefore preserves every quaternion-producing instruction and
+        // its control flow, while exposing dead work to the host GLSL compiler.
+        std::string quaternion_program;
+        const char* slice_env=std::getenv("CARA_GPU_QUATERNION_SLICE");
+        if (ios_indexed_inputs<3 && slice_env && std::string_view(slice_env)=="1") {
+            std::array<bool,16> quaternion_attributes{};
+            for (auto slot : {VSOutputAttributes::QUATERNION_X,VSOutputAttributes::QUATERNION_Y,
+                              VSOutputAttributes::QUATERNION_Z,VSOutputAttributes::QUATERNION_W}) {
+                const auto attr=fixed.semantic_maps[static_cast<u32>(slot)].attribute_index;
+                if (attr<quaternion_attributes.size()) quaternion_attributes[attr]=true;
+            }
+            const auto quat_output=[&](u32 reg) -> std::string {
+                const auto attr=config.state.output_map[reg];
+                if (attr<config.state.num_outputs && quaternion_attributes[attr])
+                    return fmt::format("vs_out_attr{}",attr);
+                return {};
+            };
+            auto sliced=ShaderDecompiler::DecompileProgram(setup.program_code,setup.swizzle_data,
+                config.state.main_offset,get_input_reg,quat_output,config.state.sanitize_mul);
+            if (sliced) {
+                quaternion_program=std::move(sliced->code);
+                // The generated helpers and temporary state have independent
+                // names, so a reference evaluation cannot contaminate the
+                // subsequent full vertex execution.
+                for (const std::string_view name : {"exec_shader","sub_","conditional_code",
+                        "address_registers","reg_tmp","mul_safe","fma_safe","rcp_safe","rsq_safe"}) {
+                    const std::string replacement="cara_quat_"+std::string(name);
+                    for (size_t pos=0;(pos=quaternion_program.find(name,pos))!=std::string::npos;) {
+                        quaternion_program.replace(pos,name.size(),replacement);
+                        pos+=replacement.size();
+                    }
+                }
+            }
+        }
         out += GetVertexInterfaceDeclaration(true, false);
+        if (ios_indexed_inputs==4)
+            for (unsigned field=0;field<6;++field)
+                out+=fmt::format("out highp vec4 cara_feedback{};\n",field);
         out += UniformBlockDef;
-        if (ios_indexed_inputs == 2) out += PackedVertexDecoderGLSL;
+        if (ios_indexed_inputs >= 2) {
+            const char* reuse_fetch = std::getenv("CARA_GPU_PACKED_FETCH_REUSE");
+            out += reuse_fetch && std::string_view(reuse_fetch) == "1"
+                       ? PackedVertexFetchReuseGLSL : PackedVertexDecoderGLSL;
+        }
         else out += "uniform highp sampler2D cara_vertex_inputs;\n";
         if (ios_indexed_inputs) out += "uniform highp usampler2D cara_vertex_indices;\n";
         out += program_source;
-        out += "void citra_run_vertex(int vertex_id) {\n";
-        if (ios_indexed_inputs)
+        out += quaternion_program;
+        out += "void citra_load_vertex(int vertex_id) {\n";
+        if (ios_indexed_inputs>=3) out += "int input_vertex_id = vertex_id;\n";
+        else if (ios_indexed_inputs)
             out += fmt::format("int input_vertex_id = int(texelFetch(cara_vertex_indices, ivec2(vertex_id % {0}, vertex_id / {0}), 0).r);\n", IOS_VERTEX_INPUT_WIDTH);
         const IOSVertexInputLayout layout(ios_input_mask);
         for (u32 i = 0; i < used_regs.size(); ++i) {
             if (used_regs[i]) {
-                if (ios_indexed_inputs == 2 && layout.offsets[i] >= 0) {
+                if (ios_indexed_inputs >= 2 && layout.offsets[i] >= 0) {
                     out += fmt::format("vs_in_reg{0} = cara_decode_vertex(input_vertex_id, {0});\n", i);
                 } else if (layout.offsets[i] >= 0) {
                     out += fmt::format("int index{0} = {4} * {1} + {2};\nvs_in_reg{0} = texelFetch(cara_vertex_inputs, ivec2(index{0} % {3}, index{0} / {3}), 0);\n", i, layout.stride, layout.offsets[i], IOS_VERTEX_INPUT_WIDTH, ios_indexed_inputs ? "input_vertex_id" : "vertex_id");
@@ -1922,15 +1996,28 @@ layout (std140) uniform vs_config {
                 }
             }
         }
+        out += "}\nvoid citra_run_vertex(int vertex_id) {\ncitra_load_vertex(vertex_id);\n";
         out += "conditional_code = bvec2(false);\naddress_registers = ivec3(0);\n";
         for (u32 i = 0; i < 16; ++i)
             out += fmt::format("reg_tmp{} = vec4(0.0, 0.0, 0.0, 1.0);\n", i);
         for (u32 i = 0; i < config.state.num_outputs; ++i)
             out += fmt::format("vs_out_attr{} = vec4(0.0, 0.0, 0.0, 1.0);\n", i);
-        out += "exec_shader();\n}\nvoid main() {\nvec4 first_quat = vec4(0.0);\n";
-        out += "if (gl_VertexID % 3 != 0) { citra_run_vertex(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
+        out += "exec_shader();\n}\n";
+        if (!quaternion_program.empty()) {
+            out += "void citra_run_quaternion(int vertex_id) {\ncitra_load_vertex(vertex_id);\n";
+            out += "cara_quat_conditional_code=bvec2(false);\ncara_quat_address_registers=ivec3(0);\n";
+            for (u32 i=0;i<16;++i)
+                out += fmt::format("cara_quat_reg_tmp{}=vec4(0.0,0.0,0.0,1.0);\n",i);
+            for (u32 i=0;i<config.state.num_outputs;++i)
+                out += fmt::format("vs_out_attr{}=vec4(0.0,0.0,0.0,1.0);\n",i);
+            out += "cara_quat_exec_shader();\n}\n";
+        }
+        out += "void main() {\nvec4 first_quat=vec4(0.0);\n";
+        if (ios_indexed_inputs<3) out += "if (gl_VertexID % 3 != 0) { " +
+            std::string(quaternion_program.empty()?"citra_run_vertex":"citra_run_quaternion")+
+            "(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
         out += "citra_run_vertex(gl_VertexID);\nnormquat = " + quaternion + ";\n";
-        out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
+        if (ios_indexed_inputs<3) out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
         out += "gl_Position = " + vector("vec4", {VSOutputAttributes::POSITION_X, VSOutputAttributes::POSITION_Y,
             VSOutputAttributes::POSITION_Z, VSOutputAttributes::POSITION_W}) + ";\n";
         // Map PICA's [-w, 0] clip range onto GLES' [-w, w] range.
@@ -1942,7 +2029,12 @@ layout (std140) uniform vs_config {
         out += "texcoord1 = " + vector("vec2", {VSOutputAttributes::TEXCOORD1_U, VSOutputAttributes::TEXCOORD1_V}) + ";\n";
         out += "texcoord2 = " + vector("vec2", {VSOutputAttributes::TEXCOORD2_U, VSOutputAttributes::TEXCOORD2_V}) + ";\n";
         out += "texcoord0_w = " + semantic(VSOutputAttributes::TEXCOORD0_W) + ";\n";
-        out += "view = " + vector("vec3", {VSOutputAttributes::VIEW_X, VSOutputAttributes::VIEW_Y, VSOutputAttributes::VIEW_Z}) + ";\n}\n";
+        out += "view = " + vector("vec3", {VSOutputAttributes::VIEW_X, VSOutputAttributes::VIEW_Y, VSOutputAttributes::VIEW_Z}) + ";\n";
+        if (ios_indexed_inputs==4)
+            out+="cara_feedback0=gl_Position; cara_feedback1=normquat; cara_feedback2=primary_color;\n"
+                 "cara_feedback3=vec4(texcoord0,texcoord1); cara_feedback4=vec4(texcoord2,texcoord0_w,0.0);\n"
+                 "cara_feedback5=vec4(view,0.0);\n";
+        out+="}\n";
         return out;
     }
 

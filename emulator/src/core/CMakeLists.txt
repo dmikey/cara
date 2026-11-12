@@ -492,6 +492,7 @@ target_link_libraries(core PRIVATE Boost::serialization libzstd_static)
 
 file(GLOB_RECURSE CARA_STATE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/core/*.cpp" "${CMAKE_SOURCE_DIR}/src/core/*.h"
+    "${CMAKE_SOURCE_DIR}/src/core/*.inc"
     "${CMAKE_SOURCE_DIR}/src/audio_core/*.cpp" "${CMAKE_SOURCE_DIR}/src/audio_core/*.h"
     "${CMAKE_SOURCE_DIR}/src/video_core/*.cpp" "${CMAKE_SOURCE_DIR}/src/video_core/*.h"
     "${CMAKE_SOURCE_DIR}/src/common/*.cpp" "${CMAKE_SOURCE_DIR}/src/common/*.h"

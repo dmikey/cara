@@ -52,7 +52,7 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse']) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -79,6 +79,22 @@ def main():
 
     def launch(config, benchmark=True):
         settings = {'CARA_FRAME_TIMING': '1', 'CARA_AUDIO_DIAGNOSTICS': '1',
+                    'CARA_FASTINTERP_PROFILE':'1',
+                    'CARA_BENCHMARK_CAPTURE':'1',
+                    'CARA_GPU_SURFACE_REMAP':'1' if config.get('surface_remap',False) else '0',
+                    'CARA_GPU_RETAIN_INPUT_BINDINGS':'1' if config.get('retain_input_bindings',False) else '0',
+                    'CARA_GPU_PACKED_FETCH_REUSE':'1' if config.get('packed_fetch_reuse',False) else '0',
+                    'CARA_FASTINTERP_VFP_SIMD':str(int(config.get('vfp_simd',0))),
+                    'CARA_GPU_LIT_VERTEX_REUSE':'1' if config.get('lit_vertex_reuse',False) else '0',
+                    'CARA_FASTINTERP_RAM_BURST':'1' if config.get('ram_burst',False) else '0',
+                    'CARA_FASTINTERP_DECODE_BKPT':'1' if config.get('decode_bkpt',False) else '0',
+                    'CARA_SURFACE_FLUSH_TRACE':'1',
+                    'CARA_RETAIN_SMALL_CPU_WRITES':'1' if config.get('retain_small_writes',False) else '0',
+                    'CARA_GPU_QUATERNION_SLICE':'1' if config.get('quaternion_slice',False) else '0',
+                    'CARA_GL_IMPLICIT_FLUSH':'1' if config.get('implicit_flush',False) else '0',
+                    'CARA_VS_UNIFORM_REUSE':'1' if config.get('uniform_reuse',False) else '0',
+                    'CARA_GL_STATE_REUSE':'1' if config.get('state_reuse',False) else '0',
+                    'CARA_GPU_VERTEX_REUSE':'1' if config.get('vertex_reuse',False) else '0',
                     'CARA_OPEN_RECENT': '1', 'CARA_TIMING_WINDOW_FRAMES': '60',
                     'CARA_CPU_BACKEND': 'fastinterp', 'CARA_PROFILE_LOAD': '1',
                     'CARA_TEST_PRESS_A_FRAMES': args.press_a_frames if benchmark else '0',
@@ -135,7 +151,7 @@ def main():
         if any(w['guest_cpu_percent'] != 100 or w['packed_validation_failures'] != 0
                or w['packed_verified_draws'] != 0 for w in windows):
             raise RuntimeError('Unexpected clock, validation failure or active shadow decoder')
-        fields = ['mean_ms', 'vertex_prepare_ms_per_frame', 'vertex_upload_ms_per_frame',
+        fields = ['surface_remap_ms_per_frame','surface_remap_calls','surface_remap_bytes','gpu_feedback_vertex_draws','gpu_feedback_source_vertices','surface_pack_ms_per_frame','surface_download_ms_per_frame','surface_download_calls','surface_download_bytes','shader_compile_ms_per_frame','gpu_wait_ms_per_frame','uniform_upload_ms_per_frame','stream_map_ms_per_frame','stream_unmap_ms_per_frame','stream_map_calls','stream_unmap_calls','stream_mapped_bytes','state_apply_ms_per_frame','gpu_direct_vertex_draws','gpu_direct_vertices','gpu_direct_unique_inputs','mean_ms', 'vertex_prepare_ms_per_frame', 'vertex_upload_ms_per_frame',
                   'draw_submit_ms_per_frame', 'vertex_upload_bytes', 'gpu_vertices',
                   'gpu_vertex_draws', 'gpu_packed_input_draws', 'vertex_upload_fallbacks',
                   'vertex_upload_reused_bytes', 'vertex_upload_reused_textures',
@@ -146,9 +162,22 @@ def main():
         means = {key: sum(w[key] for w in windows) / len(windows) for key in fields}
         result = dict(config, fingerprint=report['engine_build_fingerprint'], means=means)
         results['runs'].append(result)
-        for name in ['runtime-status.json', 'audio-status.json', 'benchmark-status.json']:
-            if not copy(name, args.output / (config['name'] + '-' + name)):
+        for name in ['runtime-status.json', 'audio-status.json', 'benchmark-status.json', 'fastinterp-blocks.json','surface-flushes.json']:
+            for attempt in range(5):
+                if copy(name, args.output / (config['name'] + '-' + name)):
+                    break
+                time.sleep(0.2)
+            else:
                 raise RuntimeError('Unable to read ' + name)
+        (args.output / 'comparison.json').write_text(json.dumps(results, indent=2) + '\n')
+        for name in ['benchmark-frame.json', 'benchmark-frame.rgba']:
+            if not copy(name, args.output / (config['name'] + '-' + name)):
+                raise RuntimeError('Unable to read final renderer pixels: ' + name)
+        capture = json.loads((args.output / (config['name'] + '-benchmark-frame.json')).read_text())
+        pixels = (args.output / (config['name'] + '-benchmark-frame.rgba')).read_bytes()
+        if capture['gl_error'] or capture['frame'] != args.frames or len(pixels) != 400 * 480 * 4:
+            raise RuntimeError('Invalid final renderer capture')
+        result['renderer_rgba_sha256'] = hashlib.sha256(pixels).hexdigest()
         (args.output / 'comparison.json').write_text(json.dumps(results, indent=2) + '\n')
         if args.screenshots:
             run(['device', 'capture', 'screenshot', '--device', args.device,
@@ -157,12 +186,13 @@ def main():
     fingerprints = {r['fingerprint'] for r in results['runs']}
     if len(fingerprints) != 1:
         raise RuntimeError('Runs used different engine builds')
+    results['renderer_rgba_identical'] = len({r['renderer_rgba_sha256'] for r in results['runs']}) == 1
     results['matched_workload'] = len({(r['means']['gpu_vertices'], r['means']['gpu_vertex_draws'])
                                       for r in results['runs']}) == 1
     (args.output / 'comparison.json').write_text(json.dumps(results, indent=2) + '\n')
     if args.resume_best:
-        if not results['matched_workload']:
-            raise RuntimeError('Workloads differ; refusing to choose a winner automatically')
+        if not results['matched_workload'] or not results['renderer_rgba_identical']:
+            raise RuntimeError('Workloads or renderer pixels differ; refusing to choose a winner automatically')
         best = min(results['runs'], key=lambda r: r['means']['mean_ms'])
         launch(best, benchmark=False)
         print('Resumed adaptive play:', best['name'], flush=True)

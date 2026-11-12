@@ -3,8 +3,13 @@
 // Refer to the misc/licenses/gplv2.txt file included.
 
 #include <bit>
+#include <algorithm>
 #include "common/frame_timing.h"
 #include <cmath>
+#include <cstdlib>
+#ifdef __aarch64__
+#include <arm_neon.h>
+#endif
 #include <cstring>
 
 #include "common/atomic_ops.h"
@@ -120,6 +125,10 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     state_.fpexc = 0;
     state_.thumb_mode = false;
     state_.page_pointers = empty_page_table; // Never null
+    const char* bkpt = std::getenv("CARA_FASTINTERP_DECODE_BKPT");
+    decode_breakpoints_ = bkpt && std::strcmp(bkpt, "1") == 0;
+    const char* burst = std::getenv("CARA_FASTINTERP_RAM_BURST");
+    ram_burst_ = burst && std::strcmp(burst, "1") == 0;
 }
 
 ARM_FastInterp::~ARM_FastInterp() = default;
@@ -142,6 +151,54 @@ void ARM_FastInterp::LogUnhandledInstruction(u32 pc) {
     seen[seen_count++] = key;
     LOG_ERROR(Core_ARM11, "Unhandled instruction at PC {:08X}: raw={:08X}, thumb={}, cpsr={:08X}",
               pc, raw, state_.thumb_mode, GetCPSR());
+}
+
+[[gnu::noinline]] static void LogBreakpointInstruction(u32 immediate) {
+    LOG_DEBUG(Core_ARM11, "Breakpoint instruction hit. Immediate: {:#010X}", immediate);
+}
+
+void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
+    // The existing hotness counters have no instrumentation overhead. Their
+    // census is incomplete after eviction and counts fused-loop dispatches, not
+    // elapsed time or individual guest instructions. Never infer idleness from
+    // this ranking alone.
+    std::vector<const BasicBlock*> blocks;
+    cache_.VisitResidentBlocks([&](const BasicBlock& block) {
+        if (block.exec_count) blocks.push_back(&block);
+    });
+    std::sort(blocks.begin(), blocks.end(), [](const auto* a, const auto* b) {
+        return a->exec_count != b->exec_count ? a->exec_count > b->exec_count
+                                             : a->start_pc < b->start_pc;
+    });
+    u64 total = 0;
+    for (const auto* block : blocks) total += block->exec_count;
+    output << "{\"core\":" << GetID() << ",\"resident_entries\":" << blocks.size()
+           << ",\"resident_executions\":" << total << ",\"blocks\":[";
+    for (size_t i = 0; i < std::min<size_t>(blocks.size(), 128); ++i) {
+        const auto& block = *blocks[i];
+        output << (i ? "," : "") << "{\"pc\":" << block.start_pc
+               << ",\"end_pc\":" << block.end_pc << ",\"executions\":" << block.exec_count
+               << ",\"thumb\":" << (block.IsThumb() ? "true" : "false") << ",\"opcodes\":[";
+        for (unsigned j = 0; j < block.inst_count; ++j) {
+            const auto opcode = block.instructions[j].opcode;
+            output << (j ? "," : "") << unsigned(opcode);
+            if (opcode == Opcode::Vmul4S || opcode == Opcode::Vmul4Gather ||
+                opcode == Opcode::Vmla4S || opcode == Opcode::Vmla4Gather)
+                j += 3; // Reserved constituent slots are skipped by the packed handler.
+        }
+        output << "],\"source_bytes\":[";
+        // Read code only from ordinary mapped RAM. Avoid MemorySystem reads:
+        // diagnostics must not trigger MMIO or invalidate a cached GPU surface.
+        const u64 end = std::min<u64>(block.end_pc, u64(block.start_pc) + 256);
+        for (u64 address = block.start_pc; address < end; ++address) {
+            const auto* page = state_.page_pointers[address >> FASTINTERP_PAGE_BITS];
+            if (!page) break;
+            output << (address != block.start_pc ? "," : "")
+                   << unsigned(page[address & FASTINTERP_PAGE_MASK]);
+        }
+        output << "]}";
+    }
+    output << "]}";
 }
 
 void ARM_FastInterp::Run() {
@@ -625,6 +682,11 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         // PC-source elimination
         HANDLER(LdrLit),
         HANDLER(PcSetup),
+        HANDLER(Bkpt),
+        HANDLER(Vmul4S),
+        HANDLER(Vmul4Gather),
+        HANDLER(Vmla4S),
+        HANDLER(Vmla4Gather),
     };
 #undef HANDLER
 

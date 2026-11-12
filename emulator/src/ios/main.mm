@@ -19,7 +19,10 @@ extern "C" int __llvm_profile_write_file(void);
 #include <dlfcn.h>
 #include <glad/glad.h>
 #include "video_core/renderer_opengl/gl_state.h"
+#include "video_core/renderer_opengl/gl_rasterizer.h"
+#include "video_core/video_core.h"
 #include "ios/gpu_vertex_self_test.h"
+#include "ios/gpu_state_self_test.h"
 #include "ios/gpu_depth_self_test.h"
 #endif
 #include <atomic>
@@ -45,6 +48,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
 #include "core/core.h"
+#include "core/arm/fastinterp/fastinterp.h"
 #include "core/savestate.h"
 #include "core/arm/arm_interface.h"
 #include "core/frontend/applets/default_applets.h"
@@ -399,6 +403,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 #ifdef CARA_IOS_GLES
     // Explicit launch overrides retain reproducible renderer comparisons.
     if (!std::getenv("CARA_GPU_PACKED_INPUTS")) setenv("CARA_GPU_PACKED_INPUTS","1",0);
+    // Keep eligible tiled/linear RGBA8 aliases on the GPU; other layouts fall back.
+    if (!std::getenv("CARA_GPU_SURFACE_REMAP")) setenv("CARA_GPU_SURFACE_REMAP","1",0);
     if (!std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
@@ -835,6 +841,14 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         @autoreleasepool {
             Common::DetachedTasks tasks;
             FileUtil::SetUserPath(user);
+            // Clear reports before any self-test can fail, so stale results are
+            // never mistaken for evidence from this launch.
+            for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
+                                     "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
+                                     "surface-flushes.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
+                                     "benchmark-frame.json","benchmark-frame.rgba"})
+                FileUtil::Delete(user+name);
+
 #ifdef CARA_PGO_GENERATE
             const std::string pgo_path=user+"cpu-training.profraw";
             __llvm_profile_set_filename(pgo_path.c_str());
@@ -881,7 +895,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 #ifdef CARA_IOS_GLES
             if (std::getenv("CARA_VERTEX_SELF_TEST") && emuWindow->graphics_error.empty()) {
                 std::string error;
-                const bool passed = RunGPUVertexSelfTest(error);
+                const bool passed = RunGPUStateSelfTest(error) && RunGPUVertexSelfTest(error);
                 std::ofstream report(user + "gpu-vertex-self-test.json");
                 GLint max_texture_size=0; glGetIntegerv(GL_MAX_TEXTURE_SIZE,&max_texture_size);
                 GLint max_draw_buffers=0,max_color_attachments=0;
@@ -917,11 +931,17 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 dispatch_async(dispatch_get_main_queue(), ^{ self->status.text = message;  UIApplication.sharedApplication.idleTimerDisabled = NO; });
                 return;
             }
-            // Diagnostic files describe one session, never a previously opened game.
-            for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
-                                     "audio-status.json","save-state-test-status.json"})
-                FileUtil::Delete(user+name);
             auto result = system.Load(*emuWindow,rom);
+#ifdef CARA_IOS_GLES
+            if (result==Core::System::ResultStatus::Success && std::getenv("CARA_SURFACE_SELF_TEST")) {
+                std::string error;
+                auto* rasterizer=dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
+                const bool passed=rasterizer && rasterizer->RunSurfaceCoherenceSelfTest(error);
+                std::ofstream report(user+"surface-coherence-self-test.json");
+                report << "{\"passed\":" << (passed?"true":"false") << ",\"detail\":" << std::quoted(error) << "}\n";
+                if (!passed) { LOG_ERROR(Frontend,"Surface coherence fixture: {}",error); result=Core::System::ResultStatus::ErrorUnknown; }
+            }
+#endif
             if (result==Core::System::ResultStatus::Success && std::getenv("CARA_PROFILE_LOAD")) {
                 try { system.LoadStateFromPath(user+"profile-comparison.carastate"); }
                 catch (const std::exception& error) {
@@ -1171,6 +1191,17 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"vertex_orphan_upload_ms_per_frame\":" + std::to_string((current.vertex_orphan_upload_seconds - previous_counters.vertex_orphan_upload_seconds) * 1000 / count) +
                                 ",\"vertex_storage_allocate_ms_per_frame\":" + std::to_string((current.vertex_storage_allocate_seconds - previous_counters.vertex_storage_allocate_seconds) * 1000 / count) +
                                 ",\"vertex_subimage_upload_ms_per_frame\":" + std::to_string((current.vertex_subimage_upload_seconds - previous_counters.vertex_subimage_upload_seconds) * 1000 / count) +
+                                ",\"stream_map_ms_per_frame\":" + std::to_string((current.stream_map_seconds - previous_counters.stream_map_seconds)*1000.0/count) +
+                                ",\"stream_unmap_ms_per_frame\":" + std::to_string((current.stream_unmap_seconds - previous_counters.stream_unmap_seconds)*1000.0/count) +
+                                ",\"stream_map_calls\":" + std::to_string(current.stream_map_calls - previous_counters.stream_map_calls) +
+                                ",\"stream_unmap_calls\":" + std::to_string(current.stream_unmap_calls - previous_counters.stream_unmap_calls) +
+                                ",\"stream_mapped_bytes\":" + std::to_string(current.stream_mapped_bytes - previous_counters.stream_mapped_bytes) +
+                                ",\"uniform_upload_ms_per_frame\":" + std::to_string((current.uniform_upload_seconds - previous_counters.uniform_upload_seconds)*1000.0/count) +
+                                ",\"surface_remap_ms_per_frame\":" + std::to_string((current.surface_remap_seconds - previous_counters.surface_remap_seconds)*1000.0/count) +
+                                ",\"surface_remap_calls\":" + std::to_string(current.surface_remap_calls - previous_counters.surface_remap_calls) +
+                                ",\"surface_remap_bytes\":" + std::to_string(current.surface_remap_bytes - previous_counters.surface_remap_bytes) +
+                                ",\"surface_pack_ms_per_frame\":" + std::to_string((current.surface_pack_seconds - previous_counters.surface_pack_seconds)*1000.0/count) +
+                                ",\"state_apply_ms_per_frame\":" + std::to_string((current.state_apply_seconds - previous_counters.state_apply_seconds)*1000.0/count) +
                                 ",\"draw_submit_ms_per_frame\":" + std::to_string((current.draw_submit_seconds - previous_counters.draw_submit_seconds) * 1000 / count) +
                                 ",\"surface_download_ms_per_frame\":" + std::to_string((current.surface_download_seconds - previous_counters.surface_download_seconds) * 1000 / count) +
                                 ",\"shader_compile_ms_per_frame\":" + std::to_string((current.shader_compile_seconds - previous_counters.shader_compile_seconds) * 1000 / count) +
@@ -1213,6 +1244,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"present_ms_per_frame\":" + std::to_string((current.present_seconds - previous_counters.present_seconds) * 1000 / count) +
                                 ",\"shader_calls\":" + std::to_string(current.shader_calls - previous_counters.shader_calls) +
                                 ",\"gpu_vertex_draws\":" + std::to_string(current.gpu_vertex_draws - previous_counters.gpu_vertex_draws) +
+                                ",\"gpu_direct_vertex_draws\":" + std::to_string(current.gpu_direct_vertex_draws - previous_counters.gpu_direct_vertex_draws) +
+                                ",\"gpu_direct_vertices\":" + std::to_string(current.gpu_direct_vertices - previous_counters.gpu_direct_vertices) +
+                                ",\"gpu_direct_unique_inputs\":" + std::to_string(current.gpu_direct_unique_inputs - previous_counters.gpu_direct_unique_inputs) +
+                                ",\"gpu_feedback_vertex_draws\":" + std::to_string(current.gpu_feedback_vertex_draws - previous_counters.gpu_feedback_vertex_draws) +
+                                ",\"gpu_feedback_source_vertices\":" + std::to_string(current.gpu_feedback_source_vertices - previous_counters.gpu_feedback_source_vertices) +
                                 ",\"gpu_vertices\":" + std::to_string(current.gpu_vertices - previous_counters.gpu_vertices) +
                                 ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + "}");
                             previous_counters = current;
@@ -1276,6 +1312,45 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 #else
                            << ",\"jit\":false,\"software_renderer\":true}\n";
 #endif
+                }
+#ifdef CARA_IOS_GLES
+                // Capture only after measured work ends, before renderer destruction.
+                // Raw pixels avoid UIKit/display color conversion in replay comparisons.
+                if (target_frames && std::getenv("CARA_BENCHMARK_CAPTURE")) {
+                    const auto previous = OpenGL::OpenGLState::BindReadFramebuffer(emuWindow->framebuffer);
+                    GLint pack_buffer=0, pack_row_length=0, pack_alignment=0;
+                    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+                    glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row_length);
+                    glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
+                    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+                    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+                    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+                    std::vector<u8> pixels(400 * 480 * 4);
+                    glReadPixels(0, 0, 400, 480, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                    const GLenum capture_error = glGetError();
+                    glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer);
+                    glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
+                    glPixelStorei(GL_PACK_ALIGNMENT, pack_alignment);
+                    OpenGL::OpenGLState::BindReadFramebuffer(previous);
+                    if (capture_error == GL_NO_ERROR) {
+                        std::ofstream raw(user+"benchmark-frame.rgba", std::ios::binary);
+                        raw.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
+                    }
+                    std::ofstream(user+"benchmark-frame.json")
+                        << "{\"width\":400,\"height\":480,\"origin\":\"bottom_left\",\"format\":\"RGBA8\",\"gl_error\":"
+                        << capture_error << ",\"frame\":" << emuWindow->frames << "}\n";
+                }
+#endif
+                if (std::getenv("CARA_FASTINTERP_PROFILE")) {
+                    std::ofstream profile(user+"fastinterp-blocks.json");
+                    profile << "{\"frame\":" << emuWindow->frames << ",\"kind\":\"resident_block_census_not_time_samples\",\"cores\":[";
+                    bool comma=false;
+                    for (u32 id=0;id<system.GetNumCores();++id) {
+                        if (auto* cpu=dynamic_cast<Core::FastInterp::ARM_FastInterp*>(&system.GetCore(id))) {
+                            if (comma) profile << ','; cpu->WriteBlockProfile(profile); comma=true;
+                        }
+                    }
+                    profile << "]}\n";
                 }
                 system.Shutdown();
                 [saveSync captureCommittedSave];

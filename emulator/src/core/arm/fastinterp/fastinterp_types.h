@@ -452,6 +452,16 @@ enum class Opcode : u16 {
     // inst_size and ticks are 0 (the following real instruction carries both).
     PcSetup,
 
+    // Existing DynCom semantics: conditional debug notification, then continue.
+    Bkpt,
+
+    // Four independent single-precision multiplies, using precompiled SIMD handlers.
+    Vmul4S,       // Consecutive destination/vector registers and a broadcast scalar.
+    Vmul4Gather,  // Arbitrary source/destination registers with no read-after-write hazard.
+
+    Vmla4S,
+    Vmla4Gather,
+
     OpcodeCount
 };
 
@@ -482,6 +492,12 @@ struct DecodedInst {
     u8 rd;         // 1 byte: Destination register
 
     union {
+        // Four scalar operations packed into one dispatch; keeps DecodedInst at 20 bytes.
+        struct {
+            u8 sd[4];
+            u8 sn[4];
+            u8 sm[4];
+        } vfp4;
         // Data processing format
         struct {
             u8 rn;                // First source register

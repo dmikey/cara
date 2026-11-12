@@ -30,6 +30,9 @@ add_library(video_core STATIC
     renderer_opengl/gl_rasterizer.cpp
     renderer_opengl/gl_rasterizer.h
     renderer_opengl/gl_rasterizer_cache.cpp
+    renderer_opengl/gl_surface_coherence_self_test.cpp
+    renderer_opengl/gl_surface_remap.cpp
+    renderer_opengl/gl_surface_remap.h
     renderer_opengl/gl_rasterizer_cache.h
     renderer_opengl/gl_resource_manager.cpp
     renderer_opengl/gl_resource_manager.h

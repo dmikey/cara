@@ -681,3 +681,58 @@ renderer identity, bound and validate reads, write atomically, and persist befor
 iOS suspension rather than depending on a clean shutdown. This moves compile
 work to loading; it does not eliminate compilation or explain the measured warm
 grass slowdown. No persistent shader cache has been enabled in this change.
+
+
+## GPU surface aliases and submission experiments (2026-11-12)
+
+Dark Moon's opening repeatedly views the same RGBA8 bytes with different tiling
+and stride. The source is a native-resolution 256×416 tiled surface at
+`0x18000000`; the requested linear view is 128×384 at `0x18004000`. Normal cache
+copy matching rejects the layout mismatch, and iOS has no applicable format
+reinterpreter. The fallback downloaded 196,608 bytes twice per refresh before
+uploading them again. A separate diagnostic `glFinish` probe attributed most of
+that readback time to waiting for GPU completion, rather than copying the bytes.
+That probe changes synchronization and is not a performance-comparison run.
+
+The new GLES remapper computes the source texel from each destination texel's
+physical guest byte address, including Morton order and the GL vertical flip.
+It keeps eligible RGBA8 aliases on the GPU. Eligibility requires native scale,
+dense rows, distinct textures, complete source containment and valid source bytes;
+unsupported layouts and formats use the original fallback. Dirty ownership stays
+with the authoritative source, and ordinary CPU/GPU writes invalidate aliases.
+It neither substitutes stale pixels nor skips guest-visible memory writes.
+
+Matched M4 iPad replay, 1,200 refreshes with the first 300 excluded, audible output,
+FastInterp and 100% guest clock throughout:
+
+| Dark Moon opening | Mean refresh time | Emulation-thread CPU | Downloads per 60 refreshes |
+|---|---:|---:|---:|
+| Existing path | 27.096 ms | 14.040 ms | 120 |
+| GPU alias remap | 14.531 ms | 12.664 ms | 0 |
+| Remap plus unchanged-uniform reuse and quaternion-only reference shader | 14.225 ms | 12.625 ms | 0 |
+| Existing path, repeated after candidates | 27.430 ms | 14.195 ms | 120 |
+
+The isolated remap improves throughput by 86.5% in this scene. Draw/vertex counts
+and final raw 400×480 RGBA bytes match exactly. Raw framebuffer capture happens
+after the measured run, before renderer destruction, avoiding UIKit/display color
+conversion. This is a refresh-time result, not a claim that every game or scene
+runs at 60 rendered frames per second. The remap run still exceeded the native
+refresh budget in 72 of 900 measured refreshes; the uniform/reference variant did
+so in 34 of 900. Thermal state remained nominal.
+
+The on-device coherence suite covers all four tiled/linear layout pairs, the
+observed nonzero byte offset, partial rectangles and unchanged neighbors, CPU
+writes rejecting stale sources, and GPU writes invalidating a previously valid
+alias. Generated original bytes are the reference; CPU RAM and staging buffers
+are poisoned so an accidental old-data/readback path cannot pass. The same suite
+round-trips every 16-bit value in RGB565, RGB5A1 and RGBA4 through GPU storage in
+both layouts. Portable GLES color readback now uses RGBA/unsigned-byte plus exact
+repacking for formats whose requested read pair is not guaranteed.
+
+A lit transformed-vertex experiment was correct but slower: 27.041→33.025 ms
+with identical workload and pixels. It stays disabled. GLES3 requires an extra
+transform-feedback-to-texture transfer for this prototype's per-triangle output
+lookup; a future Metal buffer path can test reuse without that transfer. Reducing
+state calls, implicit buffer flushes and RAM bursts did not establish a reliable
+scene-level win in the first sweep. They remain diagnostic options rather than
+assumed improvements.
