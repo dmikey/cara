@@ -12,6 +12,7 @@ extern "C" int __llvm_profile_write_file(void);
 #endif
 #include "audio_core/dsp_interface.h"
 #import "ios/save_sync.h"
+#import "ios/shell_controllers.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #ifdef CARA_IOS_GLES
 #import <OpenGLES/EAGL.h>
@@ -334,12 +335,25 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     UIImageView* skinArt;
     CaraSkinControls* skinControls;
     CaraSkin* activeSkin;
+    CaraSkin* portraitSkin;
+    CaraSkin* landscapeSkin;
+    CaraStatsView* performanceHUD;
+    NSString* pickingSkinOrientation;
     NSDictionary* currentRepresentation;
     UIButton* menuFallback;
     BOOL pickingSkin;
     BOOL pickingSaveFolder;
     BOOL openingGame;
+    BOOL launchingOffline;
     CaraSaveSync* saveSync;
+    CaraSaveSync* stateSync;
+    CaraLibraryStore* libraryStore;
+    CaraLibraryController* libraryController;
+    UINavigationController* libraryNavigation;
+    __weak CaraSettingsController* settingsController;
+    NSTimer* cloudFeedbackTimer;
+    BOOL libraryVisible;
+    BOOL pickingROMsFolder;
     NSURL* gameURL;
     BOOL gameScoped;
     BOOL modalPaused;
@@ -355,6 +369,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     std::atomic<bool> adaptiveCPUDirty;
     std::atomic<unsigned> guestClock;
     std::atomic<unsigned> maximumSpeedLimit;
+    std::atomic<unsigned> fixedGuestClock;
+    NSString* settingsCategory;
     std::atomic<bool> framePending[2];
     unsigned frameCount;
     unsigned sessionGeneration;
@@ -364,16 +380,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     unsigned lastHUDFrame;
     bool autoStarted;
 }
-- (BOOL)prefersStatusBarHidden { return YES; }
+- (BOOL)prefersStatusBarHidden { return !libraryVisible; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    NSDictionary* devices=activeSkin.info[@"representations"];
-    NSDictionary* styles=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad ? (devices[@"ipad"]?:devices[@"iphone"]) : (devices[@"iphone"]?:devices[@"ipad"]);
-    UIInterfaceOrientationMask mask=0;
-    for (NSDictionary* orientations in styles.allValues) {
-        if (orientations[@"landscape"]) mask|=UIInterfaceOrientationMaskLandscape;
-        if (orientations[@"portrait"]) mask|=UIInterfaceOrientationMaskPortrait;
-    }
-    return mask?:UIInterfaceOrientationMaskLandscape;
+    return UIInterfaceOrientationMaskAllButUpsideDown;
 }
 - (NSURL*)defaultSkinURL {
     return [NSBundle.mainBundle URLForResource:@"CarbonDuo" withExtension:@"deltaskin"];
@@ -389,9 +398,36 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     if (@available(iOS 16.0,*)) [self setNeedsUpdateOfSupportedInterfaceOrientations];
     else [UIViewController attemptRotationToDeviceOrientation];
 }
+- (void)reloadSelectedSkins {
+    NSUserDefaults* defaults=NSUserDefaults.standardUserDefaults;
+    NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+    CaraSkin* builtIn=[CaraSkin loadURL:[self defaultSkinURL] error:nil];
+    const BOOL pad=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad;
+    NSString* legacy=[defaults stringForKey:@"controllerSkin"];
+    if (![defaults boolForKey:@"orientationSkinPreferencesMigrated"]) {
+        CaraSkin* old=legacy?[CaraSkin loadURL:[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:legacy]] error:nil]:nil;
+        for (NSString* orientation in @[@"Portrait",@"Landscape"]) {
+            if ([old strictRepresentationForPad:pad landscape:[orientation isEqual:@"Landscape"]]) [defaults setObject:legacy forKey:[@"controllerSkin" stringByAppendingString:orientation]];
+        }
+        [defaults setBool:YES forKey:@"orientationSkinPreferencesMigrated"];
+    }
+    for (NSString* orientation in @[@"Portrait",@"Landscape"]) {
+        NSString* file=[defaults stringForKey:[@"controllerSkin" stringByAppendingString:orientation]];
+        const char* test=std::getenv("CARA_TEST_SKIN"); if (test) file=[NSString stringWithUTF8String:test].lastPathComponent;
+        CaraSkin* skin=file?[CaraSkin loadURL:[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:file]] error:nil]:nil;
+        const BOOL landscape=[orientation isEqual:@"Landscape"];
+        if (![skin strictRepresentationForPad:pad landscape:landscape]) skin=builtIn;
+        if (landscape) landscapeSkin=skin; else portraitSkin=skin;
+    }
+    [self applySkin:self.view.bounds.size.width>self.view.bounds.size.height?landscapeSkin:portraitSkin];
+}
+- (void)resetSkinForOrientation:(NSString*)orientation {
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:[@"controllerSkin" stringByAppendingString:orientation]];
+    [self reloadSelectedSkins]; [self resumeFromMenu];
+}
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    NSString* rom=[NSUserDefaults.standardUserDefaults stringForKey:@"rom"];
+    NSString* rom=[[NSUserDefaults.standardUserDefaults volatileDomainForName:NSArgumentDomain] objectForKey:@"rom"];
     if (!autoStarted && !running && std::getenv("CARA_OPEN_RECENT")) {
         autoStarted=true; [self openRecentGame]; return;
     }
@@ -429,14 +465,18 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     AudioCore::SetIOSAudioMuted(benchmarkMute || [NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
     stretchAudio=[NSUserDefaults.standardUserDefaults boolForKey:@"audioStretching"]; stretchAudioDirty=false;
     const char* adaptiveOverride=std::getenv("CARA_ADAPTIVE_GUEST_CPU");
-    adaptiveCPU=adaptiveOverride?std::strcmp(adaptiveOverride,"1")==0:
-        (!std::getenv("CARA_BENCHMARK_FRAMES") && [NSUserDefaults.standardUserDefaults boolForKey:@"adaptiveGuestCPU"]);
-    adaptiveCPUDirty=false; guestClock=100;
+    NSString* mode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"];
+    if (![@[@"accuracy",@"performance"] containsObject:mode]) mode=@"performance";
+    [NSUserDefaults.standardUserDefaults setObject:mode forKey:@"playMode"];
+    adaptiveCPU=adaptiveOverride?std::strcmp(adaptiveOverride,"1")==0:(!std::getenv("CARA_BENCHMARK_FRAMES") && [mode isEqual:@"performance"]);
+    fixedGuestClock=(adaptiveOverride || std::getenv("CARA_BENCHMARK_FRAMES"))?100:105;
+    adaptiveCPUDirty=false; guestClock=adaptiveCPU.load()?100:fixedGuestClock.load();
     [NSUserDefaults.standardUserDefaults registerDefaults:@{@"maximumSpeedPercent":@105}];
     const NSInteger savedMaximumSpeed=[NSUserDefaults.standardUserDefaults integerForKey:@"maximumSpeedPercent"];
     maximumSpeedLimit=(savedMaximumSpeed>=50 && savedMaximumSpeed<=200)?unsigned(savedMaximumSpeed):Cara::FramePacer::DefaultSpeedPercent;
     NSURL* saveDocuments=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     saveSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES]];
+    stateSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES] statesOnly:YES];
     stop=false; running=false; sessionGeneration=0; framePending[0]=false; framePending[1]=false;
     top=[UIImageView new]; bottom=[UIImageView new];
     top.backgroundColor=bottom.backgroundColor=UIColor.blackColor;
@@ -470,28 +510,35 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         if (controller->emuWindow) controller->emuWindow->touch=touch.x<0 ? -1 : int(unsigned(touch.x) | (unsigned(touch.y)<<16));
     };
     skinControls.menuPressed=^{ [weakSelf showMenu]; };
+    performanceHUD=[[CaraStatsView alloc] initWithFrame:CGRectZero]; [self.view addSubview:performanceHUD];
     status=[UILabel new]; status.text=@"Choose a game from Menu";
     status.font=[UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium]; status.textColor=[UIColor colorWithRed:.7 green:.8 blue:.7 alpha:1];
     status.numberOfLines=2; status.userInteractionEnabled=NO; [self.view addSubview:status];
     menuFallback=[UIButton buttonWithType:UIButtonTypeSystem]; menuFallback.configuration=[UIButtonConfiguration filledButtonConfiguration];
     [menuFallback setTitle:@"Menu" forState:UIControlStateNormal]; [menuFallback addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:menuFallback];
-    NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
-    NSString* saved=[NSUserDefaults.standardUserDefaults stringForKey:@"controllerSkin"];
-    const char* test=std::getenv("CARA_TEST_SKIN");
-    NSURL* url=test?[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:[NSString stringWithUTF8String:test].lastPathComponent]]:
-        (saved?[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:saved]]:[self defaultSkinURL]);
-    NSError* error=nil;
-    CaraSkin* skin=url?[CaraSkin loadURL:url error:&error]:nil;
-    if (!skin) skin=[CaraSkin loadURL:[self defaultSkinURL] error:nil];
-    [self applySkin:skin];
+    [self reloadSelectedSkins];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(background) name:UIApplicationWillResignActiveNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(foreground) name:UIApplicationDidBecomeActiveNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(syncFeedbackChanged:) name:CaraSaveSyncDidChangeNotification object:nil];
+    NSString* launchROM=[[NSUserDefaults.standardUserDefaults volatileDomainForName:NSArgumentDomain] objectForKey:@"rom"];
+    if (!launchROM.length && !std::getenv("CARA_OPEN_RECENT") && !std::getenv("CARA_BENCHMARK_FRAMES")) [self showLibrary];
+    if (!std::getenv("CARA_BENCHMARK_FRAMES")) {
+        __weak EmulatorController* owner=self;
+        cloudFeedbackTimer=[NSTimer scheduledTimerWithTimeInterval:15 repeats:YES block:^(NSTimer* timer) {
+            EmulatorController* controller=owner; if (!controller) { [timer invalidate]; return; }
+            [controller->saveSync refreshCloudStatus]; [controller->stateSync refreshCloudStatus];
+        }];
+    }
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    libraryNavigation.view.frame=self.view.bounds;
 #ifdef CARA_IOS_GLES
     gpuSurface.frame=self.view.bounds;
 #endif
+    const BOOL landscape=self.view.bounds.size.width>self.view.bounds.size.height;
+    CaraSkin* selected=landscape?landscapeSkin:portraitSkin;
+    if (selected && selected!=activeSkin) { activeSkin=selected; skinControls.skin=selected; currentRepresentation=nil; }
     NSDictionary* rep=[activeSkin representationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:self.view.bounds.size.width>self.view.bounds.size.height];
     menuFallback.hidden=rep!=nil;
     if (!rep) { menuFallback.frame=CGRectMake(24,48,120,44); return; }
@@ -508,13 +555,18 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     skinArt.frame=canvas; skinControls.frame=canvas; [skinControls setNeedsDisplay];
     const auto convert=[&](CGRect r) { return CGRectMake(canvas.origin.x+r.origin.x/mapping.width*canvas.size.width,canvas.origin.y+r.origin.y/mapping.height*canvas.size.height,r.size.width/mapping.width*canvas.size.width,r.size.height/mapping.height*canvas.size.height); };
     top.frame=convert(skinControls.upperScreen); bottom.frame=convert(skinControls.lowerScreen);
-    status.frame=convert(CGRectMake(80,215,420,64));
+    CGRect statsFrame=CaraSkinRect(rep[@"caraStatsFrame"]);
+    if (statsFrame.size.width<=0 || statsFrame.size.height<=0) statsFrame=CGRectMake(52,50,430,102);
+    performanceHUD.frame=convert(statsFrame);
+    NSString* statsKey=landscape?@"landscapeStatsVisible":@"portraitStatsVisible";
+    performanceHUD.hidden=[NSUserDefaults.standardUserDefaults objectForKey:statsKey] && ![NSUserDefaults.standardUserDefaults boolForKey:statsKey];
+    status.frame=landscape?convert(CGRectMake(statsFrame.origin.x,CGRectGetMaxY(statsFrame)+8,statsFrame.size.width,54)):convert(CGRectMake((mapping.width-600)/2,mapping.height-170,600,48));
+    status.numberOfLines=landscape?2:1;
     status.adjustsFontSizeToFitWidth=YES; status.minimumScaleFactor=0.7;
 #ifdef CARA_IOS_GLES
     if (emuWindow) emuWindow->SetDisplayLayout(top.frame,bottom.frame,self.view.bounds.size,gpuSurface.contentScaleFactor);
 #endif
 }
-- (void)resumeFromMenu { modalPaused=NO; paused=false; AudioCore::SetIOSAudioPaused(stop || !running); }
 - (NSUInteger)maximumSpeedPercent { return maximumSpeedLimit.load(); }
 - (void)setMaximumSpeedPercent:(NSUInteger)percent {
     const unsigned value=unsigned(std::clamp<NSUInteger>(percent,Cara::FramePacer::MinSpeedPercent,Cara::FramePacer::MaxSpeedPercent));
@@ -532,63 +584,176 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     [limits addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { [self resumeFromMenu]; }]];
     [self presentViewController:limits animated:YES completion:nil];
 }
-- (void)showMenu {
+- (void)resumeFromMenu {
+    modalPaused=libraryVisible; paused=modalPaused;
+    AudioCore::SetIOSAudioPaused(modalPaused || stop || !running);
+}
+- (void)ensureLibrary {
+    if (libraryStore) return;
+    NSURL* documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    libraryStore=[[CaraLibraryStore alloc] initWithDocuments:documents defaults:NSUserDefaults.standardUserDefaults];
+}
+- (void)showLibrary {
     if (openingGame) return;
-    modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
-    UIAlertController* menu=[UIAlertController alertControllerWithTitle:@"Cara" message:saveSync.status preferredStyle:UIAlertControllerStyleActionSheet];
-    [menu addAction:[UIAlertAction actionWithTitle:(AudioCore::IsIOSAudioMuted()?@"Unmute sound":@"Mute sound") style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-        const bool muted=!AudioCore::IsIOSAudioMuted(); AudioCore::SetIOSAudioMuted(muted);
-        [NSUserDefaults.standardUserDefaults setBool:muted forKey:@"audioMuted"]; [self resumeFromMenu];
-    }]];
-    [menu addAction:[UIAlertAction actionWithTitle:(stretchAudio.load()?@"Disable audio stretching":@"Enable audio stretching") style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-        const bool enabled=!self->stretchAudio.load(); self->stretchAudio=enabled; self->stretchAudioDirty=true;
-        [NSUserDefaults.standardUserDefaults setBool:enabled forKey:@"audioStretching"]; [self resumeFromMenu];
-    }]];
-    [menu addAction:[UIAlertAction actionWithTitle:(adaptiveCPU.load()?@"Disable adaptive guest CPU":@"Enable adaptive guest CPU (50–100%)") style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-        const bool enabled=!self->adaptiveCPU.load(); self->adaptiveCPU=enabled; self->adaptiveCPUDirty=true;
-        [NSUserDefaults.standardUserDefaults setBool:enabled forKey:@"adaptiveGuestCPU"]; [self resumeFromMenu];
-    }]];
-    [menu addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"Maximum speed: %u%%…",maximumSpeedLimit.load()] style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self showMaximumSpeed]; }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Open game…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { self->pickingSkin=NO; [self openROM]; }]];
-    NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
-    if (recent) [menu addAction:[UIAlertAction actionWithTitle:@"Open recent game" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-        [self openRecentGame];
-    }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Import skin…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { self->pickingSkin=YES; [self openROM]; }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Use Carbon Duo" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-        [NSUserDefaults.standardUserDefaults removeObjectForKey:@"controllerSkin"];
-        [self applySkin:[CaraSkin loadURL:[self defaultSkinURL] error:nil]]; [self resumeFromMenu];
-    }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Choose iCloud save folder…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-        if (self->running) { self->status.text=@"Stop the game before changing the save folder."; [self resumeFromMenu]; return; }
-        self->pickingSaveFolder=YES;
-        UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO];
-        picker.delegate=self; [self presentViewController:picker animated:YES completion:nil];
-    }]];
-    if (saveSync.enabled) {
-        [menu addAction:[UIAlertAction actionWithTitle:@"Sync saves now" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-            if (self->running) { self->status.text=@"Stop the game before restoring cloud saves."; [self resumeFromMenu]; return; }
-            [self syncSaves:nil completion:nil];
-        }]];
-        [menu addAction:[UIAlertAction actionWithTitle:@"Disconnect save folder" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self->saveSync disconnect]; [self resumeFromMenu]; }]];
+    [self ensureLibrary];
+    if (!libraryController) {
+        libraryController=[CaraLibraryController new]; libraryController.store=libraryStore;
+        __weak EmulatorController* owner=self;
+        libraryController.openGame=^(NSURL* url) { [owner openGameURL:url]; };
+        libraryController.addGame=^{ EmulatorController* controller=owner; if (!controller) return; controller->pickingSkin=NO; [controller openROM]; };
+        libraryController.chooseFolder=^{ [owner chooseROMsFolder]; };
+        libraryController.showSettings=^{ [owner showMenu]; };
+        libraryController.resumeGame=^{ [owner hideLibrary]; };
+        libraryNavigation=[[UINavigationController alloc] initWithRootViewController:libraryController];
+        [self addChildViewController:libraryNavigation]; libraryNavigation.view.frame=self.view.bounds;
+        libraryNavigation.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+        [self.view addSubview:libraryNavigation.view]; [libraryNavigation didMoveToParentViewController:self];
     }
-    if (running && std::getenv("CARA_PROFILE_CHECKPOINT")) {
-        [menu addAction:[UIAlertAction actionWithTitle:@"Capture comparison checkpoint" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-            stateCommand.store(101,std::memory_order_release);
-        }]];
+    libraryVisible=YES; modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
+    libraryNavigation.view.hidden=NO; [self.view bringSubviewToFront:libraryNavigation.view]; libraryController.canResume=running && !stop;
+    [libraryController reloadLibrary]; [self updateSyncFeedback];
+    [self setNeedsStatusBarAppearanceUpdate];
+    if (@available(iOS 16.0,*)) [self setNeedsUpdateOfSupportedInterfaceOrientations];
+}
+- (void)hideLibrary {
+    libraryVisible=NO; libraryNavigation.view.hidden=YES; [libraryController suspendArtwork];
+    [self resumeFromMenu]; [self setNeedsStatusBarAppearanceUpdate];
+    if (@available(iOS 16.0,*)) [self setNeedsUpdateOfSupportedInterfaceOrientations];
+}
+- (void)shellError:(NSString*)title message:(NSString*)message {
+    status.text=message;
+    UIAlertController* alert=[UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self resumeFromMenu]; }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)chooseROMsFolder {
+    if (running || saveSync.busy || stateSync.busy) { [self shellError:@"ROMs folder" message:@"Stop the game and wait for syncing to finish before changing folders."]; return; }
+    pickingROMsFolder=YES;
+    UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO]; picker.delegate=self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)syncFeedbackChanged:(NSNotification*)notification {
+    if (notification.object==saveSync || notification.object==stateSync) [self updateSyncFeedback];
+}
+- (void)updateSyncFeedback {
+    if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{ [self updateSyncFeedback]; }); return; }
+    BOOL busy=saveSync.busy || stateSync.busy;
+    CaraSaveSync* attention=nil;
+    for (CaraSaveSync* channel in @[saveSync,stateSync]) if ([channel.phase isEqual:@"error"] || [channel.phase isEqual:@"conflict"]) { attention=channel; break; }
+    libraryController.syncing=busy;
+    if (attention) {
+        libraryController.syncTitle=[NSString stringWithFormat:@"%@: %@",attention.statesOnly?@"States":@"Saves",attention.status]; libraryController.syncDetail=attention.detail;
+    } else if (busy) {
+        libraryController.syncTitle=@"Syncing your progress…";
+        libraryController.syncDetail=[NSString stringWithFormat:@"Saves: %@ · States: %@",saveSync.status,stateSync.status];
+    } else if (!saveSync.enabled && !stateSync.enabled) {
+        libraryController.syncTitle=@"Your progress, kept close";
+        libraryController.syncDetail=@"Connect iCloud Drive in Settings to sync saves and states.";
+    } else {
+        libraryController.syncTitle=(saveSync.cloudUploadVerified && stateSync.cloudUploadVerified)?@"Uploaded to iCloud":@"Saves & states";
+        libraryController.syncDetail=[NSString stringWithFormat:@"Saves: %@ · States: %@",saveSync.status,stateSync.status];
     }
+    if (settingsController) { settingsController.sections=[self settingsForCategory:settingsCategory]; [settingsController refresh]; }
+}
+- (NSArray*)settingsSections {
+    __weak EmulatorController* owner=self;
+    const BOOL stopped=!running && !openingGame;
+    const BOOL available=stopped && !saveSync.busy && !stateSync.busy;
+    const auto action=[](NSString* title,NSString* symbol,BOOL enabled,void(^block)(void)) { return @{@"title":title,@"symbol":symbol,@"enabled":@(enabled),@"action":block}; };
+    NSMutableArray* sections=[NSMutableArray new];
     if (running) {
-        [menu addAction:[UIAlertAction actionWithTitle:@"Save state…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self showStateSlots:YES]; }]];
-        [menu addAction:[UIAlertAction actionWithTitle:@"Load state…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self showStateSlots:NO]; }]];
+        NSMutableArray* game=[NSMutableArray arrayWithArray:@[
+            action(@"Game library",@"square.grid.2x2",YES,^{ [owner showLibrary]; }),
+            action(@"Save state…",@"square.and.arrow.down",YES,^{ [owner showStateSlots:YES]; }),
+            action(@"Load state…",@"arrow.counterclockwise",YES,^{ [owner showStateSlots:NO]; }),
+        ]];
+        if (std::getenv("CARA_PROFILE_CHECKPOINT")) [game addObject:action(@"Capture comparison checkpoint",@"camera.viewfinder",YES,^{ EmulatorController* controller=owner; if (controller) stateCommand.store(101,std::memory_order_release); })];
+        NSMutableDictionary* stopRow=[action(@"Stop game",@"stop.circle",YES,^{ [owner stopGame]; [owner showLibrary]; }) mutableCopy]; stopRow[@"destructive"]=@YES; [game addObject:stopRow];
+        [sections addObject:@{@"title":@"Current game",@"rows":game,@"footer":@"Keep using in-game saves. Save states require a matching Cara engine build, game revision, and system mode."}];
     }
-    if (running) [menu addAction:[UIAlertAction actionWithTitle:@"Stop game" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) { [self stopGame]; [self resumeFromMenu]; }]];
-    [menu addAction:[UIAlertAction actionWithTitle:(running?@"Resume":@"Close") style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { [self resumeFromMenu]; }]];
-    if (activeSkin && currentRepresentation) {
-        menu.popoverPresentationController.sourceView=skinControls;
-        CGRect r=[skinControls menuFrame]; NSDictionary* mapping=currentRepresentation[@"mappingSize"];
-        menu.popoverPresentationController.sourceRect=CGRectMake(r.origin.x/[mapping[@"width"] doubleValue]*skinControls.bounds.size.width,r.origin.y/[mapping[@"height"] doubleValue]*skinControls.bounds.size.height,MAX(1,r.size.width/[mapping[@"width"] doubleValue]*skinControls.bounds.size.width),MAX(1,r.size.height/[mapping[@"height"] doubleValue]*skinControls.bounds.size.height));
-    } else { menu.popoverPresentationController.sourceView=menuFallback; menu.popoverPresentationController.sourceRect=menuFallback.bounds; }
-    [self presentViewController:menu animated:YES completion:nil];
+    NSMutableArray* locations=[NSMutableArray arrayWithObject:@{@"title":@"ROMs folder",@"subtitle":libraryStore.folderName?:@"Roms",@"symbol":@"folder",@"enabled":@(available),@"action":^{ [owner chooseROMsFolder]; }}];
+    [locations addObject:action(@"Open game from Files…",@"doc.badge.plus",!openingGame,^{ EmulatorController* c=owner; if (c) { c->pickingSkin=NO; [c openROM]; } })];
+    if (libraryStore.hasCustomFolder) [locations addObject:action(@"Use Cara’s Roms folder",@"folder.fill",available,^{ EmulatorController* c=owner; if (c) { [c->libraryStore useDefaultFolder]; [c->libraryController reloadLibrary]; [c resumeFromMenu]; } })];
+    [sections addObject:@{@"title":@"Game library",@"rows":locations,@"footer":@"Cara creates Roms in its own Files folder. You can also choose a folder elsewhere; games stay in their original locations. Stop the game before changing folders."}];
+    NSMutableArray* cloud=[NSMutableArray new];
+    for (CaraSaveSync* channel in @[saveSync,stateSync]) {
+        NSString* label=channel.statesOnly?@"Save states":@"In-game saves";
+        NSString* last=channel.lastFolderWrite?[NSDateFormatter localizedStringFromDate:channel.lastFolderWrite dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterShortStyle]:nil;
+        NSString* detail=[NSString stringWithFormat:@"%@\n%@%@",channel.status,channel.detail,last?[@"\nFolder updated " stringByAppendingString:last]:@""];
+        [cloud addObject:@{@"title":label,@"subtitle":detail,@"symbol":[channel.phase isEqual:@"error"]?@"exclamationmark.icloud":@"icloud"}];
+    }
+    [cloud addObject:action(@"Choose iCloud Drive folder…",@"folder.badge.gearshape",available,^{ EmulatorController* c=owner; if (!c) return; c->pickingSaveFolder=YES; UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO]; picker.delegate=c; [c presentViewController:picker animated:YES completion:nil]; })];
+    [cloud addObject:action(@"Sync now / resolve conflicts",@"arrow.triangle.2.circlepath.icloud",available && (saveSync.enabled||stateSync.enabled),^{ [owner syncSaves:nil completion:nil]; })];
+    if (saveSync.enabled || stateSync.enabled) [cloud addObject:action(@"Disconnect sync folder",@"icloud.slash",!saveSync.busy && !stateSync.busy,^{ EmulatorController* c=owner; if (!c) return; [c->saveSync disconnect]; [c->stateSync disconnect]; [c resumeFromMenu]; })];
+    [sections addObject:@{@"title":@"iCloud & Files",@"rows":cloud,@"footer":@"Choose the same iCloud Drive folder on each device. Stop the game to restore data or change folders. Save states need a matching Cara build."}];
+    [sections addObject:@{@"title":@"Audio",@"rows":@[
+        @{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@(!AudioCore::IsIOSAudioMuted()),@"change":^(BOOL on) { AudioCore::SetIOSAudioMuted(!on); [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"audioMuted"]; }},
+        @{@"title":@"Audio stretching",@"subtitle":@"Adjust audio when emulation speed varies.",@"symbol":@"waveform",@"value":@(stretchAudio.load()),@"change":^(BOOL on) { EmulatorController* c=owner; if (!c) return; c->stretchAudio=on; c->stretchAudioDirty=true; [NSUserDefaults.standardUserDefaults setBool:on forKey:@"audioStretching"]; }},
+    ]}];
+    [sections addObject:@{@"title":@"Emulation",@"rows":@[
+        @{@"title":@"Play mode",@"subtitle":adaptiveCPU.load()?@"Performance · adaptive CPU":@"Accuracy · CPU locked at 105%",@"symbol":@"speedometer"},
+    ],@"footer":@"Choose Accuracy or Performance on the main settings card."}];
+    for (NSString* orientation in @[@"Landscape",@"Portrait"]) {
+        NSString* key=[@"controllerSkin" stringByAppendingString:orientation];
+        NSString* selected=[NSUserDefaults.standardUserDefaults stringForKey:key];
+        NSString* statsKey=[orientation isEqual:@"Landscape"]?@"landscapeStatsVisible":@"portraitStatsVisible";
+        BOOL showStats=![NSUserDefaults.standardUserDefaults objectForKey:statsKey] || [NSUserDefaults.standardUserDefaults boolForKey:statsKey];
+        NSString* title=[orientation stringByAppendingString:@" skin"];
+        [sections addObject:@{@"title":title,@"rows":@[
+            @{@"title":@"Import skin…",@"subtitle":selected?:@"Built-in",@"symbol":[orientation isEqual:@"Portrait"]?@"rectangle.portrait":@"rectangle",@"action":^{ EmulatorController* c=owner; if (c) { c->pickingSkin=YES; c->pickingSkinOrientation=orientation; [c openROM]; } }},
+            action(@"Use built-in skin",@"sun.max",YES,^{ [owner resetSkinForOrientation:orientation]; }),
+            @{@"title":@"Performance bar",@"subtitle":@"Game FPS, emulation speed, and guest CPU clock.",@"symbol":@"chart.bar",@"value":@(showStats),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:statsKey]; [owner.view setNeedsLayout]; }},
+        ],@"footer":@"Portrait and landscape keep their own skin and performance-bar settings."}];
+    }
+    return sections;
+}
+- (NSArray*)settingsForCategory:(NSString*)category {
+    NSArray* all=[self settingsSections];
+    if ([category isEqual:@"Library & iCloud"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [@[@"Game library",@"iCloud & Files"] containsObject:section[@"title"]]; }]];
+    if ([category isEqual:@"Skins"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [section[@"title"] hasSuffix:@"skin"]; }]];
+    return all;
+}
+- (void)showSettingsCategory:(NSString*)category {
+    settingsCategory=category;
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=category; settings.sections=[self settingsForCategory:category]; settingsController=settings;
+    __weak EmulatorController* owner=self; settings.finished=^{ [owner resumeFromMenu]; };
+    UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
+    if ([navigation isKindOfClass:UINavigationController.class]) [navigation pushViewController:settings animated:YES];
+}
+- (void)setPlayMode:(NSString*)mode {
+    if (std::getenv("CARA_BENCHMARK_FRAMES") || std::getenv("CARA_ADAPTIVE_GUEST_CPU")) return;
+    BOOL adaptive=[mode isEqual:@"performance"];
+    adaptiveCPU=adaptive; fixedGuestClock=105; adaptiveCPUDirty=true;
+    [NSUserDefaults.standardUserDefaults setObject:mode forKey:@"playMode"];
+    [NSUserDefaults.standardUserDefaults setBool:adaptive forKey:@"adaptiveGuestCPU"];
+}
+- (void)showMenu {
+    if (openingGame || self.presentedViewController) return;
+    [self ensureLibrary]; modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
+    CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"]?:@"performance";
+    quick.modeSelectionEnabled=!std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_ADAPTIVE_GUEST_CPU");
+    __weak EmulatorController* owner=self;
+    quick.chooseMode=^(NSString* mode) { [owner setPlayMode:mode]; };
+    BOOL landscape=self.view.bounds.size.width>self.view.bounds.size.height;
+    NSString* meterKey=landscape?@"landscapeStatsVisible":@"portraitStatsVisible";
+    quick.showFPS=![NSUserDefaults.standardUserDefaults objectForKey:meterKey] || [NSUserDefaults.standardUserDefaults boolForKey:meterKey];
+    quick.toggleFPS=^(BOOL visible) { [NSUserDefaults.standardUserDefaults setBool:visible forKey:meterKey]; [owner.view setNeedsLayout]; };
+    NSMutableArray* actions=[NSMutableArray new];
+    if (running) {
+        [actions addObject:@{@"title":@"Save state",@"symbol":@"square.and.arrow.down",@"action":^{ [owner showStateSlots:YES]; }}];
+        [actions addObject:@{@"title":@"Load state",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner showStateSlots:NO]; }}];
+    }
+    [actions addObject:@{@"title":@"Library & iCloud",@"symbol":@"folder",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Library & iCloud"]; }}];
+    [actions addObject:@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Skins"]; }}];
+    if (running) [actions addObject:@{@"title":@"Game library",@"symbol":@"square.grid.2x2",@"action":^{ [owner showLibrary]; }}];
+    [actions addObject:@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Advanced"]; }}];
+    quick.actions=actions; quick.finished=^{ [owner resumeFromMenu]; };
+    UINavigationController* navigation=[[UINavigationController alloc] initWithRootViewController:quick]; navigation.view.tintColor=[UIColor colorWithRed:1 green:.48 blue:.24 alpha:1];
+    navigation.modalPresentationStyle=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad?UIModalPresentationFormSheet:UIModalPresentationPageSheet;
+    navigation.preferredContentSize=CGSizeMake(620,850);
+    if (@available(iOS 15.0,*)) { navigation.sheetPresentationController.detents=@[UISheetPresentationControllerDetent.largeDetent]; navigation.sheetPresentationController.prefersGrabberVisible=YES; navigation.sheetPresentationController.preferredCornerRadius=28; }
+    navigation.presentationController.delegate=quick;
+    [self presentViewController:navigation animated:YES completion:nil];
 }
 - (void)showStateSlots:(BOOL)saving {
     UIAlertController* slots=[UIAlertController alertControllerWithTitle:(saving?@"Save state":@"Load state") message:(saving?@"Saving replaces the selected slot. Keep using in-game saves too.":@"Loading returns to this slot. Unsaved progress since then is lost.") preferredStyle:UIAlertControllerStyleAlert];
@@ -609,7 +774,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         startedAt += duration;
         lastHUDTime += duration;
     }
-    backgroundAt = 0; paused = modalPaused; AudioCore::SetIOSAudioPaused(paused);
+    backgroundAt = 0; paused = modalPaused; AudioCore::SetIOSAudioPaused(paused || stop || !running);
+    [saveSync refreshCloudStatus]; [stateSync refreshCloudStatus];
+    if (libraryVisible) [libraryController reloadLibrary];
 }
 - (void)openRecentGame {
     NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
@@ -628,61 +795,86 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)importSkin:(NSURL*)url {
+    NSString* orientation=pickingSkinOrientation?:((self.view.bounds.size.width>self.view.bounds.size.height)?@"Landscape":@"Portrait");
+    pickingSkin=NO; pickingSkinOrientation=nil;
     const BOOL scoped=[url startAccessingSecurityScopedResource];
     NSError* error=nil; CaraSkin* skin=[CaraSkin loadURL:url error:&error];
     if (!skin) { if (scoped) [url stopAccessingSecurityScopedResource]; [self skinError:error.localizedDescription?:@"Unsupported skin."]; return; }
-    NSDictionary* rep=[skin representationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:self.view.bounds.size.width>self.view.bounds.size.height];
+    NSDictionary* rep=[skin strictRepresentationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:[orientation isEqual:@"Landscape"]];
     CaraSkinControls* check=[[CaraSkinControls alloc] initWithFrame:CGRectZero]; check.skin=skin;
     if (rep) check.representation=rep;
-    if (!rep || !check.artwork) { if (scoped) [url stopAccessingSecurityScopedResource]; [self skinError:@"The skin has no usable artwork or layout for this device."]; return; }
+    if (!rep || !check.artwork) { if (scoped) [url stopAccessingSecurityScopedResource]; [self skinError:[NSString stringWithFormat:@"This skin has no usable %@ layout. Your other skin is unchanged.",orientation.lowercaseString]]; return; }
     NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
-    NSURL* destination=[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:@"controller.deltaskin"]];
+    NSString* name=[NSString stringWithFormat:@"controller-%@.deltaskin",orientation.lowercaseString];
+    NSURL* destination=[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:name]];
     NSData* data=[NSData dataWithContentsOfURL:url options:0 error:&error];
     BOOL saved=data && [data writeToURL:destination options:NSDataWritingAtomic error:&error];
     if (scoped) [url stopAccessingSecurityScopedResource];
     if (!saved) { [self skinError:error.localizedDescription]; return; }
-    [NSUserDefaults.standardUserDefaults setObject:@"controller.deltaskin" forKey:@"controllerSkin"];
-    [self applySkin:skin]; [self resumeFromMenu];
+    [NSUserDefaults.standardUserDefaults setObject:name forKey:[@"controllerSkin" stringByAppendingString:orientation]];
+    [self reloadSelectedSkins]; [self resumeFromMenu];
 }
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { pickingSaveFolder=NO; pickingSkin=NO; [self resumeFromMenu]; }
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { pickingSaveFolder=NO; pickingSkin=NO; pickingROMsFolder=NO; pickingSkinOrientation=nil; [self resumeFromMenu]; }
 - (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
     NSURL* url=urls.firstObject;
     if (!url) { [self resumeFromMenu]; return; }
+    if (pickingROMsFolder) {
+        pickingROMsFolder=NO; [self ensureLibrary]; NSError* error=nil;
+        if (![libraryStore chooseFolder:url error:&error]) { [self shellError:@"ROMs folder unavailable" message:error.localizedDescription]; return; }
+        [libraryController reloadLibrary]; [self resumeFromMenu]; return;
+    }
     if (pickingSaveFolder) {
         pickingSaveFolder=NO; NSError* error=nil;
-        if (![saveSync connectFolder:url error:&error]) { status.text=error.localizedDescription; [self resumeFromMenu]; return; }
+        if (![saveSync connectFolder:url error:&error] || ![stateSync connectFolder:url error:&error]) { [self shellError:@"Sync folder unavailable" message:error.localizedDescription]; return; }
         [self syncSaves:nil completion:nil]; return;
     }
     if (pickingSkin || [@[@"deltaskin",@"caraskin"] containsObject:url.pathExtension.lowercaseString]) { [self importSkin:url]; return; }
     [self openGameURL:url];
 }
 - (void)syncSaves:(NSString*)resolution completion:(void(^)(BOOL))completion {
-    status.text=@"Syncing saves…";
-    [saveSync requestSync:YES resolution:resolution completion:^(NSDictionary* result,NSError* error) {
-        [self resumeFromMenu];
-        if (error) { self->status.text=error.localizedDescription; if (completion) completion(NO); return; }
+    [self syncChannel:saveSync resolution:resolution completion:^(BOOL ok) {
+        if (!ok) { if (completion) completion(NO); return; }
+        if (self->launchingOffline) { if (completion) completion(YES); return; }
+        [self syncChannel:self->stateSync resolution:nil completion:completion];
+    }];
+}
+- (void)syncChannel:(CaraSaveSync*)channel resolution:(NSString*)resolution completion:(void(^)(BOOL))completion {
+    [channel requestSync:YES resolution:resolution completion:^(NSDictionary* result,NSError* error) {
+        [self updateSyncFeedback];
+        if (error) {
+            if (self->openingGame) {
+                UIAlertController* offline=[UIAlertController alertControllerWithTitle:@"Sync folder unavailable" message:[error.localizedDescription stringByAppendingString:@"\n\nYou can continue with the saves and states already on this device."] preferredStyle:UIAlertControllerStyleAlert];
+                [offline addAction:[UIAlertAction actionWithTitle:@"Use local data" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { self->launchingOffline=YES; if (completion) completion(YES); }]];
+                [offline addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { [self resumeFromMenu]; if (completion) completion(NO); }]];
+                [self presentViewController:offline animated:YES completion:nil];
+            } else { [self shellError:(channel.statesOnly?@"Save states couldn’t sync":@"Saves couldn’t sync") message:error.localizedDescription]; if (completion) completion(NO); }
+            return;
+        }
         if ([result[@"conflict"] boolValue]) {
-            UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Choose saves" message:@"Both versions are preserved. Choose which complete save set to use." preferredStyle:UIAlertControllerStyleAlert];
-            [alert addAction:[UIAlertAction actionWithTitle:@"Keep this iPad’s saves" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self syncSaves:@"local" completion:completion]; }]];
+            UIAlertController* alert=[UIAlertController alertControllerWithTitle:(channel.statesOnly?@"Choose save states":@"Choose saves") message:@"Both versions are preserved. Choose which complete set to use on this device." preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"Keep this device’s version" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self syncChannel:channel resolution:@"local" completion:completion]; }]];
             for (NSDictionary* version in result[@"versions"]) {
-                NSString* title=[@"Use cloud version " stringByAppendingString:[version[@"id"] substringToIndex:MIN((NSUInteger)8,[version[@"id"] length])]];
-                [alert addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self syncSaves:version[@"id"] completion:completion]; }]];
+                NSDate* date=[NSDate dateWithTimeIntervalSince1970:[version[@"created"] doubleValue]];
+                NSString* title=[@"Use folder version · " stringByAppendingString:[NSDateFormatter localizedStringFromDate:date dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterShortStyle]];
+                [alert addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self syncChannel:channel resolution:version[@"id"] completion:completion]; }]];
             }
-            [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { if (completion) completion(NO); }]];
+            [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { [self resumeFromMenu]; if (completion) completion(NO); }]];
             [self presentViewController:alert animated:YES completion:nil]; return;
         }
-        self->status.text=self->saveSync.status; if (completion) completion(YES);
+        [self resumeFromMenu]; if (completion) completion(YES);
     }];
 }
 - (void)openGameURL:(NSURL*)url {
     if (openingGame) return;
     if (![@[@"3ds",@"cci",@"cxi",@"3dsx",@"elf"] containsObject:url.pathExtension.lowercaseString]) { status.text=@"Choose an extracted .3ds, .cci, .cxi, .3dsx or .elf game."; [self resumeFromMenu]; return; }
-    openingGame=YES; stop=true; [self resumeFromMenu];
+    [self ensureLibrary];
+    openingGame=YES; launchingOffline=NO; stop=true; [self resumeFromMenu];
     if (worker.joinable()) worker.join();
     if (gameScoped) [gameURL stopAccessingSecurityScopedResource];
     gameURL=url; gameScoped=[url startAccessingSecurityScopedResource];
     NSData* bookmark=[url bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
     if (bookmark) [NSUserDefaults.standardUserDefaults setObject:bookmark forKey:@"recentGameBookmark"];
+    if (!std::getenv("CARA_BENCHMARK_FRAMES")) [libraryStore rememberGame:url error:nil];
     [self syncSaves:nil completion:^(BOOL ok) {
         if (!ok) { self->openingGame=NO; return; }
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
@@ -690,7 +882,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL* actual) {
                 if ([actual checkResourceIsReachableAndReturnError:&error]) readable=actual;
             }];
-            dispatch_async(dispatch_get_main_queue(), ^{ self->openingGame=NO; if (readable) [self startROM:readable]; else self->status.text=error.localizedDescription?:@"Game unavailable. Select it again in Files."; });
+            dispatch_async(dispatch_get_main_queue(), ^{ self->openingGame=NO; if (readable) [self startROM:readable]; else [self shellError:@"Game unavailable" message:error.localizedDescription?:@"Select this game again in Files."]; });
         });
     }];
 }
@@ -702,6 +894,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     const bool captureCheckpoint = (emulatedFrame % 600 == 0 || CaptureBurst(emulatedFrame)) &&
         [NSProcessInfo.processInfo.environment[@"CARA_CAPTURE_FRAMES"] isEqualToString:@"1"];
     if (framePending[screen].exchange(true) && !captureCheckpoint) return;
+#ifndef CARA_IOS_GLES
+    const double gameFPS=screen==0 && emulatedFrame%60==0 && !std::getenv("CARA_BENCHMARK_FRAMES")?Core::System::GetInstance().GetAndResetPerfStats().game_fps:-1.0;
+#endif
     NSData* data = [NSData dataWithBytes:pixels.data() length:pixels.size()];
     __weak EmulatorController* weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -735,6 +930,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 const double refresh=(reportedFrame-controller->lastHUDFrame)/std::max(now-controller->lastHUDTime,0.001);
                 controller->lastHUDTime=now; controller->lastHUDFrame=reportedFrame;
                 controller->status.text=CaraSpeedLabel(refresh,controller->adaptiveCPU.load(),controller->guestClock.load());
+                [controller->performanceHUD updateGameFPS:gameFPS speed:refresh*100.0/59.833997 guestClock:controller->guestClock.load() adaptive:controller->adaptiveCPU.load()];
             }
 #endif
             if ([NSProcessInfo.processInfo.environment[@"CARA_CAPTURE_FRAMES"] isEqualToString:@"1"]) {
@@ -810,6 +1006,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[documents stringByAppendingPathComponent:@"skin-input-check.json"] atomically:YES];
 }
 - (void)startROM:(NSURL*)url {
+    [self hideLibrary];
     const unsigned session=++sessionGeneration;
     framePending[0]=false; framePending[1]=false;
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
@@ -832,6 +1029,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         if (frame % 60 != 0) return;
         const auto timing = Common::FrameTiming::counters;
         const auto title=Core::System::GetInstance().GetTitleID();
+        const double gameFPS=std::getenv("CARA_BENCHMARK_FRAMES")?-1.0:Core::System::GetInstance().GetAndResetPerfStats().game_fps;
         dispatch_async(dispatch_get_main_queue(), ^{
             EmulatorController* controller = weakSelf;
             if (!controller || !controller->running || controller->sessionGeneration!=session) return;
@@ -840,6 +1038,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             const double fps = (frame - controller->lastHUDFrame) / std::max(elapsed, 0.001);
             controller->lastHUDTime = now; controller->lastHUDFrame = frame;
             controller->status.text = CaraSpeedLabel(fps,controller->adaptiveCPU.load(),controller->guestClock.load());
+            [controller->performanceHUD updateGameFPS:gameFPS speed:fps*100.0/59.833997 guestClock:controller->guestClock.load() adaptive:controller->adaptiveCPU.load()];
             if (timing.enabled) {
                 std::ofstream report(user + "runtime-status.json");
                 report << "{\"title_id\":" << title << ",\"frame\":" << frame << ",\"display_fps\":" << fps
@@ -1086,20 +1285,21 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 unsigned audio_report_frame=0;
                 Cara::AdaptiveClock clock_control;
                 clock_control.SetEnabled(self->adaptiveCPU.load());
-                self->guestClock=100;
+                const auto policy_clock=[&]() { return self->adaptiveCPU.load()?clock_control.Percent():self->fixedGuestClock.load(); };
+                self->guestClock=policy_clock();
                 unsigned clock_frame=emuWindow->frames;
                 auto clock_frame_time=std::chrono::steady_clock::now();
                 double clock_work_seconds=0;
                 const auto reset_clock_samples=[&]() {
                     clock_control.ResetSamples(); clock_work_seconds=0;
                     clock_frame=emuWindow->frames; clock_frame_time=std::chrono::steady_clock::now();
-                    if (system.IsPoweredOn()) system.CoreTiming().UpdateClockSpeed(clock_control.Percent());
-                    self->guestClock=clock_control.Percent();
+                    if (system.IsPoweredOn()) system.CoreTiming().UpdateClockSpeed(policy_clock());
+                    self->guestClock=policy_clock();
                 };
                 // A restored state may carry an adaptive underclock. Apply the current
                 // frontend policy before the first slice, including fixed-clock tests.
                 reset_clock_samples();
-                LOG_INFO(Frontend,"Session guest CPU policy: {}%",clock_control.Percent());
+                LOG_INFO(Frontend,"Session guest CPU policy: {}%",policy_clock());
                 const auto state_test_frame=[](const char* name) -> unsigned {
                     const char* value=std::getenv(name);
                     return value?unsigned(std::clamp(std::strtol(value,nullptr,10),0L,100000L)):0;
@@ -1167,7 +1367,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                         std::string failure;
                         try {
                             if (command==101) system.SaveStateToPath(user+"profile-comparison.carastate");
-                            else if (command>0) system.SaveState(unsigned(command));
+                            else if (command>0) { system.SaveState(unsigned(command)); [stateSync captureCommittedSave]; }
                             else system.LoadState(unsigned(-command));
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
@@ -1256,7 +1456,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 
                             timing_windows.push_back("{\"end_frame\":" + std::to_string(timed_frame) +
                                 ",\"frames\":" + std::to_string(frame_times.size()) +
-                                ",\"guest_cpu_percent\":" + std::to_string(clock_control.Percent()) +
+                                ",\"guest_cpu_percent\":" + std::to_string(policy_clock()) +
                                 ",\"mean_ms\":" + std::to_string(total_ms / count) +
                                 ",\"host_cpu_timing\":" + std::string(host_cpu_valid?"true":"false") +
                                 ",\"emulation_thread_cpu_ms_per_frame\":" + std::to_string(host_cpu_valid?(host_cpu.first-previous_host_cpu.first)*1000/count:0) +
@@ -1432,7 +1632,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                            << ",\"late_paced_frames\":" << late_paced_frames
                            << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "dyncom") == 0) ? "dyncom" : "fastinterp") << "\""
                            << ",\"adaptive_guest_cpu\":" << (clock_control.Enabled()?"true":"false")
-                           << ",\"guest_cpu_percent\":" << clock_control.Percent()
+                           << ",\"guest_cpu_percent\":" << policy_clock()
                            << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
 #ifdef CARA_IOS_GLES
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
@@ -1484,6 +1684,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 }
                 system.Shutdown();
                 [saveSync captureCommittedSave];
+                [stateSync captureCommittedSave];
             }
 #ifdef CARA_PGO_GENERATE
             const int pgo_status=__llvm_profile_write_file();
@@ -1503,6 +1704,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 if (result != Core::System::ResultStatus::Success)
                     self->status.text = [NSString stringWithFormat:@"Emulation ended (code %u). See emulator.log",unsigned(result)];
                 else self->status.text = @"Stopped";
+                self->libraryController.canResume=NO;
+                if (!target_frames && !self->openingGame) {
+                    [self showLibrary];
+                    if (result != Core::System::ResultStatus::Success && !self.presentedViewController) [self shellError:@"Game stopped" message:self->status.text];
+                }
             });
         }
     });
@@ -1510,6 +1716,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 - (void)dealloc {
     stop = true;
     if (worker.joinable()) worker.join();
+    [cloudFeedbackTimer invalidate];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 @end

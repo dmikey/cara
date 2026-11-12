@@ -35,6 +35,13 @@ int main(int argc,char** argv) { @autoreleasepool {
     require(skin!=nil,error.localizedDescription.UTF8String?:"Skin load failed");
     NSDictionary* rep=[skin representationForPad:YES landscape:YES];
     require(CaraValidateRepresentation(rep),"Golden representation failed");
+    for (BOOL pad : {NO,YES}) for (BOOL landscape : {NO,YES}) {
+        NSDictionary* orientation=[skin strictRepresentationForPad:pad landscape:landscape];
+        require(CaraValidateRepresentation(orientation),"Built-in portrait/landscape representation missing");
+        CGRect stats=CaraSkinRect(orientation[@"caraStatsFrame"]);
+        require(stats.size.width>0 && stats.size.height>0,"Stats corner missing");
+        require([orientation[@"screens"] count]==2,"Both screens required in each orientation");
+    }
     NSMutableDictionary* bad=[rep mutableCopy]; bad[@"mappingSize"]=@{@"width":@0,@"height":@100};
     require(!CaraValidateRepresentation(bad),"Zero mapping accepted");
     bad=[rep mutableCopy]; bad[@"items"]=@[@{@"inputs":@[@"quickSave"],@"frame":@{@"x":@0,@"y":@0,@"width":@40,@"height":@40}}];
