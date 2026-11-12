@@ -1512,6 +1512,14 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"cpu_shader_ms_per_frame\":" + std::to_string((current.shader_seconds - previous_counters.shader_seconds) * 1000 / count) +
                                 ",\"guest_cpu_ms_per_frame\":" + std::to_string((current.guest_cpu_seconds - previous_counters.guest_cpu_seconds) * 1000 / count) +
                                 ",\"draw_ms_per_frame\":" + std::to_string((current.draw_seconds - previous_counters.draw_seconds) * 1000 / count) +
+                                ",\"texture_lookup_checks\":" + std::to_string(current.texture_lookup_checks - previous_counters.texture_lookup_checks) +
+                                ",\"texture_lookup_hits\":" + std::to_string(current.texture_lookup_hits - previous_counters.texture_lookup_hits) +
+                                ",\"texture_lookup_misses\":" + std::to_string(current.texture_lookup_misses - previous_counters.texture_lookup_misses) +
+                                ",\"texture_lookup_stores\":" + std::to_string(current.texture_lookup_stores - previous_counters.texture_lookup_stores) +
+                                ",\"texture_lookup_ambiguous_rejects\":" + std::to_string(current.texture_lookup_ambiguous_rejects - previous_counters.texture_lookup_ambiguous_rejects) +
+                                ",\"texture_lookup_epoch_rejects\":" + std::to_string(current.texture_lookup_epoch_rejects - previous_counters.texture_lookup_epoch_rejects) +
+                                ",\"texture_lookup_verified_hits\":" + std::to_string(current.texture_lookup_verified_hits - previous_counters.texture_lookup_verified_hits) +
+                                ",\"texture_lookup_verify_mismatches\":" + std::to_string(current.texture_lookup_verify_mismatches - previous_counters.texture_lookup_verify_mismatches) +
                                 ",\"draw_framebuffer_acquire_ms_per_frame\":" + std::to_string((current.draw_framebuffer_acquire_seconds - previous_counters.draw_framebuffer_acquire_seconds) * 1000 / count) +
                                 ",\"draw_framebuffer_acquire_calls\":" + std::to_string((current.draw_framebuffer_acquire_calls - previous_counters.draw_framebuffer_acquire_calls)) +
                                 ",\"draw_texture_acquire_ms_per_frame\":" + std::to_string((current.draw_texture_acquire_seconds - previous_counters.draw_texture_acquire_seconds) * 1000 / count) +

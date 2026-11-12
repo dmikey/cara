@@ -956,3 +956,20 @@ and must not be added twice. `CARA_FASTINTERP_CONTIGUOUS_TRANSFERS` uses exact
 RAM, retaining existing PC/writeback and fallback behavior. Target comparisons
 must use one binary and one newly compatible checkpoint, with independent
 controls and identical rendered output before any default is changed.
+
+The first same-build grass sweep measured 25.187/25.448/25.424/25.467/25.464
+ms/refresh for baseline, lookup reuse, baseline, contiguous transfers and baseline.
+All final pixels and workloads matched. Neither candidate demonstrated a gain.
+Lookup reuse avoided about 87 searches per refresh; its baseline counters were
+not enabled, so zero baseline counts do not establish absence of work. The bulk
+transfer path handled about 19,977 transfers and 319,630 bytes per refresh.
+Native copy-loop gains did not translate to this first game measurement.
+
+A separate narrow diagnostic measured texture acquisition at 2.016 ms/refresh,
+framebuffer acquisition at 0.170, shader setup at 0.064 and dirty invalidation at
+0.220. Reinterpretation checks were 0.063 ms nested inside acquisition. Total
+StateApply was about 0.22 ms, limiting the value of skipping an otherwise-empty
+mipmap restore. These are instrumented wall timings, with overlapping nested
+phases; do not sum them as exclusive CPU totals. Follow-up work resolves the
+memory experiment at decode time and investigates safely reusing exact texture
+lookups, with normal validation and alias/registration guards retained.

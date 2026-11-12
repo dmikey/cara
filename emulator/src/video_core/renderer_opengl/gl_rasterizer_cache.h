@@ -168,6 +168,14 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
         return watcher;
     }
 
+    std::shared_ptr<SurfaceWatcher> GetTextureLookupWatcher() {
+        // Reuse one node per surface; cache eviction must not accumulate dead
+        // weak watcher-list nodes on long-lived textures.
+        if (!texture_lookup_watcher || !texture_lookup_watcher->Get())
+            texture_lookup_watcher = CreateWatcher();
+        return texture_lookup_watcher;
+    }
+
     void InvalidateAllWatcher() {
         for (const auto& watcher : watchers) {
             if (auto locked = watcher.lock()) {
@@ -188,6 +196,7 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
 
 private:
     std::list<std::weak_ptr<SurfaceWatcher>> watchers;
+    std::shared_ptr<SurfaceWatcher> texture_lookup_watcher;
 };
 
 struct CachedTextureCube {
@@ -208,6 +217,7 @@ public:
 
     // ROM-free GPU/cache oracle; invoke before guest execution on an unused scratch page.
     bool RunSmallWriteSelfTest(std::string& error);
+    bool RunTextureLookupSelfTest(std::string& error);
 
     /// Blit one surface's texture to another
     bool BlitSurfaces(const Surface& src_surface, const Common::Rectangle<u32>& src_rect,
@@ -303,6 +313,26 @@ private:
         SurfaceParams source_params{}, destination_params{};
         u32 copy_reject_bits{};
     };
+    struct TextureLookupEntry {
+        SurfaceParams params;
+        ScaleMatch scale_match = ScaleMatch::Exact;
+        u64 generation = 0;
+        u16 selected_scale = 0;
+        std::shared_ptr<SurfaceWatcher> watcher;
+    };
+    static constexpr size_t TextureLookupCapacity = 8;
+    std::array<TextureLookupEntry, TextureLookupCapacity> texture_lookup_entries{};
+    size_t texture_lookup_next = 0;
+    u64 texture_lookup_generation = 1;
+    bool texture_lookup_reuse = false;
+    bool texture_lookup_verify = false;
+    void AdvanceTextureLookupGeneration() {
+        if (++texture_lookup_generation == 0) {
+            texture_lookup_entries = {};
+            texture_lookup_next = 0;
+            texture_lookup_generation = 1;
+        }
+    }
     bool trace_flushes = false;
     bool retain_small_cpu_writes = false;
     bool gpu_surface_remap = false;

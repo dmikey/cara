@@ -61,6 +61,7 @@ jobs:
           CARA_CPU_CATEGORY_TIMING=1 work/build-mac/bin/cara-cpu-category-self-test --wrapper
           CARA_CONTIGUOUS_TRANSFERS_TEST=1 CARA_FASTINTERP_CONTIGUOUS_TRANSFERS=0 work/build-mac/bin/cara-fastinterp-self-test
           CARA_CONTIGUOUS_TRANSFERS_TEST=1 CARA_FASTINTERP_CONTIGUOUS_TRANSFERS=1 work/build-mac/bin/cara-fastinterp-self-test
+          work/build-mac/bin/cara-texture-lookup-self-test
           work/build-mac/bin/cara-render-bookkeeping-self-test
           work/build-mac/bin/cara-vertex-upload-bank-self-test
           work/build-mac/bin/cara-frame-pacer-self-test

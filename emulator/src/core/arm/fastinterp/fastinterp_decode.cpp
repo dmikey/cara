@@ -2936,7 +2936,9 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
             if (increment == before)
                 base_off += 4;
             out.lsm.contiguous_first = 0xFF;
-            if (count == 4 || count == 8) {
+            // Resolve the process-fixed experiment once per decoded instruction.
+            // PurgeState discards cached blocks before every save-state load.
+            if (contiguous_transfers_ && (count == 4 || count == 8)) {
                 const auto first = std::countr_zero(out.lsm.reg_list);
                 if ((u32(out.lsm.reg_list) >> first) == ((1u << count) - 1))
                     out.lsm.contiguous_first = static_cast<u8>(first);

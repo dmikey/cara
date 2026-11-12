@@ -20,6 +20,15 @@ struct PhaseCPUSamples {
 // Opt-in diagnostics on the emulation thread. No clocks are read during normal play.
 struct Counters {
     bool enabled = false;
+    std::uint64_t texture_lookup_checks = 0;
+    std::uint64_t texture_lookup_hits = 0;
+    std::uint64_t texture_lookup_misses = 0;
+    std::uint64_t texture_lookup_stores = 0;
+    std::uint64_t texture_lookup_ambiguous_rejects = 0;
+    std::uint64_t texture_lookup_epoch_rejects = 0;
+    std::uint64_t texture_lookup_verified_hits = 0;
+    std::uint64_t texture_lookup_verify_mismatches = 0;
+
     double draw_framebuffer_acquire_seconds = 0;
     std::uint64_t draw_framebuffer_acquire_calls = 0;
     double draw_texture_acquire_seconds = 0;

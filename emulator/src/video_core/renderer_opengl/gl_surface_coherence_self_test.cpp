@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "common/scope_exit.h"
+#include "common/frame_timing.h"
 #include "core/memory.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_rasterizer_cache.h"
@@ -15,7 +16,162 @@ namespace OpenGL {
 
 // Run immediately after core initialization, before guest execution. This uses
 // original generated data and the production GPU surface/interval conversion path.
+// Original GPU surface/cache proof using the production lookup and mutation paths.
+bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
+    constexpr u32 bytes=64*1024;
+    constexpr PAddr scratch=Memory::VRAM_PADDR_END-bytes;
+    const SurfaceInterval interval(scratch,scratch+bytes);
+    const auto occupied=surface_cache.equal_range(interval);
+    const auto dirty=dirty_regions.equal_range(interval);
+    if (occupied.first!=occupied.second || dirty.first!=dirty.second) {
+        error="texture lookup oracle requires unused scratch VRAM"; return false;
+    }
+    const GLenum entry_error=glGetError();
+    if (entry_error!=GL_NO_ERROR) { error="texture lookup oracle preexisting GL="+std::to_string(entry_error); return false; }
+    u8* memory=VideoCore::Memory()->GetPhysicalPointer(scratch);
+    if (!memory) { error="texture lookup oracle scratch unavailable"; return false; }
+    const std::vector<u8> backup(memory,memory+bytes);
+    const auto saved_state=OpenGLState::GetCurState();
+    const auto saved_counters=Common::FrameTiming::counters;
+    const bool saved_reuse=texture_lookup_reuse,saved_verify=texture_lookup_verify;
+    const bool saved_trace=trace_flushes,saved_retain=retain_small_cpu_writes;
+    const bool saved_skip=Settings::values.skip_cpu_write;
+    trace_flushes=false; retain_small_cpu_writes=true; Settings::values.skip_cpu_write=false;
+    Common::FrameTiming::counters.enabled=true;
+    texture_lookup_reuse=texture_lookup_verify=true;
+    texture_lookup_entries={};texture_lookup_next=0;
+    SCOPE_EXIT({
+        std::vector<Surface> remove;
+        const auto range=surface_cache.equal_range(interval);
+        for (auto it=range.first;it!=range.second;++it)
+            for (const auto& surface:it->second)
+                if (std::find(remove.begin(),remove.end(),surface)==remove.end()) remove.push_back(surface);
+        dirty_regions.erase(interval);
+        for (const auto& surface:remove) {
+            OpenGLState::ResetTexture(surface->texture.handle);
+            UnregisterSurface(surface);
+            remove_surfaces.erase(surface);
+        }
+        texture_lookup_entries={};texture_lookup_next=0;
+        texture_lookup_reuse=saved_reuse;texture_lookup_verify=saved_verify;
+        trace_flushes=saved_trace;retain_small_cpu_writes=saved_retain;Settings::values.skip_cpu_write=saved_skip;
+        std::memcpy(memory,backup.data(),backup.size());
+        OpenGLState::InvalidateRasterState();saved_state.Apply();
+        Common::FrameTiming::counters=saved_counters;
+    });
+    const auto fail=[&](const char* stage) {
+        error=std::string("texture lookup oracle: ")+stage+" GL="+std::to_string(glGetError()); return false;
+    };
+    const auto info_at=[&](PAddr address) {
+        Pica::Texture::TextureInfo info{};info.physical_address=address;
+        info.width=info.height=8;info.format=Pica::TexturingRegs::TextureFormat::RGBA8;
+        info.SetDefaultStride();return info;
+    };
+    auto info=info_at(scratch);
+    SurfaceParams params;params.addr=scratch;params.width=params.height=params.stride=8;
+    params.is_tiled=true;params.res_scale=1;params.pixel_format=SurfaceParams::PixelFormat::RGBA8;params.UpdateParams();
+    for(u32 i=0;i<params.size;++i) memory[i]=u8(i*17+3);
+    std::vector<u8> expected(memory,memory+params.size);
+    auto base=GetTextureSurface(info,0);
+    if(!base) return fail("initial texture creation");
+    // Creation deliberately cannot admit an old selection proof. A fresh exact
+    // query records the unique winner, then the following query must hit.
+    if(GetTextureSurface(info,0)!=base) return fail("initial identity");
+    const auto before_warm=Common::FrameTiming::counters.texture_lookup_hits;
+    if(GetTextureSurface(info,0)!=base || Common::FrameTiming::counters.texture_lookup_hits!=before_warm+1)
+        return fail("warm hit not exercised");
+    const auto check_bytes=[&](const Surface& surface,const std::vector<u8>& wanted) {
+        surface->DownloadGLTexture(surface->GetRect());
+        surface->FlushGLBuffer(surface->addr,surface->end);
+        return glGetError()==GL_NO_ERROR && std::equal(wanted.begin(),wanted.end(),memory);
+    };
+    if(!check_bytes(base,expected)) return fail("original generated RGBA bytes");
+    for(u32 size:{4u,16u}) {
+        const auto hits=Common::FrameTiming::counters.texture_lookup_hits;
+        InvalidateRegion(scratch,size,nullptr);
+        for(u32 i=0;i<size;++i) expected[i]=memory[i]=u8(0x91+i+size);
+        if(GetTextureSurface(info,0)!=base || Common::FrameTiming::counters.texture_lookup_hits!=hits ||
+           !check_bytes(base,expected)) return fail("CPU write invalidation/readback");
+        const auto warm=Common::FrameTiming::counters.texture_lookup_hits;
+        if(GetTextureSurface(info,0)!=base || Common::FrameTiming::counters.texture_lookup_hits!=warm+1)
+            return fail("CPU write revalidated hit");
+    }
+    // Exercise a real GPU owner write. This mirrors framebuffer acquisition's
+    // watcher invalidation and Draw's region-owner invalidation after rendering.
+    {
+        const auto previous=OpenGLState::GetCurState();
+        OpenGLState state=previous;
+        OGLFramebuffer clear_framebuffer;clear_framebuffer.Create();
+        OpenGLState::BindDrawFramebuffer(clear_framebuffer.handle);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,base->texture.handle,0);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_DEPTH_STENCIL_ATTACHMENT,GL_TEXTURE_2D,0,0);
+        state.draw.draw_framebuffer=clear_framebuffer.handle;
+        state.scissor.enabled=false;state.color_mask={GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE};state.SubApply();
+        base->InvalidateAllWatcher();
+        const GLfloat color[]={0.25f,0.5f,0.75f,1.0f};glClearBufferfv(GL_COLOR,0,color);
+        InvalidateRegion(scratch,params.size,base);
+        previous.SubApply();
+    }
+    const auto gpu_hits=Common::FrameTiming::counters.texture_lookup_hits;
+    if(GetTextureSurface(info,0)!=base || Common::FrameTiming::counters.texture_lookup_hits!=gpu_hits)
+        return fail("GPU owner write invalidation");
+    base->DownloadGLTexture(base->GetRect());const auto gpu_bytes=base->gl_buffer;
+    texture_lookup_reuse=false;auto reference=GetTextureSurface(info,0);
+    reference->DownloadGLTexture(reference->GetRect());texture_lookup_reuse=true;
+    if(reference!=base || reference->gl_buffer!=gpu_bytes) return fail("GPU owner bytes/identity");
+    // Competing equal-scale exact matches must not be admitted. Validate an
+    // earlier invalid alias without invalidating the later winner's watcher.
+    auto duplicate=CreateSurface(params);RegisterSurface(duplicate);
+    ValidateSurface(duplicate,scratch,params.size);
+    const Surface earlier=std::less<Surface>{}(base,duplicate)?base:duplicate;
+    const Surface later=earlier==base?duplicate:base;
+    earlier->invalid_regions.insert(earlier->GetInterval());earlier->InvalidateAllWatcher();
+    ValidateSurface(later,scratch,params.size);
+    const auto ambiguous_hits=Common::FrameTiming::counters.texture_lookup_hits;
+    if(GetSurface(params,ScaleMatch::Exact,true)!=later) return fail("valid later exact alias");
+    ValidateSurface(earlier,scratch,params.size);
+    texture_lookup_reuse=false;reference=GetSurface(params,ScaleMatch::Exact,true);texture_lookup_reuse=true;
+    if(reference!=earlier || GetSurface(params,ScaleMatch::Exact,true)!=reference ||
+       Common::FrameTiming::counters.texture_lookup_hits!=ambiguous_hits)
+        return fail("equal-scale validity-change selection");
+    // A newly registered higher-scale candidate must replace the old winner.
+    SurfaceParams high_params=params;high_params.res_scale=2;
+    auto high=CreateSurface(high_params);RegisterSurface(high);
+    if(GetTextureSurface(info,0)!=high || GetTextureSurface(info,0)!=high)
+        return fail("higher-scale registration");
+    const auto unlink_hits=Common::FrameTiming::counters.texture_lookup_hits;
+    high->UnlinkAllWatcher();
+    if(GetTextureSurface(info,0)!=high || Common::FrameTiming::counters.texture_lookup_hits!=unlink_hits)
+        return fail("unlinked deferred-removal watcher");
+    OpenGLState::ResetTexture(high->texture.handle);
+    UnregisterSurface(high);
+    texture_lookup_reuse=false;reference=GetTextureSurface(info,0);texture_lookup_reuse=true;
+    if(GetTextureSurface(info,0)!=reference || reference==high)
+        return fail("unregister/reacquire identity");
+    // Pre-create nine disjoint textures before populating the bounded eight
+    // entries, so registration epochs do not explain the eviction miss.
+    std::array<Pica::Texture::TextureInfo,9> infos{};
+    texture_lookup_reuse=false;
+    for(size_t i=0;i<infos.size();++i) {
+        infos[i]=info_at(scratch+2048*u32(i+1));
+        std::fill_n(memory+2048*(i+1),256,u8(i*19));
+        if(!GetTextureSurface(infos[i],0)) return fail("eviction texture creation");
+    }
+    texture_lookup_reuse=true;texture_lookup_entries={};texture_lookup_next=0;
+    for(const auto& item:infos) if(!GetTextureSurface(item,0)) return fail("eviction admission");
+    const auto eviction_hits=Common::FrameTiming::counters.texture_lookup_hits;
+    if(!GetTextureSurface(infos.back(),0) || Common::FrameTiming::counters.texture_lookup_hits!=eviction_hits+1)
+        return fail("last bounded entry hit");
+    if(!GetTextureSurface(infos.front(),0) || Common::FrameTiming::counters.texture_lookup_hits!=eviction_hits+1)
+        return fail("oldest bounded entry eviction");
+    if(Common::FrameTiming::counters.texture_lookup_verified_hits<=saved_counters.texture_lookup_verified_hits ||
+       Common::FrameTiming::counters.texture_lookup_verify_mismatches!=saved_counters.texture_lookup_verify_mismatches ||
+       glGetError()!=GL_NO_ERROR) return fail("shadow identity verification");
+    return true;
+}
+
 bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
+    if (texture_lookup_reuse && !RunTextureLookupSelfTest(error)) return false;
     if (const GLenum initial_error = glGetError(); initial_error != GL_NO_ERROR) {
         error = "surface coherence entered with GL error=" + std::to_string(initial_error);
         return false;

@@ -418,7 +418,7 @@ handle_Ldm: {
     // Restrict bulk copies to direct RAM on one guest page. The extra host
     // range check also preserves scalar ordering in aliased test mappings.
     bool contiguous_ram = false;
-    if (contiguous_transfers_ && inst->lsm.contiguous_first != 0xFF && base_page && same_page) {
+    if (inst->lsm.contiguous_first != 0xFF && base_page && same_page) {
         contiguous_ram = ContiguousTransferRangesDisjoint(
             reinterpret_cast<std::uintptr_t>(base_page), current & FASTINTERP_PAGE_MASK,
             inst->lsm.count * 4, reinterpret_cast<std::uintptr_t>(state_.regs.data()));
@@ -496,7 +496,7 @@ handle_Stm: {
     // Restrict bulk copies to direct RAM on one guest page. The extra host
     // range check also preserves scalar ordering in aliased test mappings.
     bool contiguous_ram = false;
-    if (contiguous_transfers_ && inst->lsm.contiguous_first != 0xFF && base_page && same_page) {
+    if (inst->lsm.contiguous_first != 0xFF && base_page && same_page) {
         contiguous_ram = ContiguousTransferRangesDisjoint(
             reinterpret_cast<std::uintptr_t>(base_page), current & FASTINTERP_PAGE_MASK,
             inst->lsm.count * 4, reinterpret_cast<std::uintptr_t>(state_.regs.data()));

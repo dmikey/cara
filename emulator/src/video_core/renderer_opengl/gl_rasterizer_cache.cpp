@@ -27,6 +27,7 @@
 #include "common/color.h"
 #include "common/hash.h"
 #include "common/frame_timing.h"
+#include "video_core/renderer_opengl/gl_texture_lookup_key.h"
 #include "video_core/renderer_opengl/gl_reinterpret_lookup_cache.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
@@ -886,7 +887,8 @@ static constexpr MatchFlags operator|(MatchFlags lhs, MatchFlags rhs) {
 template <MatchFlags find_flags>
 static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams& params,
                          ScaleMatch match_scale_type,
-                         std::optional<SurfaceInterval> validate_interval = std::nullopt) {
+                         std::optional<SurfaceInterval> validate_interval = std::nullopt,
+                         ExactLookupSelection<const CachedSurface*>* selection = nullptr) {
     Surface match_surface = nullptr;
     bool match_valid = false;
     u32 match_scale = 0;
@@ -919,6 +921,11 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
                 if (!res_scale_matched && match_scale_type != ScaleMatch::Ignore &&
                     surface->type != SurfaceType::Fill)
                     return;
+
+                // The sink is used only by GetSurface's Exact|Invalid query.
+                // Observe all eligible identities, not only winner updates;
+                // validity can change later without a structural cache mutation.
+                if (selection) selection->Observe(surface.get(), surface->res_scale);
 
                 // Found a match, update only if this is better than the previous one
                 auto UpdateMatch = [&] {
@@ -976,6 +983,8 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
         const char* value = std::getenv(name);
         return value && std::strcmp(value, "1") == 0;
     };
+    texture_lookup_reuse = enabled("CARA_TEXTURE_LOOKUP_REUSE");
+    texture_lookup_verify = enabled("CARA_TEXTURE_LOOKUP_VERIFY");
     trace_flushes = enabled("CARA_SURFACE_FLUSH_TRACE");
     retain_small_cpu_writes = enabled("CARA_RETAIN_SMALL_CPU_WRITES");
     gpu_surface_remap = enabled("CARA_GPU_SURFACE_REMAP");
@@ -1112,8 +1121,43 @@ Surface RasterizerCacheOpenGL::GetSurface(const SurfaceParams& params, ScaleMatc
     ASSERT(!params.is_tiled || (params.width % 8 == 0 && params.height % 8 == 0));
 
     // Check for an exact match in existing surfaces
-    Surface surface =
-        FindMatch<MatchFlags::Exact | MatchFlags::Invalid>(surface_cache, params, match_res_scale);
+    Surface surface;
+    const bool count_lookup = texture_lookup_reuse && Common::FrameTiming::counters.enabled;
+    const u64 selection_generation = texture_lookup_generation;
+    ExactLookupSelection<const CachedSurface*> selection;
+    bool lookup_hit = false;
+    bool verification_mismatch = false;
+    if (texture_lookup_reuse) {
+        if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_checks;
+        for (const auto& entry : texture_lookup_entries) {
+            if (entry.generation != selection_generation || entry.scale_match != match_res_scale ||
+                !SameTextureLookupParams(entry.params, params) || !entry.watcher || !entry.watcher->IsValid()) continue;
+            auto candidate = entry.watcher->Get();
+            if (!candidate || !candidate->registered || candidate->type == SurfaceType::Fill ||
+                candidate->res_scale != entry.selected_scale || !candidate->ExactMatch(params) ||
+                !candidate->IsRegionValid(params.GetInterval())) continue;
+            if (texture_lookup_verify) {
+                auto reference = FindMatch<MatchFlags::Exact | MatchFlags::Invalid>(surface_cache, params, match_res_scale);
+                if (reference != candidate) {
+                    if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_verify_mismatches;
+                    surface = std::move(reference);
+                    texture_lookup_entries = {};
+                    texture_lookup_next = 0;
+                    verification_mismatch = true;
+                    break;
+                }
+                if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_verified_hits;
+            }
+            surface = std::move(candidate);
+            lookup_hit = true;
+            if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_hits;
+            break;
+        }
+        if (!lookup_hit && count_lookup) ++Common::FrameTiming::counters.texture_lookup_misses;
+    }
+    if (!surface)
+        surface = FindMatch<MatchFlags::Exact | MatchFlags::Invalid>(surface_cache, params, match_res_scale,
+            std::nullopt, texture_lookup_reuse ? &selection : nullptr);
 
     if (surface == nullptr) {
         u16 target_res_scale = params.res_scale;
@@ -1145,6 +1189,21 @@ Surface RasterizerCacheOpenGL::GetSurface(const SurfaceParams& params, ScaleMatc
         ValidateSurface(surface, params.addr, params.size);
     }
 
+    if (texture_lookup_reuse && !lookup_hit && !verification_mismatch) {
+        if (selection_generation != texture_lookup_generation) {
+            if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_epoch_rejects;
+        } else if (!selection.IsUnique(surface.get())) {
+            if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_ambiguous_rejects;
+        } else if (surface->registered && surface->type != SurfaceType::Fill &&
+                   surface->IsRegionValid(params.GetInterval())) {
+            auto watcher = surface->GetTextureLookupWatcher();
+            watcher->Validate();
+            auto& entry = texture_lookup_entries[texture_lookup_next];
+            entry = {params, match_res_scale, selection_generation, surface->res_scale, std::move(watcher)};
+            texture_lookup_next = (texture_lookup_next + 1) % TextureLookupCapacity;
+            if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_stores;
+        }
+    }
     surface->last_used_frame = VideoCore::GetCurrentFrame();
 
     return surface;
@@ -2038,6 +2097,7 @@ void RasterizerCacheOpenGL::RegisterSurface(const Surface& surface) {
         return;
     }
     surface->registered = true;
+    AdvanceTextureLookupGeneration();
     surface_cache.add({surface->GetInterval(), SurfaceSet{surface}});
     UpdatePagesCachedCount(surface->addr, surface->size, 1);
 }
@@ -2047,6 +2107,7 @@ void RasterizerCacheOpenGL::UnregisterSurface(const Surface& surface) {
         return;
     }
     surface->registered = false;
+    AdvanceTextureLookupGeneration();
     UpdatePagesCachedCount(surface->addr, surface->size, -1);
     surface_cache.subtract({surface->GetInterval(), SurfaceSet{surface}});
 }
