@@ -86,6 +86,27 @@ bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
         return glGetError()==GL_NO_ERROR && std::equal(wanted.begin(),wanted.end(),memory);
     };
     if(!check_bytes(base,expected)) return fail("original generated RGBA bytes");
+    // No-load callers must retain usage updates but never validate dirty bytes.
+    base->last_used_frame=~0u;
+    const auto no_load_hits=Common::FrameTiming::counters.texture_lookup_hits;
+    if(GetSurface(params,ScaleMatch::Ignore,false)!=base ||
+       Common::FrameTiming::counters.texture_lookup_hits!=no_load_hits+1 ||
+       base->last_used_frame!=VideoCore::GetCurrentFrame()) return fail("valid no-load hit/usage");
+    InvalidateRegion(scratch,16,nullptr);
+    for(u32 i=0;i<16;++i) expected[i]=memory[i]=u8(0xD3+i);
+    const auto pending=base->invalid_regions;
+    const auto dirty_hits=Common::FrameTiming::counters.texture_lookup_hits;
+    const auto dirty_stores=Common::FrameTiming::counters.texture_lookup_stores;
+    texture_lookup_reuse=false;auto no_load_reference=GetSurface(params,ScaleMatch::Ignore,false);texture_lookup_reuse=true;
+    base->last_used_frame=~0u;
+    if(GetSurface(params,ScaleMatch::Ignore,false)!=no_load_reference || no_load_reference!=base ||
+       base->invalid_regions!=pending || pending.empty() ||
+       Common::FrameTiming::counters.texture_lookup_hits!=dirty_hits ||
+       Common::FrameTiming::counters.texture_lookup_stores!=dirty_stores ||
+       base->last_used_frame!=VideoCore::GetCurrentFrame()) return fail("invalid no-load identity/no-validation/no-store");
+    if(GetTextureSurface(info,0)!=base || !check_bytes(base,expected))
+        return fail("ordinary texture revalidation after no-load query");
+
     for(u32 size:{4u,16u}) {
         const auto hits=Common::FrameTiming::counters.texture_lookup_hits;
         InvalidateRegion(scratch,size,nullptr);
