@@ -30,6 +30,8 @@ extern "C" int __llvm_profile_write_file(void);
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include "common/scm_rev.h"
 #include <functional>
 #include <fstream>
 #include <iomanip>
@@ -296,6 +298,11 @@ public:
         if (present) present(s, w, h, p, frames);
     }
 };
+
+static const char* CaraSelectedCPUBackend() {
+    const char* backend=std::getenv("CARA_CPU_BACKEND");
+    return backend && std::strcmp(backend,"dyncom")==0 ? "dyncom" : "fastinterp";
+}
 
 static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsigned clock) {
     NSString* value=[NSString stringWithFormat:@"%.0f%% speed",refreshesPerSecond*100.0/59.833997];
@@ -777,6 +784,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 report << "{\"title_id\":" << title << ",\"frame\":" << frame << ",\"display_fps\":" << fps
                        << ",\"guest_cpu_percent\":" << controller->guestClock.load()
                        << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
+                       << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
+                       << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
+                       << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
+                       << ",\"host_physical_memory_bytes\":" << NSProcessInfo.processInfo.physicalMemory
+                       << ",\"vertex_upload_bank_budget_bytes\":" << timing.vertex_upload_bank_budget_bytes
                        << ",\"thermal_state\":" << long(NSProcessInfo.processInfo.thermalState)
                        << ",\"gpu_vertex_draws\":" << timing.gpu_vertex_draws
                        << ",\"cpu_vertex_draws\":" << timing.cpu_vertex_draws;
@@ -1052,6 +1064,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"draw_ms_per_frame\":" + std::to_string((current.draw_seconds - previous_counters.draw_seconds) * 1000 / count) +
                                 ",\"vertex_prepare_ms_per_frame\":" + std::to_string((current.vertex_prepare_seconds - previous_counters.vertex_prepare_seconds) * 1000 / count) +
                                 ",\"vertex_upload_ms_per_frame\":" + std::to_string((current.vertex_upload_seconds - previous_counters.vertex_upload_seconds) * 1000 / count) +
+                                ",\"vertex_orphan_upload_ms_per_frame\":" + std::to_string((current.vertex_orphan_upload_seconds - previous_counters.vertex_orphan_upload_seconds) * 1000 / count) +
+                                ",\"vertex_storage_allocate_ms_per_frame\":" + std::to_string((current.vertex_storage_allocate_seconds - previous_counters.vertex_storage_allocate_seconds) * 1000 / count) +
+                                ",\"vertex_subimage_upload_ms_per_frame\":" + std::to_string((current.vertex_subimage_upload_seconds - previous_counters.vertex_subimage_upload_seconds) * 1000 / count) +
                                 ",\"draw_submit_ms_per_frame\":" + std::to_string((current.draw_submit_seconds - previous_counters.draw_submit_seconds) * 1000 / count) +
                                 ",\"surface_download_ms_per_frame\":" + std::to_string((current.surface_download_seconds - previous_counters.surface_download_seconds) * 1000 / count) +
                                 ",\"shader_compile_ms_per_frame\":" + std::to_string((current.shader_compile_seconds - previous_counters.shader_compile_seconds) * 1000 / count) +
@@ -1065,6 +1080,16 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"vertex_upload_fallbacks\":" + std::to_string(current.vertex_upload_fallbacks - previous_counters.vertex_upload_fallbacks) +
                                 ",\"vertex_storage_allocations\":" + std::to_string(current.vertex_storage_allocations - previous_counters.vertex_storage_allocations) +
                                 ",\"vertex_pool_peak_bytes\":" + std::to_string(current.vertex_pool_peak_bytes) +
+                                ",\"vertex_upload_bytes\":" + std::to_string(current.vertex_upload_bytes - previous_counters.vertex_upload_bytes) +
+                                ",\"vertex_orphan_upload_bytes\":" + std::to_string(current.vertex_orphan_upload_bytes - previous_counters.vertex_orphan_upload_bytes) +
+                                ",\"vertex_gl_image_calls\":" + std::to_string(current.vertex_gl_image_calls - previous_counters.vertex_gl_image_calls) +
+                                ",\"vertex_gl_subimage_calls\":" + std::to_string(current.vertex_gl_subimage_calls - previous_counters.vertex_gl_subimage_calls) +
+                                ",\"vertex_reuse_expanded\":" + std::to_string(current.vertex_reuse_expanded - previous_counters.vertex_reuse_expanded) +
+                                ",\"vertex_reuse_unique\":" + std::to_string(current.vertex_reuse_unique - previous_counters.vertex_reuse_unique) +
+                                ",\"vertex_reuse_attribute_bytes\":" + std::to_string(current.vertex_reuse_attribute_bytes - previous_counters.vertex_reuse_attribute_bytes) +
+                                ",\"vertex_reuse_unique_attribute_bytes\":" + std::to_string(current.vertex_reuse_unique_attribute_bytes - previous_counters.vertex_reuse_unique_attribute_bytes) +
+                                ",\"vertex_reuse_invalid_draws\":" + std::to_string(current.vertex_reuse_invalid_draws - previous_counters.vertex_reuse_invalid_draws) +
+                                ",\"vertex_upload_bank_budget_bytes\":" + std::to_string(current.vertex_upload_bank_budget_bytes) +
                                 ",\"guest_pc\":[" + std::to_string(current.last_guest_pc[0]) + "," + std::to_string(current.last_guest_pc[1]) + "," + std::to_string(current.last_guest_pc[2]) + "," + std::to_string(current.last_guest_pc[3]) + "]" +
                                 ",\"guest_core_ticks\":[" + std::to_string(current.guest_core_ticks[0] - previous_counters.guest_core_ticks[0]) + "," + std::to_string(current.guest_core_ticks[1] - previous_counters.guest_core_ticks[1]) + "," + std::to_string(current.guest_core_ticks[2] - previous_counters.guest_core_ticks[2]) + "," + std::to_string(current.guest_core_ticks[3] - previous_counters.guest_core_ticks[3]) + "]" +
                                 ",\"guest_ticks\":" + std::to_string(current.guest_ticks - previous_counters.guest_ticks) +
@@ -1077,7 +1102,12 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                             previous_counters = current;
                             frame_times.clear();
                             std::ofstream timing_report(user + "frame-timing.json");
-                            timing_report << "{\"title_id\":" << system.GetTitleID() << ",\"instrumented\":true,\"uncapped\":" << (pace_frames ? "false" : "true") << ",\"windows\":[";
+                            timing_report << "{\"title_id\":" << system.GetTitleID()
+                                          << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
+                                          << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
+                                          << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
+                                          << ",\"vertex_reuse_probe\":" << (std::getenv("CARA_VERTEX_REUSE_TRACE")?"true":"false")
+                                          << ",\"instrumented\":true,\"uncapped\":" << (pace_frames ? "false" : "true") << ",\"windows\":[";
                             for (size_t i = 0; i < timing_windows.size(); ++i)
                                 timing_report << (i ? "," : "") << timing_windows[i];
                             timing_report << "]}\n";

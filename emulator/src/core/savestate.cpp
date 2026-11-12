@@ -18,6 +18,8 @@
 #include "network/network.h"
 
 namespace Core {
+const char* GetSaveStateBuildFingerprint() { return CARA_STATE_FINGERPRINT; }
+
 namespace {
 constexpr std::array<u8, 8> magic{'C','A','R','A','S','T','0','1'};
 constexpr u64 max_archive_size = 768ull * 1024 * 1024;

@@ -1,5 +1,8 @@
 # Validation
 
+Current hardware findings, experimental controls and open questions are tracked in
+[Hardware investigation](hardware-investigation.md).
+
 ## Local development evidence — November 2, 2026
 
 - Source baseline: `weihuoya/citra` revision `302b0c3bc4312bc96489c11584a97664894b343f`.

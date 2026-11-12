@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <bitset>
 #include <set>
 #include <cstdlib>
 #include <memory>
@@ -501,6 +502,26 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     const size_t rows = (ios_triangle_indices.size() * layout.stride + IOS_VERTEX_INPUT_WIDTH - 1) / IOS_VERTEX_INPUT_WIDTH;
     if (IOS_VERTEX_INPUT_WIDTH>unsigned(ios_vertex_max_texture_size) ||
         rows>unsigned(ios_vertex_max_texture_size)) return false;
+    // Optional probe only: measure reuse before choosing a new GPU input layout.
+    // No vertex data or command stream is modified by this diagnostic.
+    static const bool probe_reuse = std::getenv("CARA_VERTEX_REUSE_TRACE") != nullptr;
+    if (Common::FrameTiming::counters.enabled && probe_reuse) {
+        std::bitset<65536> seen;
+        bool valid = true;
+        for (u32 vertex : ios_triangle_indices) {
+            const u32 key = is_indexed ? vertex : vertex - u32(pipeline.vertex_offset);
+            if (key >= seen.size()) { valid = false; break; }
+            seen.set(key);
+        }
+        auto& counters = Common::FrameTiming::counters;
+        if (valid) {
+            const size_t unique = seen.count();
+            counters.vertex_reuse_expanded += ios_triangle_indices.size();
+            counters.vertex_reuse_unique += unique;
+            counters.vertex_reuse_attribute_bytes += ios_triangle_indices.size() * layout.stride * sizeof(GLvec4);
+            counters.vertex_reuse_unique_attribute_bytes += unique * layout.stride * sizeof(GLvec4);
+        } else ++counters.vertex_reuse_invalid_draws;
+    }
     ios_vertex_inputs.resize(rows * IOS_VERTEX_INPUT_WIDTH);
     Pica::VertexLoader loader(pipeline);
     Pica::DebugUtils::MemoryAccessTracker accesses;
@@ -615,7 +636,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     }
     if (Common::FrameTiming::counters.enabled) {
         auto& counters = Common::FrameTiming::counters;
-        if (orphan_upload) ++counters.vertex_upload_fallbacks;
+        counters.vertex_upload_bank_budget_bytes = max_bank_bytes;
+        counters.vertex_upload_bytes += ios_vertex_inputs.size() * sizeof(GLvec4);
+        if (orphan_upload) {
+            ++counters.vertex_upload_fallbacks;
+            counters.vertex_orphan_upload_bytes += ios_vertex_inputs.size() * sizeof(GLvec4);
+        }
         if (orphan_upload || resize_storage) ++counters.vertex_storage_allocations;
         size_t bytes = 0;
         for (const auto& frame_bank : ios_vertex_frame_uploads) bytes += frame_bank.bytes;
@@ -637,13 +663,19 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         if (orphan_upload) {
+            Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
+            if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, upload_rows, 0,
                          GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
         } else {
             if (resize_storage) {
+                Common::FrameTiming::Scope storage_timing(Common::FrameTiming::Phase::VertexStorageAllocate);
+                if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, storage_rows, 0,
                              GL_RGBA, GL_FLOAT, nullptr);
             }
+            Common::FrameTiming::Scope update_timing(Common::FrameTiming::Phase::VertexSubImageUpload);
+            if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_subimage_calls;
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
                             GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
         }

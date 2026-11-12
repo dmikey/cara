@@ -15,6 +15,19 @@ struct Counters {
     double draw_seconds = 0;
     double vertex_prepare_seconds = 0;
     double vertex_upload_seconds = 0;
+    double vertex_orphan_upload_seconds = 0;
+    double vertex_storage_allocate_seconds = 0;
+    double vertex_subimage_upload_seconds = 0;
+    std::uint64_t vertex_upload_bytes = 0;
+    std::uint64_t vertex_orphan_upload_bytes = 0;
+    std::uint64_t vertex_gl_image_calls = 0;
+    std::uint64_t vertex_gl_subimage_calls = 0;
+    std::uint64_t vertex_upload_bank_budget_bytes = 0;
+    std::uint64_t vertex_reuse_expanded = 0;
+    std::uint64_t vertex_reuse_unique = 0;
+    std::uint64_t vertex_reuse_attribute_bytes = 0;
+    std::uint64_t vertex_reuse_unique_attribute_bytes = 0;
+    std::uint64_t vertex_reuse_invalid_draws = 0;
     double draw_submit_seconds = 0;
     double surface_download_seconds = 0;
     double shader_compile_seconds = 0;
@@ -40,7 +53,7 @@ struct Counters {
 };
 inline thread_local Counters counters;
 
-enum class Phase { Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
+enum class Phase { Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
 class Scope {
 public:
     explicit Scope(Phase phase_) : phase(phase_), active(counters.enabled) {
@@ -62,6 +75,12 @@ public:
             counters.vertex_prepare_seconds += seconds;
         } else if (phase == Phase::VertexUpload) {
             counters.vertex_upload_seconds += seconds;
+        } else if (phase == Phase::VertexOrphanUpload) {
+            counters.vertex_orphan_upload_seconds += seconds;
+        } else if (phase == Phase::VertexStorageAllocate) {
+            counters.vertex_storage_allocate_seconds += seconds;
+        } else if (phase == Phase::VertexSubImageUpload) {
+            counters.vertex_subimage_upload_seconds += seconds;
         } else if (phase == Phase::DrawSubmit) {
             counters.draw_submit_seconds += seconds;
         } else if (phase == Phase::SurfaceDownload) {
