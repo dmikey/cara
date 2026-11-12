@@ -1,115 +1,92 @@
 # Cara
 
+[![Build](https://github.com/dmikey/cara/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/dmikey/cara/actions/workflows/build.yml?query=branch%3Amain)
+[![License: GPL v2 or later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
+
 <img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
 
-Cara is a new, open-source Nintendo 3DS emulator focused on **Apple hardware,
-performance, and memory efficiency**. Built for iPhone and iPad, it combines a
-no-CPU-JIT execution path with custom GPU rendering enhancements and its own
-native app shell.
+**Nintendo 3DS emulator core and emulator shell. Built for Apple hardware.**
 
-Cara builds on Citra MMJ and Azahar's FastInterp, with Apple-focused work on how
-the CPU, GPU, and memory interact. The goal is practical gameplay performance,
-correct graphics, and a reusable 3DS core designed for Delta compatibility.
-Development is active; compatibility and performance vary by game.
+Cara brings a performance-first approach to 3DS emulation on iPhone and iPad:
+custom GPU rendering, efficient memory use, and gameplay without CPU JIT.
+Open source, with a native shell of its own and a reusable core designed for Delta
+integration.
 
-## What makes Cara different
+## Performance you can measure
 
-Cara starts from **Citra MMJ**, weihuoya's Android-focused performance fork.
-MMJ's appeal was its work on making 3DS emulation practical on mobile hardware:
-GPU-accelerated OpenGL ES rendering, shader reuse, and controls for expensive
-rendering and memory operations. That mobile graphics foundation is what Cara
-borrows from MMJ.
-
-| MMJ's mobile foundation | How Cara uses it |
-|---|---|
-| **Hardware-accelerated draws and generated GPU shaders** | Cara builds on the command processor, shader generator/decompiler, and OpenGL renderer, with a custom Apple vertex pipeline and native presentation. |
-| **Shader and program caching** | MMJ reuses generated shaders and compiled programs to reduce repeated compilation. Cara retains the source foundation; its iOS frontend currently disables persistent shader caching, and Android-generated program binaries are excluded. |
-| **Renderer performance controls** | MMJ exposes options such as Skip Slow Draw and Skip CPU Access to trade rendering or memory work for speed. Cara's Apple work targets less repeated work and fewer transfers while preserving correct output; those shortcuts are not the basis of its reported gains. |
-
-The inherited implementation is documented in MMJ's
-[shader manager](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/renderer_opengl/gl_shader_manager.cpp),
-[draw processing](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/command_processor.cpp),
-and [surface cache](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp).
-Cara adds two further pieces:
-
-- **Azahar FastInterp.** Cara adapts Azahar's ARM interpreter for execution without
-  CPU JIT. Guest instructions become decoded data dispatched to precompiled
-  handlers in the signed app. Cara adds integration with its memory, scheduling,
-  and save-state systems.
-- **Custom rendering enhancements.** Cara's GLES3 pipeline moves PICA vertex work
-  and packed vertex decoding onto the GPU, reuses prepared input data, and reduces
-  repeated uploads and CPU/GPU transfers. Direct GPU presentation avoids copying
-  every displayed frame through CPU memory. Rendering correctness and bounded
-  cache memory are part of the performance work.
-
-## A reusable core and a native shell
-
-Cara is developed as a reusable 3DS core for integration into Delta, alongside
-its own standalone iOS shell. The shell provides game loading from Files, touch
-controls, customizable Delta-compatible skins, audio, save states, and iCloud
-save-folder support. Delta integration is a development target; the standalone
-Cara app is the playable build provided here.
-
-## Features
-
-- Open games directly from Files.
-- GPU-accelerated graphics and native stereo audio.
-- Touch controls and customizable controller skins.
-- Save states with per-game slots.
-- Sync in-game saves through a selected iCloud Drive folder.
-- Optional adaptive guest CPU clock for demanding scenes.
-
-## Benchmarks
-
-Xenoblade Chronicles 3D's opening sequence on an M4 iPad, at native resolution
-with sound enabled and JIT disabled. All runs used **100% guest CPU clock**.
+In a recorded Xenoblade Chronicles 3D opening replay on an M4 iPad, Cara reached
+**99.5% emulation speed** using **758 MiB peak sampled memory**—about **40–45% less
+memory** than the two Azahar-based apps in the same comparison.
 
 | Build | Emulation speed | Peak sampled memory |
 |---|---:|---:|
 | **Cara GLES3** | **99.5%** | **758 MiB** |
 | Manic / Azahar | 97.4% | 1,373 MiB |
 | Azahar / MoltenVK | 84.6% | 1,261 MiB |
-| Manic / Citra (frozen scene) | 82.1%† | 1,302 MiB |
 
-† Manic / Citra's scene froze while its counter continued. Its figure does not
-represent a completed, playable replay.
+All three completed the opening replay at native resolution, with sound enabled,
+CPU JIT disabled, and **100% guest CPU clock**. This is a whole-app comparison of
+one scene; performance and compatibility vary by game. See the
+[full results, build revision, and methodology](docs/performance.md).
 
-The first three builds completed the opening replay. Cara used about 40–45% less
-sampled memory than the two Azahar-based builds in this test. These are whole-app
-results, including differences in frontend and presentation behavior. Cara was
-measured at checkpoint `a9e0658`, before save-state support.
+## What makes Cara different
 
-## Build
+| Focus | The Cara approach |
+|---|---|
+| **Built for Apple hardware** | Custom GPU rendering and native presentation for iPhone and iPad. |
+| **More work on the GPU** | GPU vertex processing and packed-data decoding reduce work on the CPU. |
+| **Less repeated work** | Prepared-input reuse and fewer CPU/GPU transfers target the costs that slow gameplay down. |
+| **Memory-conscious design** | Bounded graphics caches and data reuse keep memory efficiency central to performance tuning. |
+| **Play without CPU JIT** | Azahar FastInterp powers the CPU execution path inside the signed app. |
+| **A core and a shell** | A reusable core developed for Delta integration, alongside Cara’s standalone iOS app. |
 
-Requires macOS, Xcode, Python 3, CMake 3.31.10, and Ninja 1.13.2.
-Emulator and dependency source is bundled in the repository.
+## From Android performance work to Apple hardware
 
-```sh
-python3 tools/prepare.py
-python3 tools/build.py ios --renderer gles3
-python3 tools/audit_no_jit.py ios --renderer gles3
-```
+**Citra MMJ**, weihuoya’s performance-focused Android fork, gave Cara a mobile
+rendering foundation to build on. We carry that work forward in three key areas:
 
-The unsigned app is written to `work/build-ios-gles3/bin/cara-ios.app`.
-Device installation requires development signing.
+- **Mobile GPU rendering.** MMJ’s OpenGL ES rendering path is the starting point
+  for Cara’s Apple-focused graphics engine. Cara adds custom GPU vertex processing,
+  packed-data decoding, and native screen presentation.
+- **Shader generation and reuse.** MMJ generates and reuses GPU shaders and programs
+  to avoid repeated compilation. Cara adapts that shader foundation for Apple GPUs
+  and extends it with its own rendering enhancements.
+- **Graphics data reuse.** MMJ’s texture and render-target caching provides the
+  foundation for reusing graphics resources. Cara takes that focus further with
+  prepared-input reuse, bounded graphics caches, and fewer CPU/GPU transfers.
 
-See the guides for [save states](docs/save-states.md),
-[adaptive CPU clock](docs/adaptive-clock.md), and [validation](docs/validation.md).
+**Azahar FastInterp** supplies the interpreter foundation for execution without
+CPU JIT. Cara combines these foundations with Apple-focused performance and memory
+work, a reusable core, and its own native shell.
 
-## Attribution
+Explore the [architecture, inherited systems, and Cara enhancements](docs/technology.md).
 
-- [Citra Emulator Project](https://github.com/citra-emu) and its contributors —
-  the original emulator and core emulation work.
-- [Citra MMJ](https://github.com/weihuoya/citra), maintained by
-  [weihuoya](https://github.com/weihuoya) — the fork that forms Cara's source foundation.
-- [Azahar](https://github.com/azahar-emu/azahar) and its contributors — FastInterp
-  and adapted core improvements. [warmenhoven](https://github.com/warmenhoven)
-  contributed [FastInterp](https://github.com/azahar-emu/azahar/pull/2376).
+## Made for playing
 
-Save-state support also builds on original Citra work by Hamish Milne and other
-contributors, restored from MMJ and adapted for Cara.
+- **Your games, through Files.** Open extracted game files from the file browser.
+- **Your controls.** Touch controls and customizable Delta-compatible skins.
+- **Your progress.** Per-game save-state slots and in-game save syncing through a selected iCloud Drive folder.
+- **Your experience.** GPU-accelerated graphics, native stereo audio, and an optional adaptive guest CPU clock for demanding scenes.
 
-Upstream copyright notices and licenses are preserved. See [LICENSE](LICENSE),
-[NOTICE](NOTICE), [source revisions](emulator/VENDORED_SOURCE.json), and
-[FastInterp provenance](docs/fastinterp-upstream.json). Third-party libraries retain
-their respective licenses.
+The standalone Cara app is the playable build provided here. Delta core integration
+is a development target.
+
+## Open source, built in the open
+
+Cara is licensed under **GPL-2.0-or-later**. Emulator and dependency source is
+bundled in the repository, with build tools and validation guides included.
+
+[Build Cara](docs/build.md) · [Performance](docs/performance.md) ·
+[Architecture](docs/technology.md) · [Save states](docs/save-states.md) ·
+[Validation](docs/validation.md)
+
+## Credits
+
+Cara builds on the work of the [Citra Emulator Project](https://github.com/citra-emu),
+[weihuoya’s Citra MMJ](https://github.com/weihuoya/citra), and
+[Azahar](https://github.com/azahar-emu/azahar), including
+[warmenhoven’s FastInterp](https://github.com/azahar-emu/azahar/pull/2376).
+Save-state support builds on original Citra work by Hamish Milne and other contributors.
+
+Upstream copyright notices and third-party licenses are preserved. See
+[NOTICE](NOTICE), [LICENSE](LICENSE), and [source provenance](emulator/VENDORED_SOURCE.json).
