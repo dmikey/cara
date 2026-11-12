@@ -14,6 +14,7 @@ def main():
     p.add_argument('--device', required=True)
     p.add_argument('--rom', required=True, help='Existing filename in app Documents')
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--expected-title-id', type=lambda value:int(value,0), help='Fail if the launched title differs from this known game ID')
     p.add_argument('--frames', type=int, default=2400)
     p.add_argument('--save-frame', type=int, default=2100)
     p.add_argument('--press-a-frames', default='300,600,900,1200')
@@ -58,6 +59,10 @@ def main():
         if copy('frame-timing.json'):
             try:
                 timing=json.loads((a.output/'frame-timing.json').read_text())
+                if timing.get('rom_filename') != Path(a.rom).name:
+                    raise RuntimeError('Different game opened during capture; refusing a mislabelled checkpoint')
+                if a.expected_title_id is not None and timing.get('title_id') != a.expected_title_id:
+                    raise RuntimeError('Capture title does not match requested game ID')
                 frame=timing['windows'][-1]['end_frame']
                 if frame<a.frames: observed=True
                 if observed and frame>=a.frames and copy('benchmark-status.json'):
@@ -85,7 +90,7 @@ def main():
         raise RuntimeError('Missing fresh checkpoint save receipt')
     receipt=json.loads((a.output/'profile-checkpoint-status.json').read_text())
     if (receipt.get('saved') is not True or receipt.get('frame') != a.save_frame or
-            receipt.get('title_id') != timing['title_id'] or
+            receipt.get('rom_filename') != Path(a.rom).name or receipt.get('title_id') != timing['title_id'] or
             receipt.get('engine_build_fingerprint') != timing['engine_build_fingerprint']):
         raise RuntimeError('Checkpoint receipt does not match this capture')
     state=a.output/'profile-comparison.carastate'

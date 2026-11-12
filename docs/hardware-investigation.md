@@ -867,3 +867,21 @@ frames or resume do not create catch-up bursts. Pause, load, counter reset and
 speed changes rebaseline the schedule. Uncapped profiling remains explicit.
 The pure policy has ROM-free deterministic tests; physical paced-run validation
 is recorded separately from unpaced engine throughput.
+
+
+Stories stopped during an automatic opening checkpoint at frame 600 with result
+12: `Save-state service ns:s: unregistered class`. Normal capped play continued
+past this point. The save traversal can reach nested kernel/service objects,
+so the service label alone does not identify the missing type. ROM-free active
+APT and retained NS sessions serialize correctly. Bundled Boost now includes
+the failing dynamic type in this error; no speculative duplicate export was
+added. A failed profiling checkpoint writes a failed receipt and no longer ends
+emulation. Capture/replay reports include the actual ROM filename and tools reject
+another game's reports, avoiding mislabelled evidence if a game is changed.
+
+Further default-off diagnostics measure ordered (source vertex, triangle-first
+vertex) locality for lit indexed rendering using LRU16/32 models. These are
+models of potential vertex-shader work, not GPU execution measurements. A
+source-only compiler switch, `CARA_FASTINTERP_PIN_PAGE_TABLE`, constrains the
+ARM64 page-table base to x28 at dispatch; native memory-copy gains and larger
+executor code size require a matched physical-device comparison before promotion.

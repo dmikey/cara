@@ -34,6 +34,20 @@ struct Counters {
     std::uint64_t vertex_index_cache_hits = 0;
     std::uint64_t vertex_index_cache_misses = 0;
     std::uint64_t vertex_index_cache_bytes = 0;
+    std::uint64_t lit_pair_probe_draws = 0;
+    std::uint64_t lit_pair_probe_unavailable_draws = 0;
+    std::uint64_t lit_pair_probe_vertices = 0;
+    std::uint64_t lit_pair_probe_unique_pairs = 0;
+    std::uint64_t lit_pair_probe_baseline_vs_runs = 0;
+    std::uint64_t lit_pair_probe_lru16_misses = 0;
+    std::uint64_t lit_pair_probe_lru32_misses = 0;
+    std::uint64_t lit_pair_probe_lru16_vs_runs = 0;
+    std::uint64_t lit_pair_probe_lru32_vs_runs = 0;
+    std::uint64_t lit_pair_probe_pair_table_bytes = 0;
+    std::uint64_t lit_pair_probe_selected_draws = 0;
+    std::uint64_t lit_pair_probe_selected_baseline_vs_runs = 0;
+    std::uint64_t lit_pair_probe_selected_lru32_vs_runs = 0;
+
     double vertex_reuse_check_seconds = 0;
     std::uint64_t vertex_upload_reused_bytes = 0;
     std::uint64_t vertex_upload_reused_textures = 0;

@@ -1135,13 +1135,18 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                     }
                     try {
                         if (profile_save_frame && !profile_saved && emuWindow->frames>=profile_save_frame) {
-                            system.SaveStateToPath(user+"profile-comparison.carastate");
-                            profile_saved=true;
+                            profile_saved=true; // One attempt; an unsupported checkpoint must not end play.
+                            std::string failure;
+                            try { system.SaveStateToPath(user+"profile-comparison.carastate"); }
+                            catch (const std::exception& error) { failure=error.what(); }
                             std::ofstream(user+"profile-checkpoint-status.json")
-                                << "{\"saved\":true,\"frame\":" << emuWindow->frames
+                                << "{\"saved\":" << (failure.empty()?"true":"false") << ",\"frame\":" << emuWindow->frames
                                 << ",\"title_id\":" << system.GetTitleID()
-                                << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint()) << "}\n";
-                            LOG_INFO(Frontend,"Comparison checkpoint saved at frame {}",emuWindow->frames);
+                                << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
+                                << ",\"rom_filename\":" << std::quoted(std::string(FileUtil::GetFilename(rom)))
+                                << ",\"detail\":" << std::quoted(failure) << "}\n";
+                            if (failure.empty()) LOG_INFO(Frontend,"Comparison checkpoint saved at frame {}",emuWindow->frames);
+                            else LOG_ERROR(Frontend,"Comparison checkpoint failed: {}",failure);
                         }
                         if (state_save_frame && !state_saved && emuWindow->frames>=state_save_frame) {
                             saved_execution=execution_snapshot();
@@ -1320,6 +1325,19 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"vertex_index_cache_hits\":" + std::to_string(current.vertex_index_cache_hits - previous_counters.vertex_index_cache_hits) +
                                 ",\"vertex_index_cache_misses\":" + std::to_string(current.vertex_index_cache_misses - previous_counters.vertex_index_cache_misses) +
                                 ",\"vertex_index_cache_bytes\":" + std::to_string(current.vertex_index_cache_bytes) +
+                                ",\"lit_pair_probe_draws\":" + std::to_string(current.lit_pair_probe_draws - previous_counters.lit_pair_probe_draws) +
+                                ",\"lit_pair_probe_unavailable_draws\":" + std::to_string(current.lit_pair_probe_unavailable_draws - previous_counters.lit_pair_probe_unavailable_draws) +
+                                ",\"lit_pair_probe_vertices\":" + std::to_string(current.lit_pair_probe_vertices - previous_counters.lit_pair_probe_vertices) +
+                                ",\"lit_pair_probe_unique_pairs\":" + std::to_string(current.lit_pair_probe_unique_pairs - previous_counters.lit_pair_probe_unique_pairs) +
+                                ",\"lit_pair_probe_baseline_vs_runs\":" + std::to_string(current.lit_pair_probe_baseline_vs_runs - previous_counters.lit_pair_probe_baseline_vs_runs) +
+                                ",\"lit_pair_probe_lru16_misses\":" + std::to_string(current.lit_pair_probe_lru16_misses - previous_counters.lit_pair_probe_lru16_misses) +
+                                ",\"lit_pair_probe_lru32_misses\":" + std::to_string(current.lit_pair_probe_lru32_misses - previous_counters.lit_pair_probe_lru32_misses) +
+                                ",\"lit_pair_probe_lru16_vs_runs\":" + std::to_string(current.lit_pair_probe_lru16_vs_runs - previous_counters.lit_pair_probe_lru16_vs_runs) +
+                                ",\"lit_pair_probe_lru32_vs_runs\":" + std::to_string(current.lit_pair_probe_lru32_vs_runs - previous_counters.lit_pair_probe_lru32_vs_runs) +
+                                ",\"lit_pair_probe_pair_table_bytes\":" + std::to_string(current.lit_pair_probe_pair_table_bytes - previous_counters.lit_pair_probe_pair_table_bytes) +
+                                ",\"lit_pair_probe_selected_draws\":" + std::to_string(current.lit_pair_probe_selected_draws - previous_counters.lit_pair_probe_selected_draws) +
+                                ",\"lit_pair_probe_selected_baseline_vs_runs\":" + std::to_string(current.lit_pair_probe_selected_baseline_vs_runs - previous_counters.lit_pair_probe_selected_baseline_vs_runs) +
+                                ",\"lit_pair_probe_selected_lru32_vs_runs\":" + std::to_string(current.lit_pair_probe_selected_lru32_vs_runs - previous_counters.lit_pair_probe_selected_lru32_vs_runs) +
                                 ",\"vertex_upload_reused_bytes\":" + std::to_string(current.vertex_upload_reused_bytes - previous_counters.vertex_upload_reused_bytes) +
                                 ",\"vertex_upload_reused_textures\":" + std::to_string(current.vertex_upload_reused_textures - previous_counters.vertex_upload_reused_textures) +
                                 ",\"vertex_reuse_check_ms_per_frame\":" + std::to_string((current.vertex_reuse_check_seconds - previous_counters.vertex_reuse_check_seconds)*1000/count) +
@@ -1357,6 +1375,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                             frame_times.clear();
                             std::ofstream timing_report(user + "frame-timing.json");
                             timing_report << "{\"title_id\":" << system.GetTitleID()
+                                          << ",\"rom_filename\":" << std::quoted(std::string(FileUtil::GetFilename(rom)))
                                           << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
                                           << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
@@ -1403,7 +1422,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                     const double pause_elapsed = std::chrono::duration<double>(paused_duration).count();
                     const double elapsed = std::max(0.001, wall_elapsed - pause_elapsed);
                     std::ofstream report(user + "benchmark-status.json");
-                    report << "{\"title_id\":" << system.GetTitleID() << ",\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
+                    report << "{\"title_id\":" << system.GetTitleID() << ",\"rom_filename\":" << std::quoted(std::string(FileUtil::GetFilename(rom))) << ",\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
                            << ",\"fps\":" << emuWindow->frames / elapsed
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"maximum_speed_percent\":" << paced_speed

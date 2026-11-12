@@ -1,7 +1,15 @@
 # Modified for Cara on 2026-11-12; see NOTICE for attribution.
-# Diagnostic compiler controls; neither changes guest instruction semantics.
+# Diagnostic compiler controls; these do not change guest instruction semantics.
 option(CARA_FASTINTERP_NO_LTO "Compile the interpreter without ThinLTO for comparison" OFF)
 option(CARA_FASTINTERP_NO_TAIL_MERGE "Compare separate interpreter dispatch tails" OFF)
+option(CARA_FASTINTERP_PIN_PAGE_TABLE "Compare ARM64 page-table base pinned to x28" OFF)
+if(CARA_FASTINTERP_PIN_PAGE_TABLE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "CARA_FASTINTERP_PIN_PAGE_TABLE requires Clang")
+    endif()
+    set_property(SOURCE arm/fastinterp/fastinterp.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS CARA_FASTINTERP_PIN_PAGE_TABLE=1)
+endif()
 if(CARA_FASTINTERP_NO_LTO OR CARA_FASTINTERP_NO_TAIL_MERGE)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "FastInterp compiler experiments require Clang")

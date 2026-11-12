@@ -630,6 +630,10 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         const char* value=std::getenv("CARA_VERTEX_INDEX_CACHE");
         return value && std::strcmp(value,"1")==0;
     }();
+    static const bool pair_probe_enabled = [] {
+        const char* value = std::getenv("CARA_GPU_LIT_PAIR_PROBE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
     ios_cached_index_data=nullptr;
     const IOSVertexIndexCache::Key key{is_indexed?index_address:0,count,
         is_indexed?0:u32(pipeline.vertex_offset),static_cast<u32>(topology),
@@ -655,7 +659,7 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         }
         if (ios_triangle_indices.empty()) return false;
         if (cache_enabled)
-            ios_cached_index_data=ios_vertex_index_cache.Store(key,indices,source_size,ios_triangle_indices);
+            ios_cached_index_data=ios_vertex_index_cache.Store(key,indices,source_size,ios_triangle_indices, pair_probe_enabled);
     }
     const auto& triangles=IOSTriangles();
     if (Common::FrameTiming::counters.enabled)
@@ -1052,6 +1056,38 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         } else glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
     }
     if (elements) glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,index_buffer.GetHandle());
+    // Prospective lit pair-indexed VS reuse: diagnostic counters only. The
+    // actual uploaded bytes, shader and draw call are deliberately unchanged.
+    static const bool pair_probe_enabled = [] {
+        const char* value = std::getenv("CARA_GPU_LIT_PAIR_PROBE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (pair_probe_enabled && Common::FrameTiming::counters.enabled && raw_inputs &&
+        !Pica::g_state.regs.lighting.disable && !ios_direct_vertex_reuse && !ios_feedback_vertex_reuse) {
+        {
+            auto& counters = Common::FrameTiming::counters;
+            if (!ios_cached_index_data || !ios_cached_index_data->pair_reuse.measured) {
+                ++counters.lit_pair_probe_unavailable_draws;
+            } else {
+                const auto& stats = ios_cached_index_data->pair_reuse;
+                ++counters.lit_pair_probe_draws;
+                counters.lit_pair_probe_vertices += stats.vertices;
+                counters.lit_pair_probe_unique_pairs += stats.unique_pairs;
+                counters.lit_pair_probe_baseline_vs_runs += stats.baseline_vs_runs;
+                counters.lit_pair_probe_lru16_misses += stats.lru16_misses;
+                counters.lit_pair_probe_lru32_misses += stats.lru32_misses;
+                counters.lit_pair_probe_lru16_vs_runs += stats.lru16_vs_runs;
+                counters.lit_pair_probe_lru32_vs_runs += stats.lru32_vs_runs;
+                counters.lit_pair_probe_pair_table_bytes += std::uint64_t(stats.unique_pairs) * 4;
+                // Report candidate work coverage as well as aggregate efficiency.
+                if (std::uint64_t(stats.lru32_vs_runs) * 4 <= std::uint64_t(stats.baseline_vs_runs) * 3) {
+                    ++counters.lit_pair_probe_selected_draws;
+                    counters.lit_pair_probe_selected_baseline_vs_runs += stats.baseline_vs_runs;
+                    counters.lit_pair_probe_selected_lru32_vs_runs += stats.lru32_vs_runs;
+                }
+            }
+        }
+    }
     ++Common::FrameTiming::counters.gpu_vertex_draws;
     Common::FrameTiming::counters.gpu_vertices += triangles.size();
     Common::FrameTiming::counters.gpu_input_records += ios_vertex_input_records;

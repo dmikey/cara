@@ -713,6 +713,14 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
     // local_pc syncs back to regs[15] at chain/done (SYNC_PC) and before SVC.
     u32 local_pc = state_.regs[15];
 
+#if defined(__aarch64__) && defined(CARA_FASTINTERP_PIN_PAGE_TABLE) && CARA_FASTINTERP_PIN_PAGE_TABLE
+// Private compiler experiment: keep the page-table base in a callee-saved
+// register across dispatch. No guards, memory ordering or slow paths change.
+#define KEEP_PAGE_TABLE_REGISTER() asm volatile("" : : "r"(local_page_ptrs))
+#else
+#define KEEP_PAGE_TABLE_REGISTER() ((void)0)
+#endif
+
 // Macros for PC access through local variable (synced at chain/done)
 #define GET_PC() local_pc
 #define SET_PC(val) (local_pc = (val))
@@ -721,6 +729,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
 // No bounds check: every block ends with an EndBlock terminator.
 #define DISPATCH()                                                                                 \
     do {                                                                                           \
+        KEEP_PAGE_TABLE_REGISTER();                                                               \
         ++inst;                                                                                    \
         goto* dispatch_table[static_cast<size_t>(inst->opcode)];                                   \
     } while (0)
@@ -789,7 +798,11 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
     // Macros rather than lambdas: capturing 'this' costs a closure in tight
     // loops like LDM/STM.
 
+#if defined(__aarch64__) && defined(CARA_FASTINTERP_PIN_PAGE_TABLE) && CARA_FASTINTERP_PIN_PAGE_TABLE
+    register u8** local_page_ptrs asm("x28") = state_.page_pointers;
+#else
     u8** const local_page_ptrs = state_.page_pointers;
+#endif
 
 // Fast-path read macros with direct page table access
 #define MEM_READ8(addr, result)                                                                    \
@@ -1018,6 +1031,7 @@ done:
 #undef SET_PC
 #undef SYNC_PC
 #undef DISPATCH
+#undef KEEP_PAGE_TABLE_REGISTER
 #undef CHECK_COND
 #undef ADVANCE_AND_DISPATCH
 #undef MEM_READ8

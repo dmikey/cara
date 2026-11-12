@@ -142,6 +142,8 @@ def main():
             if copy('frame-timing.json', target):
                 try:
                     report = json.loads(target.read_text())
+                    if args.rom and report.get('rom_filename') != Path(args.rom).name:
+                        raise RuntimeError('Different game opened during comparison')
                     window = report['windows'][-1]
                     right_mode = ((window['gpu_packed_input_draws'] > 0) == config['packed']
                                   and window['vertex_upload_bank_budget_bytes'] == config['bank_mib'] * 1048576)
