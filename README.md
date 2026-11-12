@@ -2,13 +2,53 @@
 
 <img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
 
-Cara is an experimental Nintendo 3DS emulator built for iOS play without CPU JIT.
-Its custom graphics path moves more work onto the GPU and cuts repeated data
-transfers to improve gameplay speed.
+Cara is a new, open-source Nintendo 3DS emulator focused on **Apple hardware,
+performance, and memory efficiency**. Built for iPhone and iPad, it combines a
+no-CPU-JIT execution path with custom GPU rendering enhancements and its own
+native app shell.
 
-It combines Citra MMJ with Azahar's FastInterp CPU interpreter and a custom GLES3
-renderer, with a focus on correct graphics and lower memory use on iPhone and
-iPad. Compatibility and performance vary by game.
+Cara builds on Citra MMJ and Azahar's FastInterp, with Apple-focused work on how
+the CPU, GPU, and memory interact. The goal is practical gameplay performance,
+correct graphics, and a reusable 3DS core designed for Delta compatibility.
+Development is active; compatibility and performance vary by game.
+
+## What makes Cara different
+
+Cara starts from **Citra MMJ**, weihuoya's Android-focused performance fork.
+MMJ's appeal was its work on making 3DS emulation practical on mobile hardware:
+GPU-accelerated OpenGL ES rendering, shader reuse, and controls for expensive
+rendering and memory operations. That mobile graphics foundation is what Cara
+borrows from MMJ.
+
+| MMJ's mobile foundation | How Cara uses it |
+|---|---|
+| **Hardware-accelerated draws and generated GPU shaders** | Cara builds on the command processor, shader generator/decompiler, and OpenGL renderer, with a custom Apple vertex pipeline and native presentation. |
+| **Shader and program caching** | MMJ reuses generated shaders and compiled programs to reduce repeated compilation. Cara retains the source foundation; its iOS frontend currently disables persistent shader caching, and Android-generated program binaries are excluded. |
+| **Renderer performance controls** | MMJ exposes options such as Skip Slow Draw and Skip CPU Access to trade rendering or memory work for speed. Cara's Apple work targets less repeated work and fewer transfers while preserving correct output; those shortcuts are not the basis of its reported gains. |
+
+The inherited implementation is documented in MMJ's
+[shader manager](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/renderer_opengl/gl_shader_manager.cpp),
+[draw processing](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/command_processor.cpp),
+and [surface cache](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp).
+Cara adds two further pieces:
+
+- **Azahar FastInterp.** Cara adapts Azahar's ARM interpreter for execution without
+  CPU JIT. Guest instructions become decoded data dispatched to precompiled
+  handlers in the signed app. Cara adds integration with its memory, scheduling,
+  and save-state systems.
+- **Custom rendering enhancements.** Cara's GLES3 pipeline moves PICA vertex work
+  and packed vertex decoding onto the GPU, reuses prepared input data, and reduces
+  repeated uploads and CPU/GPU transfers. Direct GPU presentation avoids copying
+  every displayed frame through CPU memory. Rendering correctness and bounded
+  cache memory are part of the performance work.
+
+## A reusable core and a native shell
+
+Cara is developed as a reusable 3DS core for integration into Delta, alongside
+its own standalone iOS shell. The shell provides game loading from Files, touch
+controls, customizable Delta-compatible skins, audio, save states, and iCloud
+save-folder support. Delta integration is a development target; the standalone
+Cara app is the playable build provided here.
 
 ## Features
 
