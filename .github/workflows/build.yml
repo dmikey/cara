@@ -40,7 +40,7 @@ jobs:
         run: |
           python3 tools/prepare.py
           python3 tools/audit_branding.py
-          python3 -m py_compile tools/benchmark_gpu_inputs.py tools/capture_profile_checkpoint.py tools/summarize_phase_cpu.py tools/sample_device_stacks.py tools/_sample_device_stacks_lldb.py tools/benchmark_speed_cap.py
+          python3 -m py_compile tools/benchmark_gpu_inputs.py tools/capture_profile_checkpoint.py tools/summarize_phase_cpu.py tools/sample_device_stacks.py tools/_sample_device_stacks_lldb.py tools/benchmark_speed_cap.py tools/build_ios_shell_preview.py tools/make_skin.py
       - name: Build
         run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
       - name: Audit linked no-JIT binary
@@ -81,6 +81,11 @@ jobs:
           work/build-mac/bin/cara-interval-cache-self-test
           work/build-mac/bin/cara-input-self-test
           work/build-mac/bin/cara-save-sync-self-test
+          work/build-mac/bin/cara-play-profile-self-test
+          work/build-mac/bin/cara-input-hub-self-test
+          work/build-mac/bin/cara-state-catalog-self-test
+          work/build-mac/bin/cara-configuration-self-test
+          work/build-mac/bin/cara-library-self-test
           work/build-mac/bin/cara-skin-self-test
           CARA_RASTER_THREADS=1 work/build-mac/bin/cara-raster-self-test
           CARA_RASTER_THREADS=4 work/build-mac/bin/cara-raster-self-test

@@ -7,6 +7,7 @@
 @property(nonatomic,readonly) NSDictionary* info;
 @property(nonatomic,readonly) NSDictionary<NSString*,NSData*>* assets;
 + (instancetype)loadURL:(NSURL*)url error:(NSError**)error;
+- (NSDictionary*)strictRepresentationForPad:(BOOL)pad landscape:(BOOL)landscape;
 - (NSDictionary*)representationForPad:(BOOL)pad landscape:(BOOL)landscape;
 @end
 
