@@ -80,7 +80,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     if (indexed_inputs==6) {
         glGetIntegerv(GL_ACTIVE_TEXTURE,&saved_active); glActiveTexture(GL_TEXTURE10);
         glGetIntegerv(GL_TEXTURE_BINDING_2D,&saved_texture10);
-        glGetIntegeri_v(GL_SAMPLER_BINDING,10,&saved_sampler10);
+        glGetIntegerv(GL_SAMPLER_BINDING,&saved_sampler10);
         glActiveTexture(static_cast<GLenum>(saved_active));
     }
     SCOPE_EXIT({
