@@ -85,7 +85,15 @@ int main(int argc, char** argv) {
         Window window; auto& system = Core::System::GetInstance();
         const auto status = system.Load(window, std::filesystem::absolute(argv[1]).string());
         if (status != Core::System::ResultStatus::Success) throw std::runtime_error("Counter ELF load failed: " + std::to_string(unsigned(status)));
-        Run(system, 500); const auto saved = Inspect(system);
+        Run(system, 500);
+        auto table=system.Memory().GetCurrentPageTable();
+        system.Memory().MapMemoryRegion(*table, Memory::VRAM_VADDR, Memory::PAGE_SIZE,
+                                        system.Memory().GetPhysicalRef(Memory::VRAM_PADDR));
+        // A host renderer may retain page-cache markers even after a flush. The
+        // software fixture deliberately leaves one to exercise cold GPU recovery.
+        system.Memory().RasterizerMarkRegionCached(Memory::VRAM_PADDR, Memory::PAGE_SIZE, true);
+        table.reset();
+        const auto saved = Inspect(system);
         if (!saved.counter) throw std::runtime_error("Counter fixture did not run");
         const auto path = output + "/checkpoint.carastate";
         std::cout << "Saving CPU, kernel, RAM, GPU and HLE DSP state" << std::endl;
@@ -98,6 +106,10 @@ int main(int argc, char** argv) {
         system.LoadStateFromPath(path);
         if (!previous_process.expired()) throw std::runtime_error("Previous process leaked after state load");
         if (!(Inspect(system) == saved)) throw std::runtime_error("Restore did not reproduce CPU/RAM/timing state");
+        if (system.Memory().GetCurrentPageTable()->attributes[Memory::VRAM_VADDR >> Memory::PAGE_BITS]!=Memory::PageType::Memory)
+            throw std::runtime_error("Restored page retained a stale host GPU marker");
+        system.Memory().RasterizerMarkRegionCached(Memory::VRAM_PADDR, Memory::PAGE_SIZE, true);
+        system.Memory().RasterizerMarkRegionCached(Memory::VRAM_PADDR, Memory::PAGE_SIZE, false);
         Run(system, 500);
         if (!(Inspect(system) == future)) {
             const auto actual=Inspect(system);

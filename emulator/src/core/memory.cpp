@@ -207,6 +207,19 @@ MemorySystem::~MemorySystem() = default;
 template <class Archive>
 void MemorySystem::serialize(Archive& ar, const unsigned int file_version) {
     ar&* impl.get();
+    if (Archive::is_loading::value) {
+        // These flags describe host renderer resources, which are rebuilt after a
+        // state load. Saved VRAM/RAM is authoritative; no old GPU surface exists.
+        impl->cache_marker = {};
+        for (auto& table : impl->page_table_list) {
+            if (!table) throw std::runtime_error("Invalid saved page table");
+            for (std::size_t page=0;page<PAGE_TABLE_NUM_ENTRIES;++page) {
+                if (table->attributes[page] != PageType::RasterizerCachedMemory) continue;
+                table->attributes[page]=PageType::Memory;
+                table->pointers[page]=GetPointerForRasterizerCache(static_cast<VAddr>(page << PAGE_BITS));
+            }
+        }
+    }
 }
 
 SERIALIZE_IMPL(MemorySystem)
@@ -273,7 +286,8 @@ MemoryRef MemorySystem::GetPointerForRasterizerCache(VAddr addr) {
 }
 
 void MemorySystem::RegisterPageTable(std::shared_ptr<PageTable> page_table) {
-    impl->page_table_list.push_back(page_table);
+    if (std::find(impl->page_table_list.begin(), impl->page_table_list.end(), page_table)==impl->page_table_list.end())
+        impl->page_table_list.push_back(page_table);
 }
 
 void MemorySystem::UnregisterPageTable(std::shared_ptr<PageTable> page_table) {

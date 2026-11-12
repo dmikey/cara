@@ -40,7 +40,9 @@ void Process::serialize(Archive& ar, const unsigned int file_version) {
     ar& ideal_processor;
     ar& status;
     ar& process_id;
+    if (Archive::is_loading::value) kernel.memory.UnregisterPageTable(vm_manager.page_table);
     ar& vm_manager;
+    if (Archive::is_loading::value) kernel.memory.RegisterPageTable(vm_manager.page_table);
     ar& memory_used;
     ar& memory_region;
     ar& tls_slots;
