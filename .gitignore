@@ -12,6 +12,9 @@ __pycache__/
 *.nds
 *.zip
 *.ipa
+*.carastate
+*.carastate.tmp
+*.cst
 *.app/
 *.mobileprovision
 *.p12

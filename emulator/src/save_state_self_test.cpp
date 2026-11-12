@@ -16,6 +16,7 @@
 #include "common/logging/filter.h"
 #include "core/arm/arm_interface.h"
 #include "core/core.h"
+#include "core/savestate.h"
 #include "core/hle/kernel/kernel.h"
 #include "core/hle/kernel/process.h"
 #include "core/frontend/applets/default_applets.h"
@@ -114,6 +115,18 @@ int main(int argc, char** argv) {
             if (!(Inspect(system) == future)) throw std::runtime_error("Repeated load changed continuation");
         }
         std::cout << "12 repeated loads with matching continuation passed" << std::endl;
+        const auto slot_checkpoint=Inspect(system);
+        system.SaveState(Core::SaveStateSlotCount);
+        if (Core::ListSaveStates(system.GetTitleID()).empty()) throw std::runtime_error("Saved slot was not listed");
+        Run(system, 50);
+        system.LoadState(Core::SaveStateSlotCount);
+        if (!(Inspect(system)==slot_checkpoint)) throw std::runtime_error("Numbered slot round trip failed");
+        for (const u32 invalid_slot : {0u, Core::SaveStateSlotCount+1}) {
+            bool rejected=false;
+            try { system.SaveState(invalid_slot); } catch (const std::exception&) { rejected=true; }
+            if (!rejected) throw std::runtime_error("Invalid slot was accepted");
+        }
+        std::cout << "Numbered slots and slot bounds passed" << std::endl;
         const auto original = Read(path);
         auto reject = [&](std::vector<u8> bytes, const char* label) {
             const auto before = Inspect(system); const auto invalid = output + "/invalid.carastate"; Write(invalid, bytes);
@@ -125,6 +138,9 @@ int main(int argc, char** argv) {
         bytes = original; bytes[8] ^= 0x40; reject(bytes, "Unsupported format");
         bytes = original; bytes[16] ^= 1; reject(bytes, "Wrong game");
         bytes = original; bytes[48] ^= 1; reject(bytes, "Wrong engine");
+        bytes = original; bytes[144] ^= 1; reject(bytes, "Wrong system mode");
+        bytes = original; bytes[148] ^= 1; reject(bytes, "Wrong game revision");
+        bytes = original; bytes[180] ^= 1; reject(bytes, "Wrong CPU backend");
         bytes = original; bytes.back() ^= 0x80; reject(bytes, "Corrupt payload");
         // A valid checksum/compression envelope containing a late archive truncation
         // exercises rollback after the engine has already begun deserialization.

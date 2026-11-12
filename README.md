@@ -29,6 +29,7 @@ Both completed the same 9,000-refresh Xenoblade opening replay at native render
 resolution, 100% guest CPU clock, with sound enabled and scripted A presses at
 refreshes 900 and 1500. Both used FastInterp with CPU and host shader JIT off.
 The same ROM was selected through Files, with separate save fixtures and app containers.
+Cara measurements use checkpoint `a9e0658`, before save-state support.
 
 | Measurement | Cara GLES3 | Azahar / MoltenVK |
 |---|---:|---:|
@@ -42,6 +43,28 @@ FIFO presentation and spent substantial time waiting on presentation. The builds
 also used different frontends and compiler settings, so this does not isolate the
 cost of GLES3 versus Metal. Memory was sampled every 300 refreshes. Audio counts
 include startup and recovery buffering; output implementations differed.
+
+### Manic with Azahar on M4 iPad
+
+Manic 2.0.2 completed a 9,000-refresh Xenoblade opening replay in 154.42 seconds
+at 97.4% average emulation speed. It used its bundled Azahar core with FastInterp,
+100% guest CPU clock, native render resolution, sound enabled, and CPU and host
+shader JIT disabled. Scripted A presses occurred at refreshes 900 and 1500.
+
+| Measurement | Cara GLES3 | Manic / Azahar |
+|---|---:|---:|
+| Emulation speed | 99.5% | 97.4% |
+| Replay duration | 151.24 s | 154.42 s |
+| Peak sampled physical footprint | 758 MiB | 1373 MiB |
+
+Manic's sound was initially reported clean, with crackling later in the replay.
+Two late 300-refresh windows ran at 76.4% and 70.1% speed. Its audio instrumentation
+counted frames submitted to the frontend, so no comparable output-underrun
+percentage is available. This was a privately re-signed release with compiled
+timing and input instrumentation; its renderer and audio frameworks were retained.
+The apps used separate save data and different Azahar revisions. These results
+describe this opening replay, rather than sustained gameplay or a renderer-only
+comparison. Manic's separate Citra core and its underclocked presets were not measured.
 
 ## Attribution
 

@@ -104,8 +104,10 @@ Header ReadHeader(FileUtil::IOFile& file) {
 
 std::vector<SaveStateInfo> ListSaveStates(u64 title) {
     std::vector<SaveStateInfo> states;
+    const auto& system=System::GetInstance();
+    const auto* hash=!title && system.IsPoweredOn() && system.GetTitleID()==title ? &system.StateGameHash() : nullptr;
     for (u32 slot = 1; slot <= SaveStateSlotCount; ++slot) {
-        const auto path = StatePath(title, slot);
+        const auto path = StatePath(title, slot, hash);
         if (!FileUtil::Exists(path)) continue;
         try {
             FileUtil::IOFile file(path, "rb");
