@@ -2935,6 +2935,12 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
             // Add 4 when (increment == before): STMIB/LDMIB, STMDA/LDMDA
             if (increment == before)
                 base_off += 4;
+            out.lsm.contiguous_first = 0xFF;
+            if (count == 4 || count == 8) {
+                const auto first = std::countr_zero(out.lsm.reg_list);
+                if ((u32(out.lsm.reg_list) >> first) == ((1u << count) - 1))
+                    out.lsm.contiguous_first = static_cast<u8>(first);
+            }
             out.lsm.count = static_cast<u8>(count);
             out.lsm.base_off = static_cast<s8>(base_off);
             out.lsm.wb_delta = static_cast<s16>(increment ? static_cast<s32>(count * 4)

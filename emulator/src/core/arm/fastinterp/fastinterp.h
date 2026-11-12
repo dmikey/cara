@@ -136,6 +136,7 @@ private:
     bool stepping_{false};
     bool decode_breakpoints_{false};
     bool ram_burst_{false};
+    bool contiguous_transfers_{false};
 
     FusionStats fusion_stats_;
 

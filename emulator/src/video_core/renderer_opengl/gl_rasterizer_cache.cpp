@@ -27,6 +27,7 @@
 #include "common/color.h"
 #include "common/hash.h"
 #include "common/frame_timing.h"
+#include "video_core/renderer_opengl/gl_reinterpret_lookup_cache.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
 #include "common/microprofile.h"
@@ -1785,6 +1786,18 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
 bool RasterizerCacheOpenGL::NoUnimplementedReinterpretations(const Surface& surface,
                                                              SurfaceParams& params,
                                                              const SurfaceInterval& interval) {
+    const bool profile = Common::FrameTiming::RenderBookkeepingProfileEnabled();
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ReinterpretCheck, profile);
+    static const bool reuse = [] {
+        const char* value = std::getenv("CARA_RENDER_BOOKKEEPING_REUSE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    const bool count_lookups = Common::FrameTiming::counters.enabled && (profile || reuse);
+    // RGBA8 is the only repeated entry (nine implicit zero initializers).
+    // The first matching format for 32bpp is RGBA8, so one cached slot suffices.
+    ReinterpretLookupCache<PixelFormat, Surface, 1> lookup_cache;
+    bool seen_rgba8 = false;
+    if (count_lookups) ++Common::FrameTiming::counters.render_reinterpret_invocations;
     static constexpr std::array<PixelFormat, 17> all_formats{
         PixelFormat::RGBA8, PixelFormat::RGB8,   PixelFormat::RGB5A1, PixelFormat::RGB565,
         PixelFormat::RGBA4, PixelFormat::D16,    PixelFormat::D24, PixelFormat::D24S8,
@@ -1795,8 +1808,19 @@ bool RasterizerCacheOpenGL::NoUnimplementedReinterpretations(const Surface& surf
             params.pixel_format = format;
             // This could potentially be expensive,
             // although experimentally it hasn't been too bad
-            Surface test_surface =
-                FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore, interval);
+            if (count_lookups) {
+                if (format == PixelFormat::RGBA8) {
+                    if (seen_rgba8) ++Common::FrameTiming::counters.render_reinterpret_repeat_opportunities;
+                    seen_rgba8 = true;
+                }
+            }
+            const auto result = lookup_cache.Get(reuse, format, [&] {
+                if (count_lookups) ++Common::FrameTiming::counters.render_reinterpret_find_calls;
+                return FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore, interval);
+            });
+            if (count_lookups && result.reused)
+                ++Common::FrameTiming::counters.render_reinterpret_avoided_calls;
+            const Surface& test_surface = result.value;
             if (test_surface != nullptr) {
                 LOG_WARNING(Render_OpenGL, "Missing pixel_format reinterpreter: {} -> {}", (u32)format,
                             (u32)surface->pixel_format);

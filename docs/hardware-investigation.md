@@ -936,3 +936,23 @@ audio-queue callback CPU is outside these categories. These are CPU timings, not
 hardware GPU execution. Raw counts, clock failures/overflow and a clock-read cost
 calibration accompany the data. Diagnostics are opt-in and their frame times
 must not be used as uninstrumented performance results.
+
+
+The exclusive Stories grass capture at full guest clock and audio partitions
+23.38 ms/refresh of RunLoop CPU into 12.03 ms CPU execution/memory and 11.08 ms
+graphics-command CPU, with 0.10 ms SVC and 0.03 ms scheduled DSP work. Coverage
+was 99.77% of thread CPU; no clock failures/overflow occurred. Clock-read cost
+was estimated at 0.126 ms/refresh. The matched categories-off baseline was
+25.252 ms/refresh wall time; diagnostic pixels and workload matched. These are
+CPU measurements, not GPU execution timings.
+
+Two independent default-off experiments now target that split.
+`CARA_RENDER_BOOKKEEPING_REUSE` memoizes repeated pure format lookups within one
+validation call, preserving format mutations and warning order. Optional
+`CARA_RENDER_BOOKKEEPING_PROFILE` separates framebuffer/texture acquisition,
+shader setup and dirty-region invalidation; reinterpretation timing is nested
+and must not be added twice. `CARA_FASTINTERP_CONTIGUOUS_TRANSFERS` uses exact
+16/32-byte copies for decoded contiguous register groups wholly within mapped
+RAM, retaining existing PC/writeback and fallback behavior. Target comparisons
+must use one binary and one newly compatible checkpoint, with independent
+controls and identical rendered output before any default is changed.

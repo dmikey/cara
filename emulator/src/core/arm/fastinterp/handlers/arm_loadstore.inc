@@ -415,7 +415,24 @@ handle_Ldm: {
     const u8* base_page = local_page_ptrs[current >> FASTINTERP_PAGE_BITS];
     bool same_page = inst->lsm.count && (current & FASTINTERP_PAGE_MASK) + inst->lsm.count * 4 <= FASTINTERP_PAGE_MASK + 1;
 
-    if (ram_burst_ && inst->lsm.count <= 4 && base_page != nullptr && same_page) {
+    // Restrict bulk copies to direct RAM on one guest page. The extra host
+    // range check also preserves scalar ordering in aliased test mappings.
+    bool contiguous_ram = false;
+    if (contiguous_transfers_ && inst->lsm.contiguous_first != 0xFF && base_page && same_page) {
+        contiguous_ram = ContiguousTransferRangesDisjoint(
+            reinterpret_cast<std::uintptr_t>(base_page), current & FASTINTERP_PAGE_MASK,
+            inst->lsm.count * 4, reinterpret_cast<std::uintptr_t>(state_.regs.data()));
+    }
+    if (contiguous_ram) {
+        if (Common::FrameTiming::counters.enabled) {
+            ++Common::FrameTiming::counters.contiguous_transfer_loads;
+            Common::FrameTiming::counters.contiguous_transfer_bytes += inst->lsm.count * 4;
+        }
+        const auto* source = base_page + (current & FASTINTERP_PAGE_MASK);
+        auto* destination = &state_.regs[inst->lsm.contiguous_first];
+        if (inst->lsm.count == 4) std::memcpy(destination, source, 16);
+        else std::memcpy(destination, source, 32);
+    } else if (ram_burst_ && inst->lsm.count <= 4 && base_page != nullptr && same_page) {
         const u8* source = base_page + (current & FASTINTERP_PAGE_MASK);
         u32 remaining = reg_list;
         while (remaining) {
@@ -476,7 +493,24 @@ handle_Stm: {
     u8* base_page = local_page_ptrs[current >> FASTINTERP_PAGE_BITS];
     bool same_page = inst->lsm.count && (current & FASTINTERP_PAGE_MASK) + inst->lsm.count * 4 <= FASTINTERP_PAGE_MASK + 1;
 
-    if (ram_burst_ && inst->lsm.count <= 4 && base_page != nullptr && same_page) {
+    // Restrict bulk copies to direct RAM on one guest page. The extra host
+    // range check also preserves scalar ordering in aliased test mappings.
+    bool contiguous_ram = false;
+    if (contiguous_transfers_ && inst->lsm.contiguous_first != 0xFF && base_page && same_page) {
+        contiguous_ram = ContiguousTransferRangesDisjoint(
+            reinterpret_cast<std::uintptr_t>(base_page), current & FASTINTERP_PAGE_MASK,
+            inst->lsm.count * 4, reinterpret_cast<std::uintptr_t>(state_.regs.data()));
+    }
+    if (contiguous_ram) {
+        if (Common::FrameTiming::counters.enabled) {
+            ++Common::FrameTiming::counters.contiguous_transfer_stores;
+            Common::FrameTiming::counters.contiguous_transfer_bytes += inst->lsm.count * 4;
+        }
+        const auto* source = &state_.regs[inst->lsm.contiguous_first];
+        auto* destination = base_page + (current & FASTINTERP_PAGE_MASK);
+        if (inst->lsm.count == 4) std::memcpy(destination, source, 16);
+        else std::memcpy(destination, source, 32);
+    } else if (ram_burst_ && inst->lsm.count <= 4 && base_page != nullptr && same_page) {
         u8* destination = base_page + (current & FASTINTERP_PAGE_MASK);
         u32 remaining = reg_list;
         while (remaining) {

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <array>
 #include <bit>
+#include <limits>
+#include "core/arm/fastinterp/arm_tick_counts.h"
+#include <bit>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +31,184 @@ int main() {
     table->pointers[1] = TestMemory(code);
     memory.SetCurrentPageTable(table);
     fast->SetPageTable(table);
+    if (std::getenv("CARA_CONTIGUOUS_TRANSFERS_TEST")) {
+        using Core::FastInterp::ContiguousTransferRangesDisjoint;
+        const auto maximum = std::numeric_limits<std::uintptr_t>::max();
+        if (!ContiguousTransferRangesDisjoint(0x1000, 0, 16, 0x2000) ||
+            !ContiguousTransferRangesDisjoint(0x1ff0, 0, 16, 0x2000) ||
+            !ContiguousTransferRangesDisjoint(0x2040, 0, 16, 0x2000) ||
+            ContiguousTransferRangesDisjoint(0x1ff1, 0, 16, 0x2000) ||
+            ContiguousTransferRangesDisjoint(0x203f, 0, 16, 0x2000) ||
+            ContiguousTransferRangesDisjoint(maximum, 1, 16, 0x2000) ||
+            ContiguousTransferRangesDisjoint(maximum - 7, 0, 16, 0x2000) ||
+            ContiguousTransferRangesDisjoint(0x1000, 0, 16, maximum - 7) ||
+            ContiguousTransferRangesDisjoint(0x1000, 0, 0, 0x2000)) {
+            std::cerr << "contiguous transfer host-range guard mismatch\n";
+            return 1;
+        }
+        std::array<u8, 4096> page_a{}, page_b{};
+        table->attributes[3] = table->attributes[4] = Memory::PageType::Memory;
+        table->pointers[3] = TestMemory(page_a);
+        table->pointers[4] = TestMemory(page_b);
+        unsigned cases = 0;
+        u64 hash = 1469598103934665603ull;
+        auto record = [&](u64 value) { hash = (hash ^ value) * 1099511628211ull; };
+        for (bool load : {false, true})
+            for (bool before : {false, true})
+                for (bool increment : {false, true})
+                    for (bool writeback : {false, true})
+                        for (bool user : {false, true})
+                            for (u16 mask : {u16(0x000f), u16(0x0078), u16(0x0780), u16(0x7800),
+                                             u16(0xf000), u16(0x00ff), u16(0x0ff0), u16(0xff00),
+                                             u16(0), u16(1), u16(0x0f0f), u16(0x500f)})
+                                for (unsigned rn : {0u, 2u, 7u, 12u}) {
+                                    const unsigned bytes = std::popcount(mask) * 4;
+                                    for (unsigned offset :
+                                         {0u, 3u, 4096u - bytes, 4097u - bytes, 4095u})
+                                        for (unsigned predicate : {0u, 1u, 2u}) {
+                                            std::array<u8, 8192> expected_memory{};
+                                            for (unsigned i = 0; i < expected_memory.size(); ++i)
+                                                expected_memory[i] = u8(i * 13 + 37);
+                                            std::copy_n(expected_memory.data(), 4096,
+                                                        page_a.data());
+                                            std::copy_n(expected_memory.data() + 4096, 4096,
+                                                        page_b.data());
+                                            std::array<u32, 16> expected{};
+                                            for (unsigned i = 0; i < 15; ++i) {
+                                                expected[i] = 0x9e3779b9u * (i + 1);
+                                                fast->SetReg(i, expected[i]);
+                                            }
+                                            const u32 start = 0x3000 + offset;
+                                            const u32 base = increment
+                                                                 ? start - (before ? 4 : 0)
+                                                                 : start + bytes - (before ? 0 : 4);
+                                            expected[rn] = base;
+                                            fast->SetReg(rn, base);
+                                            const bool executes = predicate != 1;
+                                            const u32 cpsr =
+                                                predicate == 2 ? 0xe0000010u : 0xa0000010u;
+                                            code[0] = ((predicate == 0 ? 14u : 0u) << 28) |
+                                                      0x08000000u | (u32(before) << 24) |
+                                                      (u32(increment) << 23) | (u32(user) << 22) |
+                                                      (u32(writeback) << 21) | (u32(load) << 20) |
+                                                      (rn << 16) | mask;
+                                            expected[15] =
+                                                0x1008; // STM's established pipeline PC source.
+                                            if (executes) {
+                                                unsigned position = offset;
+                                                for (unsigned reg = 0; reg < 16; ++reg)
+                                                    if (mask & (1u << reg)) {
+                                                        if (load)
+                                                            std::memcpy(&expected[reg],
+                                                                        expected_memory.data() +
+                                                                            position,
+                                                                        4);
+                                                        else
+                                                            std::memcpy(expected_memory.data() +
+                                                                            position,
+                                                                        &expected[reg], 4);
+                                                        position += 4;
+                                                    }
+                                                if (writeback)
+                                                    expected[rn] =
+                                                        increment ? base + bytes : base - bytes;
+                                            }
+                                            u32 expected_pc = 0x1004, expected_cpsr = cpsr;
+                                            if (executes && load && (mask & 0x8000)) {
+                                                expected_pc = expected[15] & ~1u;
+                                                expected_cpsr |= (expected[15] & 1) ? 0x20 : 0;
+                                            }
+                                            expected[15] = expected_pc;
+                                            fast->ClearInstructionCache();
+                                            fast->SetCPSR(cpsr);
+                                            fast->SetPC(0x1000);
+                                            const auto tick_before =
+                                                timing.GetTimer(0)->GetDowncount();
+                                            fast->Step();
+                                            const auto ticks =
+                                                tick_before - timing.GetTimer(0)->GetDowncount();
+                                            bool passed =
+                                                fast->GetPC() == expected_pc &&
+                                                fast->GetCPSR() == expected_cpsr &&
+                                                ticks == Core::TicksForInstruction(false, code[0]);
+                                            for (unsigned i = 0; i < 16; ++i) {
+                                                passed &= fast->GetReg(i) == expected[i];
+                                                record(fast->GetReg(i));
+                                            }
+                                            passed &=
+                                                std::memcmp(page_a.data(), expected_memory.data(),
+                                                            4096) == 0 &&
+                                                std::memcmp(page_b.data(),
+                                                            expected_memory.data() + 4096,
+                                                            4096) == 0;
+                                            if (!passed) {
+                                                std::cerr
+                                                    << "contiguous transfer oracle mismatch case="
+                                                    << cases << " instruction=" << std::hex
+                                                    << code[0] << "\n";
+                                                return 1;
+                                            }
+                                            record(ticks);
+                                            record(fast->GetCPSR());
+                                            ++cases;
+                                        }
+                                }
+        // A final word straddling guest UINT32_MAX must wrap into page zero;
+        // the entire-span fast path must reject it and retain coherent byte reads.
+        table->attributes[0xfffff] = table->attributes[0] = Memory::PageType::Memory;
+        table->pointers[0xfffff] = TestMemory(page_a);
+        table->pointers[0] = TestMemory(page_b);
+        for (bool load : {false, true})
+            for (bool writeback : {false, true}) {
+                std::array<u8, 8192> expected_memory{};
+                for (unsigned i = 0; i < expected_memory.size(); ++i)
+                    expected_memory[i] = u8(i * 17 + 43);
+                std::copy_n(expected_memory.data(), 4096, page_a.data());
+                std::copy_n(expected_memory.data() + 4096, 4096, page_b.data());
+                std::array<u32, 16> expected{};
+                for (unsigned i = 0; i < 15; ++i) {
+                    expected[i] = 0x10203040u + i * 977;
+                    fast->SetReg(i, expected[i]);
+                }
+                expected[2] = 0xfffffff1;
+                fast->SetReg(2, expected[2]);
+                for (unsigned reg = 3; reg <= 6; ++reg) {
+                    const unsigned offset = 4081 + (reg - 3) * 4;
+                    if (load)
+                        std::memcpy(&expected[reg], expected_memory.data() + offset, 4);
+                    else
+                        std::memcpy(expected_memory.data() + offset, &expected[reg], 4);
+                }
+                if (writeback)
+                    expected[2] = 1;
+                expected[15] = 0x1004;
+                code[0] = 0xE8820078u | (u32(load) << 20) | (u32(writeback) << 21);
+                fast->ClearInstructionCache();
+                fast->SetCPSR(0xa0000010);
+                fast->SetPC(0x1000);
+                const auto before = timing.GetTimer(0)->GetDowncount();
+                fast->Step();
+                bool passed =
+                    fast->GetCPSR() == 0xa0000010 && before - timing.GetTimer(0)->GetDowncount() ==
+                                                         Core::TicksForInstruction(false, code[0]);
+                for (unsigned reg = 0; reg < 16; ++reg) {
+                    passed &= fast->GetReg(reg) == expected[reg];
+                    record(fast->GetReg(reg));
+                }
+                passed &= std::memcmp(page_a.data(), expected_memory.data(), 4096) == 0 &&
+                          std::memcmp(page_b.data(), expected_memory.data() + 4096, 4096) == 0;
+                if (!passed) {
+                    std::cerr << "guest address wrap transfer mismatch\n";
+                    return 1;
+                }
+                ++cases;
+            }
+        std::cout
+            << cases
+            << " contiguous transfer scalar-oracle cases and 9 alias/wrap guards passed; trace="
+            << hash << "\n";
+        return 0;
+    }
     if (std::getenv("CARA_ADD_CMP_TEST")) {
         static_assert(sizeof(Core::FastInterp::DecodedInst) == 20);
         auto rotate = [](u32 encoding) {
@@ -375,10 +556,11 @@ int main() {
             const char* name;
             u32 load, store;
         };
-        const std::array<Fixture, 5> fixtures{{
+        const std::array<Fixture, 6> fixtures{{
             {"conditional_bkpt", 0x31200A76, 0xE1A03003},
             {"ldm_stm_8", 0xE89107F8, 0xE88207F8},
             {"ldm_stm_3", 0xE8910038, 0xE8820038},
+            {"ldm_stm_4", 0xE8910078, 0xE8820078},
             {"vldm_vstm_s16", 0xEC910A10, 0xEC820A10},
             {"vldm_vstm_d8", 0xEC910B10, 0xEC820B10},
         }};

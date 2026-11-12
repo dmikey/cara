@@ -6,10 +6,22 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include "common/common_types.h"
 #include "core/arm/fastinterp/fastinterp_flags.h"
 
 namespace Core::FastInterp {
+
+// Only compare integer host ranges here; never dereference artificial test addresses.
+constexpr bool ContiguousTransferRangesDisjoint(std::uintptr_t page, u32 offset, u32 bytes,
+                                                std::uintptr_t registers) {
+    constexpr auto maximum = std::numeric_limits<std::uintptr_t>::max();
+    constexpr auto register_bytes = 16 * sizeof(u32);
+    if (!bytes || page > maximum - offset) return false;
+    const auto memory = page + offset;
+    if (memory > maximum - bytes || registers > maximum - register_bytes) return false;
+    return memory + bytes <= registers || registers + register_bytes <= memory;
+}
 
 // ============================================================================
 // Instruction Opcodes
@@ -542,6 +554,7 @@ struct DecodedInst {
             u8 flags;     // P,U,S,W bits
             s8 base_off;  // Base-to-first-access offset (folds increment/before)
             s16 wb_delta; // Writeback delta: +count*4 or -count*4
+            u8 contiguous_first; // First of a contiguous 4/8-register span, or 0xFF.
         } lsm;
 
         // Branch format

@@ -1512,6 +1512,23 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"cpu_shader_ms_per_frame\":" + std::to_string((current.shader_seconds - previous_counters.shader_seconds) * 1000 / count) +
                                 ",\"guest_cpu_ms_per_frame\":" + std::to_string((current.guest_cpu_seconds - previous_counters.guest_cpu_seconds) * 1000 / count) +
                                 ",\"draw_ms_per_frame\":" + std::to_string((current.draw_seconds - previous_counters.draw_seconds) * 1000 / count) +
+                                ",\"draw_framebuffer_acquire_ms_per_frame\":" + std::to_string((current.draw_framebuffer_acquire_seconds - previous_counters.draw_framebuffer_acquire_seconds) * 1000 / count) +
+                                ",\"draw_framebuffer_acquire_calls\":" + std::to_string((current.draw_framebuffer_acquire_calls - previous_counters.draw_framebuffer_acquire_calls)) +
+                                ",\"draw_texture_acquire_ms_per_frame\":" + std::to_string((current.draw_texture_acquire_seconds - previous_counters.draw_texture_acquire_seconds) * 1000 / count) +
+                                ",\"draw_texture_acquire_calls\":" + std::to_string((current.draw_texture_acquire_calls - previous_counters.draw_texture_acquire_calls)) +
+                                ",\"draw_shader_setup_ms_per_frame\":" + std::to_string((current.draw_shader_setup_seconds - previous_counters.draw_shader_setup_seconds) * 1000 / count) +
+                                ",\"draw_shader_setup_calls\":" + std::to_string((current.draw_shader_setup_calls - previous_counters.draw_shader_setup_calls)) +
+                                ",\"draw_dirty_invalidate_ms_per_frame\":" + std::to_string((current.draw_dirty_invalidate_seconds - previous_counters.draw_dirty_invalidate_seconds) * 1000 / count) +
+                                ",\"draw_dirty_invalidate_calls\":" + std::to_string((current.draw_dirty_invalidate_calls - previous_counters.draw_dirty_invalidate_calls)) +
+                                ",\"render_reinterpret_check_ms_per_frame\":" + std::to_string((current.render_reinterpret_check_seconds - previous_counters.render_reinterpret_check_seconds) * 1000 / count) +
+                                ",\"render_reinterpret_check_calls\":" + std::to_string((current.render_reinterpret_check_calls - previous_counters.render_reinterpret_check_calls)) +
+                                ",\"render_reinterpret_invocations\":" + std::to_string((current.render_reinterpret_invocations - previous_counters.render_reinterpret_invocations)) +
+                                ",\"render_reinterpret_find_calls\":" + std::to_string((current.render_reinterpret_find_calls - previous_counters.render_reinterpret_find_calls)) +
+                                ",\"render_reinterpret_avoided_calls\":" + std::to_string((current.render_reinterpret_avoided_calls - previous_counters.render_reinterpret_avoided_calls)) +
+                                ",\"render_reinterpret_repeat_opportunities\":" + std::to_string((current.render_reinterpret_repeat_opportunities - previous_counters.render_reinterpret_repeat_opportunities)) +
+                                ",\"contiguous_transfer_loads\":" + std::to_string((current.contiguous_transfer_loads - previous_counters.contiguous_transfer_loads)) +
+                                ",\"contiguous_transfer_stores\":" + std::to_string((current.contiguous_transfer_stores - previous_counters.contiguous_transfer_stores)) +
+                                ",\"contiguous_transfer_bytes\":" + std::to_string((current.contiguous_transfer_bytes - previous_counters.contiguous_transfer_bytes)) +
                                 ",\"vertex_prepare_ms_per_frame\":" + std::to_string((current.vertex_prepare_seconds - previous_counters.vertex_prepare_seconds) * 1000 / count) +
                                 ",\"vertex_upload_ms_per_frame\":" + std::to_string((current.vertex_upload_seconds - previous_counters.vertex_upload_seconds) * 1000 / count) +
                                 ",\"vertex_orphan_upload_ms_per_frame\":" + std::to_string((current.vertex_orphan_upload_seconds - previous_counters.vertex_orphan_upload_seconds) * 1000 / count) +

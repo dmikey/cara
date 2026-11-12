@@ -129,6 +129,8 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     decode_breakpoints_ = bkpt && std::strcmp(bkpt, "1") == 0;
     const char* burst = std::getenv("CARA_FASTINTERP_RAM_BURST");
     ram_burst_ = burst && std::strcmp(burst, "1") == 0;
+    const char* contiguous = std::getenv("CARA_FASTINTERP_CONTIGUOUS_TRANSFERS");
+    contiguous_transfers_ = contiguous && std::strcmp(contiguous, "1") == 0;
 }
 
 ARM_FastInterp::~ARM_FastInterp() = default;

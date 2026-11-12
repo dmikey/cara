@@ -812,7 +812,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         }
     }
     state.draw.vertex_array = hw_vao.handle;
-    shader_program_manager->ApplyTo(state);
+    {
+        Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
+                                                   Common::FrameTiming::RenderBookkeepingProfileEnabled());
+        shader_program_manager->ApplyTo(state);
+    }
     if (!state.draw.shader_program) return false;
     state.Apply();
     const bool raw_inputs = ios_indexed_vertex_inputs == 2;
@@ -1148,7 +1152,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 
     state.draw.vertex_array = hw_vao.handle;
     state.draw.vertex_buffer = vertex_buffer.GetHandle();
-    shader_program_manager->ApplyTo(state);
+    {
+        Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
+                                                   Common::FrameTiming::RenderBookkeepingProfileEnabled());
+        shader_program_manager->ApplyTo(state);
+    }
     state.Apply();
 
     u8* buffer_ptr;
@@ -1280,8 +1288,12 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     Surface color_surface;
     Surface depth_surface;
     Common::Rectangle<u32> surfaces_rect;
-    std::tie(color_surface, depth_surface, surfaces_rect) =
-        res_cache.GetFramebufferSurfaces(using_color_fb, using_depth_fb, viewport_rect_unscaled);
+    {
+        Common::FrameTiming::Scope lookup(Common::FrameTiming::Phase::DrawFramebufferAcquire,
+                                         Common::FrameTiming::RenderBookkeepingProfileEnabled());
+        std::tie(color_surface, depth_surface, surfaces_rect) =
+            res_cache.GetFramebufferSurfaces(using_color_fb, using_depth_fb, viewport_rect_unscaled);
+    }
 
     u32 res_scale = 1;
     GLuint color_attachment = 0;
@@ -1296,6 +1308,9 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
 
     // Sync and bind the texture surfaces
     const auto pica_textures = regs.texturing.GetTextures();
+    {
+    Common::FrameTiming::Scope lookup(Common::FrameTiming::Phase::DrawTextureAcquire,
+                                     Common::FrameTiming::RenderBookkeepingProfileEnabled());
     for (unsigned texture_index = 0; texture_index < pica_textures.size(); ++texture_index) {
         const auto& texture = pica_textures[texture_index];
 
@@ -1395,6 +1410,8 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         } else {
             state.texture_units[texture_index].texture_2d = 0;
         }
+    }
+
     }
 
     Common::Rectangle<u32> draw_rect{
@@ -1551,7 +1568,11 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         state.draw.vertex_buffer = vertex_buffer.GetHandle();
         shader_program_manager->UseTrivialVertexShader();
         shader_program_manager->UseTrivialGeometryShader();
-        shader_program_manager->ApplyTo(state);
+        {
+            Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
+                                                       Common::FrameTiming::RenderBookkeepingProfileEnabled());
+            shader_program_manager->ApplyTo(state);
+        }
         state.Apply();
 
         std::size_t max_vertices = 3 * (VERTEX_BUFFER_SIZE / (3 * sizeof(HardwareVertex)));
@@ -1598,6 +1619,9 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
                                               draw_rect.right / res_scale,
                                               draw_rect.bottom / res_scale};
 
+    {
+    Common::FrameTiming::Scope invalidate(Common::FrameTiming::Phase::DrawDirtyInvalidate,
+                                         Common::FrameTiming::RenderBookkeepingProfileEnabled());
     if (color_surface != nullptr) {
         auto interval = color_surface->GetSubRectInterval(draw_rect_unscaled);
         res_cache.InvalidateRegion(boost::icl::first(interval), boost::icl::length(interval),
@@ -1609,6 +1633,7 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
                                    depth_surface);
     }
 
+    }
     return succeeded;
 }
 
@@ -2281,6 +2306,8 @@ void RasterizerOpenGL::SamplerInfo::SyncWithConfig(const TextureConfig& config) 
 }
 
 void RasterizerOpenGL::SetShader() {
+    Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
+                                           Common::FrameTiming::RenderBookkeepingProfileEnabled());
     shader_program_manager->UseFragmentShader(Pica::g_state.regs);
 }
 

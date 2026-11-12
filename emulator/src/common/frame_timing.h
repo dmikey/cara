@@ -20,6 +20,24 @@ struct PhaseCPUSamples {
 // Opt-in diagnostics on the emulation thread. No clocks are read during normal play.
 struct Counters {
     bool enabled = false;
+    double draw_framebuffer_acquire_seconds = 0;
+    std::uint64_t draw_framebuffer_acquire_calls = 0;
+    double draw_texture_acquire_seconds = 0;
+    std::uint64_t draw_texture_acquire_calls = 0;
+    double draw_shader_setup_seconds = 0;
+    std::uint64_t draw_shader_setup_calls = 0;
+    double draw_dirty_invalidate_seconds = 0;
+    std::uint64_t draw_dirty_invalidate_calls = 0;
+    double render_reinterpret_check_seconds = 0;
+    std::uint64_t render_reinterpret_check_calls = 0;
+    std::uint64_t render_reinterpret_invocations = 0;
+    std::uint64_t render_reinterpret_find_calls = 0;
+    std::uint64_t render_reinterpret_avoided_calls = 0;
+    std::uint64_t render_reinterpret_repeat_opportunities = 0;
+    std::uint64_t contiguous_transfer_loads = 0;
+    std::uint64_t contiguous_transfer_stores = 0;
+    std::uint64_t contiguous_transfer_bytes = 0;
+
     PhaseCPUSamples draw_submit_cpu_samples;
     PhaseCPUSamples vertex_orphan_cpu_samples;
     PhaseCPUSamples stream_map_cpu_samples;
@@ -114,10 +132,18 @@ struct Counters {
 };
 inline thread_local Counters counters;
 
-enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
+inline bool RenderBookkeepingProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_RENDER_BOOKKEEPING_PROFILE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
 class Scope {
 public:
-    explicit Scope(Phase phase_) : phase(phase_), active(counters.enabled) {
+    explicit Scope(Phase phase_, bool enabled = true) : phase(phase_), active(counters.enabled && enabled) {
         if (!active) return;
         started = std::chrono::steady_clock::now();
         int sample_phase = -1;
@@ -198,6 +224,21 @@ public:
         } else if (phase == Phase::ShaderCompile) {
             counters.shader_compile_seconds += seconds;
             ++counters.shader_compile_calls;
+        } else if (phase == Phase::DrawFramebufferAcquire) {
+            counters.draw_framebuffer_acquire_seconds += seconds;
+            ++counters.draw_framebuffer_acquire_calls;
+        } else if (phase == Phase::DrawTextureAcquire) {
+            counters.draw_texture_acquire_seconds += seconds;
+            ++counters.draw_texture_acquire_calls;
+        } else if (phase == Phase::DrawShaderSetup) {
+            counters.draw_shader_setup_seconds += seconds;
+            ++counters.draw_shader_setup_calls;
+        } else if (phase == Phase::DrawDirtyInvalidate) {
+            counters.draw_dirty_invalidate_seconds += seconds;
+            ++counters.draw_dirty_invalidate_calls;
+        } else if (phase == Phase::ReinterpretCheck) {
+            counters.render_reinterpret_check_seconds += seconds;
+            ++counters.render_reinterpret_check_calls;
         } else if (phase == Phase::GPUWait) {
             counters.gpu_wait_seconds += seconds;
         } else {

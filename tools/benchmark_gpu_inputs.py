@@ -59,13 +59,15 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos']) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile']) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
     if len({config['name'] for config in configs}) != len(configs):
         parser.error('configuration names must be unique')
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.resume_best and any(c.get('render_bookkeeping_profile',False) for c in configs):
+        parser.error('Renderer diagnostics cannot select a performance winner')
     env = os.environ.copy()
     env.setdefault('DEVELOPER_DIR', '/Volumes/Fast/Applications/Xcode.app/Contents/Developer')
 
@@ -100,6 +102,9 @@ def main():
                     'CARA_GPU_LIT_PAIR_PROBE':'1' if config.get('lit_pair_probe',False) else '0',
                     'CARA_GPU_LIT_VERTEX_REUSE':'1' if config.get('lit_vertex_reuse',False) else '0',
                     'CARA_FASTINTERP_RAM_BURST':'1' if config.get('ram_burst',False) else '0',
+                    'CARA_FASTINTERP_CONTIGUOUS_TRANSFERS':'1' if config.get('contiguous_transfers',False) else '0',
+                    'CARA_RENDER_BOOKKEEPING_REUSE':'1' if config.get('render_bookkeeping_reuse',False) else '0',
+                    'CARA_RENDER_BOOKKEEPING_PROFILE':'1' if config.get('render_bookkeeping_profile',False) else '0',
                     'CARA_FASTINTERP_DECODE_BKPT':'1' if config.get('decode_bkpt',False) else '0',
                     'CARA_SURFACE_FLUSH_TRACE':'1',
                     'CARA_RETAIN_SMALL_CPU_WRITES':'1' if config.get('retain_small_writes',False) else '0',
@@ -176,6 +181,7 @@ def main():
                   'vertex_upload_reused_bytes', 'vertex_upload_reused_textures',
                   'vertex_reuse_check_ms_per_frame', 'vertex_index_cache_hits',
                   'vertex_index_cache_misses', 'vertex_index_cache_bytes']
+        fields += ['draw_framebuffer_acquire_ms_per_frame', 'draw_framebuffer_acquire_calls', 'draw_texture_acquire_ms_per_frame', 'draw_texture_acquire_calls', 'draw_shader_setup_ms_per_frame', 'draw_shader_setup_calls', 'draw_dirty_invalidate_ms_per_frame', 'draw_dirty_invalidate_calls', 'render_reinterpret_check_ms_per_frame', 'render_reinterpret_check_calls', 'render_reinterpret_invocations', 'render_reinterpret_find_calls', 'render_reinterpret_avoided_calls', 'render_reinterpret_repeat_opportunities', 'contiguous_transfer_loads', 'contiguous_transfer_stores', 'contiguous_transfer_bytes']
         if args.phase_cpu_timing:
             fields += [phase+'_'+suffix for phase in ['draw_submit','vertex_orphan','stream_map','stream_unmap','uniform_upload','vertex_subimage']
                        for suffix in ['sample_wall_ms','sample_cpu_ms','samples','sample_clock_failures']]
