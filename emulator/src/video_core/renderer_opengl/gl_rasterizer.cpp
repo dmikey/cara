@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <set>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -56,6 +57,12 @@ RasterizerOpenGL::RasterizerOpenGL()
       index_buffer(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE),
       texture_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 11264 : TEXTURE_BUFFER_SIZE),
       texture_lf_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE) {
+
+#ifdef CARA_IOS_GLES
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE,&ios_vertex_max_texture_size);
+    LOG_INFO(Render_OpenGL,"GLES vertex atlas: width={} max_texture={} max_vertices={}",
+             IOS_VERTEX_INPUT_WIDTH,ios_vertex_max_texture_size,IOS_MAX_EXPANDED_VERTICES);
+#endif
 
     AllowShadow = (GLAD_GL_ARB_shader_image_load_store && GLAD_GL_ARB_shader_image_size &&
                    GLAD_GL_ARB_framebuffer_no_attachments) ||
@@ -443,25 +450,32 @@ bool RasterizerOpenGL::SetupGeometryShader() {
 
 bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     const auto& regs = Pica::g_state.regs;
-    if (regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No) {
-        return false;
-    }
-    if (!SetupVertexShader())
-        return false;
+    const auto reject=[&](const char* reason) {
 #ifdef CARA_IOS_GLES
-    if (!PrepareIOSVertices(is_indexed)) return false;
+        static const bool trace=std::getenv("CARA_VERTEX_FALLBACK_TRACE")!=nullptr;
+        if (trace) {
+            static std::set<std::string> reported;
+            if (reported.insert(reason).second)
+                LOG_INFO(Render_OpenGL,"GPU vertex path rejected: {} (vertices={})",reason,u32(regs.pipeline.num_vertices));
+        }
 #endif
-
-    if (!SetupGeometryShader())
         return false;
-
-    return Draw(true, is_indexed);
+    };
+    if (regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No) return reject("geometry shader");
+    if (!SetupVertexShader()) return reject("vertex shader translation");
+#ifdef CARA_IOS_GLES
+    if (!PrepareIOSVertices(is_indexed)) return reject("vertex input preparation");
+#endif
+    if (!SetupGeometryShader()) return reject("geometry setup");
+    const bool result=Draw(true,is_indexed);
+    if (!result) reject("draw submission");
+    return result;
 }
 
 #ifdef CARA_IOS_GLES
 bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexPrepare);
-    constexpr u32 MAX_VERTICES = 16384;
+    constexpr u32 MAX_VERTICES = IOS_MAX_EXPANDED_VERTICES;
     const auto& regs = Pica::g_state.regs;
     const auto& pipeline = regs.pipeline;
     const u32 count = pipeline.num_vertices;
@@ -485,6 +499,8 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     if (ios_triangle_indices.empty()) return false;
     const IOSVertexInputLayout layout(regs.vs);
     const size_t rows = (ios_triangle_indices.size() * layout.stride + IOS_VERTEX_INPUT_WIDTH - 1) / IOS_VERTEX_INPUT_WIDTH;
+    if (IOS_VERTEX_INPUT_WIDTH>unsigned(ios_vertex_max_texture_size) ||
+        rows>unsigned(ios_vertex_max_texture_size)) return false;
     ios_vertex_inputs.resize(rows * IOS_VERTEX_INPUT_WIDTH);
     Pica::VertexLoader loader(pipeline);
     Pica::DebugUtils::MemoryAccessTracker accesses;
@@ -572,7 +588,8 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     unsigned size_class = 0;
     unsigned rows = 1;
     while (rows < upload_rows) { rows *= 2; ++size_class; }
-    if (ios_vertex_upload_index++ < max_upload_draws && size_class < bank.sizes.size()) {
+    if (ios_vertex_upload_index++ < max_upload_draws && size_class < bank.sizes.size() &&
+        rows<=unsigned(ios_vertex_max_texture_size)) {
         auto& pool = bank.sizes[size_class];
         const size_t bytes = rows * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
         if (bank.used[size_class] == pool.size()) {

@@ -4,6 +4,8 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdlib>
+#include <unordered_set>
 #include <memory>
 #include <utility>
 #include "common/assert.h"
@@ -290,6 +292,17 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
 
 #ifdef CARA_IOS_GLES
         ++Common::FrameTiming::counters.cpu_vertex_draws;
+        static const bool trace_fallback=std::getenv("CARA_VERTEX_FALLBACK_TRACE")!=nullptr;
+        if (trace_fallback) {
+            static std::unordered_set<u64> reported;
+            const u32 count=regs.pipeline.num_vertices;
+            const u32 topology=static_cast<u32>(primitive_assembler.GetTopology());
+            const u32 gs=static_cast<u32>(regs.pipeline.use_gs.Value());
+            const u64 key=u64(count)|(u64(topology)<<32)|(u64(gs)<<36)|(u64(accelerate_draw)<<40);
+            if (reported.size()<64 && reported.insert(key).second)
+                LOG_INFO(Render_OpenGL,"CPU vertex fallback: vertices={} topology={} gs={} attempted={} assembler_empty={}",
+                         count,topology,gs,accelerate_draw,primitive_assembler.IsEmpty());
+        }
 #endif
         // Processes information about internal vertex attributes to figure out how a vertex is
         // loaded.

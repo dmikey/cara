@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#include <mach/mach.h>
 #import "ios/skin_controls.h"
 #include "audio_core/ios_sink.h"
 #ifdef CARA_PGO_GENERATE
@@ -31,6 +32,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include <cstdlib>
 #include <functional>
 #include <fstream>
+#include <iomanip>
 #include <thread>
 #include <sstream>
 #include "common/detached_tasks.h"
@@ -297,7 +299,7 @@ public:
 
 static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsigned clock) {
     NSString* value=[NSString stringWithFormat:@"%.0f%% speed",refreshesPerSecond*100.0/59.833997];
-    if (adaptive) value=[value stringByAppendingFormat:@" · CPU %u%% auto",clock];
+    if (adaptive) value=[value stringByAppendingFormat:@" · Guest CPU %u%% auto",clock];
     if (AudioCore::IOSAudioOutputFailed()) return [value stringByAppendingString:@" · Audio unavailable"];
     if (AudioCore::IsIOSAudioMuted()) return [value stringByAppendingString:@" · Muted"];
     return value;
@@ -777,7 +779,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                        << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
                        << ",\"thermal_state\":" << long(NSProcessInfo.processInfo.thermalState)
                        << ",\"gpu_vertex_draws\":" << timing.gpu_vertex_draws
-                       << ",\"cpu_vertex_draws\":" << timing.cpu_vertex_draws << "}\n";
+                       << ",\"cpu_vertex_draws\":" << timing.cpu_vertex_draws;
+                task_vm_info_data_t memory{}; mach_msg_type_number_t count=TASK_VM_INFO_COUNT;
+                if (task_info(mach_task_self(),TASK_VM_INFO,reinterpret_cast<task_info_t>(&memory),&count)==KERN_SUCCESS)
+                    report << ",\"physical_footprint_bytes\":" << memory.phys_footprint;
+                report << "}\n";
             }
         });
     };
@@ -837,8 +843,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 std::string error;
                 const bool passed = RunGPUVertexSelfTest(error);
                 std::ofstream report(user + "gpu-vertex-self-test.json");
-                report << "{\"passed\":" << (passed ? "true" : "false")
-                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color_packed_sparse_zero_clipping\"}\n";
+                GLint max_texture_size=0; glGetIntegerv(GL_MAX_TEXTURE_SIZE,&max_texture_size);
+                report << "{\"max_texture_size\":" << max_texture_size << ",\"passed\":" << (passed ? "true" : "false") << ",\"detail\":" << std::quoted(error)
+                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color_packed_sparse_zero_clipping_large_batches\"}\n";
                 LOG_INFO(Frontend, "GPU vertex fixture passed={} detail={}", passed, error);
                 if (!passed) emuWindow->graphics_error = error;
             }

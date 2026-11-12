@@ -270,14 +270,15 @@ private:
 #ifdef CARA_IOS_GLES
     bool PrepareIOSVertices(bool is_indexed);
     OGLTexture ios_vertex_fallback_texture;
+    GLint ios_vertex_max_texture_size = 0;
     struct IOSVertexUpload {
         OGLTexture texture;
         unsigned rows = 0;
     };
     struct IOSVertexFrameUploads {
-        // The input atlas has at most 2,048 rows at the expanded-vertex limit.
-        std::array<std::vector<IOSVertexUpload>, 12> sizes;
-        std::array<size_t, 12> used{};
+        // Power-of-two heights through 8,192 rows; the existing bank byte budget still applies.
+        std::array<std::vector<IOSVertexUpload>, 14> sizes;
+        std::array<size_t, 14> used{};
         size_t bytes = 0;
         size_t textures = 0;
     };

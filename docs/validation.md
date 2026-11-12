@@ -308,3 +308,32 @@ alone does not establish cloud sync. `CARA_SKIN_SELF_TEST=1` writes a synthetic
 UIKit/HID check; `CARA_CAPTURE_SKIN_UI=1` writes a UIKit composite using diagnostic
 game frames. Neither should be described as a physical touch test or literal
 screen recording.
+
+
+### Dark Moon large vertex batches
+
+On the M4 iPad, Luigi's Mansion: Dark Moon (`0004000000055F00`) submitted
+41,967-vertex triangle lists above the former 16,384-vertex GLES input limit.
+Those draws fell back to the CPU vertex interpreter. The policy limit is now
+65,536 expanded vertices, checked against the device's texture-size limit.
+A full sixteen-register input atlas uses at most 16 MiB and 8,192 rows;
+the existing upload-bank byte budget remains in force.
+
+The physical GPU fixture checks all outputs of 41,967- and 65,535-vertex
+atlases against the CPU interpreter, with both uniform-branch paths, quaternion
+alignment, viewport rounding, color and clipping checks. On the test iPad,
+a single large transform-feedback capture returned zeros starting at vertex
+4,092 even for a synthetic vertex-ID shader. Nonzero draw starts also failed.
+The validator therefore captures 3,072 vertices at a time using an explicit
+logical vertex base. It still checks every vertex across the complete atlas;
+regular rendering does not use transform feedback.
+
+In observed slow-scene windows at a 50% guest clock, mean refresh time changed
+from 51.10 ms to 26.81 ms. CPU vertex fallbacks dropped from four per refresh to
+zero, and CPU vertex shader time from 17.70 ms to zero. Input preparation still
+cost 9.91 ms, texture upload 3.90 ms and surface downloads 4.01 ms per refresh.
+These are separate scene observations, not a deterministic matched replay;
+the user reported speed increasing from about 35% to 62%, still below full speed.
+The 62% reading is emulation speed, not original guest CPU performance at the
+reduced clock. CPU clock, raster, 22,000 ARM/Thumb differential cases, New 3DS
+70% clock save-state regressions and the iOS no-JIT audit passed locally.

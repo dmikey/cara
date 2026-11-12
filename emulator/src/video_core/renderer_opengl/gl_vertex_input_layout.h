@@ -5,8 +5,10 @@
 #include "video_core/regs_shader.h"
 
 namespace OpenGL {
-// At the 16,384-vertex limit, even a full 16-register layout fits 2,048 rows.
+// A full 16-register layout at the policy limit occupies 16 MiB and 8,192 rows.
+// Each draw is also checked against the active device texture-size limit.
 constexpr unsigned IOS_VERTEX_INPUT_WIDTH = 128;
+constexpr unsigned IOS_MAX_EXPANDED_VERTICES = 65536;
 struct IOSVertexInputLayout {
     u16 mask = 0;
     unsigned stride = 0;
