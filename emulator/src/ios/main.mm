@@ -2,6 +2,8 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include <mach/mach.h>
+#include <sys/resource.h>
+#include <time.h>
 #import "ios/skin_controls.h"
 #include "audio_core/ios_sink.h"
 #ifdef CARA_PGO_GENERATE
@@ -869,7 +871,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 const bool passed = RunGPUVertexSelfTest(error);
                 std::ofstream report(user + "gpu-vertex-self-test.json");
                 GLint max_texture_size=0; glGetIntegerv(GL_MAX_TEXTURE_SIZE,&max_texture_size);
-                report << "{\"max_texture_size\":" << max_texture_size << ",\"passed\":" << (passed ? "true" : "false") << ",\"detail\":" << std::quoted(error)
+                GLint max_draw_buffers=0,max_color_attachments=0;
+                glGetIntegerv(GL_MAX_DRAW_BUFFERS,&max_draw_buffers);
+                glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS,&max_color_attachments);
+
+                report << "{\"max_texture_size\":" << max_texture_size << ",\"max_draw_buffers\":" << max_draw_buffers << ",\"max_color_attachments\":" << max_color_attachments << ",\"passed\":" << (passed ? "true" : "false") << ",\"detail\":" << std::quoted(error)
                        << ",\"fixtures\":\"uniform_branch_loop_quaternion_color_packed_sparse_zero_clipping_large_batches_indexed_u16_packed_bytes\"}\n";
                 LOG_INFO(Frontend, "GPU vertex fixture passed={} detail={}", passed, error);
                 if (!passed) emuWindow->graphics_error = error;
@@ -931,6 +937,17 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 std::vector<double> frame_times;
                 std::vector<std::string> timing_windows;
                 auto previous_counters = Common::FrameTiming::counters;
+                const bool host_cpu_timing=std::getenv("CARA_HOST_CPU_TIMING")!=nullptr;
+                const auto read_host_cpu=[]() -> std::pair<double,double> {
+                    timespec thread{}; rusage process{};
+                    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID,&thread)!=0 || getrusage(RUSAGE_SELF,&process)!=0)
+                        return {-1.0,-1.0};
+                    return {double(thread.tv_sec)+double(thread.tv_nsec)*1e-9,
+                            double(process.ru_utime.tv_sec+process.ru_stime.tv_sec)+
+                            double(process.ru_utime.tv_usec+process.ru_stime.tv_usec)*1e-6};
+                };
+                auto previous_host_cpu=host_cpu_timing?read_host_cpu():std::pair<double,double>{0,0};
+
                 std::vector<unsigned> test_press_frames;
                 const char* press_frames_env = std::getenv("CARA_TEST_PRESS_A_FRAMES");
                 if (target_frames && press_frames_env) {
@@ -1073,10 +1090,17 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                             std::sort(frame_times.begin(), frame_times.end());
                             const auto current = Common::FrameTiming::counters;
                             const double count = double(frame_times.size());
+                            const auto host_cpu=host_cpu_timing?read_host_cpu():std::pair<double,double>{0,0};
+                            const bool host_cpu_valid=host_cpu_timing && previous_host_cpu.first>=0 &&
+                                host_cpu.first>=previous_host_cpu.first && host_cpu.second>=previous_host_cpu.second;
+
                             timing_windows.push_back("{\"end_frame\":" + std::to_string(timed_frame) +
                                 ",\"frames\":" + std::to_string(frame_times.size()) +
                                 ",\"guest_cpu_percent\":" + std::to_string(clock_control.Percent()) +
                                 ",\"mean_ms\":" + std::to_string(total_ms / count) +
+                                ",\"host_cpu_timing\":" + std::string(host_cpu_valid?"true":"false") +
+                                ",\"emulation_thread_cpu_ms_per_frame\":" + std::to_string(host_cpu_valid?(host_cpu.first-previous_host_cpu.first)*1000/count:0) +
+                                ",\"process_cpu_ms_per_frame\":" + std::to_string(host_cpu_valid?(host_cpu.second-previous_host_cpu.second)*1000/count:0) +
                                 ",\"p50_ms\":" + std::to_string(frame_times[frame_times.size() / 2]) +
                                 ",\"p95_ms\":" + std::to_string(frame_times[(frame_times.size() - 1) * 95 / 100]) +
                                 ",\"max_ms\":" + std::to_string(frame_times.back()) +
@@ -1128,6 +1152,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"gpu_vertices\":" + std::to_string(current.gpu_vertices - previous_counters.gpu_vertices) +
                                 ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + "}");
                             previous_counters = current;
+                            previous_host_cpu = host_cpu;
                             frame_times.clear();
                             std::ofstream timing_report(user + "frame-timing.json");
                             timing_report << "{\"title_id\":" << system.GetTitleID()

@@ -361,6 +361,40 @@ engine compatibility checks are retained. The benchmark engine fingerprint is
 Frontend default changes do not change that engine fingerprint or invalidate this
 checkpoint. Engine changes may still require recreating it; do not override checks.
 
+#### Audible replay and scripted progression
+
+The final audible-output checkpoint pair measured **49.61 ms indexed float versus
+40.85 ms packed GPU**, a 21.4% throughput improvement at 100% guest clock. Both
+reported active speaker output, nonzero audio samples and no audio-backend error.
+Their RGB screenshots at refresh 1200 are identical. This does not prove
+subjectively glitch-free audio at reduced emulation speed.
+
+A separate pair replayed A presses at refreshes 300, 600 and 900, then measured
+refreshes 301–1800 through later dialogue/camera changes. It measured **38.45 versus
+32.49 ms**, an 18.3% throughput improvement. Draw and expanded-vertex counts match,
+and the final RGB screenshots are identical. This extends the check beyond the
+initial stationary dialogue, but does not cover every area or battle.
+
+#### Candidate architectural limits
+
+Input deduplication does not cache transformed GPU vertices. In the initial
+checkpoint, 118.64 million expanded inputs correspond to 19.94 million distinct
+source records per 60-refresh window. The fused shader additionally reruns the
+first triangle vertex for the other two vertices. GPU transform reuse is therefore
+a promising next experiment, but these counts alone do not establish GPU execution
+time or a whole-frame speedup. A pre-transform pass must preserve output precision,
+quaternion alignment, clipping and guest memory coherence; its extra submissions
+and render-target switches may cost more than it saves on small draws.
+
+`CARA_HOST_CPU_TIMING=1` samples the emulation thread's CPU clock and whole-process
+user+system CPU time once per timing window. These are separate from elapsed phase
+scopes: thread CPU includes interpreter, renderer and driver work on that thread;
+process CPU sums work across all app threads and can exceed elapsed time. A gap
+between thread CPU and elapsed time indicates off-CPU time, not uniquely GPU work.
+The GPU fixture report also records draw-buffer and color-attachment limits for
+planning a GLES pre-transform experiment. Keep these measurements separate from
+Instruments sampling, which remains unavailable in the earlier USB test.
+
 ### Device tooling
 
 CoreDevice screenshot capture works without adding GPU readback to Cara:
