@@ -233,9 +233,11 @@ public:
         const auto previous_draw=OpenGL::OpenGLState::BindDrawFramebuffer(framebuffer);
         const auto previous_renderbuffer=OpenGL::OpenGLState::BindRenderbuffer(renderbuffer);
         const bool scissor=glIsEnabled(GL_SCISSOR_TEST);
+        const bool discard=glIsEnabled(GL_RASTERIZER_DISCARD);
         GLboolean mask[4]; GLfloat clear[4];
         glGetBooleanv(GL_COLOR_WRITEMASK,mask); glGetFloatv(GL_COLOR_CLEAR_VALUE,clear);
-        glDisable(GL_SCISSOR_TEST); glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+        glDisable(GL_SCISSOR_TEST); glDisable(GL_RASTERIZER_DISCARD);
+        glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
         glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT);
         if (drawable_framebuffer) {
             OpenGL::OpenGLState::BindDrawFramebuffer(drawable_framebuffer);
@@ -246,6 +248,7 @@ public:
         glClearColor(clear[0],clear[1],clear[2],clear[3]);
         glColorMask(mask[0],mask[1],mask[2],mask[3]);
         if (scissor) glEnable(GL_SCISSOR_TEST);
+        if (discard) glEnable(GL_RASTERIZER_DISCARD);
         OpenGL::OpenGLState::BindRenderbuffer(previous_renderbuffer);
         OpenGL::OpenGLState::BindDrawFramebuffer(previous_draw);
 #endif
