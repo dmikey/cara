@@ -1,5 +1,8 @@
 # Cara
 
+[![Build](https://github.com/dmikey/cara/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/dmikey/cara/actions/workflows/build.yml?query=branch%3Amain)
+[![Tests](https://img.shields.io/github/actions/workflow/status/dmikey/cara/build.yml?branch=main&label=tests)](https://github.com/dmikey/cara/actions/workflows/build.yml?query=branch%3Amain)
+
 <img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
 
 Cara is an experimental Nintendo 3DS emulator built for iOS play without CPU JIT.
