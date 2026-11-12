@@ -23,68 +23,22 @@ play without JIT.
 
 ## Benchmarks
 
-### Cara GLES3 and Azahar/MoltenVK on M4 iPad
+Xenoblade Chronicles 3D's opening sequence on an M4 iPad, at native resolution
+with sound enabled and no JIT. A speed of 100% means normal game pacing.
 
-Both completed the same 9,000-refresh Xenoblade opening replay at native render
-resolution, 100% guest CPU clock, with sound enabled and scripted A presses at
-refreshes 900 and 1500. Both used FastInterp with CPU and host shader JIT off.
-The same ROM was selected through Files, with separate save fixtures and app containers.
-Cara measurements use checkpoint `a9e0658`, before save-state support.
-
-| Measurement | Cara GLES3 | Azahar / MoltenVK |
+| Build | Average speed | Peak sampled memory |
 |---|---:|---:|
-| Emulation speed | 99.5% | 84.6% |
-| Replay duration | 151.24 s | 177.82 s |
-| Peak sampled physical footprint | 758 MiB | 1261 MiB |
-| Requested audio frames not supplied | 0.66% | 15.52% |
+| **Cara GLES3** | **99.5%** | **758 MiB** |
+| Manic / Azahar | 97.4% | 1,373 MiB |
+| Azahar / MoltenVK | 84.6% | 1,261 MiB |
+| Manic / Citra, full CPU speed | 82.1% (frozen scene) | 1,302 MiB |
+| Manic / Citra, default 20% CPU speed | 99.7% before crash | 1,331 MiB |
 
-These are whole-app results for this replay. The MoltenVK test host exposed only
-FIFO presentation and spent substantial time waiting on presentation. The builds
-also used different frontends and compiler settings, so this does not isolate the
-cost of GLES3 versus Metal. Memory was sampled every 300 refreshes. Audio counts
-include startup and recovery buffering; output implementations differed.
-
-### Manic with Azahar on M4 iPad
-
-Manic 2.0.2 completed a 9,000-refresh Xenoblade opening replay in 154.42 seconds
-at 97.4% average emulation speed. It used its bundled Azahar core with FastInterp,
-100% guest CPU clock, native render resolution, sound enabled, and CPU and host
-shader JIT disabled. Scripted A presses occurred at refreshes 900 and 1500.
-
-| Measurement | Cara GLES3 | Manic / Azahar |
-|---|---:|---:|
-| Emulation speed | 99.5% | 97.4% |
-| Replay duration | 151.24 s | 154.42 s |
-| Peak sampled physical footprint | 758 MiB | 1373 MiB |
-
-Manic's sound was initially reported clean, with crackling later in the replay.
-Two late 300-refresh windows ran at 76.4% and 70.1% speed. Its audio instrumentation
-counted frames submitted to the frontend, so no comparable output-underrun
-percentage is available. This was a privately re-signed release with compiled
-timing and input instrumentation; its renderer and audio frameworks were retained.
-The apps used separate save data and different Azahar revisions. These results
-describe this opening replay, rather than sustained gameplay or a renderer-only
-comparison.
-
-### Manic's Citra core on M4 iPad
-
-The same opening test was also attempted with Manic's Citra core at 100% guest CPU
-clock and at its default no-JIT Compatibility preset of 20%. Both used native
-resolution, New 3DS mode, sound enabled, and CPU and host shader JIT disabled.
-Recorded boot settings differed only in guest CPU clock.
-
-| Guest CPU clock | Recorded refreshes | Recorded duration | Guest refresh throughput | Peak sampled footprint | Observed result |
-|---|---:|---:|---:|---:|---|
-| 100% | 9,000 | 183.11 s | 82.1% | 1302 MiB | Cutscene froze while guest refresh ticks continued |
-| 20%, Compatibility | 7,800 | 130.77 s | 99.7% | 1331 MiB | Scene moved normally with occasional audio cuts, then the app crashed |
-
-Neither run completed a visually valid replay. The 100% figure measures counter
-throughput despite the frozen scene. The 20% figures describe its last recorded
-checkpoint, rather than the exact crash time or a completed 9,000-refresh run.
-Its crash report records an invalid memory access in the bundled MoltenVK renderer
-on the Vulkan worker thread. The second run retained the first run's disk shader
-cache. Guest refresh throughput at an underclocked CPU setting does not establish
-equivalent game frame rate or timing. Native Citra audio output was not instrumented.
+The first three builds completed the opening replay. Neither Manic / Citra run
+completed it successfully; its frozen-scene counter and partial run are not
+measures of playable performance. These compare the apps as tested, rather than
+isolating their graphics engines. Cara was measured at checkpoint `a9e0658`,
+before save-state support.
 
 ## Attribution
 
