@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <cinttypes>
+#include "common/archives.h"
 #include "common/common_paths.h"
 #include "common/file_util.h"
 #include "common/logging/log.h"
@@ -18,6 +19,8 @@
 #include "core/hle/service/ptm/ptm_u.h"
 #include "core/settings.h"
 
+SERIALIZE_EXPORT_IMPL(Service::PTM::Module)
+
 namespace Service::PTM {
 
 /// Values for the default gamecoin.dat file
@@ -30,7 +33,7 @@ void Module::Interface::GetAdapterState(Kernel::HLERequestContext& ctx) {
     rb.Push(RESULT_SUCCESS);
     rb.Push(ptm->battery_is_charging);
 
-    LOG_WARNING(Service_PTM, "(STUBBED) PTM GetAdapterState called");
+    LOG_WARNING(Service_PTM, "(STUBBED) called");
 }
 
 void Module::Interface::GetShellState(Kernel::HLERequestContext& ctx) {
@@ -48,7 +51,7 @@ void Module::Interface::GetBatteryLevel(Kernel::HLERequestContext& ctx) {
     rb.Push(RESULT_SUCCESS);
     rb.Push(static_cast<u32>(ChargeLevels::CompletelyFull)); // Set to a completely full battery
 
-    LOG_WARNING(Service_PTM, "(STUBBED) PTM GetBatteryLevel called");
+    LOG_WARNING(Service_PTM, "(STUBBED) called");
 }
 
 void Module::Interface::GetBatteryChargeState(Kernel::HLERequestContext& ctx) {
@@ -58,7 +61,7 @@ void Module::Interface::GetBatteryChargeState(Kernel::HLERequestContext& ctx) {
     rb.Push(RESULT_SUCCESS);
     rb.Push(ptm->battery_is_charging);
 
-    LOG_WARNING(Service_PTM, "(STUBBED) PTM GetBatteryChargeState called");
+    LOG_WARNING(Service_PTM, "(STUBBED) called");
 }
 
 void Module::Interface::GetPedometerState(Kernel::HLERequestContext& ctx) {
@@ -68,7 +71,7 @@ void Module::Interface::GetPedometerState(Kernel::HLERequestContext& ctx) {
     rb.Push(RESULT_SUCCESS);
     rb.Push(ptm->pedometer_is_counting);
 
-    LOG_WARNING(Service_PTM, "(STUBBED) PTM GetPedometerState called");
+    LOG_WARNING(Service_PTM, "(STUBBED) called");
 }
 
 void Module::Interface::GetStepHistory(Kernel::HLERequestContext& ctx) {
@@ -111,7 +114,7 @@ void Module::Interface::GetSoftwareClosedFlag(Kernel::HLERequestContext& ctx) {
     rb.Push(RESULT_SUCCESS);
     rb.Push(false);
 
-    LOG_WARNING(Service_PTM, "(STUBBED) PTM GetSoftwareClosedFlag called");
+    LOG_WARNING(Service_PTM, "(STUBBED) called");
 }
 
 void CheckNew3DS(IPC::RequestBuilder& rb) {

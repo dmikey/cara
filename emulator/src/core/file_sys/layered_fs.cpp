@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include "common/alignment.h"
+#include "common/archives.h"
 #include "common/assert.h"
 #include "common/common_paths.h"
 #include "common/file_util.h"
@@ -12,6 +13,8 @@
 #include "common/swap.h"
 #include "core/file_sys/layered_fs.h"
 #include "core/file_sys/patch.h"
+
+SERIALIZE_EXPORT_IMPL(FileSys::LayeredFS)
 
 namespace FileSys {
 
@@ -50,6 +53,8 @@ struct FileMetadata {
     // Followed by a name of name length (aligned up to 4)
 };
 static_assert(sizeof(FileMetadata) == 0x20, "Size of FileMetadata is not correct");
+
+LayeredFS::LayeredFS() = default;
 
 LayeredFS::LayeredFS(std::shared_ptr<RomFSReader> romfs_, std::string patch_path_,
                      std::string patch_ext_path_, bool load_relocations_)

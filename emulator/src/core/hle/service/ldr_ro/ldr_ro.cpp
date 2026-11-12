@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include "common/alignment.h"
+#include "common/archives.h"
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "core/arm/arm_interface.h"
@@ -11,6 +12,10 @@
 #include "core/hle/kernel/process.h"
 #include "core/hle/service/ldr_ro/cro_helper.h"
 #include "core/hle/service/ldr_ro/ldr_ro.h"
+
+SERVICE_CONSTRUCT_IMPL(Service::LDR::RO)
+SERIALIZE_EXPORT_IMPL(Service::LDR::RO)
+SERIALIZE_EXPORT_IMPL(Service::LDR::ClientSlot)
 
 namespace Service::LDR {
 
@@ -52,36 +57,6 @@ static bool VerifyBufferState(Kernel::Process& process, VAddr buffer_ptr, u32 si
         vma = std::next(vma);
     }
     return false;
-}
-
-static void InvalidateCacheRange(Core::System& system, std::vector<std::pair<u32, u32>>& ranges) {
-    if (ranges.empty()) {
-        return;
-    }
-
-    std::sort(ranges.begin(), ranges.end(), [](const std::pair<u32, u32>& x, const std::pair<u32, u32>& y)->bool {
-        return x.first < y.first;
-    });
-
-    u32 start_address = ranges[0].first;
-    u32 length = ranges[0].second;
-
-    for(u32 i = 1; i < ranges.size(); ++i) {
-        u32 addr = ranges[i].first;
-        u32 size = ranges[i].second;
-        u32 offset = addr - start_address;
-        if (offset > length + Memory::PAGE_SIZE) {
-            system.InvalidateCacheRange(start_address, length);
-            //
-            start_address = addr;
-            length = size;
-        } else {
-            length = std::max(addr + size, start_address + length) - start_address;
-        }
-    }
-
-    system.InvalidateCacheRange(start_address, length);
-    ranges.clear();
 }
 
 void RO::Initialize(Kernel::HLERequestContext& ctx) {
@@ -164,8 +139,6 @@ void RO::Initialize(Kernel::HLERequestContext& ctx) {
 
     slot->loaded_crs = crs_address;
 
-    InvalidateCacheRange(system, crs.invalidate_cache_ranges);
-
     rb.Push(RESULT_SUCCESS);
 }
 
@@ -209,7 +182,7 @@ void RO::LoadCRO(Kernel::HLERequestContext& ctx, bool link_on_load_bug_fix) {
     auto process = rp.PopObject<Kernel::Process>();
 
     LOG_DEBUG(Service_LDR,
-              "LoadCRO called ({}), cro_buffer_ptr=0x{:08X}, cro_address=0x{:08X}, cro_size=0x{:X}, "
+              "called ({}), cro_buffer_ptr=0x{:08X}, cro_address=0x{:08X}, cro_size=0x{:X}, "
               "data_segment_address=0x{:08X}, zero={}, data_segment_size=0x{:X}, "
               "bss_segment_address=0x{:08X}, bss_segment_size=0x{:X}, auto_link={}, "
               "fix_level={}, crr_address=0x{:08X}",
@@ -352,8 +325,7 @@ void RO::LoadCRO(Kernel::HLERequestContext& ctx, bool link_on_load_bug_fix) {
         }
     }
 
-    cro.invalidate_cache_ranges.emplace_back(cro_address, cro_size);
-    InvalidateCacheRange(system, cro.invalidate_cache_ranges);
+    system.InvalidateCacheRange(cro_address, cro_size);
 
     LOG_INFO(Service_LDR, "CRO \"{}\" loaded at 0x{:08X}, fixed_end=0x{:08X}", cro.ModuleName(),
              cro_address, cro_address + fix_size);
@@ -367,6 +339,9 @@ void RO::UnloadCRO(Kernel::HLERequestContext& ctx) {
     u32 zero = rp.Pop<u32>();
     VAddr cro_buffer_ptr = rp.Pop<u32>();
     auto process = rp.PopObject<Kernel::Process>();
+
+    LOG_DEBUG(Service_LDR, "called, cro_address=0x{:08X}, zero={}, cro_buffer_ptr=0x{:08X}",
+              cro_address, zero, cro_buffer_ptr);
 
     CROHelper cro(cro_address, *process, system);
 
@@ -391,8 +366,7 @@ void RO::UnloadCRO(Kernel::HLERequestContext& ctx) {
         return;
     }
 
-    LOG_INFO(Service_LDR, "UnloadCRO CRO \"{}\", cro_address=0x{:08X}, zero={}, cro_buffer_ptr=0x{:08X}",
-             cro.ModuleName(), cro_address, zero, cro_buffer_ptr);
+    LOG_INFO(Service_LDR, "Unloading CRO \"{}\"", cro.ModuleName());
 
     u32 fixed_size = cro.GetFixedSize();
 
@@ -424,8 +398,7 @@ void RO::UnloadCRO(Kernel::HLERequestContext& ctx) {
         LOG_ERROR(Service_LDR, "Error unmapping CRO {:08X}", result.raw);
     }
 
-    cro.invalidate_cache_ranges.emplace_back(cro_address, fixed_size);
-    InvalidateCacheRange(system, cro.invalidate_cache_ranges);
+    system.InvalidateCacheRange(cro_address, fixed_size);
 
     rb.Push(result);
 }
@@ -435,7 +408,7 @@ void RO::LinkCRO(Kernel::HLERequestContext& ctx) {
     VAddr cro_address = rp.Pop<u32>();
     auto process = rp.PopObject<Kernel::Process>();
 
-    LOG_DEBUG(Service_LDR, "LinkCRO called, cro_address=0x{:08X}", cro_address);
+    LOG_DEBUG(Service_LDR, "called, cro_address=0x{:08X}", cro_address);
 
     CROHelper cro(cro_address, *process, system);
 
@@ -466,8 +439,6 @@ void RO::LinkCRO(Kernel::HLERequestContext& ctx) {
     if (result.IsError()) {
         LOG_ERROR(Service_LDR, "Error linking CRO {:08X}", result.raw);
     }
-
-    InvalidateCacheRange(system, cro.invalidate_cache_ranges);
 
     rb.Push(result);
 }
@@ -509,8 +480,6 @@ void RO::UnlinkCRO(Kernel::HLERequestContext& ctx) {
         LOG_ERROR(Service_LDR, "Error unlinking CRO {:08X}", result.raw);
     }
 
-    InvalidateCacheRange(system, cro.invalidate_cache_ranges);
-
     rb.Push(result);
 }
 
@@ -540,8 +509,6 @@ void RO::Shutdown(Kernel::HLERequestContext& ctx) {
     if (result.IsError()) {
         LOG_ERROR(Service_LDR, "Error unmapping CRS {:08X}", result.raw);
     }
-
-    InvalidateCacheRange(system, crs.invalidate_cache_ranges);
 
     slot->loaded_crs = 0;
     rb.Push(result);

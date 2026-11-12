@@ -12,6 +12,12 @@ namespace Service::MCU {
 class HWC final : public Module::Interface {
 public:
     explicit HWC(std::shared_ptr<Module> module);
+
+private:
+    SERVICE_SERIALIZATION(HWC, module, Module)
 };
 
 } // namespace Service::MCU
+
+BOOST_CLASS_EXPORT_KEY(Service::MCU::HWC)
+BOOST_SERIALIZATION_CONSTRUCT(Service::MCU::HWC)

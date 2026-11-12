@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <memory>
+#include "common/archives.h"
 #include "common/common_types.h"
 #include "common/file_util.h"
 #include "common/string_util.h"
@@ -14,6 +15,9 @@
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // FileSys namespace
+
+SERIALIZE_EXPORT_IMPL(FileSys::DiskFile)
+SERIALIZE_EXPORT_IMPL(FileSys::DiskDirectory)
 
 namespace FileSys {
 

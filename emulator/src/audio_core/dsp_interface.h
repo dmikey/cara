@@ -7,6 +7,7 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include <boost/serialization/access.hpp>
 #include "audio_core/audio_types.h"
 #include "audio_core/raw_audio_buffer.h"
 #include "audio_core/time_stretch.h"
@@ -126,6 +127,10 @@ private:
 #endif
     std::string current_sink_id;
     std::string current_audio_device_id;
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int) {}
+    friend class boost::serialization::access;
 };
 
 } // namespace AudioCore

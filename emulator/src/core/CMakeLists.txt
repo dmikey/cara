@@ -486,3 +486,23 @@ endif()
 
 # Boost 1.70's Apple detection predates C++20's removal of std::result_of.
 target_compile_definitions(core PRIVATE BOOST_ASIO_HAS_STD_INVOKE_RESULT=1)
+
+target_sources(core PRIVATE savestate.cpp hle/kernel/session.cpp)
+target_link_libraries(core PRIVATE Boost::serialization libzstd_static)
+
+file(GLOB_RECURSE CARA_STATE_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/core/*.cpp" "${CMAKE_SOURCE_DIR}/src/core/*.h"
+    "${CMAKE_SOURCE_DIR}/src/audio_core/*.cpp" "${CMAKE_SOURCE_DIR}/src/audio_core/*.h"
+    "${CMAKE_SOURCE_DIR}/src/video_core/*.cpp" "${CMAKE_SOURCE_DIR}/src/video_core/*.h"
+    "${CMAKE_SOURCE_DIR}/src/common/*.cpp" "${CMAKE_SOURCE_DIR}/src/common/*.h"
+    "${CMAKE_SOURCE_DIR}/src/network/*.cpp" "${CMAKE_SOURCE_DIR}/src/network/*.h")
+list(SORT CARA_STATE_SOURCES)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CARA_STATE_SOURCES})
+set(CARA_STATE_SIGNATURE "cara-state-1;${CMAKE_SYSTEM_NAME};${CMAKE_CXX_COMPILER_ID};${CMAKE_CXX_COMPILER_VERSION};${CMAKE_OSX_ARCHITECTURES};${CMAKE_SYSTEM_PROCESSOR};${CMAKE_SIZEOF_VOID_P}")
+foreach(CARA_STATE_SOURCE IN LISTS CARA_STATE_SOURCES)
+    file(SHA256 "${CARA_STATE_SOURCE}" CARA_STATE_FILE_HASH)
+    string(APPEND CARA_STATE_SIGNATURE ";${CARA_STATE_FILE_HASH}")
+endforeach()
+string(SHA256 CARA_STATE_FINGERPRINT "${CARA_STATE_SIGNATURE}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/cara_state_version.h" "#define CARA_STATE_FINGERPRINT \"${CARA_STATE_FINGERPRINT}\"\n")
+target_include_directories(core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")

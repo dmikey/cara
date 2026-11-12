@@ -24,9 +24,12 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <boost/serialization/split_member.hpp>
+#include <boost/serialization/vector.hpp>
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "common/threadsafe_queue.h"
+#include "core/global.h"
 
 // The timing we get from the assembly is 268,111,855.956 Hz
 // It is possible that this number isn't just an integer because the compiler could have
@@ -57,24 +60,24 @@ constexpr s64 usToCycles(int us) {
 }
 
 inline s64 usToCycles(s64 us) {
+    if (us / 1000000 > static_cast<s64>(MAX_VALUE_TO_MULTIPLY)) {
+        LOG_ERROR(Core_Timing, "Integer overflow, use max value");
+        return std::numeric_limits<s64>::max();
+    }
     if (us > static_cast<s64>(MAX_VALUE_TO_MULTIPLY)) {
-        if (us / 1000000 > static_cast<s64>(MAX_VALUE_TO_MULTIPLY)) {
-            LOG_ERROR(Core_Timing, "Integer overflow, use max value");
-            return std::numeric_limits<s64>::max();
-        }
-        LOG_DEBUG(Core_Timing, "[usToCycles s64] Time very big, do rounding");
+        LOG_DEBUG(Core_Timing, "Time very big, do rounding");
         return BASE_CLOCK_RATE_ARM11 * (us / 1000000);
     }
     return (BASE_CLOCK_RATE_ARM11 * us) / 1000000;
 }
 
 inline s64 usToCycles(u64 us) {
+    if (us / 1000000 > MAX_VALUE_TO_MULTIPLY) {
+        LOG_ERROR(Core_Timing, "Integer overflow, use max value");
+        return std::numeric_limits<s64>::max();
+    }
     if (us > MAX_VALUE_TO_MULTIPLY) {
-        if (us / 1000000 > MAX_VALUE_TO_MULTIPLY) {
-            LOG_ERROR(Core_Timing, "Integer overflow, use max value");
-            return std::numeric_limits<s64>::max();
-        }
-        LOG_DEBUG(Core_Timing, "[usToCycles u64] Time very big, do rounding");
+        LOG_DEBUG(Core_Timing, "Time very big, do rounding");
         return BASE_CLOCK_RATE_ARM11 * static_cast<s64>(us / 1000000);
     }
     return (BASE_CLOCK_RATE_ARM11 * static_cast<s64>(us)) / 1000000;
@@ -89,16 +92,24 @@ constexpr s64 nsToCycles(int ns) {
 }
 
 inline s64 nsToCycles(s64 ns) {
+    if (ns / 1000000000 > static_cast<s64>(MAX_VALUE_TO_MULTIPLY)) {
+        LOG_ERROR(Core_Timing, "Integer overflow, use max value");
+        return std::numeric_limits<s64>::max();
+    }
     if (ns > static_cast<s64>(MAX_VALUE_TO_MULTIPLY)) {
-        LOG_DEBUG(Core_Timing, "[nsToCycles s64] Time very big, do rounding");
+        LOG_DEBUG(Core_Timing, "Time very big, do rounding");
         return BASE_CLOCK_RATE_ARM11 * (ns / 1000000000);
     }
     return (BASE_CLOCK_RATE_ARM11 * ns) / 1000000000;
 }
 
 inline s64 nsToCycles(u64 ns) {
+    if (ns / 1000000000 > MAX_VALUE_TO_MULTIPLY) {
+        LOG_ERROR(Core_Timing, "Integer overflow, use max value");
+        return std::numeric_limits<s64>::max();
+    }
     if (ns > MAX_VALUE_TO_MULTIPLY) {
-        LOG_DEBUG(Core_Timing, "[nsToCycles u64] Time very big, do rounding");
+        LOG_DEBUG(Core_Timing, "Time very big, do rounding");
         return BASE_CLOCK_RATE_ARM11 * (static_cast<s64>(ns) / 1000000000);
     }
     return (BASE_CLOCK_RATE_ARM11 * static_cast<s64>(ns)) / 1000000000;
@@ -126,6 +137,7 @@ struct TimingEventType {
 };
 
 class Timing {
+
 public:
     struct Event {
         s64 time;
@@ -135,12 +147,37 @@ public:
 
         bool operator>(const Event& right) const;
         bool operator<(const Event& right) const;
+
+    private:
+        template <class Archive>
+        void save(Archive& ar, const unsigned int) const {
+            ar& time;
+            ar& fifo_order;
+            ar& userdata;
+            std::string name = *(type->name);
+            ar << name;
+        }
+
+        template <class Archive>
+        void load(Archive& ar, const unsigned int) {
+            ar& time;
+            ar& fifo_order;
+            ar& userdata;
+            std::string name;
+            ar >> name;
+            type = Global<Timing>().RegisterEvent(name, nullptr);
+        }
+        friend class boost::serialization::access;
+
+        BOOST_SERIALIZATION_SPLIT_MEMBER()
     };
 
     static constexpr int MAX_SLICE_LENGTH = 20000;
 
     class Timer {
     public:
+        Timer();
+        explicit Timer(Timing& owner);
         ~Timer();
 
         s64 GetMaxSliceLength() const;
@@ -187,7 +224,43 @@ public:
         s64 downcount = MAX_SLICE_LENGTH;
         s64 executed_ticks = 0;
         u64 idled_cycles = 0;
+        Timing& timing;
         u32 downcount_hack = 0;
+        double cpu_clock_scale = 1.0;
+        template <class Archive> void serialize(Archive& ar, const unsigned int) {
+            MoveEvents(); ar& event_queue; ar& event_fifo_id; ar& slice_length;
+            ar& downcount; ar& executed_ticks; ar& idled_cycles; ar& is_timer_sane;
+            ar& downcount_hack; ar& cpu_clock_scale;
+            if (Archive::is_loading::value) {
+                pending_restore = std::make_unique<RestoredState>(RestoredState{
+                    event_queue, event_fifo_id, slice_length, downcount, executed_ticks,
+                    idled_cycles, is_timer_sane, downcount_hack, cpu_clock_scale});
+            }
+        }
+        // Service constructors/destructors register and schedule startup events while
+        // their object graph is rebuilt. Apply the saved queues again after that graph
+        // is complete, so those host-side lifecycle effects cannot alter guest timing.
+        struct RestoredState {
+            std::vector<Event> events;
+            u64 fifo;
+            s64 slice, remaining, executed;
+            u64 idle;
+            bool sane;
+            u32 hack;
+            double scale;
+        };
+        std::unique_ptr<RestoredState> pending_restore;
+        void FinishStateLoad() {
+            if (!pending_restore) return;
+            MoveEvents();
+            auto saved = std::move(pending_restore);
+            event_queue=std::move(saved->events); event_fifo_id=saved->fifo;
+            slice_length=saved->slice; downcount=saved->remaining; executed_ticks=saved->executed;
+            idled_cycles=saved->idle; is_timer_sane=saved->sane;
+            downcount_hack=saved->hack; cpu_clock_scale=saved->scale;
+        }
+        friend class Timing;
+        friend class boost::serialization::access;
     };
 
     explicit Timing();
@@ -221,19 +294,29 @@ public:
         global_timer += ticks;
     }
 
+    /**
+     * Updates the value of the cpu clock scaling to the new percentage.
+     */
+    void UpdateClockSpeed(u32 cpu_clock_percentage);
+
     std::chrono::microseconds GetGlobalTimeUs() const;
 
     std::shared_ptr<Timer> GetTimer(u32 core_id);
+    void FinishStateLoad() { for (auto& timer : timers) timer->FinishStateLoad(); }
 
 private:
     s64 global_timer = 0;
 
     // unordered_map stores each element separately as a linked list node so pointers to
     // elements remain stable regardless of rehashes/resizing.
-    std::unordered_map<std::string, TimingEventType> event_types;
+    std::unordered_map<std::string, TimingEventType> event_types = {};
 
     std::array<std::shared_ptr<Timer>, 4> timers;
-    Timer* current_timer = nullptr;
+    std::shared_ptr<Timer> current_timer;
+    template <class Archive> void serialize(Archive& ar, const unsigned int) {
+        ar& global_timer; ar& timers; ar& current_timer;
+    }
+    friend class boost::serialization::access;
 };
 
 } // namespace Core

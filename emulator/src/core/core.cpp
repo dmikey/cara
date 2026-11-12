@@ -3,6 +3,14 @@
 // Refer to the license.txt file included.
 
 #include <memory>
+#include <stdexcept>
+#include <cryptopp/sha.h>
+#include "common/archives.h"
+#include "core/global.h"
+#include "core/hw/gpu.h"
+#include "core/hw/lcd.h"
+#include "core/hle/service/gsp/gsp.h"
+#include "core/movie.h"
 #include <cstdlib>
 #include <cstring>
 #include <utility>
@@ -29,6 +37,7 @@
 #include "core/hle/service/fs/archive.h"
 #include "core/hle/service/service.h"
 #include "core/hle/service/sm/sm.h"
+#include "core/hle/service/sm/srv.h"
 #include "core/hw/hw.h"
 #include "core/loader/loader.h"
 #include "core/movie.h"
@@ -39,8 +48,13 @@
 #include "video_core/video_core.h"
 
 namespace Core {
+template <> Core::System& Global() { return System::GetInstance(); }
+template <> Kernel::KernelSystem& Global() { return System::GetInstance().Kernel(); }
+template <> Core::Timing& Global() { return System::GetInstance().CoreTiming(); }
+
 
 System System::s_instance;
+System::~System() = default;
 
 System::ResultStatus System::RunLoop() {
     return Settings::values.is_new_3ds ? RunLoopMultiCores() : RunLoopSingleCore();
@@ -320,6 +334,7 @@ static void LoadOverrides(u64 title_id) {
 }
 
 System::ResultStatus System::Load(Frontend::EmuWindow& emu_window, const std::string& filepath) {
+    FileUtil::SetCurrentRomPath(filepath);
     app_loader = Loader::GetLoader(filepath);
     if (!app_loader) {
         LOG_CRITICAL(Core, "Failed to obtain loader for {}!", filepath);
@@ -392,6 +407,10 @@ System::ResultStatus System::Load(Frontend::EmuWindow& emu_window, const std::st
     status = ResultStatus::Success;
     m_emu_window = &emu_window;
     m_filepath = filepath;
+    if (const auto process = kernel->GetCurrentProcess(); process && process->codeset) {
+        const auto& image = process->codeset->memory;
+        CryptoPP::SHA256().CalculateDigest(state_game_hash.data(), image.data(), image.size());
+    }
 
     // Reset counters and set time origin to current frame
     GetAndResetPerfStats();
@@ -563,24 +582,24 @@ void System::SetCpuUsageLimit(bool enabled) {
     }
 }
 
-void System::Shutdown() {
+void System::Shutdown(bool is_deserializing) {
     // Shutdown emulation session
-    GDBStub::Shutdown();
+    if (!is_deserializing) GDBStub::Shutdown();
     VideoCore::Shutdown();
     HW::Shutdown();
     telemetry_session.reset();
-    perf_stats.reset();
+    if (!is_deserializing) perf_stats.reset();
     rpc_server.reset();
-    cheat_engine.reset();
+    if (!is_deserializing) cheat_engine.reset();
     archive_manager.reset();
     service_manager.reset();
-    cpu_cores = {};
     dsp_core.reset();
     kernel.reset();
+    cpu_cores = {};
     timing.reset();
     memory.reset();
-    app_loader.reset();
-    custom_tex_cache.reset();
+    if (!is_deserializing) app_loader.reset();
+    if (!is_deserializing) custom_tex_cache.reset();
 
     if (auto room_member = Network::GetRoomMember().lock()) {
         Network::GameInfo game_info{};
@@ -599,3 +618,65 @@ void System::Reset() {
 }
 
 } // namespace Core
+
+namespace Core {
+template <class Archive> void System::serialize(Archive& ar, const unsigned int version) {
+    u32 num_cores = static_cast<u32>(cpu_cores.size());
+    ar& num_cores;
+    if (num_cores != cpu_cores.size()) throw std::runtime_error("Incompatible CPU count in save state");
+    if (Archive::is_loading::value) {
+        Shutdown(true);
+        auto system_mode = app_loader->LoadKernelSystemMode();
+        auto n3ds_mode = app_loader->LoadKernelN3dsMode();
+        if (system_mode.second != Loader::ResultStatus::Success || n3ds_mode.second != Loader::ResultStatus::Success)
+            throw std::runtime_error("Unable to reinitialize the game for state restore");
+        if (Init(*m_emu_window, *system_mode.first, *n3ds_mode.first) != ResultStatus::Success)
+            throw std::runtime_error("Unable to initialize the save-state session");
+        cheat_engine->Connect();
+    }
+    Memory::RasterizerClearAll(!Archive::is_loading::value);
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: timing\n");
+    ar&* timing;
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: cpu\n");
+    for (const auto& cpu : cpu_cores) ar&* cpu;
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: services\n");
+    ar&* service_manager;
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: archives\n");
+    ar&* archive_manager;
+    ar& GPU::g_regs; ar& LCD::g_regs;
+    auto* hle = dynamic_cast<AudioCore::DspHle*>(dsp_core.get());
+    if (!hle) throw std::runtime_error("Save states require the HLE audio backend");
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: dsp\n");
+    ar&* hle;
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: memory\n");
+    ar&* memory;
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: kernel\n");
+    ar&* kernel;
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: gpu\n");
+    VideoCore::serialize(ar, version);
+    if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "state: movie\n");
+    ar& Movie::GetInstance();
+    if (Archive::is_loading::value) {
+        timing->FinishStateLoad();
+        Service::GSP::SetGlobalModule(*this);
+        memory->SetDSP(*dsp_core);
+        kernel->RestoreExecutionContext();
+        // Per-core page tables can differ; use the restored process for each core.
+        for (auto& cpu : cpu_cores) cpu->ClearInstructionCache();
+        perf_stats = std::make_unique<PerfStats>();
+        perf_stats->BeginSystemFrame();
+        reset_requested = false; shutdown_requested = false;
+    }
+}
+SERIALIZE_IMPL(System)
+}
+
+namespace Core {
+u64 System::GetTitleID() const {
+    u64 id = 0;
+    if (app_loader) app_loader->ReadProgramId(id);
+    return id;
+}
+}
+
+namespace Core { void System::PrepareReschedule() { kernel->PrepareReschedule(); } }

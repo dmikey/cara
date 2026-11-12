@@ -20,6 +20,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "ios/gpu_depth_self_test.h"
 #endif
 #include <atomic>
+#include <array>
 #include "common/save_events.h"
 #include "ios/button_state.h"
 #include <algorithm>
@@ -37,6 +38,8 @@ extern "C" int __llvm_profile_write_file(void);
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
 #include "core/core.h"
+#include "core/savestate.h"
+#include "core/arm/arm_interface.h"
 #include "core/frontend/applets/default_applets.h"
 #include "core/frontend/emu_window.h"
 #include "core/frontend/input.h"
@@ -80,6 +83,8 @@ static Cara::ButtonState buttons;
 static std::atomic<float> circleX{0},circleY{0},cstickX{0},cstickY{0};
 static std::atomic<bool> digitalToCircle{false};
 static std::atomic<bool> paused{false};
+// Commands are consumed between guest slices, on the emulation/GL owner thread.
+static std::atomic<int> stateCommand{0};
 class Button final : public Input::ButtonDevice {
     unsigned index;
 public:
@@ -487,6 +492,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
         }]];
         [menu addAction:[UIAlertAction actionWithTitle:@"Disconnect save folder" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self->saveSync disconnect]; [self resumeFromMenu]; }]];
     }
+    if (running) {
+        [menu addAction:[UIAlertAction actionWithTitle:@"Save state…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self showStateSlots:YES]; }]];
+        [menu addAction:[UIAlertAction actionWithTitle:@"Load state…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self showStateSlots:NO]; }]];
+    }
     if (running) [menu addAction:[UIAlertAction actionWithTitle:@"Stop game" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* action) { [self stopGame]; [self resumeFromMenu]; }]];
     [menu addAction:[UIAlertAction actionWithTitle:(running?@"Resume":@"Close") style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { [self resumeFromMenu]; }]];
     if (activeSkin && currentRepresentation) {
@@ -495,6 +504,17 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
         menu.popoverPresentationController.sourceRect=CGRectMake(r.origin.x/[mapping[@"width"] doubleValue]*skinControls.bounds.size.width,r.origin.y/[mapping[@"height"] doubleValue]*skinControls.bounds.size.height,MAX(1,r.size.width/[mapping[@"width"] doubleValue]*skinControls.bounds.size.width),MAX(1,r.size.height/[mapping[@"height"] doubleValue]*skinControls.bounds.size.height));
     } else { menu.popoverPresentationController.sourceView=menuFallback; menu.popoverPresentationController.sourceRect=menuFallback.bounds; }
     [self presentViewController:menu animated:YES completion:nil];
+}
+- (void)showStateSlots:(BOOL)saving {
+    UIAlertController* slots=[UIAlertController alertControllerWithTitle:(saving?@"Save state":@"Load state") message:(saving?@"Saving replaces the selected slot. Keep using in-game saves too.":@"Loading returns to this slot. Unsaved progress since then is lost.") preferredStyle:UIAlertControllerStyleAlert];
+    for (unsigned slot=1; slot<=Core::SaveStateSlotCount; ++slot) {
+        [slots addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"Slot %u",slot] style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            self->status.text=saving?@"Saving state…":@"Loading state…";
+            stateCommand.store(saving?int(slot):-int(slot),std::memory_order_release);
+        }]];
+    }
+    [slots addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { [self resumeFromMenu]; }]];
+    [self presentViewController:slots animated:YES completion:nil];
 }
 - (void)stopGame { stop=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; status.text=@"Stopping…"; }
 - (void)background { backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; }
@@ -700,7 +720,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
 - (void)startROM:(NSURL*)url {
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
     lastHUDTime = startedAt; lastHUDFrame = 0;
-    running=true; stop=false; [self resumeFromMenu]; [self resetSkinInput];
+    stateCommand=0; running=true; stop=false; [self resumeFromMenu]; [self resetSkinInput];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     status.text = @"Loading game…";
     std::string rom = url.path.UTF8String;
@@ -858,10 +878,63 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                 const unsigned window_frames = window_env ? unsigned(std::clamp(std::strtol(window_env, nullptr, 10), 60L, 600L)) : 600;
                 const bool audio_diagnostics=std::getenv("CARA_AUDIO_DIAGNOSTICS")!=nullptr;
                 unsigned audio_report_frame=0;
+                const auto state_test_frame=[](const char* name) -> unsigned {
+                    const char* value=std::getenv(name);
+                    return value?unsigned(std::clamp(std::strtol(value,nullptr,10),0L,100000L)):0;
+                };
+                const unsigned state_save_frame=state_test_frame("CARA_STATE_TEST_SAVE_FRAME");
+                const unsigned state_load_frame=state_test_frame("CARA_STATE_TEST_LOAD_FRAME");
+                bool state_saved=false,state_loaded=false;
+                std::array<u64,69> saved_execution{};
+                const auto execution_snapshot=[&]() {
+                    std::array<u64,69> snapshot{};
+                    for (unsigned cpu=0;cpu<4;++cpu) {
+                        for (unsigned reg=0;reg<16;++reg) snapshot[cpu*17+reg]=system.GetCore(cpu).GetReg(reg);
+                        snapshot[cpu*17+16]=system.GetCore(cpu).GetCPSR();
+                    }
+                    snapshot.back()=system.CoreTiming().GetGlobalTicks(); return snapshot;
+                };
+                const auto state_test_report=[&](const std::string& error) {
+                    std::ofstream report(user+"save-state-test-status.json",std::ios::trunc);
+                    report << "{\"saved\":" << state_saved << ",\"loaded\":" << state_loaded << ",\"frame\":" << emuWindow->frames << ",\"failed\":" << !error.empty() << "}";
+                    if (!error.empty()) LOG_ERROR(Frontend,"Save-state device test: {}",error);
+                };
                 while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
                     if (self->stretchAudioDirty.exchange(false)) {
                         s.enable_audio_stretching=self->stretchAudio.load();
                         system.DSP().EnableStretching(s.enable_audio_stretching);
+                    }
+                    try {
+                        if (state_save_frame && !state_saved && emuWindow->frames>=state_save_frame) {
+                            saved_execution=execution_snapshot();
+                            system.SaveStateToPath(user+"device-test.carastate"); state_saved=true; state_test_report("");
+                        }
+                        if (state_saved && state_load_frame && !state_loaded && emuWindow->frames>=state_load_frame) {
+                            AudioCore::SetIOSAudioPaused(true);
+                            system.LoadStateFromPath(user+"device-test.carastate");
+                            if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
+                            state_loaded=true; state_test_report(""); AudioCore::SetIOSAudioPaused(paused);
+                        }
+                    } catch (const std::exception& error) {
+                        state_test_report(error.what()); result=Core::System::ResultStatus::ErrorUnknown; break;
+                    }
+                    if (const int command=stateCommand.exchange(0,std::memory_order_acq_rel)) {
+                        std::string failure;
+                        try {
+                            if (command>0) system.SaveState(unsigned(command));
+                            else system.LoadState(unsigned(-command));
+                        } catch (const std::exception& error) { failure=error.what(); }
+                        const bool powered=system.IsPoweredOn();
+                        NSString* message=failure.empty()?[NSString stringWithFormat:@"State %@ in slot %d",command>0?@"saved":@"loaded",std::abs(command)]:[NSString stringWithUTF8String:failure.c_str()];
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            self->status.text=message;
+                            if (!failure.empty()) {
+                                UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Save state" message:message preferredStyle:UIAlertControllerStyleAlert];
+                                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self resumeFromMenu]; }]];
+                                [self presentViewController:alert animated:YES completion:nil];
+                            } else [self resumeFromMenu];
+                        });
+                        if (!powered) { result=Core::System::ResultStatus::ErrorUnknown; break; }
                     }
                     if (paused) {
                         if (!was_paused) pause_started = std::chrono::steady_clock::now();

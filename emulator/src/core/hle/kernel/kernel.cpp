@@ -2,6 +2,12 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/archives.h"
+#include <stdexcept>
+#include "common/serialization/atomic.h"
+#include <boost/serialization/shared_ptr.hpp>
+#include <boost/serialization/unordered_map.hpp>
+#include <boost/serialization/vector.hpp>
 #include "core/hle/kernel/client_port.h"
 #include "core/hle/kernel/config_mem.h"
 #include "core/hle/kernel/handle_table.h"
@@ -20,6 +26,7 @@ namespace Kernel {
 KernelSystem::KernelSystem(Memory::MemorySystem& memory, Core::Timing& timing, u32 system_mode,
                            u8 n3ds_mode)
     : memory(memory), timing(timing) {
+    for (auto& region : memory_regions) region = std::make_shared<MemoryRegionInfo>();
     MemoryInit(system_mode, n3ds_mode);
 
     resource_limits = std::make_unique<ResourceLimitList>(*this);
@@ -34,6 +41,12 @@ KernelSystem::KernelSystem(Memory::MemorySystem& memory, Core::Timing& timing, u
 
 /// Shutdown the kernel
 KernelSystem::~KernelSystem() {
+    // Break process-handle/thread-owner cycles while all kernel managers live.
+    // Repeated state loads tear down an entire kernel each time.
+    for (auto& manager : thread_managers) {
+        if (manager) for (const auto& thread : manager->GetThreadList()) if (thread) thread->Stop();
+    }
+    for (auto& process : process_list) if (process) process->handle_table.Clear();
     ResetThreadIDs();
 };
 
@@ -52,10 +65,10 @@ u32 KernelSystem::GenerateObjectID() {
 void KernelSystem::Initialize(const std::shared_ptr<Process>& process, ARM_Interface* cpu) {
     current_cpu = cpu;
     current_process = process;
-    memory.SetCurrentPageTable(&process->vm_manager.page_table);
+    memory.SetCurrentPageTable(process->vm_manager.page_table);
     for (int i = 0; i < thread_managers.size(); ++i) {
         stored_processes[i] = process;
-        thread_managers[i]->cpu->SetPageTable(&process->vm_manager.page_table);
+        thread_managers[i]->cpu->SetPageTable(process->vm_manager.page_table);
     }
 }
 
@@ -65,9 +78,9 @@ std::shared_ptr<Process> KernelSystem::GetCurrentProcess() const {
 
 void KernelSystem::SetCurrentProcess(const std::shared_ptr<Process>& process) {
     current_process = process;
-    memory.SetCurrentPageTable(&process->vm_manager.page_table);
+    memory.SetCurrentPageTable(process->vm_manager.page_table);
     stored_processes[current_cpu->GetID()] = process;
-    current_cpu->SetPageTable(&process->vm_manager.page_table);
+    current_cpu->SetPageTable(process->vm_manager.page_table);
 }
 
 void KernelSystem::SetCurrentProcessForCPU(const std::shared_ptr<Process>& process, u32 core_id) {
@@ -75,7 +88,7 @@ void KernelSystem::SetCurrentProcessForCPU(const std::shared_ptr<Process>& proce
         SetCurrentProcess(process);
     } else {
         stored_processes[core_id] = process;
-        thread_managers[core_id]->cpu->SetPageTable(&process->vm_manager.page_table);
+        thread_managers[core_id]->cpu->SetPageTable(process->vm_manager.page_table);
     }
 }
 
@@ -181,4 +194,46 @@ void KernelSystem::ResetThreadIDs() {
     next_thread_id = 0;
 }
 
+template <class Archive>
+void KernelSystem::serialize(Archive& ar, const unsigned int file_version) {
+    u32 running_id = current_cpu ? current_cpu->GetID() : 0;
+    ar& running_id;
+    if (running_id >= thread_managers.size()) throw std::runtime_error("Invalid saved CPU index");
+    if (Archive::is_loading::value) current_cpu = thread_managers[running_id]->cpu;
+    ar& memory_regions;
+    ar& named_ports;
+    // current_cpu set externally
+    // NB: subsystem references and prepare_reschedule_callback are constant
+    ar&* resource_limits.get();
+    u32 saved_object_id = next_object_id;
+    ar& saved_object_id;
+    ar&* timer_manager.get();
+    u32 saved_process_id = next_process_id;
+    ar& saved_process_id;
+    ar& process_list;
+    ar& current_process;
+    // NB: core count checked in 'core'
+    for (auto& thread_manager : thread_managers) {
+        ar&* thread_manager.get();
+    }
+    ar& config_mem_handler;
+    ar& shared_page_handler;
+    ar& stored_processes;
+    ar& next_thread_id;
+    if (Archive::is_loading::value) { next_object_id = saved_object_id; next_process_id = saved_process_id; }
+    // Deliberately don't include debugger info to allow debugging through loads
+}
+
+SERIALIZE_IMPL(KernelSystem)
+
 } // namespace Kernel
+
+namespace Kernel {
+void KernelSystem::RestoreExecutionContext() {
+    if (current_process) memory.SetCurrentPageTable(current_process->vm_manager.page_table);
+    for (std::size_t i = 0; i < thread_managers.size(); ++i) {
+        auto process = stored_processes[i] ? stored_processes[i] : current_process;
+        if (process) thread_managers[i]->cpu->SetPageTable(process->vm_manager.page_table);
+    }
+}
+}

@@ -5,9 +5,17 @@
 #pragma once
 
 #include <memory>
+#include <cstdio>
+#include <cstdlib>
+#include <stdexcept>
+#include <boost/serialization/weak_ptr.hpp>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <boost/serialization/shared_ptr.hpp>
+#include <boost/serialization/split_member.hpp>
+#include <boost/serialization/string.hpp>
+#include <boost/serialization/unordered_map.hpp>
 #include "core/hle/kernel/client_port.h"
 #include "core/hle/kernel/object.h"
 #include "core/hle/kernel/server_port.h"
@@ -80,6 +88,40 @@ private:
     // For IPC Recorder
     /// client port Object id -> service name
     std::unordered_map<u32, std::string> registered_services_inverse;
+
+    template <class Archive>
+    void save(Archive& ar, const unsigned int file_version) const {
+        const u32 count = static_cast<u32>(registered_services.size());
+        ar << count;
+        for (const auto& pair : registered_services) {
+            if (std::getenv("CARA_STATE_TRACE")) std::fprintf(stderr, "service: %s\n", pair.first.c_str());
+            try { ar << pair.first; ar << pair.second; }
+            catch (const std::exception& error) { throw std::runtime_error("Save-state service " + pair.first + ": " + error.what()); }
+        }
+        ar << srv_interface;
+    }
+
+    template <class Archive>
+    void load(Archive& ar, const unsigned int file_version) {
+        u32 count = 0; ar >> count;
+        if (count > 4096) throw std::runtime_error("Invalid saved service count");
+        registered_services.clear();
+        for (u32 i = 0; i < count; ++i) {
+            std::string name; std::shared_ptr<Kernel::ClientPort> port;
+            ar >> name; ar >> port;
+            if (name.empty() || name.size() > 8 || !port || !registered_services.emplace(name, port).second)
+                throw std::runtime_error("Invalid saved service entry");
+        }
+        ar >> srv_interface;
+        registered_services_inverse.clear();
+        for (const auto& pair : registered_services) {
+            registered_services_inverse.emplace(pair.second->GetObjectId(), pair.first);
+        }
+    }
+
+    BOOST_SERIALIZATION_SPLIT_MEMBER()
+
+    friend class boost::serialization::access;
 };
 
 } // namespace Service::SM

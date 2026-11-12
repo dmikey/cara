@@ -19,14 +19,17 @@ public:
     public:
         Interface(std::shared_ptr<Module> act, const char* name);
         ~Interface();
-
         void Initialize(Kernel::HLERequestContext& ctx);
-
         void UnknownMehod0x000E0080(Kernel::HLERequestContext& ctx);
 
-    private:
+    protected:
         std::shared_ptr<Module> act;
     };
+
+private:
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int file_version) {}
+    friend class boost::serialization::access;
 };
 
 void InstallInterfaces(Core::System& system);

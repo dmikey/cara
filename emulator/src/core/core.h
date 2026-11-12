@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #pragma once
+#include <boost/serialization/access.hpp>
 
 #include <memory>
 #include <string>
@@ -52,11 +53,13 @@ class CheatEngine;
 }
 
 namespace Core {
+template <typename T> T& Global();
 
 class Timing;
 
 class System {
 public:
+    ~System();
     /**
      * Gets the instance of the System singleton class.
      * @returns Reference to the instance of the System singleton class.
@@ -106,7 +109,13 @@ public:
     ResultStatus SingleStep();
 
     /// Shutdown the emulated system.
-    void Shutdown();
+    void Shutdown(bool is_deserializing = false);
+    void SaveState(u32 slot) const;
+    void LoadState(u32 slot);
+    void SaveStateToPath(const std::string& path) const;
+    void LoadStateFromPath(const std::string& path);
+    u64 GetTitleID() const;
+    const std::array<u8, 32>& StateGameHash() const { return state_game_hash; }
 
     /// Shutdown and then load again
     void Reset();
@@ -117,6 +126,7 @@ public:
     }
 
     /// Request shutdown of the system
+    void PrepareReschedule();
     void RequestShutdown() {
         shutdown_requested = true;
     }
@@ -275,6 +285,9 @@ public:
     std::vector<std::string> cheat_texts;
 
 private:
+    std::array<u8, 32> state_game_hash{};
+    friend class boost::serialization::access;
+    template <class Archive> void serialize(Archive& ar, const unsigned int);
     /**
      * Initialize the emulated system.
      * @param emu_window Reference to the host-system window used for video output and keyboard

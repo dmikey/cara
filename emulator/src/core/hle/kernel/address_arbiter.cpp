@@ -3,8 +3,10 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include "common/archives.h"
 #include "common/common_types.h"
 #include "common/logging/log.h"
+#include "core/global.h"
 #include "core/hle/kernel/address_arbiter.h"
 #include "core/hle/kernel/errors.h"
 #include "core/hle/kernel/kernel.h"
@@ -13,6 +15,8 @@
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Kernel namespace
+
+SERIALIZE_EXPORT_IMPL(Kernel::AddressArbiter)
 
 namespace Kernel {
 
@@ -98,18 +102,15 @@ ResultCode AddressArbiter::ArbitrateAddress(std::shared_ptr<Thread> thread, Arbi
             ResumeAllThreads(address);
         } else {
             // Resume first N threads
-            for (s32 i = 0; i < value; i++) {
+            for (int i = 0; i < value; i++)
                 ResumeHighestPriorityThread(address);
-            }
         }
-        kernel.PrepareReschedule();
         break;
 
     // Wait current thread (acquire the arbiter)...
     case ArbitrationType::WaitIfLessThan:
         if ((s32)kernel.memory.Read32(address) < value) {
             WaitThread(std::move(thread), address);
-            kernel.PrepareReschedule();
         }
         break;
     case ArbitrationType::WaitIfLessThanWithTimeout:
@@ -117,7 +118,6 @@ ResultCode AddressArbiter::ArbitrateAddress(std::shared_ptr<Thread> thread, Arbi
             thread->wakeup_callback = timeout_callback;
             thread->WakeAfterDelay(nanoseconds);
             WaitThread(std::move(thread), address);
-            kernel.PrepareReschedule();
         }
         break;
     case ArbitrationType::DecrementAndWaitIfLessThan: {
@@ -126,7 +126,6 @@ ResultCode AddressArbiter::ArbitrateAddress(std::shared_ptr<Thread> thread, Arbi
             // Only change the memory value if the thread should wait
             kernel.memory.Write32(address, (s32)memory_value - 1);
             WaitThread(std::move(thread), address);
-            kernel.PrepareReschedule();
         }
         break;
     }
@@ -138,7 +137,6 @@ ResultCode AddressArbiter::ArbitrateAddress(std::shared_ptr<Thread> thread, Arbi
             thread->wakeup_callback = timeout_callback;
             thread->WakeAfterDelay(nanoseconds);
             WaitThread(std::move(thread), address);
-            kernel.PrepareReschedule();
         }
         break;
     }

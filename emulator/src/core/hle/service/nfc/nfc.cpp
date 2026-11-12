@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/archives.h"
 #include "core/core.h"
 #include "core/hle/ipc_helpers.h"
 #include "core/hle/kernel/event.h"
@@ -10,7 +11,21 @@
 #include "core/hle/service/nfc/nfc_m.h"
 #include "core/hle/service/nfc/nfc_u.h"
 
+SERVICE_CONSTRUCT_IMPL(Service::NFC::Module)
+SERIALIZE_EXPORT_IMPL(Service::NFC::Module)
+
 namespace Service::NFC {
+
+template <class Archive>
+void Module::serialize(Archive& ar, const unsigned int) {
+    ar& tag_in_range_event;
+    ar& tag_out_of_range_event;
+    ar& nfc_tag_state;
+    ar& nfc_status;
+    ar& amiibo_data;
+    ar& amiibo_in_range;
+}
+SERIALIZE_IMPL(Module)
 
 struct TagInfo {
     u16_le id_offset_size;
@@ -63,7 +78,7 @@ void Module::Interface::Initialize(Kernel::HLERequestContext& ctx) {
     nfc->nfc_tag_state = TagState::NotScanning;
 
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc Initialize called, param={}", param);
+    LOG_WARNING(Service_NFC, "(STUBBED) called, param={}", param);
 }
 
 void Module::Interface::Shutdown(Kernel::HLERequestContext& ctx) {
@@ -74,7 +89,7 @@ void Module::Interface::Shutdown(Kernel::HLERequestContext& ctx) {
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc Shutdown called, param={}", param);
+    LOG_WARNING(Service_NFC, "(STUBBED) called, param={}", param);
 }
 
 void Module::Interface::StartCommunication(Kernel::HLERequestContext& ctx) {
@@ -82,7 +97,7 @@ void Module::Interface::StartCommunication(Kernel::HLERequestContext& ctx) {
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc StartCommunication called");
+    LOG_WARNING(Service_NFC, "(STUBBED) called");
 }
 
 void Module::Interface::StopCommunication(Kernel::HLERequestContext& ctx) {
@@ -90,7 +105,7 @@ void Module::Interface::StopCommunication(Kernel::HLERequestContext& ctx) {
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc StopCommunication called");
+    LOG_WARNING(Service_NFC, "(STUBBED) called");
 }
 
 void Module::Interface::StartTagScanning(Kernel::HLERequestContext& ctx) {
@@ -110,11 +125,7 @@ void Module::Interface::StartTagScanning(Kernel::HLERequestContext& ctx) {
     nfc->SyncTagState();
 
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc StartTagScanning called, in_val={:04x}", in_val);
-
-    if (nfc->system.nfc_scanning_callback) {
-        nfc->system.nfc_scanning_callback(true);
-    }
+    LOG_WARNING(Service_NFC, "(STUBBED) called, in_val={:04x}", in_val);
 }
 
 void Module::Interface::GetTagInfo(Kernel::HLERequestContext& ctx) {
@@ -138,7 +149,7 @@ void Module::Interface::GetTagInfo(Kernel::HLERequestContext& ctx) {
     IPC::RequestBuilder rb = rp.MakeBuilder(12, 0);
     rb.Push(RESULT_SUCCESS);
     rb.PushRaw<TagInfo>(tag_info);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc GetTagInfo called");
+    LOG_WARNING(Service_NFC, "(STUBBED) called");
 }
 
 void Module::Interface::GetAmiiboConfig(Kernel::HLERequestContext& ctx) {
@@ -164,7 +175,7 @@ void Module::Interface::GetAmiiboConfig(Kernel::HLERequestContext& ctx) {
     IPC::RequestBuilder rb = rp.MakeBuilder(17, 0);
     rb.Push(RESULT_SUCCESS);
     rb.PushRaw<AmiiboConfig>(amiibo_config);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc GetAmiiboConfig called");
+    LOG_WARNING(Service_NFC, "(STUBBED) called");
 }
 
 void Module::Interface::StopTagScanning(Kernel::HLERequestContext& ctx) {
@@ -182,12 +193,7 @@ void Module::Interface::StopTagScanning(Kernel::HLERequestContext& ctx) {
     nfc->nfc_tag_state = TagState::NotScanning;
 
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "nfc StopTagScanning called");
-
-    if (nfc->system.nfc_scanning_callback) {
-        nfc->system.nfc_scanning_callback(false);
-        RemoveAmiibo();
-    }
+    LOG_DEBUG(Service_NFC, "called");
 }
 
 void Module::Interface::LoadAmiiboData(Kernel::HLERequestContext& ctx) {
@@ -199,7 +205,7 @@ void Module::Interface::LoadAmiiboData(Kernel::HLERequestContext& ctx) {
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc LoadAmiiboData called");
+    LOG_WARNING(Service_NFC, "(STUBBED) called");
 }
 
 void Module::Interface::ResetTagScanState(Kernel::HLERequestContext& ctx) {
@@ -217,7 +223,7 @@ void Module::Interface::ResetTagScanState(Kernel::HLERequestContext& ctx) {
     nfc->SyncTagState();
 
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "nfc ResetTagScanState called");
+    LOG_DEBUG(Service_NFC, "called");
 }
 
 void Module::Interface::GetTagInRangeEvent(Kernel::HLERequestContext& ctx) {
@@ -234,7 +240,7 @@ void Module::Interface::GetTagInRangeEvent(Kernel::HLERequestContext& ctx) {
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 2);
     rb.Push(RESULT_SUCCESS);
     rb.PushCopyObjects(nfc->tag_in_range_event);
-    LOG_INFO(Service_NFC, "nfc GetTagInRangeEvent called");
+    LOG_DEBUG(Service_NFC, "called");
 }
 
 void Module::Interface::GetTagOutOfRangeEvent(Kernel::HLERequestContext& ctx) {
@@ -251,7 +257,7 @@ void Module::Interface::GetTagOutOfRangeEvent(Kernel::HLERequestContext& ctx) {
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 2);
     rb.Push(RESULT_SUCCESS);
     rb.PushCopyObjects(nfc->tag_out_of_range_event);
-    LOG_INFO(Service_NFC, "nfc GetTagOutOfRangeEvent called");
+    LOG_DEBUG(Service_NFC, "called");
 }
 
 void Module::Interface::GetTagState(Kernel::HLERequestContext& ctx) {
@@ -260,7 +266,7 @@ void Module::Interface::GetTagState(Kernel::HLERequestContext& ctx) {
     IPC::RequestBuilder rb = rp.MakeBuilder(2, 0);
     rb.Push(RESULT_SUCCESS);
     rb.PushEnum(nfc->nfc_tag_state);
-    LOG_INFO(Service_NFC, "nfc GetTagState called");
+    LOG_DEBUG(Service_NFC, "called");
 }
 
 void Module::Interface::CommunicationGetStatus(Kernel::HLERequestContext& ctx) {
@@ -269,7 +275,7 @@ void Module::Interface::CommunicationGetStatus(Kernel::HLERequestContext& ctx) {
     IPC::RequestBuilder rb = rp.MakeBuilder(2, 0);
     rb.Push(RESULT_SUCCESS);
     rb.PushEnum(nfc->nfc_status);
-    LOG_INFO(Service_NFC, "(STUBBED) nfc CommunicationGetStatus called");
+    LOG_DEBUG(Service_NFC, "(STUBBED) called");
 }
 
 void Module::Interface::Unknown0x1A(Kernel::HLERequestContext& ctx) {
@@ -286,7 +292,7 @@ void Module::Interface::Unknown0x1A(Kernel::HLERequestContext& ctx) {
     nfc->nfc_tag_state = TagState::Unknown6;
 
     rb.Push(RESULT_SUCCESS);
-    LOG_INFO(Service_NFC, "nfc Unknown0x1A called");
+    LOG_DEBUG(Service_NFC, "called");
 }
 
 void Module::Interface::GetIdentificationBlock(Kernel::HLERequestContext& ctx) {
@@ -366,7 +372,7 @@ Module::Interface::Interface(std::shared_ptr<Module> nfc, const char* name, u32 
 
 Module::Interface::~Interface() = default;
 
-Module::Module(Core::System& system) : system(system) {
+Module::Module(Core::System& system) {
     tag_in_range_event =
         system.Kernel().CreateEvent(Kernel::ResetType::OneShot, "NFC::tag_in_range_event");
     tag_out_of_range_event =

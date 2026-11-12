@@ -6,6 +6,8 @@
 
 #include <array>
 #include <functional>
+#include <boost/serialization/access.hpp>
+#include <boost/serialization/array.hpp>
 #include "video_core/regs_pipeline.h"
 
 namespace Pica {
@@ -63,6 +65,16 @@ private:
     std::array<VertexType, 2> buffer;
     bool strip_ready = false;
     bool winding = false;
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
+        ar& topology;
+        ar& buffer_index;
+        ar& boost::serialization::make_array(buffer.data(), buffer.size());
+        ar& strip_ready;
+        ar& winding;
+    }
+    friend class boost::serialization::access;
 };
 
 } // namespace Pica

@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 #include <boost/optional.hpp>
+#include <boost/serialization/export.hpp>
 #include "common/common_types.h"
 #include "common/swap.h"
 #include "core/hle/service/service.h"
@@ -82,7 +83,7 @@ enum class DisconnectStatus {
 
 struct ConnectionStatus {
     u32_le status;
-    u32_le disconnect_reason;
+    INSERT_PADDING_WORDS(1);
     u16_le network_node_id;
     u16_le changed_nodes;
     u16_le nodes[UDSMaxNodes];
@@ -151,6 +152,7 @@ private:
      *      1 : Result of function, 0 on success, otherwise error code
      */
     void Shutdown(Kernel::HLERequestContext& ctx);
+    void EjectClient(Kernel::HLERequestContext& ctx);
 
     /**
      * NWM_UDS::DestroyNetwork service function.
@@ -417,17 +419,6 @@ private:
     void ConnectToNetworkDeprecated(Kernel::HLERequestContext& ctx);
 
     /**
-     * NWM_UDS::EjectClient Disconnects clients.
-     *  Inputs:
-     *      0 : Command header
-     *      1 : Network node id
-     *  Outputs:
-     *      0 : Return header
-     *      1 : Result of function, 0 on success, otherwise error code
-     */
-    void EjectClient(Kernel::HLERequestContext& ctx);
-
-    /**
      * NWM_UDS::DecryptBeaconData service function.
      * Decrypts the encrypted data tags contained in the 802.11 beacons.
      *  Inputs:
@@ -554,6 +545,14 @@ private:
     struct Node {
         bool connected;
         u16 node_id;
+
+    private:
+        template <class Archive>
+        void serialize(Archive& ar, const unsigned int) {
+            ar& connected;
+            ar& node_id;
+        }
+        friend class boost::serialization::access;
     };
 
     std::map<MacAddress, Node> node_map;
@@ -576,6 +575,14 @@ private:
 
     // List of the last <MaxBeaconFrames> beacons received from the network.
     std::list<Network::WifiPacket> received_beacons;
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int);
+    friend class boost::serialization::access;
 };
 
 } // namespace Service::NWM
+
+SERVICE_CONSTRUCT(Service::NWM::NWM_UDS)
+BOOST_CLASS_EXPORT_KEY(Service::NWM::NWM_UDS)
+BOOST_CLASS_EXPORT_KEY(Service::NWM::NWM_UDS::ThreadCallback)

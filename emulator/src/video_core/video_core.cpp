@@ -3,6 +3,8 @@
 // Refer to the license.txt file included.
 
 #include <memory>
+#include "common/archives.h"
+#include "video_core/pica_state.h"
 #include "common/logging/log.h"
 #include "core/frontend/emu_window.h"
 #include "core/settings.h"
@@ -22,7 +24,7 @@ namespace VideoCore {
 
 static std::unique_ptr<RendererBase> g_renderer;
 static std::unique_ptr<RasterizerInterface> g_rasterizer;
-static Memory::MemorySystem* g_memory = nullptr;
+Memory::MemorySystem* g_memory = nullptr;
 static bool g_setting_update = false;
 static u16 g_scale_factor = 1;
 static u32 g_current_frame = 0;
@@ -147,3 +149,14 @@ void Shutdown() {
 }
 
 } // namespace VideoCore
+
+namespace VideoCore {
+template <class Archive> void serialize(Archive& ar, const unsigned int) {
+    ar& Pica::g_state;
+    if (Archive::is_loading::value) {
+        g_setting_update = true;
+        for (u32 i = 0; i < Pica::Regs::NUM_REGS; ++i) g_rasterizer->NotifyPicaRegisterChanged(i);
+    }
+}
+}
+SERIALIZE_IMPL(VideoCore)

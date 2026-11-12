@@ -92,6 +92,13 @@
       "source": "https://github.com/herumi/xbyak.git",
       "revision": "1de435ed04c8e74775804da944d176baf0ce56e2",
       "bundled": true
+    },
+    {
+      "path": "externals/zstd",
+      "source": "https://github.com/facebook/zstd",
+      "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+      "bundled": true,
+      "tag": "v1.5.7"
     }
   ],
   "excluded_non_source": [
@@ -105,5 +112,12 @@
     "externals/dynarmic",
     "externals/libressl"
   ],
-  "note": "No-JIT iOS/macOS builds require no source fetch. Dependency licenses are retained at their source paths."
+  "note": "No-JIT iOS/macOS builds require no source fetch. Dependency licenses are retained at their source paths.",
+  "serialization_restore": {
+    "upstream": "https://github.com/weihuoya/citra",
+    "revision": "11b01c0a28e4441dc8902ea2ea88d9bcaf1efbc4",
+    "removed_in": "e85a43cf92e446b4ac4af99a22b53655ea12b92e",
+    "license": "GPL-2.0-or-later",
+    "note": "Original Citra serialization adapted for the Cara scheduler, FastInterp, native I/O, and GLES renderer."
+  }
 }

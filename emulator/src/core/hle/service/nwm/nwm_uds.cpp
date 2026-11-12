@@ -4,7 +4,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <boost/serialization/list.hpp>
+#include <boost/serialization/map.hpp>
 #include <cryptopp/osrng.h>
+#include "common/archives.h"
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "core/core.h"
@@ -21,7 +24,19 @@
 #include "core/hle/service/nwm/uds_data.h"
 #include "core/memory.h"
 
+SERIALIZE_EXPORT_IMPL(Service::NWM::NWM_UDS)
+SERVICE_CONSTRUCT_IMPL(Service::NWM::NWM_UDS)
+
 namespace Service::NWM {
+
+template <class Archive>
+void NWM_UDS::serialize(Archive& ar, const unsigned int) {
+    ar& boost::serialization::base_object<Kernel::SessionRequestHandler>(*this);
+    ar& node_map;
+    ar& connection_event;
+    ar& received_beacons;
+    // wifi_packet_received set in constructor
+}
 
 namespace ErrCodes {
 enum {
@@ -264,7 +279,6 @@ void NWM_UDS::HandleEAPoLPacket(const Network::WifiPacket& packet) {
 
         // We're now connected, signal the application
         connection_status.status = static_cast<u32>(NetworkStatus::ConnectedAsClient);
-        connection_status.disconnect_reason = static_cast<u32>(DisconnectStatus::Connected);
         // Some games require ConnectToNetwork to block, for now it doesn't
         // If blocking is implemented this lock needs to be changed,
         // otherwise it might cause deadlocks
@@ -636,7 +650,6 @@ ResultVal<std::shared_ptr<Kernel::Event>> NWM_UDS::Initialize(
         // Reset the connection status, it contains all zeros after initialization,
         // except for the actual status value.
         connection_status = {};
-        connection_status.disconnect_reason = static_cast<u32>(DisconnectStatus::NotConnected);
         connection_status.status = static_cast<u32>(NetworkStatus::NotConnected);
         node_info.clear();
         node_info.push_back(current_node);
@@ -830,7 +843,6 @@ ResultCode NWM_UDS::BeginHostingNetwork(const u8* network_info_buffer,
         ASSERT_MSG(network_info.max_nodes > 1, "Trying to host a network of only one member.");
 
         connection_status.status = static_cast<u32>(NetworkStatus::ConnectedAsHost);
-        connection_status.disconnect_reason = static_cast<u32>(DisconnectStatus::Connected);
 
         // Ensure the application data size is less than the maximum value.
         ASSERT_MSG(network_info.application_data_size <= ApplicationDataSize,
@@ -1244,6 +1256,13 @@ public:
 private:
     ThreadCallback() = default;
     u16 command_id;
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int) {
+        ar& boost::serialization::base_object<Kernel::HLERequestContext::WakeupCallback>(*this);
+        ar& command_id;
+    }
+    friend class boost::serialization::access;
 };
 
 void NWM_UDS::ConnectToNetwork(Kernel::HLERequestContext& ctx, u16 command_id,
@@ -1266,8 +1285,8 @@ void NWM_UDS::ConnectToNetwork(Kernel::HLERequestContext& ctx, u16 command_id,
 void NWM_UDS::ConnectToNetwork(Kernel::HLERequestContext& ctx) {
     IPC::RequestParser rp(ctx, 0x1E, 2, 4);
 
-    const auto connection_type = rp.Pop<u8>();
-    [[maybe_unused]] const auto passphrase_size = rp.Pop<u32>();
+    u8 connection_type = rp.Pop<u8>();
+    u32 passphrase_size = rp.Pop<u32>();
 
     const std::vector<u8> network_info_buffer = rp.PopStaticBuffer();
     ASSERT(network_info_buffer.size() == sizeof(NetworkInfo));
@@ -1287,8 +1306,8 @@ void NWM_UDS::ConnectToNetworkDeprecated(Kernel::HLERequestContext& ctx) {
     // info
     const auto network_info_buffer = rp.PopRaw<std::array<u8, 0x3C>>();
 
-    const auto connection_type = rp.Pop<u8>();
-    [[maybe_unused]] const auto passphrase_size = rp.Pop<u32>();
+    u8 connection_type = rp.Pop<u8>();
+    u32 passphrase_size = rp.Pop<u32>();
 
     std::vector<u8> passphrase = rp.PopStaticBuffer();
 
@@ -1439,7 +1458,7 @@ NWM_UDS::NWM_UDS(Core::System& system) : ServiceFramework("nwm::UDS"), system(sy
         {0x00020000, nullptr, "Scrap"},
         {0x00030000, &NWM_UDS::Shutdown, "Shutdown"},
         {0x00040402, &NWM_UDS::BeginHostingNetworkDeprecated, "BeginHostingNetwork (deprecated)"},
-        {0x00050040, &NWM_UDS::EjectClient, "EjectClient"},
+        {0x00050040, nullptr, "EjectClient"},
         {0x00060000, nullptr, "EjectSpectator"},
         {0x00070080, &NWM_UDS::UpdateNetworkAttribute, "UpdateNetworkAttribute"},
         {0x00080000, &NWM_UDS::DestroyNetwork, "DestroyNetwork"},
@@ -1504,3 +1523,5 @@ NWM_UDS::~NWM_UDS() {
 }
 
 } // namespace Service::NWM
+
+SERIALIZE_EXPORT_IMPL(Service::NWM::NWM_UDS::ThreadCallback)

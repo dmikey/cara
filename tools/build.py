@@ -61,7 +61,7 @@ def main():
                '-DBoost_NO_SYSTEM_PATHS=ON', '-DBoost_NO_BOOST_CMAKE=ON']
     targets = ['cara-fastinterp-self-test', 'cara-audio-buffer-self-test', 'cara-no-jit-probe', 'cara-raster-self-test', 'cara-core-cache-self-test', 'cara-interval-cache-self-test', 'cara-input-self-test']
     if args.platform == 'mac':
-        targets.extend(['cara-skin-self-test', 'cara-save-sync-self-test'])
+        targets.extend(['cara-skin-self-test', 'cara-save-sync-self-test', 'cara-save-state-self-test'])
     if args.platform != 'mac':
         command += ['-DCMAKE_SYSTEM_NAME=iOS', '-DCMAKE_OSX_ARCHITECTURES=arm64',
                     '-DCMAKE_OSX_SYSROOT=' + ('iphoneos' if args.platform == 'ios' else 'iphonesimulator'),

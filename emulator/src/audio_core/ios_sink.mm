@@ -20,6 +20,7 @@ namespace {
 constexpr unsigned buffer_frames = 512;
 constexpr unsigned buffer_bytes = buffer_frames * 2 * sizeof(s16);
 std::atomic<bool> muted{false};
+std::atomic<bool> playback_paused{false};
 struct Playback;
 std::mutex active_mutex;
 std::weak_ptr<Playback> active_playback;
@@ -193,7 +194,7 @@ public:
     std::shared_ptr<Playback> state=std::make_shared<Playback>();
     id inactive=nil,active=nil,interruption=nil,reset=nil;
     Impl() {
-        { std::lock_guard<std::mutex> lock(active_mutex); active_playback=state; }
+        { std::lock_guard<std::mutex> lock(active_mutex); state->manually_paused=playback_paused.load(); active_playback=state; }
         std::weak_ptr<Playback> weak=state;
         NSNotificationCenter* center=NSNotificationCenter.defaultCenter;
         inactive=[center addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*) {
@@ -223,7 +224,7 @@ IOSAudioSink::IOSAudioSink(std::string_view) : impl(std::make_unique<Impl>()) {}
 IOSAudioSink::~IOSAudioSink()=default;
 unsigned int IOSAudioSink::GetNativeSampleRate() const { return native_sample_rate; }
 void IOSAudioSink::SetCallback(std::function<void(s16*,std::size_t)> cb) { impl->state->SetCallback(std::move(cb)); }
-void SetIOSAudioPaused(bool paused) { if (auto state=Active()) state->SetPaused(paused); }
+void SetIOSAudioPaused(bool paused) { playback_paused.store(paused); if (auto state=Active()) state->SetPaused(paused); }
 void SetIOSAudioMuted(bool value) { muted.store(value,std::memory_order_relaxed); if (auto state=Active()) state->ApplyMute(); }
 bool IsIOSAudioMuted() { return muted.load(std::memory_order_relaxed); }
 bool IOSAudioOutputFailed() { if (auto state=Active()) return state->error.load()!=0; return false; }

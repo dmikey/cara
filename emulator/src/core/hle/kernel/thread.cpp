@@ -6,14 +6,16 @@
 #include <list>
 #include <unordered_map>
 #include <vector>
+#include <boost/serialization/string.hpp>
+#include "common/archives.h"
 #include "common/assert.h"
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
+#include "common/serialization/boost_flat_set.h"
 #include "core/arm/arm_interface.h"
 #include "core/arm/skyeye_common/armstate.h"
 #include "core/core.h"
-#include "core/settings.h"
 #include "core/hle/kernel/errors.h"
 #include "core/hle/kernel/handle_table.h"
 #include "core/hle/kernel/kernel.h"
@@ -23,8 +25,35 @@
 #include "core/hle/kernel/thread.h"
 #include "core/hle/result.h"
 #include "core/memory.h"
+#include "core/settings.h"
+
+SERIALIZE_EXPORT_IMPL(Kernel::Thread)
 
 namespace Kernel {
+
+template <class Archive>
+void Thread::serialize(Archive& ar, const unsigned int file_version) {
+    ar& boost::serialization::base_object<WaitObject>(*this);
+    ar&* context.get();
+    ar& thread_id;
+    ar& status;
+    ar& entry_point;
+    ar& stack_top;
+    ar& nominal_priority;
+    ar& current_priority;
+    ar& last_running_ticks;
+    ar& processor_id;
+    ar& tls_address;
+    ar& held_mutexes;
+    ar& pending_mutexes;
+    ar& owner_process;
+    ar& wait_objects;
+    ar& wait_address;
+    ar& name;
+    ar& wakeup_callback;
+}
+
+SERIALIZE_IMPL(Thread)
 
 bool Thread::ShouldWait(const Thread* thread) const {
     return status != ThreadStatus::Dead;
@@ -35,7 +64,7 @@ void Thread::Acquire(Thread* thread) {
 }
 
 Thread::Thread(KernelSystem& kernel, u32 core_id)
-    : WaitObject(kernel), context(kernel.GetThreadManager(core_id).NewContext()),
+    : WaitObject(kernel), context(kernel.GetThreadManager(core_id).NewContext()), core_id(core_id),
       thread_manager(kernel.GetThreadManager(core_id)) {}
 Thread::~Thread() {}
 
@@ -44,6 +73,7 @@ Thread* ThreadManager::GetCurrentThread() const {
 }
 
 void Thread::Stop() {
+    if (status == ThreadStatus::Dead) return;
     // Cancel any outstanding wakeup events for this thread
     thread_manager.kernel.timing.UnscheduleEvent(thread_manager.ThreadWakeupEventType, thread_id);
     thread_manager.wakeup_callback_table.erase(thread_id);
@@ -71,16 +101,20 @@ void Thread::Stop() {
     u32 tls_page = (tls_address - Memory::TLS_AREA_VADDR) / Memory::PAGE_SIZE;
     u32 tls_slot =
         ((tls_address - Memory::TLS_AREA_VADDR) % Memory::PAGE_SIZE) / Memory::TLS_ENTRY_SIZE;
-    owner_process->tls_slots[tls_page].reset(tls_slot);
+    if (owner_process && tls_page < owner_process->tls_slots.size())
+        owner_process->tls_slots[tls_page].reset(tls_slot);
 }
 
 void ThreadManager::SwitchContext(Thread* new_thread) {
     Thread* previous_thread = GetCurrentThread();
-    Process* previous_process = nullptr;
+    std::shared_ptr<Process> previous_process = nullptr;
+
+    Core::Timing& timing = kernel.timing;
 
     // Save context for previous thread
     if (previous_thread) {
         previous_process = previous_thread->owner_process;
+        previous_thread->last_running_ticks = timing.GetGlobalTicks();
         cpu->SaveContext(previous_thread->context);
 
         if (previous_thread->status == ThreadStatus::Running) {
@@ -97,7 +131,7 @@ void ThreadManager::SwitchContext(Thread* new_thread) {
                    "Thread must be ready to become running.");
 
         // Cancel any outstanding wakeup events for this thread
-        kernel.timing.UnscheduleEvent(ThreadWakeupEventType, new_thread->thread_id);
+        timing.UnscheduleEvent(ThreadWakeupEventType, new_thread->thread_id);
 
         current_thread = SharedFrom(new_thread);
 
@@ -105,7 +139,7 @@ void ThreadManager::SwitchContext(Thread* new_thread) {
         new_thread->status = ThreadStatus::Running;
 
         if (previous_process != current_thread->owner_process) {
-            kernel.SetCurrentProcessForCPU(SharedFrom(current_thread->owner_process), cpu->GetID());
+            kernel.SetCurrentProcessForCPU(current_thread->owner_process, cpu->GetID());
         }
 
         cpu->LoadContext(new_thread->context);
@@ -115,6 +149,25 @@ void ThreadManager::SwitchContext(Thread* new_thread) {
         // Note: We do not reset the current process and current page table when idling because
         // technically we haven't changed processes, our threads are just paused.
     }
+}
+
+Thread* ThreadManager::PopNextReadyThread() {
+    Thread* next = nullptr;
+    Thread* thread = GetCurrentThread();
+
+    if (thread && thread->status == ThreadStatus::Running) {
+        // We have to do better than the current thread.
+        // This call returns null when that's not possible.
+        next = ready_queue.pop_first_better(thread->current_priority);
+        if (!next) {
+            // Otherwise just keep going with the current thread
+            next = thread;
+        }
+    } else {
+        next = ready_queue.pop_first();
+    }
+
+    return next;
 }
 
 void ThreadManager::WaitCurrentThread_Sleep() {
@@ -159,11 +212,6 @@ void Thread::WakeAfterDelay(s64 nanoseconds) {
     if (nanoseconds == -1)
         return;
 
-    if ((nanoseconds & 0x7000000000000000) == 0x7000000000000000) {
-        // fx jit bug
-        nanoseconds &= 0xFFFFFFFF;
-    }
-
     thread_manager.kernel.timing.ScheduleEvent(nsToCycles(nanoseconds),
                                                thread_manager.ThreadWakeupEventType, thread_id);
 }
@@ -205,6 +253,23 @@ void Thread::ResumeFromWait() {
     thread_manager.ready_queue.push_back(current_priority, this);
     status = ThreadStatus::Ready;
     thread_manager.kernel.PrepareReschedule();
+}
+
+void ThreadManager::DebugThreadQueue() {
+    Thread* thread = GetCurrentThread();
+    if (!thread) {
+        LOG_DEBUG(Kernel, "Current: NO CURRENT THREAD");
+    } else {
+        LOG_DEBUG(Kernel, "0x{:02X} {} (current)", thread->current_priority,
+                  GetCurrentThread()->GetObjectId());
+    }
+
+    for (auto& t : thread_list) {
+        u32 priority = ready_queue.contains(t.get());
+        if (priority != -1) {
+            LOG_DEBUG(Kernel, "0x{:02X} {}", priority, t->GetObjectId());
+        }
+    }
 }
 
 /**
@@ -249,10 +314,9 @@ static void ResetThreadContext(const std::unique_ptr<ARM_Interface::ThreadContex
     context->SetCpsr(USER32MODE | ((entry_point & 1) << 5)); // Usermode and THUMB mode
 }
 
-ResultVal<std::shared_ptr<Thread>> KernelSystem::CreateThread(std::string name, VAddr entry_point,
-                                                              u32 priority, u32 arg,
-                                                              s32 processor_id, VAddr stack_top,
-                                                              Process& owner_process) {
+ResultVal<std::shared_ptr<Thread>> KernelSystem::CreateThread(
+    std::string name, VAddr entry_point, u32 priority, u32 arg, s32 processor_id, VAddr stack_top,
+    std::shared_ptr<Process> owner_process) {
     // Check if priority is in ranged. Lowest priority -> highest priority id.
     if (priority > ThreadPrioLowest) {
         LOG_ERROR(Kernel_SVC, "Invalid thread priority: {}", priority);
@@ -264,17 +328,15 @@ ResultVal<std::shared_ptr<Thread>> KernelSystem::CreateThread(std::string name, 
         return ERR_OUT_OF_RANGE_KERNEL;
     }
 
+    if (!Settings::values.is_new_3ds) processor_id = 0;
+
     // TODO(yuriks): Other checks, returning 0xD9001BEA
 
-    if (!Memory::IsValidVirtualAddress(owner_process, entry_point)) {
-        LOG_ERROR(Kernel_SVC, "(name={}): create thread invalid entry {:08x}", name, entry_point);
+    if (!Memory::IsValidVirtualAddress(*owner_process, entry_point)) {
+        LOG_ERROR(Kernel_SVC, "(name={}): invalid entry {:08x}", name, entry_point);
         // TODO: Verify error
         return ResultCode(ErrorDescription::InvalidAddress, ErrorModule::Kernel,
                           ErrorSummary::InvalidArgument, ErrorLevel::Permanent);
-    }
-
-    if (!Settings::values.is_new_3ds) {
-        processor_id = 0;
     }
 
     auto thread{std::make_shared<Thread>(*this, processor_id)};
@@ -284,16 +346,19 @@ ResultVal<std::shared_ptr<Thread>> KernelSystem::CreateThread(std::string name, 
 
     thread->thread_id = NewThreadId();
     thread->status = ThreadStatus::Dormant;
+    thread->entry_point = entry_point;
     thread->stack_top = stack_top;
     thread->nominal_priority = thread->current_priority = priority;
+    thread->last_running_ticks = timing.GetGlobalTicks();
+    thread->processor_id = processor_id;
     thread->wait_objects.clear();
     thread->wait_address = 0;
     thread->name = std::move(name);
     thread_managers[processor_id]->wakeup_callback_table[thread->thread_id] = thread.get();
-    thread->owner_process = &owner_process;
+    thread->owner_process = owner_process;
 
     // Find the next available TLS index, and mark it as used
-    auto& tls_slots = owner_process.tls_slots;
+    auto& tls_slots = owner_process->tls_slots;
 
     auto [available_page, available_slot, needs_allocation] = GetFreeThreadLocalSlot(tls_slots);
 
@@ -309,17 +374,17 @@ ResultVal<std::shared_ptr<Thread>> KernelSystem::CreateThread(std::string name, 
                       "Not enough space in region to allocate a new TLS page for thread");
             return ERR_OUT_OF_MEMORY;
         }
-        owner_process.memory_used += Memory::PAGE_SIZE;
+        owner_process->memory_used += Memory::PAGE_SIZE;
 
         tls_slots.emplace_back(0); // The page is completely available at the start
         available_page = tls_slots.size() - 1;
         available_slot = 0; // Use the first slot in the new page
 
-        auto& vm_manager = owner_process.vm_manager;
+        auto& vm_manager = owner_process->vm_manager;
 
         // Map the page to the current process' address space.
         vm_manager.MapBackingMemory(Memory::TLS_AREA_VADDR + available_page * Memory::PAGE_SIZE,
-                                    memory.GetFCRAMPointer(*offset), Memory::PAGE_SIZE,
+                                    memory.GetFCRAMRef(*offset), Memory::PAGE_SIZE,
                                     MemoryState::Locked);
     }
 
@@ -328,7 +393,7 @@ ResultVal<std::shared_ptr<Thread>> KernelSystem::CreateThread(std::string name, 
     thread->tls_address = Memory::TLS_AREA_VADDR + available_page * Memory::PAGE_SIZE +
                           available_slot * Memory::TLS_ENTRY_SIZE;
 
-    memory.ZeroBlock(owner_process, thread->tls_address, Memory::TLS_ENTRY_SIZE);
+    memory.ZeroBlock(*owner_process, thread->tls_address, Memory::TLS_ENTRY_SIZE);
 
     // TODO(peachum): move to ScheduleThread() when scheduler is added so selected core is used
     // to initialize the context
@@ -370,49 +435,31 @@ void Thread::BoostPriority(u32 priority) {
     current_priority = priority;
 }
 
-void SetupMainThread(KernelSystem& kernel, u32 entry_point, u32 priority, Process& owner_process) {
+std::shared_ptr<Thread> SetupMainThread(KernelSystem& kernel, u32 entry_point, u32 priority,
+                                        std::shared_ptr<Process> owner_process) {
     // Initialize new "main" thread
     auto thread_res =
-        kernel.CreateThread("main", entry_point, priority, 0, owner_process.ideal_processor,
+        kernel.CreateThread("main", entry_point, priority, 0, owner_process->ideal_processor,
                             Memory::HEAP_VADDR_END, owner_process);
-    if (thread_res.Failed()) {
-        ASSERT(false);
-        return;
-    }
 
     std::shared_ptr<Thread> thread = std::move(thread_res).Unwrap();
+
     thread->context->SetFpscr(FPSCR_DEFAULT_NAN | FPSCR_FLUSH_TO_ZERO | FPSCR_ROUND_TOZERO |
                               FPSCR_IXC); // 0x03C00010
+
+    // Note: The newly created thread will be run when the scheduler fires.
+    return thread;
 }
 
 bool ThreadManager::HaveReadyThreads() {
     return ready_queue.get_first() != nullptr;
 }
 
-void ThreadManager::PrepareReschedule() {
-    reschedule_pending = true;
-}
-
 void ThreadManager::Reschedule() {
-    if (!reschedule_pending) {
-        return;
-    }
+    if (!reschedule_pending) return;
     reschedule_pending = false;
-
-    Thread* next;
     Thread* cur = GetCurrentThread();
-
-    if (cur && cur->status == ThreadStatus::Running) {
-        // We have to do better than the current thread.
-        // This call returns null when that's not possible.
-        next = ready_queue.pop_first_better(cur->current_priority);
-        if (!next) {
-            // Otherwise just keep going with the current thread
-            return;
-        }
-    } else {
-        next = ready_queue.pop_first();
-    }
+    Thread* next = PopNextReadyThread();
 
     if (cur && next) {
         LOG_TRACE(Kernel, "context switch {} -> {}", cur->GetObjectId(), next->GetObjectId());
@@ -457,7 +504,7 @@ ThreadManager::ThreadManager(Kernel::KernelSystem& kernel, u32 core_id) : kernel
 
 ThreadManager::~ThreadManager() {
     for (auto& t : thread_list) {
-        t->Stop();
+        if (t) t->Stop();
     }
 }
 
@@ -466,3 +513,5 @@ const std::vector<std::shared_ptr<Thread>>& ThreadManager::GetThreadList() const
 }
 
 } // namespace Kernel
+
+namespace Kernel { void ThreadManager::PrepareReschedule() { reschedule_pending = true; } }

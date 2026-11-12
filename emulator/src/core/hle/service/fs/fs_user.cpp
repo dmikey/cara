@@ -4,6 +4,7 @@
 // Refer to the license.txt file included.
 
 #include <cinttypes>
+#include "common/archives.h"
 #include "common/assert.h"
 #include "common/common_types.h"
 #include "common/file_util.h"
@@ -26,6 +27,10 @@
 #include "core/hle/service/fs/archive.h"
 #include "core/hle/service/fs/fs_user.h"
 #include "core/settings.h"
+
+SERVICE_CONSTRUCT_IMPL(Service::FS::FS_USER)
+SERIALIZE_EXPORT_IMPL(Service::FS::FS_USER)
+SERIALIZE_EXPORT_IMPL(Service::FS::ClientSlot)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Namespace FS_User
@@ -59,7 +64,7 @@ void FS_USER::OpenFile(Kernel::HLERequestContext& ctx) {
     ASSERT(filename.size() == filename_size);
     FileSys::Path file_path(filename_type, filename);
 
-    LOG_DEBUG(Service_FS, "FS_USER OpenFile path={}, mode={} attrs={}", file_path.DebugStr(), mode.hex, attributes);
+    LOG_DEBUG(Service_FS, "path={}, mode={} attrs={}", file_path.DebugStr(), mode.hex, attributes);
 
     const auto [file_res, open_timeout_ns] =
         archives.OpenFileFromArchive(archive_handle, file_path, mode);
@@ -140,7 +145,7 @@ void FS_USER::DeleteFile(Kernel::HLERequestContext& ctx) {
 
     FileSys::Path file_path(filename_type, filename);
 
-    LOG_DEBUG(Service_FS, "FS_USER DeleteFile type={} size={} data={}", static_cast<u32>(filename_type), filename_size,
+    LOG_DEBUG(Service_FS, "type={} size={} data={}", static_cast<u32>(filename_type), filename_size,
               file_path.DebugStr());
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
@@ -227,7 +232,7 @@ void FS_USER::CreateFile(Kernel::HLERequestContext& ctx) {
 
     FileSys::Path file_path(filename_type, filename);
 
-    LOG_DEBUG(Service_FS, "FS_USER CreateFile type={} attributes={} size={:x} data={}",
+    LOG_DEBUG(Service_FS, "type={} attributes={} size={:x} data={}",
               static_cast<u32>(filename_type), attributes, file_size, file_path.DebugStr());
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
@@ -245,7 +250,7 @@ void FS_USER::CreateDirectory(Kernel::HLERequestContext& ctx) {
     ASSERT(dirname.size() == dirname_size);
     FileSys::Path dir_path(dirname_type, dirname);
 
-    LOG_DEBUG(Service_FS, "FS_USER CreateDirectory type={} size={} data={}", static_cast<u32>(dirname_type), dirname_size,
+    LOG_DEBUG(Service_FS, "type={} size={} data={}", static_cast<u32>(dirname_type), dirname_size,
               dir_path.DebugStr());
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
@@ -289,7 +294,7 @@ void FS_USER::OpenDirectory(Kernel::HLERequestContext& ctx) {
 
     FileSys::Path dir_path(dirname_type, dirname);
 
-    LOG_DEBUG(Service_FS, "FS_USER OpenDirectory type={} size={} data={}", static_cast<u32>(dirname_type), dirname_size,
+    LOG_DEBUG(Service_FS, "type={} size={} data={}", static_cast<u32>(dirname_type), dirname_size,
               dir_path.DebugStr());
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 2);
@@ -317,7 +322,7 @@ void FS_USER::OpenArchive(Kernel::HLERequestContext& ctx) {
     ASSERT(archivename.size() == archivename_size);
     FileSys::Path archive_path(archivename_type, archivename);
 
-    LOG_DEBUG(Service_FS, "FS_USER OpenArchive archive_id=0x{:08X} archive_path={}", static_cast<u32>(archive_id),
+    LOG_DEBUG(Service_FS, "archive_id=0x{:08X} archive_path={}", static_cast<u32>(archive_id),
               archive_path.DebugStr());
 
     IPC::RequestBuilder rb = rp.MakeBuilder(3, 0);
@@ -383,8 +388,6 @@ void FS_USER::CloseArchive(Kernel::HLERequestContext& ctx) {
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
     rb.Push(archives.CloseArchive(archive_handle));
-
-    LOG_DEBUG(Service_GSP, "FS_USER CloseArchive called");
 }
 
 void FS_USER::IsSdmcDetected(Kernel::HLERequestContext& ctx) {
@@ -400,11 +403,11 @@ void FS_USER::IsSdmcWriteable(Kernel::HLERequestContext& ctx) {
     rb.Push(RESULT_SUCCESS);
     // If the SD isn't enabled, it can't be writeable...else, stubbed true
     rb.Push(Settings::values.use_virtual_sd);
-    LOG_DEBUG(Service_FS, " (STUBBED) FS_USER IsSdmcWriteable");
+    LOG_DEBUG(Service_FS, " (STUBBED)");
 }
 
 void FS_USER::FormatSaveData(Kernel::HLERequestContext& ctx) {
-    LOG_WARNING(Service_FS, "(STUBBED) FS_USER FormatSaveData");
+    LOG_WARNING(Service_FS, "(STUBBED)");
 
     IPC::RequestParser rp(ctx, 0x84C, 9, 2);
     auto archive_id = rp.PopEnum<FS::ArchiveIdCode>();
@@ -468,7 +471,7 @@ void FS_USER::FormatThisUserSaveData(Kernel::HLERequestContext& ctx) {
     rb.Push(archives.FormatArchive(ArchiveIdCode::SaveData, format_info, FileSys::Path(),
                                    slot->program_id));
 
-    LOG_TRACE(Service_FS, "FS_USER FormatThisUserSaveData called");
+    LOG_TRACE(Service_FS, "called");
 }
 
 void FS_USER::GetFreeBytes(Kernel::HLERequestContext& ctx) {
@@ -488,7 +491,7 @@ void FS_USER::GetFreeBytes(Kernel::HLERequestContext& ctx) {
 void FS_USER::GetSdmcArchiveResource(Kernel::HLERequestContext& ctx) {
     IPC::RequestParser rp(ctx, 0x814, 0, 0);
 
-    LOG_WARNING(Service_FS, "(STUBBED) GetSdmcArchiveResource called");
+    LOG_WARNING(Service_FS, "(STUBBED) called");
 
     auto resource = archives.GetArchiveResource(MediaType::SDMC);
 
@@ -506,7 +509,7 @@ void FS_USER::GetSdmcArchiveResource(Kernel::HLERequestContext& ctx) {
 void FS_USER::GetNandArchiveResource(Kernel::HLERequestContext& ctx) {
     IPC::RequestParser rp(ctx, 0x815, 0, 0);
 
-    LOG_WARNING(Service_FS, "(STUBBED) GetNandArchiveResource called");
+    LOG_WARNING(Service_FS, "(STUBBED) called");
 
     auto resource = archives.GetArchiveResource(MediaType::NAND);
     if (resource.Failed()) {
@@ -698,7 +701,7 @@ void FS_USER::InitializeWithSdkVersion(Kernel::HLERequestContext& ctx) {
     ClientSlot* slot = GetSessionData(ctx.Session());
     slot->program_id = system.Kernel().GetProcessById(pid)->codeset->program_id;
 
-    LOG_WARNING(Service_FS, "(STUBBED) FS_USER InitializeWithSdkVersion called, version: 0x{:08X}", version);
+    LOG_WARNING(Service_FS, "(STUBBED) called, version: 0x{:08X}", version);
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
     rb.Push(RESULT_SUCCESS);
@@ -712,7 +715,7 @@ void FS_USER::SetPriority(Kernel::HLERequestContext& ctx) {
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
     rb.Push(RESULT_SUCCESS);
 
-    LOG_DEBUG(Service_FS, "FS_USER SetPriority called priority=0x{:X}", priority);
+    LOG_DEBUG(Service_FS, "called priority=0x{:X}", priority);
 }
 
 void FS_USER::GetPriority(Kernel::HLERequestContext& ctx) {
@@ -726,14 +729,14 @@ void FS_USER::GetPriority(Kernel::HLERequestContext& ctx) {
     rb.Push(RESULT_SUCCESS);
     rb.Push(priority);
 
-    LOG_DEBUG(Service_FS, "FS_USER GetPriority called priority=0x{:X}", priority);
+    LOG_DEBUG(Service_FS, "called priority=0x{:X}", priority);
 }
 
 void FS_USER::GetArchiveResource(Kernel::HLERequestContext& ctx) {
     IPC::RequestParser rp(ctx, 0x849, 1, 0);
     auto media_type = rp.PopEnum<MediaType>();
 
-    LOG_WARNING(Service_FS, "(STUBBED) FS_USER GetArchiveResource called Media type=0x{:08X}", static_cast<u32>(media_type));
+    LOG_WARNING(Service_FS, "(STUBBED) called Media type=0x{:08X}", static_cast<u32>(media_type));
 
     auto resource = archives.GetArchiveResource(media_type);
     if (resource.Failed()) {
@@ -757,7 +760,7 @@ void FS_USER::GetFormatInfo(Kernel::HLERequestContext& ctx) {
 
     FileSys::Path archive_path(archivename_type, archivename);
 
-    LOG_DEBUG(Service_FS, "FS_USER GetFormatInfo archive_path={}", archive_path.DebugStr());
+    LOG_DEBUG(Service_FS, "archive_path={}", archive_path.DebugStr());
 
     IPC::RequestBuilder rb = rp.MakeBuilder(5, 0);
     ClientSlot* slot = GetSessionData(ctx.Session());
@@ -780,7 +783,7 @@ void FS_USER::GetProgramLaunchInfo(Kernel::HLERequestContext& ctx) {
 
     u32 process_id = rp.Pop<u32>();
 
-    LOG_DEBUG(Service_FS, "FS_USER GetProgramLaunchInfo process_id={}", process_id);
+    LOG_DEBUG(Service_FS, "process_id={}", process_id);
 
     auto program_info = program_info_map.find(process_id);
 
@@ -1005,7 +1008,7 @@ FS_USER::FS_USER(Core::System& system)
         {0x080A0244, &FS_USER::RenameDirectory, "RenameDirectory"},
         {0x080B0102, &FS_USER::OpenDirectory, "OpenDirectory"},
         {0x080C00C2, &FS_USER::OpenArchive, "OpenArchive"},
-        {0x080D0144, &FS_USER::ControlArchive, "ControlArchive"},
+        {0x080D0144, nullptr, "ControlArchive"},
         {0x080E0080, &FS_USER::CloseArchive, "CloseArchive"},
         {0x080F0180, &FS_USER::FormatThisUserSaveData, "FormatThisUserSaveData"},
         {0x08100200, &FS_USER::CreateLegacySystemSaveData, "CreateLegacySystemSaveData"},

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <boost/serialization/array.hpp>
 #include "audio_core/audio_types.h"
 #include "audio_core/hle/shared_memory.h"
 
@@ -21,12 +22,12 @@ public:
     DspStatus Tick(DspConfiguration& config, const IntermediateMixSamples& read_samples,
                    IntermediateMixSamples& write_samples, const std::array<QuadFrame32, 3>& input);
 
-    const StereoFrame16& GetOutput() const {
+    StereoFrame16 GetOutput() const {
         return current_frame;
     }
 
 private:
-    StereoFrame16 current_frame{};
+    StereoFrame16 current_frame = {};
 
     using OutputFormat = DspConfiguration::OutputFormat;
 
@@ -54,6 +55,17 @@ private:
     void DownmixAndMixIntoCurrentFrame(float gain, const QuadFrame32& samples);
     /// INTERNAL: Generate DspStatus based on internal state.
     DspStatus GetCurrentStatus() const;
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int) {
+        ar& current_frame;
+        ar& state.intermediate_mixer_volume;
+        ar& state.mixer1_enabled;
+        ar& state.mixer2_enabled;
+        ar& state.intermediate_mix_buffer;
+        ar& state.output_format;
+    }
+    friend class boost::serialization::access;
 };
 
 } // namespace AudioCore::HLE

@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/archives.h"
 #include "core/hle/service/apt/apt_s.h"
 
 namespace Service::APT {
@@ -23,7 +24,7 @@ APT_S::APT_S(std::shared_ptr<Module> apt)
         {0x000C0104, &APT_S::SendParameter, "SendParameter"},
         {0x000D0080, &APT_S::ReceiveParameter, "ReceiveParameter"},
         {0x000E0080, &APT_S::GlanceParameter, "GlanceParameter"},
-        {0x000F0100, &APT_S::CancelParameter, "CancelParameter"},
+        {0x000F0100, nullptr, "CancelParameter"},
         {0x001000C2, nullptr, "DebugFunc"},
         {0x001100C0, nullptr, "MapProgramIdForDebug"},
         {0x00120040, nullptr, "SetHomeMenuAppletIdForDebug"},
@@ -45,10 +46,10 @@ APT_S::APT_S(std::shared_ptr<Module> apt)
         {0x00220040, nullptr, "PrepareToCloseApplication"},
         {0x00230040, nullptr, "PrepareToJumpToApplication"},
         {0x00240044, nullptr, "JumpToApplication"},
-        {0x002500C0, &APT_S::PrepareToCloseLibraryApplet, "PrepareToCloseLibraryApplet"},
+        {0x002500C0, nullptr, "PrepareToCloseLibraryApplet"},
         {0x00260000, nullptr, "PrepareToCloseSystemApplet"},
         {0x00270044, &APT_S::CloseApplication, "CloseApplication"},
-        {0x00280044, &APT_S::CloseLibraryApplet, "CloseLibraryApplet"},
+        {0x00280044, nullptr, "CloseLibraryApplet"},
         {0x00290044, nullptr, "CloseSystemApplet"},
         {0x002A0000, nullptr, "OrderToCloseSystemApplet"},
         {0x002B0000, nullptr, "PrepareToJumpToHomeMenu"},
@@ -67,7 +68,7 @@ APT_S::APT_S(std::shared_ptr<Module> apt)
         {0x00380040, nullptr, "PreloadResidentApplet"},
         {0x00390040, nullptr, "PrepareToStartResidentApplet"},
         {0x003A0044, nullptr, "StartResidentApplet"},
-        {0x003B0040, &APT_S::CancelLibraryApplet, "CancelLibraryApplet"},
+        {0x003B0040, nullptr, "CancelLibraryApplet"},
         {0x003C0042, nullptr, "SendDspSleep"},
         {0x003D0042, nullptr, "SendDspWakeUp"},
         {0x003E0080, nullptr, "ReplySleepQuery"},
@@ -77,7 +78,7 @@ APT_S::APT_S(std::shared_ptr<Module> apt)
         {0x00420080, nullptr, "SleepSystem"},
         {0x00430040, &APT_S::NotifyToWait, "NotifyToWait"},
         {0x00440000, &APT_S::GetSharedFont, "GetSharedFont"},
-        {0x00450040, &APT_S::GetWirelessRebootInfo, "GetWirelessRebootInfo"},
+        {0x00450040, nullptr, "GetWirelessRebootInfo"},
         {0x00460104, &APT_S::Wrap, "Wrap"},
         {0x00470104, &APT_S::Unwrap, "Unwrap"},
         {0x00480100, nullptr, "GetProgramInfo"},
@@ -106,3 +107,5 @@ APT_S::APT_S(std::shared_ptr<Module> apt)
 }
 
 } // namespace Service::APT
+
+SERIALIZE_EXPORT_IMPL(Service::APT::APT_S)

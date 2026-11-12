@@ -1116,7 +1116,7 @@ void ARM_FastInterp::ClearExclusiveState() {
     exclusive_.valid = false;
 }
 
-void ARM_FastInterp::SetPageTable(Memory::PageTable* page_table) {
+void ARM_FastInterp::SetPageTable(const std::shared_ptr<Memory::PageTable>& page_table) {
     // The kernel calls this on every context switch, almost always with the
     // same page table. Only reset when the address space actually changes;
     // flushing the block cache every switch would re-decode all hot code.
@@ -1125,14 +1125,14 @@ void ARM_FastInterp::SetPageTable(Memory::PageTable* page_table) {
     }
     page_table_ = page_table;
     if (page_table) {
-        state_.page_pointers = page_table->pointers.data();
+        state_.page_pointers = page_table->GetPointerArray().data();
     } else {
         state_.page_pointers = empty_page_table; // Never null
     }
     ClearInstructionCache();
 }
 
-Memory::PageTable* ARM_FastInterp::GetPageTable() const {
+std::shared_ptr<Memory::PageTable> ARM_FastInterp::GetPageTable() const {
     return page_table_;
 }
 

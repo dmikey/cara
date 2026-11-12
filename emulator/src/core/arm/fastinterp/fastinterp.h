@@ -34,8 +34,8 @@ public:
     void ClearInstructionCache() override;
     void InvalidateCacheRange(u32 start_address, std::size_t length) override;
     void ClearExclusiveState();
-    void PurgeState() override { ClearExclusiveState(); }
-    void SetPageTable(Memory::PageTable* page_table) override;
+    void PurgeState() override { ClearExclusiveState(); ClearInstructionCache(); }
+    void SetPageTable(const std::shared_ptr<Memory::PageTable>& page_table) override;
 
     void SetPC(u32 addr) override;
     u32 GetPC() const override;
@@ -57,7 +57,7 @@ public:
 
 
 protected:
-    Memory::PageTable* GetPageTable() const override;
+    std::shared_ptr<Memory::PageTable> GetPageTable() const override;
 
 private:
     /// Execute a single basic block, returns number of instructions executed
@@ -111,7 +111,7 @@ private:
     Memory::MemorySystem& memory_;
     InterpreterState state_;
     BlockCache cache_;
-    Memory::PageTable* page_table_ = nullptr;
+    std::shared_ptr<Memory::PageTable> page_table_;
 
     // Per-core LDREX/STREX reservation. FastInterp handles exclusives itself
     // (there is no shared monitor without the JIT), so the common mapped-RAM

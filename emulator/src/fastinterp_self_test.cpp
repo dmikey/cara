@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <array>
+#include "test_memory.h"
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -15,11 +16,11 @@ int main() {
     auto& system = Core::System::GetInstance();
     auto old = std::make_unique<ARMul_State>(system, memory, USER32MODE);
     auto fast = std::make_unique<Core::FastInterp::ARM_FastInterp>(system, memory, 0, timing.GetTimer(0));
-    auto table = std::make_unique<Memory::PageTable>();
+    auto table = std::make_shared<Memory::PageTable>();
     std::array<u32, 1024> code{};
     table->attributes[1] = Memory::PageType::Memory;
-    table->pointers[1] = reinterpret_cast<u8*>(code.data());
-    memory.SetCurrentPageTable(table.get()); fast->SetPageTable(table.get());
+    table->pointers[1] = TestMemory(code);
+    memory.SetCurrentPageTable(table); fast->SetPageTable(table);
     u32 seed = 0x4321abcd;
     auto random = [&] { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return seed; };
     unsigned count = 0;
@@ -69,7 +70,7 @@ int main() {
     // Separate backing allocations make out-of-page host reads/writes observable.
     std::array<u8, 4096> page_a{}, page_b{};
     table->attributes[3] = table->attributes[4] = Memory::PageType::Memory;
-    table->pointers[3] = page_a.data(); table->pointers[4] = page_b.data();
+    table->pointers[3] = TestMemory(page_a); table->pointers[4] = TestMemory(page_b);
     page_a[4095] = 0x12; page_b[0] = 0x34; page_b[1] = 0x56; page_b[2] = 0x78;
     code[0] = 0xE5910000; // LDR r0, [r1], including a page crossing
     fast->ClearInstructionCache(); fast->SetCPSR(0x10); fast->SetPC(0x1000); fast->SetReg(1, 0x3FFF); fast->Step();
@@ -82,10 +83,10 @@ int main() {
     fast->SetReg(7, ~saved); fast->SetCPSR(0x10); fast->LoadContext(context);
     if (fast->GetReg(7) != saved || fast->GetCPSR() != saved_flags) return 1;
     // Same PC in a different process must not reuse the previous decode.
-    auto second = std::make_unique<Memory::PageTable>();
+    auto second = std::make_shared<Memory::PageTable>();
     std::array<u32,1024> other{0xE3A0002A}; second->attributes[1] = Memory::PageType::Memory;
-    second->pointers[1] = reinterpret_cast<u8*>(other.data());
-    memory.SetCurrentPageTable(second.get()); fast->SetPageTable(second.get()); fast->SetCPSR(0x10); fast->SetPC(0x1000); fast->Step();
+    second->pointers[1] = TestMemory(other);
+    memory.SetCurrentPageTable(second); fast->SetPageTable(second); fast->SetCPSR(0x10); fast->SetPC(0x1000); fast->Step();
     if (fast->GetReg(0) != 42) return 1;
     std::cout << count << " ARM/Thumb differential instruction cases, fused loop, cross-page RAM, context round-trip and address-space switch passed\n";
 }

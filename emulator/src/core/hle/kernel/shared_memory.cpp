@@ -3,18 +3,22 @@
 // Refer to the license.txt file included.
 
 #include <cstring>
+#include "common/archives.h"
 #include "common/logging/log.h"
 #include "core/hle/kernel/errors.h"
 #include "core/hle/kernel/memory.h"
 #include "core/hle/kernel/shared_memory.h"
 #include "core/memory.h"
 
+SERIALIZE_EXPORT_IMPL(Kernel::SharedMemory)
+
 namespace Kernel {
 
 SharedMemory::SharedMemory(KernelSystem& kernel) : Object(kernel), kernel(kernel) {}
 SharedMemory::~SharedMemory() {
-    for (const auto& block : holding_memory) {
-        kernel.GetMemoryRegion(block.region)->Free(block.offset, block.size);
+    for (const auto& interval : holding_memory) {
+        kernel.GetMemoryRegion(MemoryRegion::SYSTEM)
+            ->Free(interval.lower(), interval.upper() - interval.lower());
     }
     if (base_address != 0 && owner_process != nullptr) {
         owner_process->vm_manager.ChangeMemoryState(base_address, size, MemoryState::Locked,
@@ -43,8 +47,8 @@ ResultVal<std::shared_ptr<SharedMemory>> KernelSystem::CreateSharedMemory(
         ASSERT_MSG(offset, "Not enough space in region to allocate shared memory!");
 
         std::fill(memory.GetFCRAMPointer(*offset), memory.GetFCRAMPointer(*offset + size), 0);
-        shared_memory->backing_blocks = {{memory.GetFCRAMPointer(*offset), size}};
-        shared_memory->holding_memory.emplace_back(*offset, size, region);
+        shared_memory->backing_blocks = {{memory.GetFCRAMRef(*offset), size}};
+        shared_memory->holding_memory += MemoryRegionInfo::Interval(*offset, *offset + size);
         shared_memory->linear_heap_phys_offset = *offset;
 
         // Increase the amount of used linear heap memory for the owner process.
@@ -77,17 +81,15 @@ std::shared_ptr<SharedMemory> KernelSystem::CreateSharedMemoryForApplet(
     auto memory_region = GetMemoryRegion(MemoryRegion::SYSTEM);
     auto backing_blocks = memory_region->HeapAllocate(size);
     ASSERT_MSG(!backing_blocks.empty(), "Not enough space in region to allocate shared memory!");
+    shared_memory->holding_memory = backing_blocks;
     shared_memory->owner_process = nullptr;
     shared_memory->name = std::move(name);
     shared_memory->size = size;
     shared_memory->permissions = permissions;
     shared_memory->other_permissions = other_permissions;
     for (const auto& interval : backing_blocks) {
-        u32 block_size = interval.upper() - interval.lower();
-        shared_memory->holding_memory.emplace_back(interval.lower(), block_size,
-                                                   MemoryRegion::SYSTEM);
-        shared_memory->backing_blocks.emplace_back(memory.GetFCRAMPointer(interval.lower()),
-                                                   block_size);
+        shared_memory->backing_blocks.push_back(
+            {memory.GetFCRAMRef(interval.lower()), interval.upper() - interval.lower()});
         std::fill(memory.GetFCRAMPointer(interval.lower()),
                   memory.GetFCRAMPointer(interval.upper()), 0);
     }

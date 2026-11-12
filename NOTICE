@@ -16,3 +16,11 @@ FastInterp CPU interpreter: Copyright 2026 Citra Emulator Project / Azahar Emula
 Vendored from Azahar 2127.0-rc2, revision 6b4e7f2e694514fdf2f72dc20368609b7cd4912e.
 FastInterp and its timing/atomic helpers are GPL-2.0-or-later; see
 emulator/misc/licenses/gplv2.txt and docs/fastinterp-upstream.json.
+
+Save-state serialization derives from the Citra Emulator Project and contributors,
+including the original save-state work by Hamish Milne. Restored from Citra MMJ
+revision 11b01c0a28e4441dc8902ea2ea88d9bcaf1efbc4 and adapted for Cara.
+The original GPL-2.0-or-later notices remain in the source files.
+
+Zstandard: Copyright Meta Platforms, Inc. and affiliates. Bundled source and BSD
+license are in emulator/externals/zstd/; its revision is recorded in VENDORED_SOURCE.json.

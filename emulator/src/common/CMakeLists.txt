@@ -113,3 +113,6 @@ target_link_libraries(common PUBLIC fmt microprofile)
 if (ARCHITECTURE_x86_64)
     target_link_libraries(common PRIVATE xbyak)
 endif()
+
+target_sources(common PRIVATE memory_ref.cpp zstd_compression.cpp)
+target_link_libraries(common PUBLIC Boost::serialization PRIVATE libzstd_static)

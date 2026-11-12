@@ -189,7 +189,7 @@ private:
 ResultCode SVC::ControlMemory(u32* out_addr, u32 addr0, u32 addr1, u32 size, u32 operation,
                               u32 permissions) {
     LOG_DEBUG(Kernel_SVC,
-              "ControlMemory called operation=0x{:08X}, addr0=0x{:08X}, addr1=0x{:08X}, "
+              "called operation=0x{:08X}, addr0=0x{:08X}, addr1=0x{:08X}, "
               "size=0x{:X}, permissions=0x{:08X}",
               operation, addr0, addr1, size, permissions);
 
@@ -281,7 +281,7 @@ void SVC::ExitProcess() {
     // Stop all the process threads that are currently waiting for objects.
     auto& thread_list = kernel.GetCurrentThreadManager().GetThreadList();
     for (auto& thread : thread_list) {
-        if (thread->owner_process != current_process.get())
+        if (thread->owner_process != current_process)
             continue;
 
         if (thread.get() == kernel.GetCurrentThreadManager().GetCurrentThread())
@@ -428,6 +428,14 @@ public:
 
 private:
     bool do_output;
+
+    SVC_SyncCallback() = default;
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int) {
+        ar& boost::serialization::base_object<Kernel::WakeupCallback>(*this);
+        ar& do_output;
+    }
+    friend class boost::serialization::access;
 };
 
 class SVC_IPCCallback : public Kernel::WakeupCallback {
@@ -453,6 +461,14 @@ public:
 
 private:
     Core::System& system;
+
+    SVC_IPCCallback() : system(Core::Global<Core::System>()) {}
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int) {
+        ar& boost::serialization::base_object<Kernel::WakeupCallback>(*this);
+    }
+    friend class boost::serialization::access;
 };
 
 /// Wait for a handle to synchronize, timeout after the specified nanoseconds
@@ -764,8 +780,8 @@ ResultCode SVC::CreateAddressArbiter(Handle* out_handle) {
 
 /// Arbitrate address
 ResultCode SVC::ArbitrateAddress(Handle handle, u32 address, u32 type, u32 value, s64 nanoseconds) {
-    LOG_TRACE(Kernel_SVC, "called handle=0x{:08X}, address=0x{:08X}, type=0x{:08X}, value=0x{:08X}, nanoseconds: {:08X}",
-              handle, address, type, value, nanoseconds);
+    LOG_TRACE(Kernel_SVC, "called handle=0x{:08X}, address=0x{:08X}, type=0x{:08X}, value=0x{:08X}",
+              handle, address, type, value);
 
     std::shared_ptr<AddressArbiter> arbiter =
         kernel.GetCurrentProcess()->handle_table.Get<AddressArbiter>(handle);
@@ -777,7 +793,7 @@ ResultCode SVC::ArbitrateAddress(Handle handle, u32 address, u32 type, u32 value
                                   static_cast<ArbitrationType>(type), address, value, nanoseconds);
 
     // TODO(Subv): Identify in which specific cases this call should cause a reschedule.
-    // system.PrepareReschedule();
+    system.PrepareReschedule();
 
     return res;
 }
@@ -913,7 +929,7 @@ ResultCode SVC::CreateThread(Handle* out_handle, u32 entry_point, u32 arg, VAddr
 
     CASCADE_RESULT(std::shared_ptr<Thread> thread,
                    kernel.CreateThread(name, entry_point, priority, arg, processor_id, stack_top,
-                                       *current_process));
+                                       current_process));
 
     thread->context->SetFpscr(FPSCR_DEFAULT_NAN | FPSCR_FLUSH_TO_ZERO |
                               FPSCR_ROUND_TOZERO); // 0x03C00000
@@ -1022,7 +1038,7 @@ ResultCode SVC::GetProcessIdOfThread(u32* process_id, Handle thread_handle) {
     if (thread == nullptr)
         return ERR_INVALID_HANDLE;
 
-    const std::shared_ptr<Process> process = SharedFrom(thread->owner_process);
+    const std::shared_ptr<Process> process = thread->owner_process;
 
     ASSERT_MSG(process != nullptr, "Invalid parent process for thread={:#010X}", thread_handle);
 
@@ -1404,15 +1420,7 @@ ResultCode SVC::GetProcessInfo(s64* out, Handle process_handle, u32 type) {
 
     switch (type) {
     case 0:
-        // Returns the amount of executable memory allocated to the process +
-        // thread context size + page-rounded size of the external handle table
-    case 1:
-        // Returns the amount of <unknown> memory allocated to the process +
-        // thread context size + page-rounded size of the external handle table
     case 2:
-        // Returns the amount of DMA-able (code, data, IO pages, etc.) memory allocated to the process +
-        // thread context size + page-rounded size of the external handle table
-
         // TODO(yuriks): Type 0 returns a slightly higher number than type 2, but I'm not sure
         // what's the difference between them.
         *out = process->memory_used;
@@ -1421,47 +1429,26 @@ ResultCode SVC::GetProcessInfo(s64* out, Handle process_handle, u32 type) {
             return ERR_MISALIGNED_SIZE;
         }
         break;
+    case 1:
     case 3:
-        // Returns the amount of <unknown> memory allocated to the process +
-        // thread context size + page-rounded size of the external handle table
-        LOG_ERROR(Kernel_SVC, "unimplemented GetProcessInfo type={}", type);
-        break;
     case 4:
-        // Returns the amount handles in use by the process.
-        *out = process->handle_table.Size();
-        break;
     case 5:
-        // Returns the highest count of handles that have been open at once by the process
-        LOG_ERROR(Kernel_SVC, "unimplemented GetProcessInfo type={}", type);
-        break;
     case 6:
-        // Returns *(u32*)(KProcess+0x234) which is always 0
-        *out = 0;
-        break;
     case 7:
-        // Returns the number of threads of the process
-        *out = kernel.GetProcessThreadsCount(process);
-        break;
     case 8:
-        // Returns the maximum number of threads which can be opened by this process (always 0)
-        *out = 0;
+        // These are valid, but not implemented yet
+        LOG_ERROR(Kernel_SVC, "unimplemented GetProcessInfo type={}", type);
         break;
     case 20:
-        // low u32 = (0x20000000 - <LINEAR virtual-memory base for this process>).
         *out = Memory::FCRAM_PADDR - process->GetLinearHeapAreaAddress();
         break;
     case 21:
-        // Returns the maximum amount of VRAM memory allocatable by the process:
-        // 0x800000 bytes if the process has already allocated VRAM memory,
-        // otherwise 0 (+ error 0xE0E01BF4)
     case 22:
-        // Returns the address of the first chunk of VRAM allocated by this process
     case 23:
         // These return a different error value than higher invalid values
         LOG_ERROR(Kernel_SVC, "unknown GetProcessInfo type={}", type);
         return ERR_NOT_IMPLEMENTED;
     default:
-        // 9-18:  This only returns error 0xD8E007ED.
         LOG_ERROR(Kernel_SVC, "unknown GetProcessInfo type={}", type);
         return ERR_INVALID_ENUM_VALUE;
     }
@@ -1637,3 +1624,6 @@ void SVCContext::CallSVC(u32 immediate) {
 }
 
 } // namespace Kernel
+
+SERIALIZE_EXPORT_IMPL(Kernel::SVC_SyncCallback)
+SERIALIZE_EXPORT_IMPL(Kernel::SVC_IPCCallback)

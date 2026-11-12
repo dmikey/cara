@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #pragma once
+#include <stdexcept>
 
 #include <array>
 #include <cstdio>
@@ -14,13 +15,15 @@
 #include <string_view>
 #include <type_traits>
 #include <vector>
+#include <boost/serialization/split_member.hpp>
+#include <boost/serialization/string.hpp>
+#include <boost/serialization/wrapper.hpp>
 #include "common/common_types.h"
 
 namespace FileUtil {
 
 // User paths for GetUserPath
 enum class UserPath {
-    AmiiboDir,
     CacheDir,
     CheatsDir,
     ConfigDir,
@@ -37,6 +40,34 @@ enum class UserPath {
     UserDir,
 };
 
+// Replaces install-specific paths with standard placeholders, and back again
+std::string SerializePath(const std::string& input, bool is_saving);
+
+// A serializable path string
+struct Path : public boost::serialization::wrapper_traits<const Path> {
+    std::string& str;
+
+    explicit Path(std::string& _str) : str(_str) {}
+
+    static const Path make(std::string& str) {
+        return Path(str);
+    }
+
+    template <class Archive>
+    void save(Archive& ar, const unsigned int) const {
+        auto s_path = SerializePath(str, true);
+        ar << s_path;
+    }
+    template <class Archive>
+    void load(Archive& ar, const unsigned int) const {
+        ar >> str;
+        str = SerializePath(str, false);
+    }
+
+    BOOST_SERIALIZATION_SPLIT_MEMBER();
+    friend class boost::serialization::access;
+};
+
 // FileSystem tree node/
 struct FSTEntry {
     bool isDirectory;
@@ -44,6 +75,17 @@ struct FSTEntry {
     std::string physicalName; // name on disk
     std::string virtualName;  // name in FST names table
     std::vector<FSTEntry> children;
+
+private:
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int) {
+        ar& isDirectory;
+        ar& size;
+        ar& Path::make(physicalName);
+        ar& Path::make(virtualName);
+        ar& children;
+    }
+    friend class boost::serialization::access;
 };
 
 // Returns true if file filename exists
@@ -129,6 +171,8 @@ std::optional<std::string> GetCurrentDir();
 void CopyDir(const std::string& source_path, const std::string& dest_path);
 
 void SetUserPath(const std::string& path);
+
+void SetCurrentRomPath(const std::string& path);
 
 // Returns a pointer to a string with a Citra data dir in the user's home
 // directory. To be used in "multi-user" mode (that is, installed).
@@ -277,6 +321,26 @@ public:
     }
 
 private:
+    std::string state_filename, state_mode;
+    int state_flags = 0;
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int) {
+        ar& Path::make(state_filename);
+        ar& state_mode;
+        bool opened = IsOpen();
+        ar& opened;
+        u64 position = Archive::is_saving::value && opened ? Tell() : 0;
+        ar& position;
+        if (Archive::is_loading::value) {
+            const auto original_mode = state_mode;
+            const auto restore_mode = (state_mode.find('w') != std::string::npos || state_mode.find('a') != std::string::npos) ? std::string("r+b") : state_mode;
+            if (opened && (!Open(state_filename, restore_mode.c_str()) || !Seek(position, SEEK_SET)))
+                throw std::runtime_error("Unable to restore an open game file");
+            state_mode = original_mode;
+            if (!opened) Close();
+        }
+    }
+    friend class boost::serialization::access;
     std::unique_ptr<FileUtil::IOHandler> m_file;
     bool m_good = false;
 };

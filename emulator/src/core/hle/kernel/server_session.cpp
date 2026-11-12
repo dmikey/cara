@@ -3,7 +3,10 @@
 // Refer to the license.txt file included.
 
 #include <tuple>
-
+#include <boost/serialization/shared_ptr.hpp>
+#include <boost/serialization/string.hpp>
+#include <boost/serialization/vector.hpp>
+#include "common/archives.h"
 #include "core/hle/kernel/client_port.h"
 #include "core/hle/kernel/client_session.h"
 #include "core/hle/kernel/hle_ipc.h"
@@ -11,7 +14,21 @@
 #include "core/hle/kernel/session.h"
 #include "core/hle/kernel/thread.h"
 
+SERIALIZE_EXPORT_IMPL(Kernel::ServerSession)
+
 namespace Kernel {
+
+template <class Archive>
+void ServerSession::serialize(Archive& ar, const unsigned int file_version) {
+    ar& boost::serialization::base_object<WaitObject>(*this);
+    ar& name;
+    ar& parent;
+    ar& hle_handler;
+    ar& pending_requesting_threads;
+    ar& currently_handling;
+    ar& mapped_buffer_context;
+}
+SERIALIZE_IMPL(ServerSession)
 
 ServerSession::ServerSession(KernelSystem& kernel) : WaitObject(kernel), kernel(kernel) {}
 ServerSession::~ServerSession() {
@@ -73,8 +90,8 @@ ResultCode ServerSession::HandleSyncRequest(std::shared_ptr<Thread> thread) {
                                 cmd_buf.size() * sizeof(u32));
 
         auto context =
-            std::make_shared<Kernel::HLERequestContext>(kernel, SharedFrom(this), thread.get());
-        context->PopulateFromIncomingCommandBuffer(cmd_buf.data(), *current_process);
+            std::make_shared<Kernel::HLERequestContext>(kernel, SharedFrom(this), thread);
+        context->PopulateFromIncomingCommandBuffer(cmd_buf.data(), current_process);
 
         hle_handler->HandleSyncRequest(*context);
 
@@ -123,13 +140,11 @@ ResultCode ServerSession::HandleSyncRequest(std::shared_ptr<Thread> thread) {
 
 KernelSystem::SessionPair KernelSystem::CreateSessionPair(const std::string& name,
                                                           std::shared_ptr<ClientPort> port) {
-    auto server_session{std::make_shared<ServerSession>(*this)};
-    server_session->name = name + "_Server";
-
+    auto server_session = ServerSession::Create(*this, name + "_Server").Unwrap();
     auto client_session{std::make_shared<ClientSession>(*this)};
     client_session->name = name + "_Client";
 
-    auto parent{std::make_shared<Session>()};
+    std::shared_ptr<Session> parent(new Session);
     parent->client = client_session.get();
     parent->server = server_session.get();
     parent->port = std::move(port);

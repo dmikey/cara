@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <array>
+#include "test_memory.h"
 #include <chrono>
 #include <cstring>
 #include <string>
@@ -18,15 +19,15 @@ int main(int argc, char** argv) {
     auto& system = Core::System::GetInstance();
     auto first = std::make_unique<ARMul_State>(system, memory, USER32MODE);
     auto second = std::make_unique<ARMul_State>(system, memory, USER32MODE);
-    auto first_table = std::make_unique<Memory::PageTable>();
-    auto second_table = std::make_unique<Memory::PageTable>();
+    auto first_table = std::make_shared<Memory::PageTable>();
+    auto second_table = std::make_shared<Memory::PageTable>();
     // MOV r0, #17 / MOV r0, #29; B .  Same guest PC, distinct core address spaces.
     std::array<u32, 1024> first_code{0xE3A00011, 0xEAFFFFFE};
     std::array<u32, 1024> second_code{0xE3A0001D, 0xEAFFFFFE};
     first_table->attributes[1] = second_table->attributes[1] = Memory::PageType::Memory;
-    first_table->pointers[1] = reinterpret_cast<u8*>(first_code.data());
-    second_table->pointers[1] = reinterpret_cast<u8*>(second_code.data());
-    const auto execute = [&](ARMul_State& cpu, Memory::PageTable* table, u32 expected, u32 pc = 0x1000) {
+    first_table->pointers[1] = TestMemory(first_code);
+    second_table->pointers[1] = TestMemory(second_code);
+    const auto execute = [&](ARMul_State& cpu, const std::shared_ptr<Memory::PageTable>& table, u32 expected, u32 pc = 0x1000) {
         memory.SetCurrentPageTable(table);
         cpu.Reg[15] = pc; cpu.Reg[0] = 0; cpu.NumInstrsToExecute = 2;
         InterpreterMainLoop(&cpu, timing.GetTimer(0).get());
@@ -37,26 +38,26 @@ int main(int argc, char** argv) {
         return true;
     };
     InvalidateDynComDecodedCache();
-    if (!execute(*first, first_table.get(), 17)) return 1;
+    if (!execute(*first, first_table, 17)) return 1;
     for (unsigned i = 0; i < 8; ++i) {
         // A reset on core two overwrites the shared arena, while core one still
         // holds an offset into it. Core one must decode its own instruction again.
         InvalidateDynComDecodedCache();
-        if (!execute(*second, second_table.get(), 29)) return 1;
-        if (!execute(*first, first_table.get(), 17)) return 1;
+        if (!execute(*second, second_table, 29)) return 1;
+        if (!execute(*first, first_table, 17)) return 1;
     }
     // These PCs collide in the direct-mapped lookup; a tag mismatch must fall back.
     std::array<u32, 1024> collision_code{};
     collision_code[3] = 0xE3A0002B; collision_code[4] = 0xEAFFFFFE;
     first_table->attributes[2] = Memory::PageType::Memory;
-    first_table->pointers[2] = reinterpret_cast<u8*>(collision_code.data());
+    first_table->pointers[2] = TestMemory(collision_code);
     for (unsigned i = 0; i < 100; ++i) {
-        if (!execute(*first, first_table.get(), 43, 0x200c)) return 2;
-        if (!execute(*first, first_table.get(), 17)) return 2;
+        if (!execute(*first, first_table, 43, 0x200c)) return 2;
+        if (!execute(*first, first_table, 17)) return 2;
     }
     first_code[0] = 0xE3A00047;
     InvalidateDynComDecodedCache();
-    if (!execute(*first, first_table.get(), 71)) return 3;
+    if (!execute(*first, first_table, 71)) return 3;
     // ARM -> Thumb -> ARM, both inside one slice and across single-step slices.
     // Debugger polling must not change instruction-set transitions or CPSR flags.
     alignas(4) std::array<u8, 4096> interworking{};
@@ -70,8 +71,8 @@ int main(int argc, char** argv) {
     std::memcpy(interworking.data() + 0x84, &adds_r0, sizeof(adds_r0));
     std::memcpy(interworking.data() + 0x88, &branch, sizeof(branch));
     first_table->attributes[3] = Memory::PageType::Memory;
-    first_table->pointers[3] = interworking.data();
-    memory.SetCurrentPageTable(first_table.get());
+    first_table->pointers[3] = TestMemory(interworking);
+    memory.SetCurrentPageTable(first_table);
     for (bool single_step : {false, true}) {
         InvalidateDynComDecodedCache();
         first->Cpsr = USER32MODE;
@@ -95,7 +96,7 @@ int main(int argc, char** argv) {
     for (unsigned i = 0; i < 16; ++i) arithmetic[i] = 0xE2800001; // ADD r0, r0, #1
     arithmetic[16] = 0xEAFFFFEE; // B back to the first ADD
     first_table->attributes[4] = Memory::PageType::Memory;
-    first_table->pointers[4] = reinterpret_cast<u8*>(arithmetic.data());
+    first_table->pointers[4] = TestMemory(arithmetic);
     InvalidateDynComDecodedCache();
     first->Reg[15] = 0x4000; first->Reg[0] = 0; first->NumInstrsToExecute = 170;
     InterpreterMainLoop(first.get(), timing.GetTimer(0).get());
@@ -106,7 +107,7 @@ int main(int argc, char** argv) {
     // pattern is an independent rotation oracle, including a zero-bit rotation.
     std::array<u32, 1024> immediate_code{};
     first_table->attributes[5] = Memory::PageType::Memory;
-    first_table->pointers[5] = reinterpret_cast<u8*>(immediate_code.data());
+    first_table->pointers[5] = TestMemory(immediate_code);
     for (unsigned operand = 0; operand < 4096; ++operand) {
         for (unsigned carry = 0; carry < 2; ++carry) {
             immediate_code[0] = 0xE3B00000 | operand; // MOVS r0, #rotated immediate
@@ -143,8 +144,8 @@ int main(int argc, char** argv) {
     compare_code[2]=0xE3A01001; compare_code[3]=0xEAFFFFFE;
     compare_code[4]=0xE3A01002; compare_code[5]=0xEAFFFFFE;
     first_table->attributes[8]=Memory::PageType::Memory;
-    first_table->pointers[8]=reinterpret_cast<u8*>(compare_code.data());
-    memory.SetCurrentPageTable(first_table.get());
+    first_table->pointers[8]=TestMemory(compare_code);
+    memory.SetCurrentPageTable(first_table);
     for (u32 lhs:{0u,1u,0xffffffffu,0x80000000u,0x7fffffffu})
     for (u32 rhs:{0u,1u,255u}) for (unsigned cmp_cond:{14u,0u})
     for (unsigned branch_cond=0;branch_cond<15;++branch_cond) for (bool link:{false,true})
@@ -175,7 +176,7 @@ int main(int argc, char** argv) {
     // independent reference. Include every predicate and initial NZCV combination.
     std::array<u32,1024> flag_code{0xE1500001,0xEAFFFFFE}; // CMP r0,r1; B .
     first_table->attributes[9]=Memory::PageType::Memory;
-    first_table->pointers[9]=reinterpret_cast<u8*>(flag_code.data());
+    first_table->pointers[9]=TestMemory(flag_code);
     const std::array<u32,9> flag_edges{0,1,2,0x7ffffffe,0x7fffffff,
         0x80000000,0x80000001,0xfffffffe,0xffffffff};
     const auto verify_compare = [&](u32 lhs,u32 rhs,unsigned predicate,unsigned initial) {
@@ -234,19 +235,19 @@ int main(int argc, char** argv) {
     ram_a[0]=0x12;ram_a[1]=0x34;ram_a[2]=0x56;ram_a[3]=0x78;
     ram_b[0]=0x98;ram_b[1]=0xba;ram_b[2]=0xdc;ram_b[3]=0xfe;
     first_table->attributes[11]=second_table->attributes[11]=Memory::PageType::Memory;
-    first_table->pointers[11]=ram_a.data();second_table->pointers[11]=ram_b.data();
+    first_table->pointers[11]=TestMemory(ram_a);second_table->pointers[11]=TestMemory(ram_b);
     for(unsigned turn=0;turn<100;++turn) {
-        memory.SetCurrentPageTable((turn&1)?first_table.get():second_table.get());
+        memory.SetCurrentPageTable((turn&1)?first_table:second_table);
         if(memory.Read32(0xb000)!=((turn&1)?0x78563412u:0xfedcba98u)) {
             std::cerr << "RAM read retained a stale address-space pointer\n";return 13;
         }
     }
-    memory.SetCurrentPageTable(first_table.get());
-    first_table->pointers[11]=ram_b.data();
+    memory.SetCurrentPageTable(first_table);
+    first_table->pointers[11]=TestMemory(ram_b);
     if(memory.Read32(0xb000)!=0xfedcba98u) return 13;
     memory.UnmapRegion(*first_table,0xb000,Memory::PAGE_SIZE);
     if(memory.Read32(0xb000)!=0) {std::cerr << "RAM read bypassed unmapped fallback\n";return 13;}
-    memory.MapMemoryRegion(*first_table,0xb000,Memory::PAGE_SIZE,ram_a.data());
+    memory.MapMemoryRegion(*first_table,0xb000,Memory::PAGE_SIZE,TestMemory(ram_a));
     memory.Write32(0xbffc,0xa1b2c3d4);
     if(memory.Read32(0xbffc)!=0xa1b2c3d4 || ram_a[4092]!=0xd4 || ram_a[4095]!=0xa1) return 13;
     memory.Write8(0xb000,0xef);

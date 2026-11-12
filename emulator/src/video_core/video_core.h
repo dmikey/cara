@@ -21,6 +21,8 @@ class MemorySystem;
 // Video Core namespace
 
 namespace VideoCore {
+extern Memory::MemorySystem* g_memory;
+template <class Archive> void serialize(Archive& ar, const unsigned int);
 
 class RendererBase;
 class RasterizerInterface;

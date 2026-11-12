@@ -3,12 +3,15 @@
 // Refer to the license.txt file included.
 
 #include "common/common_paths.h"
+#include "common/archives.h"
 #include "core/core.h"
 #include "core/hle/applets/applet.h"
 #include "core/hle/service/apt/applet_manager.h"
 #include "core/hle/service/apt/errors.h"
 #include "core/hle/service/apt/ns.h"
 #include "core/hle/service/cfg/cfg.h"
+
+SERVICE_CONSTRUCT_IMPL(Service::APT::AppletManager)
 
 namespace Service::APT {
 

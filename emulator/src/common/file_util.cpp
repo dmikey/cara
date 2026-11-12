@@ -432,7 +432,33 @@ void SetUserPath(const std::string& path) {
     g_paths.emplace(UserPath::DumpDir, user_path + DUMP_DIR DIR_SEP);
     g_paths.emplace(UserPath::LoadDir, user_path + LOAD_DIR DIR_SEP);
     g_paths.emplace(UserPath::StatesDir, user_path + STATES_DIR DIR_SEP);
-    g_paths.emplace(UserPath::AmiiboDir, user_path + AMIIBO_DIR DIR_SEP);
+}
+
+std::string g_currentRomPath{};
+
+void SetCurrentRomPath(const std::string& path) {
+    g_currentRomPath = path;
+}
+
+bool StringReplace(std::string& haystack, const std::string& a, const std::string& b, bool swap) {
+    const auto& needle = swap ? b : a;
+    const auto& replacement = swap ? a : b;
+    if (needle.empty()) {
+        return false;
+    }
+    auto index = haystack.find(needle, 0);
+    if (index == std::string::npos) {
+        return false;
+    }
+    haystack.replace(index, needle.size(), replacement);
+    return true;
+}
+
+std::string SerializePath(const std::string& input, bool is_saving) {
+    auto result = input;
+    StringReplace(result, "%CARA_ROM_FILE%", g_currentRomPath, is_saving);
+    StringReplace(result, "%CARA_USER_DIR%", GetUserPath(UserPath::UserDir), is_saving);
+    return result;
 }
 
 const std::string& GetUserPath(UserPath path) {
@@ -441,7 +467,6 @@ const std::string& GetUserPath(UserPath path) {
         SetUserPath("");
     return g_paths[path];
 }
-
 std::size_t WriteStringToFile(bool text_file, const std::string& filename, std::string_view str) {
     return IOFile(filename, text_file ? "w" : "wb").WriteString(str);
 }
@@ -567,9 +592,12 @@ IOFile::~IOFile() {
 IOFile::IOFile(IOFile&& other) noexcept {
     std::swap(m_file, other.m_file);
     std::swap(m_good, other.m_good);
+    std::swap(state_filename, other.state_filename);
+    std::swap(state_mode, other.state_mode);
 }
 
 bool IOFile::Open(const std::string& filename, const char openmode[]) {
+    state_filename = filename; state_mode = openmode;
     if (s_io_factory) {
         m_file = s_io_factory->Open(filename, openmode);
     } else {

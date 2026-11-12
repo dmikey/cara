@@ -16,8 +16,13 @@ namespace Service::HBLDR {
 class HBLDR final : public ServiceFramework<HBLDR> {
 public:
     HBLDR();
+
+private:
+    SERVICE_SERIALIZATION_SIMPLE
 };
 
 void InstallInterfaces(Core::System& system);
 
-} // namespace Service::NDM
+} // namespace Service::HBLDR
+
+BOOST_CLASS_EXPORT_KEY(Service::HBLDR::HBLDR)
