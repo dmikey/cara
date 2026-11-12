@@ -56,9 +56,10 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
 - (BOOL)keyboardConnected { return GCKeyboard.coalescedKeyboard!=nil; }
 - (void)devicesChanged:(NSNotification*)notification {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{ [self devicesChanged:notification]; }); return; }
-    if (!selected || ![GCController.controllers containsObject:selected]) {
-        selected=nil;
-        for (GCController* controller in GCController.controllers) if (controller.extendedGamepad) { [self useController:controller]; break; }
+    if (!selected || (!selected.isSnapshot && ![GCController.controllers containsObject:selected])) {
+        GCController* replacement=nil;
+        for (GCController* controller in GCController.controllers) if (controller.extendedGamepad) { replacement=controller; break; }
+        [self useController:replacement];
     }
     __weak CaraInputHub* owner=self;
     GCKeyboard* keyboard=GCKeyboard.coalescedKeyboard; keyboard.handlerQueue=dispatch_get_main_queue();

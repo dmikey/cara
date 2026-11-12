@@ -14,6 +14,11 @@
 @end
 static void Check(BOOL ok,NSString* text) { if (!ok) { NSLog(@"FAIL: %@",text); std::exit(1); } }
 static void Drain() { [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.03]]; }
+static void WaitFor(BOOL(^condition)(void),NSString* message) {
+    NSDate* deadline=[NSDate dateWithTimeIntervalSinceNow:5];
+    while (!condition() && deadline.timeIntervalSinceNow>0) Drain();
+    Check(condition(),message);
+}
 int main() { @autoreleasepool {
     InputTestDefaults* defaults=[InputTestDefaults new]; CaraInputHub* hub=[[CaraInputHub alloc] initWithDefaults:defaults];
     __block NSSet* buttons; __block CGPoint circle=CGPointZero; __block BOOL fast=NO;
@@ -35,9 +40,12 @@ int main() { @autoreleasepool {
     // Snapshot setters update values but do not promise hardware callbacks.
     // Inject the public profile event after writing the native synthetic value.
     const auto event=[&](GCControllerElement* element) { if (controller.extendedGamepad.valueChangedHandler) controller.extendedGamepad.valueChangedHandler(controller.extendedGamepad,element); Drain(); };
-    [controller.extendedGamepad.buttonA setValue:1]; event(controller.extendedGamepad.buttonA); Check([buttons containsObject:@"a"],@"native GameController snapshot button routed");
-    [controller.extendedGamepad.buttonA setValue:0]; event(controller.extendedGamepad.buttonA); Check(![buttons containsObject:@"a"],@"native GameController snapshot release routed");
-    [controller.extendedGamepad.leftThumbstick.xAxis setValue:.8]; event(controller.extendedGamepad.leftThumbstick.xAxis); Check(circle.x>.7 && circle.y==0,@"native controller analog and deadzone");
+    [controller.extendedGamepad.buttonA setValue:1]; WaitFor(^BOOL { return controller.extendedGamepad.buttonA.isPressed; },@"snapshot press value arrives"); event(controller.extendedGamepad.buttonA); Check([buttons containsObject:@"a"],@"native GameController snapshot button routed");
+    [controller.extendedGamepad.buttonA setValue:0]; WaitFor(^BOOL { return !controller.extendedGamepad.buttonA.isPressed; },@"snapshot release value arrives"); event(controller.extendedGamepad.buttonA); Check(![buttons containsObject:@"a"],@"native GameController snapshot release routed");
+    [controller.extendedGamepad.leftThumbstick.xAxis setValue:.8]; WaitFor(^BOOL { return controller.extendedGamepad.leftThumbstick.xAxis.value>.79; },@"snapshot axis value arrives"); event(controller.extendedGamepad.leftThumbstick.xAxis); Check(circle.x>.7 && circle.y==0,@"native controller analog and deadzone");
+    [controller.extendedGamepad.buttonA setValue:1]; WaitFor(^BOOL { return controller.extendedGamepad.buttonA.isPressed; },@"snapshot reconnect press value arrives"); event(controller.extendedGamepad.buttonA);
+    [NSNotificationCenter.defaultCenter postNotificationName:GCKeyboardDidConnectNotification object:nil]; Check([buttons containsObject:@"a"],@"unrelated device notifications retain an explicitly selected snapshot");
+    [hub useController:nil]; Check(![buttons containsObject:@"a"] && CGPointEqualToPoint(circle,CGPointZero),@"controller removal clears held buttons and axes");
     // Menu callback can synchronously deactivate the hub; stale commands must
     // not re-enable held fast-forward after that nested reset.
     __weak CaraInputHub* weakHub=hub;
