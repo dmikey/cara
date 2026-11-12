@@ -39,6 +39,7 @@ struct Playback {
     std::atomic<uint64_t> fill_nanoseconds{0}, max_fill_nanoseconds{0};
     s16 last_left=0,last_right=0;
     std::atomic<unsigned> peak{0};
+    std::atomic<u64> queue_generations{0};
 
     static void Output(void* context,AudioQueueRef,AudioQueueBufferRef buffer) {
         auto* self=static_cast<Playback*>(context);
@@ -107,6 +108,7 @@ struct Playback {
             return false;
         }
         AudioQueueSetParameter(queue,kAudioQueueParam_Volume,muted.load()?0.0f:1.0f);
+        queue_generations.fetch_add(1,std::memory_order_relaxed);
         return true;
     }
     bool ActivateSessionLocked() {
@@ -137,21 +139,25 @@ struct Playback {
         if (queue && playing) AudioQueuePause(queue);
         playing=false;
     }
+    void DiscardQueueLocked() {
+        stopping.store(true,std::memory_order_release);
+        if (queue) {
+            AudioQueueStop(queue,true);
+            dispatch_sync(callback_queue,^{});
+            AudioQueueDispose(queue,true);
+        }
+        queue=nullptr; buffers.fill(nullptr); playing=false; primed=false;
+        stopping.store(false,std::memory_order_release);
+    }
     void ResetService() {
         std::lock_guard<std::mutex> lock(control);
         if (stopping.load()) return;
-        stopping.store(true,std::memory_order_release);
-        if (queue) { AudioQueueStop(queue,true); AudioQueueDispose(queue,true); dispatch_sync(callback_queue,^{}); }
-        queue=nullptr; buffers.fill(nullptr); playing=false; primed=false;
-        stopping.store(false,std::memory_order_release);
+        DiscardQueueLocked();
         ResumeLocked();
     }
     void SetCallback(std::function<void(s16*,std::size_t)> next) {
         std::lock_guard<std::mutex> lock(control);
-        stopping.store(true,std::memory_order_release);
-        if (queue) { AudioQueueStop(queue,true); dispatch_sync(callback_queue,^{}); }
-        playing=false; primed=false; callback=std::move(next);
-        stopping.store(false,std::memory_order_release);
+        DiscardQueueLocked(); callback=std::move(next);
         ResumeLocked();
     }
     void ApplyMute() {
@@ -163,12 +169,26 @@ struct Playback {
         if (pause) PauseLocked(); else ResumeLocked();
     }
     void SetBackground(bool value) {
-        std::lock_guard<std::mutex> lock(control); background=value;
-        if (value) PauseLocked(); else ResumeLocked();
+        std::lock_guard<std::mutex> lock(control);
+        if (stopping.load()) return;
+        const bool returning=background && !value;
+        background=value;
+        if (value) DiscardQueueLocked();
+        else {
+            // A suspension can consume the interruption-ended notification. An
+            // explicit foreground return should attempt a fresh audio session.
+            if (returning) interrupted=false;
+            ResumeLocked();
+        }
     }
-    void SetInterruption(bool began,bool resume) {
-        std::lock_guard<std::mutex> lock(control); interrupted=began;
-        if (began) PauseLocked(); else if (resume) ResumeLocked();
+    void SetInterruption(bool began) {
+        std::lock_guard<std::mutex> lock(control);
+        if (stopping.load()) return;
+        interrupted=began;
+        if (began) DiscardQueueLocked();
+        // Games may resume when an interruption ends without the optional
+        // shouldResume hint. Background and manual-pause gates still apply.
+        else ResumeLocked();
     }
     void Shutdown() {
         std::lock_guard<std::mutex> lock(control);
@@ -206,8 +226,7 @@ public:
         interruption=[center addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification* note) {
             NSNumber* type=note.userInfo[AVAudioSessionInterruptionTypeKey]; if (!type) return;
             const bool began=type.unsignedIntegerValue==AVAudioSessionInterruptionTypeBegan;
-            NSNumber* options=note.userInfo[AVAudioSessionInterruptionOptionKey];
-            if (auto owner=weak.lock()) owner->SetInterruption(began,(options.unsignedIntegerValue&AVAudioSessionInterruptionOptionShouldResume)!=0);
+            if (auto owner=weak.lock()) owner->SetInterruption(began);
         }];
         reset=[center addObserverForName:AVAudioSessionMediaServicesWereResetNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification*) {
             if (auto owner=weak.lock()) owner->ResetService();
@@ -231,7 +250,10 @@ bool IOSAudioOutputFailed() { if (auto state=Active()) return state->error.load(
 void WriteIOSAudioDiagnostics(const std::string& path, u64 requested, u64 supplied, u64 underruns) {
     auto state=Active(); if (!state) return;
     UInt32 running=0,size=sizeof(running);
-    { std::lock_guard<std::mutex> lock(state->control); if (state->queue) AudioQueueGetProperty(state->queue,kAudioQueueProperty_IsRunning,&running,&size); }
+    bool background=false,interrupted=false,manual=false;
+    { std::lock_guard<std::mutex> lock(state->control);
+      if (state->queue) AudioQueueGetProperty(state->queue,kAudioQueueProperty_IsRunning,&running,&size);
+      background=state->background; interrupted=state->interrupted; manual=state->manually_paused; }
     @autoreleasepool {
         AVAudioSession* session=AVAudioSession.sharedInstance;
         NSString* route=session.currentRoute.outputs.firstObject.portType?:@"";
@@ -240,6 +262,8 @@ void WriteIOSAudioDiagnostics(const std::string& path, u64 requested, u64 suppli
             @"dsp_fill_total_ms":@(double(state->fill_nanoseconds.load())/1e6),
             @"dsp_fill_max_ms":@(double(state->max_fill_nanoseconds.load())/1e6),@"sample_rate":@(native_sample_rate),
             @"channels":@2,@"frames_per_buffer":@(buffer_frames),@"buffers":@3,@"queue_running":@(running!=0),
+            @"background":@(background),@"interrupted":@(interrupted),@"manually_paused":@(manual),
+            @"queue_generations":@(state->queue_generations.load()),
             @"muted":@(IsIOSAudioMuted()),@"callbacks":@(state->callbacks.load()),
             @"frames_submitted":@(state->frames_submitted.load()),@"nonzero_frames":@(state->nonzero_frames.load()),
             @"changing_frames":@(state->changing_frames.load()),@"peak_pcm":@(state->peak.load()),

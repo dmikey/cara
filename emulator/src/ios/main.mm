@@ -337,6 +337,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     std::atomic<unsigned> guestClock;
     std::atomic<bool> framePending[2];
     unsigned frameCount;
+    unsigned sessionGeneration;
     CFTimeInterval startedAt;
     CFTimeInterval backgroundAt;
     CFTimeInterval lastHUDTime;
@@ -371,6 +372,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     NSString* rom=[NSUserDefaults.standardUserDefaults stringForKey:@"rom"];
+    if (!autoStarted && !running && std::getenv("CARA_OPEN_RECENT")) {
+        autoStarted=true; [self openRecentGame]; return;
+    }
     if (!autoStarted && rom.length && !running) {
         autoStarted=true;
         NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
@@ -390,7 +394,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     adaptiveCPUDirty=false; guestClock=100;
     NSURL* saveDocuments=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     saveSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES]];
-    stop=false; running=false; framePending[0]=false; framePending[1]=false;
+    stop=false; running=false; sessionGeneration=0; framePending[0]=false; framePending[1]=false;
     top=[UIImageView new]; bottom=[UIImageView new];
     top.backgroundColor=bottom.backgroundColor=UIColor.blackColor;
     top.contentMode=bottom.contentMode=UIViewContentModeScaleAspectFit;
@@ -483,9 +487,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     [menu addAction:[UIAlertAction actionWithTitle:@"Open game…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { self->pickingSkin=NO; [self openROM]; }]];
     NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
     if (recent) [menu addAction:[UIAlertAction actionWithTitle:@"Open recent game" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-        BOOL stale=NO; NSError* error=nil;
-        NSURL* url=[NSURL URLByResolvingBookmarkData:recent options:NSURLBookmarkResolutionWithoutUI relativeToURL:nil bookmarkDataIsStale:&stale error:&error];
-        if (url) [self openGameURL:url]; else { self->status.text=@"Select the game again in Files."; [self resumeFromMenu]; }
+        [self openRecentGame];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Import skin…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { self->pickingSkin=YES; [self openROM]; }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Use Carbon Duo" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
@@ -538,6 +540,13 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         lastHUDTime += duration;
     }
     backgroundAt = 0; paused = modalPaused; AudioCore::SetIOSAudioPaused(paused);
+}
+- (void)openRecentGame {
+    NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
+    BOOL stale=NO; NSError* error=nil;
+    NSURL* url=recent?[NSURL URLByResolvingBookmarkData:recent options:NSURLBookmarkResolutionWithoutUI relativeToURL:nil bookmarkDataIsStale:&stale error:&error]:nil;
+    if (url) [self openGameURL:url];
+    else { status.text=@"Select the game again in Files."; [self resumeFromMenu]; }
 }
 - (void)openROM {
     UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:pickingSkin];
@@ -619,7 +628,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     if ([@[@"deltaskin",@"caraskin"] containsObject:url.pathExtension.lowercaseString]) [self importSkin:url];
     else [self openGameURL:url];
 }
-- (void)showFrame:(unsigned)screen width:(unsigned)width height:(unsigned)height pixels:(const std::vector<u8>&)pixels frame:(unsigned)emulatedFrame {
+- (void)showFrame:(unsigned)screen width:(unsigned)width height:(unsigned)height pixels:(const std::vector<u8>&)pixels frame:(unsigned)emulatedFrame session:(unsigned)session {
     const bool captureCheckpoint = (emulatedFrame % 600 == 0 || CaptureBurst(emulatedFrame)) &&
         [NSProcessInfo.processInfo.environment[@"CARA_CAPTURE_FRAMES"] isEqualToString:@"1"];
     if (framePending[screen].exchange(true) && !captureCheckpoint) return;
@@ -627,7 +636,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     __weak EmulatorController* weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
         EmulatorController* controller = weakSelf;
-        if (!controller) return;
+        if (!controller || controller->sessionGeneration!=session) return;
         CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
         CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
         CGImageRef image = CGImageCreate(width,height,8,32,width*4,space,CGBitmapInfo(kCGImageAlphaLast) | kCGBitmapByteOrder32Big,provider,nullptr,false,kCGRenderingIntentDefault);
@@ -731,6 +740,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[documents stringByAppendingPathComponent:@"skin-input-check.json"] atomically:YES];
 }
 - (void)startROM:(NSURL*)url {
+    const unsigned session=++sessionGeneration;
+    framePending[0]=false; framePending[1]=false;
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
     lastHUDTime = startedAt; lastHUDFrame = 0;
     stateCommand=0; running=true; stop=false; [self resumeFromMenu]; [self resetSkinInput];
@@ -747,12 +758,13 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 #ifdef CARA_IOS_GLES
     [self.view layoutIfNeeded];
     emuWindow->drawable_layer = (CAEAGLLayer*)gpuSurface.layer;
-    emuWindow->frame_presented = [weakSelf,user](unsigned frame) {
+    emuWindow->frame_presented = [weakSelf,user,session](unsigned frame) {
         if (frame % 60 != 0) return;
         const auto timing = Common::FrameTiming::counters;
+        const auto title=Core::System::GetInstance().GetTitleID();
         dispatch_async(dispatch_get_main_queue(), ^{
             EmulatorController* controller = weakSelf;
-            if (!controller || !controller->running) return;
+            if (!controller || !controller->running || controller->sessionGeneration!=session) return;
             const double now = CFAbsoluteTimeGetCurrent();
             const double elapsed = now - controller->lastHUDTime;
             const double fps = (frame - controller->lastHUDFrame) / std::max(elapsed, 0.001);
@@ -760,7 +772,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             controller->status.text = CaraSpeedLabel(fps,controller->adaptiveCPU.load(),controller->guestClock.load());
             if (timing.enabled) {
                 std::ofstream report(user + "runtime-status.json");
-                report << "{\"frame\":" << frame << ",\"display_fps\":" << fps
+                report << "{\"title_id\":" << title << ",\"frame\":" << frame << ",\"display_fps\":" << fps
                        << ",\"guest_cpu_percent\":" << controller->guestClock.load()
                        << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
                        << ",\"thermal_state\":" << long(NSProcessInfo.processInfo.thermalState)
@@ -770,10 +782,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         });
     };
 #endif
-    emuWindow->present = [weakSelf](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
-        [weakSelf showFrame:s width:w height:h pixels:p frame:frame];
+    emuWindow->present = [weakSelf,session](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
+        [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
-    worker = std::thread([self,rom,user] {
+    worker = std::thread([self,rom,user,session] {
         @autoreleasepool {
             Common::DetachedTasks tasks;
             FileUtil::SetUserPath(user);
@@ -854,10 +866,15 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 dispatch_async(dispatch_get_main_queue(), ^{ self->status.text = message;  UIApplication.sharedApplication.idleTimerDisabled = NO; });
                 return;
             }
-            if (target_frames) FileUtil::Delete(user + "benchmark-status.json");
-            if (Common::FrameTiming::counters.enabled) FileUtil::Delete(user + "frame-timing.json");
+            // Diagnostic files describe one session, never a previously opened game.
+            for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
+                                     "audio-status.json","save-state-test-status.json"})
+                FileUtil::Delete(user+name);
             auto result = system.Load(*emuWindow,rom);
+            if (result==Core::System::ResultStatus::Success)
+                LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
             dispatch_async(dispatch_get_main_queue(), ^{
+                if (self->sessionGeneration!=session) return;
                 if (result == Core::System::ResultStatus::Success)
                     self->status.text = @"Running";
                 else self->status.text = [NSString stringWithFormat:@"Load failed (code %u). See Documents/cara/emulator.log",unsigned(result)];
@@ -958,6 +975,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                         const bool powered=system.IsPoweredOn();
                         NSString* message=failure.empty()?[NSString stringWithFormat:@"State %@ in slot %d",command>0?@"saved":@"loaded",std::abs(command)]:[NSString stringWithUTF8String:failure.c_str()];
                         dispatch_async(dispatch_get_main_queue(), ^{
+                            if (self->sessionGeneration!=session) return;
                             self->status.text=message;
                             if (!failure.empty()) {
                                 UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Save state" message:message preferredStyle:UIAlertControllerStyleAlert];
@@ -1052,7 +1070,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                             previous_counters = current;
                             frame_times.clear();
                             std::ofstream timing_report(user + "frame-timing.json");
-                            timing_report << "{\"instrumented\":true,\"uncapped\":" << (pace_frames ? "false" : "true") << ",\"windows\":[";
+                            timing_report << "{\"title_id\":" << system.GetTitleID() << ",\"instrumented\":true,\"uncapped\":" << (pace_frames ? "false" : "true") << ",\"windows\":[";
                             for (size_t i = 0; i < timing_windows.size(); ++i)
                                 timing_report << (i ? "," : "") << timing_windows[i];
                             timing_report << "]}\n";
@@ -1088,7 +1106,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                     const double pause_elapsed = std::chrono::duration<double>(paused_duration).count();
                     const double elapsed = std::max(0.001, wall_elapsed - pause_elapsed);
                     std::ofstream report(user + "benchmark-status.json");
-                    report << "{\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
+                    report << "{\"title_id\":" << system.GetTitleID() << ",\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
                            << ",\"fps\":" << emuWindow->frames / elapsed
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"late_paced_frames\":" << late_paced_frames
@@ -1117,7 +1135,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             emuWindow->DoneCurrent();
             running = false;
             dispatch_async(dispatch_get_main_queue(), ^{
-                if (self->running) return;
+                if (self->running || self->sessionGeneration!=session) return;
                 const bool keepAwake = target_frames && std::getenv("CARA_TEST_KEEP_AWAKE");
                 UIApplication.sharedApplication.idleTimerDisabled = keepAwake;
                 if (keepAwake) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 900 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
