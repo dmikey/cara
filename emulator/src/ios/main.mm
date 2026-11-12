@@ -405,6 +405,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     if (!std::getenv("CARA_GPU_PACKED_INPUTS")) setenv("CARA_GPU_PACKED_INPUTS","1",0);
     // Keep eligible tiled/linear RGBA8 aliases on the GPU; other layouts fall back.
     if (!std::getenv("CARA_GPU_SURFACE_REMAP")) setenv("CARA_GPU_SURFACE_REMAP","1",0);
+    if (!std::getenv("CARA_VS_UNIFORM_REUSE")) setenv("CARA_VS_UNIFORM_REUSE","1",0);
     if (!std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
@@ -846,7 +847,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
                                      "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
                                      "surface-flushes.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
-                                     "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json"})
+                                     "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json"})
                 FileUtil::Delete(user+name);
 
 #ifdef CARA_PGO_GENERATE
@@ -942,6 +943,17 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             }
             auto result = system.Load(*emuWindow,rom);
 #ifdef CARA_IOS_GLES
+            if (result==Core::System::ResultStatus::Success && std::getenv("CARA_UNIFORM_SELF_TEST")) {
+                std::string error;
+                auto* rasterizer=dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
+                bool passed=false;
+                try { passed=rasterizer && rasterizer->RunUniformReuseSelfTest(error); }
+                catch (const std::exception& exception) { error=exception.what(); }
+                catch (...) { error="Unknown uniform fixture exception"; }
+                std::ofstream(user+"uniform-reuse-self-test.json")
+                    << "{\"passed\":" << (passed?"true":"false") << ",\"detail\":" << std::quoted(error) << "}\n";
+                if (!passed) { emuWindow->graphics_error=error; result=Core::System::ResultStatus::ErrorVideoCore; }
+            }
             if (result==Core::System::ResultStatus::Success && std::getenv("CARA_SURFACE_SELF_TEST")) {
                 std::string error;
                 auto* rasterizer=dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
@@ -1230,6 +1242,18 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"stream_map_sample_cpu_ms\":" + std::to_string((current.stream_map_cpu_samples.cpu_seconds - previous_counters.stream_map_cpu_samples.cpu_seconds)*1000.0) +
                                 ",\"stream_map_samples\":" + std::to_string((current.stream_map_cpu_samples.samples - previous_counters.stream_map_cpu_samples.samples)) +
                                 ",\"stream_map_sample_clock_failures\":" + std::to_string((current.stream_map_cpu_samples.clock_failures - previous_counters.stream_map_cpu_samples.clock_failures)) +
+                                ",\"stream_unmap_sample_wall_ms\":" + std::to_string((current.stream_unmap_cpu_samples.wall_seconds - previous_counters.stream_unmap_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"stream_unmap_sample_cpu_ms\":" + std::to_string((current.stream_unmap_cpu_samples.cpu_seconds - previous_counters.stream_unmap_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"stream_unmap_samples\":" + std::to_string((current.stream_unmap_cpu_samples.samples - previous_counters.stream_unmap_cpu_samples.samples)) +
+                                ",\"stream_unmap_sample_clock_failures\":" + std::to_string((current.stream_unmap_cpu_samples.clock_failures - previous_counters.stream_unmap_cpu_samples.clock_failures)) +
+                                ",\"uniform_upload_sample_wall_ms\":" + std::to_string((current.uniform_upload_cpu_samples.wall_seconds - previous_counters.uniform_upload_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"uniform_upload_sample_cpu_ms\":" + std::to_string((current.uniform_upload_cpu_samples.cpu_seconds - previous_counters.uniform_upload_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"uniform_upload_samples\":" + std::to_string((current.uniform_upload_cpu_samples.samples - previous_counters.uniform_upload_cpu_samples.samples)) +
+                                ",\"uniform_upload_sample_clock_failures\":" + std::to_string((current.uniform_upload_cpu_samples.clock_failures - previous_counters.uniform_upload_cpu_samples.clock_failures)) +
+                                ",\"vertex_subimage_sample_wall_ms\":" + std::to_string((current.vertex_subimage_cpu_samples.wall_seconds - previous_counters.vertex_subimage_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"vertex_subimage_sample_cpu_ms\":" + std::to_string((current.vertex_subimage_cpu_samples.cpu_seconds - previous_counters.vertex_subimage_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"vertex_subimage_samples\":" + std::to_string((current.vertex_subimage_cpu_samples.samples - previous_counters.vertex_subimage_cpu_samples.samples)) +
+                                ",\"vertex_subimage_sample_clock_failures\":" + std::to_string((current.vertex_subimage_cpu_samples.clock_failures - previous_counters.vertex_subimage_cpu_samples.clock_failures)) +
                                 ",\"uniform_upload_ms_per_frame\":" + std::to_string((current.uniform_upload_seconds - previous_counters.uniform_upload_seconds)*1000.0/count) +
                                 ",\"surface_remap_ms_per_frame\":" + std::to_string((current.surface_remap_seconds - previous_counters.surface_remap_seconds)*1000.0/count) +
                                 ",\"surface_remap_calls\":" + std::to_string(current.surface_remap_calls - previous_counters.surface_remap_calls) +

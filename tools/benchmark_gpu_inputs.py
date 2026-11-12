@@ -25,6 +25,8 @@ def main():
     parser.add_argument('--press-a-frames', default='0',
                         help='Comma-separated emulated frames for six-frame A presses; 0 disables')
     parser.add_argument('--host-cpu-timing', action='store_true')
+    parser.add_argument('--gpu-self-test', action='store_true',
+                        help='Validate GPU fixtures before replay; abort if they fail')
     parser.add_argument('--phase-cpu-timing', action='store_true',
                         help='Diagnostic sampled phase CPU/wall totals; not an uninstrumented performance run')
     parser.add_argument('--circle-segments', default='',
@@ -82,6 +84,7 @@ def main():
     def launch(config, benchmark=True):
         settings = {'CARA_FRAME_TIMING': '1', 'CARA_AUDIO_DIAGNOSTICS': '1',
                     'CARA_FASTINTERP_PROFILE':'1',
+                    'CARA_TEST_KEEP_AWAKE':'1',
                     'CARA_PHASE_CPU_TIMING':'1' if args.phase_cpu_timing else '0',
                     'CARA_BENCHMARK_CAPTURE':'1',
                     'CARA_GPU_SURFACE_REMAP':'1' if config.get('surface_remap',False) else '0',
@@ -110,6 +113,8 @@ def main():
                     'CARA_VERTEX_INDEX_CACHE': '1' if config.get('index_cache', False) else '0',
                     'CARA_VERTEX_UPLOAD_BANK_MIB': str(config['bank_mib']),
                     'CARA_ADAPTIVE_GUEST_CPU': '0' if benchmark else '1'}
+        if args.gpu_self_test:
+            settings['CARA_VERTEX_SELF_TEST'] = '1'
         if args.host_cpu_timing:
             settings['CARA_HOST_CPU_TIMING'] = '1'
         if benchmark:
@@ -161,7 +166,7 @@ def main():
                   'vertex_reuse_check_ms_per_frame', 'vertex_index_cache_hits',
                   'vertex_index_cache_misses', 'vertex_index_cache_bytes']
         if args.phase_cpu_timing:
-            fields += [phase+'_'+suffix for phase in ['draw_submit','vertex_orphan','stream_map']
+            fields += [phase+'_'+suffix for phase in ['draw_submit','vertex_orphan','stream_map','stream_unmap','uniform_upload','vertex_subimage']
                        for suffix in ['sample_wall_ms','sample_cpu_ms','samples','sample_clock_failures']]
         if args.host_cpu_timing:
             fields += ['emulation_thread_cpu_ms_per_frame', 'process_cpu_ms_per_frame']
@@ -174,6 +179,10 @@ def main():
                 time.sleep(0.2)
             else:
                 raise RuntimeError('Unable to read ' + name)
+        if args.gpu_self_test:
+            check_path = args.output / (config['name'] + '-gpu-vertex-self-test.json')
+            if not copy('gpu-vertex-self-test.json', check_path) or json.loads(check_path.read_text()).get('passed') is not True:
+                raise RuntimeError('GPU fixture did not pass')
         status = json.loads((args.output / (config['name'] + '-benchmark-status.json')).read_text())
         if (status['result_code'] != 0 or status['frames'] != args.frames or
                 status['target_frames'] != args.frames or status['title_id'] != report['title_id'] or

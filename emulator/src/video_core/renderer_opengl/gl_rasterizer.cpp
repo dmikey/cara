@@ -2814,6 +2814,189 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
 #endif
 }
 
+// Cara GPU oracle: exercise the production upload/cache path before guest execution.
+bool RasterizerOpenGL::RunUniformReuseSelfTest(std::string& error) {
+    const char* reuse = std::getenv("CARA_VS_UNIFORM_REUSE");
+    if (!reuse || std::strcmp(reuse, "1") != 0) {
+        error = "uniform reuse oracle requires CARA_VS_UNIFORM_REUSE=1 before first upload";
+        return false;
+    }
+    struct Range {
+        GLuint buffer;
+        GLint64 offset;
+        GLint64 size;
+        bool operator==(const Range& other) const {
+            return buffer == other.buffer && offset == other.offset && size == other.size;
+        }
+    };
+    const auto range = [](UniformBindings binding) {
+        const GLuint index = static_cast<GLuint>(binding);
+        GLint buffer = 0;
+        GLint64 offset = 0, size = 0;
+        glGetIntegeri_v(GL_UNIFORM_BUFFER_BINDING, index, &buffer);
+        glGetInteger64i_v(GL_UNIFORM_BUFFER_START, index, &offset);
+        glGetInteger64i_v(GL_UNIFORM_BUFFER_SIZE, index, &size);
+        return Range{static_cast<GLuint>(buffer), offset, size};
+    };
+    constexpr std::array<UniformBindings, 3> bindings{
+        UniformBindings::VS, UniformBindings::Common, UniformBindings::Light};
+    const std::array<Range, 3> saved_ranges{range(bindings[0]), range(bindings[1]), range(bindings[2])};
+    GLint saved_generic = 0;
+    glGetIntegerv(GL_UNIFORM_BUFFER_BINDING, &saved_generic);
+    const GLuint saved_tracked = OpenGLState::GetCurState().draw.uniform_buffer;
+    const auto saved_regs = Pica::g_state.regs.vs;
+    const auto saved_uniforms = Pica::g_state.vs.uniforms;
+    const auto saved_blocks = uniform_block_data;
+    SCOPE_EXIT({
+        Pica::g_state.regs.vs = saved_regs;
+        Pica::g_state.vs.uniforms = saved_uniforms;
+        uniform_block_data = saved_blocks;
+        // Ring contents were deliberately invalidated; restored CPU state must
+        // be uploaded before the first real draw, including a nonaccelerated one.
+        previous_vs_uniforms_valid = false;
+        uniform_block_data.dirty = true;
+        uniform_block_data.light_dirty = true;
+        for (size_t n = 0; n < bindings.size(); ++n) {
+            const auto& saved = saved_ranges[n];
+            const GLuint index = static_cast<GLuint>(bindings[n]);
+            if (saved.buffer != 0 && saved.size > 0) {
+                glBindBufferRange(GL_UNIFORM_BUFFER, index, saved.buffer,
+                                  static_cast<GLintptr>(saved.offset), static_cast<GLsizeiptr>(saved.size));
+            } else {
+                glBindBufferBase(GL_UNIFORM_BUFFER, index, saved.buffer);
+            }
+        }
+        OpenGLState::BindUniformBuffer(saved_tracked);
+        glBindBuffer(GL_UNIFORM_BUFFER, static_cast<GLuint>(saved_generic));
+    });
+    const auto fail = [&](const char* stage) {
+        error = std::string("uniform reuse oracle: ") + stage;
+        return false;
+    };
+    if (glGetError() != GL_NO_ERROR) return fail("preexisting GL error");
+    const auto read = [&](UniformBindings binding, void* destination, size_t size) {
+        const auto indexed = range(binding);
+        if (indexed.buffer != uniform_buffer.GetHandle() || indexed.offset < 0 ||
+            indexed.size != static_cast<GLint64>(size) ||
+            indexed.offset + indexed.size > static_cast<GLint64>(uniform_buffer.GetSize())) return false;
+        GLint native = 0;
+        glGetIntegerv(GL_UNIFORM_BUFFER_BINDING, &native);
+        const GLuint tracked = OpenGLState::GetCurState().draw.uniform_buffer;
+        OpenGLState::BindUniformBuffer(indexed.buffer);
+        SCOPE_EXIT({
+            OpenGLState::BindUniformBuffer(tracked);
+            glBindBuffer(GL_UNIFORM_BUFFER, static_cast<GLuint>(native));
+        });
+        const void* mapped = glMapBufferRange(GL_UNIFORM_BUFFER, static_cast<GLintptr>(indexed.offset),
+                                              static_cast<GLsizeiptr>(size), GL_MAP_READ_BIT);
+        if (!mapped) return false;
+        std::memcpy(destination, mapped, size);
+        const bool unmapped = glUnmapBuffer(GL_UNIFORM_BUFFER) == GL_TRUE;
+        return unmapped && glGetError() == GL_NO_ERROR;
+    };
+    const auto check_vs = [&] {
+        VSUniformData expected{}, actual{};
+        expected.uniforms.SetFromRegs(Pica::g_state.regs.vs, Pica::g_state.vs);
+        if (!read(UniformBindings::VS, &actual, sizeof(actual))) return false;
+        // BoolAligned padding is deliberately excluded, exactly as in the cache key.
+        const auto& a = actual.uniforms;
+        const auto& b = expected.uniforms;
+        if (std::memcmp(a.i.data(), b.i.data(), sizeof(a.i)) != 0 ||
+            std::memcmp(a.f.data(), b.f.data(), sizeof(a.f)) != 0) return false;
+        for (size_t n = 0; n < a.bools.size(); ++n) {
+            if (a.bools[n].b != b.bools[n].b) return false;
+        }
+        return true;
+    };
+    const auto check_blocks = [&] {
+        UniformData fs{};
+        UniformLightData light{};
+        return read(UniformBindings::Common, &fs, sizeof(fs)) &&
+               read(UniformBindings::Light, &light, sizeof(light)) &&
+               std::memcmp(&fs, &uniform_block_data.data, sizeof(fs)) == 0 &&
+               std::memcmp(&light, &uniform_block_data.light_data, sizeof(light)) == 0;
+    };
+    previous_vs_uniforms_valid = false;
+    uniform_block_data.dirty = uniform_block_data.light_dirty = true;
+    UploadUniforms(true);
+    if (!check_vs() || !check_blocks()) return fail("initial upload/readback");
+    auto vs = range(UniformBindings::VS);
+    auto fs = range(UniformBindings::Common);
+    auto light = range(UniformBindings::Light);
+    UploadUniforms(true);
+    if (!(range(UniformBindings::VS) == vs) || !(range(UniformBindings::Common) == fs) ||
+        !(range(UniformBindings::Light) == light) || !check_vs()) return fail("unchanged VS reuse");
+    const auto changed_vs = [&] {
+        const auto before = range(UniformBindings::VS);
+        UploadUniforms(true);
+        const auto after = range(UniformBindings::VS);
+        if (before == after || !check_vs()) return false;
+        UploadUniforms(true);
+        return range(UniformBindings::VS) == after && check_vs();
+    };
+    Pica::g_state.vs.uniforms.b[0] = !Pica::g_state.vs.uniforms.b[0];
+    if (!changed_vs()) return fail("boolean mutation/reuse");
+    auto& integer = Pica::g_state.regs.vs.int_uniforms[0].x;
+    integer.Assign(integer.Value() ^ 0x5Au);
+    if (!changed_vs()) return fail("integer register mutation/reuse");
+    Pica::g_state.vs.uniforms.f[0].x = Pica::float24::FromFloat32(
+        Pica::g_state.vs.uniforms.f[0].x.ToFloat32() == 1.25f ? 2.5f : 1.25f);
+    if (!changed_vs()) return fail("float mutation/reuse");
+    // Float24 currently retains a float32 value. Verify byte-sensitive cases
+    // through SetFromRegs rather than relying on numeric float comparisons.
+    for (const u32 bits : {0x00000000u, 0x80000000u, 0x7FC12345u, 0x7FC54321u}) {
+        float value = 0;
+        std::memcpy(&value, &bits, sizeof(value));
+        Pica::g_state.vs.uniforms.f[0].x = Pica::float24::FromFloat32(value);
+        VSUniformData expected{};
+        expected.uniforms.SetFromRegs(Pica::g_state.regs.vs, Pica::g_state.vs);
+        u32 represented = 0;
+        std::memcpy(&represented, &expected.uniforms.f[0][0], sizeof(represented));
+        if (represented != bits) return fail("float special value not representable");
+        if (!changed_vs()) return fail("signed-zero/NaN payload mutation/reuse");
+    }
+    vs = range(UniformBindings::VS);
+    fs = range(UniformBindings::Common);
+    light = range(UniformBindings::Light);
+    uniform_block_data.data.alphatest_ref ^= 1;
+    uniform_block_data.dirty = true;
+    UploadUniforms(true);
+    if (!(range(UniformBindings::VS) == vs) || range(UniformBindings::Common) == fs ||
+        !(range(UniformBindings::Light) == light) || !check_vs() || !check_blocks())
+        return fail("fragment dirty independence");
+    fs = range(UniformBindings::Common);
+    uniform_block_data.light_data.shadow_texture_bias ^= 1;
+    uniform_block_data.light_dirty = true;
+    UploadUniforms(true);
+    if (!(range(UniformBindings::VS) == vs) || !(range(UniformBindings::Common) == fs) ||
+        range(UniformBindings::Light) == light || !check_vs() || !check_blocks())
+        return fail("light dirty independence");
+    const auto exhaust_ring = [&] {
+        OpenGLState::BindUniformBuffer(uniform_buffer.GetHandle());
+        auto [data, offset, invalidated] = uniform_buffer.Map(uniform_buffer.GetSize(), uniform_buffer_alignment);
+        if (!data || offset != 0) return false;
+        // Uses the existing 4 MiB GPU ring / bounded staging, no new test buffer.
+        // Poison also prevents a stale range from accidentally passing readback.
+        std::memset(data, 0xC7, static_cast<size_t>(uniform_buffer.GetSize()));
+        uniform_buffer.Unmap(uniform_buffer.GetSize());
+        return glGetError() == GL_NO_ERROR;
+    };
+    if (!exhaust_ring()) return fail("accelerated wrap setup");
+    uniform_block_data.dirty = true; // Actual UploadUniforms must observe the next wrap.
+    UploadUniforms(true);
+    if (!previous_vs_uniforms_valid || !check_vs() || !check_blocks() ||
+        range(UniformBindings::VS).offset != 0) return fail("wrap reupload of cached VS");
+    if (!exhaust_ring()) return fail("nonaccelerated wrap setup");
+    uniform_block_data.dirty = true;
+    UploadUniforms(false);
+    if (previous_vs_uniforms_valid || !check_blocks()) return fail("nonaccelerated wrap invalidation");
+    UploadUniforms(true);
+    if (!previous_vs_uniforms_valid || !check_vs() || !check_blocks())
+        return fail("accelerated restore after nonaccelerated wrap");
+    if (glGetError() != GL_NO_ERROR) return fail("final GL error");
+    return true;
+}
+
 void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::UniformUpload);
     static const bool reuse_vs=[] {

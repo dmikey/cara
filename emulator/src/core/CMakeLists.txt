@@ -1,4 +1,18 @@
 # Modified for Cara on 2026-11-12; see NOTICE for attribution.
+# Diagnostic compiler controls; neither changes guest instruction semantics.
+option(CARA_FASTINTERP_NO_LTO "Compile the interpreter without ThinLTO for comparison" OFF)
+option(CARA_FASTINTERP_NO_TAIL_MERGE "Compare separate interpreter dispatch tails" OFF)
+if(CARA_FASTINTERP_NO_LTO OR CARA_FASTINTERP_NO_TAIL_MERGE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "FastInterp compiler experiments require Clang")
+    endif()
+    set_property(SOURCE arm/fastinterp/fastinterp.cpp APPEND PROPERTY COMPILE_OPTIONS -fno-lto)
+endif()
+if(CARA_FASTINTERP_NO_TAIL_MERGE)
+    set_property(SOURCE arm/fastinterp/fastinterp.cpp APPEND PROPERTY
+        COMPILE_OPTIONS -mllvm -enable-tail-merge=false)
+endif()
+
 add_library(core STATIC
     arm/fastinterp/fastinterp.cpp
     arm/fastinterp/fastinterp_decode.cpp

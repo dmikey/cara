@@ -23,6 +23,9 @@ struct Counters {
     PhaseCPUSamples draw_submit_cpu_samples;
     PhaseCPUSamples vertex_orphan_cpu_samples;
     PhaseCPUSamples stream_map_cpu_samples;
+    PhaseCPUSamples stream_unmap_cpu_samples;
+    PhaseCPUSamples uniform_upload_cpu_samples;
+    PhaseCPUSamples vertex_subimage_cpu_samples;
     double shader_seconds = 0;
     double guest_cpu_seconds = 0;
     double draw_seconds = 0;
@@ -104,15 +107,21 @@ public:
         if (phase == Phase::DrawSubmit) sample_phase = 0;
         else if (phase == Phase::VertexOrphanUpload) sample_phase = 1;
         else if (phase == Phase::StreamMap) sample_phase = 2;
+        else if (phase == Phase::StreamUnmap) sample_phase = 3;
+        else if (phase == Phase::UniformUpload) sample_phase = 4;
+        else if (phase == Phase::VertexSubImageUpload) sample_phase = 5;
         if (sample_phase < 0 || !CPUSamplingEnabled()) return;
-        static thread_local std::array<std::uint64_t, 3> sample_sequence{};
+        static thread_local std::array<std::uint64_t, 6> sample_sequence{};
         // Use high bits of a multiplicative hash, avoiding a fixed draw-slot
         // pattern when a frame repeatedly submits a multiple of 64 draws.
         const auto mixed = std::uint32_t(++sample_sequence[sample_phase]) * 0x9E3779B9u;
         if ((mixed >> 26) != 0) return;
         cpu_sample = sample_phase == 0 ? &counters.draw_submit_cpu_samples
                    : sample_phase == 1 ? &counters.vertex_orphan_cpu_samples
-                                       : &counters.stream_map_cpu_samples;
+                                       : sample_phase == 2 ? &counters.stream_map_cpu_samples
+                   : sample_phase == 3 ? &counters.stream_unmap_cpu_samples
+                   : sample_phase == 4 ? &counters.uniform_upload_cpu_samples
+                                       : &counters.vertex_subimage_cpu_samples;
         cpu_started = ReadThreadCPUTime();
         if (cpu_started < 0) {
             ++cpu_sample->clock_failures;

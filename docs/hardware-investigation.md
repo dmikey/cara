@@ -753,3 +753,63 @@ not a proven interrupt-polling loop. Cara already advances idle cores to the nex
 scheduled event when no guest thread is runnable. No speculative idle-loop skipping
 has been introduced. Resident execution counts are not statistical CPU time samples;
 `tools/profile_cpu_stacks.py` provides a separate Instruments attach/export path.
+
+## Uniform reuse and interpreter code layout (2026-11-12)
+
+A new matched Stories grass replay used the shipping 80 MiB upload banks,
+prepared indices, resident input reuse, native scale, audible output and 100%
+guest clock. Each run used 1,200 refreshes with the first 300 excluded.
+
+| Configuration | Mean refresh time |
+|---|---:|
+| Baseline, first / middle / last | 27.361 / 26.357 / 27.421 ms |
+| Uniform reuse | 25.102 ms |
+| Uniform reuse, independent repeats | 25.258 / 25.327 ms |
+| Repeated baseline | 27.472 ms |
+| State reuse alone | 27.142 ms |
+| Quaternion reference slice alone | 27.462 ms |
+| Packed fetch reuse alone | 27.155 ms |
+| Combined graphics options, first / repeat | 24.672 / 24.849 ms |
+
+Every completed configuration matched final raw framebuffer bytes and draw/vertex
+counts. Uniform reuse is the clear isolated gain, approximately 8–9% higher
+throughput against the repeated baseline. The small additional combined gain does
+not justify enabling all experimental shader paths. Only uniform reuse becomes a
+new iOS default; explicit `CARA_VS_UNIFORM_REUSE=0` retains the comparison path.
+
+The cache compares meaningful boolean/integer/float fields exactly, including
+floating-point bit patterns, and is invalidated when stream storage wraps. A
+physical-iPad oracle now exercises production uploads and indexed GPU buffer
+readback: unchanged values, individual mutations, signed zero, distinct NaNs,
+fragment/light independence, accelerated wrap, and nonaccelerated wrap followed by
+accelerated recovery. Run it before guest execution with
+`CARA_UNIFORM_SELF_TEST=1`; `uniform-reuse-self-test.json` records the result.
+The oracle restores guest inputs and forces subsequent blocks dirty.
+
+Uniform-only `glBufferSubData` staging passed byte/range tests but caused severe
+synchronous upload stalls in a diagnostic scene capture. It was rejected and
+removed from the selected engine. Existing unsynchronized mapping remains.
+
+An independent compiler experiment isolated ThinLTO removal from LLVM dispatch
+tail merging. The interpreter object was confirmed native when testing the
+machine-code flag. Normal ThinLTO had 159 indirect dispatch sites in a 42,084-byte
+function; no-LTO had 158 sites / 41,896 bytes; no-tail-merge had 540 sites / 56,220
+bytes. This changed code layout without emitting runtime code. Device controls:
+
+| Compiler configuration | Baseline / uniform reuse |
+|---|---:|
+| No-LTO control | 26.552 / 25.110 ms |
+| No-LTO plus no-tail-merge | 27.091 / 25.272 ms |
+
+Outputs matched, and native instruction/timing tests passed, but no gain justified
+promotion. Both compiler controls default off; normal ThinLTO remains selected.
+Compiler-only comparisons retain an ABI-compatible checkpoint and preserve each
+executable's SHA/UUID separately, since a source fingerprint alone does not
+identify compiler switches.
+
+Phase diagnostics now sample thread CPU and wall time for draw submission,
+texture orphan/subimage upload, stream map/unmap and complete uniform upload.
+`tools/summarize_phase_cpu.py` reports raw totals, sample counts and clock failures;
+ratios use sums across complete windows. Off-CPU time includes blocking and host
+scheduling and must not be labelled GPU execution time. These sampled diagnostic
+runs are separate from uninstrumented speed comparisons.

@@ -27,7 +27,7 @@ def main():
     settings = {'CARA_FRAME_TIMING':'1', 'CARA_HOST_CPU_TIMING':'1',
                 'CARA_AUDIO_DIAGNOSTICS':'1', 'CARA_TIMING_WINDOW_FRAMES':'60',
                 'CARA_CPU_BACKEND':'fastinterp', 'CARA_ADAPTIVE_GUEST_CPU':'0',
-                'CARA_FASTINTERP_PROFILE':'1', 'CARA_BENCHMARK_AUDIO':'1',
+                'CARA_FASTINTERP_PROFILE':'1', 'CARA_TEST_KEEP_AWAKE':'1', 'CARA_BENCHMARK_AUDIO':'1',
                 'CARA_BENCHMARK_INPUT_LOCK':'1', 'CARA_BENCHMARK_FRAMES':str(a.frames),
                 'CARA_TEST_PRESS_A_FRAMES':a.press_a_frames,
                 'CARA_TEST_HOLD_START_FRAME':str(a.hold_start_frame),
@@ -65,7 +65,7 @@ def main():
                     if status['frames']==a.frames and status['result_code']==0: break
             except (ValueError,KeyError,IndexError): pass
         if not observed and time.monotonic()-started > 5:
-            for diagnostic in ['gpu-vertex-self-test.json', 'surface-coherence-self-test.json']:
+            for diagnostic in ['gpu-vertex-self-test.json', 'surface-coherence-self-test.json','uniform-reuse-self-test.json']:
                 if copy(diagnostic):
                     try:
                         check=json.loads((a.output/diagnostic).read_text())
@@ -79,7 +79,7 @@ def main():
         raise RuntimeError('Capture did not finish; inspect private emulator.log')
     if not copy('profile-comparison.carastate'):
         raise RuntimeError('Missing comparison checkpoint')
-    for name in ['runtime-status.json','audio-status.json','fastinterp-blocks.json','surface-flushes.json','gpu-vertex-self-test.json','surface-coherence-self-test.json','emulator.log']:
+    for name in ['runtime-status.json','audio-status.json','fastinterp-blocks.json','surface-flushes.json','gpu-vertex-self-test.json','surface-coherence-self-test.json','uniform-reuse-self-test.json','emulator.log']:
         copy(name)
     if not copy('profile-checkpoint-status.json'):
         raise RuntimeError('Missing fresh checkpoint save receipt')

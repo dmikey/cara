@@ -12,30 +12,60 @@
 namespace {
 using OpenGL::OpenGLState;
 
-bool CheckStreamBuffers(std::string& error) {
-    const GLuint saved = OpenGLState::GetCurState().draw.vertex_buffer;
-    OpenGL::OGLStreamBuffer buffer(GL_ARRAY_BUFFER, 128);
-    OpenGLState::BindVertexBuffer(buffer.GetHandle());
-    bool passed = true;
-    const auto check = [&](GLsizeiptr size, GLintptr wanted_offset, bool wanted_invalidate, u8 value) {
+bool CheckStreamBuffers(GLenum target, std::string& error) {
+    const bool uniform = target == GL_UNIFORM_BUFFER;
+    const auto bind = [&](GLuint handle) {
+        if (uniform) OpenGLState::BindUniformBuffer(handle);
+        else OpenGLState::BindVertexBuffer(handle);
+    };
+    const GLuint saved = uniform ? OpenGLState::GetCurState().draw.uniform_buffer
+                                 : OpenGLState::GetCurState().draw.vertex_buffer;
+    OpenGL::OGLStreamBuffer buffer(target, 128);
+    bind(buffer.GetHandle());
+    SCOPE_EXIT({ bind(saved); });
+    const auto binding_matches = [&] {
+        GLint actual = 0;
+        glGetIntegerv(uniform ? GL_UNIFORM_BUFFER_BINDING : GL_ARRAY_BUFFER_BINDING, &actual);
+        const auto& tracked = OpenGLState::GetCurState();
+        return static_cast<GLuint>(actual) == buffer.GetHandle() &&
+               (uniform ? tracked.draw.uniform_buffer : tracked.draw.vertex_buffer) ==
+                   buffer.GetHandle();
+    };
+    const auto check = [&](GLsizeiptr size, GLsizeiptr used_size, GLintptr wanted_offset,
+                           bool wanted_invalidate, u8 value) {
         auto [data, offset, invalidated] = buffer.Map(size, 16);
         if (!data) { error = "stream map failed"; return false; }
         std::fill_n(data, size, value);
-        buffer.Unmap(size);
-        bool good = offset == wanted_offset && invalidated == wanted_invalidate;
-        const auto* read = static_cast<const u8*>(glMapBufferRange(GL_ARRAY_BUFFER, offset, size, GL_MAP_READ_BIT));
-        if (read) {
-            good &= std::all_of(read, read + size, [&](u8 byte) { return byte == value; });
-            good &= glUnmapBuffer(GL_ARRAY_BUFFER) == GL_TRUE;
-        } else good = false;
+        buffer.Unmap(used_size);
+        bool good = offset == wanted_offset && invalidated == wanted_invalidate && binding_matches();
+        if (used_size > 0) {
+            const auto* read = static_cast<const u8*>(glMapBufferRange(target, offset, used_size, GL_MAP_READ_BIT));
+            if (read) {
+                good &= std::all_of(read, read + used_size, [&](u8 byte) { return byte == value; });
+                good &= glUnmapBuffer(target) == GL_TRUE;
+            } else good = false;
+        }
         good &= glGetError() == GL_NO_ERROR;
-        if (!good) error = "stream flush, wrap or range visibility mismatch";
+        if (!good) error = "stream flush, wrap, binding or range visibility mismatch";
         return good;
     };
-    passed = check(64, 0, false, 0x35);
-    if (passed) passed = check(96, 0, true, 0xA7);
-    if (passed) passed = check(16, 96, false, 0x59);
-    OpenGLState::BindVertexBuffer(saved);
+    bool passed = check(64, 64, 0, false, 0x35);
+    if (passed) passed = check(96, 96, 0, true, 0xA7);
+    // Advance by the used prefix, not the reservation; then align the next map.
+    if (passed) passed = check(32, 7, 96, false, 0x59);
+    if (passed) passed = check(9, 0, 112, false, 0x11);
+    if (passed) passed = check(9, 9, 112, false, 0x6B);
+    if (passed) {
+        const auto* contents = static_cast<const u8*>(glMapBufferRange(target, 0, 121, GL_MAP_READ_BIT));
+        passed = contents && std::all_of(contents, contents + 96, [](u8 b) { return b == 0xA7; }) &&
+                 std::all_of(contents + 96, contents + 103, [](u8 b) { return b == 0x59; }) &&
+                 std::all_of(contents + 112, contents + 121, [](u8 b) { return b == 0x6B; });
+        if (contents) passed &= glUnmapBuffer(target) == GL_TRUE;
+        passed &= glGetError() == GL_NO_ERROR;
+        if (!passed) error = "stream upload changed an untouched prefix";
+    }
+    // The aligned position is now 128, so the next request starts a new generation.
+    if (passed) passed = check(16, 16, 0, true, 0xC3);
     return passed;
 }
 
@@ -115,7 +145,8 @@ bool RunGPUStateSelfTest(std::string& error) {
     OpenGL::GLES = true;
     OpenGL::AllowShadow = false;
     SCOPE_EXIT({ OpenGL::GLES = old_gles; OpenGL::AllowShadow = old_shadow; });
-    if (!CheckStreamBuffers(error)) return false;
+    if (!CheckStreamBuffers(GL_ARRAY_BUFFER, error) ||
+        !CheckStreamBuffers(GL_UNIFORM_BUFFER, error)) return false;
     const auto saved = OpenGLState::GetCurState();
     OpenGLState state = saved;
     state.cull.enabled = false;

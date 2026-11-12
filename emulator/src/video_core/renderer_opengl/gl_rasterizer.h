@@ -38,6 +38,7 @@ class RasterizerOpenGL : public VideoCore::RasterizerInterface {
 public:
     RasterizerOpenGL();
     ~RasterizerOpenGL() override;
+    bool RunUniformReuseSelfTest(std::string& error);
     bool RunSurfaceCoherenceSelfTest(std::string& error) { return res_cache.RunSmallWriteSelfTest(error); }
 
     void AddTriangle(const Pica::Shader::OutputVertex& v0, const Pica::Shader::OutputVertex& v1,
