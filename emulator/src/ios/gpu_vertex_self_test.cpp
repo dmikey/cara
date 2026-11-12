@@ -12,6 +12,7 @@
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
+#include "video_core/renderer_opengl/gl_vertex_source_map.h"
 #include "video_core/shader/shader_interpreter.h"
 
 // Isolate driver capture from the PICA translation and packed input texture.
@@ -66,7 +67,7 @@ static bool RunFeedbackCaptureFixture(std::string& error) {
     return passed;
 }
 
-static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99) {
+static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99, bool indexed_inputs=false, size_t source_count=257) {
     using namespace OpenGL;
     using S = nihstro::SourceRegister;
     using D = nihstro::DestRegister;
@@ -118,7 +119,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     const PicaVSConfig config(regs, setup);
     const PicaFixedGSConfig output(regs);
     OGLShader vertex, fragment;
-    std::string vertex_source=GenerateVertexShader(setup, config, false, &output, input_mask);
+    std::string vertex_source=GenerateVertexShader(setup, config, false, &output, input_mask, indexed_inputs);
     // Exercise the entire large atlas without relying on large feedback captures.
     for (size_t pos=0;(pos=vertex_source.find("gl_VertexID",pos))!=std::string::npos;) {
         const std::string replacement="(gl_VertexID + capture_base)";
@@ -140,25 +141,48 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     inputs[0] = {-0.5f, -0.5f, -0.5f, 1}; inputs[16] = {0.5f, -0.5f, -0.5f, 1}; inputs[32] = {0, 0.5f, -0.5f, 1};
     inputs[1] = {1, 0, 0, 0}; inputs[17] = {-1, 0, 0, 0}; inputs[33] = {0, 1, 0, 0};
     inputs[7] = {-0.25f, 0.125f, 0.5f, 1}; inputs[23] = {0.125f, -0.5f, 1.5f, 1}; inputs[39] = {0.25f, 0.5f, -0.125f, 1};
-    for (size_t v = 3; v < vertex_count; ++v) {
-        for (size_t reg = 0; reg < 16; ++reg) inputs[v * 16 + reg] = inputs[(v % 3) * 16 + reg];
-        inputs[v * 16][0] += float(v / 3) / 1024.0f;
-    }
+    std::array<std::array<GLvec4,16>,3> seeds;
+    for (unsigned v=0;v<3;++v) std::copy_n(inputs.begin()+v*16,16,seeds[v].begin());
     const IOSVertexInputLayout layout(input_mask);
-    const size_t texture_rows = (vertex_count * layout.stride + IOS_VERTEX_INPUT_WIDTH - 1) / IOS_VERTEX_INPUT_WIDTH;
-    std::vector<GLvec4> packed(texture_rows * IOS_VERTEX_INPUT_WIDTH);
-    for (size_t v = 0; v < vertex_count; ++v)
-        for (unsigned reg = 0; reg < layout.offsets.size(); ++reg)
-            if (layout.offsets[reg] >= 0) packed[v * layout.stride + layout.offsets[reg]] = inputs[v * 16 + reg];
+    auto source_map=std::make_unique<IOSVertexSourceMap>(); source_map->BeginDraw();
+    const size_t index_rows=(vertex_count+IOS_VERTEX_INPUT_WIDTH-1)/IOS_VERTEX_INPUT_WIDTH;
+    std::vector<u16> indices(index_rows*IOS_VERTEX_INPUT_WIDTH);
+    std::vector<GLvec4> packed;
+    for (size_t v=0;v<vertex_count;++v) {
+        const u16 source=indexed_inputs ? u16(source_count==vertex_count ? (v*7)%source_count : ((v/3)*7+(v%3)*13)%source_count) : u16(v);
+        std::copy_n(seeds[source%3].begin(),16,inputs.begin()+v*16);
+        inputs[v*16][0]+=float(source/3)/1024.0f;
+        const auto record=source_map->Resolve(source);
+        indices[v]=record.index;
+        if (record.inserted) {
+            const size_t first=packed.size(); packed.resize(first+layout.stride);
+            for (unsigned reg=0;reg<16;++reg)
+                if (layout.offsets[reg]>=0) packed[first+layout.offsets[reg]]=inputs[v*16+reg];
+        }
+    }
+    const size_t record_count=source_map->Size();
+    const size_t texture_rows=(packed.size()+IOS_VERTEX_INPUT_WIDTH-1)/IOS_VERTEX_INPUT_WIDTH;
+    packed.resize(texture_rows*IOS_VERTEX_INPUT_WIDTH);
     OGLTexture texture; texture.Create();
     glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D, texture.handle);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, static_cast<GLsizei>(texture_rows), 0, GL_RGBA, GL_FLOAT, packed.data());
+    OGLTexture index_texture;
+    if (indexed_inputs) {
+        index_texture.Create(); glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D,index_texture.handle);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glBindSampler(8,0);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_R16UI,IOS_VERTEX_INPUT_WIDTH,static_cast<GLsizei>(index_rows),0,
+                     GL_RED_INTEGER,GL_UNSIGNED_SHORT,indices.data());
+        glActiveTexture(GL_TEXTURE7);
+    }
     OGLBuffer uniform_buffer, feedback_buffer, raster_uniforms; uniform_buffer.Create(); feedback_buffer.Create(); raster_uniforms.Create();
     OGLVertexArray vao; vao.Create(); glBindVertexArray(vao.handle);
     glUseProgram(program);
     glUniform1i(glGetUniformLocation(program, "cara_vertex_inputs"), 7);
+    glUniform1i(glGetUniformLocation(program, "cara_vertex_indices"), 8);
     glUniformBlockBinding(program, glGetUniformBlockIndex(program, "vs_config"), 0);
     const GLvec4 viewport = {13.0f, 7.0f, 200.25f, 120.125f};
     UniformData raster_data{};
@@ -190,6 +214,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
             glBeginTransformFeedback(GL_TRIANGLES); glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(captured_vertices)); glEndTransformFeedback();
             const float* actual = static_cast<const float*>(glMapBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER, 0, feedback_floats * sizeof(float), GL_MAP_READ_BIT));
             if (!actual) { passed = false; error = "fixture readback failed"; break; }
+            std::array<float,4> first_quaternion{};
             for (size_t local=0;local<captured_vertices;++local) {
                 const size_t v=first+local;
                 Pica::Shader::UnitState state;
@@ -198,6 +223,11 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
                         state.registers.input[reg][c] = Pica::float24::FromFloat32((input_mask & (1u << reg)) ? inputs[v * 16 + reg][c] : 0.0f);
                 Pica::Shader::InterpreterEngine interpreter;
                 interpreter.SetupBatch(setup, 0); interpreter.Run(setup, state);
+                float quaternion_dot=0;
+                for (size_t c=0;c<4;++c) {
+                    if (v%3==0) first_quaternion[c]=state.registers.output[1][c].ToFloat32();
+                    quaternion_dot+=first_quaternion[c]*state.registers.output[1][c].ToFloat32();
+                }
                 for (size_t c = 0; c < 4; ++c) {
                     float position = state.registers.output[0][c].ToFloat32();
                     if (c < 2 && !std::getenv("CARA_UNSNAPPED_VERTICES")) {
@@ -208,7 +238,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
                     if (c == 2)
                         position = 2.0f * position + state.registers.output[0][3].ToFloat32();
                     const float expected[] = {position,
-                        state.registers.output[1][c].ToFloat32() * (v % 3 == 1 ? -1 : 1),
+                        state.registers.output[1][c].ToFloat32() * (quaternion_dot < 0 ? -1 : 1),
                         std::min(1.0f, std::abs(state.registers.output[2][c].ToFloat32()))};
                     for (size_t field = 0; field < 3; ++field)
                         if (!std::isfinite(actual[local * 12 + field * 4 + c]) ||
@@ -242,7 +272,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D, texture.handle);
     glUniform1i(glGetUniformLocation(program,"capture_base"),0);
     for (bool outside : {false, true}) {
-        for (size_t v = 0; v < vertex_count; ++v)
+        for (size_t v = 0; v < record_count; ++v)
             packed[v * layout.stride + layout.offsets[0]][2] = outside ? 0.125f : -0.5f;
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH,
                         static_cast<GLsizei>(texture_rows), GL_RGBA, GL_FLOAT, packed.data());
@@ -264,7 +294,9 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glBindBufferBase(GL_UNIFORM_BUFFER, 1, 0);
     glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0); glBindBuffer(GL_UNIFORM_BUFFER, 0);
     glBindVertexArray(0); glUseProgram(0); glDeleteProgram(program);
-    glBindTexture(GL_TEXTURE_2D, 0); glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D,0);
+    glActiveTexture(GL_TEXTURE0);
     return passed;
 }
 
@@ -282,6 +314,12 @@ bool RunGPUVertexSelfTest(std::string& error) {
     for (size_t count : {size_t(41967),size_t(65535)}) {
         if (!RunVertexLayoutFixture(large_mask,error,count)) {
             error += " large vertex count="+std::to_string(count);
+            return false;
+        }
+    }
+    for (const auto& fixture : {std::pair<size_t,size_t>{41967,257}, {65535,65535}}) {
+        if (!RunVertexLayoutFixture(large_mask,error,fixture.first,true,fixture.second)) {
+            error+=" indexed vertex count="+std::to_string(fixture.first);
             return false;
         }
     }

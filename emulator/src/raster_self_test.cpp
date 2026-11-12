@@ -2,6 +2,9 @@
 #include <algorithm>
 #include <array>
 #include <iostream>
+#include <unordered_map>
+#include <memory>
+#include "video_core/renderer_opengl/gl_vertex_source_map.h"
 #include "core/frontend/emu_window.h"
 #include "core/memory.h"
 #include "core/settings.h"
@@ -53,6 +56,37 @@ static bool Check(const char* name, const Common::Vec4<u8>& expected) {
     return true;
 }
 
+static bool CheckVertexSourceMap() {
+    auto map = std::make_unique<OpenGL::IOSVertexSourceMap>();
+    std::unordered_map<u16,u16> reference;
+    u32 seed=0x87654321;
+    for (unsigned draw=0;draw<32;++draw) {
+        map->BeginDraw(); reference.clear();
+        for (unsigned i=0;i<8192;++i) {
+            seed^=seed<<13; seed^=seed>>17; seed^=seed<<5;
+            const u16 source=draw%2 ? u16(seed%257) : u16(seed);
+            const auto [it,inserted]=reference.emplace(source,u16(reference.size()));
+            const auto actual=map->Resolve(source);
+            if (actual.index!=it->second || actual.inserted!=inserted) return false;
+        }
+        if (map->Size()!=reference.size()) return false;
+    }
+    map->BeginDraw();
+    for (u32 source=0;source<65536;++source) {
+        const auto record=map->Resolve(u16(source));
+        if (!record.inserted || record.index!=source) return false;
+    }
+    if (map->Size()!=65536) return false;
+    map->BeginDraw(); map->Resolve(1); map->Resolve(2); map->Resolve(42);
+    // Return to this exact stamp value after wrapping; dormant entries must retire.
+    for (unsigned draw=0;draw<65535;++draw) map->BeginDraw();
+    map->BeginDraw();
+    const auto fresh=map->Resolve(42);
+    if (!fresh.inserted || fresh.index!=0 || map->Size()!=1) return false;
+    std::cout << "Source vertex reuse, draw resets, full u16 domain and epoch wrap passed\n";
+    return true;
+}
+
 static bool CheckPackedVertexInputs() {
     u32 seed=0x1479ABCD;
     const auto random=[&]() { seed^=seed<<13; seed^=seed>>17; seed^=seed<<5; return seed; };
@@ -85,6 +119,7 @@ static bool CheckPackedVertexInputs() {
 }
 
 int main() {
+    if (!CheckVertexSourceMap()) { std::cerr << "Source vertex map regression\n"; return 1; }
     if (!CheckPackedVertexInputs()) return 1;
     Memory::MemorySystem memory;
     TestWindow window;

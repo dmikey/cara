@@ -857,7 +857,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 std::ofstream report(user + "gpu-vertex-self-test.json");
                 GLint max_texture_size=0; glGetIntegerv(GL_MAX_TEXTURE_SIZE,&max_texture_size);
                 report << "{\"max_texture_size\":" << max_texture_size << ",\"passed\":" << (passed ? "true" : "false") << ",\"detail\":" << std::quoted(error)
-                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color_packed_sparse_zero_clipping_large_batches\"}\n";
+                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color_packed_sparse_zero_clipping_large_batches_indexed_u16\"}\n";
                 LOG_INFO(Frontend, "GPU vertex fixture passed={} detail={}", passed, error);
                 if (!passed) emuWindow->graphics_error = error;
             }
@@ -1081,6 +1081,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"vertex_storage_allocations\":" + std::to_string(current.vertex_storage_allocations - previous_counters.vertex_storage_allocations) +
                                 ",\"vertex_pool_peak_bytes\":" + std::to_string(current.vertex_pool_peak_bytes) +
                                 ",\"vertex_upload_bytes\":" + std::to_string(current.vertex_upload_bytes - previous_counters.vertex_upload_bytes) +
+                                ",\"vertex_index_upload_bytes\":" + std::to_string(current.vertex_index_upload_bytes - previous_counters.vertex_index_upload_bytes) +
+                                ",\"gpu_input_records\":" + std::to_string(current.gpu_input_records - previous_counters.gpu_input_records) +
+                                ",\"gpu_indexed_input_draws\":" + std::to_string(current.gpu_indexed_input_draws - previous_counters.gpu_indexed_input_draws) +
                                 ",\"vertex_orphan_upload_bytes\":" + std::to_string(current.vertex_orphan_upload_bytes - previous_counters.vertex_orphan_upload_bytes) +
                                 ",\"vertex_gl_image_calls\":" + std::to_string(current.vertex_gl_image_calls - previous_counters.vertex_gl_image_calls) +
                                 ",\"vertex_gl_subimage_calls\":" + std::to_string(current.vertex_gl_subimage_calls - previous_counters.vertex_gl_subimage_calls) +

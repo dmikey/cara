@@ -58,6 +58,7 @@ static void SetShaderSamplerBindings(GLuint shader) {
     SetShaderSamplerBinding(shader, "tex_cube", TextureUnits::TextureCube);
 #ifdef CARA_IOS_GLES
     SetShaderSamplerBinding(shader, "cara_vertex_inputs", TextureUnits::TextureUnit{7});
+    SetShaderSamplerBinding(shader, "cara_vertex_indices", TextureUnits::TextureUnit{8});
 #endif
 
     // Set the texture samplers to correspond to different lookup table texture units
@@ -183,7 +184,8 @@ public:
         return &cached_shader;
     }
 
-    bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup) {
+    bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
+                                     bool ios_indexed_inputs) {
         bool result = false;
         const PicaVSConfig key(regs, setup);
         u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
@@ -191,6 +193,7 @@ public:
         const PicaFixedGSConfig ios_output(regs);
         const u16 ios_input_mask = IOSVertexInputLayout::MaskFromRegs(regs.vs);
         key_hash ^= Common::ComputeHash64(&ios_input_mask, sizeof(ios_input_mask));
+        key_hash ^= Common::ComputeHash64(&ios_indexed_inputs, sizeof(ios_indexed_inputs));
         // Output semantics are part of a fused ES vertex program, not a separate GS.
         key_hash ^= Common::ComputeHash64(&ios_output, sizeof(ios_output));
         if (failed_ios_vertex_shaders.count(key_hash)) return false;
@@ -199,7 +202,7 @@ public:
         if (iter_ref == shaders_ref.end()) {
             std::string vs_code = GenerateVertexShader(setup, key, separable
 #ifdef CARA_IOS_GLES
-                , &ios_output, ios_input_mask
+                , &ios_output, ios_input_mask, ios_indexed_inputs
 #endif
             );
             if (vs_code.empty()) {
@@ -516,8 +519,8 @@ ShaderProgramManager::ShaderProgramManager(bool separable)
 ShaderProgramManager::~ShaderProgramManager() = default;
 
 bool ShaderProgramManager::UseProgrammableVertexShader(const Pica::Regs& regs,
-                                                       Pica::Shader::ShaderSetup& setup) {
-    return impl->UseProgrammableVertexShader(regs, setup);
+                                                       Pica::Shader::ShaderSetup& setup, bool ios_indexed_inputs) {
+    return impl->UseProgrammableVertexShader(regs, setup, ios_indexed_inputs);
 }
 
 void ShaderProgramManager::UseTrivialVertexShader() {

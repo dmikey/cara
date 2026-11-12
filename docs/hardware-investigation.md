@@ -73,24 +73,25 @@ in-flight driver allocations.
 
 ## GLES input architecture
 
-The iOS GLES path expands indexed triangles/strips/fans on the CPU and uploads
-packed float4 attributes for every expanded triangle vertex. A small within-draw
-CPU decode cache avoids some repeated attribute reads, but repeated indices still
-produce repeated uploaded records. The final draw is `glDrawArrays`, so this path
-also does not use an indexed draw's native post-transform vertex reuse.
+The iOS GLES path expands triangle indices on the CPU, preserving each triangle's
+logical vertex ordinal. Indexed triangles and strips/fans now upload each distinct
+source vertex's packed float4 attributes once per draw, plus an R16UI lookup
+texture. The fused GPU shader resolves that lookup before fetching attributes.
+Ordinary non-indexed triangle lists retain the dense input path.
 
 The fused vertex shader reruns the first vertex of each triangle when needed to
-align quaternion signs before interpolation. That preserves an aspect of PICA's
-fixed geometry stage on GLES3, but makes changing back to a simple indexed
-vertex-array draw insufficient by itself. Preserve the triangle's expanded
-ordinal and first-vertex quaternion behavior when optimizing.
+align quaternion signs before interpolation. The new representation preserves
+that ordinal, first-vertex behavior, shader evaluation and clipping/depth rules.
+It reduces repeated CPU packing and transfer data; it does not implement a native
+indexed draw or cache transformed vertex outputs.
 
-A bounded next design is an expanded index texture plus a unique-attribute
-texture. The shader can look up an index before fetching inputs while retaining
-its current triangle/quaternion semantics. This reduces duplicate transfer data;
-it does not automatically cache transformed vertex outputs. The reuse probe is
-intended to quantify whether that design is worthwhile before implementing it.
-Raw-byte GPU decoding is a separate, later step with additional format tests.
+A bounded u16 source map uses per-draw epochs, including an explicit wrap reset.
+Input storage and index storage both count against the existing three 64 MiB
+upload banks. Dense and indexed size classes remain separate. Unsupported draws
+retain the existing CPU fallback; pool exhaustion retains orphan uploads.
+`CARA_GPU_INDEXED_INPUTS=0` selects the earlier dense representation for diagnostic
+comparisons. The indexed path is enabled by default. Raw-byte GPU decoding is a
+separate, later step with additional format tests.
 
 ## Dark Moon: measured rendering costs
 
@@ -246,6 +247,40 @@ unique inputs is a more fundamental target than continually increasing retained
 pool memory. Preserve first-vertex quaternion alignment and the expanded draw
 ordinal when testing the new representation. Compare performance with the probe
 disabled after correctness validation.
+
+### Indexed-input implementation: physical-device validation
+
+The implementation was first tested with `CARA_GPU_INDEXED_INPUTS=1`, with the
+reuse probe disabled. The user confirmed that Stories is playable with adaptive
+guest CPU and that scenery, music and voices remain correct. This is a specific
+scene/device observation, not full-game compatibility or fixed-clock full speed.
+
+The initial adaptive sample ended at a 50% guest clock. Five recent windows
+included one 60% window and four 50% windows: mean refresh time 20.09 ms,
+preparation 4.07 ms and upload 6.26 ms. There were no orphan fallbacks or fresh
+storage allocations in those windows, with the original 192 MiB total pool budget.
+Mixed guest clocks and different draw counts prevent a matched timing comparison
+against the earlier 100% dense sample. The HUD capture showed 88% speed at a 50%
+guest clock; do not describe it as 100% guest CPU execution.
+
+A subsequent adaptive-off sample in the same dialogue had a much larger workload:
+about 2.29 million expanded vertices per refresh. Five windows at a 100% guest
+clock averaged 60.82 ms, including 13.39 ms preparation and 24.28 ms upload.
+Transfer volume averaged approximately 45.2 MiB per refresh, including the index
+texture. Some orphan fallbacks returned. This establishes that reducing duplicate
+inputs does not eliminate overload at full guest clock; it is not an exact replay
+of the earlier 1.09-million-vertex sample. Adaptive mode was restored afterward.
+
+The M4 GPU oracle passed dense fixtures and indexed 41,967-vertex / 257-source
+and 65,535-vertex / 65,535-source fixtures, including permuted records, quaternion
+alignment, colors, clipping and packed inputs. Native tests cover repeat reuse,
+reset, the full u16 index domain and epoch wrap. The ARM/Thumb differential and
+old/New-3DS save-state regressions passed, as did the iOS no-host-JIT symbol audit.
+
+Private raw reports are retained under `/private/tmp/cara-stories-indexed-*`;
+commercial screenshots and game data are not committed. A future speedup claim
+needs both representations measured with the reuse probe off, identical clock
+policy and a restored checkpoint or otherwise equivalent draw workload.
 
 ### Device tooling
 

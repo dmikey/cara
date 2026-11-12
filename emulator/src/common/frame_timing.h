@@ -19,6 +19,9 @@ struct Counters {
     double vertex_storage_allocate_seconds = 0;
     double vertex_subimage_upload_seconds = 0;
     std::uint64_t vertex_upload_bytes = 0;
+    std::uint64_t vertex_index_upload_bytes = 0;
+    std::uint64_t gpu_input_records = 0;
+    std::uint64_t gpu_indexed_input_draws = 0;
     std::uint64_t vertex_orphan_upload_bytes = 0;
     std::uint64_t vertex_gl_image_calls = 0;
     std::uint64_t vertex_gl_subimage_calls = 0;

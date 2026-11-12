@@ -110,7 +110,8 @@ public:
     ShaderProgramManager(bool separable);
     ~ShaderProgramManager();
 
-    bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup);
+    bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
+                                     bool ios_indexed_inputs = false);
 
     void UseTrivialVertexShader();
 

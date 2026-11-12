@@ -1826,7 +1826,7 @@ void main() {
 }
 
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
-                                 bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask) {
+                                 bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, bool ios_indexed_inputs) {
     std::string out;
     if (separable_shader) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
@@ -1903,13 +1903,16 @@ layout (std140) uniform vs_config {
         out += GetVertexInterfaceDeclaration(true, false);
         out += UniformBlockDef;
         out += "uniform highp sampler2D cara_vertex_inputs;\n";
+        if (ios_indexed_inputs) out += "uniform highp usampler2D cara_vertex_indices;\n";
         out += program_source;
         out += "void citra_run_vertex(int vertex_id) {\n";
+        if (ios_indexed_inputs)
+            out += fmt::format("int input_vertex_id = int(texelFetch(cara_vertex_indices, ivec2(vertex_id % {0}, vertex_id / {0}), 0).r);\n", IOS_VERTEX_INPUT_WIDTH);
         const IOSVertexInputLayout layout(ios_input_mask);
         for (u32 i = 0; i < used_regs.size(); ++i) {
             if (used_regs[i]) {
                 if (layout.offsets[i] >= 0) {
-                    out += fmt::format("int index{0} = vertex_id * {1} + {2};\nvs_in_reg{0} = texelFetch(cara_vertex_inputs, ivec2(index{0} % {3}, index{0} / {3}), 0);\n", i, layout.stride, layout.offsets[i], IOS_VERTEX_INPUT_WIDTH);
+                    out += fmt::format("int index{0} = {4} * {1} + {2};\nvs_in_reg{0} = texelFetch(cara_vertex_inputs, ivec2(index{0} % {3}, index{0} / {3}), 0);\n", i, layout.stride, layout.offsets[i], IOS_VERTEX_INPUT_WIDTH, ios_indexed_inputs ? "input_vertex_id" : "vertex_id");
                 } else {
                     out += fmt::format("vs_in_reg{} = vec4(0.0);\n", i);
                 }
