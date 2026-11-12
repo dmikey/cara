@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
+#include <stdexcept>
 #include <tuple>
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -29,8 +31,12 @@ Timing::Timing() {
 }
 
 void Timing::UpdateClockSpeed(u32 cpu_clock_percentage) {
+    if (cpu_clock_percentage < 1 || cpu_clock_percentage > 400)
+        throw std::invalid_argument("Guest CPU clock must be between 1 and 400 percent");
+    const double scale = 100.0 / cpu_clock_percentage;
     for (auto& timer : timers) {
-        timer->cpu_clock_scale = 100.0 / cpu_clock_percentage;
+        if (timer->cpu_clock_scale != scale) timer->cpu_clock_remainder = 0;
+        timer->cpu_clock_scale = scale;
     }
 }
 
@@ -151,7 +157,15 @@ s64 Timing::Timer::GetTicks() const {
 }
 
 void Timing::Timer::AddTicks(u64 ticks) {
-    downcount -= static_cast<u64>(ticks >> downcount_hack);
+    const auto cycles = ticks >> downcount_hack;
+    if (cpu_clock_scale == 1.0) {
+        downcount -= cycles;
+        return;
+    }
+    const double scaled = cycles * cpu_clock_scale + cpu_clock_remainder;
+    const auto elapsed = static_cast<s64>(scaled);
+    cpu_clock_remainder = scaled - elapsed;
+    downcount -= elapsed;
 }
 
 void Timing::Timer::ForceExceptionCheck(s64 cycles) {
@@ -217,7 +231,9 @@ void Timing::Timer::Idle() {
 }
 
 s64 Timing::Timer::GetDowncount() const {
-    return downcount;
+    if (cpu_clock_scale == 1.0 || downcount <= 0) return downcount;
+    return std::max<s64>(1, static_cast<s64>(std::ceil(
+        (downcount - cpu_clock_remainder) / cpu_clock_scale)));
 }
 
 } // namespace Core

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <array>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include "video_core/pica_state.h"
@@ -85,6 +86,8 @@ int main(int argc, char** argv) {
         Window window; auto& system = Core::System::GetInstance();
         const auto status = system.Load(window, std::filesystem::absolute(argv[1]).string());
         if (status != Core::System::ResultStatus::Success) throw std::runtime_error("Counter ELF load failed: " + std::to_string(unsigned(status)));
+        if (const char* clock=std::getenv("CARA_TEST_CPU_PERCENT"))
+            system.CoreTiming().UpdateClockSpeed(unsigned(std::clamp(std::strtol(clock,nullptr,10),25L,100L)));
         Run(system, 500);
         auto table=system.Memory().GetCurrentPageTable();
         system.Memory().MapMemoryRegion(*table, Memory::VRAM_VADDR, Memory::PAGE_SIZE,

@@ -23,6 +23,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include <array>
 #include "common/save_events.h"
 #include "ios/button_state.h"
+#include "cara/adaptive_clock.h"
 #include <algorithm>
 #include <mutex>
 #include <chrono>
@@ -294,8 +295,9 @@ public:
     }
 };
 
-static NSString* CaraSpeedLabel(double refreshesPerSecond) {
+static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsigned clock) {
     NSString* value=[NSString stringWithFormat:@"%.0f%% speed",refreshesPerSecond*100.0/59.833997];
+    if (adaptive) value=[value stringByAppendingFormat:@" · CPU %u%% auto",clock];
     if (AudioCore::IOSAudioOutputFailed()) return [value stringByAppendingString:@" · Audio unavailable"];
     if (AudioCore::IsIOSAudioMuted()) return [value stringByAppendingString:@" · Muted"];
     return value;
@@ -330,6 +332,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
     std::atomic<bool> running;
     std::atomic<bool> stretchAudio;
     std::atomic<bool> stretchAudioDirty;
+    std::atomic<bool> adaptiveCPU;
+    std::atomic<bool> adaptiveCPUDirty;
+    std::atomic<unsigned> guestClock;
     std::atomic<bool> framePending[2];
     unsigned frameCount;
     CFTimeInterval startedAt;
@@ -379,6 +384,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
     const bool benchmarkMute=std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_BENCHMARK_AUDIO");
     AudioCore::SetIOSAudioMuted(benchmarkMute || [NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
     stretchAudio=[NSUserDefaults.standardUserDefaults boolForKey:@"audioStretching"]; stretchAudioDirty=false;
+    const char* adaptiveOverride=std::getenv("CARA_ADAPTIVE_GUEST_CPU");
+    adaptiveCPU=adaptiveOverride?std::strcmp(adaptiveOverride,"1")==0:
+        (!std::getenv("CARA_BENCHMARK_FRAMES") && [NSUserDefaults.standardUserDefaults boolForKey:@"adaptiveGuestCPU"]);
+    adaptiveCPUDirty=false; guestClock=100;
     NSURL* saveDocuments=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     saveSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES]];
     stop=false; running=false; framePending[0]=false; framePending[1]=false;
@@ -466,6 +475,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
     [menu addAction:[UIAlertAction actionWithTitle:(stretchAudio.load()?@"Disable audio stretching":@"Enable audio stretching") style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
         const bool enabled=!self->stretchAudio.load(); self->stretchAudio=enabled; self->stretchAudioDirty=true;
         [NSUserDefaults.standardUserDefaults setBool:enabled forKey:@"audioStretching"]; [self resumeFromMenu];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:(adaptiveCPU.load()?@"Disable adaptive guest CPU":@"Enable adaptive guest CPU (50–100%)") style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+        const bool enabled=!self->adaptiveCPU.load(); self->adaptiveCPU=enabled; self->adaptiveCPUDirty=true;
+        [NSUserDefaults.standardUserDefaults setBool:enabled forKey:@"adaptiveGuestCPU"]; [self resumeFromMenu];
     }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Open game…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { self->pickingSkin=NO; [self openROM]; }]];
     NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
@@ -642,7 +655,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                 const double now=CFAbsoluteTimeGetCurrent();
                 const double refresh=(reportedFrame-controller->lastHUDFrame)/std::max(now-controller->lastHUDTime,0.001);
                 controller->lastHUDTime=now; controller->lastHUDFrame=reportedFrame;
-                controller->status.text=CaraSpeedLabel(refresh);
+                controller->status.text=CaraSpeedLabel(refresh,controller->adaptiveCPU.load(),controller->guestClock.load());
             }
 #endif
             if ([NSProcessInfo.processInfo.environment[@"CARA_CAPTURE_FRAMES"] isEqualToString:@"1"]) {
@@ -744,10 +757,12 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
             const double elapsed = now - controller->lastHUDTime;
             const double fps = (frame - controller->lastHUDFrame) / std::max(elapsed, 0.001);
             controller->lastHUDTime = now; controller->lastHUDFrame = frame;
-            controller->status.text = CaraSpeedLabel(fps);
+            controller->status.text = CaraSpeedLabel(fps,controller->adaptiveCPU.load(),controller->guestClock.load());
             if (timing.enabled) {
                 std::ofstream report(user + "runtime-status.json");
                 report << "{\"frame\":" << frame << ",\"display_fps\":" << fps
+                       << ",\"guest_cpu_percent\":" << controller->guestClock.load()
+                       << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
                        << ",\"thermal_state\":" << long(NSProcessInfo.processInfo.thermalState)
                        << ",\"gpu_vertex_draws\":" << timing.gpu_vertex_draws
                        << ",\"cpu_vertex_draws\":" << timing.cpu_vertex_draws << "}\n";
@@ -878,6 +893,18 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                 const unsigned window_frames = window_env ? unsigned(std::clamp(std::strtol(window_env, nullptr, 10), 60L, 600L)) : 600;
                 const bool audio_diagnostics=std::getenv("CARA_AUDIO_DIAGNOSTICS")!=nullptr;
                 unsigned audio_report_frame=0;
+                Cara::AdaptiveClock clock_control;
+                clock_control.SetEnabled(self->adaptiveCPU.load());
+                self->guestClock=100;
+                unsigned clock_frame=emuWindow->frames;
+                auto clock_frame_time=std::chrono::steady_clock::now();
+                double clock_work_seconds=0;
+                const auto reset_clock_samples=[&]() {
+                    clock_control.ResetSamples(); clock_work_seconds=0;
+                    clock_frame=emuWindow->frames; clock_frame_time=std::chrono::steady_clock::now();
+                    if (system.IsPoweredOn()) system.CoreTiming().UpdateClockSpeed(clock_control.Percent());
+                    self->guestClock=clock_control.Percent();
+                };
                 const auto state_test_frame=[](const char* name) -> unsigned {
                     const char* value=std::getenv(name);
                     return value?unsigned(std::clamp(std::strtol(value,nullptr,10),0L,100000L)):0;
@@ -900,6 +927,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                     if (!error.empty()) LOG_ERROR(Frontend,"Save-state device test: {}",error);
                 };
                 while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
+                    if (self->adaptiveCPUDirty.exchange(false)) {
+                        clock_control.SetEnabled(self->adaptiveCPU.load()); reset_clock_samples();
+                    }
                     if (self->stretchAudioDirty.exchange(false)) {
                         s.enable_audio_stretching=self->stretchAudio.load();
                         system.DSP().EnableStretching(s.enable_audio_stretching);
@@ -913,7 +943,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                             AudioCore::SetIOSAudioPaused(true);
                             system.LoadStateFromPath(user+"device-test.carastate");
                             if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
-                            state_loaded=true; state_test_report(""); AudioCore::SetIOSAudioPaused(paused);
+                            state_loaded=true; state_test_report(""); reset_clock_samples(); AudioCore::SetIOSAudioPaused(paused);
                         }
                     } catch (const std::exception& error) {
                         state_test_report(error.what()); result=Core::System::ResultStatus::ErrorUnknown; break;
@@ -924,6 +954,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                             if (command>0) system.SaveState(unsigned(command));
                             else system.LoadState(unsigned(-command));
                         } catch (const std::exception& error) { failure=error.what(); }
+                        reset_clock_samples();
                         const bool powered=system.IsPoweredOn();
                         NSString* message=failure.empty()?[NSString stringWithFormat:@"State %@ in slot %d",command>0?@"saved":@"loaded",std::abs(command)]:[NSString stringWithUTF8String:failure.c_str()];
                         dispatch_async(dispatch_get_main_queue(), ^{
@@ -944,7 +975,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                         const auto resumed = std::chrono::steady_clock::now();
                         paused_duration += resumed - pause_started;
                         last_frame_time += resumed - pause_started;
-                        next_frame_time = resumed; was_paused = false;
+                        next_frame_time = resumed; was_paused = false; reset_clock_samples();
                     }
                     if (active_test_press && emuWindow->frames >= active_test_press + 6) {
                         buttons.Release(Settings::NativeButton::A); active_test_press = 0;
@@ -959,7 +990,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                     const uint64_t generation=Cara::save_commit_generation.load(std::memory_order_relaxed);
                     if (generation!=observedSave) { observedSave=generation; saveFrame=emuWindow->frames+120; }
                     if (saveFrame && emuWindow->frames>=saveFrame) { saveFrame=0; std::fflush(nullptr); [saveSync captureCommittedSave]; }
+                    const auto work_started=clock_control.Enabled()?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
                     result = system.RunLoop();
+                    if (clock_control.Enabled()) clock_work_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-work_started).count();
                     if (audio_diagnostics && emuWindow->frames >= audio_report_frame+60) {
                         const auto audio=system.DSP().GetOutputCounters();
                         AudioCore::WriteIOSAudioDiagnostics(user+"audio-status.json",audio.requested,audio.supplied,audio.underruns); audio_report_frame=emuWindow->frames;
@@ -983,6 +1016,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                             const double count = double(frame_times.size());
                             timing_windows.push_back("{\"end_frame\":" + std::to_string(timed_frame) +
                                 ",\"frames\":" + std::to_string(frame_times.size()) +
+                                ",\"guest_cpu_percent\":" + std::to_string(clock_control.Percent()) +
                                 ",\"mean_ms\":" + std::to_string(total_ms / count) +
                                 ",\"p50_ms\":" + std::to_string(frame_times[frame_times.size() / 2]) +
                                 ",\"p95_ms\":" + std::to_string(frame_times[(frame_times.size() - 1) * 95 / 100]) +
@@ -1024,6 +1058,22 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                             timing_report << "]}\n";
                         }
                     }
+                    if (clock_control.Enabled() && emuWindow->frames!=clock_frame) {
+                        const auto now=std::chrono::steady_clock::now();
+                        const unsigned advanced=emuWindow->frames-clock_frame;
+                        const double elapsed=std::chrono::duration<double>(now-clock_frame_time).count();
+                        const unsigned old_percent=clock_control.Percent();
+                        if (advanced<=4) {
+                            for (unsigned frame=0;frame<advanced;++frame)
+                                clock_control.ObserveFrame(clock_work_seconds/advanced,elapsed/advanced);
+                        } else clock_control.ResetSamples();
+                        if (clock_control.Percent()!=old_percent) {
+                            system.CoreTiming().UpdateClockSpeed(clock_control.Percent());
+                            self->guestClock=clock_control.Percent();
+                            LOG_INFO(Frontend,"Adaptive guest CPU: {}%",clock_control.Percent());
+                        }
+                        clock_frame=emuWindow->frames; clock_frame_time=now; clock_work_seconds=0;
+                    }
                     if (pace_frames && emuWindow->frames != paced_frame) {
                         paced_frame = emuWindow->frames;
                         next_frame_time += std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / 59.833997376556916));
@@ -1043,6 +1093,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond) {
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"late_paced_frames\":" << late_paced_frames
                            << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "dyncom") == 0) ? "dyncom" : "fastinterp") << "\""
+                           << ",\"adaptive_guest_cpu\":" << (clock_control.Enabled()?"true":"false")
+                           << ",\"guest_cpu_percent\":" << clock_control.Percent()
                            << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
 #ifdef CARA_IOS_GLES
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws

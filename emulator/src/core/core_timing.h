@@ -227,14 +227,15 @@ public:
         Timing& timing;
         u32 downcount_hack = 0;
         double cpu_clock_scale = 1.0;
+        double cpu_clock_remainder = 0.0;
         template <class Archive> void serialize(Archive& ar, const unsigned int) {
             MoveEvents(); ar& event_queue; ar& event_fifo_id; ar& slice_length;
             ar& downcount; ar& executed_ticks; ar& idled_cycles; ar& is_timer_sane;
-            ar& downcount_hack; ar& cpu_clock_scale;
+            ar& downcount_hack; ar& cpu_clock_scale; ar& cpu_clock_remainder;
             if (Archive::is_loading::value) {
                 pending_restore = std::make_unique<RestoredState>(RestoredState{
                     event_queue, event_fifo_id, slice_length, downcount, executed_ticks,
-                    idled_cycles, is_timer_sane, downcount_hack, cpu_clock_scale});
+                    idled_cycles, is_timer_sane, downcount_hack, cpu_clock_scale, cpu_clock_remainder});
             }
         }
         // Service constructors/destructors register and schedule startup events while
@@ -247,7 +248,7 @@ public:
             u64 idle;
             bool sane;
             u32 hack;
-            double scale;
+            double scale, remainder;
         };
         std::unique_ptr<RestoredState> pending_restore;
         void FinishStateLoad() {
@@ -258,6 +259,7 @@ public:
             slice_length=saved->slice; downcount=saved->remaining; executed_ticks=saved->executed;
             idled_cycles=saved->idle; is_timer_sane=saved->sane;
             downcount_hack=saved->hack; cpu_clock_scale=saved->scale;
+            cpu_clock_remainder=saved->remainder;
         }
         friend class Timing;
         friend class boost::serialization::access;

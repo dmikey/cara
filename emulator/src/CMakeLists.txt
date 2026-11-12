@@ -124,6 +124,8 @@ if (ENABLE_WEB_SERVICE)
 endif()
 
 if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-clock-self-test clock_self_test.cpp)
+    target_link_libraries(cara-clock-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-input-self-test input_self_test.cpp)
     add_executable(cara-audio-buffer-self-test audio_buffer_self_test.cpp)
     add_executable(cara-interval-cache-self-test interval_cache_self_test.cpp)
@@ -156,6 +158,40 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist"
         XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
+
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    find_program(CARA_XCRUN xcrun REQUIRED)
+    set(CARA_ICON_PLATFORM iphoneos)
+    if (CMAKE_OSX_SYSROOT MATCHES "iphonesimulator|iPhoneSimulator")
+        set(CARA_ICON_PLATFORM iphonesimulator)
+    endif()
+    set(CARA_ICON_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cara-icons")
+    set(CARA_ICON_INFO "${CMAKE_CURRENT_BINARY_DIR}/cara-icon-info.plist")
+    set(CARA_ICON_STAMP "${CMAKE_CURRENT_BINARY_DIR}/cara-icons.stamp")
+    file(GLOB_RECURSE CARA_ICON_INPUTS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/ios/Assets.xcassets/*")
+    add_custom_command(OUTPUT "${CARA_ICON_STAMP}" "${CARA_ICON_INFO}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CARA_ICON_OUTPUT}"
+        COMMAND "${CARA_XCRUN}" actool
+            --compile "${CARA_ICON_OUTPUT}"
+            --platform "${CARA_ICON_PLATFORM}"
+            --minimum-deployment-target 15.0
+            --app-icon AppIcon --target-device iphone --target-device ipad
+            --output-partial-info-plist "${CARA_ICON_INFO}"
+            --output-format human-readable-text
+            "${CMAKE_CURRENT_SOURCE_DIR}/ios/Assets.xcassets"
+        COMMAND ${CMAKE_COMMAND} -E touch "${CARA_ICON_STAMP}"
+        DEPENDS ${CARA_ICON_INPUTS}
+        VERBATIM)
+    add_custom_target(cara-ios-icons DEPENDS "${CARA_ICON_STAMP}")
+    add_dependencies(cara-ios cara-ios-icons)
+    set_property(TARGET cara-ios APPEND PROPERTY LINK_DEPENDS "${CARA_ICON_STAMP}")
+    add_custom_command(TARGET cara-ios POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CARA_ICON_OUTPUT}" "$<TARGET_BUNDLE_DIR:cara-ios>"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/../tools/merge_icon_plist.py"
+            "$<TARGET_BUNDLE_DIR:cara-ios>/Info.plist" "${CARA_ICON_INFO}"
+        VERBATIM)
 endif()
 
 if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
