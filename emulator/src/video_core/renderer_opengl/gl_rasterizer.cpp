@@ -515,19 +515,11 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         if (!valid[slot] || ids[slot] != vertex) {
             Pica::Shader::AttributeBuffer input{};
             loader.LoadVertex(base, static_cast<int>(i), vertex, input, accesses);
-            auto& registers = inputs[slot];
-            registers.fill(GLvec4{});
-            for (u32 attr = 0; attr <= regs.vs.max_input_attribute_index; ++attr) {
-                const auto& value = input.attr[attr];
-                registers[regs.vs.GetRegisterForAttribute(attr)] = {
-                    value.x.ToFloat32(), value.y.ToFloat32(), value.z.ToFloat32(), value.w.ToFloat32()};
-            }
+            layout.PackAttributes(input, inputs[slot]);
             ids[slot] = vertex; valid[slot] = true;
         }
-        for (u32 reg = 0; reg < layout.offsets.size(); ++reg) {
-            if (layout.offsets[reg] >= 0)
-                ios_vertex_inputs[i * layout.stride + layout.offsets[reg]] = inputs[slot][reg];
-        }
+        std::copy_n(inputs[slot].begin(), layout.stride,
+                    ios_vertex_inputs.begin() + i * layout.stride);
     }
     return true;
 }

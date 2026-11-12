@@ -6,6 +6,7 @@
 #include "core/memory.h"
 #include "core/settings.h"
 #include "video_core/pica_state.h"
+#include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/swrasterizer/framebuffer.h"
 #include "video_core/swrasterizer/rasterizer.h"
 #include "video_core/swrasterizer/texturing.h"
@@ -52,7 +53,39 @@ static bool Check(const char* name, const Common::Vec4<u8>& expected) {
     return true;
 }
 
+static bool CheckPackedVertexInputs() {
+    u32 seed=0x1479ABCD;
+    const auto random=[&]() { seed^=seed<<13; seed^=seed>>17; seed^=seed<<5; return seed; };
+    for (unsigned trial=0;trial<8192;++trial) {
+        Pica::ShaderRegs regs{};
+        regs.max_input_attribute_index.Assign(trial%16);
+        regs.input_attribute_to_register_map_low=random();
+        regs.input_attribute_to_register_map_high=random();
+        Pica::Shader::AttributeBuffer attributes{};
+        for (unsigned attr=0;attr<16;++attr)
+            for (unsigned c=0;c<4;++c)
+                attributes.attr[attr][c]=Pica::float24::FromFloat32(float(s32(random()))/65536.0f);
+        Pica::Shader::UnitState reference;
+        reference.LoadInput(regs,attributes);
+        const OpenGL::IOSVertexInputLayout layout(regs);
+        std::array<Common::Vec4<float>,16> packed{};
+        layout.PackAttributes(attributes,packed);
+        for (unsigned reg=0;reg<16;++reg) {
+            if (layout.offsets[reg]<0) continue;
+            for (unsigned c=0;c<4;++c) {
+                if (packed[layout.offsets[reg]][c]!=reference.registers.input[reg][c].ToFloat32()) {
+                    std::cerr << "Packed vertex differs from interpreter register mapping\n";
+                    return false;
+                }
+            }
+        }
+    }
+    std::cout << "8192 sparse, permuted and duplicate vertex mappings match interpreter inputs\n";
+    return true;
+}
+
 int main() {
+    if (!CheckPackedVertexInputs()) return 1;
     Memory::MemorySystem memory;
     TestWindow window;
     Settings::values.resolution_factor = 1;

@@ -337,3 +337,38 @@ the user reported speed increasing from about 35% to 62%, still below full speed
 The 62% reading is emulation speed, not original guest CPU performance at the
 reduced clock. CPU clock, raster, 22,000 ARM/Thumb differential cases, New 3DS
 70% clock save-state regressions and the iOS no-JIT audit passed locally.
+
+
+### Physical RAM lookup and packed vertex inputs
+
+Cara adapts Azahar PR #1587 (`47cd41cc58a4671147ad5f7727fc7ccb0b194826`)
+to avoid temporary `MemoryRef`/`shared_ptr` ownership during raw physical RAM
+lookups. The last-region cache borrows the owning field, retains Cara's existing
+bounds checks, and is cleared before state deserialization. Owning `MemoryRef`
+requests still retain their backing memory. Native tests compare raw and owning
+pointers, writes, region ends and interleaved region accesses before and after
+save-state restoration, including DSP RAM and New 3DS RAM.
+
+The GLES input staging path also packs attributes directly into texture order,
+removing the full intermediate register clear/scatter and sixteen-register scan
+for each expanded vertex. Its precomputed mapping preserves the interpreter's
+last-attribute-wins behavior. The native raster regression compares 8,192 sparse,
+permuted and duplicate mappings against `UnitState::LoadInput`.
+
+The M4 iPad Dark Moon boot windows ending at refreshes 720 through 1,200 measured:
+
+| Build | Mean refresh | Vertex preparation | Vertex upload | Emulation speed |
+|---|---:|---:|---:|---:|
+| Large GPU batches | 27.16 ms | 10.03 ms | 3.93 ms | 61.5% |
+| Direct physical RAM lookup | 25.05 ms | 7.14 ms | 3.95 ms | 66.7% |
+| Direct lookup and packed inputs | 24.10 ms | 6.20 ms | 3.97 ms | 69.4% |
+
+All three runs used a 50% guest clock, no CPU vertex fallbacks, normal pacing and
+sound. Each 60-refresh window contained 32,720 GPU draws and approximately
+17.785 million expanded vertices. These comparable boot observations are not a
+fully deterministic replay: vertex counts differed slightly, and surface-download
+time varied from 4.00 to 4.54 ms per refresh. Speed here measures emulated refresh
+throughput; the reduced guest clock is a separate performance tradeoff. The final
+candidate passed the physical large-atlas GPU/interpreter fixture and the iOS
+no-JIT audit. Native interpreter, raster, clock and old/New 3DS save-state tests
+passed locally.
