@@ -849,3 +849,21 @@ on-disk device shared cache. Host Xcode/SDK 27.2 versus cached iPadOS 27.2.1 met
 is a diagnostic lead, not an established cause. No stack percentages are reported.
 The interactive candidate remains private; no additional debugger retries are
 part of these matched speed comparisons.
+
+
+The first paired-fusion iPad sweep found no meaningful Stories improvement:
+25.246 ms/refresh baseline, 25.190 ADD/CMP, 25.258 VCMP/VMRS, 25.283 combined,
+and 25.213 final baseline. All matched workload and final raw pixels at 100%
+guest CPU with audio. Both remain disabled. The ADD handler was subsequently
+simplified to read the two retained decoded slots directly, avoiding a runtime
+rotate and redundant instruction reread; independent ADD and dead-flag ADD.S
+oracles and timer traces pass. Its small native synthetic improvement is not a
+game-speed claim.
+
+Normal play now has a persisted `maximumSpeedPercent` preference, default 105,
+with a frame-pacing policy independent of guest CPU underclocking. It counts all
+advanced vblanks per frontend iteration and discards overdue pacing debt, so slow
+frames or resume do not create catch-up bursts. Pause, load, counter reset and
+speed changes rebaseline the schedule. Uncapped profiling remains explicit.
+The pure policy has ROM-free deterministic tests; physical paced-run validation
+is recorded separately from unpaced engine throughput.

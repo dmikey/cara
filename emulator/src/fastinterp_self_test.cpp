@@ -83,7 +83,9 @@ int main() {
                     for (u32 initial : edges)
                         for (unsigned cond = 0; cond < 14; ++cond) {
                             code.fill(0xE1A03003);
-                            code[prefix] = 0xE2810000 | a; // ADD r0,r1,#rotated-immediate
+                            // Also verify ADD.S forms whose flags are killed by the following CMP.
+                            code[prefix] =
+                                (std::getenv("CARA_ADD_CMP_SETFLAGS") ? 0xE2910000u : 0xE2810000u) | a;
                             code[prefix + 1] = 0xE3500000 | c;
                             code[prefix + 2] = (cond << 28) | 0x0A000001; // taken -> MOV r2,#2
                             code[prefix + 3] = 0xE3A02001;

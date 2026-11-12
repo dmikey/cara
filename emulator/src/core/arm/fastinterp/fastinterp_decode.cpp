@@ -1451,36 +1451,19 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         return value && std::strcmp(value, "1") == 0;
     }();
     if (add_cmp_immediate && !is_thumb) {
-        u32 source_pc = pc;
         for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
             auto& add = block->instructions[slot];
             const auto& cmp = block->instructions[slot + 1];
-            const u32 source_size = add.inst_size;
             if (add.opcode == Opcode::Add && add.cond == 0xE && add.rd != 15 && add.dp.rn != 15 &&
                 add.dp.rm == 0xFF && add.inst_size == 4 && cmp.opcode == Opcode::FusedCmpBcc &&
                 cmp.fused.rn == add.rd && cmp.inst_size == 8) {
-                const auto rn = add.dp.rn;
-                const auto branch_cond = cmp.fused.branch_cond;
-                const auto cmp_imm = cmp.fused.imm;
-                const auto branch_target = cmp.fused.branch_target;
-                const auto ticks = add.ticks + cmp.ticks;
-                const u32 raw_add = ReadMemory32(source_pc);
-                // ARM-only immediate ADD, not a remapped Thumb/dead-flag form.
-                if ((raw_add & 0xFFF00000u) == 0xE2800000u) {
-                    add.opcode = Opcode::AddCmpImmBcc;
-                    add.add_cmp_imm.rn = rn;
-                    add.add_cmp_imm.branch_cond = branch_cond;
-                    add.add_cmp_imm.add_imm12 = raw_add & 0xFFF;
-                    add.add_cmp_imm.cmp_imm = cmp_imm;
-                    add.add_cmp_imm.branch_target = branch_target;
-                    add.ticks = ticks;
-                    // Keep original slot sizes for subsequent packing passes.
-                    source_pc += source_size + cmp.inst_size;
-                    ++slot; // Keep constituent slot intact, but do not revisit it.
-                    continue;
-                }
+                // Keep both predecoded operand layouts intact. Dead-flag
+                // elimination may have produced this ADD from an ADD.S; its
+                // flags are unobservable because the unconditional CMP replaces them.
+                add.opcode = Opcode::AddCmpImmBcc;
+                add.ticks += cmp.ticks;
+                ++slot;
             }
-            source_pc += source_size;
         }
     }
 

@@ -55,6 +55,7 @@ jobs:
           CARA_TEST_NEW_3DS=1 CARA_TEST_CPU_PERCENT=70 work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-underclock
           CARA_CPU_BACKEND=dyncom work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-dyncom
           work/build-mac/bin/cara-clock-self-test
+          work/build-mac/bin/cara-frame-pacer-self-test
           work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=2 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
@@ -62,6 +63,9 @@ jobs:
           CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=0 work/build-mac/bin/cara-fastinterp-self-test > work/add-cmp-off.txt
           CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=1 work/build-mac/bin/cara-fastinterp-self-test > work/add-cmp-on.txt
           diff -u work/add-cmp-off.txt work/add-cmp-on.txt
+          CARA_ADD_CMP_SETFLAGS=1 CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=0 work/build-mac/bin/cara-fastinterp-self-test > work/adds-cmp-off.txt
+          CARA_ADD_CMP_SETFLAGS=1 CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=1 work/build-mac/bin/cara-fastinterp-self-test > work/adds-cmp-on.txt
+          diff -u work/adds-cmp-off.txt work/adds-cmp-on.txt
           CARA_VCMP_VMRS_TEST=1 CARA_FASTINTERP_VCMP_VMRS=0 work/build-mac/bin/cara-fastinterp-self-test > work/vcmp-off.txt
           CARA_VCMP_VMRS_TEST=1 CARA_FASTINTERP_VCMP_VMRS=1 work/build-mac/bin/cara-fastinterp-self-test > work/vcmp-on.txt
           diff -u work/vcmp-off.txt work/vcmp-on.txt

@@ -30,6 +30,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "common/save_events.h"
 #include "ios/button_state.h"
 #include "cara/adaptive_clock.h"
+#include "cara/frame_pacer.h"
 #include <algorithm>
 #include <mutex>
 #include <chrono>
@@ -319,6 +320,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 }
 
 @interface EmulatorController : UIViewController <UIDocumentPickerDelegate>
+- (NSUInteger)maximumSpeedPercent;
+- (void)setMaximumSpeedPercent:(NSUInteger)percent;
+- (void)showMaximumSpeed;
 @end
 @implementation EmulatorController {
     UIImageView* top;
@@ -350,6 +354,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     std::atomic<bool> adaptiveCPU;
     std::atomic<bool> adaptiveCPUDirty;
     std::atomic<unsigned> guestClock;
+    std::atomic<unsigned> maximumSpeedLimit;
     std::atomic<bool> framePending[2];
     unsigned frameCount;
     unsigned sessionGeneration;
@@ -427,6 +432,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     adaptiveCPU=adaptiveOverride?std::strcmp(adaptiveOverride,"1")==0:
         (!std::getenv("CARA_BENCHMARK_FRAMES") && [NSUserDefaults.standardUserDefaults boolForKey:@"adaptiveGuestCPU"]);
     adaptiveCPUDirty=false; guestClock=100;
+    [NSUserDefaults.standardUserDefaults registerDefaults:@{@"maximumSpeedPercent":@105}];
+    const NSInteger savedMaximumSpeed=[NSUserDefaults.standardUserDefaults integerForKey:@"maximumSpeedPercent"];
+    maximumSpeedLimit=(savedMaximumSpeed>=50 && savedMaximumSpeed<=200)?unsigned(savedMaximumSpeed):Cara::FramePacer::DefaultSpeedPercent;
     NSURL* saveDocuments=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     saveSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES]];
     stop=false; running=false; sessionGeneration=0; framePending[0]=false; framePending[1]=false;
@@ -507,6 +515,23 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 #endif
 }
 - (void)resumeFromMenu { modalPaused=NO; paused=false; AudioCore::SetIOSAudioPaused(stop || !running); }
+- (NSUInteger)maximumSpeedPercent { return maximumSpeedLimit.load(); }
+- (void)setMaximumSpeedPercent:(NSUInteger)percent {
+    const unsigned value=unsigned(std::clamp<NSUInteger>(percent,Cara::FramePacer::MinSpeedPercent,Cara::FramePacer::MaxSpeedPercent));
+    maximumSpeedLimit=value;
+    [NSUserDefaults.standardUserDefaults setInteger:value forKey:@"maximumSpeedPercent"];
+}
+- (void)showMaximumSpeed {
+    UIAlertController* limits=[UIAlertController alertControllerWithTitle:@"Maximum speed" message:@"Limits game speed. 105% is the default." preferredStyle:UIAlertControllerStyleAlert];
+    for (NSUInteger percent : {100u,105u,125u,150u,200u}) {
+        NSString* title=[NSString stringWithFormat:@"%@%lu%%%@",maximumSpeedLimit.load()==percent?@"✓ ":@"",(unsigned long)percent,percent==105?@" (Default)":@""];
+        [limits addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            [self setMaximumSpeedPercent:percent]; [self resumeFromMenu];
+        }]];
+    }
+    [limits addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { [self resumeFromMenu]; }]];
+    [self presentViewController:limits animated:YES completion:nil];
+}
 - (void)showMenu {
     if (openingGame) return;
     modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
@@ -523,6 +548,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         const bool enabled=!self->adaptiveCPU.load(); self->adaptiveCPU=enabled; self->adaptiveCPUDirty=true;
         [NSUserDefaults.standardUserDefaults setBool:enabled forKey:@"adaptiveGuestCPU"]; [self resumeFromMenu];
     }]];
+    [menu addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"Maximum speed: %u%%…",maximumSpeedLimit.load()] style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self showMaximumSpeed]; }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Open game…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { self->pickingSkin=NO; [self openROM]; }]];
     NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
     if (recent) [menu addAction:[UIAlertAction actionWithTitle:@"Open recent game" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
@@ -818,6 +844,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 std::ofstream report(user + "runtime-status.json");
                 report << "{\"title_id\":" << title << ",\"frame\":" << frame << ",\"display_fps\":" << fps
                        << ",\"guest_cpu_percent\":" << controller->guestClock.load()
+                       << ",\"maximum_speed_percent\":" << controller->maximumSpeedLimit.load()
                        << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
                        << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
                        << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
@@ -875,7 +902,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             s.use_shader_cache = false;
 #endif
             s.use_virtual_sd = true; s.region_value = Settings::REGION_VALUE_AUTO_SELECT;
-            s.resolution_factor = 1; s.frame_limit = 100;
+            s.resolution_factor = 1; s.use_frame_limit = false; // Frontend counts every presented vblank.
+            s.frame_limit = u16(self->maximumSpeedLimit.load());
             const char* target_env = std::getenv("CARA_BENCHMARK_FRAMES");
             const unsigned target_frames = target_env ? static_cast<unsigned>(std::clamp(std::strtol(target_env, nullptr, 10), 1L, 18000L)) : 0;
             const bool pace_frames = !target_frames || std::getenv("CARA_PACED_BENCHMARK") != nullptr;
@@ -989,8 +1017,19 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             });
             if (result == Core::System::ResultStatus::Success) {
                 const auto benchmark_start = std::chrono::steady_clock::now();
-                auto next_frame_time = benchmark_start;
-                unsigned paced_frame = 0;
+                const auto host_seconds=[](std::chrono::steady_clock::time_point value) { return std::chrono::duration<double>(value.time_since_epoch()).count(); };
+                unsigned paced_speed=self->maximumSpeedLimit.load();
+                bool has_speed_override=false;
+                if (const char* speed_override=std::getenv("CARA_MAX_SPEED_PERCENT")) {
+                    char* end=nullptr;
+                    const long value=std::strtol(speed_override,&end,10);
+                    if (end!=speed_override && *end=='\0' && value>=50 && value<=200) {
+                        paced_speed=unsigned(value); has_speed_override=true;
+                    }
+                }
+                Cara::FramePacer frame_pacer(paced_speed);
+                frame_pacer.Reset(host_seconds(benchmark_start));
+                unsigned paced_frame = emuWindow->frames;
                 unsigned late_paced_frames = 0;
                 bool was_paused = false;
                 auto pause_started = benchmark_start;
@@ -1112,7 +1151,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                             AudioCore::SetIOSAudioPaused(true);
                             system.LoadStateFromPath(user+"device-test.carastate");
                             if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
-                            state_loaded=true; state_test_report(""); reset_clock_samples(); AudioCore::SetIOSAudioPaused(paused);
+                            state_loaded=true; state_test_report(""); reset_clock_samples();
+                            frame_pacer.Reset(host_seconds(std::chrono::steady_clock::now())); paced_frame=emuWindow->frames;
+                            AudioCore::SetIOSAudioPaused(paused);
                         }
                     } catch (const std::exception& error) {
                         state_test_report(error.what()); result=Core::System::ResultStatus::ErrorUnknown; break;
@@ -1125,6 +1166,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                             else system.LoadState(unsigned(-command));
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
+                        frame_pacer.Reset(host_seconds(std::chrono::steady_clock::now())); paced_frame=emuWindow->frames;
                         const bool powered=system.IsPoweredOn();
                         NSString* message=failure.empty()?[NSString stringWithFormat:@"State %@ in slot %d",command>0?@"saved":@"loaded",std::abs(command)]:[NSString stringWithUTF8String:failure.c_str()];
                         if (command==101 && failure.empty()) message=@"Comparison checkpoint saved";
@@ -1147,7 +1189,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                         const auto resumed = std::chrono::steady_clock::now();
                         paused_duration += resumed - pause_started;
                         last_frame_time += resumed - pause_started;
-                        next_frame_time = resumed; was_paused = false; reset_clock_samples();
+                        frame_pacer.Reset(host_seconds(resumed)); paced_frame=emuWindow->frames;
+                        was_paused = false; reset_clock_samples();
                     }
                     if (test_start_frame && !test_start_pressed && emuWindow->frames>=test_start_frame) {
                         buttons.Press(Settings::NativeButton::Start); test_start_pressed=true;
@@ -1341,12 +1384,18 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                         clock_frame=emuWindow->frames; clock_frame_time=now; clock_work_seconds=0;
                     }
                     if (pace_frames && emuWindow->frames != paced_frame) {
-                        paced_frame = emuWindow->frames;
-                        next_frame_time += std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / 59.833997376556916));
-                        const auto now = std::chrono::steady_clock::now();
-                        if (now > next_frame_time + std::chrono::milliseconds(1)) ++late_paced_frames;
-                        if (now - next_frame_time > std::chrono::milliseconds(100)) next_frame_time = now;
-                        std::this_thread::sleep_until(next_frame_time);
+                        const auto now=std::chrono::steady_clock::now();
+                        if (emuWindow->frames<paced_frame) {
+                            frame_pacer.Reset(host_seconds(now)); // Reset/wrap is not a huge forward delta.
+                        } else {
+                            if (!has_speed_override) paced_speed=self->maximumSpeedLimit.load();
+                            frame_pacer.SetSpeedPercent(paced_speed,host_seconds(now));
+                            const double deadline=frame_pacer.Advance(emuWindow->frames-paced_frame,host_seconds(now));
+                            if (deadline<=host_seconds(now)) ++late_paced_frames;
+                            const auto wake=std::chrono::steady_clock::time_point(std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(deadline)));
+                            std::this_thread::sleep_until(wake);
+                        }
+                        paced_frame=emuWindow->frames;
                     }
                 }
                 if (target_frames) {
@@ -1357,6 +1406,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                     report << "{\"title_id\":" << system.GetTitleID() << ",\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
                            << ",\"fps\":" << emuWindow->frames / elapsed
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
+                           << ",\"maximum_speed_percent\":" << paced_speed
                            << ",\"late_paced_frames\":" << late_paced_frames
                            << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "dyncom") == 0) ? "dyncom" : "fastinterp") << "\""
                            << ",\"adaptive_guest_cpu\":" << (clock_control.Enabled()?"true":"false")
