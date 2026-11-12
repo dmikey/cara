@@ -64,7 +64,27 @@ percentage is available. This was a privately re-signed release with compiled
 timing and input instrumentation; its renderer and audio frameworks were retained.
 The apps used separate save data and different Azahar revisions. These results
 describe this opening replay, rather than sustained gameplay or a renderer-only
-comparison. Manic's separate Citra core and its underclocked presets were not measured.
+comparison.
+
+### Manic's Citra core on M4 iPad
+
+The same opening test was also attempted with Manic's Citra core at 100% guest CPU
+clock and at its default no-JIT Compatibility preset of 20%. Both used native
+resolution, New 3DS mode, sound enabled, and CPU and host shader JIT disabled.
+Recorded boot settings differed only in guest CPU clock.
+
+| Guest CPU clock | Recorded refreshes | Recorded duration | Guest refresh throughput | Peak sampled footprint | Observed result |
+|---|---:|---:|---:|---:|---|
+| 100% | 9,000 | 183.11 s | 82.1% | 1302 MiB | Cutscene froze while guest refresh ticks continued |
+| 20%, Compatibility | 7,800 | 130.77 s | 99.7% | 1331 MiB | Scene moved normally with occasional audio cuts, then the app crashed |
+
+Neither run completed a visually valid replay. The 100% figure measures counter
+throughput despite the frozen scene. The 20% figures describe its last recorded
+checkpoint, rather than the exact crash time or a completed 9,000-refresh run.
+Its crash report records an invalid memory access in the bundled MoltenVK renderer
+on the Vulkan worker thread. The second run retained the first run's disk shader
+cache. Guest refresh throughput at an underclocked CPU setting does not establish
+equivalent game frame rate or timing. Native Citra audio output was not instrumented.
 
 ## Attribution
 
