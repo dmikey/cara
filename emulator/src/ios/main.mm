@@ -32,6 +32,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "ios/button_state.h"
 #include "cara/adaptive_clock.h"
 #include "cara/frame_pacer.h"
+#include "ios/play_profile.h"
 #include <algorithm>
 #include <mutex>
 #include <chrono>
@@ -468,12 +469,12 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     NSString* mode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"];
     if (![@[@"accuracy",@"performance"] containsObject:mode]) mode=@"performance";
     [NSUserDefaults.standardUserDefaults setObject:mode forKey:@"playMode"];
-    adaptiveCPU=adaptiveOverride?std::strcmp(adaptiveOverride,"1")==0:(!std::getenv("CARA_BENCHMARK_FRAMES") && [mode isEqual:@"performance"]);
-    fixedGuestClock=(adaptiveOverride || std::getenv("CARA_BENCHMARK_FRAMES"))?100:105;
-    adaptiveCPUDirty=false; guestClock=adaptiveCPU.load()?100:fixedGuestClock.load();
     [NSUserDefaults.standardUserDefaults registerDefaults:@{@"maximumSpeedPercent":@105}];
     const NSInteger savedMaximumSpeed=[NSUserDefaults.standardUserDefaults integerForKey:@"maximumSpeedPercent"];
-    maximumSpeedLimit=(savedMaximumSpeed>=50 && savedMaximumSpeed<=200)?unsigned(savedMaximumSpeed):Cara::FramePacer::DefaultSpeedPercent;
+    const unsigned requested=(savedMaximumSpeed>=50 && savedMaximumSpeed<=200)?unsigned(savedMaximumSpeed):Cara::FramePacer::DefaultSpeedPercent;
+    const auto policy=Cara::MakePlayPolicy([mode isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,requested,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,adaptiveOverride?(std::strcmp(adaptiveOverride,"1")==0?1:0):-1);
+    adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed;
+    adaptiveCPUDirty=false; guestClock=policy.guest_clock;
     NSURL* saveDocuments=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     saveSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES]];
     stateSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES] statesOnly:YES];
@@ -570,7 +571,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 - (NSUInteger)maximumSpeedPercent { return maximumSpeedLimit.load(); }
 - (void)setMaximumSpeedPercent:(NSUInteger)percent {
     const unsigned value=unsigned(std::clamp<NSUInteger>(percent,Cara::FramePacer::MinSpeedPercent,Cara::FramePacer::MaxSpeedPercent));
-    maximumSpeedLimit=value;
+    maximumSpeedLimit=adaptiveCPU.load()?value:105;
     [NSUserDefaults.standardUserDefaults setInteger:value forKey:@"maximumSpeedPercent"];
 }
 - (void)showMaximumSpeed {
@@ -691,7 +692,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         @{@"title":@"Audio stretching",@"subtitle":@"Adjust audio when emulation speed varies.",@"symbol":@"waveform",@"value":@(stretchAudio.load()),@"change":^(BOOL on) { EmulatorController* c=owner; if (!c) return; c->stretchAudio=on; c->stretchAudioDirty=true; [NSUserDefaults.standardUserDefaults setBool:on forKey:@"audioStretching"]; }},
     ]}];
     [sections addObject:@{@"title":@"Emulation",@"rows":@[
-        @{@"title":@"Play mode",@"subtitle":adaptiveCPU.load()?@"Performance · adaptive CPU":@"Accuracy · CPU locked at 105%",@"symbol":@"speedometer"},
+        @{@"title":@"Play mode",@"subtitle":adaptiveCPU.load()?@"Performance · adaptive CPU":@"Accuracy · 105% speed cap, normal 100% CPU",@"symbol":@"speedometer"},
     ],@"footer":@"Choose Accuracy or Performance on the main settings card."}];
     for (NSString* orientation in @[@"Landscape",@"Portrait"]) {
         NSString* key=[@"controllerSkin" stringByAppendingString:orientation];
@@ -723,7 +724,8 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 - (void)setPlayMode:(NSString*)mode {
     if (std::getenv("CARA_BENCHMARK_FRAMES") || std::getenv("CARA_ADAPTIVE_GUEST_CPU")) return;
     BOOL adaptive=[mode isEqual:@"performance"];
-    adaptiveCPU=adaptive; fixedGuestClock=105; adaptiveCPUDirty=true;
+    const auto policy=Cara::MakePlayPolicy(adaptive?Cara::PlayMode::Performance:Cara::PlayMode::Accuracy,unsigned([NSUserDefaults.standardUserDefaults integerForKey:@"maximumSpeedPercent"]));
+    adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed; adaptiveCPUDirty=true;
     [NSUserDefaults.standardUserDefaults setObject:mode forKey:@"playMode"];
     [NSUserDefaults.standardUserDefaults setBool:adaptive forKey:@"adaptiveGuestCPU"];
 }

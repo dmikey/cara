@@ -78,6 +78,10 @@ jobs:
           work/build-mac/bin/cara-interval-cache-self-test
           work/build-mac/bin/cara-input-self-test
           work/build-mac/bin/cara-save-sync-self-test
+          work/build-mac/bin/cara-play-profile-self-test
+          work/build-mac/bin/cara-input-hub-self-test
+          work/build-mac/bin/cara-state-catalog-self-test
+          work/build-mac/bin/cara-configuration-self-test
           work/build-mac/bin/cara-library-self-test
           work/build-mac/bin/cara-skin-self-test
           CARA_RASTER_THREADS=1 work/build-mac/bin/cara-raster-self-test

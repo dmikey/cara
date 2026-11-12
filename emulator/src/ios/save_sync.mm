@@ -29,9 +29,20 @@ BOOL CaraIsStatePath(NSString* relative) {
     dispatch_once(&once,^{ expression=[NSRegularExpression regularExpressionWithPattern:@"^states/(?:(?:[0-9A-F]{16}|homebrew-[0-9A-F]{64})\\.(?:0[1-9]|10|quick|(?:manual|auto|backup)-[0-9A-F-]{36})\\.carastate|metadata\\.json)$" options:0 error:nil]; });
     return relative.length<180 && NSEqualRanges([expression rangeOfFirstMatchInString:relative options:0 range:NSMakeRange(0,relative.length)],NSMakeRange(0,relative.length));
 }
-static unsigned long long FileLimit(NSString* path) { return [path isEqual:@"states/metadata.json"]?2ull*1024*1024:CaraIsStatePath(path)?768ull*1024*1024+256:128ull*1024*1024; }
-static unsigned long long SetLimit(BOOL statesOnly) { return statesOnly?8ull*1024*1024*1024:512ull*1024*1024; }
-static BOOL ManagedPath(NSString* path,BOOL statesOnly) { return statesOnly?CaraIsStatePath(path):CaraIsSavePath(path); }
+BOOL CaraIsConfigurationPath(NSString* relative) {
+    if (![relative isKindOfClass:NSString.class] || relative.length>200) return NO;
+    if ([@[@"settings/controller-preferences.json",@"settings/skins/portrait.deltaskin",@"settings/skins/landscape.deltaskin"] containsObject:relative]) return YES;
+    static NSRegularExpression* cheats; static dispatch_once_t once;
+    dispatch_once(&once,^{ cheats=[NSRegularExpression regularExpressionWithPattern:@"^cheats/[0-9A-F]{16}\\.txt$" options:0 error:nil]; });
+    return NSEqualRanges([cheats rangeOfFirstMatchInString:relative options:0 range:NSMakeRange(0,relative.length)],NSMakeRange(0,relative.length));
+}
+static unsigned long long FileLimit(NSString* path) {
+    if ([@[@"states/metadata.json",@"settings/controller-preferences.json"] containsObject:path]) return 2ull*1024*1024;
+    if (CaraIsConfigurationPath(path)) return [path hasPrefix:@"cheats/"]?1024ull*1024:32ull*1024*1024;
+    return CaraIsStatePath(path)?768ull*1024*1024+256:128ull*1024*1024;
+}
+static unsigned long long SetLimit(CaraSyncContent content) { return content==CaraSyncSaveStates?8ull*1024*1024*1024:content==CaraSyncConfiguration?128ull*1024*1024:512ull*1024*1024; }
+static BOOL ManagedPath(NSString* path,CaraSyncContent content) { return content==CaraSyncSaveStates?CaraIsStatePath(path):content==CaraSyncConfiguration?CaraIsConfigurationPath(path):CaraIsSavePath(path); }
 static NSString* HashFile(NSURL* url,NSError** error) {
     NSDictionary* values=[url resourceValuesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey,NSURLFileSizeKey] error:error];
     if (!values || ![values[NSURLIsRegularFileKey] boolValue] || [values[NSURLIsSymbolicLinkKey] boolValue] || [values[NSURLFileSizeKey] unsignedLongLongValue]>([url.pathExtension isEqual:@"carastate"]?768ull*1024*1024+256:128ull*1024*1024)) { if (error && !*error) *error=SaveError(@"A save file is invalid or too large."); return nil; }
@@ -59,9 +70,9 @@ static BOOL WriteJSON(NSDictionary* value,NSURL* url,NSError** error,BOOL coordi
     if (coordinated) [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateWritingItemAtURL:url options:NSFileCoordinatorWritingForReplacing error:&failure byAccessor:write]; else write(url);
     if (!ok && error) *error=failure?:SaveError(@"Could not write save metadata."); return ok;
 }
-static NSDictionary* Collect(NSURL* root,NSError** error,BOOL statesOnly) {
+static NSDictionary* Collect(NSURL* root,NSError** error,CaraSyncContent content) {
     NSMutableDictionary* files=[NSMutableDictionary new]; unsigned long long total=0;
-    for (NSString* sub in (statesOnly?@[@"states"]:@[@"sdmc/Nintendo 3DS",@"nand/data"])) {
+    for (NSString* sub in (content==CaraSyncSaveStates?@[@"states"]:content==CaraSyncConfiguration?@[@"settings",@"cheats"]:@[@"sdmc/Nintendo 3DS",@"nand/data"])) {
         NSURL* base=[root URLByAppendingPathComponent:sub isDirectory:YES];
         if (![NSFileManager.defaultManager fileExistsAtPath:base.path]) continue;
         __block NSError* enumerationError=nil;
@@ -71,12 +82,12 @@ static NSDictionary* Collect(NSURL* root,NSError** error,BOOL statesOnly) {
             NSString* rootPath=root.path;
             NSString* prefix=[rootPath hasSuffix:@"/"]?rootPath:[rootPath stringByAppendingString:@"/"];
             if (![url.path hasPrefix:prefix]) continue;
-            NSString* path=[url.path substringFromIndex:prefix.length]; if (!ManagedPath(path,statesOnly)) continue;
+            NSString* path=[url.path substringFromIndex:prefix.length]; if (!ManagedPath(path,content)) continue;
             NSDictionary* info=[url resourceValuesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey,NSURLFileSizeKey] error:error];
             if ([info[NSURLIsSymbolicLinkKey] boolValue]) { if (error) *error=SaveError(@"Save links are not supported."); return nil; }
             if (![info[NSURLIsRegularFileKey] boolValue]) continue;
             total+=[info[NSURLFileSizeKey] unsignedLongLongValue];
-            if ([info[NSURLFileSizeKey] unsignedLongLongValue]>FileLimit(path) || total>SetLimit(statesOnly) || files.count>=4096) { if (error) *error=SaveError(@"The save set is too large."); return nil; }
+            if ([info[NSURLFileSizeKey] unsignedLongLongValue]>FileLimit(path) || total>SetLimit(content) || files.count>=4096) { if (error) *error=SaveError(@"The save set is too large."); return nil; }
             NSString* hash=HashFile(url,error); if (!hash) return nil;
             files[path]=@{@"hash":hash,@"size":info[NSURLFileSizeKey]};
         }
@@ -85,15 +96,15 @@ static NSDictionary* Collect(NSURL* root,NSError** error,BOOL statesOnly) {
     }
     return files;
 }
-static BOOL ValidFiles(NSDictionary* files,BOOL statesOnly) {
+static BOOL ValidFiles(NSDictionary* files,CaraSyncContent content) {
     if (![files isKindOfClass:NSDictionary.class] || files.count>4096) return NO;
     unsigned long long total=0;
     for (NSString* path in files) {
-        NSDictionary* entry=files[path]; if (!ManagedPath(path,statesOnly) || ![entry isKindOfClass:NSDictionary.class]) return NO;
+        NSDictionary* entry=files[path]; if (!ManagedPath(path,content) || ![entry isKindOfClass:NSDictionary.class]) return NO;
         NSString* hash=entry[@"hash"];
         if (![hash isKindOfClass:NSString.class] || hash.length!=64 || [hash rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location!=NSNotFound || ![entry[@"size"] isKindOfClass:NSNumber.class]) return NO;
         const unsigned long long size=[entry[@"size"] unsignedLongLongValue]; total+=size;
-        if (size>FileLimit(path) || total>SetLimit(statesOnly)) return NO;
+        if (size>FileLimit(path) || total>SetLimit(content)) return NO;
     }
     return YES;
 }
@@ -143,27 +154,31 @@ static BOOL CopyFile(NSURL* source,NSURL* destination,NSString* hash,NSNumber* e
     NSString* storeName;
 }
 @synthesize status=_status;
-- (instancetype)initWithRoot:(NSURL*)url { return [self initWithRoot:url folder:nil device:nil statesOnly:NO]; }
-- (instancetype)initWithRoot:(NSURL*)url statesOnly:(BOOL)onlyStates { return [self initWithRoot:url folder:nil device:nil statesOnly:onlyStates]; }
-- (instancetype)initWithRoot:(NSURL*)url folder:(NSURL*)folder device:(NSString*)device { return [self initWithRoot:url folder:folder device:device statesOnly:NO]; }
-- (instancetype)initWithRoot:(NSURL*)url folder:(NSURL*)folder device:(NSString*)device statesOnly:(BOOL)onlyStates {
+- (instancetype)initWithRoot:(NSURL*)url { return [self initWithRoot:url folder:nil device:nil content:CaraSyncGameSaves]; }
+- (instancetype)initWithRoot:(NSURL*)url statesOnly:(BOOL)onlyStates { return [self initWithRoot:url folder:nil device:nil content:onlyStates?CaraSyncSaveStates:CaraSyncGameSaves]; }
+- (instancetype)initWithRoot:(NSURL*)url folder:(NSURL*)folder device:(NSString*)device { return [self initWithRoot:url folder:folder device:device content:CaraSyncGameSaves]; }
+- (instancetype)initWithRoot:(NSURL*)url folder:(NSURL*)folder device:(NSString*)device statesOnly:(BOOL)onlyStates { return [self initWithRoot:url folder:folder device:device content:onlyStates?CaraSyncSaveStates:CaraSyncGameSaves]; }
+- (instancetype)initWithRoot:(NSURL*)url content:(CaraSyncContent)content { return [self initWithRoot:url folder:nil device:nil content:content]; }
+- (instancetype)initWithRoot:(NSURL*)url folder:(NSURL*)folder device:(NSString*)device content:(CaraSyncContent)content {
+    const BOOL onlyStates=content==CaraSyncSaveStates;
+    const BOOL configuration=content==CaraSyncConfiguration;
     if ((self=[super init])) {
-        _statesOnly=onlyStates; pending=0;
-        metadataName=onlyStates?@"state-sync.json":@"save-sync.json";
-        checkpointDirectory=onlyStates?@"StateCheckpoints":@"SaveCheckpoints";
-        backupDirectory=onlyStates?@"StateBackups":@"SaveBackups";
-        storeName=onlyStates?@"Cara States":@"Cara Saves";
+        _content=content; _statesOnly=onlyStates; _configurationOnly=configuration; pending=0;
+        metadataName=configuration?@"configuration-sync.json":onlyStates?@"state-sync.json":@"save-sync.json";
+        checkpointDirectory=configuration?@"ConfigurationCheckpoints":onlyStates?@"StateCheckpoints":@"SaveCheckpoints";
+        backupDirectory=configuration?@"ConfigurationBackups":onlyStates?@"StateBackups":@"SaveBackups";
+        storeName=configuration?@"Cara Settings":onlyStates?@"Cara States":@"Cara Saves";
         root=url; directFolder=folder; MakeDirectory(root,nil);
         char canonical[PATH_MAX]; if (realpath(root.path.fileSystemRepresentation,canonical)) root=[NSURL fileURLWithFileSystemRepresentation:canonical isDirectory:YES relativeToURL:nil];
         NSDictionary* previous=ReadJSON([root URLByAppendingPathComponent:metadataName],nil,NO);
         state=[previous mutableCopy] ?: [NSMutableDictionary new];
         // Upgrade existing folder authorization once; an explicit disconnect
         // in the new channel must stay disconnected on later launches.
-        if (onlyStates && !previous) {
+        if (content!=CaraSyncGameSaves && !previous) {
             NSString* bookmark=ReadJSON([root URLByAppendingPathComponent:@"save-sync.json"],nil,NO)[@"bookmark"];
             if (bookmark) state[@"bookmark"]=bookmark;
         }
-        if (!ValidFiles(state[@"files"],_statesOnly)) [state removeObjectForKey:@"files"];
+        if (!ValidFiles(state[@"files"],_content)) [state removeObjectForKey:@"files"];
         if (device) state[@"device"]=device;
         if (!SafeID(state[@"device"])) state[@"device"]=NSUUID.UUID.UUIDString;
         queue=dispatch_queue_create(onlyStates?"com.dmikey.cara.state-sync":"com.dmikey.cara.save-sync",DISPATCH_QUEUE_SERIAL);
@@ -176,6 +191,7 @@ static BOOL CopyFile(NSURL* source,NSURL* destination,NSString* hash,NSNumber* e
     }
     return self;
 }
+- (NSString*)contentName { return self.configurationOnly?@"Controls & cheats":self.statesOnly?@"Save states":@"In-game saves"; }
 - (void)announce {
     dispatch_async(dispatch_get_main_queue(),^{ [NSNotificationCenter.defaultCenter postNotificationName:CaraSaveSyncDidChangeNotification object:self]; });
 }
@@ -185,7 +201,7 @@ static BOOL CopyFile(NSURL* source,NSURL* destination,NSString* hash,NSNumber* e
 - (BOOL)busy { return pending.load(std::memory_order_acquire)>0; }
 - (void)beginSync {
     ++pending;
-    [self phase:@"preparing" title:(self.statesOnly?@"Preparing save states…":@"Preparing saves…") detail:@"Your local data stays available while the folder is updated."];
+    [self phase:@"preparing" title:(self.configurationOnly?@"Preparing controls & cheats…":self.statesOnly?@"Preparing save states…":@"Preparing saves…") detail:@"Your local data stays available while the folder is updated."];
 }
 - (void)finish:(NSDictionary*)result error:(NSError*)error {
     if (error) [self phase:@"error" title:@"Couldn’t sync" detail:error.localizedDescription];
@@ -212,7 +228,7 @@ static BOOL CopyFile(NSURL* source,NSURL* destination,NSString* hash,NSNumber* e
     }
 }
 - (NSURL*)checkpoint:(NSError**)error {
-    NSDictionary* files=Collect(root,error,self.statesOnly); if (!files) return nil;
+    NSDictionary* files=Collect(root,error,self.content); if (!files) return nil;
     NSURL* stage=[[root URLByAppendingPathComponent:checkpointDirectory isDirectory:YES] URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
     BOOL complete=NO;
     @try {
@@ -228,7 +244,7 @@ static BOOL CopyFile(NSURL* source,NSURL* destination,NSString* hash,NSNumber* e
     if (cache[identifier]) return cache[identifier];
     NSURL* url=[[[store URLByAppendingPathComponent:@"Snapshots"] URLByAppendingPathComponent:identifier] URLByAppendingPathComponent:@"manifest.json"];
     NSDictionary* value=ReadJSON(url,error,YES);
-    if (!value || ![value[@"id"] isEqual:identifier] || !ValidFiles(value[@"files"],self.statesOnly) || ![value[@"parents"] isKindOfClass:NSArray.class] || [value[@"parents"] count]>64) { if (error && !*error) *error=SaveError(@"Invalid cloud save manifest."); return nil; }
+    if (!value || ![value[@"id"] isEqual:identifier] || !ValidFiles(value[@"files"],self.content) || ![value[@"parents"] isKindOfClass:NSArray.class] || [value[@"parents"] count]>64) { if (error && !*error) *error=SaveError(@"Invalid cloud save manifest."); return nil; }
     for (NSString* parent in value[@"parents"]) if (!SafeID(parent)) { if (error) *error=SaveError(@"Invalid cloud ancestry."); return nil; }
     cache[identifier]=value; return value;
 }
@@ -248,7 +264,7 @@ static BOOL CopyFile(NSURL* source,NSURL* destination,NSString* hash,NSNumber* e
         NSURL* heads=[store URLByAppendingPathComponent:@"Heads" isDirectory:YES];
         NSURL* snapshots=[store URLByAppendingPathComponent:@"Snapshots" isDirectory:YES];
         if (!MakeDirectory(heads,error) || !MakeDirectory(snapshots,error)) return nil;
-        NSDictionary* local=ReadJSON([checkpoint URLByAppendingPathComponent:@"manifest.json"],error,NO)[@"files"]; if (!ValidFiles(local,self.statesOnly)) return nil;
+        NSDictionary* local=ReadJSON([checkpoint URLByAppendingPathComponent:@"manifest.json"],error,NO)[@"files"]; if (!ValidFiles(local,self.content)) return nil;
         NSMutableDictionary* cache=[NSMutableDictionary new]; NSMutableArray* ids=[NSMutableArray new];
         NSArray* entries=[NSFileManager.defaultManager contentsOfDirectoryAtURL:heads includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:error];
         if (!entries || entries.count>64) return nil;
@@ -421,7 +437,7 @@ static BOOL CopyFile(NSURL* source,NSURL* destination,NSString* hash,NSNumber* e
     NSError* error=nil; NSURL* checkpoint=[self checkpoint:&error];
     if (!checkpoint) { [self finish:nil error:error?:SaveError(@"Could not prepare a local sync checkpoint.")]; return; }
     dispatch_async(queue,^{ @autoreleasepool {
-        [self phase:@"syncing" title:(self.statesOnly?@"Syncing save states…":@"Syncing saves…") detail:@"Local data is preserved if the sync folder is unavailable."];
+        [self phase:@"syncing" title:(self.configurationOnly?@"Syncing controls & cheats…":self.statesOnly?@"Syncing save states…":@"Syncing saves…") detail:@"Local data is preserved if the sync folder is unavailable."];
         NSError* failure=nil; NSDictionary* result=[self syncCheckpoint:checkpoint restore:NO resolution:nil error:&failure];
         if (!result && !failure) failure=SaveError(@"The sync folder could not be updated. Local data was kept.");
         [NSFileManager.defaultManager removeItemAtURL:checkpoint error:nil];

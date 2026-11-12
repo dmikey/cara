@@ -4,6 +4,8 @@
 
 FOUNDATION_EXPORT NSNotificationName const CaraSaveSyncDidChangeNotification;
 
+typedef NS_ENUM(NSUInteger,CaraSyncContent) { CaraSyncGameSaves, CaraSyncSaveStates, CaraSyncConfiguration };
+
 @interface CaraSaveSync : NSObject
 @property(atomic,readonly) BOOL enabled;
 @property(atomic,copy,readonly) NSString* status;
@@ -13,7 +15,12 @@ FOUNDATION_EXPORT NSNotificationName const CaraSaveSyncDidChangeNotification;
 @property(atomic,readonly) BOOL cloudUploadVerified;
 @property(atomic,strong,readonly) NSDate* lastFolderWrite;
 @property(nonatomic,readonly) BOOL statesOnly;
+@property(nonatomic,readonly) BOOL configurationOnly;
+@property(nonatomic,readonly) CaraSyncContent content;
+@property(copy,nonatomic,readonly) NSString* contentName;
 - (instancetype)initWithRoot:(NSURL*)root;
+- (instancetype)initWithRoot:(NSURL*)root content:(CaraSyncContent)content;
+- (instancetype)initWithRoot:(NSURL*)root folder:(NSURL*)folder device:(NSString*)device content:(CaraSyncContent)content;
 - (instancetype)initWithRoot:(NSURL*)root statesOnly:(BOOL)statesOnly;
 // Direct folder injection is also used by the ROM-free two-device regression test.
 - (instancetype)initWithRoot:(NSURL*)root folder:(NSURL*)folder device:(NSString*)device;
@@ -30,3 +37,5 @@ FOUNDATION_EXPORT NSNotificationName const CaraSaveSyncDidChangeNotification;
 BOOL CaraIsSavePath(NSString* relative);
 
 BOOL CaraIsStatePath(NSString* relative);
+
+BOOL CaraIsConfigurationPath(NSString* relative);
