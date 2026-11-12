@@ -206,6 +206,7 @@ MemorySystem::~MemorySystem() = default;
 
 template <class Archive>
 void MemorySystem::serialize(Archive& ar, const unsigned int file_version) {
+    if (Archive::is_loading::value) phys_mem_region_info_cache = {};
     ar&* impl.get();
     if (Archive::is_loading::value) {
         // These flags describe host renderer resources, which are rebuilt after a
@@ -423,11 +424,13 @@ std::string MemorySystem::ReadCString(VAddr vaddr, std::size_t max_length) {
     return string;
 }
 
-u8* MemorySystem::GetPhysicalPointer(PAddr address) {
-    return GetPhysicalRef(address);
-}
-
-MemoryRef MemorySystem::GetPhysicalRef(PAddr address) {
+// Direct-pointer path adapted from Azahar commit 47cd41cc58a4671147ad5f7727fc7ccb0b194826.
+// Keep Cara's existing null-at-end bounds and owning MemoryRef behavior.
+MemorySystem::PhysMemRegionInfo MemorySystem::GetPhysMemRegionInfo(PAddr address) {
+    if (address >= phys_mem_region_info_cache.region_start &&
+        address < phys_mem_region_info_cache.region_end) {
+        return phys_mem_region_info_cache;
+    }
     struct MemoryArea {
         PAddr paddr_base;
         u32 size;
@@ -449,33 +452,50 @@ MemoryRef MemorySystem::GetPhysicalRef(PAddr address) {
 
     if (area == std::end(memory_areas)) {
         LOG_ERROR(HW_Memory, "unknown GetPhysicalPointer @ 0x{:08X}", address);
-        return nullptr;
+        phys_mem_region_info_cache = {};
+        return {};
     }
 
     u32 offset_into_region = address - area->paddr_base;
 
-    std::shared_ptr<BackingMem> target_mem = nullptr;
+    const std::shared_ptr<BackingMem>* target_mem = nullptr;
     switch (area->paddr_base) {
     case VRAM_PADDR:
-        target_mem = impl->vram_mem;
+        target_mem = &impl->vram_mem;
         break;
     case DSP_RAM_PADDR:
-        target_mem = impl->dsp_mem;
+        target_mem = &impl->dsp_mem;
         break;
     case FCRAM_PADDR:
-        target_mem = impl->fcram_mem;
+        target_mem = &impl->fcram_mem;
         break;
     case N3DS_EXTRA_RAM_PADDR:
-        target_mem = impl->n3ds_extra_ram_mem;
+        target_mem = &impl->n3ds_extra_ram_mem;
         break;
     default:
         UNREACHABLE();
     }
-    if (offset_into_region >= target_mem->GetSize()) {
-        return {nullptr};
+    if (offset_into_region >= (*target_mem)->GetSize()) {
+        phys_mem_region_info_cache = {};
+        return {};
     }
 
-    return {target_mem, offset_into_region};
+    phys_mem_region_info_cache = {
+        target_mem, area->paddr_base,
+        area->paddr_base + static_cast<PAddr>((*target_mem)->GetSize())};
+    return phys_mem_region_info_cache;
+}
+
+u8* MemorySystem::GetPhysicalPointer(PAddr address) {
+    const auto region = GetPhysMemRegionInfo(address);
+    if (!region.backing_mem) return nullptr;
+    return (*region.backing_mem)->GetPtr() + (address - region.region_start);
+}
+
+MemoryRef MemorySystem::GetPhysicalRef(PAddr address) {
+    const auto region = GetPhysMemRegionInfo(address);
+    if (!region.backing_mem) return {nullptr};
+    return {*region.backing_mem, address - region.region_start};
 }
 
 /// For a rasterizer-accessible PAddr, gets a list of all possible VAddr

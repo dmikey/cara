@@ -388,6 +388,16 @@ private:
 
     void MapPages(PageTable& page_table, u32 base, u32 size, MemoryRef memory, PageType type);
 
+    // Adapted from Azahar PR #1587: borrow the owner slot instead of copying
+    // shared ownership for every raw physical-memory lookup.
+    struct PhysMemRegionInfo {
+        const std::shared_ptr<BackingMem>* backing_mem = nullptr;
+        PAddr region_start = 0;
+        PAddr region_end = 0;
+    };
+    PhysMemRegionInfo GetPhysMemRegionInfo(PAddr address);
+    PhysMemRegionInfo phys_mem_region_info_cache{};
+
     class Impl;
 
     std::unique_ptr<Impl> impl;

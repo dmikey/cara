@@ -48,6 +48,31 @@ static Snapshot Inspect(Core::System& system) {
     s.ticks = system.CoreTiming().GetGlobalTicks();
     return s;
 }
+static void CheckPhysicalPointers(Memory::MemorySystem& memory) {
+    const std::array<std::pair<u32,u32>,4> regions{{
+        {Memory::VRAM_PADDR,Memory::VRAM_SIZE},
+        {Memory::DSP_RAM_PADDR,Memory::DSP_RAM_SIZE},
+        {Memory::FCRAM_PADDR,Memory::FCRAM_N3DS_SIZE},
+        {Memory::N3DS_EXTRA_RAM_PADDR,Memory::N3DS_EXTRA_RAM_SIZE},
+    }};
+    // Interleave regions and revisit boundaries to exercise cached hits/misses.
+    for (u32 trial=0;trial<32;++trial) {
+        for (const auto& [base,size]:regions) {
+            const u32 offset=trial==0?0:trial==1?size-1:(trial*7919)%size;
+            auto owner=memory.GetPhysicalRef(base+offset);
+            u8* raw=memory.GetPhysicalPointer(base+offset);
+            if (!raw || raw!=owner.GetPtr() || owner.GetSize()!=size-offset)
+                throw std::runtime_error("Physical raw/owned pointer mismatch");
+            const u8 saved=*raw; *raw^=0x5A;
+            if (*owner.GetPtr()!=u8(saved^0x5A)) throw std::runtime_error("Physical write alias mismatch");
+            *raw=saved;
+            if (memory.GetPhysicalPointer(base+size) || memory.GetPhysicalRef(base+size))
+                throw std::runtime_error("Physical end address must remain invalid");
+            if (memory.GetPhysicalPointer(base+offset)!=raw)
+                throw std::runtime_error("Physical cache miss corrupted next lookup");
+        }
+    }
+}
 static void Run(Core::System& system, unsigned slices) {
     while (slices--) if (system.RunLoop() != Core::System::ResultStatus::Success) throw std::runtime_error("Guest execution failed");
 }
@@ -88,6 +113,7 @@ int main(int argc, char** argv) {
         if (status != Core::System::ResultStatus::Success) throw std::runtime_error("Counter ELF load failed: " + std::to_string(unsigned(status)));
         if (const char* clock=std::getenv("CARA_TEST_CPU_PERCENT"))
             system.CoreTiming().UpdateClockSpeed(unsigned(std::clamp(std::strtol(clock,nullptr,10),25L,100L)));
+        CheckPhysicalPointers(system.Memory());
         Run(system, 500);
         auto table=system.Memory().GetCurrentPageTable();
         system.Memory().MapMemoryRegion(*table, Memory::VRAM_VADDR, Memory::PAGE_SIZE,
@@ -107,6 +133,7 @@ int main(int argc, char** argv) {
         system.Memory().GetPhysicalPointer(Memory::VRAM_PADDR)[0] ^= 0x80;
         std::weak_ptr<Kernel::Process> previous_process=system.Kernel().GetCurrentProcess();
         system.LoadStateFromPath(path);
+        CheckPhysicalPointers(system.Memory());
         if (!previous_process.expired()) throw std::runtime_error("Previous process leaked after state load");
         if (!(Inspect(system) == saved)) throw std::runtime_error("Restore did not reproduce CPU/RAM/timing state");
         if (system.Memory().GetCurrentPageTable()->attributes[Memory::VRAM_VADDR >> Memory::PAGE_BITS]!=Memory::PageType::Memory)

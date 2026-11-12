@@ -24,3 +24,7 @@ The original GPL-2.0-or-later notices remain in the source files.
 
 Zstandard: Copyright Meta Platforms, Inc. and affiliates. Bundled source and BSD
 license are in emulator/externals/zstd/; its revision is recorded in VENDORED_SOURCE.json.
+
+Physical memory pointer lookup adapts Azahar PR #1587, commit
+47cd41cc58a4671147ad5f7727fc7ccb0b194826 (GPL-2.0-or-later).
+https://github.com/azahar-emu/azahar/pull/1587
