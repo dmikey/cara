@@ -4,6 +4,8 @@
 
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
 #include "core/cache_file.h"
@@ -210,7 +212,30 @@ public:
                 LOG_WARNING(Render_OpenGL, "generate programmable vertex shader failed!");
                 current_shaders.vs = nullptr;
             } else {
+#ifdef CARA_IOS_GLES
+                // Diagnostic injection exercises the actual retry/cache path on
+                // device; it never affects normal launches.
+                const char* force_retry = std::getenv("CARA_GPU_TEST_SHADER_RETRY");
+                if (force_retry && std::strcmp(force_retry, "1") == 0) {
+                    const auto baseline = GenerateVertexShader(setup, key, separable,
+                        &ios_output, ios_input_mask, ios_indexed_inputs, false);
+                    if (baseline != vs_code)
+                        vs_code += "\n#error Cara optional shader retry test\n";
+                }
+#endif
                 current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER);
+#ifdef CARA_IOS_GLES
+                if (!current_shaders.vs) {
+                    auto baseline = GenerateVertexShader(setup, key, separable,
+                        &ios_output, ios_input_mask, ios_indexed_inputs, false);
+                    if (!baseline.empty() && baseline != vs_code) {
+                        LOG_WARNING(Render_OpenGL,
+                            "Optional vertex optimization failed; retrying baseline GPU shader");
+                        current_shaders.vs = GetShaderStageRef(baseline, GL_VERTEX_SHADER);
+                        if (current_shaders.vs) vs_code = std::move(baseline);
+                    }
+                }
+#endif
                 if (current_shaders.vs) {
                     shaders_ref[key_hash] = current_shaders.vs;
                     vertex_cache.emplace(current_shaders.vs->GetHash(), std::move(vs_code));

@@ -72,7 +72,7 @@ static bool RunFeedbackCaptureFixture(std::string& error) {
     return passed;
 }
 
-static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99, unsigned indexed_inputs=0, size_t source_count=257) {
+static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99, unsigned indexed_inputs=0, size_t source_count=257, bool source_optimizations=true) {
     using namespace OpenGL;
     using S = nihstro::SourceRegister;
     using D = nihstro::DestRegister;
@@ -95,6 +95,28 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
                    [](auto instruction) { return instruction.hex; });
     std::transform(binary.swizzle_table.begin(), binary.swizzle_table.end(), setup.swizzle_data.begin(),
                    [](auto swizzle) { return swizzle.hex; });
+    // The bundled inline assembler constructs MAD operands but its binary
+    // compiler does not handle MultiplyAdd. Encode this original fixture
+    // instruction directly, as we do for the flow-control instructions below.
+    // W=1 and quaternion Z=0 preserve the expected quaternion while exercising
+    // the sliced namespace's GLES multiply/add helper.
+    nihstro::SwizzlePattern mad_swizzle{};
+    mad_swizzle.dest_mask = 0xF;
+    for (unsigned component=0; component<4; ++component) {
+        mad_swizzle.SetSelectorSrc1(component,static_cast<nihstro::SwizzlePattern::Selector>(component));
+        mad_swizzle.SetSelectorSrc2(component,nihstro::SwizzlePattern::Selector::w);
+        mad_swizzle.SetSelectorSrc3(component,nihstro::SwizzlePattern::Selector::z);
+    }
+    const unsigned mad_descriptor=static_cast<unsigned>(binary.swizzle_table.size());
+    setup.swizzle_data[mad_descriptor]=mad_swizzle.hex;
+    nihstro::Instruction mad{};
+    mad.opcode=O::Id::MAD;
+    mad.mad.dest=D::MakeOutput(1);
+    mad.mad.src1=S::MakeInput(1);
+    mad.mad.src2=S::MakeInput(0);
+    mad.mad.src3=S::MakeInput(1);
+    mad.mad.operand_desc_id=mad_descriptor;
+    setup.program_code[1]=mad.hex;
     nihstro::Instruction jump{};
     jump.opcode = O::Id::JMPU;
     jump.flow_control.dest_offset = 7;
@@ -124,7 +146,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     const PicaVSConfig config(regs, setup);
     const PicaFixedGSConfig output(regs);
     OGLShader vertex, fragment;
-    std::string vertex_source=GenerateVertexShader(setup, config, false, &output, input_mask, indexed_inputs);
+    std::string vertex_source=GenerateVertexShader(setup, config, false, &output, input_mask, indexed_inputs, source_optimizations);
     const std::string direct_vertex_source=vertex_source;
     // Exercise the entire large atlas without relying on large feedback captures.
     for (size_t pos=0;(pos=vertex_source.find("gl_VertexID",pos))!=std::string::npos;) {
@@ -342,7 +364,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
         // record, with interpolated colors so a wrong element fetch is visible.
         OGLProgram expanded_color, indexed_color;
         const char* color_fragment="in highp vec4 primary_color; out vec4 color; void main() { color=primary_color; }";
-        const std::string expanded_source=GenerateVertexShader(setup,config,false,&output,input_mask,2);
+        const std::string expanded_source=GenerateVertexShader(setup,config,false,&output,input_mask,2,source_optimizations);
         expanded_color.Create(expanded_source.c_str(),color_fragment);
         indexed_color.Create(direct_vertex_source.c_str(),color_fragment);
         if (!expanded_color.handle || !indexed_color.handle) {
@@ -400,6 +422,25 @@ static bool RunPackedDecodeFixture(std::string& error,
                                    unsigned offset_bias=0, unsigned stride=24, bool boundary=false,
                                    bool empty_attributes=false) {
     using namespace OpenGL;
+    const GLenum entry_error=glGetError();
+    GLint old_draw=0,old_read=0;std::array<GLint,4> old_viewport{};
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&old_draw);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&old_read);
+    glGetIntegerv(GL_VIEWPORT,old_viewport.data());
+    OGLFramebuffer capture_fbo;capture_fbo.Create();
+    OGLTexture capture_color;capture_color.Create();
+    SCOPE_EXIT({
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,old_draw);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,old_read);
+        glViewport(old_viewport[0],old_viewport[1],old_viewport[2],old_viewport[3]);
+    });
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+    glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,capture_color.handle);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,1,1,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+    glBindFramebuffer(GL_FRAMEBUFFER,capture_fbo.handle);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,capture_color.handle,0);
+    glViewport(0,0,1,1);
+    const GLenum framebuffer_status=glCheckFramebufferStatus(GL_FRAMEBUFFER);
     constexpr unsigned count=3072, per_attribute=count/16;
     std::array<std::array<GLint,4>,16> layout{};
     std::vector<u8> bytes(16*per_attribute*32,0xA5);
@@ -447,22 +488,31 @@ static bool RunPackedDecodeFixture(std::string& error,
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32UI,128,rows,0,GL_RGBA_INTEGER,GL_UNSIGNED_INT,bytes.data());
     OGLVertexArray vao; vao.Create(); glBindVertexArray(vao.handle);
     OGLBuffer output; output.Create(); glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,output.handle);
-    glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER,expected.size()*sizeof(float),nullptr,GL_STREAM_READ);
+    const std::vector<u32> sentinel(expected.size(),0xCDCDCDCDu);
+    glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER,expected.size()*sizeof(float),sentinel.data(),GL_STREAM_READ);
     glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,output.handle); glUseProgram(program);
     glUniform1i(glGetUniformLocation(program,"cara_vertex_inputs"),7);
     glUniform4iv(glGetUniformLocation(program,"cara_vertex_layout[0]"),16,layout[0].data());
+    const GLenum setup_error=glGetError();
     glEnable(GL_RASTERIZER_DISCARD); glBeginTransformFeedback(GL_TRIANGLES); glDrawArrays(GL_TRIANGLES,0,count); glEndTransformFeedback();
     const auto draw_error=glGetError();
     const float* actual=static_cast<const float*>(glMapBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER,0,expected.size()*sizeof(float),GL_MAP_READ_BIT));
-    bool passed=actual && draw_error==GL_NO_ERROR;
+    bool passed=actual && entry_error==GL_NO_ERROR && setup_error==GL_NO_ERROR &&
+        draw_error==GL_NO_ERROR && framebuffer_status==GL_FRAMEBUFFER_COMPLETE;
     if (actual) {
         for (unsigned i=0;i<expected.size();++i) if (std::memcmp(actual+i,expected.data()+i,sizeof(float))!=0) {
-            error="packed decoder mismatch component="+std::to_string(i)+" expected="+std::to_string(expected[i])+" actual="+std::to_string(actual[i]); passed=false; break;
+            u32 wanted_bits=0,actual_bits=0;
+            std::memcpy(&wanted_bits,expected.data()+i,4);std::memcpy(&actual_bits,actual+i,4);
+            error="packed decoder mismatch component="+std::to_string(i)+" expected_bits="+
+                std::to_string(wanted_bits)+" actual_bits="+std::to_string(actual_bits);passed=false;break;
         }
         if (!glUnmapBuffer(GL_TRANSFORM_FEEDBACK_BUFFER)) passed=false;
     }
     if (!passed && error.empty()) error="packed decoder capture failed";
-    if (!passed && boundary) error += " offset="+std::to_string(offset_bias)+
+    if (!passed) error += " entryGL="+std::to_string(entry_error)+" setupGL="+
+        std::to_string(setup_error)+" drawGL="+std::to_string(draw_error)+
+        " framebuffer="+std::to_string(framebuffer_status)+" boundary="+std::to_string(boundary)+
+        " empty="+std::to_string(empty_attributes)+" offset="+std::to_string(offset_bias)+
         " stride="+std::to_string(stride)+" fetch_reuse="+
         std::to_string(decoder==PackedVertexFetchReuseGLSL);
     glDisable(GL_RASTERIZER_DISCARD); glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,0); glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,0);
@@ -652,7 +702,17 @@ static bool RunRetainedInputBindingFixture(std::string& error) {
     // This oracle runs before renderer initialization sets the GLES globals.
     const bool previous_gles = GLES;
     GLES = true;
-    const auto previous = OpenGLState::GetCurState();
+    auto previous = OpenGLState::GetCurState();
+    // Before renderer initialization, the window's actual framebuffer can
+    // differ from the renderer's cached defaults. Preserve the real bindings.
+    GLint previous_draw=0,previous_read=0;
+    std::array<GLint,4> previous_viewport{};
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&previous_draw);
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&previous_read);
+    glGetIntegerv(GL_VIEWPORT,previous_viewport.data());
+    previous.draw.draw_framebuffer=previous_draw;
+    previous.draw.read_framebuffer=previous_read;
+    previous.viewport={previous_viewport[0],previous_viewport[1],previous_viewport[2],previous_viewport[3]};
     const GLboolean dither = glIsEnabled(GL_DITHER);
     GLint active = GL_TEXTURE0;
     glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
@@ -816,6 +876,10 @@ bool RunGPUVertexSelfTest(std::string& error) {
             error+=" indexed vertex count="+std::to_string(fixture.first)+" mode="+std::to_string(mode);
             return false;
         }
+    }
+    // Compile and execute the GPU retry source with optional flags still set.
+    if (!RunVertexLayoutFixture(0x0083,error,99,2,257,false)) {
+        error += " baseline GPU retry source"; return false;
     }
     return true;
 }

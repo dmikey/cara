@@ -846,7 +846,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
                                      "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
                                      "surface-flushes.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
-                                     "benchmark-frame.json","benchmark-frame.rgba"})
+                                     "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json"})
                 FileUtil::Delete(user+name);
 
 #ifdef CARA_PGO_GENERATE
@@ -895,7 +895,16 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 #ifdef CARA_IOS_GLES
             if (std::getenv("CARA_VERTEX_SELF_TEST") && emuWindow->graphics_error.empty()) {
                 std::string error;
-                const bool passed = RunGPUStateSelfTest(error) && RunGPUVertexSelfTest(error);
+                bool passed = false;
+                try {
+                    passed = RunGPUStateSelfTest(error) && RunGPUVertexSelfTest(error);
+                } catch (const std::exception& exception) {
+                    error = std::string("GPU fixture exception: ") + exception.what();
+                } catch (const char* exception) {
+                    error = std::string("GPU fixture exception: ") + exception;
+                } catch (...) {
+                    error = "Unknown GPU fixture exception";
+                }
                 std::ofstream report(user + "gpu-vertex-self-test.json");
                 GLint max_texture_size=0; glGetIntegerv(GL_MAX_TEXTURE_SIZE,&max_texture_size);
                 GLint max_draw_buffers=0,max_color_attachments=0;
@@ -936,7 +945,16 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             if (result==Core::System::ResultStatus::Success && std::getenv("CARA_SURFACE_SELF_TEST")) {
                 std::string error;
                 auto* rasterizer=dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
-                const bool passed=rasterizer && rasterizer->RunSurfaceCoherenceSelfTest(error);
+                bool passed=false;
+                try {
+                    passed=rasterizer && rasterizer->RunSurfaceCoherenceSelfTest(error);
+                } catch (const std::exception& exception) {
+                    error=std::string("Surface fixture exception: ")+exception.what();
+                } catch (const char* exception) {
+                    error=std::string("Surface fixture exception: ")+exception;
+                } catch (...) {
+                    error="Unknown surface fixture exception";
+                }
                 std::ofstream report(user+"surface-coherence-self-test.json");
                 report << "{\"passed\":" << (passed?"true":"false") << ",\"detail\":" << std::quoted(error) << "}\n";
                 if (!passed) { LOG_ERROR(Frontend,"Surface coherence fixture: {}",error); result=Core::System::ResultStatus::ErrorUnknown; }
@@ -1068,6 +1086,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                         if (profile_save_frame && !profile_saved && emuWindow->frames>=profile_save_frame) {
                             system.SaveStateToPath(user+"profile-comparison.carastate");
                             profile_saved=true;
+                            std::ofstream(user+"profile-checkpoint-status.json")
+                                << "{\"saved\":true,\"frame\":" << emuWindow->frames
+                                << ",\"title_id\":" << system.GetTitleID()
+                                << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint()) << "}\n";
                             LOG_INFO(Frontend,"Comparison checkpoint saved at frame {}",emuWindow->frames);
                         }
                         if (state_save_frame && !state_saved && emuWindow->frames>=state_save_frame) {
@@ -1196,6 +1218,18 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"stream_map_calls\":" + std::to_string(current.stream_map_calls - previous_counters.stream_map_calls) +
                                 ",\"stream_unmap_calls\":" + std::to_string(current.stream_unmap_calls - previous_counters.stream_unmap_calls) +
                                 ",\"stream_mapped_bytes\":" + std::to_string(current.stream_mapped_bytes - previous_counters.stream_mapped_bytes) +
+                                ",\"draw_submit_sample_wall_ms\":" + std::to_string((current.draw_submit_cpu_samples.wall_seconds - previous_counters.draw_submit_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"draw_submit_sample_cpu_ms\":" + std::to_string((current.draw_submit_cpu_samples.cpu_seconds - previous_counters.draw_submit_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"draw_submit_samples\":" + std::to_string((current.draw_submit_cpu_samples.samples - previous_counters.draw_submit_cpu_samples.samples)) +
+                                ",\"draw_submit_sample_clock_failures\":" + std::to_string((current.draw_submit_cpu_samples.clock_failures - previous_counters.draw_submit_cpu_samples.clock_failures)) +
+                                ",\"vertex_orphan_sample_wall_ms\":" + std::to_string((current.vertex_orphan_cpu_samples.wall_seconds - previous_counters.vertex_orphan_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"vertex_orphan_sample_cpu_ms\":" + std::to_string((current.vertex_orphan_cpu_samples.cpu_seconds - previous_counters.vertex_orphan_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"vertex_orphan_samples\":" + std::to_string((current.vertex_orphan_cpu_samples.samples - previous_counters.vertex_orphan_cpu_samples.samples)) +
+                                ",\"vertex_orphan_sample_clock_failures\":" + std::to_string((current.vertex_orphan_cpu_samples.clock_failures - previous_counters.vertex_orphan_cpu_samples.clock_failures)) +
+                                ",\"stream_map_sample_wall_ms\":" + std::to_string((current.stream_map_cpu_samples.wall_seconds - previous_counters.stream_map_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"stream_map_sample_cpu_ms\":" + std::to_string((current.stream_map_cpu_samples.cpu_seconds - previous_counters.stream_map_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"stream_map_samples\":" + std::to_string((current.stream_map_cpu_samples.samples - previous_counters.stream_map_cpu_samples.samples)) +
+                                ",\"stream_map_sample_clock_failures\":" + std::to_string((current.stream_map_cpu_samples.clock_failures - previous_counters.stream_map_cpu_samples.clock_failures)) +
                                 ",\"uniform_upload_ms_per_frame\":" + std::to_string((current.uniform_upload_seconds - previous_counters.uniform_upload_seconds)*1000.0/count) +
                                 ",\"surface_remap_ms_per_frame\":" + std::to_string((current.surface_remap_seconds - previous_counters.surface_remap_seconds)*1000.0/count) +
                                 ",\"surface_remap_calls\":" + std::to_string(current.surface_remap_calls - previous_counters.surface_remap_calls) +

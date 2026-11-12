@@ -32,7 +32,12 @@ def main():
                 'CARA_TEST_PRESS_A_FRAMES':a.press_a_frames,
                 'CARA_TEST_HOLD_START_FRAME':str(a.hold_start_frame),
                 'CARA_PROFILE_SAVE_FRAME':str(a.save_frame)}
-    settings.update(json.loads(a.settings))
+    extra=json.loads(a.settings)
+    if not isinstance(extra,dict) or any(not isinstance(v,str) for v in extra.values()):
+        p.error('settings must be an object of string environment values')
+    if set(extra) & (set(settings) | {'CARA_PROFILE_LOAD'}):
+        p.error('settings cannot override capture controls; use the dedicated arguments')
+    settings.update(extra)
     if a.load:
         settings['CARA_PROFILE_LOAD']='1'
     a.output.mkdir(parents=True, exist_ok=True)
@@ -76,6 +81,13 @@ def main():
         raise RuntimeError('Missing comparison checkpoint')
     for name in ['runtime-status.json','audio-status.json','fastinterp-blocks.json','surface-flushes.json','gpu-vertex-self-test.json','surface-coherence-self-test.json','emulator.log']:
         copy(name)
+    if not copy('profile-checkpoint-status.json'):
+        raise RuntimeError('Missing fresh checkpoint save receipt')
+    receipt=json.loads((a.output/'profile-checkpoint-status.json').read_text())
+    if (receipt.get('saved') is not True or receipt.get('frame') != a.save_frame or
+            receipt.get('title_id') != timing['title_id'] or
+            receipt.get('engine_build_fingerprint') != timing['engine_build_fingerprint']):
+        raise RuntimeError('Checkpoint receipt does not match this capture')
     state=a.output/'profile-comparison.carastate'
     manifest={'rom_filename':Path(a.rom).name,'title_id':timing['title_id'],
               'engine_fingerprint':timing['engine_build_fingerprint'],

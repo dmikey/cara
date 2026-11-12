@@ -1827,7 +1827,8 @@ void main() {
 }
 
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
-                                 bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs) {
+                                 bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs,
+                                 bool ios_source_optimizations) {
     std::string out;
     if (ios_output && ios_indexed_inputs==5) {
         out=GetVertexInterfaceDeclaration(true,false);
@@ -1936,7 +1937,7 @@ layout (std140) uniform vs_config {
         // its control flow, while exposing dead work to the host GLSL compiler.
         std::string quaternion_program;
         const char* slice_env=std::getenv("CARA_GPU_QUATERNION_SLICE");
-        if (ios_indexed_inputs<3 && slice_env && std::string_view(slice_env)=="1") {
+        if (ios_source_optimizations && ios_indexed_inputs<3 && slice_env && std::string_view(slice_env)=="1") {
             std::array<bool,16> quaternion_attributes{};
             for (auto slot : {VSOutputAttributes::QUATERNION_X,VSOutputAttributes::QUATERNION_Y,
                               VSOutputAttributes::QUATERNION_Z,VSOutputAttributes::QUATERNION_W}) {
@@ -1953,6 +1954,17 @@ layout (std140) uniform vs_config {
                 config.state.main_offset,get_input_reg,quat_output,config.state.sanitize_mul);
             if (sliced) {
                 quaternion_program=std::move(sliced->code);
+#ifdef CARA_IOS_GLES
+                // Apply the same GLES3 multiply/add expansion as LoadShader
+                // before namespacing; its exact macro rewrite cannot match the
+                // renamed quaternion helper afterward.
+                const std::string fma_macro = "#define fma_safe(x, y, z) fma(x, y, z)";
+                if (const auto position = quaternion_program.find(fma_macro);
+                    position != std::string::npos) {
+                    quaternion_program.replace(position, fma_macro.size(),
+                        "#define fma_safe(x, y, z) ((x) * (y) + (z))");
+                }
+#endif
                 // The generated helpers and temporary state have independent
                 // names, so a reference evaluation cannot contaminate the
                 // subsequent full vertex execution.
@@ -1973,7 +1985,7 @@ layout (std140) uniform vs_config {
         out += UniformBlockDef;
         if (ios_indexed_inputs >= 2) {
             const char* reuse_fetch = std::getenv("CARA_GPU_PACKED_FETCH_REUSE");
-            out += reuse_fetch && std::string_view(reuse_fetch) == "1"
+            out += ios_source_optimizations && reuse_fetch && std::string_view(reuse_fetch) == "1"
                        ? PackedVertexFetchReuseGLSL : PackedVertexDecoderGLSL;
         }
         else out += "uniform highp sampler2D cara_vertex_inputs;\n";

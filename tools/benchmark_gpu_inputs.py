@@ -25,6 +25,8 @@ def main():
     parser.add_argument('--press-a-frames', default='0',
                         help='Comma-separated emulated frames for six-frame A presses; 0 disables')
     parser.add_argument('--host-cpu-timing', action='store_true')
+    parser.add_argument('--phase-cpu-timing', action='store_true',
+                        help='Diagnostic sampled phase CPU/wall totals; not an uninstrumented performance run')
     parser.add_argument('--circle-segments', default='',
                         help='Comma-separated begin:end:x:y stick movements; neutral between segments')
     args = parser.parse_args()
@@ -75,11 +77,12 @@ def main():
     checkpoint = args.output / 'profile-comparison.carastate'
     if not copy(checkpoint.name, checkpoint):
         raise RuntimeError('Capture a comparison checkpoint in Cara before running this tool')
-    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'runs': []}
+    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'phase_cpu_sampling': args.phase_cpu_timing, 'runs': []}
 
     def launch(config, benchmark=True):
         settings = {'CARA_FRAME_TIMING': '1', 'CARA_AUDIO_DIAGNOSTICS': '1',
                     'CARA_FASTINTERP_PROFILE':'1',
+                    'CARA_PHASE_CPU_TIMING':'1' if args.phase_cpu_timing else '0',
                     'CARA_BENCHMARK_CAPTURE':'1',
                     'CARA_GPU_SURFACE_REMAP':'1' if config.get('surface_remap',False) else '0',
                     'CARA_GPU_RETAIN_INPUT_BINDINGS':'1' if config.get('retain_input_bindings',False) else '0',
@@ -157,11 +160,13 @@ def main():
                   'vertex_upload_reused_bytes', 'vertex_upload_reused_textures',
                   'vertex_reuse_check_ms_per_frame', 'vertex_index_cache_hits',
                   'vertex_index_cache_misses', 'vertex_index_cache_bytes']
+        if args.phase_cpu_timing:
+            fields += [phase+'_'+suffix for phase in ['draw_submit','vertex_orphan','stream_map']
+                       for suffix in ['sample_wall_ms','sample_cpu_ms','samples','sample_clock_failures']]
         if args.host_cpu_timing:
             fields += ['emulation_thread_cpu_ms_per_frame', 'process_cpu_ms_per_frame']
         means = {key: sum(w[key] for w in windows) / len(windows) for key in fields}
         result = dict(config, fingerprint=report['engine_build_fingerprint'], means=means)
-        results['runs'].append(result)
         for name in ['runtime-status.json', 'audio-status.json', 'benchmark-status.json', 'fastinterp-blocks.json','surface-flushes.json']:
             for attempt in range(5):
                 if copy(name, args.output / (config['name'] + '-' + name)):
@@ -169,7 +174,11 @@ def main():
                 time.sleep(0.2)
             else:
                 raise RuntimeError('Unable to read ' + name)
-        (args.output / 'comparison.json').write_text(json.dumps(results, indent=2) + '\n')
+        status = json.loads((args.output / (config['name'] + '-benchmark-status.json')).read_text())
+        if (status['result_code'] != 0 or status['frames'] != args.frames or
+                status['target_frames'] != args.frames or status['title_id'] != report['title_id'] or
+                status['guest_cpu_percent'] != 100 or status['adaptive_guest_cpu']):
+            raise RuntimeError('Benchmark did not complete successfully at fixed 100% clock')
         for name in ['benchmark-frame.json', 'benchmark-frame.rgba']:
             if not copy(name, args.output / (config['name'] + '-' + name)):
                 raise RuntimeError('Unable to read final renderer pixels: ' + name)
@@ -178,6 +187,7 @@ def main():
         if capture['gl_error'] or capture['frame'] != args.frames or len(pixels) != 400 * 480 * 4:
             raise RuntimeError('Invalid final renderer capture')
         result['renderer_rgba_sha256'] = hashlib.sha256(pixels).hexdigest()
+        results['runs'].append(result)
         (args.output / 'comparison.json').write_text(json.dumps(results, indent=2) + '\n')
         if args.screenshots:
             run(['device', 'capture', 'screenshot', '--device', args.device,

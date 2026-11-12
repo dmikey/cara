@@ -736,3 +736,20 @@ lookup; a future Metal buffer path can test reuse without that transfer. Reducin
 state calls, implicit buffer flushes and RAM bursts did not establish a reliable
 scene-level win in the first sweep. They remain diagnostic options rather than
 assumed improvements.
+
+
+The optional FastInterp SIMD handlers combine independent scalar VMUL/VMLA work
+inside precompiled ARM64 code. They do not emit executable instructions at runtime.
+Fusion runs after decoding and retains every original slot, block boundary and
+chain limit. An earlier prototype shortened decoded blocks and changed scheduler
+return points despite matching instruction results; a mixed-budget trace test now
+requires identical PC, registers, ticks, block ranges and execution counts.
+Native tests cover floating-point rounding/flush/default-NaN modes, exceptional
+values, operand dependencies, code invalidation, page crossings and tracked-memory
+fallbacks. SIMD modes remain opt-in pending matched iPad game results.
+
+The resident-block census found ordinary scans, copies and matrix/quaternion work,
+not a proven interrupt-polling loop. Cara already advances idle cores to the next
+scheduled event when no guest thread is runnable. No speculative idle-loop skipping
+has been introduced. Resident execution counts are not statistical CPU time samples;
+`tools/profile_cpu_stacks.py` provides a separate Instruments attach/export path.

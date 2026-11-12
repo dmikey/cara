@@ -4,12 +4,25 @@
 #include <chrono>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 
 namespace Common::FrameTiming {
+
+struct PhaseCPUSamples {
+    double wall_seconds = 0;
+    double cpu_seconds = 0;
+    std::uint64_t samples = 0;
+    std::uint64_t clock_failures = 0;
+};
 
 // Opt-in diagnostics on the emulation thread. No clocks are read during normal play.
 struct Counters {
     bool enabled = false;
+    PhaseCPUSamples draw_submit_cpu_samples;
+    PhaseCPUSamples vertex_orphan_cpu_samples;
+    PhaseCPUSamples stream_map_cpu_samples;
     double shader_seconds = 0;
     double guest_cpu_seconds = 0;
     double draw_seconds = 0;
@@ -85,11 +98,38 @@ enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUn
 class Scope {
 public:
     explicit Scope(Phase phase_) : phase(phase_), active(counters.enabled) {
-        if (active) started = std::chrono::steady_clock::now();
+        if (!active) return;
+        started = std::chrono::steady_clock::now();
+        int sample_phase = -1;
+        if (phase == Phase::DrawSubmit) sample_phase = 0;
+        else if (phase == Phase::VertexOrphanUpload) sample_phase = 1;
+        else if (phase == Phase::StreamMap) sample_phase = 2;
+        if (sample_phase < 0 || !CPUSamplingEnabled()) return;
+        static thread_local std::array<std::uint64_t, 3> sample_sequence{};
+        // Use high bits of a multiplicative hash, avoiding a fixed draw-slot
+        // pattern when a frame repeatedly submits a multiple of 64 draws.
+        const auto mixed = std::uint32_t(++sample_sequence[sample_phase]) * 0x9E3779B9u;
+        if ((mixed >> 26) != 0) return;
+        cpu_sample = sample_phase == 0 ? &counters.draw_submit_cpu_samples
+                   : sample_phase == 1 ? &counters.vertex_orphan_cpu_samples
+                                       : &counters.stream_map_cpu_samples;
+        cpu_started = ReadThreadCPUTime();
+        if (cpu_started < 0) {
+            ++cpu_sample->clock_failures;
+            cpu_sample = nullptr;
+        }
     }
     ~Scope() {
         if (!active) return;
+        const double cpu_ended = cpu_sample ? ReadThreadCPUTime() : -1;
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        if (cpu_sample) {
+            if (cpu_ended >= cpu_started) {
+                cpu_sample->wall_seconds += seconds;
+                cpu_sample->cpu_seconds += cpu_ended - cpu_started;
+                ++cpu_sample->samples;
+            } else ++cpu_sample->clock_failures;
+        }
         if (phase == Phase::SurfaceRemap) {
             counters.surface_remap_seconds += seconds;
         } else if (phase == Phase::SurfacePack) {
@@ -141,6 +181,25 @@ public:
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
 private:
+    static bool CPUSamplingEnabled() {
+        static const bool enabled = [] {
+            const char* value = std::getenv("CARA_PHASE_CPU_TIMING");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        return enabled;
+    }
+    static double ReadThreadCPUTime() {
+#if defined(CLOCK_THREAD_CPUTIME_ID)
+        timespec value{};
+        if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0)
+            return double(value.tv_sec) + double(value.tv_nsec) * 1e-9;
+#endif
+        return -1;
+    }
+    // Approximately one in 64 calls, reported as samples rather than a phase
+    // total: deterministic selection and clock overhead can still bias results.
+    PhaseCPUSamples* cpu_sample = nullptr;
+    double cpu_started = 0;
     Phase phase;
     bool active;
     std::chrono::steady_clock::time_point started;
