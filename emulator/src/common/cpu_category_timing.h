@@ -44,7 +44,7 @@ class Scope {
 public:
     explicit Scope(Category category) noexcept {
         // No clocks, TLS tracker access or allocation in the disabled path.
-        if (!FrameTiming::counters.enabled || !DiagnosticEnabled()) return;
+        if (!DiagnosticEnabled() || !FrameTiming::counters.enabled) return;
         // Others is the RunLoop root. Child entrypoints can also run on audio
         // or setup threads; outside a live root they do not read the clock.
         Tracker& tracker = ThreadTracker();
