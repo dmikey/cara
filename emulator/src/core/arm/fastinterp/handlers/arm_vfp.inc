@@ -336,6 +336,28 @@ handle_VcmpS:
     }
     ADVANCE_AND_DISPATCH();
 
+handle_VcmpVmrsS:
+    {
+        float a = VFP_S_READ(inst->vfp.sd);
+        float b = VFP_S_READ(inst->vfp.sm);
+        u32 flags = 0;
+        if (std::isnan(a) || std::isnan(b)) {
+            flags = 0x30000000; // C=1, V=1 (unordered)
+        } else if (a == b) {
+            flags = 0x60000000; // Z=1, C=1
+        } else if (a < b) {
+            flags = 0x80000000; // N=1
+        } else {
+            flags = 0x20000000; // C=1
+        }
+        state_.fpscr = (state_.fpscr & 0x0FFFFFFF) | flags;
+    }
+    state_.lazy_flags.SetPacked(state_.fpscr);
+    executed += inst->ticks;
+    SET_PC(GET_PC() + 8);
+    ++inst; // Skip the retained VMRS APSR constituent slot.
+    DISPATCH();
+
 handle_VcmpD:
     CHECK_COND();
     {

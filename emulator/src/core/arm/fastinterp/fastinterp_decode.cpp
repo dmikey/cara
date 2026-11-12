@@ -1442,6 +1442,68 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
 
     fusion_stats_.dead_flags_eliminated += EliminateDeadFlags(block);
 
+    // Default-off experiment: preserve original block ranges, slots and chain
+    // quantum. Only combine an ADD and an already fused immediate CMP/Bcc;
+    // never fetch across the original decoded block boundary or skip
+    // iterations.
+    static const bool add_cmp_immediate = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_ADD_CMP_IMM");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (add_cmp_immediate && !is_thumb) {
+        u32 source_pc = pc;
+        for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
+            auto& add = block->instructions[slot];
+            const auto& cmp = block->instructions[slot + 1];
+            const u32 source_size = add.inst_size;
+            if (add.opcode == Opcode::Add && add.cond == 0xE && add.rd != 15 && add.dp.rn != 15 &&
+                add.dp.rm == 0xFF && add.inst_size == 4 && cmp.opcode == Opcode::FusedCmpBcc &&
+                cmp.fused.rn == add.rd && cmp.inst_size == 8) {
+                const auto rn = add.dp.rn;
+                const auto branch_cond = cmp.fused.branch_cond;
+                const auto cmp_imm = cmp.fused.imm;
+                const auto branch_target = cmp.fused.branch_target;
+                const auto ticks = add.ticks + cmp.ticks;
+                const u32 raw_add = ReadMemory32(source_pc);
+                // ARM-only immediate ADD, not a remapped Thumb/dead-flag form.
+                if ((raw_add & 0xFFF00000u) == 0xE2800000u) {
+                    add.opcode = Opcode::AddCmpImmBcc;
+                    add.add_cmp_imm.rn = rn;
+                    add.add_cmp_imm.branch_cond = branch_cond;
+                    add.add_cmp_imm.add_imm12 = raw_add & 0xFFF;
+                    add.add_cmp_imm.cmp_imm = cmp_imm;
+                    add.add_cmp_imm.branch_target = branch_target;
+                    add.ticks = ticks;
+                    // Keep original slot sizes for subsequent packing passes.
+                    source_pc += source_size + cmp.inst_size;
+                    ++slot; // Keep constituent slot intact, but do not revisit it.
+                    continue;
+                }
+            }
+            source_pc += source_size;
+        }
+    }
+
+    // Pair only: no branch lookahead and no change to original slot sizes,
+    // decoded source ranges, block limits or timer/chaining boundaries.
+    static const bool vcmp_vmrs = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_VCMP_VMRS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (vcmp_vmrs && !is_thumb) {
+        for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
+            auto& compare = block->instructions[slot];
+            const auto& transfer = block->instructions[slot + 1];
+            if (compare.opcode == Opcode::VcmpS && compare.cond == 0xE && compare.inst_size == 4 &&
+                transfer.opcode == Opcode::Vmrs && transfer.cond == 0xE && transfer.vfp.rt == 15 &&
+                transfer.inst_size == 4) {
+                compare.opcode = Opcode::VcmpVmrsS;
+                compare.ticks += transfer.ticks;
+                ++slot; // The pair handler skips this retained VMRS slot.
+            }
+        }
+    }
+
     // Pack only within an already decoded block, retaining its original slots.
     // The handler skips the three consumed slots. Keeping source ranges and
     // slot counts fixed preserves both decode limits and the chaining quantum.

@@ -406,6 +406,34 @@ handle_ThumbFusedTstBcc: {
     DISPATCH();
 }
 
+handle_AddCmpImmBcc : {
+    const auto& operands = inst->add_cmp_imm;
+    const u32 imm8 = operands.add_imm12 & 0xFF;
+    const unsigned rotate = (operands.add_imm12 >> 8) * 2;
+    const u32 add_imm = std::rotr(imm8, rotate);
+    const u32 result = state_.regs[operands.rn] + add_imm;
+    state_.regs[inst->rd] = result;
+#ifdef __aarch64__
+    u32 take_branch, nzcv;
+    ARM64_CMP_COND(result, operands.cmp_imm, operands.branch_cond, take_branch, nzcv);
+#else
+    const u32 difference = result - operands.cmp_imm;
+    const u32 nzcv = (difference & 0x80000000u) | ((difference == 0) ? 0x40000000u : 0) |
+                     ((result >= operands.cmp_imm) ? 0x20000000u : 0) |
+                     ((((result ^ operands.cmp_imm) & (result ^ difference)) >> 3) & 0x10000000u);
+    const bool take_branch = CondPassed(operands.branch_cond, nzcv);
+#endif
+    state_.lazy_flags.SetPacked(nzcv);
+    executed += inst->ticks;
+    if (take_branch) {
+        SET_PC(operands.branch_target);
+        goto chain;
+    }
+    SET_PC(GET_PC() + 12);
+    ++inst; // Skip the retained FusedCmpBcc constituent slot.
+    DISPATCH();
+}
+
 handle_FusedAddCmpBcc: {
     // ARM: ADD Rd, Rn, #imm; CMP Rd, Rm; B<cond> label (iterator loop pattern)
     // First: ADD Rd, Rn, #imm

@@ -813,3 +813,39 @@ texture orphan/subimage upload, stream map/unmap and complete uniform upload.
 ratios use sums across complete windows. Off-CPU time includes blocking and host
 scheduling and must not be labelled GPU execution time. These sampled diagnostic
 runs are separate from uninstrumented speed comparisons.
+
+
+The exact committed uniform-reuse build (`f96dd2a`) was rechecked on the same
+Stories walking route at 100% guest clock with audio: 26.916 ms/refresh disabled
+versus 25.330 enabled, or 6.3% higher throughput. These are display refreshes,
+not unique game frames. The pair matched draw/vertex work and its final raw frame;
+intermediate frames were not all compared. Luigi's opening cross-check measured
+14.569 versus 14.337 ms/refresh with the same final-frame/workload checks.
+All three GitHub jobs passed for that commit in run `43294787817`.
+
+
+A default-off packed-input PBO experiment passed exact integer-byte readback on
+the iPad across two buffer orphans, but was rejected on Stories. An 8 MiB
+unsynchronized/orphaned unpack ring measured 26.010 ms/refresh versus 25.170 and
+25.353 for surrounding CPU-pointer baselines, at 100% guest clock with audio.
+All three runs matched workload and final raw pixels. Staging added a memcpy
+and map/unmap; the data does not show an overall benefit. The production patch
+was removed. Private measurements: `profiles/input-pbo/comparison`.
+
+Two further interpreter dispatch experiments preserve real guest work:
+`CARA_FASTINTERP_ADD_CMP_IMM=1` combines ADD immediate with an already decoded
+immediate CMP/conditional branch, and `CARA_FASTINTERP_VCMP_VMRS=1` combines an
+unconditional single-precision compare with its APSR flag transfer. Both are
+initially disabled. They retain the original decoded slots, source ranges, block
+limits and timer/chaining quantum, with summed canonical ticks. They do not skip
+loop iterations. Native independent bit/arithmetic oracles and enabled/disabled
+timer traces pass, including rotated immediates, overflow, NaNs, signed zero,
+register aliases and block boundaries. Device speed remains to be measured;
+resident block counts identify candidates but are not CPU-time shares.
+
+Two bounded LLDB stack trials produced zero usable snapshots. Even a persistent
+interactive CLI never completed the native attachment; it warned about a missing
+on-disk device shared cache. Host Xcode/SDK 27.2 versus cached iPadOS 27.2.1 metadata
+is a diagnostic lead, not an established cause. No stack percentages are reported.
+The interactive candidate remains private; no additional debugger retries are
+part of these matched speed comparisons.

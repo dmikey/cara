@@ -59,6 +59,13 @@ jobs:
           CARA_FASTINTERP_VFP_SIMD=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=2 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=3 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=0 work/build-mac/bin/cara-fastinterp-self-test > work/add-cmp-off.txt
+          CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=1 work/build-mac/bin/cara-fastinterp-self-test > work/add-cmp-on.txt
+          diff -u work/add-cmp-off.txt work/add-cmp-on.txt
+          CARA_VCMP_VMRS_TEST=1 CARA_FASTINTERP_VCMP_VMRS=0 work/build-mac/bin/cara-fastinterp-self-test > work/vcmp-off.txt
+          CARA_VCMP_VMRS_TEST=1 CARA_FASTINTERP_VCMP_VMRS=1 work/build-mac/bin/cara-fastinterp-self-test > work/vcmp-on.txt
+          diff -u work/vcmp-off.txt work/vcmp-on.txt
+          CARA_FASTINTERP_ADD_CMP_IMM=1 CARA_FASTINTERP_VCMP_VMRS=1 CARA_FASTINTERP_VFP_SIMD=3 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-core-cache-self-test
           work/build-mac/bin/cara-audio-buffer-self-test
           CARA_DISABLE_FAST_DECODE_LOOKUP=1 work/build-mac/bin/cara-core-cache-self-test

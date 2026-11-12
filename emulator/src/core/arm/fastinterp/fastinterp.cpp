@@ -185,6 +185,8 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
             if (opcode == Opcode::Vmul4S || opcode == Opcode::Vmul4Gather ||
                 opcode == Opcode::Vmla4S || opcode == Opcode::Vmla4Gather)
                 j += 3; // Reserved constituent slots are skipped by the packed handler.
+            else if (opcode == Opcode::AddCmpImmBcc || opcode == Opcode::VcmpVmrsS)
+                ++j; // Retained constituent is skipped by the fused handler.
         }
         output << "],\"source_bytes\":[";
         // Read code only from ordinary mapped RAM. Avoid MemorySystem reads:
@@ -687,6 +689,8 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         HANDLER(Vmul4Gather),
         HANDLER(Vmla4S),
         HANDLER(Vmla4Gather),
+        HANDLER(AddCmpImmBcc),
+        HANDLER(VcmpVmrsS),
     };
 #undef HANDLER
 

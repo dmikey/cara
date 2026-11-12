@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +28,317 @@ int main() {
     table->pointers[1] = TestMemory(code);
     memory.SetCurrentPageTable(table);
     fast->SetPageTable(table);
+    if (std::getenv("CARA_ADD_CMP_TEST")) {
+        static_assert(sizeof(Core::FastInterp::DecodedInst) == 20);
+        auto rotate = [](u32 encoding) {
+            return std::rotr(encoding & 255u, int((encoding >> 8) * 2));
+        };
+        auto flags = [](u32 a, u32 b) {
+            const u32 d = a - b;
+            return (d & 0x80000000u) | (d == 0 ? 0x40000000u : 0u) | (a >= b ? 0x20000000u : 0u) |
+                   ((((a ^ b) & (a ^ d)) >> 3) & 0x10000000u);
+        };
+        auto passed = [](unsigned cond, u32 f) {
+            bool n = f >> 31, z = (f >> 30) & 1, c = (f >> 29) & 1, v = (f >> 28) & 1;
+            switch (cond) {
+            case 0:
+                return z;
+            case 1:
+                return !z;
+            case 2:
+                return c;
+            case 3:
+                return !c;
+            case 4:
+                return n;
+            case 5:
+                return !n;
+            case 6:
+                return v;
+            case 7:
+                return !v;
+            case 8:
+                return c && !z;
+            case 9:
+                return !c || z;
+            case 10:
+                return n == v;
+            case 11:
+                return n != v;
+            case 12:
+                return !z && n == v;
+            default:
+                return z || n != v;
+            }
+        };
+        const std::array<u32, 8> edges{0,           1,           0xffffffffu, 0xfffffffeu,
+                                       0x7fffffffu, 0x80000000u, 0x80000001u, 0x12345678u};
+        const std::array<u32, 7> immediates{1, 255, 0x101, 0x480, 0x801, 0xcff, 0xf01};
+        u64 checksum = 1469598103934665603ull;
+        unsigned cases = 0;
+        auto hash = [&](u64 value) { checksum = (checksum ^ value) * 1099511628211ull; };
+        for (unsigned prefix : {0u, 29u, 30u, 31u})
+            for (u32 a : immediates)
+                for (u32 c : immediates)
+                    for (u32 initial : edges)
+                        for (unsigned cond = 0; cond < 14; ++cond) {
+                            code.fill(0xE1A03003);
+                            code[prefix] = 0xE2810000 | a; // ADD r0,r1,#rotated-immediate
+                            code[prefix + 1] = 0xE3500000 | c;
+                            code[prefix + 2] = (cond << 28) | 0x0A000001; // taken -> MOV r2,#2
+                            code[prefix + 3] = 0xE3A02001;
+                            code[prefix + 4] = 0xEA000000;
+                            code[prefix + 5] = 0xE3A02002;
+                            code[prefix + 6] = 0xEAFFFFFE;
+                            fast->ClearInstructionCache();
+                            fast->SetCPSR(0xA0000010);
+                            fast->SetPC(0x1000);
+                            fast->SetReg(0, 0xdeadbeef);
+                            fast->SetReg(1, initial);
+                            fast->SetReg(2, 0);
+                            timing.GetTimer(0)->Advance(128);
+                            fast->Run();
+                            u32 result = initial + rotate(a), f = flags(result, rotate(c));
+                            if (fast->GetReg(0) != result || fast->GetReg(1) != initial ||
+                                fast->GetReg(2) != (passed(cond, f) ? 2u : 1u) ||
+                                fast->GetCPSR() != (f | 0x10) ||
+                                fast->GetPC() != 0x1000 + 4 * (prefix + 6)) {
+                                std::cerr
+                                    << "ADD/CMP immediate differential mismatch prefix=" << prefix
+                                    << " cond=" << cond << "\n";
+                                return 1;
+                            }
+                            hash(fast->GetReg(0));
+                            hash(fast->GetReg(2));
+                            hash(fast->GetCPSR());
+                            ++cases;
+                        }
+        // Repeated, observable timer boundaries. Prefixes place ADD at the last
+        // real slot or immediately before it; retaining original slots matters.
+        for (unsigned prefix : {0u, 28u, 29u, 30u, 31u}) {
+            code.fill(0xE1A03003);
+            code[prefix] = 0xE2800001;
+            code[prefix + 1] = 0xE3500080;
+            code[prefix + 2] = 0x3AFFFFFC;
+            code[prefix + 3] = 0xEAFFFFFE;
+            fast->ClearInstructionCache();
+            fast->SetCPSR(0x10);
+            fast->SetPC(0x1000);
+            fast->SetReg(0, 0);
+            for (unsigned slice = 0; slice < 128; ++slice) {
+                const std::array<unsigned, 8> budgets{1, 2, 5, 6, 7, 31, 32, 128};
+                timing.GetTimer(0)->Advance(budgets[slice % budgets.size()]);
+                const auto before = timing.GetTimer(0)->GetDowncount();
+                fast->Run();
+                hash(fast->GetPC());
+                hash(fast->GetReg(0));
+                hash(fast->GetCPSR());
+                hash(before - timing.GetTimer(0)->GetDowncount());
+            }
+        }
+        std::ostringstream profile;
+        fast->WriteBlockProfile(profile);
+        const auto marker = "\"opcodes\":[" +
+                            std::to_string(unsigned(Core::FastInterp::Opcode::AddCmpImmBcc)) + "]";
+        const char* experiment = std::getenv("CARA_FASTINTERP_ADD_CMP_IMM");
+        const bool enabled = experiment && std::strcmp(experiment, "1") == 0;
+        if ((profile.str().find(marker) != std::string::npos) != enabled) {
+            std::cerr << "ADD/CMP experiment activation mismatch\n";
+            return 1;
+        }
+        std::cout << "ADD/CMP independent cases=" << cases
+                  << " quantum_slices=640 trace=" << checksum << "\n";
+        return 0;
+    }
+    if (std::getenv("CARA_VCMP_VMRS_BENCH")) {
+        // Finite guest loop with a real floating compare, APSR transfer,
+        // conditional branch and countdown. No guest iterations are skipped.
+        code = {0xEEB40A60, 0xEEF1FA10, 0x0A000001, 0xE2500001, 0x1AFFFFFA, 0xEAFFFFFE};
+        fast->SetVFPReg(0, 0x3F800000);
+        fast->SetVFPReg(1, 0x40000000);
+        fast->ClearInstructionCache();
+        fast->SetCPSR(0x10);
+        fast->SetPC(0x1000);
+        fast->SetReg(0, 20000000);
+        const auto start = std::chrono::steady_clock::now();
+        while (fast->GetReg(0)) {
+            timing.GetTimer(0)->Advance(100000);
+            fast->Run();
+        }
+        std::cout << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
+                  << "\n";
+        return 0;
+    }
+    if (std::getenv("CARA_VCMP_VMRS_TEST")) {
+        static_assert(sizeof(Core::FastInterp::DecodedInst) == 20);
+        auto expected_flags = [](u32 a, u32 b) {
+            const bool nan_a = (a & 0x7fffffff) > 0x7f800000;
+            const bool nan_b = (b & 0x7fffffff) > 0x7f800000;
+            if (nan_a || nan_b)
+                return 0x30000000u;
+            if (a == b || ((a | b) & 0x7fffffff) == 0)
+                return 0x60000000u;
+            const u32 ordered_a = (a >> 31) ? ~a : (a ^ 0x80000000u);
+            const u32 ordered_b = (b >> 31) ? ~b : (b ^ 0x80000000u);
+            return ordered_a < ordered_b ? 0x80000000u : 0x20000000u;
+        };
+        auto compare = [](unsigned sd, unsigned sm, unsigned cond = 14) {
+            return (cond << 28) | 0x0EB40A40u | ((sd >> 1) << 12) | ((sd & 1) << 22) | (sm >> 1) |
+                   ((sm & 1) << 5);
+        };
+        const std::array<u32, 20> edges{0,           0x80000000u, 1,           0x80000001u,
+                                        0x007fffffu, 0x807fffffu, 0x00800000u, 0x80800000u,
+                                        0x3f800000u, 0xbf800000u, 0x7f7fffffu, 0xff7fffffu,
+                                        0x7f800000u, 0xff800000u, 0x7fc00001u, 0xffc00001u,
+                                        0x7f800001u, 0xff800001u, 0x7fffffffu, 0xffffffffu};
+        u64 checksum = 1469598103934665603ull;
+        unsigned cases = 0;
+        auto hash = [&](u64 value) { checksum = (checksum ^ value) * 1099511628211ull; };
+#ifdef __aarch64__
+        u64 saved_fpcr, saved_fpsr;
+        asm volatile("mrs %0, fpcr" : "=r"(saved_fpcr));
+        asm volatile("mrs %0, fpsr" : "=r"(saved_fpsr));
+        asm volatile("msr fpcr, %0" : : "r"(u64(0)));
+#endif
+        auto fixture = [&](unsigned prefix, unsigned sd, unsigned sm, u32 a, u32 b) {
+            fast->SetPC(0x1000);
+            fast->SetCPSR(0xa8000010);
+            const u32 old_fpscr = 0xa0000000u | ((a ^ b) & 0x0fffffffu);
+            fast->SetVFPSystemReg(VFP_FPSCR, old_fpscr);
+            fast->SetVFPReg(sd, a);
+            fast->SetVFPReg(sm, b);
+            if (sd == sm)
+                a = b;
+#ifdef __aarch64__
+            asm volatile("msr fpsr, %0" : : "r"(u64(0)));
+#endif
+            timing.GetTimer(0)->Advance(128);
+            fast->Run();
+            const u32 expected = expected_flags(a, b);
+            if (fast->GetCPSR() != (expected | 0x08000010u) ||
+                fast->GetVFPSystemReg(VFP_FPSCR) != ((old_fpscr & 0x0fffffffu) | expected) ||
+                fast->GetVFPReg(sd) != a || fast->GetVFPReg(sm) != b ||
+                fast->GetPC() != 0x1000 + (prefix + 2) * 4) {
+                std::cerr << "VCMP/VMRS oracle mismatch case=" << cases << "\n";
+                return false;
+            }
+            hash(fast->GetCPSR());
+            hash(fast->GetVFPSystemReg(VFP_FPSCR));
+#ifdef __aarch64__
+            u64 fpsr;
+            asm volatile("mrs %0, fpsr" : "=r"(fpsr));
+            hash(fpsr);
+#endif
+            ++cases;
+            return true;
+        };
+        auto prepare = [&](unsigned prefix, unsigned sd, unsigned sm) {
+            code.fill(0xe1a03003);
+            code[prefix] = compare(sd, sm);
+            code[prefix + 1] = 0xeef1fa10;
+            code[prefix + 2] = 0xeafffffe;
+            fast->ClearInstructionCache();
+        };
+        auto half_bits_to_single = [](u32 bits) {
+            const u32 sign = (bits & 0x8000u) << 16;
+            u32 exponent = (bits >> 10) & 31u, fraction = bits & 1023u;
+            if (exponent == 31)
+                return sign | 0x7f800000u | (fraction << 13);
+            if (!exponent) {
+                if (!fraction)
+                    return sign;
+                int unbiased = -14;
+                while (!(fraction & 1024u)) {
+                    fraction <<= 1;
+                    --unbiased;
+                }
+                return sign | (u32(unbiased + 127) << 23) | ((fraction & 1023u) << 13);
+            }
+            return sign | ((exponent + 112) << 23) | (fraction << 13);
+        };
+        prepare(0, 0, 1);
+        // Exhaust all 65,536 high halves (all signs/exponents), and all low
+        // halves (subnormal mantissas), with independent changing counterparts.
+        for (u32 bits = 0; bits < 65536; ++bits) {
+            if (!fixture(0, 0, 1, bits << 16, edges[bits % edges.size()]) ||
+                !fixture(0, 0, 1, bits, edges[(bits / 7) % edges.size()]) ||
+                !fixture(0, 0, 1, half_bits_to_single(bits), edges[(bits / 11) % edges.size()]))
+                return 1;
+        }
+        for (unsigned prefix : {0u, 29u, 30u, 31u})
+            for (auto layout : {std::array<unsigned, 2>{0, 1}, {31, 30}, {0, 0}}) {
+                prepare(prefix, layout[0], layout[1]);
+                for (u32 a : edges)
+                    for (u32 b : edges)
+                        if (!fixture(prefix, layout[0], layout[1], a, b))
+                            return 1;
+            }
+        // Conditional constituents and VMRS-to-general-register are ineligible.
+        for (unsigned variant = 0; variant < 3; ++variant) {
+            code.fill(0xe1a03003);
+            code[0] = compare(0, 1, variant == 0 ? 0 : 14);
+            code[1] = variant == 1 ? 0x0ef1fa10u : variant == 2 ? 0xeef13a10u : 0xeef1fa10u;
+            code[2] = 0xeafffffe;
+            fast->ClearInstructionCache();
+            fast->SetPC(0x1000);
+            fast->SetCPSR(0x08000010);
+            fast->SetVFPSystemReg(VFP_FPSCR, 0x60000005);
+            fast->SetVFPReg(0, 0x3f800000);
+            fast->SetVFPReg(1, 0x40000000);
+            fast->SetReg(3, 0);
+            timing.GetTimer(0)->Advance(128);
+            fast->Run();
+            const u32 expected_fpscr = variant == 0 ? 0x60000005u : 0x80000005u;
+            const u32 expected_cpsr = variant == 0 ? 0x68000010u : 0x08000010u;
+            if (fast->GetVFPSystemReg(VFP_FPSCR) != expected_fpscr ||
+                fast->GetCPSR() != expected_cpsr ||
+                (variant == 2 && fast->GetReg(3) != expected_fpscr)) {
+                std::cerr << "VCMP/VMRS ineligible constituent mismatch\n";
+                return 1;
+            }
+        }
+        for (unsigned prefix : {0u, 28u, 29u, 30u, 31u}) {
+            code.fill(0xe1a03003);
+            code[prefix] = compare(0, 1);
+            code[prefix + 1] = 0xeef1fa10;
+            code[prefix + 2] = 0xe2800001;
+            code[prefix + 3] = 0xeafffffb; // branch back to VCMP, real work each loop
+            fast->ClearInstructionCache();
+            fast->SetPC(0x1000);
+            fast->SetCPSR(0x10);
+            fast->SetReg(0, 0);
+            for (unsigned slice = 0; slice < 128; ++slice) {
+                const std::array<unsigned, 8> budgets{1, 2, 3, 4, 5, 31, 32, 128};
+                fast->SetVFPReg(0, edges[slice % edges.size()]);
+                fast->SetVFPReg(1, edges[(slice * 7) % edges.size()]);
+                timing.GetTimer(0)->Advance(budgets[slice % budgets.size()]);
+                const auto before = timing.GetTimer(0)->GetDowncount();
+                fast->Run();
+                hash(fast->GetPC());
+                hash(fast->GetReg(0));
+                hash(fast->GetCPSR());
+                hash(fast->GetVFPSystemReg(VFP_FPSCR));
+                hash(before - timing.GetTimer(0)->GetDowncount());
+            }
+        }
+        std::ostringstream profile;
+        fast->WriteBlockProfile(profile);
+        const auto marker =
+            "\"opcodes\":[" + std::to_string(unsigned(Core::FastInterp::Opcode::VcmpVmrsS)) + ",";
+        const char* flag = std::getenv("CARA_FASTINTERP_VCMP_VMRS");
+        const bool enabled = flag && std::strcmp(flag, "1") == 0;
+        if ((profile.str().find(marker) != std::string::npos) != enabled) {
+            std::cerr << "VCMP/VMRS activation mismatch\n";
+            return 1;
+        }
+#ifdef __aarch64__
+        asm volatile("msr fpcr, %0" : : "r"(saved_fpcr));
+        asm volatile("msr fpsr, %0" : : "r"(saved_fpsr));
+#endif
+        std::cout << "VCMP/VMRS bit-oracle cases=" << cases
+                  << " quantum_slices=640 trace=" << checksum << "\n";
+        return 0;
+    }
     auto vmul = [](unsigned d, unsigned n, unsigned m, unsigned cond = 14) {
         return (cond << 28) | 0x0E200A00 | ((d >> 1) << 12) | ((d & 1) << 22) | ((n >> 1) << 16) |
                ((n & 1) << 7) | (m >> 1) | ((m & 1) << 5);

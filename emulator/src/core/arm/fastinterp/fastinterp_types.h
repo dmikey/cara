@@ -461,6 +461,9 @@ enum class Opcode : u16 {
 
     Vmla4S,
     Vmla4Gather,
+    AddCmpImmBcc, // Opt-in, consumes existing Add + FusedCmpBcc slots
+
+    VcmpVmrsS, // Opt-in VCMP.S + VMRS APSR pair, original slots retained
 
     OpcodeCount
 };
@@ -579,6 +582,16 @@ struct DecodedInst {
             u32 imm;           // Immediate operand (for SUBS Rd,Rn,#imm or CMP Rn,#imm)
             u32 branch_target; // Absolute taken-branch target (precomputed at decode)
         } fused;
+
+        // Two original slots retained: ADD #imm; fused CMP #imm + Bcc.
+        // Preserve the original rotated ADD encoding to fit the 12-byte union.
+        struct {
+            u8 rn;
+            u8 branch_cond;
+            u16 add_imm12;
+            u32 cmp_imm;
+            u32 branch_target;
+        } add_cmp_imm;
 
         // Generic 32-bit immediate
         u32 imm32;
