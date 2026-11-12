@@ -4,6 +4,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "ios/shell_controllers.h"
 #import "ios/skin_controls.h"
+#include "ios/session_presentation.h"
 #include <array>
 #include <cstring>
 
@@ -32,6 +33,12 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     CaraSettingsController* settings;
     NSURL* fixture;
     unsigned toggleActions;
+    CaraSkinControls* previewControls;
+    UIImageView* previewArtwork;
+    CaraStatsView* previewStats;
+    UILabel* previewStatus;
+    NSArray<UIView*>* previewScreens;
+    NSDictionary* previewRepresentation;
 }
 - (BOOL)prefersStatusBarHidden { return [Scenario() containsString:@"skin"]; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return [Scenario() containsString:@"landscape"]?UIInterfaceOrientationMaskLandscape:UIInterfaceOrientationMaskPortrait; }
@@ -86,19 +93,35 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     const BOOL landscape=[Scenario() containsString:@"landscape"];
     NSDictionary* rep=[skin strictRepresentationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:landscape]; controls.representation=rep;
     UIImageView* image=[[UIImageView alloc] initWithImage:controls.artwork]; image.contentMode=UIViewContentModeScaleAspectFit; image.frame=self.view.bounds; image.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:image];
-    NSDictionary* mapping=rep[@"mappingSize"];
-    CGRect canvas=CaraAspectFit(CGSizeMake([mapping[@"width"] doubleValue],[mapping[@"height"] doubleValue]),UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets));
-    // Wait for scene geometry before using exact controls/screen frames.
-    dispatch_async(dispatch_get_main_queue(),^{
-        CGRect fitted=CaraAspectFit(CGSizeMake([mapping[@"width"] doubleValue],[mapping[@"height"] doubleValue]),UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets));
-        image.frame=fitted; controls.frame=fitted; [self.view addSubview:controls];
-        CGFloat scale=fitted.size.width/[mapping[@"width"] doubleValue];
-        for (NSDictionary* screen in rep[@"screens"]) {
-            CGRect r=CaraSkinRect(screen[@"outputFrame"]);
-            UIView* game=[UIView new]; game.backgroundColor=[UIColor colorWithRed:.06 green:.09 blue:.08 alpha:1]; game.frame=CGRectMake(fitted.origin.x+r.origin.x*scale,fitted.origin.y+r.origin.y*scale,r.size.width*scale,r.size.height*scale); [self.view insertSubview:game belowSubview:controls];
-        }
-        CGRect r=CaraSkinRect(rep[@"caraStatsFrame"]); CaraStatsView* stats=[[CaraStatsView alloc] initWithFrame:CGRectMake(fitted.origin.x+r.origin.x*scale,fitted.origin.y+r.origin.y*scale,r.size.width*scale,r.size.height*scale)]; [stats updateGameFPS:30 speed:100 guestClock:75 adaptive:YES]; [self.view addSubview:stats];
-    });
+    previewControls=controls; previewArtwork=image; previewRepresentation=rep;
+    [self.view addSubview:controls];
+    NSMutableArray* screens=[NSMutableArray new];
+    for (NSDictionary* screen in rep[@"screens"]) { UIView* game=[UIView new]; [self.view insertSubview:game belowSubview:controls]; [screens addObject:game]; }
+    previewScreens=screens; previewStats=[CaraStatsView new]; [self.view addSubview:previewStats];
+    previewStatus=[UILabel new]; previewStatus.font=[UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium]; previewStatus.textColor=[UIColor colorWithRed:.7 green:.8 blue:.7 alpha:1]; [self.view addSubview:previewStatus];
+}
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    if (!previewRepresentation) return;
+    NSDictionary* mapping=previewRepresentation[@"mappingSize"];
+    CGRect fitted=CaraAspectFit(CGSizeMake([mapping[@"width"] doubleValue],[mapping[@"height"] doubleValue]),UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets));
+    previewArtwork.frame=previewControls.frame=fitted;
+    const CGFloat scale=fitted.size.width/[mapping[@"width"] doubleValue];
+    const auto convert=[&](CGRect r) { return CGRectMake(fitted.origin.x+r.origin.x*scale,fitted.origin.y+r.origin.y*scale,r.size.width*scale,r.size.height*scale); };
+    NSString* phase=NSProcessInfo.processInfo.environment[@"CARA_UI_SESSION"]?:@"running";
+    const auto state=[phase isEqual:@"stopped"]?Cara::SessionPresentation::Stopped:[phase isEqual:@"paused"]?Cara::SessionPresentation::Paused:[phase isEqual:@"loading"]?Cara::SessionPresentation::Loading:[phase isEqual:@"error"]?Cara::SessionPresentation::Failed:Cara::SessionPresentation::Running;
+    const BOOL inactive=Cara::ClearSessionPresentation(state);
+    for (NSUInteger i=0;i<previewScreens.count;++i) {
+        previewScreens[i].frame=convert(CaraSkinRect(previewRepresentation[@"screens"][i][@"outputFrame"]));
+        previewScreens[i].backgroundColor=inactive?UIColor.blackColor:[UIColor colorWithRed:.07 green:.16 blue:.23 alpha:1];
+    }
+    CGRect r=CaraSkinRect(previewRepresentation[@"caraStatsFrame"]);
+    previewStats.frame=convert(r);
+    if (inactive) [previewStats showInactiveGuestClock:100 adaptive:YES]; else [previewStats updateGameFPS:30 speed:100 guestClock:75 adaptive:YES];
+    previewStatus.text=[NSString stringWithUTF8String:Cara::SessionPresentationLabel(state)];
+    const BOOL landscape=[Scenario() containsString:@"landscape"];
+    previewStatus.frame=convert(landscape?CGRectMake(r.origin.x,CGRectGetMaxY(r)+8,r.size.width,54):CGRectMake(([mapping[@"width"] doubleValue]-600)/2,[mapping[@"height"] doubleValue]-170,600,48));
+    NSAssert(!inactive || [previewStats.accessibilityLabel containsString:@"No live game metrics"],@"Inactive sessions must not claim live FPS or speed");
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
