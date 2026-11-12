@@ -40,16 +40,26 @@ one scene; performance and compatibility vary by game. See the
 | **Play without CPU JIT** | Azahar FastInterp powers the CPU execution path inside the signed app. |
 | **A core and a shell** | A reusable core developed for Delta integration, alongside Cara’s standalone iOS app. |
 
-## Proven foundations. Cara enhancements.
+## From Android performance work to Apple hardware
 
-**Citra MMJ** brought a mobile-first performance focus to Citra: Android GPU
-rendering, shader reuse, and mobile performance tuning. Cara builds on that
-foundation with its own Apple-focused rendering enhancements and memory work.
+**Citra MMJ**, weihuoya’s performance-focused Android fork, gave Cara a mobile
+rendering foundation to build on. We carry that work forward in three key areas:
+
+- **Mobile GPU rendering.** MMJ’s OpenGL ES rendering path is the starting point
+  for Cara’s Apple-focused graphics engine. Cara adds custom GPU vertex processing,
+  packed-data decoding, and native screen presentation.
+- **Shader generation and reuse.** MMJ generates and reuses GPU shaders and programs
+  to avoid repeated compilation. Cara adapts that shader foundation for Apple GPUs
+  and extends it with its own rendering enhancements.
+- **Graphics data reuse.** MMJ’s texture and render-target caching provides the
+  foundation for reusing graphics resources. Cara takes that focus further with
+  prepared-input reuse, bounded graphics caches, and fewer CPU/GPU transfers.
+
 **Azahar FastInterp** supplies the interpreter foundation for execution without
-CPU JIT. Cara brings these pieces together with its native shell and ongoing
-performance engineering.
+CPU JIT. Cara combines these foundations with Apple-focused performance and memory
+work, a reusable core, and its own native shell.
 
-Explore the [architecture and upstream foundations](docs/technology.md).
+Explore the [architecture, inherited systems, and Cara enhancements](docs/technology.md).
 
 ## Made for playing
 
