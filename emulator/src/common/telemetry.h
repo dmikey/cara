@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2017 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -15,7 +16,7 @@ namespace Telemetry {
 /// Field type, used for grouping fields together in the final submitted telemetry log
 enum class FieldType : u8 {
     None = 0,     ///< No specified field group
-    App,          ///< Citra application fields (e.g. version, branch, etc.)
+    App,          ///< Cara application fields (e.g. version, branch, etc.)
     Session,      ///< Emulated session fields (e.g. title ID, log, etc.)
     Performance,  ///< Emulated performance (e.g. fps, emulated CPU speed, etc.)
     UserFeedback, ///< User submitted feedback (e.g. star rating, user notes, etc.)

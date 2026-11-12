@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 
 #include <atomic>
 #include <condition_variable>
@@ -275,7 +276,7 @@ static void UpdateDisplayRotation() {
 extern "C" {
 #endif
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_InstallCIA(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_InstallCIA(JNIEnv* env, jclass obj,
                                                                    jobjectArray jPaths) {
     const std::vector<std::string> paths = JniHelper::Unwrap<std::vector<std::string>>(jPaths);
     Service::AM::InstallStatus status;
@@ -294,7 +295,7 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_InstallCIA(JNIEnv* env, 
     s_app_dict.clear();
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_SetUserPath(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SetUserPath(JNIEnv* env, jclass obj,
                                                                     jstring jPath) {
     // saf
     FileUtil::RegisterIOFactory(std::make_unique<AndroidIOFactory>());
@@ -333,11 +334,11 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_SetUserPath(JNIEnv* env,
     };
 }
 
-JNIEXPORT jboolean JNICALL Java_org_citra_emu_NativeLibrary_IsRunning(JNIEnv* env, jclass obj) {
+JNIEXPORT jboolean JNICALL Java_org_cara_emu_NativeLibrary_IsRunning(JNIEnv* env, jclass obj) {
     return s_is_running;
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_SurfaceChanged(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceChanged(JNIEnv* env, jclass obj,
                                                                        jobject surf) {
     s_surface = ANativeWindow_fromSurface(env, surf);
     if (s_render_window) {
@@ -346,7 +347,7 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_SurfaceChanged(JNIEnv* e
     UpdateDisplayRotation();
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* env, jclass obj) {
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* env, jclass obj) {
     ANativeWindow_release(s_surface);
     s_surface = nullptr;
     if (s_render_window) {
@@ -354,21 +355,21 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_SurfaceDestroyed(JNIEnv*
     }
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_WindowChanged(JNIEnv* env, jclass obj) {
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_WindowChanged(JNIEnv* env, jclass obj) {
     if (s_render_window) {
         UpdateDisplayRotation();
         s_render_window->UpdateWindow();
     }
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_DoFrame(JNIEnv* env, jclass obj) {
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_DoFrame(JNIEnv* env, jclass obj) {
     if (!s_is_running || s_stop_running) {
         return;
     }
     s_render_window->TryPresenting();
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_HandleImage(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_HandleImage(JNIEnv* env, jclass obj,
                                                                     jintArray jpixels, jint width,
                                                                     jint height) {
     jint* pixels = env->GetIntArrayElements(jpixels, nullptr);
@@ -377,7 +378,7 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_HandleImage(JNIEnv* env,
     env->DeleteLocalRef(jpixels);
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_SetBackgroundImage(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SetBackgroundImage(JNIEnv* env, jclass obj,
                                                                            jintArray jpixels,
                                                                            jint width,
                                                                            jint height) {
@@ -387,14 +388,14 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_SetBackgroundImage(JNIEn
     env->DeleteLocalRef(jpixels);
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_InputEvent(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_InputEvent(JNIEnv* env, jclass obj,
                                                                    jint button, jfloat value) {
     if (InputManager::GetInstance().InputEvent(button, value)) {
         s_update_hid = true;
     }
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_TouchEvent(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_TouchEvent(JNIEnv* env, jclass obj,
                                                                    jint action, jint x, jint y) {
     const int TOUCH_PRESSED = 1;
     const int TOUCH_MOVED = 2;
@@ -411,13 +412,13 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_TouchEvent(JNIEnv* env, 
     }
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_KeyboardEvent(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_KeyboardEvent(JNIEnv* env, jclass obj,
                                                                       jint action, jstring jtext) {
     if (s_keyboard)
         s_keyboard->Accept(action, JniHelper::Unwrap(jtext));
 }
 
-JNIEXPORT jboolean JNICALL Java_org_citra_emu_NativeLibrary_KeyEvent(JNIEnv* env, jclass obj,
+JNIEXPORT jboolean JNICALL Java_org_cara_emu_NativeLibrary_KeyEvent(JNIEnv* env, jclass obj,
                                                                      jint button, jint action) {
     if (InputManager::GetInstance().KeyEvent(button, action)) {
         s_update_hid = true;
@@ -426,14 +427,14 @@ JNIEXPORT jboolean JNICALL Java_org_citra_emu_NativeLibrary_KeyEvent(JNIEnv* env
     return false;
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_MoveEvent(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_MoveEvent(JNIEnv* env, jclass obj,
                                                                   jint axis, jfloat value) {
     if (InputManager::GetInstance().KeyEvent(axis, value)) {
         s_update_hid = true;
     }
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_Run(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass obj,
                                                             jstring jFile) {
     NativeLibrary::Initialize(env);
     // reload config
@@ -537,25 +538,25 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_Run(JNIEnv* env, jclass 
     NativeLibrary::Shutdown(env);
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_ResumeEmulation(JNIEnv* env, jclass obj) {
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_ResumeEmulation(JNIEnv* env, jclass obj) {
     if (!s_stop_running) {
         s_is_running = true;
         s_running_cv.notify_all();
     }
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_PauseEmulation(JNIEnv* env, jclass obj) {
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_PauseEmulation(JNIEnv* env, jclass obj) {
     s_is_running = false;
     s_running_cv.notify_all();
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_StopEmulation(JNIEnv* env, jclass obj) {
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_StopEmulation(JNIEnv* env, jclass obj) {
     s_stop_running = true;
     s_render_window->StopPresenting();
     s_running_cv.notify_all();
 }
 
-JNIEXPORT jintArray JNICALL Java_org_citra_emu_NativeLibrary_getRunningSettings(JNIEnv* env,
+JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(JNIEnv* env,
                                                                                 jclass obj) {
     int i = 0;
     int settings[13];
@@ -580,7 +581,7 @@ JNIEXPORT jintArray JNICALL Java_org_citra_emu_NativeLibrary_getRunningSettings(
     return array;
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_setRunningSettings(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv* env, jclass obj,
                                                                            jintArray array) {
     int i = 0;
     jint* settings = env->GetIntArrayElements(array, nullptr);
@@ -644,7 +645,7 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_setRunningSettings(JNIEn
     env->ReleaseIntArrayElements(array, settings, 0);
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_setCustomLayout(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setCustomLayout(JNIEnv* env, jclass obj,
                                                                         jboolean is_top_screen,
                                                                         jint left, jint top,
                                                                         jint right, jint bottom) {
@@ -691,7 +692,7 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_setCustomLayout(JNIEnv* 
     s_render_window->UpdateLayout();
 }
 
-JNIEXPORT jobject JNICALL Java_org_citra_emu_NativeLibrary_getCustomLayout(JNIEnv* env, jclass obj,
+JNIEXPORT jobject JNICALL Java_org_cara_emu_NativeLibrary_getCustomLayout(JNIEnv* env, jclass obj,
                                                                            jboolean is_top_screen) {
     int left, top, right, bottom;
     if (is_top_screen) {
@@ -708,7 +709,7 @@ JNIEXPORT jobject JNICALL Java_org_citra_emu_NativeLibrary_getCustomLayout(JNIEn
     return JniHelper::RectObject(left, top, right, bottom);
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_Screenshot(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Screenshot(JNIEnv* env, jclass obj,
                                                                    jobject listener) {
     if (VideoCore::g_screenshot_complete_callback) {
         return;
@@ -727,23 +728,23 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_Screenshot(JNIEnv* env, 
     };
 }
 
-JNIEXPORT jintArray JNICALL Java_org_citra_emu_NativeLibrary_searchMemory(
+JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_searchMemory(
     JNIEnv* env, jclass obj, jint start_addr, jint stop_addr, jint value_type, jint search_type,
     jint scan_type, jint value) {
     return searchMemoryRegion(start_addr, stop_addr, value_type, search_type, scan_type, value);
 }
 
-JNIEXPORT jintArray JNICALL Java_org_citra_emu_NativeLibrary_getSearchResults(JNIEnv* env,
+JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getSearchResults(JNIEnv* env,
                                                                               jclass obj) {
     return getSearchResults();
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_resetSearchResults(JNIEnv* env,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_resetSearchResults(JNIEnv* env,
                                                                            jclass obj) {
     resetSearchResults();
 }
 
-JNIEXPORT jintArray JNICALL Java_org_citra_emu_NativeLibrary_loadPageTable(JNIEnv* env,
+JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_loadPageTable(JNIEnv* env,
                                                                            jclass obj) {
     u32 start_addr = 0;
     u32 mem_size = 0;
@@ -770,7 +771,7 @@ JNIEXPORT jintArray JNICALL Java_org_citra_emu_NativeLibrary_loadPageTable(JNIEn
     return JniHelper::Wrap(pages);
 }
 
-JNIEXPORT jbyteArray JNICALL Java_org_citra_emu_NativeLibrary_loadPage(JNIEnv* env, jclass obj,
+JNIEXPORT jbyteArray JNICALL Java_org_cara_emu_NativeLibrary_loadPage(JNIEnv* env, jclass obj,
                                                                        jint index) {
     Core::System& system{Core::System::GetInstance()};
     auto p = system.Memory().GetCurrentPageTable()->pointers[index];
@@ -781,7 +782,7 @@ JNIEXPORT jbyteArray JNICALL Java_org_citra_emu_NativeLibrary_loadPage(JNIEnv* e
     }
 }
 
-JNIEXPORT jint JNICALL Java_org_citra_emu_NativeLibrary_readMemory(JNIEnv* env, jclass obj,
+JNIEXPORT jint JNICALL Java_org_cara_emu_NativeLibrary_readMemory(JNIEnv* env, jclass obj,
                                                                    jint jAddr, jint valueType) {
     u32 addr = static_cast<u32>(jAddr);
     u32 index = addr >> Memory::PAGE_BITS;
@@ -800,7 +801,7 @@ JNIEXPORT jint JNICALL Java_org_citra_emu_NativeLibrary_readMemory(JNIEnv* env, 
     return 0;
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_writeMemory(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_writeMemory(JNIEnv* env, jclass obj,
                                                                     jint jAddr, jint valueType,
                                                                     jint value) {
     u32 addr = static_cast<u32>(jAddr);
@@ -819,12 +820,12 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_writeMemory(JNIEnv* env,
     }
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_reloadCheatCode(JNIEnv* env, jclass obj) {
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_reloadCheatCode(JNIEnv* env, jclass obj) {
     Core::System& system{Core::System::GetInstance()};
     system.CheatEngine().ReloadCheatFile();
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_loadAmiibo(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_loadAmiibo(JNIEnv* env, jclass obj,
                                                                    jstring jPath) {
     Core::System& system{Core::System::GetInstance()};
     Service::SM::ServiceManager& sm = system.ServiceManager();
@@ -834,43 +835,43 @@ JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_loadAmiibo(JNIEnv* env, 
     }
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_NativeLibrary_ResetCamera(JNIEnv* env, jclass obj) {
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_ResetCamera(JNIEnv* env, jclass obj) {
     Settings::Apply();
 }
 
-JNIEXPORT jstring JNICALL Java_org_citra_emu_NativeLibrary_GetAppId(JNIEnv* env, jclass obj,
+JNIEXPORT jstring JNICALL Java_org_cara_emu_NativeLibrary_GetAppId(JNIEnv* env, jclass obj,
                                                                     jstring jPath) {
     return JniHelper::Wrap(GetGameInfo(JniHelper::Unwrap(jPath)).strid);
 }
 
-JNIEXPORT jstring JNICALL Java_org_citra_emu_NativeLibrary_GetAppTitle(JNIEnv* env, jclass obj,
+JNIEXPORT jstring JNICALL Java_org_cara_emu_NativeLibrary_GetAppTitle(JNIEnv* env, jclass obj,
                                                                        jstring jPath) {
     return JniHelper::Wrap(GetGameInfo(JniHelper::Unwrap(jPath)).name);
 }
 
-JNIEXPORT jbyteArray JNICALL Java_org_citra_emu_NativeLibrary_GetAppIcon(JNIEnv* env, jclass obj,
+JNIEXPORT jbyteArray JNICALL Java_org_cara_emu_NativeLibrary_GetAppIcon(JNIEnv* env, jclass obj,
                                                                          jstring jPath) {
     auto& icon = GetGameInfo(JniHelper::Unwrap(jPath)).icon;
     return JniHelper::Wrap(reinterpret_cast<const u8*>(icon.data()), icon.size() * 2);
 }
 
-JNIEXPORT jint JNICALL Java_org_citra_emu_NativeLibrary_GetAppRegion(JNIEnv* env, jclass obj,
+JNIEXPORT jint JNICALL Java_org_cara_emu_NativeLibrary_GetAppRegion(JNIEnv* env, jclass obj,
                                                                      jstring jPath) {
     auto& regions = GetGameInfo(JniHelper::Unwrap(jPath)).regions;
     return regions.size() == 7 ? 7 : static_cast<jint>(regions[0]);
 }
 
-JNIEXPORT jboolean JNICALL Java_org_citra_emu_NativeLibrary_IsAppExecutable(JNIEnv* env, jclass obj,
+JNIEXPORT jboolean JNICALL Java_org_cara_emu_NativeLibrary_IsAppExecutable(JNIEnv* env, jclass obj,
                                                                             jstring jPath) {
     return GetGameInfo(JniHelper::Unwrap(jPath)).executable;
 }
 
-JNIEXPORT jboolean JNICALL Java_org_citra_emu_NativeLibrary_IsAppVisible(JNIEnv* env, jclass obj,
+JNIEXPORT jboolean JNICALL Java_org_cara_emu_NativeLibrary_IsAppVisible(JNIEnv* env, jclass obj,
                                                                          jstring jPath) {
     return GetGameInfo(JniHelper::Unwrap(jPath)).icon.size() > 0;
 }
 
-JNIEXPORT jstring JNICALL Java_org_citra_emu_utils_TranslateHelper_GoogleTranslateToken(
+JNIEXPORT jstring JNICALL Java_org_cara_emu_utils_TranslateHelper_GoogleTranslateToken(
     JNIEnv* env, jclass clazz, jstring jText) {
     u32 ttk0 = 444129;
     u32 ttk1 = 803085091;
@@ -935,52 +936,52 @@ JNIEXPORT jstring JNICALL Java_org_citra_emu_utils_TranslateHelper_GoogleTransla
     return JniHelper::Wrap(fmt::format("{}.{}", aa, aa ^ ttk0));
 }
 
-JNIEXPORT jint JNICALL Java_org_citra_emu_utils_NetPlayManager_NetPlayCreateRoom(
+JNIEXPORT jint JNICALL Java_org_cara_emu_utils_NetPlayManager_NetPlayCreateRoom(
     JNIEnv* env, jclass clazz, jstring ipaddress, jint port, jstring username) {
     return static_cast<jint>(
         NetPlayCreateRoom(JniHelper::Unwrap(ipaddress), port, JniHelper::Unwrap(username)));
 }
 
-JNIEXPORT jint JNICALL Java_org_citra_emu_utils_NetPlayManager_NetPlayJoinRoom(
+JNIEXPORT jint JNICALL Java_org_cara_emu_utils_NetPlayManager_NetPlayJoinRoom(
     JNIEnv* env, jclass clazz, jstring ipaddress, jint port, jstring username) {
     return static_cast<jint>(
         NetPlayJoinRoom(JniHelper::Unwrap(ipaddress), port, JniHelper::Unwrap(username)));
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_org_citra_emu_utils_NetPlayManager_NetPlayRoomInfo(JNIEnv* env, jclass clazz) {
+Java_org_cara_emu_utils_NetPlayManager_NetPlayRoomInfo(JNIEnv* env, jclass clazz) {
     return JniHelper::Wrap(NetPlayRoomInfo());
 }
 
-JNIEXPORT jboolean JNICALL Java_org_citra_emu_utils_NetPlayManager_NetPlayIsJoined(JNIEnv* env,
+JNIEXPORT jboolean JNICALL Java_org_cara_emu_utils_NetPlayManager_NetPlayIsJoined(JNIEnv* env,
                                                                                    jclass clazz) {
     return NetPlayIsJoined();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_org_citra_emu_utils_NetPlayManager_NetPlayIsHostedRoom(JNIEnv* env, jclass clazz) {
+Java_org_cara_emu_utils_NetPlayManager_NetPlayIsHostedRoom(JNIEnv* env, jclass clazz) {
     return NetPlayIsHostedRoom();
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_utils_NetPlayManager_NetPlaySendMessage(JNIEnv* env,
+JNIEXPORT void JNICALL Java_org_cara_emu_utils_NetPlayManager_NetPlaySendMessage(JNIEnv* env,
                                                                                   jclass clazz,
                                                                                   jstring msg) {
     NetPlaySendMessage(JniHelper::Unwrap(msg));
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_utils_NetPlayManager_NetPlayKickUser(JNIEnv* env,
+JNIEXPORT void JNICALL Java_org_cara_emu_utils_NetPlayManager_NetPlayKickUser(JNIEnv* env,
                                                                                jclass clazz,
                                                                                jstring username) {
     NetPlayKickUser(JniHelper::Unwrap(username));
 }
 
-JNIEXPORT void JNICALL Java_org_citra_emu_utils_NetPlayManager_NetPlayLeaveRoom(JNIEnv* env,
+JNIEXPORT void JNICALL Java_org_cara_emu_utils_NetPlayManager_NetPlayLeaveRoom(JNIEnv* env,
                                                                                 jclass clazz) {
     NetPlayLeaveRoom();
 }
 
 JNIEXPORT jstring JNICALL
-Java_org_citra_emu_utils_NetPlayManager_NetPlayGetConsoleId(JNIEnv* env, jclass clazz) {
+Java_org_cara_emu_utils_NetPlayManager_NetPlayGetConsoleId(JNIEnv* env, jclass clazz) {
     return JniHelper::Wrap(NetPlayGetConsoleId());
 }
 

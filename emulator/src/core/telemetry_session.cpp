@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2017 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -88,8 +89,8 @@ TelemetrySession::~TelemetrySession() {
 
 #ifdef ENABLE_WEB_SERVICE
     auto backend = std::make_unique<WebService::TelemetryJson>(Settings::values.web_api_url,
-                                                               Settings::values.citra_username,
-                                                               Settings::values.citra_token);
+                                                               Settings::values.cara_username,
+                                                               Settings::values.cara_token);
 #else
     auto backend = std::make_unique<Telemetry::NullVisitor>();
 #endif
@@ -187,8 +188,8 @@ void TelemetrySession::AddInitialInfo(Loader::AppLoader& app_loader) {
 bool TelemetrySession::SubmitTestcase() {
 #ifdef ENABLE_WEB_SERVICE
     auto backend = std::make_unique<WebService::TelemetryJson>(Settings::values.web_api_url,
-                                                               Settings::values.citra_username,
-                                                               Settings::values.citra_token);
+                                                               Settings::values.cara_username,
+                                                               Settings::values.cara_token);
     field_collection.Accept(*backend);
     return backend->SubmitTestcase();
 #else

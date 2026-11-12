@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2013 Dolphin Emulator Project / 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -411,6 +412,14 @@ void SetUserPath(const std::string& path) {
 #ifdef ANDROID
         if (FileUtil::Exists(ROOT_DIR DIR_SEP SDCARD_DIR)) {
             user_path = ROOT_DIR DIR_SEP SDCARD_DIR DIR_SEP EMU_DATA_DIR DIR_SEP;
+#ifndef USER_DIR
+            // Keep existing upstream user data reachable when no Cara directory exists yet.
+            constexpr const char* legacy_user_path =
+                ROOT_DIR DIR_SEP SDCARD_DIR DIR_SEP "citra-emu" DIR_SEP;
+            if (!FileUtil::Exists(user_path) && FileUtil::IsDirectory(legacy_user_path)) {
+                user_path = legacy_user_path;
+            }
+#endif
             g_paths.emplace(UserPath::ConfigDir, user_path + CONFIG_DIR DIR_SEP);
             g_paths.emplace(UserPath::CacheDir, user_path + CACHE_DIR DIR_SEP);
         }

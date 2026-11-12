@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 #include <chrono>
 #include <thread>
 
@@ -70,7 +71,7 @@ class NDKMotion final : public Input::MotionDevice {
     }
 
     void Construct(std::chrono::microseconds update_period) {
-        sensor_manager = GetInstanceForPackage("org.citra.emu");
+        sensor_manager = GetInstanceForPackage("org.cara.emu");
         looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
         if (!sensor_manager || !looper) {
             LOG_CRITICAL(Input, "Could not retrieve sensor manager");

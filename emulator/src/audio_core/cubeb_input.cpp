@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2018 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -26,7 +27,7 @@ struct CubebInput::Impl {
 
 CubebInput::CubebInput(std::string device_id)
     : impl(std::make_unique<Impl>()), device_id(std::move(device_id)) {
-    if (cubeb_init(&impl->ctx, "Citra Input", nullptr) != CUBEB_OK) {
+    if (cubeb_init(&impl->ctx, "Cara Input", nullptr) != CUBEB_OK) {
         LOG_ERROR(Audio, "cubeb_init failed! Mic will not work properly");
         return;
     }
@@ -91,7 +92,7 @@ void CubebInput::StartSampling(const Frontend::Mic::Parameters& params) {
         LOG_ERROR(Audio, "Could not get minimum latency");
     }
 
-    if (cubeb_stream_init(impl->ctx, &impl->stream, "Citra Microphone", input_device, &input_params,
+    if (cubeb_stream_init(impl->ctx, &impl->stream, "Cara Microphone", input_device, &input_params,
                           nullptr, nullptr, latency_frames, Impl::DataCallback, Impl::StateCallback,
                           impl.get()) != CUBEB_OK) {
         LOG_CRITICAL(Audio, "Error creating cubeb input stream");
@@ -170,7 +171,7 @@ std::vector<std::string> ListCubebInputDevices() {
     std::vector<std::string> device_list;
     cubeb* ctx;
 
-    if (cubeb_init(&ctx, "Citra Input Device Enumerator", nullptr) != CUBEB_OK) {
+    if (cubeb_init(&ctx, "Cara Input Device Enumerator", nullptr) != CUBEB_OK) {
         LOG_CRITICAL(Audio, "cubeb_init failed");
         return {};
     }

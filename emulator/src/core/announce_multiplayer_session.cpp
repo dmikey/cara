@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2017 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -22,8 +23,8 @@ static constexpr std::chrono::seconds announce_time_interval(15);
 AnnounceMultiplayerSession::AnnounceMultiplayerSession() {
 #ifdef ENABLE_WEB_SERVICE
     backend = std::make_unique<WebService::RoomJson>(Settings::values.web_api_url,
-                                                     Settings::values.citra_username,
-                                                     Settings::values.citra_token);
+                                                     Settings::values.cara_username,
+                                                     Settings::values.cara_token);
 #else
     backend = std::make_unique<AnnounceMultiplayerRoom::NullBackend>();
 #endif
@@ -155,8 +156,8 @@ void AnnounceMultiplayerSession::UpdateCredentials() {
 
 #ifdef ENABLE_WEB_SERVICE
     backend = std::make_unique<WebService::RoomJson>(Settings::values.web_api_url,
-                                                     Settings::values.citra_username,
-                                                     Settings::values.citra_token);
+                                                     Settings::values.cara_username,
+                                                     Settings::values.cara_token);
 #endif
 }
 

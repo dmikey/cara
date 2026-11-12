@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 /*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -22,7 +23,7 @@ import androidx.fragment.app.FragmentManager;
 
 import java.util.ArrayList;
 import java.util.List;
-import org.citra.emu.R;
+import org.cara.emu.R;
 
 /**
  * An abstract base activity that handles all the fluff you don't care about.

@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -108,7 +109,7 @@ enum class Class : ClassType {
     Input,             ///< Input emulation
     Network,           ///< Network emulation
     Movie,             ///< Movie (Input Recording) Playback
-    WebService,        ///< Interface to Citra Web Services
+    WebService,        ///< Interface to Cara Web Services
     RPC_Server,        ///< RPC server
     Count              ///< Total number of logging classes
 };

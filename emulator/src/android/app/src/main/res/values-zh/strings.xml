@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Cara on 2026-11-12; see NOTICE for attribution. -->
 <resources>
 
     <!-- Title of the app -->
-    <string name="app_name">Citra</string>
-    <string name="app_name_version">Citra %1$s</string>
+    <string name="app_name">Cara</string>
+    <string name="app_name_version">Cara %1$s</string>
     <string name="host">app</string>
-    <string name="scheme">citra</string>
+    <string name="scheme">cara</string>
 
     <string name="error">错误</string>
     <string name="about">关于</string>
-    <string name="citra_official_website">Citra 官方网站</string>
+    <string name="cara_official_website">Cara 官方网站</string>
     <string name="open_weibo">微博：EMU-MMJ</string>
     <string name="latest_version">最新版本</string>
     <string name="connection_error">无法访问</string>
@@ -28,7 +29,7 @@
     <string name="text_amiibo">Amiibo</string>
     <string name="text_load_amiibo">加载</string>
     <string name="text_remove_amiibo">移除</string>
-    <string name="text_amiibo_hint">Amiibo 目录是空的！(citra-emu/amiibo)</string>
+    <string name="text_amiibo_hint">Amiibo 目录是空的！(cara-emu/amiibo)</string>
     <string name="main_choose_directory">选择目录</string>
 
     <string name="setting_core_ticks_hack">FMV Hack</string>
@@ -148,7 +149,7 @@
     <string name="setting_header_camera">摄像头设置</string>
 
     <string name="setting_use_game_config">启用游戏独立设置</string>
-    <string name="setting_use_game_config_desc">游戏的独立设置保存在以下目录：citra-emu/load/configs。</string>
+    <string name="setting_use_game_config_desc">游戏的独立设置保存在以下目录：cara-emu/load/configs。</string>
     <string name="setting_is_new_3ds">New 3DS Mode</string>
     <string name="setting_is_new_3ds_desc">新 3DS 模式需要更好的处理器性能，占用更多的内存，少数游戏只能在新 3DS 上才能启动。</string>
     <string name="setting_use_virtual_sd">使用虚拟SD卡</string>
@@ -177,7 +178,7 @@
     <string name="setting_use_fence_sync">开启内存复用</string>
     <string name="setting_use_fence_sync_description">开启可以提升性能，但部分游戏会出现显示问题或者闪退。</string>
     <string name="setting_custom_textures">使用自定义纹理</string>
-    <string name="setting_custom_textures_description">纹理目录：citra-emu/load/textures/\"游戏ID\"/。</string>
+    <string name="setting_custom_textures_description">纹理目录：cara-emu/load/textures/\"游戏ID\"/。</string>
     <string name="setting_shader_type">着色器类型</string>
     <string name="setting_factor_3d">Factor 3D (3D Depth Slider)</string>
     <string name="setting_camera_type">摄像头类型</string>
@@ -241,7 +242,7 @@
     <string name="system_font_twn">繁体中文</string>
 
     <string name="game_emulation_info">下拉刷新\n长按游戏编辑金手指\n文件支持：.CCI，.CXI，.3DS，.3DSX</string>
-    <string name="application_emulation_info">下拉刷新\n长按游戏编辑金手指\n应用将被安装到“citra-emu/sdmc”目录</string>
+    <string name="application_emulation_info">下拉刷新\n长按游戏编辑金手指\n应用将被安装到“cara-emu/sdmc”目录</string>
     <string name="cheat_list">金手指列表</string>
     <string name="edit_cheat">编辑金手指</string>
     <string name="reset_setting">重置设置</string>

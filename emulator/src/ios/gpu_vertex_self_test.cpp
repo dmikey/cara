@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <algorithm>
 #include <array>
@@ -236,7 +237,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glUniformBlockBinding(program, glGetUniformBlockIndex(program, "vs_config"), 0);
     const GLvec4 viewport = {13.0f, 7.0f, 200.25f, 120.125f};
     UniformData raster_data{};
-    raster_data.citra_viewport = viewport;
+    raster_data.cara_viewport = viewport;
     const GLuint raster_block = glGetUniformBlockIndex(program, "shader_data");
     if (raster_block != GL_INVALID_INDEX) {
         glUniformBlockBinding(program, raster_block, 1);
@@ -612,7 +613,7 @@ static bool RunLitVertexReuseFixture(unsigned source_count, std::string& error) 
     OGLVertexArray vao;vao.Create();glBindVertexArray(vao.handle);
     OGLBuffer transformed,captured_output,common_buffer;
     transformed.Create();captured_output.Create();common_buffer.Create();
-    UniformData common{};common.citra_viewport={13.0f,7.0f,200.25f,120.125f};
+    UniformData common{};common.cara_viewport={13.0f,7.0f,200.25f,120.125f};
     glBindBuffer(GL_UNIFORM_BUFFER,common_buffer.handle);glBufferData(GL_UNIFORM_BUFFER,sizeof(common),&common,GL_STREAM_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER,1,common_buffer.handle);
     const auto bind_program=[&](GLuint program) {
@@ -660,7 +661,7 @@ static bool RunLitVertexReuseFixture(unsigned source_count, std::string& error) 
         std::array<float,22> expected{};
         for (unsigned c=0;c<4;++c) expected[c]=inputs[source*6][c];
         for (unsigned c=0;c<2;++c) if (!std::getenv("CARA_UNSNAPPED_VERTICES")) {
-            const auto& viewport=common.citra_viewport;
+            const auto& viewport=common.cara_viewport;
             const float screen=(expected[c]/expected[3]+1.0f)*viewport[c+2]+viewport[c];
             expected[c]=((std::round(screen*16.0f)/16.0f-viewport[c])/viewport[c+2]-1.0f)*expected[3];
         }

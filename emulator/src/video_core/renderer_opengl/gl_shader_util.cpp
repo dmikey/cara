@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -20,7 +21,7 @@ GLuint LoadShader(const char* source, GLenum type) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ShaderCompile);
     std::string version = GLES ? R"(#version 320 es
 
-#define CITRA_GLES
+#define CARA_GLES
 
 #if defined(GL_ANDROID_extension_pack_es31a)
 #extension GL_ANDROID_extension_pack_es31a : enable
@@ -35,7 +36,7 @@ GLuint LoadShader(const char* source, GLenum type) {
     std::string compatible_source(source);
 #ifdef CARA_IOS_GLES
     version = R"(#version 300 es
-#define CITRA_GLES
+#define CARA_GLES
 precision highp int;
 precision highp float;
 precision highp sampler2D;

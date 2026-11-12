@@ -1,3 +1,4 @@
+# Modified for Cara on 2026-11-12; see NOTICE for attribution.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJCXX)
 endif()
@@ -107,11 +108,11 @@ if(NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 if (ENABLE_SDL2)
-    add_subdirectory(citra)
+    add_subdirectory(cara)
 endif()
 
 if (ENABLE_QT)
-    add_subdirectory(citra_qt)
+    add_subdirectory(cara_qt)
 endif()
 if (ANDROID)
     add_subdirectory(android/jni)

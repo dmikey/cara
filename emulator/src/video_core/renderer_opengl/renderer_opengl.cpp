@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -623,7 +624,7 @@ void RendererOpenGL::LoadFBToScreenInfo(const GPU::Regs::FramebufferConfig& fram
         // Update existing texture
         // TODO: Test what happens on hardware when you change the framebuffer dimensions so that
         //       they differ from the LCD resolution.
-        // TODO: Applications could theoretically crash Citra here by specifying too large
+        // TODO: Applications could theoretically crash Cara here by specifying too large
         //       framebuffer sizes. We should make sure that this cannot happen.
         if (GLES) {
             u32 bytes_per_pixel = screen_info.texture.gl_format == GL_RGB ? 3 : 4;

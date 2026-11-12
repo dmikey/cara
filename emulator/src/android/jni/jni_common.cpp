@@ -1,8 +1,9 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 #include "jni_common.h"
 
 std::atomic<int> NativeLibrary::current_display_rotation = 0;
 
-static constexpr char* CLASS = "org/citra/emu/NativeLibrary";
+static constexpr char* CLASS = "org/cara/emu/NativeLibrary";
 static NativeLibrary::ImageLoadedHandler s_image_loaded_callback;
 
 // jni for cubeb

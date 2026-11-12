@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2017 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -863,15 +864,15 @@ float rsq_safe(float x) {
                 // Apple's GLES linker crashes on some generated switch/fallthrough trees.
                 // A single-iteration loop preserves switch breaks and case fallthrough.
                 shader.AddLine("do {");
-                shader.AddLine("bool citra_case_active = false;");
+                shader.AddLine("bool cara_case_active = false;");
 #else
                 shader.AddLine("switch (jmp_to) {");
 #endif
 
                 for (auto label : labels) {
 #ifdef CARA_IOS_GLES
-                    shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) citra_case_active = true;");
-                    shader.AddLine("if (citra_case_active) {");
+                    shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) cara_case_active = true;");
+                    shader.AddLine("if (cara_case_active) {");
 #else
                     shader.AddLine("case " + std::to_string(label) + "u: {");
 #endif

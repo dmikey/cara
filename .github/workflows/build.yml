@@ -37,7 +37,9 @@ jobs:
           xcodebuild -version
           uname -m
       - name: Validate bundled source (no fetch)
-        run: python3 tools/prepare.py
+        run: |
+          python3 tools/prepare.py
+          python3 tools/audit_branding.py
       - name: Build
         run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
       - name: Audit linked no-JIT binary

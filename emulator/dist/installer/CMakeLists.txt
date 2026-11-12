@@ -1,3 +1,4 @@
+# Modified for Cara on 2026-11-12; see NOTICE for attribution.
 
 if(WIN32)
     set(PLATFORM "windows")
@@ -9,7 +10,7 @@ endif()
 
 set(BUILD_DIR "${CMAKE_BINARY_DIR}/installer")
 set(DIST_DIR "${BUILD_DIR}/dist")
-set(TARGET_FILE "${DIST_DIR}/citra-setup-${PLATFORM}")
+set(TARGET_FILE "${DIST_DIR}/cara-setup-${PLATFORM}")
 file(MAKE_DIRECTORY ${BUILD_DIR})
 
 # Adds a custom target that will run the BuildInstaller.cmake file

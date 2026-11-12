@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2018 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -56,7 +57,7 @@ struct UniformData {
     alignas(16) GLvec4 tev_combiner_buffer_color;
     alignas(16) GLvec4 clip_coef;
 #ifdef CARA_IOS_GLES
-    alignas(16) GLvec4 citra_viewport;
+    alignas(16) GLvec4 cara_viewport;
 #endif
 };
 

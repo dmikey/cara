@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -1363,8 +1364,8 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         static_cast<float>(regs.rasterizer.viewport_corner.y),
         Pica::float24::FromRaw(regs.rasterizer.viewport_size_x).ToFloat32(),
         Pica::float24::FromRaw(regs.rasterizer.viewport_size_y).ToFloat32()};
-    if (uniform_block_data.data.citra_viewport != native_viewport) {
-        uniform_block_data.data.citra_viewport = native_viewport;
+    if (uniform_block_data.data.cara_viewport != native_viewport) {
+        uniform_block_data.data.cara_viewport = native_viewport;
         uniform_block_data.dirty = true;
     }
 #endif

@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -97,7 +98,7 @@ void Module::Interface::GetMyScreenName(Kernel::HLERequestContext& ctx) {
     };
 
     // TODO: (mailwl) get the name from config
-    ScreenName screen_name{u"Citra"};
+    ScreenName screen_name{u"Cara"};
 
     rb.Push(RESULT_SUCCESS);
     rb.PushRaw(screen_name);

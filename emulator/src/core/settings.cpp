@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -58,7 +59,7 @@ void LogSetting(const std::string& name, const T& value) {
 }
 
 void LogSettings() {
-    LOG_INFO(Config, "Citra Configuration:");
+    LOG_INFO(Config, "Cara Configuration:");
     LogSetting("Core_UseCpuJit", Settings::values.use_cpu_jit);
     LogSetting("Renderer_UseGLES", Settings::values.use_gles);
     LogSetting("Renderer_UseHwRenderer", Settings::values.use_hw_renderer);

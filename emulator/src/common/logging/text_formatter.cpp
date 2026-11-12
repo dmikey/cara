@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -37,7 +38,7 @@ void PrintMessage(const Entry& entry) {
 #ifdef ANDROID
     // Android's log level enum are offset by '2'
     const int android_log_level = static_cast<int>(entry.log_level) + 2;
-    __android_log_print(android_log_level, "CitraNative", "%s", str.c_str());
+    __android_log_print(android_log_level, "CaraNative", "%s", str.c_str());
 #else
     fputs(str.c_str(), stderr);
 #endif

@@ -1,8 +1,9 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2012 Michael Kang, 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#define CITRA_IGNORE_EXIT(x)
+#define CARA_IGNORE_EXIT(x)
 
 #include <algorithm>
 #include <cinttypes>
@@ -237,7 +238,7 @@ static unsigned int DPO(RotateRightByRegister)(ARMul_State* cpu, unsigned int sh
 
 #define DEBUG_MSG                                                                                  \
     LOG_DEBUG(Core_ARM11, "inst is {:x}", inst);                                                   \
-    CITRA_IGNORE_EXIT(0)
+    CARA_IGNORE_EXIT(0)
 
 #define LnSWoUB(s) glue(LnSWoUB, s)
 #define MLnS(s) glue(MLnS, s)
@@ -753,7 +754,7 @@ get_addr_fp_t GetAddressingOpLoadStoreT(unsigned int inst) {
     // of this instruction, however the 3DS CPU doesn't
     // support this variant (the 3DS CPU is only ARMv6K,
     // while this variant is added in ARMv6T2).
-    // So it's sufficient for citra to not implement this.
+    // So it's sufficient for cara to not implement this.
     return nullptr;
 }
 
@@ -837,7 +838,7 @@ static unsigned int InterpreterTranslateInstruction(const ARMul_State* cpu, cons
                   inst);
         LOG_ERROR(Core_ARM11, "cpsr={:#X}, cpu->TFlag={}, r15={:#010X}", cpu->Cpsr, cpu->TFlag,
                   cpu->Reg[15]);
-        CITRA_IGNORE_EXIT(-1);
+        CARA_IGNORE_EXIT(-1);
     }
     inst_base = arm_instruction_trans[idx](inst, idx);
 
@@ -1893,7 +1894,7 @@ BXJ_INST : {
     // According to the ARM documentation on BXJ, if setting the J bit in the APSR
     // fails, then BXJ functions identically like a regular BX instruction.
     //
-    // This is sufficient for citra, as the CPU for the 3DS does not implement Jazelle.
+    // This is sufficient for cara, as the CPU for the 3DS does not implement Jazelle.
 
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         bx_inst* const inst_cream = (bx_inst*)inst_base->component;

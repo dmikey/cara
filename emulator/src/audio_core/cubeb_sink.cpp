@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2018 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -27,7 +28,7 @@ struct CubebSink::Impl {
 };
 
 CubebSink::CubebSink(std::string_view target_device_name) : impl(std::make_unique<Impl>()) {
-    if (cubeb_init(&impl->ctx, "Citra Output", nullptr) != CUBEB_OK) {
+    if (cubeb_init(&impl->ctx, "Cara Output", nullptr) != CUBEB_OK) {
         LOG_CRITICAL(Audio_Sink, "cubeb_init failed");
         return;
     }
@@ -66,7 +67,7 @@ CubebSink::CubebSink(std::string_view target_device_name) : impl(std::make_uniqu
         }
     }
 
-    int stream_err = cubeb_stream_init(impl->ctx, &impl->stream, "CitraAudio", nullptr, nullptr,
+    int stream_err = cubeb_stream_init(impl->ctx, &impl->stream, "CaraAudio", nullptr, nullptr,
                                        output_device, &params, std::max(512u, minimum_latency),
                                        &Impl::DataCallback, &Impl::StateCallback, impl.get());
     if (stream_err != CUBEB_OK) {
@@ -166,7 +167,7 @@ std::vector<std::string> ListCubebSinkDevices() {
     std::vector<std::string> device_list;
     cubeb* ctx;
 
-    if (cubeb_init(&ctx, "CitraEnumerator", nullptr) != CUBEB_OK) {
+    if (cubeb_init(&ctx, "CaraEnumerator", nullptr) != CUBEB_OK) {
         LOG_CRITICAL(Audio_Sink, "cubeb_init failed");
         return {};
     }

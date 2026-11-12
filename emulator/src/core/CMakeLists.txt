@@ -1,3 +1,4 @@
+# Modified for Cara on 2026-11-12; see NOTICE for attribution.
 add_library(core STATIC
     arm/fastinterp/fastinterp.cpp
     arm/fastinterp/fastinterp_decode.cpp
@@ -460,7 +461,7 @@ add_library(core STATIC
     settings.h
     telemetry_session.cpp
     telemetry_session.h
-    tracer/citrace.h
+    tracer/cara_trace.h
     tracer/recorder.cpp
     tracer/recorder.h
 )

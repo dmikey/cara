@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2020 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -73,14 +74,14 @@ struct CaptureSession {
         camera_status_t camera_status =
             ACameraManager_openCamera(manager, camera_id.c_str(), &callback, &camera_device);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to create camera: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to create camera: %d",
                                 camera_status);
             return false;
         }
 
         media_status_t media_status = AImageReader_new(width, height, format, 4, &image_reader);
         if (media_status != AMEDIA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to create image reader: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to create image reader: %d",
                                 media_status);
             Release();
             return false;
@@ -89,7 +90,7 @@ struct CaptureSession {
         AImageReader_ImageListener image_listener{this, &CaptureSession::OnImageAvailable};
         media_status = AImageReader_setImageListener(image_reader, &image_listener);
         if (media_status != AMEDIA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to set image listener: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to set image listener: %d",
                                 media_status);
             Release();
             return false;
@@ -97,7 +98,7 @@ struct CaptureSession {
 
         media_status = AImageReader_getWindow(image_reader, &native_window);
         if (media_status != AMEDIA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to get window: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to get window: %d",
                                 media_status);
             Release();
             return false;
@@ -105,7 +106,7 @@ struct CaptureSession {
 
         camera_status = ACaptureSessionOutput_create(native_window, &session_output);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to create output session: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to create output session: %d",
                                 camera_status);
             Release();
             return false;
@@ -113,7 +114,7 @@ struct CaptureSession {
 
         camera_status = ACaptureSessionOutputContainer_create(&output_container);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to create output container: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to create output container: %d",
                                 camera_status);
             Release();
             return false;
@@ -121,7 +122,7 @@ struct CaptureSession {
 
         camera_status = ACaptureSessionOutputContainer_add(output_container, session_output);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to create output container: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to create output container: %d",
                                 camera_status);
             Release();
             return false;
@@ -133,7 +134,7 @@ struct CaptureSession {
         camera_status = ACameraDevice_createCaptureSession(camera_device, output_container,
                                                            &state_callbacks, &capture_session);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to create capture session: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to create capture session: %d",
                                 camera_status);
             Release();
             return false;
@@ -142,7 +143,7 @@ struct CaptureSession {
         camera_status =
             ACameraDevice_createCaptureRequest(camera_device, TEMPLATE_PREVIEW, &capture_request);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to create capture request: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to create capture request: %d",
                                 camera_status);
             Release();
             return false;
@@ -150,7 +151,7 @@ struct CaptureSession {
 
         camera_status = ACameraOutputTarget_create(native_window, &output_target);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to create output target: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to create output target: %d",
                                 camera_status);
             Release();
             return false;
@@ -158,7 +159,7 @@ struct CaptureSession {
 
         camera_status = ACaptureRequest_addTarget(capture_request, output_target);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to add output target: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to add output target: %d",
                                 camera_status);
             Release();
             return false;
@@ -177,7 +178,7 @@ struct CaptureSession {
         camera_status = ACameraCaptureSession_setRepeatingRequest(
             capture_session, &capture_callbacks, requests.size(), requests.data(), nullptr);
         if (camera_status != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to set repeating request: %d",
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to set repeating request: %d",
                                 camera_status);
             Release();
             return false;
@@ -317,17 +318,17 @@ struct CaptureSession {
 
     static void OnCameraDisconnected(void* context, ACameraDevice* device) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnCameraDisconnected");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnCameraDisconnected");
     }
 
     static void OnCameraError(void* context, ACameraDevice* device, int error) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnCameraError");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnCameraError");
     }
 
     static void OnImageAvailable(void* context, AImageReader* reader) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        //__android_log_print(ANDROID_LOG_INFO, "citra", "OnImageAvailable");
+        //__android_log_print(ANDROID_LOG_INFO, "cara", "OnImageAvailable");
 
         AImage* image = nullptr;
         media_status_t media_status = AImageReader_acquireLatestImage(reader, &image);
@@ -371,17 +372,17 @@ struct CaptureSession {
 
     static void OnSessionClosed(void* context, ACameraCaptureSession* session) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnSessionClosed");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnSessionClosed");
     }
 
     static void OnSessionReady(void* context, ACameraCaptureSession* session) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnSessionReady");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnSessionReady");
     }
 
     static void OnSessionActive(void* context, ACameraCaptureSession* session) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnSessionActive");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnSessionActive");
     }
 
     static void OnCaptureStarted(void* context, ACameraCaptureSession* session,
@@ -402,26 +403,26 @@ struct CaptureSession {
     static void OnCaptureFailed(void* context, ACameraCaptureSession* session,
                                 ACaptureRequest* request, ACameraCaptureFailure* failure) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnCaptureFailed");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnCaptureFailed");
     }
 
     static void OnCaptureSequenceCompleted(void* context, ACameraCaptureSession* session,
                                            int sequenceId, int64_t frameNumber) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnCaptureSequenceCompleted");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnCaptureSequenceCompleted");
     }
 
     static void OnCaptureSequenceAborted(void* context, ACameraCaptureSession* session,
                                          int sequenceId) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnCaptureSequenceAborted");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnCaptureSequenceAborted");
     }
 
     static void OnCaptureBufferLost(void* context, ACameraCaptureSession* session,
                                     ACaptureRequest* request, ACameraWindowType* window,
                                     int64_t frameNumber) {
         auto* that = reinterpret_cast<CaptureSession*>(context);
-        __android_log_print(ANDROID_LOG_INFO, "citra", "OnCaptureBufferLost");
+        __android_log_print(ANDROID_LOG_INFO, "cara", "OnCaptureBufferLost");
     }
 
     std::mutex image_mutex;
@@ -475,13 +476,13 @@ public:
         ACameraIdList* id_list = nullptr;
         camera_status_t ret = ACameraManager_getCameraIdList(manager, &id_list);
         if (ret != ACAMERA_OK) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "failed to get camera id list: %d", ret);
+            __android_log_print(ANDROID_LOG_INFO, "cara", "failed to get camera id list: %d", ret);
             ACameraManager_delete(manager);
             return;
         }
 
         if (id_list->numCameras <= 0) {
-            __android_log_print(ANDROID_LOG_INFO, "citra", "no camera devices found");
+            __android_log_print(ANDROID_LOG_INFO, "cara", "no camera devices found");
             ACameraManager_deleteCameraIdList(id_list);
             ACameraManager_delete(manager);
             return;
@@ -492,7 +493,7 @@ public:
             ret =
                 ACameraManager_getCameraCharacteristics(manager, id_list->cameraIds[i], &metadata);
             if (ret != ACAMERA_OK) {
-                __android_log_print(ANDROID_LOG_INFO, "citra",
+                __android_log_print(ANDROID_LOG_INFO, "cara",
                                     "failed to get camera characteristics: %d", ret);
                 continue;
             }
