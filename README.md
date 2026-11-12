@@ -13,6 +13,12 @@ It combines Citra MMJ with Azahar's FastInterp CPU interpreter and a custom GLES
 renderer, with a focus on correct graphics and lower memory use on iPhone and
 iPad. Compatibility and performance vary by game.
 
+We didn't set out to create another 3DS emulator. Our goal was to contribute the
+most complete portable 3DS core we could for reuse in Delta. Along the way, we
+found that the graphics pipeline still needed substantial work. Improving it
+became part of that same goal: a reusable core with correct graphics and practical
+performance on iOS.
+
 ## Features
 
 - Open games directly from Files.
