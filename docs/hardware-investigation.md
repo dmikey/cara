@@ -885,3 +885,23 @@ models of potential vertex-shader work, not GPU execution measurements. A
 source-only compiler switch, `CARA_FASTINTERP_PIN_PAGE_TABLE`, constrains the
 ARM64 page-table base to x28 at dispatch; native memory-copy gains and larger
 executor code size require a matched physical-device comparison before promotion.
+
+
+The opening-state failure was identified on the iPad as
+`FileSys::FixSizeDiskFile`, the fixed-size external-save-data backend. It now
+exports and serializes its DiskFile base plus cached fixed size. A ROM-free test
+using public ExtSaveData factory/archive APIs verifies polymorphic restore,
+independent descriptor reopen, offsets, bounded writes including overflowing
+lengths, resize refusal, flush and exact host bytes. The original fixture
+reproduces the same missing-type error before the fix. No state-header guard
+was relaxed.
+
+An opt-in lit ordered-pair renderer (`CARA_GPU_LIT_PAIR_REUSE=1`) is prepared for
+target validation. It caches (source, triangle-first source) records and exact
+triangle-order elements, uses a separate RG16UI/EBO storage class, and selects
+only modeled LRU32 savings of at least 25%. It preserves draw order and remains
+off by default. Shared upload-bank dimensions prevent mismatched pool/use
+arrays; native bounds/reclamation tests run against that same helper, including
+all 70 classes and class 69. ASan/UBSan checks passed locally. Finite raster and
+special-value GPU equivalence tests must pass before any speed result can be
+accepted; modeled shader reuse is not a measured gain.

@@ -436,7 +436,7 @@ bool RasterizerOpenGL::SetupVertexShader() {
     return shader_program_manager->UseProgrammableVertexShader(Pica::g_state.regs,
                                                                Pica::g_state.vs
 #ifdef CARA_IOS_GLES
-                                                               , ios_feedback_vertex_reuse ? 5u : ios_direct_vertex_reuse ? 3u : ios_indexed_vertex_inputs
+                                                               , ios_lit_pair_vertex_reuse ? 6u : ios_feedback_vertex_reuse ? 5u : ios_direct_vertex_reuse ? 3u : ios_indexed_vertex_inputs
 #endif
     );
 }
@@ -481,6 +481,19 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
         ios_vertex_input_span>=128 && ios_vertex_input_span<=3072 &&
         ios_vertex_input_span==ios_vertex_input_records &&
         IOSTriangles().size()>=size_t(ios_vertex_input_span)*3;
+#endif
+#ifdef CARA_IOS_GLES
+    static const bool lit_pair_reuse = [] {
+        const char* value = std::getenv("CARA_GPU_LIT_PAIR_REUSE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    ios_lit_pair_vertex_reuse = lit_pair_reuse && ios_indexed_vertex_inputs == 2 &&
+        !regs.lighting.disable && !AllowShadow && !ios_direct_vertex_reuse && !ios_feedback_vertex_reuse &&
+        ios_cached_index_data && ios_cached_index_data->lit_pair_count > 0 &&
+        ios_cached_index_data->lit_pair_count <= 65535 &&
+        ios_cached_index_data->lit_elements.size() == IOSTriangles().size() &&
+        std::uint64_t(ios_cached_index_data->pair_reuse.lru32_vs_runs) * 4 <=
+            std::uint64_t(ios_cached_index_data->pair_reuse.baseline_vs_runs) * 3;
 #endif
     if (!SetupVertexShader()) return reject("vertex shader translation");
     if (!SetupGeometryShader()) return reject("geometry setup");
@@ -634,6 +647,10 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         const char* value = std::getenv("CARA_GPU_LIT_PAIR_PROBE");
         return value && std::strcmp(value, "1") == 0;
     }();
+    static const bool build_lit_pairs = [] {
+        const char* value = std::getenv("CARA_GPU_LIT_PAIR_REUSE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
     ios_cached_index_data=nullptr;
     const IOSVertexIndexCache::Key key{is_indexed?index_address:0,count,
         is_indexed?0:u32(pipeline.vertex_offset),static_cast<u32>(topology),
@@ -659,7 +676,7 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         }
         if (ios_triangle_indices.empty()) return false;
         if (cache_enabled)
-            ios_cached_index_data=ios_vertex_index_cache.Store(key,indices,source_size,ios_triangle_indices, pair_probe_enabled);
+            ios_cached_index_data=ios_vertex_index_cache.Store(key,indices,source_size,ios_triangle_indices, pair_probe_enabled, build_lit_pairs);
     }
     const auto& triangles=IOSTriangles();
     if (Common::FrameTiming::counters.enabled)
@@ -779,7 +796,12 @@ static GLenum GetCurrentPrimitiveMode() {
 
 bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 #ifdef CARA_IOS_GLES
-    const auto& input_indices=IOSInputIndices();
+    const auto& input_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_pairs : IOSInputIndices();
+    const auto& element_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_elements : IOSInputIndices();
+    const size_t element_bytes = (ios_lit_pair_vertex_reuse || ios_direct_vertex_reuse) ?
+        element_indices.size() * sizeof(u16) : 0;
+    const GLenum index_internal = ios_lit_pair_vertex_reuse ? GL_RG16UI : GL_R16UI;
+    const GLenum index_format = ios_lit_pair_vertex_reuse ? GL_RG_INTEGER : GL_RED_INTEGER;
     const auto& triangles=IOSTriangles();
     GLuint feedback_program=0;
     if (ios_feedback_vertex_reuse) {
@@ -813,8 +835,10 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     OGLTexture* selected_texture = &ios_vertex_fallback_texture;
     OGLTexture* selected_indices = &ios_vertex_index_fallback_texture;
     IOSVertexUpload* selected_upload = nullptr;
-    const unsigned index_rows = static_cast<unsigned>(input_indices.size() / IOS_VERTEX_INPUT_WIDTH);
-    unsigned storage_rows = std::max(upload_rows, index_rows);
+    const unsigned index_rows = static_cast<unsigned>(input_indices.size() /
+        (IOS_VERTEX_INPUT_WIDTH * (ios_lit_pair_vertex_reuse ? 2 : 1)));
+    const unsigned element_rows = static_cast<unsigned>((element_indices.size() + IOS_VERTEX_INPUT_WIDTH - 1) / IOS_VERTEX_INPUT_WIDTH);
+    unsigned storage_rows = std::max({upload_rows, index_rows, ios_lit_pair_vertex_reuse ? element_rows : 0u});
     bool resize_storage = false;
     bool orphan_upload = true;
     const unsigned frame = VideoCore::GetCurrentFrame();
@@ -838,31 +862,20 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     }();
     unsigned size_class = 0;
     unsigned rows = 1;
-    while (rows < std::max(upload_rows, index_rows)) { rows *= 2; ++size_class; }
-    const unsigned height_classes = static_cast<unsigned>(bank.sizes.size() / 4);
+    while (rows < std::max({upload_rows, index_rows, ios_lit_pair_vertex_reuse ? element_rows : 0u})) { rows *= 2; ++size_class; }
+    constexpr unsigned height_classes = static_cast<unsigned>(IOSVertexUploadBank::HeightClasses);
     const bool supported_class = size_class < height_classes;
-    size_class += (ios_direct_vertex_reuse?3:ios_indexed_vertex_inputs) * height_classes;
+    size_class = static_cast<unsigned>(IOSVertexUploadBank::ClassIndex(
+        ios_lit_pair_vertex_reuse ? IOSVertexUploadBank::LitPairFormat : ios_direct_vertex_reuse ? 3 : ios_indexed_vertex_inputs, size_class));
     if (supported_class && ios_vertex_upload_index++ < max_upload_draws && size_class < bank.sizes.size() &&
         rows<=unsigned(ios_vertex_max_texture_size)) {
         auto& pool = bank.sizes[size_class];
-        const size_t bytes = rows * IOS_VERTEX_INPUT_WIDTH *
-            (sizeof(GLvec4) + (ios_indexed_vertex_inputs ? sizeof(u16) : 0));
+        const size_t bytes = IOSVertexUploadBank::AllocationBytes(size_class, IOS_VERTEX_INPUT_WIDTH);
         if (bank.used[size_class] == pool.size()) {
             // Reclaim only allocations not yet used in this frame. Largest sizes
             // first free space promptly, without modifying in-flight draw inputs.
-            for (size_t order = bank.sizes.size(); order-- > 0 &&
-                 (bank.bytes + bytes > max_bank_bytes || bank.textures >= max_upload_draws);) {
-                const size_t i = (order % 4) * height_classes + order / 4;
-                auto& unused = bank.sizes[i];
-                const size_t allocation_bytes = (size_t(1) << (i % height_classes)) * IOS_VERTEX_INPUT_WIDTH *
-                    (sizeof(GLvec4) + (i >= height_classes ? sizeof(u16) : 0));
-                while (unused.size() > bank.used[i] &&
-                       (bank.bytes + bytes > max_bank_bytes || bank.textures >= max_upload_draws)) {
-                    unused.pop_back();
-                    bank.bytes -= allocation_bytes;
-                    --bank.textures;
-                }
-            }
+            IOSVertexUploadBank::Reclaim(bank, bytes, max_bank_bytes,
+                                        max_upload_draws, IOS_VERTEX_INPUT_WIDTH);
             if (bank.bytes + bytes <= max_bank_bytes && bank.textures < max_upload_draws) {
                 pool.emplace_back();
                 pool.back().rows = rows;
@@ -883,14 +896,14 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     if (Common::FrameTiming::counters.enabled) {
         auto& counters = Common::FrameTiming::counters;
         counters.vertex_upload_bank_budget_bytes = max_bank_bytes;
-        const size_t index_bytes = input_indices.size() * sizeof(u16);
+        const size_t index_bytes = input_indices.size() * sizeof(u16) + (ios_lit_pair_vertex_reuse ? element_bytes : 0);
         counters.vertex_upload_bytes += ios_vertex_inputs.size() * sizeof(GLvec4) + index_bytes;
         counters.vertex_index_upload_bytes += index_bytes;
         if (orphan_upload) {
             ++counters.vertex_upload_fallbacks;
             counters.vertex_orphan_upload_bytes += ios_vertex_inputs.size() * sizeof(GLvec4) + index_bytes;
         }
-        if (orphan_upload || resize_storage) counters.vertex_storage_allocations += ios_indexed_vertex_inputs ? 2 : 1;
+        if (orphan_upload || resize_storage) counters.vertex_storage_allocations += ios_lit_pair_vertex_reuse ? 3 : ios_indexed_vertex_inputs ? 2 : 1;
         size_t bytes = 0;
         for (const auto& frame_bank : ios_vertex_frame_uploads) bytes += frame_bank.bytes;
         counters.vertex_pool_peak_bytes = std::max<std::uint64_t>(counters.vertex_pool_peak_bytes, bytes);
@@ -929,7 +942,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const bool cache_inputs=raw_inputs && reuse_enabled && selected_upload;
     const size_t input_bytes=ios_vertex_inputs.size()*sizeof(GLvec4);
     const size_t index_bytes=input_indices.size()*sizeof(u16);
-    bool reuse_input=false,reuse_index=false;
+    bool reuse_input=false,reuse_index=false,reuse_elements=false;
     if (cache_inputs && !resize_storage) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
         const auto matches=[](const std::vector<u8>& shadow,const void* data,size_t bytes) {
@@ -937,12 +950,14 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         };
         reuse_input=matches(selected_upload->input_shadow,ios_vertex_inputs.data(),input_bytes);
         reuse_index=matches(selected_upload->index_shadow,input_indices.data(),index_bytes);
+        if (ios_lit_pair_vertex_reuse) reuse_elements=matches(selected_upload->elements_shadow,element_indices.data(),element_bytes);
     }
     if (Common::FrameTiming::counters.enabled) {
         auto& counters=Common::FrameTiming::counters;
-        const size_t skipped=(reuse_input?input_bytes:0)+(reuse_index?index_bytes:0);
+        const size_t skipped=(reuse_input?input_bytes:0)+(reuse_index?index_bytes:0)+(reuse_elements?element_bytes:0);
         counters.vertex_upload_bytes-=skipped;
         if (reuse_index) counters.vertex_index_upload_bytes-=index_bytes;
+        if (reuse_elements) counters.vertex_index_upload_bytes-=element_bytes;
         counters.vertex_upload_reused_bytes+=skipped;
         counters.vertex_upload_reused_textures+=unsigned(reuse_input)+unsigned(reuse_index);
     }
@@ -972,30 +987,30 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         if (orphan_upload) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_R16UI, IOS_VERTEX_INPUT_WIDTH, index_rows, 0,
-                         GL_RED_INTEGER, GL_UNSIGNED_SHORT, input_indices.data());
+            glTexImage2D(GL_TEXTURE_2D, 0, index_internal, IOS_VERTEX_INPUT_WIDTH, index_rows, 0,
+                         index_format, GL_UNSIGNED_SHORT, input_indices.data());
         } else {
             if (resize_storage) {
                 Common::FrameTiming::Scope storage_timing(Common::FrameTiming::Phase::VertexStorageAllocate);
                 if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_R16UI, IOS_VERTEX_INPUT_WIDTH, storage_rows, 0,
-                             GL_RED_INTEGER, GL_UNSIGNED_SHORT, nullptr);
+                glTexImage2D(GL_TEXTURE_2D, 0, index_internal, IOS_VERTEX_INPUT_WIDTH, storage_rows, 0,
+                             index_format, GL_UNSIGNED_SHORT, nullptr);
             }
             Common::FrameTiming::Scope update_timing(Common::FrameTiming::Phase::VertexSubImageUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_subimage_calls;
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, index_rows,
-                            GL_RED_INTEGER, GL_UNSIGNED_SHORT, input_indices.data());
+                            index_format, GL_UNSIGNED_SHORT, input_indices.data());
         }
     }
     OGLBuffer* elements=nullptr;
-    if (ios_direct_vertex_reuse) {
+    if (ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse) {
         elements=selected_upload?&selected_upload->elements:&ios_vertex_element_fallback;
         const bool created=!elements->handle;
         if (created) elements->Create();
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,elements->handle);
-        if (created || !reuse_index) {
+        if (created || !(ios_lit_pair_vertex_reuse ? reuse_elements : reuse_index)) {
             Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER,index_bytes,input_indices.data(),GL_STREAM_DRAW);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER,element_bytes,element_indices.data(),GL_STREAM_DRAW);
         }
     }
     if (cache_inputs) {
@@ -1007,6 +1022,10 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         if (!reuse_index) {
             const auto* data=reinterpret_cast<const u8*>(input_indices.data());
             selected_upload->index_shadow.assign(data,data+index_bytes);
+        }
+        if (ios_lit_pair_vertex_reuse && !reuse_elements) {
+            const auto* data=reinterpret_cast<const u8*>(element_indices.data());
+            selected_upload->elements_shadow.assign(data,data+element_bytes);
         }
     }
     if (ios_feedback_vertex_reuse) {
@@ -1048,11 +1067,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     }
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::DrawSubmit);
-        if (ios_direct_vertex_reuse) {
+        if (ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse) {
             glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(triangles.size()),GL_UNSIGNED_SHORT,nullptr);
+            if (ios_lit_pair_vertex_reuse) {
+                ++Common::FrameTiming::counters.gpu_lit_pair_draws;
+                Common::FrameTiming::counters.gpu_lit_pair_vertices+=triangles.size();
+                Common::FrameTiming::counters.gpu_lit_pair_ids+=ios_cached_index_data->lit_pair_count;
+            } else {
             ++Common::FrameTiming::counters.gpu_direct_vertex_draws;
             Common::FrameTiming::counters.gpu_direct_vertices+=triangles.size();
             Common::FrameTiming::counters.gpu_direct_unique_inputs+=ios_vertex_input_records;
+            }
         } else glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
     }
     if (elements) glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,index_buffer.GetHandle());
@@ -1063,7 +1088,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         return value && std::strcmp(value, "1") == 0;
     }();
     if (pair_probe_enabled && Common::FrameTiming::counters.enabled && raw_inputs &&
-        !Pica::g_state.regs.lighting.disable && !ios_direct_vertex_reuse && !ios_feedback_vertex_reuse) {
+        !Pica::g_state.regs.lighting.disable && !ios_direct_vertex_reuse && !ios_feedback_vertex_reuse && !ios_lit_pair_vertex_reuse) {
         {
             auto& counters = Common::FrameTiming::counters;
             if (!ios_cached_index_data || !ios_cached_index_data->pair_reuse.measured) {

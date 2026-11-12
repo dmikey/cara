@@ -2026,11 +2026,20 @@ layout (std140) uniform vs_config {
             out += "cara_quat_exec_shader();\n}\n";
         }
         out += "void main() {\nvec4 first_quat=vec4(0.0);\n";
+        if (ios_indexed_inputs == 6) {
+            // gl_VertexID now names an ordered pair, never a triangle slot.
+            // The original triangle-first source is supplied explicitly.
+            out += "uvec2 pair_id=texelFetch(cara_vertex_indices,ivec2(gl_VertexID%128,gl_VertexID/128),0).rg;\n";
+            out += "if(pair_id.x!=pair_id.y) { cara_run_vertex(int(pair_id.y)); first_quat=" + quaternion + "; }\n";
+            out += "cara_run_vertex(int(pair_id.x)); normquat=" + quaternion + ";\n";
+            out += "if(pair_id.x!=pair_id.y && dot(first_quat,normquat)<0.0) normquat=-normquat;\n";
+        } else {
         if (ios_indexed_inputs<3) out += "if (gl_VertexID % 3 != 0) { " +
             std::string(quaternion_program.empty()?"cara_run_vertex":"cara_run_quaternion")+
             "(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
         out += "cara_run_vertex(gl_VertexID);\nnormquat = " + quaternion + ";\n";
         if (ios_indexed_inputs<3) out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
+        }
         out += "gl_Position = " + vector("vec4", {VSOutputAttributes::POSITION_X, VSOutputAttributes::POSITION_Y,
             VSOutputAttributes::POSITION_Z, VSOutputAttributes::POSITION_W}) + ";\n";
         // Map PICA's [-w, 0] clip range onto GLES' [-w, w] range.

@@ -37,9 +37,14 @@ public:
         std::uint32_t first{}, last{}, unique{};
         bool packable{};
         PairReuseStats pair_reuse;
+        // Pair texels are RG16UI (source, original triangle-first source).
+        std::vector<std::uint16_t> lit_pairs;
+        std::vector<std::uint16_t> lit_elements;
+        std::uint32_t lit_pair_count = 0;
         std::size_t Bytes() const {
             return source.capacity() + triangles.capacity() * sizeof(std::uint32_t) +
-                   packed.capacity() * sizeof(std::uint16_t) + sizeof(pair_reuse);
+                   packed.capacity() * sizeof(std::uint16_t) + sizeof(pair_reuse) +
+                   (lit_pairs.capacity() + lit_elements.capacity()) * sizeof(std::uint16_t);
         }
     };
 
@@ -66,7 +71,7 @@ public:
     }
 
     const Data* Store(const Key& key, const std::uint8_t* source, std::size_t size,
-                      std::vector<std::uint32_t>& triangles, bool measure_pair_reuse = false) {
+                      std::vector<std::uint32_t>& triangles, bool measure_pair_reuse = false, bool build_lit_pairs = false) {
         if (triangles.empty() || (size && !source) || !entry_limit) return nullptr;
         Data data;
         if (size) data.source.assign(source, source + size);
@@ -86,7 +91,7 @@ public:
             }
             data.unique = static_cast<std::uint32_t>(seen.count());
         }
-        if (measure_pair_reuse && data.packable && data.triangles.size() % 3 == 0 &&
+        if ((measure_pair_reuse || build_lit_pairs) && data.packable && data.triangles.size() % 3 == 0 &&
             data.triangles.size() <= 65535) {
             auto& stats = data.pair_reuse;
             stats.measured = true;
@@ -121,6 +126,32 @@ public:
                 recent[0] = pair;
             }
             stats.unique_pairs = static_cast<std::uint32_t>(unique_pairs.size());
+        }
+        if (build_lit_pairs && data.pair_reuse.measured) {
+            std::unordered_map<std::uint32_t, std::uint16_t> pair_ids;
+            pair_ids.reserve(data.pair_reuse.unique_pairs);
+            data.lit_elements.reserve(data.triangles.size());
+            for (std::size_t i = 0; i < data.triangles.size(); ++i) {
+                const std::uint32_t source_id = data.packed[i];
+                const std::uint32_t first_id = data.packed[i - i % 3];
+                const auto key = source_id | (first_id << 16);
+                auto found = pair_ids.find(key);
+                if (found == pair_ids.end()) {
+                    // 0xFFFF is never emitted as an element, regardless of
+                    // another path's primitive-restart state.
+                    if (data.lit_pair_count >= 65535) {
+                        data.lit_pairs.clear(); data.lit_elements.clear();
+                        data.lit_pair_count = 0;
+                        break;
+                    }
+                    found = pair_ids.emplace(key, static_cast<std::uint16_t>(data.lit_pair_count++)).first;
+                    data.lit_pairs.push_back(static_cast<std::uint16_t>(source_id));
+                    data.lit_pairs.push_back(static_cast<std::uint16_t>(first_id));
+                }
+                data.lit_elements.push_back(found->second);
+            }
+            // Two u16 components per RG16UI texel, 128 texels per row.
+            data.lit_pairs.resize((data.lit_pairs.size() + 255) / 256 * 256, 0);
         }
         const auto bytes = data.Bytes();
         if (bytes > budget_bytes) {

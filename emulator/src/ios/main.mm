@@ -1363,6 +1363,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"present_ms_per_frame\":" + std::to_string((current.present_seconds - previous_counters.present_seconds) * 1000 / count) +
                                 ",\"shader_calls\":" + std::to_string(current.shader_calls - previous_counters.shader_calls) +
                                 ",\"gpu_vertex_draws\":" + std::to_string(current.gpu_vertex_draws - previous_counters.gpu_vertex_draws) +
+                                ",\"gpu_lit_pair_draws\":" + std::to_string(current.gpu_lit_pair_draws - previous_counters.gpu_lit_pair_draws) +
+                                ",\"gpu_lit_pair_vertices\":" + std::to_string(current.gpu_lit_pair_vertices - previous_counters.gpu_lit_pair_vertices) +
+                                ",\"gpu_lit_pair_ids\":" + std::to_string(current.gpu_lit_pair_ids - previous_counters.gpu_lit_pair_ids) +
                                 ",\"gpu_direct_vertex_draws\":" + std::to_string(current.gpu_direct_vertex_draws - previous_counters.gpu_direct_vertex_draws) +
                                 ",\"gpu_direct_vertices\":" + std::to_string(current.gpu_direct_vertices - previous_counters.gpu_direct_vertices) +
                                 ",\"gpu_direct_unique_inputs\":" + std::to_string(current.gpu_direct_unique_inputs - previous_counters.gpu_direct_unique_inputs) +

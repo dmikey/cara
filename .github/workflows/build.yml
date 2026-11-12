@@ -56,6 +56,7 @@ jobs:
           CARA_TEST_NEW_3DS=1 CARA_TEST_CPU_PERCENT=70 work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-underclock
           CARA_CPU_BACKEND=dyncom work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-dyncom
           work/build-mac/bin/cara-clock-self-test
+          work/build-mac/bin/cara-vertex-upload-bank-self-test
           work/build-mac/bin/cara-frame-pacer-self-test
           work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test

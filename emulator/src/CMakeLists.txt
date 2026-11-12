@@ -125,6 +125,8 @@ if (ENABLE_WEB_SERVICE)
 endif()
 
 if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-vertex-upload-bank-self-test vertex_upload_bank_self_test.cpp)
+    target_include_directories(cara-vertex-upload-bank-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(cara-frame-pacer-self-test frame_pacer_self_test.cpp)
     target_include_directories(cara-frame-pacer-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(cara-clock-self-test clock_self_test.cpp)

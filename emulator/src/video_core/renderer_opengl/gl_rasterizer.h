@@ -27,6 +27,7 @@
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_vertex_source_map.h"
 #include "video_core/renderer_opengl/gl_vertex_index_cache.h"
+#include "video_core/renderer_opengl/gl_vertex_upload_bank.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_stream_buffer.h"
 #include "video_core/renderer_opengl/pica_to_gl.h"
@@ -280,6 +281,7 @@ private:
     std::vector<u16> ios_vertex_input_indices;
     unsigned ios_indexed_vertex_inputs = 0;
     bool ios_direct_vertex_reuse = false;
+    bool ios_lit_pair_vertex_reuse = false;
     bool ios_feedback_vertex_reuse = false;
     u32 ios_vertex_input_span = 0;
     OGLBuffer ios_feedback_buffer;
@@ -303,16 +305,11 @@ private:
         // tracking or hash collision assumptions. Released with the pool entry.
         std::vector<u8> input_shadow;
         std::vector<u8> index_shadow;
+        std::vector<u8> elements_shadow;
         unsigned rows = 0;
     };
-    struct IOSVertexFrameUploads {
-        // Fourteen height classes each for dense, indexed-float, indexed-byte and direct
-        // inputs. Both textures count toward the existing bank byte budget.
-        std::array<std::vector<IOSVertexUpload>, 56> sizes;
-        std::array<size_t, 56> used{};
-        size_t bytes = 0;
-        size_t textures = 0;
-    };
+    using IOSVertexFrameUploads = IOSVertexUploadBank::Bank<IOSVertexUpload>;
+    static_assert(sizeof(GLvec4) == 16 && sizeof(u16) == 2);
     std::array<IOSVertexFrameUploads, 3> ios_vertex_frame_uploads;
     unsigned ios_vertex_upload_frame = ~0u;
     size_t ios_vertex_upload_index = 0;

@@ -18,6 +18,7 @@
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
+#include "video_core/renderer_opengl/gl_vertex_index_cache.h"
 #include "video_core/renderer_opengl/gl_vertex_source_map.h"
 #include "video_core/shader/shader_interpreter.h"
 
@@ -75,6 +76,20 @@ static bool RunFeedbackCaptureFixture(std::string& error) {
 
 static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99, unsigned indexed_inputs=0, size_t source_count=257, bool source_optimizations=true) {
     using namespace OpenGL;
+    GLint saved_active=GL_TEXTURE0,saved_texture10=0,saved_sampler10=0;
+    if (indexed_inputs==6) {
+        glGetIntegerv(GL_ACTIVE_TEXTURE,&saved_active); glActiveTexture(GL_TEXTURE10);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D,&saved_texture10);
+        glGetIntegeri_v(GL_SAMPLER_BINDING,10,&saved_sampler10);
+        glActiveTexture(static_cast<GLenum>(saved_active));
+    }
+    SCOPE_EXIT({
+        if (indexed_inputs==6) {
+            glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(saved_texture10));
+            glBindSampler(10,static_cast<GLuint>(saved_sampler10));
+            glActiveTexture(static_cast<GLenum>(saved_active));
+        }
+    });
     using S = nihstro::SourceRegister;
     using D = nihstro::DestRegister;
     using O = nihstro::OpCode;
@@ -154,12 +169,14 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
         // ES transform feedback only accepts array draws. For the direct-input
         // fixture, emulate the element fetch here; the raster check below uses
         // the unmodified production shader and a real element buffer.
-        const std::string replacement=indexed_inputs==3 ?
+        const std::string replacement=indexed_inputs==6 ?
+            "int(texelFetch(cara_fixture_elements, ivec2((gl_VertexID + capture_base) % 128, (gl_VertexID + capture_base) / 128), 0).r)" : indexed_inputs==3 ?
             "int(texelFetch(cara_vertex_indices, ivec2((gl_VertexID + capture_base) % 128, (gl_VertexID + capture_base) / 128), 0).r)" :
             "(gl_VertexID + capture_base)";
         vertex_source.replace(pos,11,replacement); pos+=replacement.size();
     }
     vertex_source="uniform highp int capture_base;\n"+vertex_source;
+    if (indexed_inputs==6) vertex_source="uniform highp usampler2D cara_fixture_elements;\n"+vertex_source;
     vertex.Create(vertex_source.c_str(), GL_VERTEX_SHADER);
     fragment.Create("out vec4 color; void main() { color = vec4(1.0); }", GL_FRAGMENT_SHADER);
     if (!vertex.handle || !fragment.handle) { error = "fixture shader compilation failed"; return false; }
@@ -212,14 +229,33 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, indexed_inputs>=2?GL_RGBA32UI:GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, static_cast<GLsizei>(texture_rows), 0, indexed_inputs>=2?GL_RGBA_INTEGER:GL_RGBA, indexed_inputs>=2?GL_UNSIGNED_INT:GL_FLOAT, packed.data());
+    IOSVertexIndexCache pair_cache;
+    const IOSVertexIndexCache::Data* pairs=nullptr;
+    OGLTexture fixture_elements, original_indices;
+    if (indexed_inputs==6) {
+        std::vector<u32> topology(indices.begin(),indices.begin()+vertex_count);
+        pairs=pair_cache.Store({},nullptr,0,topology,true,true);
+        if (!pairs || !pairs->lit_pair_count) { error="lit pair fixture topology rejected"; return false; }
+        fixture_elements.Create(); glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_2D,fixture_elements.handle);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST); glBindSampler(10,0);
+        auto padded=pairs->lit_elements; padded.resize(index_rows*IOS_VERTEX_INPUT_WIDTH,0);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_R16UI,IOS_VERTEX_INPUT_WIDTH,index_rows,0,GL_RED_INTEGER,GL_UNSIGNED_SHORT,padded.data());
+        original_indices.Create(); glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D,original_indices.handle);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_R16UI,IOS_VERTEX_INPUT_WIDTH,index_rows,0,GL_RED_INTEGER,GL_UNSIGNED_SHORT,indices.data());
+    }
     OGLTexture index_texture;
     if (indexed_inputs) {
         index_texture.Create(); glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D,index_texture.handle);
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
         glBindSampler(8,0);
-        glTexImage2D(GL_TEXTURE_2D,0,GL_R16UI,IOS_VERTEX_INPUT_WIDTH,static_cast<GLsizei>(index_rows),0,
-                     GL_RED_INTEGER,GL_UNSIGNED_SHORT,indices.data());
+        glTexImage2D(GL_TEXTURE_2D,0,indexed_inputs==6?GL_RG16UI:GL_R16UI,IOS_VERTEX_INPUT_WIDTH,
+                     static_cast<GLsizei>(indexed_inputs==6?pairs->lit_pairs.size()/(IOS_VERTEX_INPUT_WIDTH*2):index_rows),0,
+                     indexed_inputs==6?GL_RG_INTEGER:GL_RED_INTEGER,GL_UNSIGNED_SHORT,
+                     indexed_inputs==6?pairs->lit_pairs.data():indices.data());
         glActiveTexture(GL_TEXTURE7);
     }
     OGLBuffer uniform_buffer, feedback_buffer, raster_uniforms; uniform_buffer.Create(); feedback_buffer.Create(); raster_uniforms.Create();
@@ -227,6 +263,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glUseProgram(program);
     glUniform1i(glGetUniformLocation(program, "cara_vertex_inputs"), 7);
     glUniform1i(glGetUniformLocation(program, "cara_vertex_indices"), 8);
+    if (indexed_inputs==6) glUniform1i(glGetUniformLocation(program,"cara_fixture_elements"),10);
     if (indexed_inputs>=2) {
         std::array<std::array<GLint,4>,16> raw_layout{};
         for (unsigned reg=0;reg<16;++reg) if (layout.offsets[reg]>=0)
@@ -304,6 +341,72 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
             if (!glUnmapBuffer(GL_TRANSFORM_FEEDBACK_BUFFER)) { passed = false; error = "fixture buffer corrupted"; }
         }
     }
+    if (indexed_inputs==6 && passed) {
+        // Compare exact quaternion bits with the ordinary production shader on
+        // original special-value inputs. Array capture emulates the EBO lookup;
+        // real glDrawElements raster equivalence is exercised below.
+        auto baseline_source=GenerateVertexShader(setup,config,false,&output,input_mask,2,false);
+        for (size_t pos=0;(pos=baseline_source.find("gl_VertexID",pos))!=std::string::npos;) {
+            const std::string replacement="(gl_VertexID + capture_base)";
+            baseline_source.replace(pos,11,replacement); pos+=replacement.size();
+        }
+        baseline_source="uniform highp int capture_base;\n"+baseline_source;
+        OGLShader baseline_vertex; baseline_vertex.Create(baseline_source.c_str(),GL_VERTEX_SHADER);
+        const GLuint baseline=glCreateProgram();
+        SCOPE_EXIT({ glDeleteProgram(baseline); });
+        glAttachShader(baseline,baseline_vertex.handle); glAttachShader(baseline,fragment.handle);
+        glTransformFeedbackVaryings(baseline,3,varying,GL_INTERLEAVED_ATTRIBS); glLinkProgram(baseline);
+        GLint linked_baseline=0; glGetProgramiv(baseline,GL_LINK_STATUS,&linked_baseline);
+        if (!linked_baseline) { passed=false; error="lit pair special quaternion baseline linkage"; }
+        constexpr std::array<u32,8> patterns{0x00000000u,0x80000000u,0x7FC12345u,0xFFC54321u,
+                                            0x3F800000u,0xBF800000u,0x7F800000u,0xFF800000u};
+        for (size_t v=0;v<record_count;++v) {
+            auto& quaternion_input=packed[v*layout.stride+layout.offsets[1]];
+            for (size_t c=0;c<4;++c) {
+                const u32 bits=patterns[(v+c)%patterns.size()];
+                std::memcpy(&quaternion_input[c],&bits,sizeof(bits));
+            }
+        }
+        glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D,texture.handle);
+        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,IOS_VERTEX_INPUT_WIDTH,texture_rows,
+                        GL_RGBA_INTEGER,GL_UNSIGNED_INT,packed.data());
+        constexpr size_t special_vertices=99;
+        std::array<std::array<u32,special_vertices*12>,2> captured{};
+        const GLuint special_programs[]={baseline,program};
+        for (unsigned path=0;path<2 && passed;++path) {
+            glUseProgram(special_programs[path]);
+            glUniform1i(glGetUniformLocation(special_programs[path],"capture_base"),0);
+            glUniform1i(glGetUniformLocation(special_programs[path],"cara_vertex_inputs"),7);
+            glUniform1i(glGetUniformLocation(special_programs[path],"cara_vertex_indices"),8);
+            if (path) glUniform1i(glGetUniformLocation(special_programs[path],"cara_fixture_elements"),10);
+            std::array<std::array<GLint,4>,16> raw_layout{};
+            for (unsigned reg=0;reg<16;++reg) if (layout.offsets[reg]>=0)
+                raw_layout[reg]={layout.offsets[reg]*16,GLint(layout.stride*16),3,4};
+            glUniform4iv(glGetUniformLocation(special_programs[path],"cara_vertex_layout[0]"),16,raw_layout[0].data());
+            glUniformBlockBinding(special_programs[path],glGetUniformBlockIndex(special_programs[path],"vs_config"),0);
+            const GLuint common=glGetUniformBlockIndex(special_programs[path],"shader_data");
+            if (common!=GL_INVALID_INDEX) glUniformBlockBinding(special_programs[path],common,1);
+            glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D,path?index_texture.handle:original_indices.handle);
+            glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,feedback_buffer.handle);
+            glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER,sizeof(captured[path]),nullptr,GL_STREAM_READ);
+            glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,feedback_buffer.handle);
+            glBeginTransformFeedback(GL_TRIANGLES); glDrawArrays(GL_TRIANGLES,0,special_vertices); glEndTransformFeedback();
+            const void* bytes=glMapBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER,0,sizeof(captured[path]),GL_MAP_READ_BIT);
+            if (!bytes) { passed=false; error="lit pair special quaternion readback"; break; }
+            std::memcpy(captured[path].data(),bytes,sizeof(captured[path]));
+            if (glUnmapBuffer(GL_TRANSFORM_FEEDBACK_BUFFER)!=GL_TRUE || glGetError()!=GL_NO_ERROR) {
+                passed=false; error="lit pair special quaternion GL error";
+            }
+        }
+        if (passed) for (size_t v=0;v<special_vertices;++v) {
+            if (std::memcmp(captured[0].data()+v*12+4,captured[1].data()+v*12+4,4*sizeof(u32))!=0) {
+                passed=false; error="lit pair signed-zero/NaN quaternion bits changed at vertex="+std::to_string(v); break;
+            }
+        }
+        glUseProgram(program);
+        glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D,index_texture.handle);
+        glActiveTexture(GL_TEXTURE7);
+    }
     glDisable(GL_RASTERIZER_DISCARD);
     // PICA accepts -w <= z <= 0. GLES must reject the entire positive-z triangle.
     GLint old_draw = 0, old_read = 0;
@@ -324,11 +427,12 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glUniform1i(glGetUniformLocation(program,"capture_base"),0);
     OGLProgram direct_program;
     OGLBuffer element_buffer;
-    if (indexed_inputs==3) {
+    if (indexed_inputs==3 || indexed_inputs==6) {
         direct_program.Create(direct_vertex_source.c_str(), "out vec4 color; void main() { color=vec4(1.0); }");
         if (!direct_program.handle) { error="direct indexed fixture linkage failed"; passed=false; }
         glUseProgram(direct_program.handle);
         glUniform1i(glGetUniformLocation(direct_program.handle,"cara_vertex_inputs"),7);
+        glUniform1i(glGetUniformLocation(direct_program.handle,"cara_vertex_indices"),8);
         std::array<std::array<GLint,4>,16> raw_layout{};
         for (unsigned reg=0;reg<16;++reg) if (layout.offsets[reg]>=0)
             raw_layout[reg]={layout.offsets[reg]*16,GLint(layout.stride*16),3,4};
@@ -338,7 +442,8 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
         const GLuint common_block=glGetUniformBlockIndex(direct_program.handle,"shader_data");
         if (common_block!=GL_INVALID_INDEX) glUniformBlockBinding(direct_program.handle,common_block,1);
         element_buffer.Create(); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,element_buffer.handle);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER,indices.size()*sizeof(u16),indices.data(),GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,indexed_inputs==6?pairs->lit_elements.size()*sizeof(u16):indices.size()*sizeof(u16),
+                     indexed_inputs==6?pairs->lit_elements.data():indices.data(),GL_STATIC_DRAW);
     }
     for (bool outside : {false, true}) {
         for (size_t v = 0; v < record_count; ++v)
@@ -346,7 +451,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH,
                         static_cast<GLsizei>(texture_rows), indexed_inputs>=2?GL_RGBA_INTEGER:GL_RGBA, indexed_inputs>=2?GL_UNSIGNED_INT:GL_FLOAT, packed.data());
         glClearColor(0, 0, 0, 0); glClear(GL_COLOR_BUFFER_BIT);
-        if (indexed_inputs==3)
+        if (indexed_inputs==3 || indexed_inputs==6)
             glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(vertex_count),GL_UNSIGNED_SHORT,nullptr);
         else glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
         const GLenum draw_error=glGetError();
@@ -359,7 +464,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
             error = outside ? "PICA positive-z clipping plane missing" : "PICA in-range triangle incorrectly clipped";
         }
     }
-    if (indexed_inputs==3 && passed) {
+    if ((indexed_inputs==3 || indexed_inputs==6) && passed) {
         // Compare real indexed rasterization against the expanded production
         // path. This includes duplicate/reordered IDs and the relocated 65535
         // record, with interpolated colors so a wrong element fetch is visible.
@@ -382,6 +487,11 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
             std::array<std::array<u8,8*8*4>,2> images{};
             const GLuint programs[]={expanded_color.handle,indexed_color.handle};
             for (unsigned path=0;path<2;++path) {
+                if (indexed_inputs==6) {
+                    glActiveTexture(GL_TEXTURE8);
+                    glBindTexture(GL_TEXTURE_2D,path?index_texture.handle:original_indices.handle);
+                    glActiveTexture(GL_TEXTURE7);
+                }
                 glUseProgram(programs[path]);
                 glUniform1i(glGetUniformLocation(programs[path],"cara_vertex_inputs"),7);
                 glUniform1i(glGetUniformLocation(programs[path],"cara_vertex_indices"),8);
@@ -413,6 +523,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0); glBindBuffer(GL_UNIFORM_BUFFER, 0);
     glBindVertexArray(0); glUseProgram(0); glDeleteProgram(program);
     glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE10); glBindTexture(GL_TEXTURE_2D,0);
     glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D,0);
     glActiveTexture(GL_TEXTURE0);
     return passed;
@@ -877,6 +988,13 @@ bool RunGPUVertexSelfTest(std::string& error) {
             error+=" indexed vertex count="+std::to_string(fixture.first)+" mode="+std::to_string(mode);
             return false;
         }
+    }
+    const char* lit_pairs=std::getenv("CARA_GPU_LIT_PAIR_REUSE");
+    if (lit_pairs && std::strcmp(lit_pairs,"1")==0) {
+        for (const auto& fixture : {std::pair<size_t,size_t>{99,17}, {41967,257}, {65535,65535}})
+            if (!RunVertexLayoutFixture(large_mask,error,fixture.first,6,fixture.second)) {
+                error+=" lit-pair vertex count="+std::to_string(fixture.first); return false;
+            }
     }
     // Compile and execute the GPU retry source with optional flags still set.
     if (!RunVertexLayoutFixture(0x0083,error,99,2,257,false)) {
