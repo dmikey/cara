@@ -6,7 +6,7 @@ States are compressed `.carastate` files in Cara's user-data `states` directory.
 
 A state restores the emulated ARM CPUs, timing events, RAM/VRAM, kernel objects, service state, PICA registers and shader programs, and HLE DSP state. Decoded interpreter blocks and host GPU caches are rebuilt. Operations run on the emulation thread between guest slices. They do not allocate executable memory or enable JIT.
 
-State loading requires the same game executable, engine fingerprint, CPU backend, and 3DS system mode. The engine fingerprint includes engine source, compiler, architecture and pointer size. Updates can invalidate states; regular game saves are the durable format. Multiplayer must be disconnected. States are local; the existing iCloud save-folder feature continues to sync game saves only.
+State loading requires the same game executable, engine fingerprint, CPU backend, and 3DS system mode. The engine fingerprint includes engine source, compiler, architecture and pointer size. Generated build dates and branch metadata are excluded. Updates can invalidate states; regular game saves are the durable format. Multiplayer must be disconnected. States are local; the existing iCloud save-folder feature continues to sync game saves only.
 
 The file envelope checks format, exact size, Zstandard frame size, SHA-256 checksum and compatibility before applying an archive. The current session is captured for rollback if deserialization fails. Writes use a temporary file and atomic replacement. Loading does not rewind files already written by a game's own save commands.
 

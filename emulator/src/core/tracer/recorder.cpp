@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -8,12 +9,12 @@
 #include "common/logging/log.h"
 #include "core/tracer/recorder.h"
 
-namespace CiTrace {
+namespace CaraTrace {
 
 Recorder::Recorder(const InitialState& initial_state) : initial_state(initial_state) {}
 
 void Recorder::Finish(const std::string& filename) {
-    // Setup CiTrace header
+    // Setup CaraTrace header
     CTHeader header;
     std::memcpy(header.magic, CTHeader::ExpectedMagicWord(), 4);
     header.version = CTHeader::ExpectedVersion();
@@ -159,7 +160,7 @@ void Recorder::Finish(const std::string& filename) {
                 throw "Failed to write stream element";
         }
     } catch (const char* str) {
-        LOG_ERROR(HW_GPU, "Writing CiTrace file failed: {}", str);
+        LOG_ERROR(HW_GPU, "Writing CaraTrace file failed: {}", str);
     }
 }
 
@@ -205,4 +206,4 @@ template void Recorder::RegisterWritten(u32, u8);
 template void Recorder::RegisterWritten(u32, u16);
 template void Recorder::RegisterWritten(u32, u32);
 template void Recorder::RegisterWritten(u32, u64);
-} // namespace CiTrace
+} // namespace CaraTrace

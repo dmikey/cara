@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 #include "input_manager.h"
 
 #include <tuple>
@@ -124,7 +125,7 @@ private:
 
         void SetStatus(float x, float y) {
             // Clamp joystick movement to supported minimum and maximum
-            // Citra uses an inverted y axis sent by the frontend
+            // Cara uses an inverted y axis sent by the frontend
             x = std::clamp(x, -1.0F, 1.0F);
             y = std::clamp(-y, -1.0F, 1.0F);
 

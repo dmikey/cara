@@ -406,6 +406,31 @@ handle_ThumbFusedTstBcc: {
     DISPATCH();
 }
 
+handle_AddCmpImmBcc: {
+    const auto& compare = inst[1].fused;
+    const u32 result = state_.regs[inst->dp.rn] + inst->dp.imm;
+    state_.regs[inst->rd] = result;
+#ifdef __aarch64__
+    u32 take_branch, nzcv;
+    ARM64_CMP_COND(result, compare.imm, compare.branch_cond, take_branch, nzcv);
+#else
+    const u32 difference = result - compare.imm;
+    const u32 nzcv = (difference & 0x80000000u) | ((difference == 0) ? 0x40000000u : 0) |
+                     ((result >= compare.imm) ? 0x20000000u : 0) |
+                     ((((result ^ compare.imm) & (result ^ difference)) >> 3) & 0x10000000u);
+    const bool take_branch = CondPassed(compare.branch_cond, nzcv);
+#endif
+    state_.lazy_flags.SetPacked(nzcv);
+    executed += inst->ticks;
+    if (take_branch) {
+        SET_PC(compare.branch_target);
+        goto chain;
+    }
+    SET_PC(GET_PC() + 12);
+    ++inst;
+    DISPATCH();
+}
+
 handle_FusedAddCmpBcc: {
     // ARM: ADD Rd, Rn, #imm; CMP Rd, Rm; B<cond> label (iterator loop pattern)
     // First: ADD Rd, Rn, #imm

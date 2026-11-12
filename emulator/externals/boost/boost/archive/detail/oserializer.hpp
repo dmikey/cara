@@ -26,6 +26,9 @@
 #include <cstddef> // NULL
 
 #include <boost/config.hpp>
+#if !defined(BOOST_NO_RTTI) && !defined(BOOST_NO_TYPEID)
+#include <typeinfo>
+#endif
 
 #include <boost/static_assert.hpp>
 #include <boost/detail/workaround.hpp>
@@ -402,7 +405,11 @@ struct save_pointer_type {
                 boost::serialization::throw_exception(
                     archive_exception(
                         archive_exception::unregistered_class,
+#if !defined(BOOST_NO_RTTI) && !defined(BOOST_NO_TYPEID)
+                        typeid(t).name()
+#else
                         "derived class not registered or exported"
+#endif
                     )
                 );
             }
@@ -445,7 +452,11 @@ struct save_pointer_type {
                 boost::serialization::throw_exception(
                     archive_exception(
                         archive_exception::unregistered_class,
+#if !defined(BOOST_NO_RTTI) && !defined(BOOST_NO_TYPEID)
+                        typeid(t).name()
+#else
                         "derived class not registered or exported"
+#endif
                     )
                 );
             ar.save_pointer(vp, bpos);

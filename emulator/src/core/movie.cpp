@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2017 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -375,7 +376,7 @@ Movie::ValidationResult Movie::ValidateHeader(const CTMHeader& header, u64 progr
 
     if (revision != Common::g_scm_rev) {
         LOG_WARNING(Movie,
-                    "This movie was created on a different version of Citra, playback may desync");
+                    "This movie was created on a different version of Cara, playback may desync");
         return ValidationResult::RevisionDismatch;
     }
 

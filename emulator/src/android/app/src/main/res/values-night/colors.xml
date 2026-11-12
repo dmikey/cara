@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Cara on 2026-11-12; see NOTICE for attribution. -->
 <resources>
 
-    <color name="citra_orange">#313335</color>
-    <color name="citra_orange_dark">#FE8A03</color>
-    <color name="citra_accent">#008577</color>
-    <color name="citra_accent_red">#F05053</color>
-    <color name="citra_accent_white">#F8F9FA</color>
-    <color name="citra_highlight">#00DDAA</color>
+    <color name="cara_orange">#313335</color>
+    <color name="cara_orange_dark">#FE8A03</color>
+    <color name="cara_accent">#008577</color>
+    <color name="cara_accent_red">#F05053</color>
+    <color name="cara_accent_white">#F8F9FA</color>
+    <color name="cara_highlight">#00DDAA</color>
 
     <color name="foreground_color">#F8F9FA</color>
     <color name="background_color">#383A3C</color>

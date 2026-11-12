@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Cara on 2026-11-12; see NOTICE for attribution. -->
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -26,7 +27,7 @@
     <TextView
         android:id="@+id/version"
         android:text="2022/02/02T02:02:02"
-        style="@style/CitraTheme.Caption"
+        style="@style/CaraTheme.Caption"
         android:textSize="14sp"
         android:layout_centerHorizontal="true"
         android:layout_below="@id/banner"
@@ -47,7 +48,7 @@
 
         <Button
             android:id="@+id/btn_official_website"
-            android:text="@string/citra_official_website"
+            android:text="@string/cara_official_website"
             android:textAllCaps="false"
             android:textStyle="normal"
             android:layout_margin="0dp"
@@ -56,7 +57,7 @@
             android:minHeight="0dp"
             android:stateListAnimator="@null"
             android:gravity="center_vertical"
-            style="@style/CitraTheme.Borderless"
+            style="@style/CaraTheme.Borderless"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
 
@@ -78,7 +79,7 @@
             android:minHeight="0dp"
             android:stateListAnimator="@null"
             android:gravity="center_vertical"
-            style="@style/CitraTheme.Borderless"
+            style="@style/CaraTheme.Borderless"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
 
@@ -103,7 +104,7 @@
                 android:minHeight="0dp"
                 android:stateListAnimator="@null"
                 android:gravity="center_vertical"
-                style="@style/CitraTheme.Borderless"
+                style="@style/CaraTheme.Borderless"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"/>
 
@@ -128,7 +129,7 @@
         android:gravity="center"
         android:layout_margin="20dp"
         android:textSize="12sp"
-        style="@style/CitraTheme.Caption"
+        style="@style/CaraTheme.Caption"
         android:layout_centerHorizontal="true"
         android:layout_alignParentBottom="true"
         android:layout_width="wrap_content"

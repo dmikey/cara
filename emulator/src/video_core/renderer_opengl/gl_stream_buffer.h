@@ -36,6 +36,7 @@ private:
     GLenum gl_target;
     GLenum gl_target_invalidate_hack;
 
+    bool explicit_flush = true;
     GLintptr buffer_pos = 0;
     GLsizeiptr buffer_size = 0;
 };

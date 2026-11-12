@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -515,7 +516,7 @@ static void ExecuteCommand(const Command& command) {
         if (params.do_flush) {
             // This flag flushes the command list (params.address, params.size) from the cache.
             // Command lists are not processed by the hardware renderer, so we don't need to
-            // actually flush them in Citra.
+            // actually flush them in Cara.
         }
 
         WriteGPURegister(static_cast<u32>(GPU_REG_INDEX(command_processor_config.address)),

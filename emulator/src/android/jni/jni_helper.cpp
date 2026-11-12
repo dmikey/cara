@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 #include <unordered_map>
 
 #include "jni_helper.h"
@@ -38,7 +39,7 @@ void JniHelper::OnLoad() {
     clazz = "android/graphics/Rect";
     sClassMap.emplace(clazz, (jclass)env->NewGlobalRef(env->FindClass(clazz)));
 
-    clazz = "org/citra/emu/NativeLibrary";
+    clazz = "org/cara/emu/NativeLibrary";
     sClassMap.emplace(clazz, (jclass)env->NewGlobalRef(env->FindClass(clazz)));
 }
 

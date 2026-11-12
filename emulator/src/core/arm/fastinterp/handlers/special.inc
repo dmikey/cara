@@ -21,3 +21,8 @@ handle_PcSetup:
     // reads R15 as a source and couldn't be folded at decode. Zero ticks; no PC advance.
     state_.regs[15] = inst->imm32;
     DISPATCH();
+
+handle_Bkpt:
+    CHECK_COND();
+    LogBreakpointInstruction(inst->imm32);
+    ADVANCE_AND_DISPATCH();

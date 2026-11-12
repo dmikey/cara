@@ -11,6 +11,9 @@ namespace Core {
 
 struct CSTHeader;
 
+// Identifies the actual engine source/platform ABI used by state files and diagnostics.
+const char* GetSaveStateBuildFingerprint();
+
 struct SaveStateInfo {
     u32 slot;
     u64 time;

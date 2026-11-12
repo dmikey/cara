@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Cara on 2026-11-12; see NOTICE for attribution. -->
 <resources>
 
     <style name="OverflowMenu" parent="Widget.AppCompat.PopupMenu.Overflow">
@@ -11,39 +12,39 @@
     </style>
 
     <style name="BottomSheetMenu" parent="ThemeOverlay.MaterialComponents.BottomSheetDialog">
-        <item name="android:colorControlHighlight">@color/citra_highlight</item>
+        <item name="android:colorControlHighlight">@color/cara_highlight</item>
         <item name="bottomSheetStyle">@style/ModalBottomSheet</item>
     </style>
 
     <style name="AlertDialog.Button" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
-        <item name="android:textColor">@color/citra_accent</item>
+        <item name="android:textColor">@color/cara_accent</item>
     </style>
 
     <!-- Inherit from the material theme -->
-    <style name="CitraTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <style name="CaraTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:textColor">@color/foreground_color</item>
-        <item name="colorPrimary">@color/citra_orange</item>
-        <item name="colorPrimaryDark">@color/citra_orange</item>
-        <item name="colorAccent">@color/citra_accent</item>
+        <item name="colorPrimary">@color/cara_orange</item>
+        <item name="colorPrimaryDark">@color/cara_orange</item>
+        <item name="colorAccent">@color/cara_accent</item>
         <item name="colorSurface">@color/background_color</item>
-        <item name="android:colorControlHighlight">@color/citra_highlight</item>
+        <item name="android:colorControlHighlight">@color/cara_highlight</item>
         <item name="actionOverflowMenuStyle">@style/OverflowMenu</item>
         <item name="bottomSheetDialogTheme">@style/BottomSheetMenu</item>
         <item name="android:buttonBarButtonStyle">@style/AlertDialog.Button</item>
     </style>
 
-    <style name="CitraTheme.Button" parent="Widget.AppCompat.Button.Colored">
-        <item name="android:textColor">@color/citra_accent_white</item>
+    <style name="CaraTheme.Button" parent="Widget.AppCompat.Button.Colored">
+        <item name="android:textColor">@color/cara_accent_white</item>
     </style>
 
-    <style name="CitraTheme.Borderless" parent="Widget.AppCompat.Button.Borderless" />
+    <style name="CaraTheme.Borderless" parent="Widget.AppCompat.Button.Borderless" />
 
-    <style name="CitraTheme.Caption" parent="TextAppearance.AppCompat.Caption" />
+    <style name="CaraTheme.Caption" parent="TextAppearance.AppCompat.Caption" />
 
     <style name="EmulationTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:textColor">@color/foreground_color</item>
-        <item name="colorPrimary">@color/citra_orange</item>
-        <item name="colorPrimaryDark">@color/citra_orange</item>
+        <item name="colorPrimary">@color/cara_orange</item>
+        <item name="colorPrimaryDark">@color/cara_orange</item>
         <item name="android:windowTranslucentNavigation">true</item>
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:windowFullscreen">true</item>
@@ -65,9 +66,9 @@
     </style>
 
     <style name="FilePickerTheme" parent="NNF_BaseTheme">
-        <item name="colorPrimary">@color/citra_orange</item>
-        <item name="colorPrimaryDark">@color/citra_orange</item>
-        <item name="colorAccent">@color/citra_accent</item>
+        <item name="colorPrimary">@color/cara_orange</item>
+        <item name="colorPrimaryDark">@color/cara_orange</item>
+        <item name="colorAccent">@color/cara_accent</item>
 
         <!--&lt;!&ndash; Setting a divider is entirely optional &ndash;&gt;-->
         <item name="nnf_list_item_divider">@drawable/line_divider</item>
@@ -81,9 +82,9 @@
     </style>
 
     <style name="FilePickerAlertDialogTheme" parent="Theme.AppCompat.Dialog.Alert">
-        <item name="colorPrimary">@color/citra_orange</item>
-        <item name="colorPrimaryDark">@color/citra_orange</item>
-        <item name="colorAccent">@color/citra_accent</item>
+        <item name="colorPrimary">@color/cara_orange</item>
+        <item name="colorPrimaryDark">@color/cara_orange</item>
+        <item name="colorAccent">@color/cara_accent</item>
     </style>
 
 </resources>

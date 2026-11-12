@@ -6,6 +6,14 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <cstdlib>
+#include <chrono>
+#include <fstream>
+#include <iomanip>
+#if defined(__APPLE__)
+#include <execinfo.h>
+#include <dlfcn.h>
+#endif
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -33,6 +41,8 @@
 #include "video_core/pica_state.h"
 #include "video_core/renderer_base.h"
 #include "video_core/renderer_opengl/gl_format_reinterpreter.h"
+#include "video_core/renderer_opengl/gl_color_readback.h"
+#include "video_core/renderer_opengl/gl_surface_remap.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_rasterizer_cache.h"
 #include "video_core/renderer_opengl/gl_state.h"
@@ -44,6 +54,21 @@ namespace OpenGL {
 
 using SurfaceType = SurfaceParams::SurfaceType;
 using PixelFormat = SurfaceParams::PixelFormat;
+
+template <u32 bytes_per_pixel>
+static void FlushLinearSwapped(u8* destination, const u8* source, u32 start, u32 end) {
+    auto copy_byte = [&](u32 offset) {
+        const u32 pixel = offset / bytes_per_pixel * bytes_per_pixel;
+        destination[offset] = source[pixel + bytes_per_pixel - 1 - offset % bytes_per_pixel];
+    };
+    u32 offset = start;
+    for (; offset < end && offset % bytes_per_pixel; ++offset) copy_byte(offset);
+    for (; offset + bytes_per_pixel <= end; offset += bytes_per_pixel) {
+        for (u32 component = 0; component < bytes_per_pixel; ++component)
+            destination[offset + component] = source[offset + bytes_per_pixel - 1 - component];
+    }
+    for (; offset < end; ++offset) copy_byte(offset);
+}
 
 struct FormatTuple {
     GLint internal_format;
@@ -189,11 +214,12 @@ static void MortonCopy(u32 stride, u32 height, u8* gl_buffer, PAddr base, PAddr 
         std::memcpy(tile_buffer, &tmp_buf[start - aligned_down_start],
                     std::min(aligned_start, end) - start);
 
+        if (end <= aligned_start) return;
         tile_buffer += aligned_start - start;
         glbuf_next_tile();
     }
 
-    const u8* buffer_end = tile_buffer + aligned_end - aligned_start;
+    const u8* buffer_end = tile_buffer + (aligned_end - aligned_start);
     while (tile_buffer < buffer_end) {
         MortonCopyTile<morton_to_gl, format>(stride, tile_buffer, gl_buffer);
         tile_buffer += tile_size;
@@ -602,19 +628,13 @@ void CachedSurface::FlushGLBuffer(PAddr flush_start, PAddr flush_end) {
             std::memcpy(&dst_buffer[coarse_start_offset], &backup_data[0], backup_bytes);
     } else if (!is_tiled) {
         ASSERT(type == SurfaceType::Color);
-        if (pixel_format == PixelFormat::RGBA8) {
-            for (std::size_t i = start_offset; i < flush_end - addr; i += 4) {
-                dst_buffer[i] = gl_buffer[i + 3];
-                dst_buffer[i + 1] = gl_buffer[i + 2];
-                dst_buffer[i + 2] = gl_buffer[i + 1];
-                dst_buffer[i + 3] = gl_buffer[i];
-            }
-        } else if (pixel_format == PixelFormat::RGB8) {
-            for (std::size_t i = start_offset; i < flush_end - addr; i += 3) {
-                dst_buffer[i] = gl_buffer[i + 2];
-                dst_buffer[i + 1] = gl_buffer[i + 1];
-                dst_buffer[i + 2] = gl_buffer[i];
-            }
+        if (pixel_format == PixelFormat::RGBA8 || pixel_format == PixelFormat::RGB8) {
+            // Dirty ownership can split inside a pixel after a CPU byte write.
+            // Do not overwrite the neighboring CPU-owned bytes when flushing it.
+            if (pixel_format == PixelFormat::RGBA8)
+                FlushLinearSwapped<4>(dst_buffer, gl_buffer.data(), start_offset, end_offset);
+            else
+                FlushLinearSwapped<3>(dst_buffer, gl_buffer.data(), start_offset, end_offset);
         } else {
             std::memcpy(dst_buffer + start_offset, &gl_buffer[start_offset], flush_end - flush_start);
         }
@@ -705,9 +725,10 @@ void CachedSurface::UploadGLTexture(const Common::Rectangle<u32>& rect) {
 void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceDownload);
     u32 bytes_per_pixel = GetGLBytesPerPixel(pixel_format);
+    const bool repack_color = GLES && type == SurfaceType::Color && pixel_format != PixelFormat::RGBA8;
     if (Common::FrameTiming::counters.enabled) {
         ++Common::FrameTiming::counters.surface_download_calls;
-        Common::FrameTiming::counters.surface_download_bytes += u64(rect.GetWidth()) * rect.GetHeight() * bytes_per_pixel;
+        Common::FrameTiming::counters.surface_download_bytes += u64(rect.GetWidth()) * rect.GetHeight() * (repack_color ? 4 : bytes_per_pixel);
     }
     const FormatTuple& tuple = GetFormatTuple(pixel_format);
     if (gl_buffer.empty()) {
@@ -756,10 +777,63 @@ void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
         glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D,
                                target_tex, 0);
     }
-    glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
-                 static_cast<GLsizei>(rect.GetHeight()), tuple.format, tuple.type,
-                 &gl_buffer[buffer_offset]);
+    static const bool wait_trace = [] {
+        const char* value = std::getenv("CARA_READBACK_WAIT_TRACE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    last_download_wait_seconds = last_download_read_seconds = last_download_pack_seconds = 0;
+    // ES only guarantees RGBA/UNSIGNED_BYTE for normalized color readback.
+    // Upload tuples such as RGB/UNSIGNED_BYTE and packed 16-bit formats need
+    // not be accepted by glReadPixels, even when the framebuffer is complete.
+    GLenum read_format = tuple.format;
+    GLenum read_type = tuple.type;
+    u8* read_destination = &gl_buffer[buffer_offset];
+    if (repack_color) {
+        rgba_readback_buffer.resize(size_t(rect.GetWidth()) * rect.GetHeight() * 4);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        read_format = GL_RGBA;
+        read_type = GL_UNSIGNED_BYTE;
+        read_destination = rgba_readback_buffer.data();
+    }
+    if (wait_trace) {
+        // Diagnostic only: explicitly complete queued GPU work before reading.
+        // The remaining read can still include tile export/format conversion.
+        auto started = std::chrono::steady_clock::now();
+        {
+            Common::FrameTiming::Scope wait_timing(Common::FrameTiming::Phase::GPUWait);
+            glFinish();
+        }
+        last_download_wait_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        started = std::chrono::steady_clock::now();
+        glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
+                     static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
+                     read_destination);
+        last_download_read_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    } else {
+        glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
+                     static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
+                     read_destination);
+    }
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    if (repack_color) {
+        const auto started = std::chrono::steady_clock::now();
+        Common::FrameTiming::Scope pack_timing(Common::FrameTiming::Phase::SurfacePack);
+        const u8* source = rgba_readback_buffer.data();
+        for (u32 y = 0; y < rect.GetHeight(); ++y) {
+            u8* destination = &gl_buffer[buffer_offset + size_t(y) * stride * bytes_per_pixel];
+            for (u32 x = 0; x < rect.GetWidth(); ++x, source += 4, destination += bytes_per_pixel) {
+                if (pixel_format == PixelFormat::RGB8) {
+                    std::memcpy(destination, source, 3);
+                } else {
+                    const u16 pixel = pixel_format == PixelFormat::RGB565 ? ColorReadback::PackRGB565(source)
+                                    : pixel_format == PixelFormat::RGB5A1 ? ColorReadback::PackRGB5A1(source)
+                                                                         : ColorReadback::PackRGBA4(source);
+                    std::memcpy(destination, &pixel, sizeof(pixel));
+                }
+            }
+        }
+        last_download_pack_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    }
 }
 
 void CachedSurface::DumpToFile() {
@@ -897,6 +971,13 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
 }
 
 RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
+    const auto enabled = [](const char* name) {
+        const char* value = std::getenv(name);
+        return value && std::strcmp(value, "1") == 0;
+    };
+    trace_flushes = enabled("CARA_SURFACE_FLUSH_TRACE");
+    retain_small_cpu_writes = enabled("CARA_RETAIN_SMALL_CPU_WRITES");
+    gpu_surface_remap = enabled("CARA_GPU_SURFACE_REMAP");
     resolution_scale_factor = VideoCore::GetResolutionScaleFactor();
     format_reinterpreter = std::make_unique<FormatReinterpreterOpenGL>();
 
@@ -905,8 +986,103 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
 }
 
 RasterizerCacheOpenGL::~RasterizerCacheOpenGL() {
+    if (trace_flushes) WriteFlushTrace();
     g_read_framebuffer.Release();
     g_draw_framebuffer.Release();
+}
+
+void RasterizerCacheOpenGL::RecordFlush(const Surface& surface, u32 requested_bytes, u32 width,
+                                       u32 height, double seconds) {
+    const u32 format = static_cast<u32>(surface->pixel_format);
+    auto found = std::find_if(flush_trace.begin(), flush_trace.end(), [&](const auto& item) {
+        return item.reason == flush_reason && item.requested_bytes == requested_bytes &&
+               item.surface_address == surface->addr && item.pixel_format == format &&
+               item.width == width && item.height == height && item.source_params.ExactMatch(*surface) &&
+               (flush_reason != FlushReason::Validation || item.destination_params.ExactMatch(validation_destination));
+    });
+    // Bounded diagnostics only; the last bucket aggregates otherwise unseen cases.
+    if (found == flush_trace.end()) {
+        if (flush_trace.size() < 128) {
+            flush_trace.push_back({flush_reason, requested_bytes, surface->addr, format, width, height});
+            found = std::prev(flush_trace.end());
+            found->source_params = *surface;
+            if (flush_reason == FlushReason::Validation) {
+                found->destination_params = validation_destination;
+                const auto& dst = validation_destination;
+                if (surface->pixel_format != dst.pixel_format) found->copy_reject_bits |= 1;
+                if (surface->is_tiled != dst.is_tiled) found->copy_reject_bits |= 2;
+                if (dst.stride != surface->stride && dst.height > (surface->is_tiled ? 8u : 1u)) found->copy_reject_bits |= 4;
+                if (dst.addr < surface->addr || dst.end > surface->end) found->copy_reject_bits |= 8;
+                if (dst.addr >= surface->addr && (dst.addr - surface->addr) % surface->BytesInPixels(surface->is_tiled ? 64 : 1)) found->copy_reject_bits |= 16;
+                if (dst.addr >= surface->addr && surface->GetSubRect(dst).right > surface->stride) found->copy_reject_bits |= 32;
+                if (boost::icl::length(dst.GetCopyableInterval(surface)) == 0) found->copy_reject_bits |= 64;
+            }
+#if defined(__APPLE__)
+            if (flush_reason == FlushReason::External) {
+                void* addresses[16]{};
+                const int count = backtrace(addresses, 16);
+                for (int i = 0; i < count; ++i) {
+                    Dl_info info{};
+                    dladdr(addresses[i], &info);
+                    found->stack.push_back({reinterpret_cast<std::uintptr_t>(addresses[i]),
+                        reinterpret_cast<std::uintptr_t>(info.dli_fbase),
+                        info.dli_fname ? info.dli_fname : "",
+                        info.dli_sname ? info.dli_sname : ""});
+                }
+            }
+#endif
+        } else {
+            if (flush_trace.size() == 128) {
+                flush_trace.push_back({FlushReason::External, 0, 0, ~0u, 0, 0});
+            }
+            found = std::prev(flush_trace.end());
+        }
+    }
+    ++found->calls;
+    const bool repacked = GLES && surface->type == SurfaceType::Color && surface->pixel_format != PixelFormat::RGBA8;
+    found->readback_bytes += u64(width) * height * (repacked ? 4 : CachedSurface::GetGLBytesPerPixel(surface->pixel_format));
+    found->seconds += seconds;
+    found->wait_seconds += surface->last_download_wait_seconds;
+    found->read_seconds += surface->last_download_read_seconds;
+    found->pack_seconds += surface->last_download_pack_seconds;
+}
+
+void RasterizerCacheOpenGL::WriteFlushTrace() const {
+    std::ofstream file(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "surface-flushes.json");
+    const char* wait = std::getenv("CARA_READBACK_WAIT_TRACE");
+    file << "{\"wait_instrumented\":" << (wait && std::strcmp(wait, "1") == 0 ? "true" : "false")
+         << ",\"reasons\":[\"external\",\"validation\",\"small_cpu_write\",\"all\"],\"entries\":[";
+    for (size_t i = 0; i < flush_trace.size(); ++i) {
+        const auto& item = flush_trace[i];
+        file << (i ? "," : "") << "{\"reason\":" << unsigned(item.reason)
+             << ",\"requested_bytes\":" << item.requested_bytes
+             << ",\"surface_address\":" << item.surface_address
+             << ",\"format\":" << item.pixel_format << ",\"width\":" << item.width
+             << ",\"height\":" << item.height << ",\"calls\":" << item.calls
+             << ",\"readback_bytes\":" << item.readback_bytes
+             << ",\"seconds\":" << item.seconds
+             << ",\"wait_seconds\":" << item.wait_seconds
+             << ",\"read_seconds\":" << item.read_seconds
+             << ",\"pack_seconds\":" << item.pack_seconds << ",\"stack\":[";
+        for (size_t frame = 0; frame < item.stack.size(); ++frame) {
+            const auto& entry = item.stack[frame];
+            file << (frame ? "," : "") << "{\"address\":" << entry.address
+                 << ",\"image_base\":" << entry.image_base
+                 << ",\"image\":" << std::quoted(entry.image)
+                 << ",\"symbol\":" << std::quoted(entry.symbol) << '}';
+        }
+        const auto params = [&](const char* name, const SurfaceParams& p) {
+            file << ",\"" << name << "\":{\"address\":" << p.addr << ",\"size\":" << p.size
+                 << ",\"format\":" << unsigned(p.pixel_format) << ",\"width\":" << p.width
+                 << ",\"height\":" << p.height << ",\"stride\":" << p.stride
+                 << ",\"tiled\":" << (p.is_tiled ? "true" : "false") << ",\"scale\":" << p.res_scale << '}';
+        };
+        file << "]";
+        params("source", item.source_params);
+        if (item.reason == FlushReason::Validation) params("destination", item.destination_params);
+        file << ",\"copy_reject_bits\":" << item.copy_reject_bits << '}';
+    }
+    file << "]}\n";
 }
 
 bool RasterizerCacheOpenGL::BlitSurfaces(const Surface& src_surface,
@@ -1488,6 +1664,40 @@ void RasterizerCacheOpenGL::DuplicateSurface(const Surface& src_surface,
     }
 }
 
+bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const SurfaceParams& params) {
+    const auto eligible = [](const Surface& surface) {
+        return surface->pixel_format == PixelFormat::RGBA8 && surface->res_scale == 1 &&
+               surface->width != 0 && surface->height != 0 && surface->width == surface->stride &&
+               (!surface->is_tiled || ((surface->width | surface->height) & 7) == 0) &&
+               (surface->addr & 3) == 0 && surface->texture.handle != 0 && !surface->custom_tex_info;
+    };
+    if (!GLES || !eligible(destination)) return false;
+    const auto interval = params.GetInterval();
+    if (params.addr < destination->addr || params.end > destination->end) return false;
+    for (const auto& group : RangeFromInterval(surface_cache, interval)) {
+        for (const auto& source : group.second) {
+            // A cached byte interval can cover padding that has no corresponding
+            // texel. Restrict this first path to dense, native-resolution surfaces.
+            if (source == destination || !eligible(source) ||
+                source->texture.handle == destination->texture.handle ||
+                params.addr < source->addr || params.end > source->end ||
+                !source->IsRegionValid(interval)) continue;
+            Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceRemap);
+            if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
+            if (!surface_remapper->RemapRGBA8(source->texture.handle, *source,
+                                              destination->texture.handle, *destination,
+                                              destination->GetSubRect(params))) continue;
+            destination->InvalidateAllWatcher();
+            if (Common::FrameTiming::counters.enabled) {
+                ++Common::FrameTiming::counters.surface_remap_calls;
+                Common::FrameTiming::counters.surface_remap_bytes += params.size;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, u32 size) {
     if (size == 0)
         return;
@@ -1524,6 +1734,13 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
             continue;
         }
 
+        // Preserve guest byte addressing across a tiling/stride alias without
+        // synchronously exporting the source render target through CPU memory.
+        if (gpu_surface_remap && TryRemapSurface(surface, params)) {
+            notify_validated(params.GetInterval());
+            continue;
+        }
+
         // Try to find surface in cache with different format
         // that can can be reinterpreted to the requested format.
         if (ValidateByReinterpretation(surface, params, interval)) {
@@ -1548,7 +1765,14 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
 
         // Load data from 3DS memory
         if (surface->pixel_format < PixelFormat::D16) {
-            FlushRegion(params.addr, params.size);
+            {
+                const auto previous_reason = flush_reason;
+                const auto previous_destination = validation_destination;
+                if (trace_flushes) validation_destination = surface->FromInterval(interval);
+                flush_reason = FlushReason::Validation;
+                SCOPE_EXIT({ flush_reason = previous_reason; validation_destination = previous_destination; });
+                FlushRegion(params.addr, params.size);
+            }
             surface->LoadGLBuffer(params.addr, params.end);
             surface->UploadGLTexture(surface->GetSubRect(params));
         } else {
@@ -1620,7 +1844,7 @@ bool RasterizerCacheOpenGL::ValidateByReinterpretation(const Surface& surface,
 }
 
 void RasterizerCacheOpenGL::FlushRegion(PAddr addr, u32 size, const Surface& flush_surface) {
-    if (size == 0 || dirty_regions.rbegin()->first.upper() < addr) {
+    if (size == 0 || dirty_regions.empty() || dirty_regions.rbegin()->first.upper() < addr) {
         return;
     }
 
@@ -1640,7 +1864,15 @@ void RasterizerCacheOpenGL::FlushRegion(PAddr addr, u32 size, const Surface& flu
         if (!GLES || surface->pixel_format < PixelFormat::D16) {
             if (surface->type != SurfaceType::Fill) {
                 SurfaceParams params = surface->FromInterval(interval);
-                surface->DownloadGLTexture(surface->GetSubRect(params));
+                const auto rect = surface->GetSubRect(params);
+                if (trace_flushes) {
+                    const auto started = std::chrono::steady_clock::now();
+                    surface->DownloadGLTexture(rect);
+                    RecordFlush(surface, size, rect.GetWidth(), rect.GetHeight(),
+                                std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+                } else {
+                    surface->DownloadGLTexture(rect);
+                }
             }
             surface->FlushGLBuffer(boost::icl::first(interval), boost::icl::last_next(interval));
         }
@@ -1651,6 +1883,9 @@ void RasterizerCacheOpenGL::FlushRegion(PAddr addr, u32 size, const Surface& flu
 }
 
 void RasterizerCacheOpenGL::FlushAll() {
+    const auto previous_reason = flush_reason;
+    flush_reason = FlushReason::All;
+    SCOPE_EXIT({ flush_reason = previous_reason; });
     FlushRegion(0, 0xFFFFFFFF);
 }
 
@@ -1686,7 +1921,7 @@ void RasterizerCacheOpenGL::SetScaleFactor(u16 scale) {
 }
 
 void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface& region_owner) {
-    if (size == 0 || surface_cache.rbegin()->first.upper() < addr) {
+    if (size == 0 || surface_cache.empty() || surface_cache.rbegin()->first.upper() < addr) {
         return;
     }
 
@@ -1707,11 +1942,18 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
 
             // If cpu is invalidating this region we want to remove it
             // to (likely) mark the memory pages as uncached
-            if (region_owner == nullptr && size <= 8) {
+            const bool retain_small_write = retain_small_cpu_writes && !Settings::values.skip_cpu_write &&
+                                            cached_surface->pixel_format == PixelFormat::RGBA8;
+            if (region_owner == nullptr && size <= 8 && !retain_small_write) {
                 if (Settings::values.skip_cpu_write) {
                     continue;
                 }
-                FlushRegion(cached_surface->addr, cached_surface->size, cached_surface);
+                {
+                    const auto previous_reason = flush_reason;
+                    flush_reason = FlushReason::SmallCPUWrite;
+                    SCOPE_EXIT({ flush_reason = previous_reason; });
+                    FlushRegion(cached_surface->addr, cached_surface->size, cached_surface);
+                }
                 remove_surfaces.emplace(cached_surface);
                 if (Common::FrameTiming::counters.enabled)
                     ++Common::FrameTiming::counters.cpu_surface_invalidations;
@@ -1719,6 +1961,8 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
                 continue;
             }
 
+            // The retained path uses the same interval ownership as bulk CPU writes:
+            // discard only overwritten GPU bytes and preserve every other dirty byte.
             const auto interval = cached_surface->GetInterval() & invalid_interval;
             cached_surface->invalid_regions.insert(interval);
             cached_surface->InvalidateAllWatcher();

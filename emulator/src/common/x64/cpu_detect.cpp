@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2013 Dolphin Emulator Project / 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -50,7 +51,7 @@ static CPUCaps Detect() {
     CPUCaps caps = {};
 
     // Assumes the CPU supports the CPUID instruction. Those that don't would likely not support
-    // Citra at all anyway
+    // Cara at all anyway
 
     int cpu_id[4];
     memset(caps.brand_string, 0, sizeof(caps.brand_string));

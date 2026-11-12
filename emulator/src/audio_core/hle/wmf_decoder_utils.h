@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2019 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -40,7 +41,7 @@ struct Symbol {
     T* ptr_symbol = nullptr;
 };
 
-// Runtime load the MF symbols to prevent mf.dll not found errors on citra load
+// Runtime load the MF symbols to prevent mf.dll not found errors on cara load
 extern Symbol<HRESULT(ULONG, DWORD)> MFStartup;
 extern Symbol<HRESULT(void)> MFShutdown;
 extern Symbol<HRESULT(IUnknown*)> MFShutdownObject;

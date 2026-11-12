@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -107,7 +108,7 @@ static const EULAVersion MAX_EULA_VERSION = {0x7F, 0x7F};
 static const ConsoleModelInfo CONSOLE_MODEL_OLD = {NINTENDO_3DS_XL, {0, 0, 0}};
 static const ConsoleModelInfo CONSOLE_MODEL_NEW = {NEW_NINTENDO_3DS_XL, {0, 0, 0}};
 static const u8 CONSOLE_LANGUAGE = LANGUAGE_EN;
-static const UsernameBlock CONSOLE_USERNAME_BLOCK = {u"CITRA", 0, 0};
+static const UsernameBlock CONSOLE_USERNAME_BLOCK = {u"CARA", 0, 0};
 static const BirthdayBlock PROFILE_BIRTHDAY = {3, 25}; // March 25th, 2014
 static const u8 SOUND_OUTPUT_MODE = SOUND_SURROUND;
 static const u8 UNITED_STATES_COUNTRY_ID = 49;

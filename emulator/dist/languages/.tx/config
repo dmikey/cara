@@ -1,7 +1,7 @@
 [main]
 host = https://www.transifex.com
 
-[citra.emulator]
+[cara.emulator]
 file_filter = <lang>.ts
 source_file = en.ts
 source_lang = en

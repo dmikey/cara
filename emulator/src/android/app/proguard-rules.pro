@@ -21,5 +21,5 @@
 #-renamesourcefileattribute SourceFile
 
 -keepclasseswithmembernames class * { native <methods>; }
--keep class org.citra.emu.NativeLibrary { *; }
--keep interface org.citra.emu.NativeLibrary$OnScreenshotCompleteListener {*;}
+-keep class org.cara.emu.NativeLibrary { *; }
+-keep interface org.cara.emu.NativeLibrary$OnScreenshotCompleteListener {*;}

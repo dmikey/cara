@@ -1,3 +1,26 @@
+# Modified for Cara on 2026-11-12; see NOTICE for attribution.
+# Diagnostic compiler controls; these do not change guest instruction semantics.
+option(CARA_FASTINTERP_NO_LTO "Compile the interpreter without ThinLTO for comparison" OFF)
+option(CARA_FASTINTERP_NO_TAIL_MERGE "Compare separate interpreter dispatch tails" OFF)
+option(CARA_FASTINTERP_PIN_PAGE_TABLE "Compare ARM64 page-table base pinned to x28" OFF)
+if(CARA_FASTINTERP_PIN_PAGE_TABLE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "CARA_FASTINTERP_PIN_PAGE_TABLE requires Clang")
+    endif()
+    set_property(SOURCE arm/fastinterp/fastinterp.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS CARA_FASTINTERP_PIN_PAGE_TABLE=1)
+endif()
+if(CARA_FASTINTERP_NO_LTO OR CARA_FASTINTERP_NO_TAIL_MERGE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "FastInterp compiler experiments require Clang")
+    endif()
+    set_property(SOURCE arm/fastinterp/fastinterp.cpp APPEND PROPERTY COMPILE_OPTIONS -fno-lto)
+endif()
+if(CARA_FASTINTERP_NO_TAIL_MERGE)
+    set_property(SOURCE arm/fastinterp/fastinterp.cpp APPEND PROPERTY
+        COMPILE_OPTIONS -mllvm -enable-tail-merge=false)
+endif()
+
 add_library(core STATIC
     arm/fastinterp/fastinterp.cpp
     arm/fastinterp/fastinterp_decode.cpp
@@ -460,7 +483,7 @@ add_library(core STATIC
     settings.h
     telemetry_session.cpp
     telemetry_session.h
-    tracer/citrace.h
+    tracer/cara_trace.h
     tracer/recorder.cpp
     tracer/recorder.h
 )
@@ -492,10 +515,13 @@ target_link_libraries(core PRIVATE Boost::serialization libzstd_static)
 
 file(GLOB_RECURSE CARA_STATE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/core/*.cpp" "${CMAKE_SOURCE_DIR}/src/core/*.h"
+    "${CMAKE_SOURCE_DIR}/src/core/*.inc"
     "${CMAKE_SOURCE_DIR}/src/audio_core/*.cpp" "${CMAKE_SOURCE_DIR}/src/audio_core/*.h"
     "${CMAKE_SOURCE_DIR}/src/video_core/*.cpp" "${CMAKE_SOURCE_DIR}/src/video_core/*.h"
     "${CMAKE_SOURCE_DIR}/src/common/*.cpp" "${CMAKE_SOURCE_DIR}/src/common/*.h"
     "${CMAKE_SOURCE_DIR}/src/network/*.cpp" "${CMAKE_SOURCE_DIR}/src/network/*.h")
+# Build dates and branch names do not change the serialized engine layout.
+list(FILTER CARA_STATE_SOURCES EXCLUDE REGEX "/common/scm_rev\\.cpp$")
 list(SORT CARA_STATE_SOURCES)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CARA_STATE_SOURCES})
 set(CARA_STATE_SIGNATURE "cara-state-1;${CMAKE_SYSTEM_NAME};${CMAKE_CXX_COMPILER_ID};${CMAKE_CXX_COMPILER_VERSION};${CMAKE_OSX_ARCHITECTURES};${CMAKE_SYSTEM_PROCESSOR};${CMAKE_SIZEOF_VOID_P}")

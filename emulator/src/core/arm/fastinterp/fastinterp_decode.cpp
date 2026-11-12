@@ -5,6 +5,7 @@
 // FastInterp decode: raw ARM/Thumb16/Thumb32 instructions -> DecodedInst.
 
 #include <bit>
+#include <cstdlib>
 #include <cstring>
 #include "core/arm/fastinterp/arm_tick_counts.h"
 #include "core/arm/fastinterp/fastinterp.h"
@@ -341,6 +342,7 @@ FlagEffects ClassifyFlagEffects(const DecodedInst& inst) {
     // Loads/stores, branches, and other NZCV-neutral ARM instructions
     case Opcode::EndBlock:
     case Opcode::Nop:
+    case Opcode::Bkpt:
     case Opcode::Ldr:
     case Opcode::LdrB:
     case Opcode::LdrH:
@@ -1439,6 +1441,109 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     }
 
     fusion_stats_.dead_flags_eliminated += EliminateDeadFlags(block);
+
+    // Default-off experiment: preserve original block ranges, slots and chain
+    // quantum. Only combine an ADD and an already fused immediate CMP/Bcc;
+    // never fetch across the original decoded block boundary or skip
+    // iterations.
+    static const bool add_cmp_immediate = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_ADD_CMP_IMM");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (add_cmp_immediate && !is_thumb) {
+        for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
+            auto& add = block->instructions[slot];
+            const auto& cmp = block->instructions[slot + 1];
+            if (add.opcode == Opcode::Add && add.cond == 0xE && add.rd != 15 && add.dp.rn != 15 &&
+                add.dp.rm == 0xFF && add.inst_size == 4 && cmp.opcode == Opcode::FusedCmpBcc &&
+                cmp.fused.rn == add.rd && cmp.inst_size == 8) {
+                // Keep both predecoded operand layouts intact. Dead-flag
+                // elimination may have produced this ADD from an ADD.S; its
+                // flags are unobservable because the unconditional CMP replaces them.
+                add.opcode = Opcode::AddCmpImmBcc;
+                add.ticks += cmp.ticks;
+                ++slot;
+            }
+        }
+    }
+
+    // Pair only: no branch lookahead and no change to original slot sizes,
+    // decoded source ranges, block limits or timer/chaining boundaries.
+    static const bool vcmp_vmrs = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_VCMP_VMRS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (vcmp_vmrs && !is_thumb) {
+        for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
+            auto& compare = block->instructions[slot];
+            const auto& transfer = block->instructions[slot + 1];
+            if (compare.opcode == Opcode::VcmpS && compare.cond == 0xE && compare.inst_size == 4 &&
+                transfer.opcode == Opcode::Vmrs && transfer.cond == 0xE && transfer.vfp.rt == 15 &&
+                transfer.inst_size == 4) {
+                compare.opcode = Opcode::VcmpVmrsS;
+                compare.ticks += transfer.ticks;
+                ++slot; // The pair handler skips this retained VMRS slot.
+            }
+        }
+    }
+
+    // Pack only within an already decoded block, retaining its original slots.
+    // The handler skips the three consumed slots. Keeping source ranges and
+    // slot counts fixed preserves both decode limits and the chaining quantum.
+    static const unsigned vector_mul = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_VFP_SIMD");
+        if (value && std::strcmp(value, "3") == 0) return 3u;
+        if (value && std::strcmp(value, "2") == 0) return 2u;
+        return value && std::strcmp(value, "1") == 0 ? 1u : 0u;
+    }();
+    if (vector_mul && !is_thumb) {
+        u32 group_pc = pc;
+        for (unsigned slot = 0; slot + 3 < block->inst_count;) {
+            auto& inst = block->instructions[slot];
+#ifdef __aarch64__
+            // ARM64 scalar VMLA currently contracts to FMADD. Its packed form
+            // preserves that behavior; other host FP contraction policies vary.
+            const bool accumulate = vector_mul == 3 && inst.opcode == Opcode::VmlaS;
+#else
+            constexpr bool accumulate = false;
+#endif
+            std::array<DecodedInst, 4> group;
+            std::copy_n(&inst, 4, group.begin());
+            bool valid = (group_pc & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 15;
+            bool consecutive_dest = true, scalar_left = true, scalar_right = true;
+            for (unsigned i = 0; i < 4; ++i) {
+                valid &= group[i].opcode == (accumulate ? Opcode::VmlaS : Opcode::VmulS) && group[i].cond == 0xE && group[i].inst_size == 4;
+                consecutive_dest &= group[i].vfp.sd == group[0].vfp.sd + i;
+                scalar_left &= group[i].vfp.sn == group[0].vfp.sn && group[i].vfp.sm == group[0].vfp.sm + i;
+                scalar_right &= group[i].vfp.sm == group[0].vfp.sm && group[i].vfp.sn == group[0].vfp.sn + i;
+                for (unsigned j = 0; j < i; ++j)
+                    valid &= group[i].vfp.sn != group[j].vfp.sd && group[i].vfp.sm != group[j].vfp.sd && (!accumulate || group[i].vfp.sd != group[j].vfp.sd);
+            }
+            if (!valid || (!(consecutive_dest && (scalar_left || scalar_right)) && vector_mul < 2)) {
+                group_pc += inst.inst_size;
+                ++slot;
+                continue;
+            }
+            if (consecutive_dest && (scalar_left || scalar_right)) {
+                const u8 vector_start = scalar_left ? inst.vfp.sm : inst.vfp.sn;
+                const u8 scalar = scalar_left ? inst.vfp.sn : inst.vfp.sm;
+                inst.opcode = accumulate ? Opcode::Vmla4S : Opcode::Vmul4S;
+                inst.vfp.sn = vector_start; inst.vfp.sm = scalar; inst.vfp.flags = scalar_left;
+            } else {
+                inst.opcode = accumulate ? Opcode::Vmla4Gather : Opcode::Vmul4Gather;
+                for (unsigned i = 0; i < 4; ++i) {
+                    inst.vfp4.sd[i] = group[i].vfp.sd;
+                    inst.vfp4.sn[i] = group[i].vfp.sn;
+                    inst.vfp4.sm[i] = group[i].vfp.sm;
+                }
+            }
+            inst.inst_size = 16;
+            inst.ticks = 0;
+            for (const auto& original : group) inst.ticks += original.ticks;
+            group_pc += 16;
+            slot += 4;
+        }
+    }
 
     // Append the EndBlock terminator. Every block gets one - conditional
     // block-enders (Bcc, fused not-taken paths, conditional Bx, ...) DISPATCH on
@@ -2741,6 +2846,15 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
             return;
         }
         out.opcode = Opcode::Invalid;
+        return;
+    }
+
+    // Match DynCom's BKPT behavior, including legacy conditional encodings.
+    // Keep it distinct from Invalid so a failed predicate stays in the threaded
+    // dispatch path instead of leaving to invalid-instruction recovery.
+    if (decode_breakpoints_ && (inst & 0x0FF000F0) == 0x01200070) {
+        out.opcode = Opcode::Bkpt;
+        out.imm32 = ((inst >> 8) & 0xFFF) << 4 | (inst & 0xF);
         return;
     }
 

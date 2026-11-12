@@ -37,7 +37,10 @@ jobs:
           xcodebuild -version
           uname -m
       - name: Validate bundled source (no fetch)
-        run: python3 tools/prepare.py
+        run: |
+          python3 tools/prepare.py
+          python3 tools/audit_branding.py
+          python3 -m py_compile tools/benchmark_gpu_inputs.py tools/capture_profile_checkpoint.py tools/summarize_phase_cpu.py tools/sample_device_stacks.py tools/_sample_device_stacks_lldb.py tools/benchmark_speed_cap.py tools/build_ios_shell_preview.py tools/make_skin.py
       - name: Build
         run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
       - name: Audit linked no-JIT binary
@@ -46,17 +49,40 @@ jobs:
         if: matrix.platform == 'mac'
         run: |
           work/build-mac/bin/cara-no-jit-probe --self-test work/io-self-test
+          work/build-mac/bin/cara-extdata-state-self-test work/extdata-state-regression
           python3 tools/make_test_elf.py work/state-counter.elf
           work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression
           CARA_TEST_NEW_3DS=1 work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-new3ds
+          CARA_TEST_NEW_3DS=1 CARA_TEST_CPU_PERCENT=70 work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-underclock
           CARA_CPU_BACKEND=dyncom work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-dyncom
+          work/build-mac/bin/cara-clock-self-test
+          work/build-mac/bin/cara-vertex-upload-bank-self-test
+          work/build-mac/bin/cara-frame-pacer-self-test
           work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_VFP_SIMD=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_VFP_SIMD=2 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_VFP_SIMD=3 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=0 work/build-mac/bin/cara-fastinterp-self-test > work/add-cmp-off.txt
+          CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=1 work/build-mac/bin/cara-fastinterp-self-test > work/add-cmp-on.txt
+          diff -u work/add-cmp-off.txt work/add-cmp-on.txt
+          CARA_ADD_CMP_SETFLAGS=1 CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=0 work/build-mac/bin/cara-fastinterp-self-test > work/adds-cmp-off.txt
+          CARA_ADD_CMP_SETFLAGS=1 CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=1 work/build-mac/bin/cara-fastinterp-self-test > work/adds-cmp-on.txt
+          diff -u work/adds-cmp-off.txt work/adds-cmp-on.txt
+          CARA_VCMP_VMRS_TEST=1 CARA_FASTINTERP_VCMP_VMRS=0 work/build-mac/bin/cara-fastinterp-self-test > work/vcmp-off.txt
+          CARA_VCMP_VMRS_TEST=1 CARA_FASTINTERP_VCMP_VMRS=1 work/build-mac/bin/cara-fastinterp-self-test > work/vcmp-on.txt
+          diff -u work/vcmp-off.txt work/vcmp-on.txt
+          CARA_FASTINTERP_ADD_CMP_IMM=1 CARA_FASTINTERP_VCMP_VMRS=1 CARA_FASTINTERP_VFP_SIMD=3 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-core-cache-self-test
           work/build-mac/bin/cara-audio-buffer-self-test
           CARA_DISABLE_FAST_DECODE_LOOKUP=1 work/build-mac/bin/cara-core-cache-self-test
           work/build-mac/bin/cara-interval-cache-self-test
           work/build-mac/bin/cara-input-self-test
           work/build-mac/bin/cara-save-sync-self-test
+          work/build-mac/bin/cara-play-profile-self-test
+          work/build-mac/bin/cara-input-hub-self-test
+          work/build-mac/bin/cara-state-catalog-self-test
+          work/build-mac/bin/cara-configuration-self-test
+          work/build-mac/bin/cara-library-self-test
           work/build-mac/bin/cara-skin-self-test
           CARA_RASTER_THREADS=1 work/build-mac/bin/cara-raster-self-test
           CARA_RASTER_THREADS=4 work/build-mac/bin/cara-raster-self-test

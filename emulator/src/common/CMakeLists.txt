@@ -1,6 +1,7 @@
+# Modified for Cara on 2026-11-12; see NOTICE for attribution.
 # Generate cpp with Git revision from template
 # Also if this is a CI build, add the build name (ie: Nightly, Canary) to the scm_rev file as well
-set(REPO_NAME "")
+set(REPO_NAME "Cara")
 set(BUILD_VERSION "0")
 if ($ENV{CI})
   if ($ENV{TRAVIS})
@@ -17,7 +18,7 @@ if ($ENV{CI})
     set(BUILD_TAG "$ENV{GITHUB_REF_NAME}")
   endif()
   # regex capture the string nightly or canary into CMAKE_MATCH_1
-  string(REGEX MATCH "citra-emu/citra-?(.*)" OUTVAR "${BUILD_REPOSITORY}")
+  string(REGEX MATCH "[^/]+/cara-?(.*)" OUTVAR "${BUILD_REPOSITORY}")
   if (${CMAKE_MATCH_COUNT} GREATER 0)
     # capitalize the first letter of each word in the repo name.
     string(REPLACE "-" ";" REPO_NAME_LIST ${CMAKE_MATCH_1})

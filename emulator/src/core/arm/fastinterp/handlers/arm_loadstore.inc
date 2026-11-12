@@ -409,14 +409,22 @@ handle_Ldm: {
 
     // count/base_off/wb_delta precomputed at decode (fold increment/before)
     u32 current = addr + inst->lsm.base_off;
-    u32 end_addr = current + inst->lsm.count * 4 - 4;
 
     // Fast path: if all accesses are on the same mapped page, use direct pointer
     // This avoids per-access null checks in the loop (critical for LDM performance)
     const u8* base_page = local_page_ptrs[current >> FASTINTERP_PAGE_BITS];
-    bool same_page = (current >> FASTINTERP_PAGE_BITS) == (end_addr >> FASTINTERP_PAGE_BITS);
+    bool same_page = inst->lsm.count && (current & FASTINTERP_PAGE_MASK) + inst->lsm.count * 4 <= FASTINTERP_PAGE_MASK + 1;
 
-    if (__builtin_expect(base_page != nullptr && same_page, 1)) {
+    if (ram_burst_ && inst->lsm.count <= 4 && base_page != nullptr && same_page) {
+        const u8* source = base_page + (current & FASTINTERP_PAGE_MASK);
+        u32 remaining = reg_list;
+        while (remaining) {
+            const u32 reg = std::countr_zero(remaining);
+            std::memcpy(&state_.regs[reg], source, 4);
+            source += 4;
+            remaining &= remaining - 1;
+        }
+    } else if (__builtin_expect(base_page != nullptr && same_page, 1)) {
         // Fast path: direct pointer access without per-iteration checks
         for (int i = 0; i < 16; i++) {
             if (reg_list & (1 << i)) {
@@ -463,13 +471,21 @@ handle_Stm: {
 
     // count/base_off/wb_delta precomputed at decode (fold increment/before)
     u32 current = addr + inst->lsm.base_off;
-    u32 end_addr = current + inst->lsm.count * 4 - 4;
 
     // Fast path: if all accesses are on the same mapped page, use direct pointer
     u8* base_page = local_page_ptrs[current >> FASTINTERP_PAGE_BITS];
-    bool same_page = (current >> FASTINTERP_PAGE_BITS) == (end_addr >> FASTINTERP_PAGE_BITS);
+    bool same_page = inst->lsm.count && (current & FASTINTERP_PAGE_MASK) + inst->lsm.count * 4 <= FASTINTERP_PAGE_MASK + 1;
 
-    if (__builtin_expect(base_page != nullptr && same_page, 1)) {
+    if (ram_burst_ && inst->lsm.count <= 4 && base_page != nullptr && same_page) {
+        u8* destination = base_page + (current & FASTINTERP_PAGE_MASK);
+        u32 remaining = reg_list;
+        while (remaining) {
+            const u32 reg = std::countr_zero(remaining);
+            std::memcpy(destination, &state_.regs[reg], 4);
+            destination += 4;
+            remaining &= remaining - 1;
+        }
+    } else if (__builtin_expect(base_page != nullptr && same_page, 1)) {
         // Fast path: direct pointer access without per-iteration checks
         for (int i = 0; i < 16; i++) {
             if (reg_list & (1 << i)) {

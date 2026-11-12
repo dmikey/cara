@@ -48,7 +48,7 @@ public:
             return MakeResult<std::size_t>(0);
         }
 
-        if (offset + length > size) {
+        if (length > size - offset) {
             length = size - offset;
         }
 
@@ -56,7 +56,15 @@ public:
     }
 
 private:
+    FixSizeDiskFile() = default;
     u64 size{};
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int) {
+        ar& boost::serialization::base_object<DiskFile>(*this);
+        ar& size;
+    }
+    friend class boost::serialization::access;
 };
 
 class ExtSaveDataDelayGenerator : public DelayGenerator {
@@ -313,3 +321,5 @@ void ArchiveFactory_ExtSaveData::WriteIcon(const Path& path, const u8* icon_data
 
 SERIALIZE_EXPORT_IMPL(FileSys::ExtSaveDataDelayGenerator)
 SERIALIZE_EXPORT_IMPL(FileSys::ExtSaveDataArchive)
+
+SERIALIZE_EXPORT_IMPL(FileSys::FixSizeDiskFile)

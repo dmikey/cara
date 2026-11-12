@@ -1,3 +1,4 @@
+# Modified for Cara on 2026-11-12; see NOTICE for attribution.
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJCXX)
 endif()
@@ -107,11 +108,11 @@ if(NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 if (ENABLE_SDL2)
-    add_subdirectory(citra)
+    add_subdirectory(cara)
 endif()
 
 if (ENABLE_QT)
-    add_subdirectory(citra_qt)
+    add_subdirectory(cara_qt)
 endif()
 if (ANDROID)
     add_subdirectory(android/jni)
@@ -124,10 +125,18 @@ if (ENABLE_WEB_SERVICE)
 endif()
 
 if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-vertex-upload-bank-self-test vertex_upload_bank_self_test.cpp)
+    target_include_directories(cara-vertex-upload-bank-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(cara-frame-pacer-self-test frame_pacer_self_test.cpp)
+    target_include_directories(cara-frame-pacer-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(cara-clock-self-test clock_self_test.cpp)
+    target_link_libraries(cara-clock-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-input-self-test input_self_test.cpp)
     add_executable(cara-audio-buffer-self-test audio_buffer_self_test.cpp)
     add_executable(cara-interval-cache-self-test interval_cache_self_test.cpp)
     target_link_libraries(cara-interval-cache-self-test PRIVATE Boost::boost)
+    add_executable(cara-extdata-state-self-test extdata_state_self_test.cpp)
+    target_link_libraries(cara-extdata-state-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-save-state-self-test save_state_self_test.cpp)
     target_link_libraries(cara-save-state-self-test PRIVATE core common nihstro-headers cryptopp libzstd_static ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-fastinterp-self-test fastinterp_self_test.cpp)
@@ -142,20 +151,54 @@ endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJCXX)
-    add_executable(cara-ios MACOSX_BUNDLE ios/main.mm ios/save_sync.mm ios/skin_layout.mm ios/skin_controls.mm ios/skins/CarbonDuo.deltaskin)
+    add_executable(cara-ios MACOSX_BUNDLE ios/main.mm ios/library_store.mm ios/shell_controllers.mm ios/input_hub.mm ios/state_catalog.mm ios/feature_controllers.mm ios/configuration_store.mm ios/save_sync.mm ios/skin_layout.mm ios/skin_controls.mm ios/skins/CarbonDuo.deltaskin)
     set_source_files_properties(ios/skins/CarbonDuo.deltaskin PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     target_compile_options(cara-ios PRIVATE -fobjc-arc)
     if (CARA_IOS_HARDWARE_RENDERER)
-        target_sources(cara-ios PRIVATE ios/gpu_vertex_self_test.cpp ios/gpu_depth_self_test.cpp)
+        target_sources(cara-ios PRIVATE ios/gpu_vertex_self_test.cpp ios/gpu_depth_self_test.cpp ios/gpu_state_self_test.cpp)
         target_link_libraries(cara-ios PRIVATE nihstro-headers)
         target_link_libraries(cara-ios PRIVATE glad "-framework OpenGLES")
     endif()
     target_link_libraries(cara-ios PRIVATE core common Threads::Threads
-        "-framework Foundation" "-lobjc" "-framework UIKit" "-framework CoreGraphics" "-framework UniformTypeIdentifiers" "-framework ImageIO" "-framework QuartzCore" z)
+        "-framework Foundation" "-lobjc" "-framework UIKit" "-framework CoreGraphics" "-framework UniformTypeIdentifiers" "-framework ImageIO" "-framework QuartzCore" "-framework GameController" z)
     set_target_properties(cara-ios PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist"
         XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
+
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    find_program(CARA_XCRUN xcrun REQUIRED)
+    set(CARA_ICON_PLATFORM iphoneos)
+    if (CMAKE_OSX_SYSROOT MATCHES "iphonesimulator|iPhoneSimulator")
+        set(CARA_ICON_PLATFORM iphonesimulator)
+    endif()
+    set(CARA_ICON_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cara-icons")
+    set(CARA_ICON_INFO "${CMAKE_CURRENT_BINARY_DIR}/cara-icon-info.plist")
+    set(CARA_ICON_STAMP "${CMAKE_CURRENT_BINARY_DIR}/cara-icons.stamp")
+    file(GLOB_RECURSE CARA_ICON_INPUTS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/ios/Assets.xcassets/*")
+    add_custom_command(OUTPUT "${CARA_ICON_STAMP}" "${CARA_ICON_INFO}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CARA_ICON_OUTPUT}"
+        COMMAND "${CARA_XCRUN}" actool
+            --compile "${CARA_ICON_OUTPUT}"
+            --platform "${CARA_ICON_PLATFORM}"
+            --minimum-deployment-target 15.0
+            --app-icon AppIcon --target-device iphone --target-device ipad
+            --output-partial-info-plist "${CARA_ICON_INFO}"
+            --output-format human-readable-text
+            "${CMAKE_CURRENT_SOURCE_DIR}/ios/Assets.xcassets"
+        COMMAND ${CMAKE_COMMAND} -E touch "${CARA_ICON_STAMP}"
+        DEPENDS ${CARA_ICON_INPUTS}
+        VERBATIM)
+    add_custom_target(cara-ios-icons DEPENDS "${CARA_ICON_STAMP}")
+    add_dependencies(cara-ios cara-ios-icons)
+    set_property(TARGET cara-ios APPEND PROPERTY LINK_DEPENDS "${CARA_ICON_STAMP}")
+    add_custom_command(TARGET cara-ios POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CARA_ICON_OUTPUT}" "$<TARGET_BUNDLE_DIR:cara-ios>"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/../tools/merge_icon_plist.py"
+            "$<TARGET_BUNDLE_DIR:cara-ios>/Info.plist" "${CARA_ICON_INFO}"
+        VERBATIM)
 endif()
 
 if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -164,6 +207,24 @@ if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_options(cara-save-sync-self-test PRIVATE -fobjc-arc -Wno-deprecated-declarations)
     target_include_directories(cara-save-sync-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(cara-save-sync-self-test PRIVATE "-framework Foundation")
+    add_executable(cara-play-profile-self-test ios/play_profile_self_test.cpp)
+    target_include_directories(cara-play-profile-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(cara-input-hub-self-test ios/input_hub_self_test.mm ios/input_hub.mm)
+    target_compile_options(cara-input-hub-self-test PRIVATE -fobjc-arc)
+    target_include_directories(cara-input-hub-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(cara-input-hub-self-test PRIVATE "-framework Foundation" "-framework GameController" "-framework CoreGraphics")
+    add_executable(cara-state-catalog-self-test ios/state_catalog_self_test.mm ios/state_catalog.mm ios/save_sync.mm)
+    target_compile_options(cara-state-catalog-self-test PRIVATE -fobjc-arc -Wno-deprecated-declarations)
+    target_include_directories(cara-state-catalog-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(cara-state-catalog-self-test PRIVATE "-framework Foundation")
+    add_executable(cara-configuration-self-test ios/configuration_store_self_test.mm ios/configuration_store.mm ios/save_sync.mm ios/skin_layout.mm)
+    target_compile_options(cara-configuration-self-test PRIVATE -fobjc-arc -Wno-deprecated-declarations)
+    target_include_directories(cara-configuration-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(cara-configuration-self-test PRIVATE "-framework Foundation" "-framework CoreGraphics" z)
+    add_executable(cara-library-self-test ios/library_store_self_test.mm ios/library_store.mm)
+    target_compile_options(cara-library-self-test PRIVATE -fobjc-arc)
+    target_include_directories(cara-library-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(cara-library-self-test PRIVATE "-framework Foundation")
     add_executable(cara-skin-self-test ios/skin_self_test.mm ios/skin_layout.mm)
     target_compile_options(cara-skin-self-test PRIVATE -fobjc-arc)
     target_include_directories(cara-skin-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

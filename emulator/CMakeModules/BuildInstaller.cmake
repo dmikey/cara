@@ -1,3 +1,4 @@
+# Modified for Cara on 2026-11-12; see NOTICE for attribution.
 # To use this as a script, make sure you pass in the variables SRC_DIR BUILD_DIR and TARGET_FILE
 
 if(WIN32)
@@ -20,7 +21,7 @@ file(DOWNLOAD https://github.com/citra-emu/ext-windows-bin/raw/master/qtifw/${AR
 execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf "${BUILD_DIR}/${ARCHIVE}"
     WORKING_DIRECTORY "${BUILD_DIR}/")
 
-set(TARGET_NAME "citra-setup-${PLATFORM}")
+set(TARGET_NAME "cara-setup-${PLATFORM}")
 set(CONFIG_FILE "${SRC_DIR}/config/config_${PLATFORM}.xml")
 set(INSTALLER_BASE "${BUILD_DIR}/installerbase_${PLATFORM}")
 set(BINARY_CREATOR "${BUILD_DIR}/binarycreator_${PLATFORM}")

@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Cara on 2026-11-12; see NOTICE for attribution. -->
 <resources>
 
     <!-- Title of the app -->
-    <string name="app_name">Citra</string>
-    <string name="app_name_version">Citra %1$s</string>
+    <string name="app_name">Cara</string>
+    <string name="app_name_version">Cara %1$s</string>
     <string name="host">app</string>
-    <string name="scheme">citra</string>
+    <string name="scheme">cara</string>
 
     <string name="error">Ошибка</string>
     <string name="about">О приложении</string>
-    <string name="citra_official_website">Офиц. сайт Citra</string>
+    <string name="cara_official_website">Офиц. сайт Cara</string>
     <string name="open_weibo">Weibo: EMU-MMJ</string>
     <string name="latest_version">Последняя версия</string>
     <string name="connection_error">Ошибка соединения</string>
@@ -28,7 +29,7 @@
     <string name="text_amiibo">Amiibo</string>
     <string name="text_load_amiibo">Загрузить</string>
     <string name="text_remove_amiibo">Удалить</string>
-    <string name="text_amiibo_hint">Каталог amiibo пуст! (citra-emu/amiibo)</string>
+    <string name="text_amiibo_hint">Каталог amiibo пуст! (cara-emu/amiibo)</string>
     <string name="main_choose_directory">Выберите папку</string>
 
     <string name="setting_core_ticks_hack">Хак FMV</string>
@@ -148,7 +149,7 @@
     <string name="setting_header_camera">Камера</string>
 
     <string name="setting_use_game_config">Включить профили настроек</string>
-    <string name="setting_use_game_config_desc">Индивидуальные игровые настройки будут сохраняться в папку: citra-emu/load/configs/.</string>
+    <string name="setting_use_game_config_desc">Индивидуальные игровые настройки будут сохраняться в папку: cara-emu/load/configs/.</string>
     <string name="setting_is_new_3ds">Режим новой 3DS</string>
     <string name="setting_is_new_3ds_desc">Новая модель 3DS имеет отличия памяти и процессора и часть игр запускается только на ней.</string>
     <string name="setting_use_virtual_sd">Использовать виртуальную SD-карту</string>
@@ -177,7 +178,7 @@
     <string name="setting_use_fence_sync">Повторное использование памяти</string>
     <string name="setting_use_fence_sync_description">Повышает производительность, но может вызывать вылеты и проблемы с графикой.</string>
     <string name="setting_custom_textures">Использовать внешние текстуры</string>
-    <string name="setting_custom_textures_description">Папка с текстурами: citra-emu/load/textures/\"ID игры\"/.</string>
+    <string name="setting_custom_textures_description">Папка с текстурами: cara-emu/load/textures/\"ID игры\"/.</string>
     <string name="setting_shader_type">Тип шейдера</string>
     <string name="setting_factor_3d">Коэффициент 3D (настройка глубины)</string>
     <string name="setting_camera_type">Источник камеры</string>
@@ -241,7 +242,7 @@
     <string name="system_font_twn">Китайский традиционный</string>
 
     <string name="game_emulation_info">Потяните для обновления\nДолгий тап для редактирования чит-кодов\nПоддерживаются файлы: .CCI, .CXI, .3DS, .3DSX</string>
-    <string name="application_emulation_info">Потяните для обновления\nДолгий тап для редактирования чит-кодов\nПриложение будет установлено в \"citra-emu/sdmc\"</string>
+    <string name="application_emulation_info">Потяните для обновления\nДолгий тап для редактирования чит-кодов\nПриложение будет установлено в \"cara-emu/sdmc\"</string>
     <string name="cheat_list">Список чит-кодов</string>
     <string name="edit_cheat">Изменить чит-код</string>
     <string name="reset_setting">Сбросить настройки</string>

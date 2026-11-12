@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -299,7 +300,7 @@ void FmtLogMessageImpl(Class log_class, Level log_level, const char* filename,
                        unsigned int line_num, const char* function, const char* format,
                        const fmt::format_args& args) {
 #ifdef ANDROID
-    __android_log_print(ANDROID_LOG_INFO, "citra", "%s", fmt::vformat(format, args).c_str());
+    __android_log_print(ANDROID_LOG_INFO, "cara", "%s", fmt::vformat(format, args).c_str());
 #else
     auto& instance = Impl::Instance();
     if (instance.GetGlobalFilter().CheckMessage(log_class, log_level)) {

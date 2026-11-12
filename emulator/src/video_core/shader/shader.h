@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -131,7 +132,7 @@ static_assert(std::is_standard_layout<GSEmitter>::value, "GSEmitter is not stand
 
 /**
  * This structure contains the state information that needs to be unique for a shader unit. The 3DS
- * has four shader units that process shaders in parallel. At the present, Citra only implements a
+ * has four shader units that process shaders in parallel. At the present, Cara only implements a
  * single shader unit that processes all shaders serially. Putting the state information in a struct
  * here will make it easier for us to parallelize the shader processing later.
  */

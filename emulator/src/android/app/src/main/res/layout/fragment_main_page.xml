@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Cara on 2026-11-12; see NOTICE for attribution. -->
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -13,7 +14,7 @@
         android:textAllCaps="false"
         android:padding="18dp"
         android:layout_centerInParent="true"
-        style="@style/CitraTheme.Button"
+        style="@style/CaraTheme.Button"
         android:stateListAnimator="@null"
         android:layout_width="240dp"
         android:layout_height="wrap_content"/>

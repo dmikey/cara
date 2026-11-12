@@ -137,15 +137,18 @@ BOOL CaraValidateRepresentation(NSDictionary* rep) {
     if (error) *error=[NSError errorWithDomain:@"CaraSkin" code:1 userInfo:@{NSLocalizedDescriptionKey:problem}];
     return nil;
 }
-- (NSDictionary*)representationForPad:(BOOL)pad landscape:(BOOL)landscape {
+- (NSDictionary*)strictRepresentationForPad:(BOOL)pad landscape:(BOOL)landscape {
     NSDictionary* devices=self.info[@"representations"];
     for (NSString* device in pad?@[@"ipad",@"iphone"]:@[@"iphone",@"ipad"]) {
         for (NSString* style in @[@"standard",@"edgeToEdge",@"splitView"]) {
             NSDictionary* orientations=devices[device][style];
-            NSDictionary* rep=orientations[landscape?@"landscape":@"portrait"]?:orientations[@"landscape"]?:orientations[@"portrait"];
+            NSDictionary* rep=orientations[landscape?@"landscape":@"portrait"];
             if (rep) return rep;
         }
     }
     return nil;
+}
+- (NSDictionary*)representationForPad:(BOOL)pad landscape:(BOOL)landscape {
+    return [self strictRepresentationForPad:pad landscape:landscape]?:[self strictRepresentationForPad:pad landscape:!landscape];
 }
 @end

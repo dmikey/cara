@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 #include <memory>
 #include "common/alignment.h"
 #include "common/assert.h"
@@ -158,7 +159,7 @@ void VertexLoader::LoadVertex(u32 base_address, int index, int vertex,
         } else {
             // TODO(yuriks): In this case, no data gets loaded and the vertex
             // remains with the last value it had. This isn't currently maintained
-            // as global state, however, and so won't work in Citra yet.
+            // as global state, however, and so won't work in Cara yet.
         }
     }
 }

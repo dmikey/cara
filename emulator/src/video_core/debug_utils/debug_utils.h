@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2
 // Refer to the license.txt file included.
@@ -21,7 +22,7 @@
 #include "video_core/regs_shader.h"
 #include "video_core/regs_texturing.h"
 
-namespace CiTrace {
+namespace CaraTrace {
 class Recorder;
 }
 
@@ -74,7 +75,7 @@ public:
                 context->breakpoint_observers.remove(this);
 
                 // If we are the last observer to be destroyed, tell the debugger context that
-                // it is free to continue. In particular, this is required for a proper Citra
+                // it is free to continue. In particular, this is required for a proper Cara
                 // shutdown, when the emulation thread is waiting at a breakpoint.
                 if (context->breakpoint_observers.empty())
                     context->Resume();
@@ -158,7 +159,7 @@ public:
     Event active_breakpoint;
     bool at_breakpoint = false;
 
-    std::shared_ptr<CiTrace::Recorder> recorder = nullptr;
+    std::shared_ptr<CaraTrace::Recorder> recorder = nullptr;
 
 private:
     /**

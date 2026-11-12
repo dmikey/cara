@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -6,7 +7,7 @@
 
 #include "common/microprofile.h"
 
-// Customized Citra settings.
+// Customized Cara settings.
 // This file wraps the MicroProfile header so that these are consistent everywhere.
 #define MICROPROFILE_TEXT_WIDTH 6
 #define MICROPROFILE_TEXT_HEIGHT 12

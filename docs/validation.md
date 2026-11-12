@@ -1,5 +1,8 @@
 # Validation
 
+Current hardware findings, experimental controls and open questions are tracked in
+[Hardware investigation](hardware-investigation.md).
+
 ## Local development evidence — November 2, 2026
 
 - Source baseline: `weihuoya/citra` revision `302b0c3bc4312bc96489c11584a97664894b343f`.
@@ -37,13 +40,13 @@ An uninterrupted 3,600-frame run of the earlier GLES3 frontend completed in 71.4
 
 A larger per-draw vertex cache matched all 1,200 host screen hashes but barely reduced shader calls in the title scene; it was not retained. Further work should target GPU vertex processing and remaining CPU/driver costs, then validate real gameplay and sustained performance. CPU JIT remains excluded.
 
-For local, uncapped timing, launch a development app with `CARA_BENCHMARK_FRAMES=3600` and `CARA_FRAME_TIMING=1`. `Documents/citra/frame-timing.json` records 600-frame windows with mean, median, p95, maximum, over-budget frame count, shader calls, and time in interpreted PICA shaders, GPU readback, and native presentation. Timers are opt-in and add measurement overhead; shader/readback/presentation timings are wall-clock scopes on the emulation thread, not hardware GPU timestamps. Normal play is paced to the emulated display rate of approximately 59.834 Hz.
+For local, uncapped timing, launch a development app with `CARA_BENCHMARK_FRAMES=3600` and `CARA_FRAME_TIMING=1`. `Documents/cara/frame-timing.json` records 600-frame windows with mean, median, p95, maximum, over-budget frame count, shader calls, and time in interpreted PICA shaders, GPU readback, and native presentation. Timers are opt-in and add measurement overhead; shader/readback/presentation timings are wall-clock scopes on the emulation thread, not hardware GPU timestamps. Normal play is paced to the emulated display rate of approximately 59.834 Hz.
 
 ## GLES3 GPU vertex processing
 
 The iOS GLES3 default now runs PICA vertex programs on the GPU. Triangle lists, strips and fans are expanded using the existing primitive assembler, decoded inputs are uploaded as a float texture, and the fixed geometry-stage output mapping is folded into the vertex shader. The first vertex is re-evaluated where needed to preserve each triangle's quaternion-sign correction. Draws using guest geometry shaders, oversized draws, and unsupported programs retain the CPU interpreter fallback. There is no guest CPU code generation or executable-memory allocation. `CARA_CPU_VERTEX=1` selects the earlier interpreted vertex path for local comparisons.
 
-Apple's GLES linker crashed on the first generated vertex program's switch/fallthrough tree. The native decompiler now emits an equivalent conditional chain inside a single-iteration loop, retaining case fallthrough and jump behavior. A ROM-free GPU transform-feedback fixture passed on the physical M4 iPad: both uniform-branch outcomes, a counted loop, position, quaternion sign correction and color saturation matched the CPU interpreter within 0.00001. Run it during local app startup with `CARA_VERTEX_SELF_TEST=1`; its result is saved as `Documents/citra/gpu-vertex-self-test.json`. CI compiles this fixture but does not run it on a physical device.
+Apple's GLES linker crashed on the first generated vertex program's switch/fallthrough tree. The native decompiler now emits an equivalent conditional chain inside a single-iteration loop, retaining case fallthrough and jump behavior. A ROM-free GPU transform-feedback fixture passed on the physical M4 iPad: both uniform-branch outcomes, a counted loop, position, quaternion sign correction and color saturation matched the CPU interpreter within 0.00001. Run it during local app startup with `CARA_VERTEX_SELF_TEST=1`; its result is saved as `Documents/cara/gpu-vertex-self-test.json`. CI compiles this fixture but does not run it on a physical device.
 
 The GPU-vertex 3,600-frame test completed in 45.6867 seconds (78.7975 FPS uncapped), followed by 45.2674 seconds (79.5274 FPS) with decoded-input reuse. Both runs recorded 382,984 accepted accelerated batches, 125,132,880 expanded vertices, zero CPU vertex draws and zero paused seconds, with CPU JIT disabled. In the latter run, the final 600 frames averaged 15.27 ms, but p95 was 18.47 ms and 112 frames exceeded the 16.71 ms budget. The opening-600 top image was pixel-identical to the earlier renderer; the frame-3600 top image matched 99.88% of pixels exactly, with a maximum channel difference of 9/255. These are bounded boot/title tests with audio off, not a full-game locked-60 claim.
 
@@ -308,3 +311,80 @@ alone does not establish cloud sync. `CARA_SKIN_SELF_TEST=1` writes a synthetic
 UIKit/HID check; `CARA_CAPTURE_SKIN_UI=1` writes a UIKit composite using diagnostic
 game frames. Neither should be described as a physical touch test or literal
 screen recording.
+
+
+### Dark Moon large vertex batches
+
+On the M4 iPad, Luigi's Mansion: Dark Moon (`0004000000055F00`) submitted
+41,967-vertex triangle lists above the former 16,384-vertex GLES input limit.
+Those draws fell back to the CPU vertex interpreter. The policy limit is now
+65,536 expanded vertices, checked against the device's texture-size limit.
+A full sixteen-register input atlas uses at most 16 MiB and 8,192 rows;
+the existing upload-bank byte budget remains in force.
+
+The physical GPU fixture checks all outputs of 41,967- and 65,535-vertex
+atlases against the CPU interpreter, with both uniform-branch paths, quaternion
+alignment, viewport rounding, color and clipping checks. On the test iPad,
+a single large transform-feedback capture returned zeros starting at vertex
+4,092 even for a synthetic vertex-ID shader. Nonzero draw starts also failed.
+The validator therefore captures 3,072 vertices at a time using an explicit
+logical vertex base. It still checks every vertex across the complete atlas;
+regular rendering does not use transform feedback.
+
+In observed slow-scene windows at a 50% guest clock, mean refresh time changed
+from 51.10 ms to 26.81 ms. CPU vertex fallbacks dropped from four per refresh to
+zero, and CPU vertex shader time from 17.70 ms to zero. Input preparation still
+cost 9.91 ms, texture upload 3.90 ms and surface downloads 4.01 ms per refresh.
+These are separate scene observations, not a deterministic matched replay;
+the user reported speed increasing from about 35% to 62%, still below full speed.
+The 62% reading is emulation speed, not original guest CPU performance at the
+reduced clock. CPU clock, raster, 22,000 ARM/Thumb differential cases, New 3DS
+70% clock save-state regressions and the iOS no-JIT audit passed locally.
+
+
+### Physical RAM lookup and packed vertex inputs
+
+Cara adapts Azahar PR #1587 (`47cd41cc58a4671147ad5f7727fc7ccb0b194826`)
+to avoid temporary `MemoryRef`/`shared_ptr` ownership during raw physical RAM
+lookups. The last-region cache stores an atomic region index; each caller resolves its
+own borrowed owner field and retains Cara's existing bounds checks. It is
+cleared before state deserialization. Immutable region descriptors are rebuilt
+after loading, with backing sizes validated once rather than on every attribute
+lookup. Owning `MemoryRef`
+requests still retain their backing memory. Native tests compare raw and owning
+pointers, writes, region ends and interleaved region accesses before and after
+save-state restoration, including DSP RAM and New 3DS RAM. Four concurrent workers
+also exercise 80,000 interleaved raw/owning lookups per check.
+
+The GLES input staging path also packs attributes directly into texture order,
+removing the full intermediate register clear/scatter and sixteen-register scan
+for each expanded vertex. Its precomputed mapping preserves the interpreter's
+last-attribute-wins behavior. The native raster regression compares 8,192 sparse,
+permuted and duplicate mappings against `UnitState::LoadInput`.
+
+The M4 iPad Dark Moon boot windows ending at refreshes 720 through 1,200 measured:
+
+| Build | Mean refresh | Vertex preparation | Vertex upload | Emulation speed |
+|---|---:|---:|---:|---:|
+| Large GPU batches | 27.16 ms | 10.03 ms | 3.93 ms | 61.5% |
+| Direct physical RAM lookup | 25.05 ms | 7.14 ms | 3.95 ms | 66.7% |
+| Direct lookup and packed inputs | 24.16 ms | 6.18 ms | 3.97 ms | 69.2% |
+
+All three runs used a 50% guest clock, no CPU vertex fallbacks, normal pacing and
+sound. Each 60-refresh window contained 32,720 GPU draws and approximately
+17.785 million expanded vertices. These comparable boot observations are not a
+fully deterministic replay: vertex counts differed slightly, and surface-download
+time varied from 4.00 to 4.57 ms per refresh. Speed here measures emulated refresh
+throughput; the reduced guest clock is a separate performance tradeoff. The final
+candidate passed the physical large-atlas GPU/interpreter fixture and the iOS
+no-JIT audit. Native interpreter, raster, clock and old/New 3DS save-state tests
+passed locally.
+
+
+Upstream follow-ups for Dark Moon include Azahar [#2095](https://github.com/azahar-emu/azahar/pull/2095)
+(GPU completion timing and interrupt queue behavior) and
+[#2318](https://github.com/azahar-emu/azahar/pull/2318) (command-list batching and
+vectorization). Both are merged upstream and are not part of the changes measured
+above. The former specifically addresses Dark Moon's dependence on GPU timing;
+its compatibility benefit does not by itself establish a throughput improvement
+on Cara. It should be tested separately from raw vertex-format decoding.

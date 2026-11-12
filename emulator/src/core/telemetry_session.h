@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2017 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -81,8 +82,8 @@ u64 RegenerateTelemetryId();
 
 /**
  * Verifies the username and token.
- * @param username Citra username to use for authentication.
- * @param token Citra token to use for authentication.
+ * @param username Cara username to use for authentication.
+ * @param token Cara token to use for authentication.
  * @returns Future with bool indicating whether the verification succeeded
  */
 bool VerifyLogin(const std::string& username, const std::string& token);

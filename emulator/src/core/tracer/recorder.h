@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -9,9 +10,9 @@
 #include <vector>
 #include <boost/crc.hpp>
 #include "common/common_types.h"
-#include "core/tracer/citrace.h"
+#include "core/tracer/cara_trace.h"
 
-namespace CiTrace {
+namespace CaraTrace {
 
 class Recorder {
 public:
@@ -34,7 +35,7 @@ public:
      */
     explicit Recorder(const InitialState& initial_state);
 
-    /// Finish recording of this Citrace and save it using the given filename.
+    /// Finish recording of this CaraTrace and save it using the given filename.
     void Finish(const std::string& filename);
 
     /// Mark end of a frame
@@ -84,4 +85,4 @@ private:
     std::unordered_map<boost::crc_32_type::value_type /*hash*/, u32 /*file_offset*/> memory_regions;
 };
 
-} // namespace CiTrace
+} // namespace CaraTrace

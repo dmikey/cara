@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <ostream>
 #include "core/arm/arm_interface.h"
 #include "core/arm/fastinterp/fastinterp_cache.h"
 #include "core/arm/fastinterp/fastinterp_types.h"
@@ -29,6 +30,8 @@ public:
                    std::shared_ptr<Core::Timing::Timer> timer);
     ~ARM_FastInterp() override;
 
+    // Diagnostic census of currently resident decoded blocks; no idle skipping.
+    void WriteBlockProfile(std::ostream& output) const;
     void Run() override;
     void Step() override;
     void ClearInstructionCache() override;
@@ -131,6 +134,8 @@ private:
 
     bool halted_{false};
     bool stepping_{false};
+    bool decode_breakpoints_{false};
+    bool ram_burst_{false};
 
     FusionStats fusion_stats_;
 

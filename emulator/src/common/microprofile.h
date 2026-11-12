@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -8,7 +9,7 @@
 // external sampling profilers like "Very Sleepy", and will improve performance somewhat.
 #define MICROPROFILE_ENABLED 0
 
-// Customized Citra settings.
+// Customized Cara settings.
 // This file wraps the MicroProfile header so that these are consistent everywhere.
 #define MICROPROFILE_WEBSERVER 0
 #define MICROPROFILE_GPU_TIMERS 0 // TODO: Implement timer queries when we upgrade to OpenGL 3.3

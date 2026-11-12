@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified for Cara on 2026-11-12; see NOTICE for attribution. -->
 <resources>
 
     <!-- Title of the app -->
-    <string name="app_name">Citra</string>
-    <string name="app_name_version">Citra %1$s</string>
+    <string name="app_name">Cara</string>
+    <string name="app_name_version">Cara %1$s</string>
     <string name="host">app</string>
-    <string name="scheme">citra</string>
+    <string name="scheme">cara</string>
 
     <string name="error">Error</string>
     <string name="about">Acerca de</string>
-    <string name="citra_official_website">Web oficial de citra</string>
+    <string name="cara_official_website">Web oficial de cara</string>
     <string name="open_weibo">Weibo: EMU-MMJ</string>
     <string name="latest_version">Última versión</string>
     <string name="connection_error">Connection Error</string>
@@ -28,7 +29,7 @@
     <string name="text_amiibo">Amiibo</string>
     <string name="text_load_amiibo">Load</string>
     <string name="text_remove_amiibo">Remove</string>
-    <string name="text_amiibo_hint">El directorio amiibo está vacío! (citra-emu/amiibo)</string>
+    <string name="text_amiibo_hint">El directorio amiibo está vacío! (cara-emu/amiibo)</string>
     <string name="main_choose_directory">Elegir directorio</string>
 
     <string name="setting_core_ticks_hack">Hack de FMV</string>
@@ -148,7 +149,7 @@
     <string name="setting_header_camera">Cámara</string>
 
     <string name="setting_use_game_config">Enable Per-Game Settings</string>
-    <string name="setting_use_game_config_desc">Game independent settings will be saved in directory: citra-emu/load/configs/.</string>
+    <string name="setting_use_game_config_desc">Game independent settings will be saved in directory: cara-emu/load/configs/.</string>
     <string name="setting_is_new_3ds">Modo New 3DS</string>
     <string name="setting_is_new_3ds_desc">El New 3DS tiene una memoria y un procesador diferentes, y algunos juegos solo pueden iniciarse en el New 3DS.</string>
     <string name="setting_use_virtual_sd">Usar SD virtual</string>
@@ -177,7 +178,7 @@
     <string name="setting_use_fence_sync">Habilitar la reutilización de memoria</string>
     <string name="setting_use_fence_sync_description">Actívelo para mejorar el rendimiento, pero algunos juegos pueden tener problemas de visualización o bloquearse en el juego.</string>
     <string name="setting_custom_textures">Cargar texturas personalizadas</string>
-    <string name="setting_custom_textures_description">Textures directory: citra-emu/load/textures/\"Game ID\"/.</string>
+    <string name="setting_custom_textures_description">Textures directory: cara-emu/load/textures/\"Game ID\"/.</string>
     <string name="setting_shader_type">Tipo de sombreador</string>
     <string name="setting_factor_3d">Factor 3D (control deslizante de profundidad 3D)</string>
     <string name="setting_camera_type">Tipo de cámara</string>
@@ -241,7 +242,7 @@
     <string name="system_font_twn">Traditional Chinese</string>
 
     <string name="game_emulation_info">Formatos soportados: .CCI, .CXI, .3DS, .3DSX</string>
-    <string name="application_emulation_info">La aplicación se instalará en "citra-emu/sdmc"</string>
+    <string name="application_emulation_info">La aplicación se instalará en "cara-emu/sdmc"</string>
     <string name="cheat_list">Cheat List</string>
     <string name="edit_cheat">Edit Cheat</string>
     <string name="reset_setting">Resetear ajustes</string>

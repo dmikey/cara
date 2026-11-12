@@ -4,6 +4,9 @@
 // Refer to the license.txt file included.
 
 #include <deque>
+#include <cstdlib>
+#include <cstring>
+#include "common/frame_timing.h"
 #include <vector>
 #include "common/alignment.h"
 #include "common/microprofile.h"
@@ -14,6 +17,10 @@
 namespace OpenGL {
 
 OGLStreamBuffer::OGLStreamBuffer(GLenum target, GLsizeiptr size) : gl_target(StreamBufferTarget(target)), buffer_size(size) {
+    // Unmap flushes the entire mapped range unless FLUSH_EXPLICIT was requested.
+    // Keep synchronization/invalidation flags identical in both experiments.
+    const char* implicit = std::getenv("CARA_GL_IMPLICIT_FLUSH");
+    explicit_flush = !(implicit && std::strcmp(implicit, "1") == 0);
     gl_buffer.Create();
     glBindBuffer(gl_target, gl_buffer.handle);
     // prefer `glBufferData` than `glBufferStorage` on mobile device
@@ -34,6 +41,8 @@ GLsizeiptr OGLStreamBuffer::GetSize() const {
 }
 
 std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr alignment) {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::StreamMap);
+    if (Common::FrameTiming::counters.enabled) Common::FrameTiming::counters.stream_mapped_bytes += size;
     bool invalidate = false;
 
     buffer_pos = Common::AlignUp<std::size_t>(buffer_pos, alignment);
@@ -44,14 +53,15 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
         }
     }
 
-    GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT |
+    GLbitfield flags = GL_MAP_WRITE_BIT | (explicit_flush ? GL_MAP_FLUSH_EXPLICIT_BIT : 0) |
                        (invalidate ? GL_MAP_INVALIDATE_BUFFER_BIT : GL_MAP_UNSYNCHRONIZED_BIT);
     u8* mapped_ptr = static_cast<u8*>(glMapBufferRange(gl_target, buffer_pos, size, flags));
     return std::make_tuple(mapped_ptr, buffer_pos, invalidate);
 }
 
 void OGLStreamBuffer::Unmap(GLsizeiptr size) {
-    if (size > 0) {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::StreamUnmap);
+    if (size > 0 && explicit_flush) {
         // flush is relative to the start of the currently mapped range of buffer
         glFlushMappedBufferRange(gl_target, 0, size);
         GLenum error = glGetError();

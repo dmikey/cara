@@ -108,6 +108,12 @@ public:
         return &block;
     }
 
+    template <typename Visitor>
+    void VisitResidentBlocks(Visitor visit) const {
+        for (size_t i = 0; i < CACHE_SIZE; ++i)
+            if (tags_[i] != INVALID_TAG && blocks_[i].inst_count) visit(blocks_[i]);
+    }
+
 private:
     /// Hash a PC to a set index. Multiply-xor-shift spreads the aligned,
     /// clustered PCs of real code across sets better than bit extraction.

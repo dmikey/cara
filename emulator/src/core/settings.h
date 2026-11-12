@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -243,11 +244,11 @@ struct Values {
 
     // WebService
     std::string web_api_url;
-    std::string citra_username;
-    std::string citra_token;
+    std::string cara_username;
+    std::string cara_token;
 } extern values;
 
-// a special value for Values::region_value indicating that citra will automatically select a region
+// a special value for Values::region_value indicating that cara will automatically select a region
 // value to fit the region lockout info of the game
 static constexpr int REGION_VALUE_AUTO_SELECT = -1;
 

@@ -98,6 +98,20 @@ public:
     std::shared_ptr<BackingMem> vram_mem;
     std::shared_ptr<BackingMem> n3ds_extra_ram_mem;
     std::shared_ptr<BackingMem> dsp_mem;
+    // Read-only while emulation runs. Owner slots stay at stable addresses even
+    // when save-state loading replaces the shared backing objects.
+    std::array<PhysMemRegionInfo,4> physical_regions;
+    void RefreshPhysicalRegions() {
+        const auto region = [](const std::shared_ptr<BackingMem>& owner, PAddr start, u32 size) {
+            if (!owner || owner->GetSize() != size)
+                throw std::runtime_error("Invalid physical memory backing size");
+            return PhysMemRegionInfo{&owner, start, start + size};
+        };
+        physical_regions = {{region(vram_mem, VRAM_PADDR, VRAM_SIZE),
+                             region(dsp_mem, DSP_RAM_PADDR, DSP_RAM_SIZE),
+                             region(fcram_mem, FCRAM_PADDR, FCRAM_N3DS_SIZE),
+                             region(n3ds_extra_ram_mem, N3DS_EXTRA_RAM_PADDR, N3DS_EXTRA_RAM_SIZE)}};
+    }
 
     Impl();
 
@@ -165,6 +179,7 @@ private:
         ar& vram_mem;
         ar& n3ds_extra_ram_mem;
         ar& dsp_mem;
+        if (Archive::is_loading::value) RefreshPhysicalRegions();
     }
 };
 
@@ -199,13 +214,16 @@ MemorySystem::Impl::Impl()
     : fcram_mem(std::make_shared<BackingMemImpl<Region::FCRAM>>(*this)),
       vram_mem(std::make_shared<BackingMemImpl<Region::VRAM>>(*this)),
       n3ds_extra_ram_mem(std::make_shared<BackingMemImpl<Region::N3DS>>(*this)),
-      dsp_mem(std::make_shared<BackingMemImpl<Region::DSP>>(*this)) {}
+      dsp_mem(std::make_shared<BackingMemImpl<Region::DSP>>(*this)) {
+    RefreshPhysicalRegions();
+}
 
 MemorySystem::MemorySystem() : impl(std::make_unique<Impl>()) {}
 MemorySystem::~MemorySystem() = default;
 
 template <class Archive>
 void MemorySystem::serialize(Archive& ar, const unsigned int file_version) {
+    if (Archive::is_loading::value) phys_mem_region_cache.store(4, std::memory_order_relaxed);
     ar&* impl.get();
     if (Archive::is_loading::value) {
         // These flags describe host renderer resources, which are rebuilt after a
@@ -423,59 +441,39 @@ std::string MemorySystem::ReadCString(VAddr vaddr, std::size_t max_length) {
     return string;
 }
 
+// Direct-pointer path adapted from Azahar commit 47cd41cc58a4671147ad5f7727fc7ccb0b194826.
+// Keep Cara's existing null-at-end bounds and owning MemoryRef behavior.
+MemorySystem::PhysMemRegionInfo MemorySystem::GetPhysMemRegionInfo(PAddr address) {
+    const auto& regions = impl->physical_regions;
+    const unsigned cached = phys_mem_region_cache.load(std::memory_order_relaxed);
+    if (cached < regions.size() && address >= regions[cached].region_start &&
+        address < regions[cached].region_end) return regions[cached];
+    const auto region = std::find_if(regions.begin(), regions.end(), [address](const auto& info) {
+        // Include the upper bound in the search, then preserve Cara's null-at-end
+        // behavior below without logging it as an unknown physical region.
+        return address >= info.region_start && address <= info.region_end;
+    });
+    if (region == regions.end() || address == region->region_end) {
+        if (region == regions.end())
+            LOG_ERROR(HW_Memory, "unknown GetPhysicalPointer @ 0x{:08X}", address);
+        phys_mem_region_cache.store(4, std::memory_order_relaxed);
+        return {};
+    }
+    phys_mem_region_cache.store(static_cast<unsigned>(region - regions.begin()),
+                                std::memory_order_relaxed);
+    return *region;
+}
+
 u8* MemorySystem::GetPhysicalPointer(PAddr address) {
-    return GetPhysicalRef(address);
+    const auto region = GetPhysMemRegionInfo(address);
+    if (!region.backing_mem) return nullptr;
+    return (*region.backing_mem)->GetPtr() + (address - region.region_start);
 }
 
 MemoryRef MemorySystem::GetPhysicalRef(PAddr address) {
-    struct MemoryArea {
-        PAddr paddr_base;
-        u32 size;
-    };
-
-    static constexpr MemoryArea memory_areas[] = {
-        {VRAM_PADDR, VRAM_SIZE},
-        {DSP_RAM_PADDR, DSP_RAM_SIZE},
-        {FCRAM_PADDR, FCRAM_N3DS_SIZE},
-        {N3DS_EXTRA_RAM_PADDR, N3DS_EXTRA_RAM_SIZE},
-    };
-
-    const auto area =
-        std::find_if(std::begin(memory_areas), std::end(memory_areas), [&](const auto& area) {
-            // Note: the region end check is inclusive because the user can pass in an address that
-            // represents an open right bound
-            return address >= area.paddr_base && address <= area.paddr_base + area.size;
-        });
-
-    if (area == std::end(memory_areas)) {
-        LOG_ERROR(HW_Memory, "unknown GetPhysicalPointer @ 0x{:08X}", address);
-        return nullptr;
-    }
-
-    u32 offset_into_region = address - area->paddr_base;
-
-    std::shared_ptr<BackingMem> target_mem = nullptr;
-    switch (area->paddr_base) {
-    case VRAM_PADDR:
-        target_mem = impl->vram_mem;
-        break;
-    case DSP_RAM_PADDR:
-        target_mem = impl->dsp_mem;
-        break;
-    case FCRAM_PADDR:
-        target_mem = impl->fcram_mem;
-        break;
-    case N3DS_EXTRA_RAM_PADDR:
-        target_mem = impl->n3ds_extra_ram_mem;
-        break;
-    default:
-        UNREACHABLE();
-    }
-    if (offset_into_region >= target_mem->GetSize()) {
-        return {nullptr};
-    }
-
-    return {target_mem, offset_into_region};
+    const auto region = GetPhysMemRegionInfo(address);
+    if (!region.backing_mem) return {nullptr};
+    return {*region.backing_mem, address - region.region_start};
 }
 
 /// For a rasterizer-accessible PAddr, gets a list of all possible VAddr

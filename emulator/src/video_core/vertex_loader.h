@@ -29,10 +29,17 @@ public:
         return num_total_attributes;
     }
 
+    struct AttributeLayout { u32 offset, stride, elements; PipelineRegs::VertexAttributeFormat format; bool is_default; };
+    AttributeLayout GetAttributeLayout(unsigned index) const {
+        return {vertex_attribute_sources[index], vertex_attribute_strides[index],
+                index < unsigned(num_total_attributes) ? vertex_attribute_elements[index] : 0,
+                vertex_attribute_formats[index],
+                index < unsigned(num_total_attributes) && vertex_attribute_is_default[index]};
+    }
 private:
     std::array<u32, 16> vertex_attribute_sources;
     std::array<u32, 16> vertex_attribute_strides{};
-    std::array<PipelineRegs::VertexAttributeFormat, 16> vertex_attribute_formats;
+    std::array<PipelineRegs::VertexAttributeFormat, 16> vertex_attribute_formats{};
     std::array<u32, 16> vertex_attribute_elements{};
     std::array<bool, 16> vertex_attribute_is_default;
     int num_total_attributes = 0;

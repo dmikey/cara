@@ -25,6 +25,10 @@
 #include "video_core/renderer_opengl/gl_resource_manager.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_state.h"
+#include "video_core/renderer_opengl/gl_vertex_source_map.h"
+#include "video_core/renderer_opengl/gl_vertex_index_cache.h"
+#include "video_core/renderer_opengl/gl_vertex_upload_bank.h"
+#include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_stream_buffer.h"
 #include "video_core/renderer_opengl/pica_to_gl.h"
 #include "video_core/shader/shader.h"
@@ -35,6 +39,8 @@ class RasterizerOpenGL : public VideoCore::RasterizerInterface {
 public:
     RasterizerOpenGL();
     ~RasterizerOpenGL() override;
+    bool RunUniformReuseSelfTest(std::string& error);
+    bool RunSurfaceCoherenceSelfTest(std::string& error) { return res_cache.RunSmallWriteSelfTest(error); }
 
     void AddTriangle(const Pica::Shader::OutputVertex& v0, const Pica::Shader::OutputVertex& v1,
                      const Pica::Shader::OutputVertex& v2) override;
@@ -270,21 +276,54 @@ private:
 #ifdef CARA_IOS_GLES
     bool PrepareIOSVertices(bool is_indexed);
     OGLTexture ios_vertex_fallback_texture;
+    OGLTexture ios_vertex_index_fallback_texture;
+    IOSVertexSourceMap ios_vertex_source_map;
+    std::vector<u16> ios_vertex_input_indices;
+    unsigned ios_indexed_vertex_inputs = 0;
+    bool ios_direct_vertex_reuse = false;
+    bool ios_lit_pair_vertex_reuse = false;
+    bool ios_feedback_vertex_reuse = false;
+    u32 ios_vertex_input_span = 0;
+    OGLBuffer ios_feedback_buffer;
+    OGLTexture ios_feedback_texture;
+    OGLBuffer ios_vertex_element_fallback;
+    struct IOSLayoutUniform {
+        GLint location = -1;
+        bool initialized = false;
+        std::array<std::array<GLint,4>,16> values{};
+    };
+    std::unordered_map<GLuint,IOSLayoutUniform> ios_layout_uniforms;
+    std::array<std::array<GLint,4>,16> ios_packed_layout{};
+    bool PrepareIOSPackedVertices(const IOSVertexInputLayout& layout);
+    u32 ios_vertex_input_records = 0;
+    GLint ios_vertex_max_texture_size = 0;
     struct IOSVertexUpload {
         OGLTexture texture;
+        OGLTexture indices;
+        OGLBuffer elements;
+        // Exact CPU shadows permit skipping writes without relying on RAM dirty
+        // tracking or hash collision assumptions. Released with the pool entry.
+        std::vector<u8> input_shadow;
+        std::vector<u8> index_shadow;
+        std::vector<u8> elements_shadow;
         unsigned rows = 0;
     };
-    struct IOSVertexFrameUploads {
-        // The input atlas has at most 2,048 rows at the expanded-vertex limit.
-        std::array<std::vector<IOSVertexUpload>, 12> sizes;
-        std::array<size_t, 12> used{};
-        size_t bytes = 0;
-        size_t textures = 0;
-    };
+    using IOSVertexFrameUploads = IOSVertexUploadBank::Bank<IOSVertexUpload>;
+    static_assert(sizeof(GLvec4) == 16 && sizeof(u16) == 2);
     std::array<IOSVertexFrameUploads, 3> ios_vertex_frame_uploads;
     unsigned ios_vertex_upload_frame = ~0u;
     size_t ios_vertex_upload_index = 0;
     std::vector<u32> ios_triangle_indices;
+    static_assert(IOS_VERTEX_INPUT_WIDTH == 128, "Index cache row alignment must match the shader");
+    IOSVertexIndexCache ios_vertex_index_cache;
+    const IOSVertexIndexCache::Data* ios_cached_index_data = nullptr;
+    const std::vector<u32>& IOSTriangles() const {
+        return ios_cached_index_data ? ios_cached_index_data->triangles : ios_triangle_indices;
+    }
+    const std::vector<u16>& IOSInputIndices() const {
+        return ios_cached_index_data && ios_indexed_vertex_inputs == 2 ?
+            ios_cached_index_data->packed : ios_vertex_input_indices;
+    }
     std::vector<GLvec4> ios_vertex_inputs;
 #endif
 
@@ -348,6 +387,8 @@ private:
     OGLStreamBuffer texture_lf_buffer;
     OGLFramebuffer framebuffer;
     GLint uniform_buffer_alignment;
+    VSUniformData previous_vs_uniforms{};
+    bool previous_vs_uniforms_valid = false;
     std::size_t uniform_size_aligned_vs;
     std::size_t uniform_size_aligned_fs;
     std::size_t uniform_size_aligned_light;

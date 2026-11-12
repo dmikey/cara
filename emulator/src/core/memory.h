@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <memory>
@@ -387,6 +388,17 @@ private:
     MemoryRef GetPointerForRasterizerCache(VAddr addr);
 
     void MapPages(PageTable& page_table, u32 base, u32 size, MemoryRef memory, PageType type);
+
+    // Adapted from Azahar PR #1587: borrow the owner slot instead of copying
+    // shared ownership for every raw physical-memory lookup.
+    struct PhysMemRegionInfo {
+        const std::shared_ptr<BackingMem>* backing_mem = nullptr;
+        PAddr region_start = 0;
+        PAddr region_end = 0;
+    };
+    PhysMemRegionInfo GetPhysMemRegionInfo(PAddr address);
+    // Only the region index is shared; each lookup resolves its own owner slot.
+    std::atomic<unsigned> phys_mem_region_cache{4};
 
     class Impl;
 

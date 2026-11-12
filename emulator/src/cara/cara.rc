@@ -1,0 +1,18 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
+#include "winresrc.h"
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+CARA_ICON              ICON                    "../../dist/cara.ico"
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// RT_MANIFEST
+//
+
+1                       RT_MANIFEST             "../../dist/cara.manifest"

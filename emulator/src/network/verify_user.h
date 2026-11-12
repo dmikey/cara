@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2018 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -13,7 +14,7 @@ struct UserData {
     std::string username;
     std::string display_name;
     std::string avatar_url;
-    bool moderator = false; ///< Whether the user is a Citra Moderator.
+    bool moderator = false; ///< Whether the user is a Cara Moderator.
 };
 
 /**
