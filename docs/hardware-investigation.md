@@ -404,8 +404,9 @@ uniforms, layout, draw order and transforms still update normally. This does not
 cache transformed vertices or depend on guest RAM dirty tracking. Reallocation,
 new textures and orphan fallback force fresh uploads; pool eviction releases both
 shadows. Padding is initialized so irrelevant bytes cannot cause false misses.
-Shadow capacity is bounded by the existing pool's corresponding texture storage;
-it is additional host memory, not included in the GPU pool counter.
+Shadow payload sizes cannot exceed the corresponding texture storage; vector
+capacity may retain allocation growth. Pool entry and dimension limits bound
+this additional host memory, which is not included in the GPU pool counter.
 
 The preceding packed-decoder comparison measured 49.559 ms elapsed / 44.980 ms
 emulation-thread CPU / 48.080 ms process CPU for indexed floats, versus
@@ -535,6 +536,101 @@ dropped-vblank behavior, operation timing, and serialization of pending events.
 Use scheduled guest ticks rather than host sleeps. Keep an immediate-versus-timed
 comparison option while testing; cover all four CPU timers and reduced guest
 clocks. Preserve native peripheral timing when adapting the CPU budget.
+
+### Prepared index-stream reuse
+
+`CARA_VERTEX_INDEX_CACHE=1` caches assembled triangle IDs, their relative R16UI
+stream, bounds and unique count. Keys include physical index address, source
+count, index width, topology and nonindexed vertex offset. Every hit compares the
+full current source index bytes. Vertex attributes remain live, and transformed
+shader output is never cached. Changed bytes invalidate immediately; hash lookup
+is only for metadata and collisions still compare complete keys and bytes.
+
+An LRU limits retained vector capacities to 32 MiB and 2,048 entries, with bounded
+metadata overhead. Cache rejection preserves the uncached input vector. Native
+checks cover changed bytes at the same address, changed metadata, shorter input,
+all 65,536 u16 values, unrepresentable ranges, capacity accounting and eviction.
+The renderer validates the source range and uses unaligned-safe u16 reads.
+
+In the new-engine opening checkpoint (`0b3ecec92f2f6b8b083811fff67f56d5b88b8d3d5be14e1fb890304fbb8184a3`),
+100% guest CPU and sound on, the 1,200-refresh comparison excluding the first 300
+matched draw/vertex counts, transfer bytes and final full RGB pixels:
+
+| Prepared index cache | Elapsed | Input preparation | Emulation-thread CPU |
+|---|---:|---:|---:|
+| Off, resident uploads retained | 26.505 ms | 6.748 ms | 22.939 ms |
+| On | 19.494 ms | 0.709 ms | 16.928 ms |
+
+The measured 36.0% throughput increase uses about 2.57 MiB of retained index data
+in this scene. The warm window has 100% index-cache hits. Clock, raster, 22,000
+ARM/Thumb differential cases, and old/New3DS save-state checks passed.
+
+A new compatible Secret Path checkpoint was recreated automatically through the
+opening prompts. The user-captured old-engine Slot 1 file remains backed up;
+compatibility checks were not bypassed. Walking uses the same 300..600 forward,
+600..900 backward, 900..1200 forward schedule, 100% guest clock and audible output:
+
+| Prepared index cache, walking through grass | Elapsed | Input preparation | Emulation-thread CPU |
+|---|---:|---:|---:|
+| Off, resident uploads retained | 33.634 ms | 6.777 ms | 29.119 ms |
+| On | 26.877 ms | 0.779 ms | 23.236 ms |
+
+This is 25.1% higher throughput. Both paths match draw/vertex counts, uploaded
+bytes and final full RGB pixels. The new checkpoint differs from the earlier
+user-captured checkpoint, so compare this on/off pair rather than treating the
+older grass timings as its baseline. Cache hit rate is about 99.94%, with about
+3 MiB retained. Both audio reports are unmuted with no reported output error;
+thermal state remained nominal. This is still below native refresh speed.
+
+The iOS frontend enables the cache with packed inputs on devices reporting at
+least 6 GiB physical RAM; an explicit `CARA_VERTEX_INDEX_CACHE=0` selects the
+uncached path. The core remains opt-in. Retain the bounded fallback and verify
+future dynamic-index workloads; do not extrapolate these hit rates to every game.
+
+## Architectural prior art
+
+Prioritize submission overhead and repeated vertex work, alongside a CPU polling
+investigation. These are candidates with different correctness and measurement
+requirements, not transferable performance multipliers:
+
+- [PPSSPP graphics settings](https://www.ppsspp.org/docs/settings/graphics/)
+  describes command buffering for CPU/GPU overlap and CPU skinning that can make
+  draw combining easier. Combine only draws with equivalent shader, uniforms,
+  textures, target, viewport, depth/stencil/blend behavior and primitive order;
+  guest reads/writes and surface ownership transitions must flush pending work.
+  Measure total frame time and latency, not merely fewer API calls.
+- The same PPSSPP page records removal of its old vertex cache in 1.17: optimized
+  decoding made its benefit small or negative, alongside graphics bugs. Cara's
+  upload reuse is separately measured and compares exact bytes. The new index
+  experiment compares source index bytes and metadata, retains no transformed
+  outputs, and must include comparison cost and moving-scene misses in results.
+- [On-the-fly Vertex Reuse](https://arxiv.org/abs/1805.08893) investigates local
+  batching and reuse in parallel GPU geometry pipelines. Cara already avoids
+  duplicate input uploads, but its expanded triangle shader still executes the
+  PICA program repeatedly, including quaternion-reference vertices. Prototype
+  reuse within a draw with all program/uniform inputs fixed; preserve PICA
+  rounding, clipping, quaternion orientation and output packing. Reported paper
+  gains are not Cara forecasts. Extra passes, storage and submissions may erase
+  the benefit on a CPU-bound GLES path. The tested iPad exposes four GLES draw
+  buffers/color attachments, so a single 22-float output pass cannot simply use
+  six RGBA attachments.
+- [Dolphin's idle-skipping history](https://dolphin-emu.org/blog/2019/05/07/dolphin-progress-report-february-march-april-2019/)
+  motivates detecting guest polling loops, and also records false-positive bugs
+  in older detection. Cara already idles a core when its kernel has no runnable
+  thread. Repeated PCs in FastInterp alone do not establish an idle loop. First
+  measure block/tick concentration and classify loads, stores, flags, MMIO side
+  effects, interrupt masking, other cores and the earliest wake event. Any skip
+  must preserve those effects and scheduler deadlines; do not add blanket busy-
+  loop suppression or infer an ARM pattern from a PowerPC implementation.
+- Dolphin's actual GPU texture decoder is in
+  [TextureCacheBase::DecodeTextureOnGPU](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoCommon/TextureCacheBase.cpp),
+  using uploaded tiled data/palettes and compute, with a CPU fallback. Its
+  VertexManager supplies upload buffers. Cara needs format-specific exact-byte
+  tests and transfer/dispatch accounting before extending this beyond vertices.
+- [Dolphin ubershaders](https://dolphin-emu.org/blog/2017/07/30/ubershaders/)
+  address specialized-shader compilation stutter. That is useful for first-use
+  stalls, but the measured warm grass replay has negligible compilation cost;
+  it does not explain this sustained slowdown.
 
 ## Next experiments
 

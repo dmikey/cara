@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <memory>
 #include "video_core/renderer_opengl/gl_vertex_source_map.h"
+#include "video_core/renderer_opengl/gl_vertex_index_cache.h"
 #include "core/frontend/emu_window.h"
 #include "core/memory.h"
 #include "core/settings.h"
@@ -118,7 +119,56 @@ static bool CheckPackedVertexInputs() {
     return true;
 }
 
+static bool CheckVertexIndexCache() {
+    using Cache = OpenGL::IOSVertexIndexCache;
+    Cache cache(2 * 1024 * 1024, 4);
+    std::array<u8,6> source{3,1,3,7,1,7};
+    const Cache::Key key{0x20000000,6,0,0,1};
+    std::vector<u32> triangles{3,1,3,7,1,7};
+    const auto expected=triangles;
+    const auto* data=cache.Store(key,source.data(),source.size(),triangles);
+    if (!data || data->triangles!=expected || data->first!=1 || data->last!=7 || data->unique!=3) return false;
+    for (size_t i=0;i<expected.size();++i)
+        if (u32(data->packed[i])+data->first!=expected[i]) return false;
+    for (size_t i=expected.size();i<data->packed.size();++i) if (data->packed[i]) return false;
+    if (cache.Find(key,source.data(),source.size())!=data) return false;
+    // A write to the same physical address must invalidate before reuse.
+    source[2]=9;
+    if (cache.Find(key,source.data(),source.size()) || cache.Bytes()!=0) return false;
+    triangles={3,1,9,7,1,7};
+    if (!cache.Store(key,source.data(),source.size(),triangles)) return false;
+    auto other=key; ++other.topology;
+    if (cache.Find(other,source.data(),source.size())) return false;
+    other=key; ++other.offset;
+    if (cache.Find(other,source.data(),source.size())) return false;
+    other=key; ++other.format;
+    if (cache.Find(other,source.data(),source.size())) return false;
+    if (cache.Find(key,source.data(),source.size()-1)) return false;
+    // All 16-bit indices, including the largest, round-trip without aliasing.
+    triangles.resize(65536);
+    for (u32 i=0;i<65536;++i) triangles[i]=65535-i;
+    data=cache.Store(key,nullptr,0,triangles);
+    if (!data || data->unique!=65536 || data->packed.front()!=65535 || data->packed.back()!=0) return false;
+    triangles={0,65536,3};
+    data=cache.Store(key,nullptr,0,triangles);
+    if (!data || data->packable || !data->packed.empty()) return false;
+    // Account actual vector capacity, and preserve the caller on rejection.
+    Cache tiny(8,4); triangles={1,2,3}; const auto original=triangles;
+    if (tiny.Store(key,nullptr,0,triangles) || triangles!=original || tiny.Bytes()!=0) return false;
+    Cache bounded(800,2);
+    for (u32 i=0;i<30;++i) {
+        auto current=key; current.address+=i*16; triangles={1,2,3};
+        if (!bounded.Store(current,nullptr,0,triangles) || bounded.Bytes()>800 || bounded.Size()>2) return false;
+    }
+    if (bounded.Find(key,nullptr,0)) return false;
+    auto last=key; last.address+=29*16;
+    if (!bounded.Find(last,nullptr,0)) return false;
+    std::cout << "Index cache: byte invalidation, metadata keys, full u16 range, bounds and eviction passed\n";
+    return true;
+}
+
 int main() {
+    if (!CheckVertexIndexCache()) { std::cerr << "Vertex index cache regression\n"; return 1; }
     if (!CheckVertexSourceMap()) { std::cerr << "Source vertex map regression\n"; return 1; }
     if (!CheckPackedVertexInputs()) return 1;
     Memory::MemorySystem memory;

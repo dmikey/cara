@@ -26,6 +26,7 @@
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_vertex_source_map.h"
+#include "video_core/renderer_opengl/gl_vertex_index_cache.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_stream_buffer.h"
 #include "video_core/renderer_opengl/pica_to_gl.h"
@@ -301,6 +302,16 @@ private:
     unsigned ios_vertex_upload_frame = ~0u;
     size_t ios_vertex_upload_index = 0;
     std::vector<u32> ios_triangle_indices;
+    static_assert(IOS_VERTEX_INPUT_WIDTH == 128, "Index cache row alignment must match the shader");
+    IOSVertexIndexCache ios_vertex_index_cache;
+    const IOSVertexIndexCache::Data* ios_cached_index_data = nullptr;
+    const std::vector<u32>& IOSTriangles() const {
+        return ios_cached_index_data ? ios_cached_index_data->triangles : ios_triangle_indices;
+    }
+    const std::vector<u16>& IOSInputIndices() const {
+        return ios_cached_index_data && ios_indexed_vertex_inputs == 2 ?
+            ios_cached_index_data->packed : ios_vertex_input_indices;
+    }
     std::vector<GLvec4> ios_vertex_inputs;
 #endif
 

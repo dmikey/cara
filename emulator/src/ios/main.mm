@@ -408,6 +408,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
         setenv("CARA_VERTEX_UPLOAD_REUSE","1",0);
+    if (!std::getenv("CARA_VERTEX_INDEX_CACHE") &&
+        std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
+        NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
+        setenv("CARA_VERTEX_INDEX_CACHE","1",0);
 #endif
     const bool benchmarkMute=std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_BENCHMARK_AUDIO");
     AudioCore::SetIOSAudioMuted(benchmarkMute || [NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
@@ -1181,6 +1185,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"vertex_storage_allocations\":" + std::to_string(current.vertex_storage_allocations - previous_counters.vertex_storage_allocations) +
                                 ",\"vertex_pool_peak_bytes\":" + std::to_string(current.vertex_pool_peak_bytes) +
                                 ",\"vertex_upload_bytes\":" + std::to_string(current.vertex_upload_bytes - previous_counters.vertex_upload_bytes) +
+                                ",\"vertex_index_cache_hits\":" + std::to_string(current.vertex_index_cache_hits - previous_counters.vertex_index_cache_hits) +
+                                ",\"vertex_index_cache_misses\":" + std::to_string(current.vertex_index_cache_misses - previous_counters.vertex_index_cache_misses) +
+                                ",\"vertex_index_cache_bytes\":" + std::to_string(current.vertex_index_cache_bytes) +
                                 ",\"vertex_upload_reused_bytes\":" + std::to_string(current.vertex_upload_reused_bytes - previous_counters.vertex_upload_reused_bytes) +
                                 ",\"vertex_upload_reused_textures\":" + std::to_string(current.vertex_upload_reused_textures - previous_counters.vertex_upload_reused_textures) +
                                 ",\"vertex_reuse_check_ms_per_frame\":" + std::to_string((current.vertex_reuse_check_seconds - previous_counters.vertex_reuse_check_seconds)*1000/count) +

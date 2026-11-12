@@ -19,7 +19,7 @@ def main():
     parser.add_argument('--warmup', type=int, default=300)
     parser.add_argument('--timeout', type=int, default=240)
     parser.add_argument('--config', action='append', required=True,
-                        help='JSON object: name, packed (boolean), bank_mib (16..128), optional reuse (boolean)')
+                        help='JSON object: name, packed (boolean), bank_mib (16..128), optional reuse and index_cache (booleans)')
     parser.add_argument('--resume-best', action='store_true')
     parser.add_argument('--screenshots', action='store_true')
     parser.add_argument('--press-a-frames', default='0',
@@ -52,7 +52,7 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -88,6 +88,7 @@ def main():
                     'CARA_PROFILE_SAVE_FRAME': '0',
                     'CARA_GPU_PACKED_INPUTS': '1' if config['packed'] else '0',
                     'CARA_VERTEX_UPLOAD_REUSE': '1' if config.get('reuse', False) else '0',
+                    'CARA_VERTEX_INDEX_CACHE': '1' if config.get('index_cache', False) else '0',
                     'CARA_VERTEX_UPLOAD_BANK_MIB': str(config['bank_mib']),
                     'CARA_ADAPTIVE_GUEST_CPU': '0' if benchmark else '1'}
         if args.host_cpu_timing:
@@ -138,7 +139,8 @@ def main():
                   'draw_submit_ms_per_frame', 'vertex_upload_bytes', 'gpu_vertices',
                   'gpu_vertex_draws', 'gpu_packed_input_draws', 'vertex_upload_fallbacks',
                   'vertex_upload_reused_bytes', 'vertex_upload_reused_textures',
-                  'vertex_reuse_check_ms_per_frame']
+                  'vertex_reuse_check_ms_per_frame', 'vertex_index_cache_hits',
+                  'vertex_index_cache_misses', 'vertex_index_cache_bytes']
         if args.host_cpu_timing:
             fields += ['emulation_thread_cpu_ms_per_frame', 'process_cpu_ms_per_frame']
         means = {key: sum(w[key] for w in windows) / len(windows) for key in fields}

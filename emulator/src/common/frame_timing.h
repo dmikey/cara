@@ -15,6 +15,9 @@ struct Counters {
     double draw_seconds = 0;
     double vertex_prepare_seconds = 0;
     double vertex_upload_seconds = 0;
+    std::uint64_t vertex_index_cache_hits = 0;
+    std::uint64_t vertex_index_cache_misses = 0;
+    std::uint64_t vertex_index_cache_bytes = 0;
     double vertex_reuse_check_seconds = 0;
     std::uint64_t vertex_upload_reused_bytes = 0;
     std::uint64_t vertex_upload_reused_textures = 0;
