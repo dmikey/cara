@@ -345,7 +345,9 @@ Cara adapts Azahar PR #1587 (`47cd41cc58a4671147ad5f7727fc7ccb0b194826`)
 to avoid temporary `MemoryRef`/`shared_ptr` ownership during raw physical RAM
 lookups. The last-region cache stores an atomic region index; each caller resolves its
 own borrowed owner field and retains Cara's existing bounds checks. It is
-cleared before state deserialization. Owning `MemoryRef`
+cleared before state deserialization. Immutable region descriptors are rebuilt
+after loading, with backing sizes validated once rather than on every attribute
+lookup. Owning `MemoryRef`
 requests still retain their backing memory. Native tests compare raw and owning
 pointers, writes, region ends and interleaved region accesses before and after
 save-state restoration, including DSP RAM and New 3DS RAM. Four concurrent workers
@@ -363,14 +365,23 @@ The M4 iPad Dark Moon boot windows ending at refreshes 720 through 1,200 measure
 |---|---:|---:|---:|---:|
 | Large GPU batches | 27.16 ms | 10.03 ms | 3.93 ms | 61.5% |
 | Direct physical RAM lookup | 25.05 ms | 7.14 ms | 3.95 ms | 66.7% |
-| Direct lookup and packed inputs | 24.10 ms | 6.20 ms | 3.97 ms | 69.4% |
+| Direct lookup and packed inputs | 24.16 ms | 6.18 ms | 3.97 ms | 69.2% |
 
 All three runs used a 50% guest clock, no CPU vertex fallbacks, normal pacing and
 sound. Each 60-refresh window contained 32,720 GPU draws and approximately
 17.785 million expanded vertices. These comparable boot observations are not a
 fully deterministic replay: vertex counts differed slightly, and surface-download
-time varied from 4.00 to 4.54 ms per refresh. Speed here measures emulated refresh
+time varied from 4.00 to 4.57 ms per refresh. Speed here measures emulated refresh
 throughput; the reduced guest clock is a separate performance tradeoff. The final
 candidate passed the physical large-atlas GPU/interpreter fixture and the iOS
 no-JIT audit. Native interpreter, raster, clock and old/New 3DS save-state tests
 passed locally.
+
+
+Upstream follow-ups for Dark Moon include Azahar [#2095](https://github.com/azahar-emu/azahar/pull/2095)
+(GPU completion timing and interrupt queue behavior) and
+[#2318](https://github.com/azahar-emu/azahar/pull/2318) (command-list batching and
+vectorization). Both are merged upstream and are not part of the changes measured
+above. The former specifically addresses Dark Moon's dependence on GPU timing;
+its compatibility benefit does not by itself establish a throughput improvement
+on Cara. It should be tested separately from raw vertex-format decoding.
