@@ -49,6 +49,7 @@ jobs:
         if: matrix.platform == 'mac'
         run: |
           work/build-mac/bin/cara-no-jit-probe --self-test work/io-self-test
+          work/build-mac/bin/cara-extdata-state-self-test work/extdata-state-regression
           python3 tools/make_test_elf.py work/state-counter.elf
           work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression
           CARA_TEST_NEW_3DS=1 work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-new3ds
