@@ -26,6 +26,7 @@
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_vertex_source_map.h"
+#include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_stream_buffer.h"
 #include "video_core/renderer_opengl/pica_to_gl.h"
 #include "video_core/shader/shader.h"
@@ -274,7 +275,9 @@ private:
     OGLTexture ios_vertex_index_fallback_texture;
     IOSVertexSourceMap ios_vertex_source_map;
     std::vector<u16> ios_vertex_input_indices;
-    bool ios_indexed_vertex_inputs = false;
+    unsigned ios_indexed_vertex_inputs = 0;
+    std::array<std::array<GLint,4>,16> ios_packed_layout{};
+    bool PrepareIOSPackedVertices(const IOSVertexInputLayout& layout);
     u32 ios_vertex_input_records = 0;
     GLint ios_vertex_max_texture_size = 0;
     struct IOSVertexUpload {
@@ -283,10 +286,10 @@ private:
         unsigned rows = 0;
     };
     struct IOSVertexFrameUploads {
-        // Fourteen height classes each for dense and indexed inputs. Both textures
-        // of an indexed record count toward the existing bank byte budget.
-        std::array<std::vector<IOSVertexUpload>, 28> sizes;
-        std::array<size_t, 28> used{};
+        // Fourteen height classes each for dense, indexed-float and indexed-byte
+        // inputs. Both textures count toward the existing bank byte budget.
+        std::array<std::vector<IOSVertexUpload>, 42> sizes;
+        std::array<size_t, 42> used{};
         size_t bytes = 0;
         size_t textures = 0;
     };

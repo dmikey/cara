@@ -111,7 +111,7 @@ public:
     ~ShaderProgramManager();
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     bool ios_indexed_inputs = false);
+                                     unsigned ios_indexed_inputs = false);
 
     void UseTrivialVertexShader();
 

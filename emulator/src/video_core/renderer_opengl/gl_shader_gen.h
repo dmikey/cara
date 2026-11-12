@@ -211,7 +211,7 @@ std::string GenerateTrivialVertexShader(bool separable_shader);
  */
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
                                  bool separable_shader, const PicaFixedGSConfig* ios_output = nullptr,
-                                 u16 ios_input_mask = 0xffff, bool ios_indexed_inputs = false);
+                                 u16 ios_input_mask = 0xffff, unsigned ios_indexed_inputs = false);
 
 /*
  * Generates the GLSL fixed geometry shader program source code for non-GS PICA pipeline

@@ -282,6 +282,85 @@ commercial screenshots and game data are not committed. A future speedup claim
 needs both representations measured with the reuse probe off, identical clock
 policy and a restored checkpoint or otherwise equivalent draw workload.
 
+### Packed-byte decoding experiment
+
+The iOS frontend now enables packed inputs by default;
+`CARA_GPU_PACKED_INPUTS=0` restores indexed float inputs for comparisons. It merges overlapping
+physical byte ranges, copies interleaved source bytes without per-vertex conversion,
+and supplies offsets, strides, formats and component counts to the GPU. The shader
+reads an RGBA32UI texture and decodes signed byte, unsigned byte, signed short and
+float32 values. Default attributes are constant records. Expanded triangle ordinals
+and quaternion alignment remain unchanged.
+
+Sparse ranges are bounded to 8 MiB and cannot exceed decoded unique-input storage
+plus the constant records. Unsupported or excessive ranges use the indexed-float
+path. Float and integer textures occupy separate pool classes. The iOS frontend uses
+80 MiB per bank when packed inputs are enabled and reported physical RAM is at
+least 6 GiB; lower-memory devices retain 64 MiB. Explicit launch overrides take
+precedence. Host CPU executable code is never generated.
+
+`CARA_PACKED_VERIFY=1` compares staged inputs with VertexLoader for every unique
+source vertex of each accepted draw. It adds significant CPU work and must be off
+for timing. The physical M4 passed an independent 3,072-vertex format/alignment
+oracle and the large indexed shader fixtures through the packed decoder. A rendered
+Stories sample reached 366,426 verified draws with zero mismatches. The user
+confirmed the scene looked correct before capturing the comparison checkpoint.
+
+`CARA_PROFILE_CHECKPOINT=1` exposes a dedicated capture action; it writes
+`profile-comparison.carastate` without using normal save slots. `CARA_PROFILE_LOAD=1`
+restores that checkpoint at launch using the usual title/build/backend validation.
+Compare both representations in the same binary at fixed 100% guest clock, with
+verification disabled and equivalent warm-up/measurement windows. A bounded run
+pauses at its end; that deliberate pause is not a game freeze.
+
+Prior art: the inherited desktop renderer and
+[Azahar OpenGL vertex setup](https://github.com/azahar-emu/azahar/blob/master/src/video_core/renderer_opengl/gl_rasterizer.cpp)
+pass packed attributes to native GPU vertex fetch. Cara's GLES adaptation uses
+shader byte fetching to preserve access to the triangle's first vertex. This is
+separate from PICA shader decompilation, which was already accelerated.
+
+#### Matched Stories checkpoint results
+
+The checkpoint's actual screen, verified by screenshots, is Lilia's **“Hey you two!
+Over here!”** dialogue in the rendered opening, not the requested Cheval line.
+All following runs restore the same checkpoint in one engine build, use a 100%
+guest clock, and measure refreshes 301–1200 after 300 warm-up refreshes. The initial
+series muted audio output while continuing DSP and audio callbacks; audible-output
+confirmation is recorded in the private evidence report. No decoder shadow checks
+run during the timing comparison.
+
+| Path / per-bank cap | Mean refresh time | Input preparation | Upload calls | Upload fallbacks per refresh |
+|---|---:|---:|---:|---:|
+| Indexed float / 64 MiB, two runs | 49.85 / 49.91 ms | 11.78 / 11.80 ms | 19.88 / 19.85 ms | 40.67 |
+| Packed GPU / 64 MiB, two runs | 41.29 / 41.56 ms | 5.62 / 5.68 ms | 15.77 / 15.87 ms | 3.20 |
+| Packed GPU / 128 MiB, two runs | 39.78 / 40.58 ms | 5.50 / 5.72 ms | 15.39 / 15.57 ms | 0 |
+| Packed GPU / 96 MiB | 40.30 ms | 5.61 ms | 15.49 ms | 0 |
+| Indexed float / 64 MiB, screenshot control | 49.42 ms | See private report | See private report | 40.67 |
+| Packed GPU / 80 MiB, screenshot control | 40.73 ms | 5.74 ms | 15.65 ms | 0 |
+
+Each measured series had identical draw/vertex workloads: averages of 47,203.33
+GPU draws and 118,640,268.4 expanded vertices per 60-refresh window. Input transfer
+fell from 2,555,966,498 to 899,113,745 bytes per window (64.8% less). The two initial
+64 MiB comparisons show approximately 20% higher refresh throughput; the selected
+80 MiB screenshot pair improves throughput by 21.3%. This heavy fixed-clock scene
+still runs below full speed. Refresh throughput is not unique animation FPS.
+
+The full RGB screenshots at refresh 1200 are byte-identical between indexed float
+and packed GPU decoding. This is a strong check for the captured frame, alongside
+the GPU oracle and live input verification, not full-game compatibility proof.
+Larger pool caps retained about 207 MiB total in this scene versus the former
+192 MiB cap; 80 MiB per bank removes fallbacks without adopting the 128 MiB limit.
+Small differences between 80/96/128 MiB runs do not establish a reliable speed
+ranking, so the smallest tested cap that eliminates fallbacks is selected.
+
+`tools/benchmark_gpu_inputs.py` automates checkpoint backup, process restart,
+fixed-clock replay, warm-up exclusion, report collection, optional screenshots,
+workload matching and restoration of adaptive play. Outputs must remain private;
+engine compatibility checks are retained. The benchmark engine fingerprint is
+`49815e4f2669e0432549caa0fcd35edf742e966c6a1f2417dcc67e7902dbeb5c`.
+Frontend default changes do not change that engine fingerprint or invalidate this
+checkpoint. Engine changes may still require recreating it; do not override checks.
+
 ### Device tooling
 
 CoreDevice screenshot capture works without adding GPU readback to Cara:

@@ -394,6 +394,14 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
 }
 - (void)viewDidLoad {
     [super viewDidLoad]; self.view.backgroundColor=UIColor.blackColor;
+#ifdef CARA_IOS_GLES
+    // Explicit launch overrides retain reproducible renderer comparisons.
+    if (!std::getenv("CARA_GPU_PACKED_INPUTS")) setenv("CARA_GPU_PACKED_INPUTS","1",0);
+    if (!std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB") &&
+        std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
+        NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
+        setenv("CARA_VERTEX_UPLOAD_BANK_MIB","80",0);
+#endif
     const bool benchmarkMute=std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_BENCHMARK_AUDIO");
     AudioCore::SetIOSAudioMuted(benchmarkMute || [NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
     stretchAudio=[NSUserDefaults.standardUserDefaults boolForKey:@"audioStretching"]; stretchAudioDirty=false;
@@ -515,6 +523,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
             [self syncSaves:nil completion:nil];
         }]];
         [menu addAction:[UIAlertAction actionWithTitle:@"Disconnect save folder" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self->saveSync disconnect]; [self resumeFromMenu]; }]];
+    }
+    if (running && std::getenv("CARA_PROFILE_CHECKPOINT")) {
+        [menu addAction:[UIAlertAction actionWithTitle:@"Capture comparison checkpoint" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            stateCommand.store(101,std::memory_order_release);
+        }]];
     }
     if (running) {
         [menu addAction:[UIAlertAction actionWithTitle:@"Save state…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) { [self showStateSlots:YES]; }]];
@@ -857,7 +870,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 std::ofstream report(user + "gpu-vertex-self-test.json");
                 GLint max_texture_size=0; glGetIntegerv(GL_MAX_TEXTURE_SIZE,&max_texture_size);
                 report << "{\"max_texture_size\":" << max_texture_size << ",\"passed\":" << (passed ? "true" : "false") << ",\"detail\":" << std::quoted(error)
-                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color_packed_sparse_zero_clipping_large_batches_indexed_u16\"}\n";
+                       << ",\"fixtures\":\"uniform_branch_loop_quaternion_color_packed_sparse_zero_clipping_large_batches_indexed_u16_packed_bytes\"}\n";
                 LOG_INFO(Frontend, "GPU vertex fixture passed={} detail={}", passed, error);
                 if (!passed) emuWindow->graphics_error = error;
             }
@@ -890,6 +903,13 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                      "audio-status.json","save-state-test-status.json"})
                 FileUtil::Delete(user+name);
             auto result = system.Load(*emuWindow,rom);
+            if (result==Core::System::ResultStatus::Success && std::getenv("CARA_PROFILE_LOAD")) {
+                try { system.LoadStateFromPath(user+"profile-comparison.carastate"); }
+                catch (const std::exception& error) {
+                    LOG_ERROR(Frontend,"Comparison checkpoint: {}",error.what());
+                    result=Core::System::ResultStatus::ErrorUnknown;
+                }
+            }
             if (result==Core::System::ResultStatus::Success)
                 LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -987,12 +1007,14 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                     if (const int command=stateCommand.exchange(0,std::memory_order_acq_rel)) {
                         std::string failure;
                         try {
-                            if (command>0) system.SaveState(unsigned(command));
+                            if (command==101) system.SaveStateToPath(user+"profile-comparison.carastate");
+                            else if (command>0) system.SaveState(unsigned(command));
                             else system.LoadState(unsigned(-command));
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
                         const bool powered=system.IsPoweredOn();
                         NSString* message=failure.empty()?[NSString stringWithFormat:@"State %@ in slot %d",command>0?@"saved":@"loaded",std::abs(command)]:[NSString stringWithUTF8String:failure.c_str()];
+                        if (command==101 && failure.empty()) message=@"Comparison checkpoint saved";
                         dispatch_async(dispatch_get_main_queue(), ^{
                             if (self->sessionGeneration!=session) return;
                             self->status.text=message;
@@ -1084,6 +1106,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"vertex_index_upload_bytes\":" + std::to_string(current.vertex_index_upload_bytes - previous_counters.vertex_index_upload_bytes) +
                                 ",\"gpu_input_records\":" + std::to_string(current.gpu_input_records - previous_counters.gpu_input_records) +
                                 ",\"gpu_indexed_input_draws\":" + std::to_string(current.gpu_indexed_input_draws - previous_counters.gpu_indexed_input_draws) +
+                                ",\"gpu_packed_input_draws\":" + std::to_string(current.gpu_packed_input_draws - previous_counters.gpu_packed_input_draws) +
+                                ",\"packed_validation_failures\":" + std::to_string(current.packed_validation_failures) +
+                                ",\"packed_verified_draws\":" + std::to_string(current.packed_verified_draws) +
                                 ",\"vertex_orphan_upload_bytes\":" + std::to_string(current.vertex_orphan_upload_bytes - previous_counters.vertex_orphan_upload_bytes) +
                                 ",\"vertex_gl_image_calls\":" + std::to_string(current.vertex_gl_image_calls - previous_counters.vertex_gl_image_calls) +
                                 ",\"vertex_gl_subimage_calls\":" + std::to_string(current.vertex_gl_subimage_calls - previous_counters.vertex_gl_subimage_calls) +

@@ -20,6 +20,7 @@
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_shader_decompiler.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
+#include "video_core/renderer_opengl/gl_packed_vertex.h"
 #include "video_core/renderer_opengl/gl_shader_util.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_vars.h"
@@ -1826,7 +1827,7 @@ void main() {
 }
 
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
-                                 bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, bool ios_indexed_inputs) {
+                                 bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs) {
     std::string out;
     if (separable_shader) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
@@ -1902,7 +1903,8 @@ layout (std140) uniform vs_config {
             VSOutputAttributes::QUATERNION_Y, VSOutputAttributes::QUATERNION_Z, VSOutputAttributes::QUATERNION_W});
         out += GetVertexInterfaceDeclaration(true, false);
         out += UniformBlockDef;
-        out += "uniform highp sampler2D cara_vertex_inputs;\n";
+        if (ios_indexed_inputs == 2) out += PackedVertexDecoderGLSL;
+        else out += "uniform highp sampler2D cara_vertex_inputs;\n";
         if (ios_indexed_inputs) out += "uniform highp usampler2D cara_vertex_indices;\n";
         out += program_source;
         out += "void citra_run_vertex(int vertex_id) {\n";
@@ -1911,7 +1913,9 @@ layout (std140) uniform vs_config {
         const IOSVertexInputLayout layout(ios_input_mask);
         for (u32 i = 0; i < used_regs.size(); ++i) {
             if (used_regs[i]) {
-                if (layout.offsets[i] >= 0) {
+                if (ios_indexed_inputs == 2 && layout.offsets[i] >= 0) {
+                    out += fmt::format("vs_in_reg{0} = cara_decode_vertex(input_vertex_id, {0});\n", i);
+                } else if (layout.offsets[i] >= 0) {
                     out += fmt::format("int index{0} = {4} * {1} + {2};\nvs_in_reg{0} = texelFetch(cara_vertex_inputs, ivec2(index{0} % {3}, index{0} / {3}), 0);\n", i, layout.stride, layout.offsets[i], IOS_VERTEX_INPUT_WIDTH, ios_indexed_inputs ? "input_vertex_id" : "vertex_id");
                 } else {
                     out += fmt::format("vs_in_reg{} = vec4(0.0);\n", i);

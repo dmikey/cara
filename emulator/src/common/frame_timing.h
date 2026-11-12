@@ -22,6 +22,9 @@ struct Counters {
     std::uint64_t vertex_index_upload_bytes = 0;
     std::uint64_t gpu_input_records = 0;
     std::uint64_t gpu_indexed_input_draws = 0;
+    std::uint64_t gpu_packed_input_draws = 0;
+    std::uint64_t packed_validation_failures = 0;
+    std::uint64_t packed_verified_draws = 0;
     std::uint64_t vertex_orphan_upload_bytes = 0;
     std::uint64_t vertex_gl_image_calls = 0;
     std::uint64_t vertex_gl_subimage_calls = 0;

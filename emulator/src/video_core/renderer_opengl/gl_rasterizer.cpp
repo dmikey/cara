@@ -478,6 +478,109 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
 }
 
 #ifdef CARA_IOS_GLES
+bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layout) {
+    const auto& pipeline = Pica::g_state.regs.pipeline;
+    const auto bounds = std::minmax_element(ios_triangle_indices.begin(), ios_triangle_indices.end());
+    const u32 first = *bounds.first, last = *bounds.second;
+    if (u64(last) - first >= 65536) return false;
+    ios_vertex_source_map.BeginDraw();
+    for (u32 vertex : ios_triangle_indices) ios_vertex_source_map.Resolve(u16(vertex-first));
+    const size_t unique = ios_vertex_source_map.Size();
+    struct Range { u64 begin, end; size_t destination; };
+    std::vector<Range> ranges;
+    std::array<u64,16> addresses{};
+    std::array<bool,16> loaded{};
+    std::array<GLvec4,16> constants{};
+    Pica::VertexLoader loader(pipeline);
+    const u64 base = pipeline.vertex_attributes.GetPhysicalBaseAddress();
+    for (unsigned reg=0;reg<16;++reg) {
+        if (layout.offsets[reg]<0) continue;
+        const unsigned attr=layout.source_attributes[layout.offsets[reg]];
+        const auto desc=loader.GetAttributeLayout(attr);
+        if (desc.elements) {
+            if (desc.elements>4) return false;
+            const unsigned format=static_cast<unsigned>(desc.format);
+            if (format>3) return false;
+            const unsigned bytes=format==3?4:format==2?2:1;
+            const u64 start=base+desc.offset+u64(first)*desc.stride;
+            const u64 end=start+u64(last-first)*desc.stride+bytes*desc.elements;
+            if (end>0x100000000ULL || end<=start || end-start>8*1024*1024) return false;
+            ranges.push_back({start,end,0}); addresses[reg]=start; loaded[reg]=true;
+            ios_packed_layout[reg]={0,GLint(desc.stride),GLint(format),GLint(desc.elements)};
+        } else {
+            if (desc.is_default) {
+                const auto& value=Pica::g_state.input_default_attributes.attr[attr];
+                constants[reg]={value.x.ToFloat32(),value.y.ToFloat32(),value.z.ToFloat32(),value.w.ToFloat32()};
+            }
+            ios_packed_layout[reg]={GLint(reg*sizeof(GLvec4)),0,3,4};
+        }
+    }
+    std::sort(ranges.begin(),ranges.end(),[](const Range& a,const Range& b){return a.begin<b.begin;});
+    std::vector<Range> merged;
+    for (const auto& range:ranges) {
+        if (!merged.empty() && range.begin<=merged.back().end)
+            merged.back().end=std::max(merged.back().end,range.end);
+        else merged.push_back(range);
+    }
+    size_t bytes=sizeof(constants);
+    for (auto& range:merged) {
+        bytes=(bytes+3)&~size_t(3); range.destination=bytes; bytes+=range.end-range.begin;
+    }
+    // Bound sparse ranges and avoid transferring more than decoded unique inputs.
+    if (bytes>8*1024*1024 || bytes>sizeof(constants)+unique*layout.stride*sizeof(GLvec4)) return false;
+    const size_t rows=(bytes+IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4)-1)/(IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4));
+    if (rows>unsigned(ios_vertex_max_texture_size)) return false;
+    ios_vertex_inputs.resize(rows*IOS_VERTEX_INPUT_WIDTH);
+    auto* output=reinterpret_cast<u8*>(ios_vertex_inputs.data());
+    std::memcpy(output,constants.data(),sizeof(constants));
+    for (const auto& range:merged) {
+        const auto memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
+        if (!memory || memory.GetSize()<range.end-range.begin) return false;
+        std::memcpy(output+range.destination,memory.GetPtr(),range.end-range.begin);
+        for (unsigned reg=0;reg<16;++reg)
+            if (loaded[reg] && addresses[reg]>=range.begin && addresses[reg]<range.end)
+                ios_packed_layout[reg][0]=GLint(range.destination+addresses[reg]-range.begin);
+    }
+    ios_vertex_input_indices.resize(((ios_triangle_indices.size()+IOS_VERTEX_INPUT_WIDTH-1)/IOS_VERTEX_INPUT_WIDTH)*IOS_VERTEX_INPUT_WIDTH);
+    for (size_t i=0;i<ios_triangle_indices.size();++i) ios_vertex_input_indices[i]=u16(ios_triangle_indices[i]-first);
+    ios_vertex_input_records=static_cast<u32>(unique);
+    static const bool verify=std::getenv("CARA_PACKED_VERIFY")!=nullptr;
+    if (verify) {
+        ios_vertex_source_map.BeginDraw();
+        Pica::DebugUtils::MemoryAccessTracker accesses;
+        for (u32 vertex:ios_triangle_indices) {
+            if (!ios_vertex_source_map.Resolve(u16(vertex-first)).inserted) continue;
+            Pica::Shader::AttributeBuffer input{};
+            loader.LoadVertex(u32(base),0,vertex,input,accesses);
+            std::array<GLvec4,16> reference;
+            layout.PackAttributes(input,reference);
+            for (unsigned reg=0;reg<16;++reg) {
+                if (layout.offsets[reg]<0) continue;
+                const auto& info=ios_packed_layout[reg];
+                const unsigned width=info[2]==3?4:info[2]==2?2:1;
+                for (unsigned c=0;c<4;++c) {
+                    float actual=c==3?1.f:0.f;
+                    if (c<unsigned(info[3])) {
+                        const u8* source=output+info[0]+size_t(vertex-first)*info[1]+c*width;
+                        if (info[2]==0) { s8 v; std::memcpy(&v,source,1); actual=v; }
+                        if (info[2]==1) { u8 v; std::memcpy(&v,source,1); actual=v; }
+                        if (info[2]==2) { s16 v; std::memcpy(&v,source,2); actual=v; }
+                        if (info[2]==3) std::memcpy(&actual,source,4);
+                    }
+                    const float expected=reference[layout.offsets[reg]][c];
+                    if (std::memcmp(&actual,&expected,4)!=0) {
+                        ++Common::FrameTiming::counters.packed_validation_failures;
+                        LOG_ERROR(Render_OpenGL,"Packed input validation failed register {} component {}",reg,c);
+                        return false;
+                    }
+                }
+            }
+        }
+        ++Common::FrameTiming::counters.packed_verified_draws;
+    }
+    return true;
+}
+
 bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexPrepare);
     constexpr u32 MAX_VERTICES = IOS_MAX_EXPANDED_VERTICES;
@@ -510,6 +613,14 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     ios_indexed_vertex_inputs = indexed_enabled && (is_indexed || strip);
     ios_vertex_input_records = static_cast<u32>(ios_triangle_indices.size());
     ios_vertex_input_indices.clear();
+    static const bool packed_enabled = [] {
+        const char* mode = std::getenv("CARA_GPU_PACKED_INPUTS");
+        return mode && std::strcmp(mode,"1") == 0;
+    }();
+    if (ios_indexed_vertex_inputs && packed_enabled && PrepareIOSPackedVertices(layout)) {
+        ios_indexed_vertex_inputs = 2;
+        return true;
+    }
     if (ios_indexed_vertex_inputs) {
         ios_vertex_source_map.BeginDraw();
         ios_vertex_inputs.clear();
@@ -613,6 +724,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     shader_program_manager->ApplyTo(state);
     if (!state.draw.shader_program) return false;
     state.Apply();
+    const bool raw_inputs = ios_indexed_vertex_inputs == 2;
+    const GLint input_internal = raw_inputs ? GL_RGBA32UI : GL_RGBA32F;
+    const GLenum input_format = raw_inputs ? GL_RGBA_INTEGER : GL_RGBA;
+    const GLenum input_type = raw_inputs ? GL_UNSIGNED_INT : GL_FLOAT;
+    if (raw_inputs) glUniform4iv(glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
     glActiveTexture(GL_TEXTURE7);
     const unsigned upload_rows = static_cast<unsigned>(ios_vertex_inputs.size() / IOS_VERTEX_INPUT_WIDTH);
     OGLTexture* selected_texture = &ios_vertex_fallback_texture;
@@ -643,9 +759,9 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     unsigned size_class = 0;
     unsigned rows = 1;
     while (rows < std::max(upload_rows, index_rows)) { rows *= 2; ++size_class; }
-    const unsigned height_classes = static_cast<unsigned>(bank.sizes.size() / 2);
+    const unsigned height_classes = static_cast<unsigned>(bank.sizes.size() / 3);
     const bool supported_class = size_class < height_classes;
-    if (ios_indexed_vertex_inputs) size_class += height_classes;
+    size_class += ios_indexed_vertex_inputs * height_classes;
     if (supported_class && ios_vertex_upload_index++ < max_upload_draws && size_class < bank.sizes.size() &&
         rows<=unsigned(ios_vertex_max_texture_size)) {
         auto& pool = bank.sizes[size_class];
@@ -656,7 +772,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             // first free space promptly, without modifying in-flight draw inputs.
             for (size_t order = bank.sizes.size(); order-- > 0 &&
                  (bank.bytes + bytes > max_bank_bytes || bank.textures >= max_upload_draws);) {
-                const size_t i = (order % 2) * height_classes + order / 2;
+                const size_t i = (order % 3) * height_classes + order / 3;
                 auto& unused = bank.sizes[i];
                 const size_t allocation_bytes = (size_t(1) << (i % height_classes)) * IOS_VERTEX_INPUT_WIDTH *
                     (sizeof(GLvec4) + (i >= height_classes ? sizeof(u16) : 0));
@@ -730,19 +846,19 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         if (orphan_upload) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, upload_rows, 0,
-                         GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
+            glTexImage2D(GL_TEXTURE_2D, 0, input_internal, IOS_VERTEX_INPUT_WIDTH, upload_rows, 0,
+                         input_format, input_type, ios_vertex_inputs.data());
         } else {
             if (resize_storage) {
                 Common::FrameTiming::Scope storage_timing(Common::FrameTiming::Phase::VertexStorageAllocate);
                 if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, storage_rows, 0,
-                             GL_RGBA, GL_FLOAT, nullptr);
+                glTexImage2D(GL_TEXTURE_2D, 0, input_internal, IOS_VERTEX_INPUT_WIDTH, storage_rows, 0,
+                             input_format, input_type, nullptr);
             }
             Common::FrameTiming::Scope update_timing(Common::FrameTiming::Phase::VertexSubImageUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_subimage_calls;
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
-                            GL_RGBA, GL_FLOAT, ios_vertex_inputs.data());
+                            input_format, input_type, ios_vertex_inputs.data());
         }
     }
     if (ios_indexed_vertex_inputs) {
@@ -774,6 +890,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     Common::FrameTiming::counters.gpu_vertices += ios_triangle_indices.size();
     Common::FrameTiming::counters.gpu_input_records += ios_vertex_input_records;
     if (ios_indexed_vertex_inputs) ++Common::FrameTiming::counters.gpu_indexed_input_draws;
+    if (ios_indexed_vertex_inputs==2) ++Common::FrameTiming::counters.gpu_packed_input_draws;
     if (ios_indexed_vertex_inputs) {
         glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D, 0);
     }

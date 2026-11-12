@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <map>
+#include <cstring>
+#include "video_core/renderer_opengl/gl_packed_vertex.h"
 #include <vector>
 #include <nihstro/inline_assembly.h>
 #include "ios/gpu_vertex_self_test.h"
@@ -67,7 +69,7 @@ static bool RunFeedbackCaptureFixture(std::string& error) {
     return passed;
 }
 
-static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99, bool indexed_inputs=false, size_t source_count=257) {
+static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99, unsigned indexed_inputs=0, size_t source_count=257) {
     using namespace OpenGL;
     using S = nihstro::SourceRegister;
     using D = nihstro::DestRegister;
@@ -167,7 +169,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D, texture.handle);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, static_cast<GLsizei>(texture_rows), 0, GL_RGBA, GL_FLOAT, packed.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, indexed_inputs==2?GL_RGBA32UI:GL_RGBA32F, IOS_VERTEX_INPUT_WIDTH, static_cast<GLsizei>(texture_rows), 0, indexed_inputs==2?GL_RGBA_INTEGER:GL_RGBA, indexed_inputs==2?GL_UNSIGNED_INT:GL_FLOAT, packed.data());
     OGLTexture index_texture;
     if (indexed_inputs) {
         index_texture.Create(); glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D,index_texture.handle);
@@ -183,6 +185,13 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     glUseProgram(program);
     glUniform1i(glGetUniformLocation(program, "cara_vertex_inputs"), 7);
     glUniform1i(glGetUniformLocation(program, "cara_vertex_indices"), 8);
+    if (indexed_inputs==2) {
+        std::array<std::array<GLint,4>,16> raw_layout{};
+        for (unsigned reg=0;reg<16;++reg) if (layout.offsets[reg]>=0)
+            raw_layout[reg]={layout.offsets[reg]*16,GLint(layout.stride*16),3,4};
+        glUniform4iv(glGetUniformLocation(program,"cara_vertex_layout[0]"),16,raw_layout[0].data());
+    }
+
     glUniformBlockBinding(program, glGetUniformBlockIndex(program, "vs_config"), 0);
     const GLvec4 viewport = {13.0f, 7.0f, 200.25f, 120.125f};
     UniformData raster_data{};
@@ -275,7 +284,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
         for (size_t v = 0; v < record_count; ++v)
             packed[v * layout.stride + layout.offsets[0]][2] = outside ? 0.125f : -0.5f;
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH,
-                        static_cast<GLsizei>(texture_rows), GL_RGBA, GL_FLOAT, packed.data());
+                        static_cast<GLsizei>(texture_rows), indexed_inputs==2?GL_RGBA_INTEGER:GL_RGBA, indexed_inputs==2?GL_UNSIGNED_INT:GL_FLOAT, packed.data());
         glClearColor(0, 0, 0, 0); glClear(GL_COLOR_BUFFER_BIT);
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
         std::array<u8, 4> pixel{};
@@ -300,7 +309,65 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     return passed;
 }
 
+static bool RunPackedDecodeFixture(std::string& error) {
+    using namespace OpenGL;
+    constexpr unsigned count=3072, per_attribute=count/16;
+    std::array<std::array<GLint,4>,16> layout{};
+    std::vector<u8> bytes(16*per_attribute*24+2048,0);
+    std::vector<float> expected(count*4);
+    const std::array<float,8> floats={-32768.f,32767.f,-1.25f,0.f,-0.f,0.125f,1024.5f,1.0e-20f};
+    for (unsigned reg=0;reg<16;++reg) {
+        const unsigned format=reg/4, components=reg%4+1, width=format==3?4:format==2?2:1;
+        const unsigned offset=reg*per_attribute*24+reg%4;
+        layout[reg]={GLint(offset),24,GLint(format),GLint(components)};
+        for (unsigned v=0;v<per_attribute;++v) for (unsigned c=0;c<4;++c) {
+            float value=c==3?1.f:0.f;
+            if (c<components) {
+                u8* destination=bytes.data()+offset+v*24+c*width;
+                const u32 bits=(v*977+reg*131+c*65521)^0x8000;
+                if (format==0) { s8 x=static_cast<s8>(bits); std::memcpy(destination,&x,1); value=x; }
+                if (format==1) { u8 x=static_cast<u8>(bits); std::memcpy(destination,&x,1); value=x; }
+                if (format==2) { s16 x=static_cast<s16>(bits); std::memcpy(destination,&x,2); value=x; }
+                if (format==3) { value=floats[(v+c)%floats.size()]; std::memcpy(destination,&value,4); }
+            }
+            expected[(v*16+reg)*4+c]=value;
+        }
+    }
+    const unsigned rows=(bytes.size()+2047)/2048; bytes.resize(rows*2048);
+    OGLShader vertex,fragment;
+    vertex.Create((std::string(PackedVertexDecoderGLSL)+"out highp vec4 decoded; void main(){ decoded=cara_decode_vertex(gl_VertexID/16,gl_VertexID%16); gl_Position=vec4(0,0,0,1); }").c_str(),GL_VERTEX_SHADER);
+    fragment.Create("out vec4 color;void main(){color=vec4(1);}",GL_FRAGMENT_SHADER);
+    GLuint program=glCreateProgram(); glAttachShader(program,vertex.handle); glAttachShader(program,fragment.handle);
+    const char* varying="decoded"; glTransformFeedbackVaryings(program,1,&varying,GL_INTERLEAVED_ATTRIBS); glLinkProgram(program);
+    GLint linked=0; glGetProgramiv(program,GL_LINK_STATUS,&linked);
+    if (!linked) { glDeleteProgram(program); error="packed decoder link failed"; return false; }
+    OGLTexture texture; texture.Create(); glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D,texture.handle); glBindSampler(7,0);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST); glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32UI,128,rows,0,GL_RGBA_INTEGER,GL_UNSIGNED_INT,bytes.data());
+    OGLVertexArray vao; vao.Create(); glBindVertexArray(vao.handle);
+    OGLBuffer output; output.Create(); glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,output.handle);
+    glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER,expected.size()*sizeof(float),nullptr,GL_STREAM_READ);
+    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,output.handle); glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program,"cara_vertex_inputs"),7);
+    glUniform4iv(glGetUniformLocation(program,"cara_vertex_layout[0]"),16,layout[0].data());
+    glEnable(GL_RASTERIZER_DISCARD); glBeginTransformFeedback(GL_TRIANGLES); glDrawArrays(GL_TRIANGLES,0,count); glEndTransformFeedback();
+    const auto draw_error=glGetError();
+    const float* actual=static_cast<const float*>(glMapBufferRange(GL_TRANSFORM_FEEDBACK_BUFFER,0,expected.size()*sizeof(float),GL_MAP_READ_BIT));
+    bool passed=actual && draw_error==GL_NO_ERROR;
+    if (actual) {
+        for (unsigned i=0;i<expected.size();++i) if (std::memcmp(actual+i,expected.data()+i,sizeof(float))!=0) {
+            error="packed decoder mismatch component="+std::to_string(i)+" expected="+std::to_string(expected[i])+" actual="+std::to_string(actual[i]); passed=false; break;
+        }
+        if (!glUnmapBuffer(GL_TRANSFORM_FEEDBACK_BUFFER)) passed=false;
+    }
+    if (!passed && error.empty()) error="packed decoder capture failed";
+    glDisable(GL_RASTERIZER_DISCARD); glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,0); glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER,0);
+    glUseProgram(0); glBindVertexArray(0); glDeleteProgram(program); glBindTexture(GL_TEXTURE_2D,0); glActiveTexture(GL_TEXTURE0);
+    return passed;
+}
+
 bool RunGPUVertexSelfTest(std::string& error) {
+    if (!RunPackedDecodeFixture(error)) return false;
     if (!RunFeedbackCaptureFixture(error)) return false;
     for (u16 mask : {u16(0xffff), u16(0x0083), u16(0x0003)}) {
         if (!RunVertexLayoutFixture(mask, error)) {
@@ -318,7 +385,7 @@ bool RunGPUVertexSelfTest(std::string& error) {
         }
     }
     for (const auto& fixture : {std::pair<size_t,size_t>{41967,257}, {65535,65535}}) {
-        if (!RunVertexLayoutFixture(large_mask,error,fixture.first,true,fixture.second)) {
+        for (unsigned mode : {1u,2u}) if (!RunVertexLayoutFixture(large_mask,error,fixture.first,mode,fixture.second)) {
             error+=" indexed vertex count="+std::to_string(fixture.first);
             return false;
         }

@@ -185,7 +185,7 @@ public:
     }
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     bool ios_indexed_inputs) {
+                                     unsigned ios_indexed_inputs) {
         bool result = false;
         const PicaVSConfig key(regs, setup);
         u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
@@ -519,7 +519,7 @@ ShaderProgramManager::ShaderProgramManager(bool separable)
 ShaderProgramManager::~ShaderProgramManager() = default;
 
 bool ShaderProgramManager::UseProgrammableVertexShader(const Pica::Regs& regs,
-                                                       Pica::Shader::ShaderSetup& setup, bool ios_indexed_inputs) {
+                                                       Pica::Shader::ShaderSetup& setup, unsigned ios_indexed_inputs) {
     return impl->UseProgrammableVertexShader(regs, setup, ios_indexed_inputs);
 }
 
