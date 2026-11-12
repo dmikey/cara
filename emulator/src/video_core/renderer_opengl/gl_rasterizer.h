@@ -283,6 +283,10 @@ private:
     struct IOSVertexUpload {
         OGLTexture texture;
         OGLTexture indices;
+        // Exact CPU shadows permit skipping writes without relying on RAM dirty
+        // tracking or hash collision assumptions. Released with the pool entry.
+        std::vector<u8> input_shadow;
+        std::vector<u8> index_shadow;
         unsigned rows = 0;
     };
     struct IOSVertexFrameUploads {

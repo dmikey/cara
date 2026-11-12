@@ -403,6 +403,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
         setenv("CARA_VERTEX_UPLOAD_BANK_MIB","80",0);
+    // Exact upload shadows trade bounded host memory for fewer driver writes.
+    if (!std::getenv("CARA_VERTEX_UPLOAD_REUSE") &&
+        std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
+        NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
+        setenv("CARA_VERTEX_UPLOAD_REUSE","1",0);
 #endif
     const bool benchmarkMute=std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_BENCHMARK_AUDIO");
     AudioCore::SetIOSAudioMuted(benchmarkMute || [NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
@@ -425,8 +430,12 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
     skinArt=[UIImageView new]; skinArt.opaque=NO; skinArt.userInteractionEnabled=NO; [self.view addSubview:skinArt];
     skinControls=[[CaraSkinControls alloc] initWithFrame:CGRectZero]; [self.view addSubview:skinControls];
     __weak EmulatorController* weakSelf=self;
+    const char* inputLock=std::getenv("CARA_BENCHMARK_INPUT_LOCK");
+    const bool benchmarkInputLock=std::getenv("CARA_BENCHMARK_FRAMES") && inputLock && std::strcmp(inputLock,"1")==0;
     skinControls.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick,CGPoint touch) {
         EmulatorController* controller=weakSelf; if (!controller) return;
+        // Scripted benchmarks own game inputs; the menu remains available.
+        if (benchmarkInputLock && controller->running) return;
         static NSDictionary<NSString*,NSNumber*>* codes;
         static dispatch_once_t once;
         dispatch_once(&once,^{ codes=@{@"a":@(Settings::NativeButton::A),@"b":@(Settings::NativeButton::B),@"x":@(Settings::NativeButton::X),@"y":@(Settings::NativeButton::Y),@"up":@(Settings::NativeButton::Up),@"down":@(Settings::NativeButton::Down),@"left":@(Settings::NativeButton::Left),@"right":@(Settings::NativeButton::Right),@"l":@(Settings::NativeButton::L),@"r":@(Settings::NativeButton::R),@"zl":@(Settings::NativeButton::ZL),@"zr":@(Settings::NativeButton::ZR),@"start":@(Settings::NativeButton::Start),@"select":@(Settings::NativeButton::Select)}; });
@@ -985,6 +994,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 const unsigned state_save_frame=state_test_frame("CARA_STATE_TEST_SAVE_FRAME");
                 const unsigned state_load_frame=state_test_frame("CARA_STATE_TEST_LOAD_FRAME");
                 bool state_saved=false,state_loaded=false;
+                const unsigned profile_save_frame=state_test_frame("CARA_PROFILE_SAVE_FRAME");
+                const unsigned test_start_frame=state_test_frame("CARA_TEST_HOLD_START_FRAME");
+                bool profile_saved=false,test_start_pressed=false,test_start_released=false;
+
                 std::array<u64,69> saved_execution{};
                 const auto execution_snapshot=[&]() {
                     std::array<u64,69> snapshot{};
@@ -1008,6 +1021,11 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                         system.DSP().EnableStretching(s.enable_audio_stretching);
                     }
                     try {
+                        if (profile_save_frame && !profile_saved && emuWindow->frames>=profile_save_frame) {
+                            system.SaveStateToPath(user+"profile-comparison.carastate");
+                            profile_saved=true;
+                            LOG_INFO(Frontend,"Comparison checkpoint saved at frame {}",emuWindow->frames);
+                        }
                         if (state_save_frame && !state_saved && emuWindow->frames>=state_save_frame) {
                             saved_execution=execution_snapshot();
                             system.SaveStateToPath(user+"device-test.carastate"); state_saved=true; state_test_report("");
@@ -1052,6 +1070,12 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                         paused_duration += resumed - pause_started;
                         last_frame_time += resumed - pause_started;
                         next_frame_time = resumed; was_paused = false; reset_clock_samples();
+                    }
+                    if (test_start_frame && !test_start_pressed && emuWindow->frames>=test_start_frame) {
+                        buttons.Press(Settings::NativeButton::Start); test_start_pressed=true;
+                    }
+                    if (test_start_pressed && !test_start_released && emuWindow->frames>=test_start_frame+120) {
+                        buttons.Release(Settings::NativeButton::Start); test_start_released=true;
                     }
                     if (active_test_press && emuWindow->frames >= active_test_press + 6) {
                         buttons.Release(Settings::NativeButton::A); active_test_press = 0;
@@ -1127,6 +1151,9 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"vertex_storage_allocations\":" + std::to_string(current.vertex_storage_allocations - previous_counters.vertex_storage_allocations) +
                                 ",\"vertex_pool_peak_bytes\":" + std::to_string(current.vertex_pool_peak_bytes) +
                                 ",\"vertex_upload_bytes\":" + std::to_string(current.vertex_upload_bytes - previous_counters.vertex_upload_bytes) +
+                                ",\"vertex_upload_reused_bytes\":" + std::to_string(current.vertex_upload_reused_bytes - previous_counters.vertex_upload_reused_bytes) +
+                                ",\"vertex_upload_reused_textures\":" + std::to_string(current.vertex_upload_reused_textures - previous_counters.vertex_upload_reused_textures) +
+                                ",\"vertex_reuse_check_ms_per_frame\":" + std::to_string((current.vertex_reuse_check_seconds - previous_counters.vertex_reuse_check_seconds)*1000/count) +
                                 ",\"vertex_index_upload_bytes\":" + std::to_string(current.vertex_index_upload_bytes - previous_counters.vertex_index_upload_bytes) +
                                 ",\"gpu_input_records\":" + std::to_string(current.gpu_input_records - previous_counters.gpu_input_records) +
                                 ",\"gpu_indexed_input_draws\":" + std::to_string(current.gpu_indexed_input_draws - previous_counters.gpu_indexed_input_draws) +

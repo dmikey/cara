@@ -395,6 +395,67 @@ The GPU fixture report also records draw-buffer and color-attachment limits for
 planning a GLES pre-transform experiment. Keep these measurements separate from
 Instruments sampling, which remains unavailable in the earlier USB test.
 
+### Resident vertex-input experiment
+
+`CARA_VERTEX_UPLOAD_REUSE=1` retains exact CPU byte shadows with each pooled
+packed-input/index texture. Before uploading, it compares the current complete
+payload against that texture's shadow and skips only matching writes. Shader
+uniforms, layout, draw order and transforms still update normally. This does not
+cache transformed vertices or depend on guest RAM dirty tracking. Reallocation,
+new textures and orphan fallback force fresh uploads; pool eviction releases both
+shadows. Padding is initialized so irrelevant bytes cannot cause false misses.
+Shadow capacity is bounded by the existing pool's corresponding texture storage;
+it is additional host memory, not included in the GPU pool counter.
+
+The preceding packed-decoder comparison measured 49.559 ms elapsed / 44.980 ms
+emulation-thread CPU / 48.080 ms process CPU for indexed floats, versus
+40.840 / 36.273 / 37.992 ms for packed bytes. Thread CPU includes renderer and
+GL driver work as well as ARM interpretation; these are not GPU-utilization
+measurements or a sampled call graph. This motivates testing fewer driver uploads.
+
+An initial resident-input comparison was rejected: the user was pressing A,
+and the two runs reached different dialogue/camera moments. Its apparent speed
+improvement is not a matched result. Benchmarks now use explicit scripted input
+and suppress skin game inputs while measuring. The menu remains available, and
+normal touch controls return when normal play is relaunched.
+
+For deterministic advancing-scene comparisons, use
+`tools/benchmark_gpu_inputs.py --press-a-frames 300,600,900 --frames 1800
+--host-cpu-timing --screenshots` with packed 80 MiB configurations differing only
+in `reuse`. Each A press lasts six emulated refreshes. Compare draw/vertex counts,
+engine fingerprints, final pixels, audio status, memory and thermal state before
+selecting a default. Never count an FMV or mismatched camera as the same workload.
+
+Engine changes still invalidate old build-specific checkpoints. The diagnostic
+`CARA_PROFILE_SAVE_FRAME` can capture a fresh compatible checkpoint automatically;
+`CARA_TEST_HOLD_START_FRAME` holds Start for 120 refreshes. Both default off.
+For this build, a boot run with A at 300/600/900 and Start at 1200 first captured
+at frame 2400; a second run from that intermediate checkpoint with the same
+schedule reached the rendered opening and captured again at 2400. Verify the
+actual screenshot and checkpoint file before timing. Do not bypass compatibility
+checks or publish the private checkpoint.
+
+The isolated, scripted 1,800-refresh comparison (first 300 excluded, sound on,
+100% guest CPU) matched all draw/vertex counts and final full RGB pixels:
+
+| Path | Elapsed per refresh | Upload | CPU comparison/copy | Emulation-thread CPU |
+|---|---:|---:|---:|---:|
+| Packed inputs, upload every use | 40.632 ms | 14.818 ms | 0 ms | 35.654 ms |
+| Packed inputs, exact upload reuse | 25.278 ms | 0.416 ms | 0.536 ms | 22.408 ms |
+
+This is 60.7% higher throughput in the measured advancing opening sequence,
+not a claim of locked 60 FPS or full-game compatibility. Uploaded bytes fell from
+853.65 MB to 26.38 MB per 60-refresh window (96.9% fewer). Each window averaged
+44,888.2 GPU draws and 113,006,607.24 expanded vertices in both paths. Process
+footprint at the end rose from 1,019,561,496 to 1,116,161,608 bytes (about 92 MiB);
+thermal state remained nominal. Audio was active during both runs. CPU staging
+still happens: this avoids redundant uploads, not all CPU vertex preparation.
+
+The iOS frontend enables reuse on devices reporting at least 6 GiB physical RAM
+when packed inputs are enabled. Smaller devices retain the no-shadow path until
+measured. `CARA_VERTEX_UPLOAD_REUSE=0` explicitly disables it for comparisons.
+The core remains opt-in through the same environment setting.
+
 ### Device tooling
 
 CoreDevice screenshot capture works without adding GPU readback to Cara:

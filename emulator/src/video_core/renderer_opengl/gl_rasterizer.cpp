@@ -532,6 +532,7 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
     if (rows>unsigned(ios_vertex_max_texture_size)) return false;
     ios_vertex_inputs.resize(rows*IOS_VERTEX_INPUT_WIDTH);
     auto* output=reinterpret_cast<u8*>(ios_vertex_inputs.data());
+    std::memset(output,0,ios_vertex_inputs.size()*sizeof(GLvec4));
     std::memcpy(output,constants.data(),sizeof(constants));
     for (const auto& range:merged) {
         const auto memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
@@ -543,6 +544,7 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
     }
     ios_vertex_input_indices.resize(((ios_triangle_indices.size()+IOS_VERTEX_INPUT_WIDTH-1)/IOS_VERTEX_INPUT_WIDTH)*IOS_VERTEX_INPUT_WIDTH);
     for (size_t i=0;i<ios_triangle_indices.size();++i) ios_vertex_input_indices[i]=u16(ios_triangle_indices[i]-first);
+    std::fill(ios_vertex_input_indices.begin()+ios_triangle_indices.size(),ios_vertex_input_indices.end(),0);
     ios_vertex_input_records=static_cast<u32>(unique);
     static const bool verify=std::getenv("CARA_PACKED_VERIFY")!=nullptr;
     if (verify) {
@@ -733,6 +735,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const unsigned upload_rows = static_cast<unsigned>(ios_vertex_inputs.size() / IOS_VERTEX_INPUT_WIDTH);
     OGLTexture* selected_texture = &ios_vertex_fallback_texture;
     OGLTexture* selected_indices = &ios_vertex_index_fallback_texture;
+    IOSVertexUpload* selected_upload = nullptr;
     const unsigned index_rows = static_cast<unsigned>(ios_vertex_input_indices.size() / IOS_VERTEX_INPUT_WIDTH);
     unsigned storage_rows = std::max(upload_rows, index_rows);
     bool resize_storage = false;
@@ -796,6 +799,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             storage_rows = upload.rows;
             selected_texture = &upload.texture;
             selected_indices = &upload.indices;
+            selected_upload = &upload;
             orphan_upload = false;
         }
     }
@@ -841,7 +845,31 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         glBindSampler(8, 0);
         glActiveTexture(GL_TEXTURE7);
     }
-    {
+    static const bool reuse_enabled=[] {
+        const char* value=std::getenv("CARA_VERTEX_UPLOAD_REUSE");
+        return value && std::strcmp(value,"1")==0;
+    }();
+    const bool cache_inputs=raw_inputs && reuse_enabled && selected_upload;
+    const size_t input_bytes=ios_vertex_inputs.size()*sizeof(GLvec4);
+    const size_t index_bytes=ios_vertex_input_indices.size()*sizeof(u16);
+    bool reuse_input=false,reuse_index=false;
+    if (cache_inputs && !resize_storage) {
+        Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
+        const auto matches=[](const std::vector<u8>& shadow,const void* data,size_t bytes) {
+            return shadow.size()==bytes && bytes && std::memcmp(shadow.data(),data,bytes)==0;
+        };
+        reuse_input=matches(selected_upload->input_shadow,ios_vertex_inputs.data(),input_bytes);
+        reuse_index=matches(selected_upload->index_shadow,ios_vertex_input_indices.data(),index_bytes);
+    }
+    if (Common::FrameTiming::counters.enabled) {
+        auto& counters=Common::FrameTiming::counters;
+        const size_t skipped=(reuse_input?input_bytes:0)+(reuse_index?index_bytes:0);
+        counters.vertex_upload_bytes-=skipped;
+        if (reuse_index) counters.vertex_index_upload_bytes-=index_bytes;
+        counters.vertex_upload_reused_bytes+=skipped;
+        counters.vertex_upload_reused_textures+=unsigned(reuse_input)+unsigned(reuse_index);
+    }
+    if (!reuse_input) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         if (orphan_upload) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
@@ -861,7 +889,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                             input_format, input_type, ios_vertex_inputs.data());
         }
     }
-    if (ios_indexed_vertex_inputs) {
+    if (ios_indexed_vertex_inputs && !reuse_index) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         glActiveTexture(GL_TEXTURE8);
         if (orphan_upload) {
@@ -880,6 +908,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_subimage_calls;
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, index_rows,
                             GL_RED_INTEGER, GL_UNSIGNED_SHORT, ios_vertex_input_indices.data());
+        }
+    }
+    if (cache_inputs) {
+        Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
+        if (!reuse_input) {
+            const auto* data=reinterpret_cast<const u8*>(ios_vertex_inputs.data());
+            selected_upload->input_shadow.assign(data,data+input_bytes);
+        }
+        if (!reuse_index) {
+            const auto* data=reinterpret_cast<const u8*>(ios_vertex_input_indices.data());
+            selected_upload->index_shadow.assign(data,data+index_bytes);
         }
     }
     {

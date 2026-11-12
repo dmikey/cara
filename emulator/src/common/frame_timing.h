@@ -15,6 +15,9 @@ struct Counters {
     double draw_seconds = 0;
     double vertex_prepare_seconds = 0;
     double vertex_upload_seconds = 0;
+    double vertex_reuse_check_seconds = 0;
+    std::uint64_t vertex_upload_reused_bytes = 0;
+    std::uint64_t vertex_upload_reused_textures = 0;
     double vertex_orphan_upload_seconds = 0;
     double vertex_storage_allocate_seconds = 0;
     double vertex_subimage_upload_seconds = 0;
@@ -59,7 +62,7 @@ struct Counters {
 };
 inline thread_local Counters counters;
 
-enum class Phase { Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
+enum class Phase { Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
 class Scope {
 public:
     explicit Scope(Phase phase_) : phase(phase_), active(counters.enabled) {
@@ -79,6 +82,8 @@ public:
             counters.draw_seconds += seconds;
         } else if (phase == Phase::VertexPrepare) {
             counters.vertex_prepare_seconds += seconds;
+        } else if (phase == Phase::VertexReuseCheck) {
+            counters.vertex_reuse_check_seconds += seconds;
         } else if (phase == Phase::VertexUpload) {
             counters.vertex_upload_seconds += seconds;
         } else if (phase == Phase::VertexOrphanUpload) {

@@ -18,15 +18,24 @@ def main():
     parser.add_argument('--warmup', type=int, default=300)
     parser.add_argument('--timeout', type=int, default=240)
     parser.add_argument('--config', action='append', required=True,
-                        help='JSON object: name, packed (boolean), bank_mib (16..128)')
+                        help='JSON object: name, packed (boolean), bank_mib (16..128), optional reuse (boolean)')
     parser.add_argument('--resume-best', action='store_true')
     parser.add_argument('--screenshots', action='store_true')
+    parser.add_argument('--press-a-frames', default='0',
+                        help='Comma-separated emulated frames for six-frame A presses; 0 disables')
+    parser.add_argument('--host-cpu-timing', action='store_true')
     args = parser.parse_args()
     if args.frames <= args.warmup or args.frames % 60 or args.warmup % 60:
         parser.error('frames and warmup must be multiples of 60, with frames > warmup')
+    try:
+        press_frames = [int(value) for value in args.press_a_frames.split(',')]
+    except ValueError:
+        parser.error('press-a-frames must contain integers')
+    if any(value < 0 or value >= args.frames for value in press_frames):
+        parser.error('A press frames must be within the run')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -49,15 +58,22 @@ def main():
     checkpoint = args.output / 'profile-comparison.carastate'
     if not copy(checkpoint.name, checkpoint):
         raise RuntimeError('Capture a comparison checkpoint in Cara before running this tool')
-    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'runs': []}
+    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'press_a_frames': press_frames, 'touch_input_locked': True, 'runs': []}
 
     def launch(config, benchmark=True):
         settings = {'CARA_FRAME_TIMING': '1', 'CARA_AUDIO_DIAGNOSTICS': '1',
                     'CARA_OPEN_RECENT': '1', 'CARA_TIMING_WINDOW_FRAMES': '60',
                     'CARA_CPU_BACKEND': 'fastinterp', 'CARA_PROFILE_LOAD': '1',
+                    'CARA_TEST_PRESS_A_FRAMES': args.press_a_frames if benchmark else '0',
+                    'CARA_BENCHMARK_INPUT_LOCK': '1' if benchmark else '0',
+                    'CARA_TEST_HOLD_START_FRAME': '0',
+                    'CARA_PROFILE_SAVE_FRAME': '0',
                     'CARA_GPU_PACKED_INPUTS': '1' if config['packed'] else '0',
+                    'CARA_VERTEX_UPLOAD_REUSE': '1' if config.get('reuse', False) else '0',
                     'CARA_VERTEX_UPLOAD_BANK_MIB': str(config['bank_mib']),
                     'CARA_ADAPTIVE_GUEST_CPU': '0' if benchmark else '1'}
+        if args.host_cpu_timing:
+            settings['CARA_HOST_CPU_TIMING'] = '1'
         if benchmark:
             settings['CARA_BENCHMARK_FRAMES'] = str(args.frames)
             settings['CARA_BENCHMARK_AUDIO'] = '1'
@@ -98,7 +114,11 @@ def main():
             raise RuntimeError('Unexpected clock, validation failure or active shadow decoder')
         fields = ['mean_ms', 'vertex_prepare_ms_per_frame', 'vertex_upload_ms_per_frame',
                   'draw_submit_ms_per_frame', 'vertex_upload_bytes', 'gpu_vertices',
-                  'gpu_vertex_draws', 'gpu_packed_input_draws', 'vertex_upload_fallbacks']
+                  'gpu_vertex_draws', 'gpu_packed_input_draws', 'vertex_upload_fallbacks',
+                  'vertex_upload_reused_bytes', 'vertex_upload_reused_textures',
+                  'vertex_reuse_check_ms_per_frame']
+        if args.host_cpu_timing:
+            fields += ['emulation_thread_cpu_ms_per_frame', 'process_cpu_ms_per_frame']
         means = {key: sum(w[key] for w in windows) / len(windows) for key in fields}
         result = dict(config, fingerprint=report['engine_build_fingerprint'], means=means)
         results['runs'].append(result)
