@@ -89,7 +89,9 @@ def main():
     if not copy('profile-checkpoint-status.json'):
         raise RuntimeError('Missing fresh checkpoint save receipt')
     receipt=json.loads((a.output/'profile-checkpoint-status.json').read_text())
-    if (receipt.get('saved') is not True or receipt.get('frame') != a.save_frame or
+    if receipt.get('saved') is not True:
+        raise RuntimeError('Checkpoint failed: '+receipt.get('detail','No successful save receipt'))
+    if (receipt.get('frame') != a.save_frame or
             receipt.get('rom_filename') != Path(a.rom).name or receipt.get('title_id') != timing['title_id'] or
             receipt.get('engine_build_fingerprint') != timing['engine_build_fingerprint']):
         raise RuntimeError('Checkpoint receipt does not match this capture')

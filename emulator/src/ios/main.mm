@@ -2,6 +2,8 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include <mach/mach.h>
+#include <pthread/qos.h>
+#include <sys/qos.h>
 #include <sys/resource.h>
 #include <time.h>
 #import "ios/skin_controls.h"
@@ -866,6 +868,13 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
     worker = std::thread([self,rom,user,session] {
+        // Diagnostic only: requested QoS is not evidence of P/E-core placement.
+        const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
+        const bool worker_interactive_qos = interactive_qos_env &&
+                                            std::strcmp(interactive_qos_env, "1") == 0;
+        const auto worker_qos_initial = qos_class_self();
+        const int worker_qos_set_result = worker_interactive_qos
+            ? pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) : 0;
         @autoreleasepool {
             Common::DetachedTasks tasks;
             FileUtil::SetUserPath(user);
@@ -1382,6 +1391,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                           << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
                                           << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
+                                          << ",\"worker_interactive_qos_requested\":" << (worker_interactive_qos?"true":"false")
+                                          << ",\"worker_qos_set_result\":" << (worker_interactive_qos?std::to_string(worker_qos_set_result):"null")
+                                          << ",\"worker_qos_initial_class_self\":" << static_cast<unsigned>(worker_qos_initial)
+                                          << ",\"worker_qos_class_self\":" << static_cast<unsigned>(qos_class_self())
                                           << ",\"vertex_reuse_probe\":" << (std::getenv("CARA_VERTEX_REUSE_TRACE")?"true":"false")
                                           << ",\"instrumented\":true,\"uncapped\":" << (pace_frames ? "false" : "true") << ",\"windows\":[";
                             for (size_t i = 0; i < timing_windows.size(); ++i)
