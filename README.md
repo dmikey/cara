@@ -5,8 +5,8 @@
 
 <img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
 
-Cara is a new, open-source Nintendo 3DS emulator focused on **Apple hardware,
-performance, and memory efficiency**. Built for iPhone and iPad, it combines a
+Cara is a new, open-source Nintendo 3DS emulator core and emulator shell focused
+on **Apple hardware, performance, and memory efficiency**. Built for iPhone and iPad, it combines a
 no-CPU-JIT execution path with custom GPU rendering enhancements and its own
 native app shell.
 
