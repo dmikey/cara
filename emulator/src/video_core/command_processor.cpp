@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/cpu_category_timing.h"
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -605,6 +606,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
 }
 
 void ProcessCommandList(PAddr list, u32 size) {
+    Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::GPUCommand);
     u32* buffer = (u32*)VideoCore::Memory()->GetPhysicalPointer(list);
     g_state.cmd_list.addr = list;
     g_state.cmd_list.head_ptr = g_state.cmd_list.current_ptr = buffer;

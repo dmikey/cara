@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--press-a-frames', default='0',
                         help='Comma-separated emulated frames for six-frame A presses; 0 disables')
     parser.add_argument('--host-cpu-timing', action='store_true')
+    parser.add_argument('--cpu-category-timing', action='store_true', help='Exclusive diagnostic thread CPU categories; not a performance comparison')
     parser.add_argument('--gpu-self-test', action='store_true',
                         help='Validate GPU fixtures before replay; abort if they fail')
     parser.add_argument('--phase-cpu-timing', action='store_true',
@@ -32,6 +33,8 @@ def main():
     parser.add_argument('--circle-segments', default='',
                         help='Comma-separated begin:end:x:y stick movements; neutral between segments')
     args = parser.parse_args()
+    if args.cpu_category_timing and args.resume_best:
+        parser.error('CPU category diagnostics cannot select a performance winner')
     if args.frames <= args.warmup or args.frames % 60 or args.warmup % 60:
         parser.error('frames and warmup must be multiples of 60, with frames > warmup')
     try:
@@ -79,12 +82,13 @@ def main():
     checkpoint = args.output / 'profile-comparison.carastate'
     if not copy(checkpoint.name, checkpoint):
         raise RuntimeError('Capture a comparison checkpoint in Cara before running this tool')
-    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'phase_cpu_sampling': args.phase_cpu_timing, 'runs': []}
+    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'phase_cpu_sampling': args.phase_cpu_timing, 'cpu_category_timing':args.cpu_category_timing, 'runs': []}
 
     def launch(config, benchmark=True):
         settings = {'CARA_FRAME_TIMING': '1', 'CARA_AUDIO_DIAGNOSTICS': '1',
                     'CARA_FASTINTERP_PROFILE':'1',
                     'CARA_TEST_KEEP_AWAKE':'1',
+                    'CARA_CPU_CATEGORY_TIMING':'1' if args.cpu_category_timing else '0',
                     'CARA_PHASE_CPU_TIMING':'1' if args.phase_cpu_timing else '0',
                     'CARA_BENCHMARK_CAPTURE':'1',
                     'CARA_GPU_SURFACE_REMAP':'1' if config.get('surface_remap',False) else '0',

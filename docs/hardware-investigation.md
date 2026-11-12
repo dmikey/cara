@@ -905,3 +905,34 @@ arrays; native bounds/reclamation tests run against that same helper, including
 all 70 classes and class 69. ASan/UBSan checks passed locally. Finite raster and
 special-value GPU equivalence tests must pass before any speed result can be
 accepted; modeled shader reuse is not a measured gain.
+
+
+On the iPad, the fixed boot checkpoint saved at frame 600 and reloaded through
+another 1,200 refreshes. Explicit lit-pair GPU fixtures then found a test-only
+invalid indexed sampler query; using the active texture unit's GLES sampler
+query fixed it. Enabled finite/interpreter, indexed raster and exact special
+quaternion fixtures now pass, as do surface-coherence and uniform-reuse checks.
+
+Correctness did not establish a speed gain. With the same grass checkpoint,
+100% guest CPU and audio, lit-pair rendering measured 28.005 ms/refresh versus
+25.068 and 25.321 baselines at 80 MiB/bank. All work and final pixels matched.
+The new path filled the three-bank limit and incurred orphan allocations.
+112/128 MiB removed those fallbacks but still measured 26.089/26.032 versus
+24.713/25.186 baselines. Existing-path 80/128 MiB counters were identical through
+all 20 windows, so the small baseline timing difference does not justify a
+capacity change. Keep the existing 80 MiB selection and lit-pair mode disabled.
+
+The page-table x28 compiler variant likewise had no stable game gain:
+unpinned/pinned/unpinned measured 24.799/25.177/25.289 ms with identical checkpoint,
+work and final pixels. Native scalar-copy gains do not generalize to this route.
+A public iOS worker-QoS experiment successfully changed requested class21 to33
+(return0), but default/interactive/default measured 24.645/25.200/25.165 ms.
+Requested QoS is not effective core identity. Both experiments remain off.
+
+Further diagnostic scopes partition emulation-thread CPU time exclusively among
+RunLoop other work, CPU execution including memory, SVC/HLE, GPU command processing
+and scheduled DSP HLE ticks. Nested GPU work subtracts from its SVC/CPU parents;
+audio-queue callback CPU is outside these categories. These are CPU timings, not
+hardware GPU execution. Raw counts, clock failures/overflow and a clock-read cost
+calibration accompany the data. Diagnostics are opt-in and their frame times
+must not be used as uninstrumented performance results.

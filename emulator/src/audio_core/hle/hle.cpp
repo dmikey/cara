@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/cpu_category_timing.h"
 #include <boost/serialization/array.hpp>
 #include <boost/serialization/base_object.hpp>
 #include <boost/serialization/shared_ptr.hpp>
@@ -437,6 +438,7 @@ bool DspHle::Impl::Tick() {
 }
 
 void DspHle::Impl::AudioTickCallback(s64 cycles_late) {
+    Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::DSPHLETick);
     if (Tick()) {
         // TODO(merry): Signal all the other interrupts as appropriate.
         if (auto service = dsp_dsp.lock()) {

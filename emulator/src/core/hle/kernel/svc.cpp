@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/cpu_category_timing.h"
 #include <algorithm>
 #include <cinttypes>
 #include <map>
@@ -1620,6 +1621,7 @@ SVCContext::SVCContext(Core::System& system) : impl(std::make_unique<SVC>(system
 SVCContext::~SVCContext() = default;
 
 void SVCContext::CallSVC(u32 immediate) {
+    Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::HLE);
     impl->CallSVC(immediate);
 }
 

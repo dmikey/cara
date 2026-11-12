@@ -48,6 +48,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
+#include "common/cpu_category_timing.h"
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
 #include "core/core.h"
@@ -1048,6 +1049,21 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                 std::vector<double> frame_times;
                 std::vector<std::string> timing_windows;
                 auto previous_counters = Common::FrameTiming::counters;
+                const bool category_timing=Common::FrameTiming::counters.enabled && Common::CPUCategoryTiming::DiagnosticEnabled();
+                Common::CPUCategoryTiming::Counters previous_categories{};
+                double category_clock_ns_per_read=0;
+                bool category_clock_calibrated=false;
+                if (category_timing) {
+                    Common::CPUCategoryTiming::Reset();
+                    std::uint64_t begin=0,end=0,value=0;
+                    unsigned good=0;
+                    if (Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr,begin)) {
+                        for (unsigned i=0;i<4096;++i) good+=Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr,value);
+                        category_clock_calibrated=Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr,end) && good==4096 && end>=begin;
+                        if (category_clock_calibrated) category_clock_ns_per_read=double(end-begin)/4097;
+                    }
+                    previous_categories=Common::CPUCategoryTiming::Snapshot();
+                }
                 const bool host_cpu_timing=std::getenv("CARA_HOST_CPU_TIMING")!=nullptr;
                 const auto read_host_cpu=[]() -> std::pair<double,double> {
                     timespec thread{}; rusage process{};
@@ -1263,6 +1279,23 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                             const bool host_cpu_valid=host_cpu_timing && previous_host_cpu.first>=0 &&
                                 host_cpu.first>=previous_host_cpu.first && host_cpu.second>=previous_host_cpu.second;
 
+                            std::string category_window;
+                            if (category_timing) {
+                                const auto categories=Common::CPUCategoryTiming::Snapshot();
+                                std::uint64_t entries=0;
+                                category_window=",\"cpu_category_ns\":[";
+                                for (size_t i=0;i<Common::CPUCategoryTiming::CategoryCount;++i)
+                                    category_window+=(i?",":"")+std::to_string(categories.cpu_ns[i]-previous_categories.cpu_ns[i]);
+                                category_window+="],\"cpu_category_entries\":[";
+                                for (size_t i=0;i<Common::CPUCategoryTiming::CategoryCount;++i) {
+                                    const auto delta=categories.entries[i]-previous_categories.entries[i]; entries+=delta;
+                                    category_window+=(i?",":"")+std::to_string(delta);
+                                }
+                                category_window+="],\"cpu_category_clock_failures\":"+std::to_string(categories.clock_failures-previous_categories.clock_failures)+
+                                    ",\"cpu_category_overflows\":"+std::to_string(categories.counter_overflows-previous_categories.counter_overflows)+
+                                    ",\"cpu_category_clock_reads\":"+std::to_string(entries*2);
+                                previous_categories=categories;
+                            }
                             timing_windows.push_back("{\"end_frame\":" + std::to_string(timed_frame) +
                                 ",\"frames\":" + std::to_string(frame_times.size()) +
                                 ",\"guest_cpu_percent\":" + std::to_string(clock_control.Percent()) +
@@ -1381,7 +1414,7 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                 ",\"gpu_feedback_vertex_draws\":" + std::to_string(current.gpu_feedback_vertex_draws - previous_counters.gpu_feedback_vertex_draws) +
                                 ",\"gpu_feedback_source_vertices\":" + std::to_string(current.gpu_feedback_source_vertices - previous_counters.gpu_feedback_source_vertices) +
                                 ",\"gpu_vertices\":" + std::to_string(current.gpu_vertices - previous_counters.gpu_vertices) +
-                                ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + "}");
+                                ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + category_window + "}");
                             previous_counters = current;
                             previous_host_cpu = host_cpu;
                             frame_times.clear();
@@ -1391,6 +1424,10 @@ static NSString* CaraSpeedLabel(double refreshesPerSecond, bool adaptive, unsign
                                           << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
                                           << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
+                                          << ",\"cpu_category_timing\":" << (category_timing?"true":"false")
+                                          << ",\"cpu_category_clock_calibrated\":" << (category_clock_calibrated?"true":"false")
+                                          << ",\"cpu_category_clock_ns_per_read\":" << category_clock_ns_per_read
+                                          << ",\"cpu_category_names\":[\"others\",\"cpu_execution_including_memory\",\"hle_svc\",\"gpu_command\",\"dsp_hle_tick\"]"
                                           << ",\"worker_interactive_qos_requested\":" << (worker_interactive_qos?"true":"false")
                                           << ",\"worker_qos_set_result\":" << (worker_interactive_qos?std::to_string(worker_qos_set_result):"null")
                                           << ",\"worker_qos_initial_class_self\":" << static_cast<unsigned>(worker_qos_initial)

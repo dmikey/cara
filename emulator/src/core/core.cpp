@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/cpu_category_timing.h"
 #include <memory>
 #include <stdexcept>
 #include <cryptopp/sha.h>
@@ -57,6 +58,7 @@ System System::s_instance;
 System::~System() = default;
 
 System::ResultStatus System::RunLoop() {
+    Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::Others);
     return Settings::values.is_new_3ds ? RunLoopMultiCores() : RunLoopSingleCore();
 }
 
