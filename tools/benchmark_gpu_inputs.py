@@ -131,6 +131,7 @@ def main():
                     'CARA_BENCHMARK_CAPTURE':'1',
                     'CARA_GPU_SURFACE_REMAP':'1' if config.get('surface_remap',False) else '0',
                     'CARA_GPU_BYTE_SURFACE_REMAP':'1' if config.get('byte_surface_remap',False) else '0',
+                    'CARA_SELECTIVE_SURFACE_CLEANUP':'1' if config.get('selective_surface_cleanup',False) else '0',
                     'CARA_GPU_RETAIN_INPUT_BINDINGS':'1' if config.get('retain_input_bindings',False) else '0',
                     'CARA_GPU_PACKED_FETCH_REUSE':'1' if config.get('packed_fetch_reuse',False) else '0',
                     'CARA_FASTINTERP_VFP_SIMD':str(int(config.get('vfp_simd',0))),
