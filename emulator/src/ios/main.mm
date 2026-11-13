@@ -673,7 +673,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         libraryController.startFromState=^(NSURL* url,NSString* filename) { EmulatorController* c=owner; if(!c) return; c->pendingLibraryState=filename; [c openGameURL:url]; };
         libraryController.gameSettings=^(NSURL* url) { [owner showGameSettings:url]; };
         libraryController.clearGameSettings=^(NSURL* url) { EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":@{}} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { CaraGameOverrides=nil; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
-        libraryController.gameFileInUse=^BOOL(NSURL* url) { EmulatorController* c=owner; return c && (running || c->openingGame) && [url.URLByStandardizingPath isEqual:c->gameURL.URLByStandardizingPath]; };
+        libraryController.gameFileInUse=^BOOL(NSURL* url) { EmulatorController* c=owner; return c && (c->running || c->openingGame) && [url.URLByStandardizingPath isEqual:c->gameURL.URLByStandardizingPath]; };
         libraryController.resumeGame=^{ [owner hideLibrary]; };
         libraryNavigation=[[UINavigationController alloc] initWithRootViewController:libraryController];
         [self addChildViewController:libraryNavigation]; libraryNavigation.view.frame=self.view.bounds;
@@ -841,7 +841,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationFullScreen; [self presentViewController:nav animated:YES completion:nil];
 }
 - (void)showGameSettings:(NSURL*)url {
-    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings";
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings"; settings.usesLibraryAppearance=YES;
     NSMutableDictionary* values=[[[libraryStore metadataForGame:url] objectForKey:@"overrides"] mutableCopy]?:[NSMutableDictionary new];
     __weak EmulatorController* owner=self;
     void(^save)(NSString*,id)=^(NSString* key,id value) { values[key]=value; EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":values} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { CaraGameOverrides=[values copy]; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };

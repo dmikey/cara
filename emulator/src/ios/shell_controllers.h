@@ -30,6 +30,7 @@
 // Each section has title, footer and rows. Rows use title, subtitle, symbol,
 // enabled, optional value/change (switch), and action (dismiss then perform).
 @property(nonatomic) BOOL categorized;
+@property(nonatomic) BOOL usesLibraryAppearance;
 @property(copy,nonatomic) NSArray<NSDictionary*>*(^sectionsProvider)(void);
 @property(copy,nonatomic) NSArray<NSDictionary*>* sections;
 @property(copy,nonatomic) void(^finished)(void);

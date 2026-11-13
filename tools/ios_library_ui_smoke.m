@@ -17,4 +17,14 @@
  [app.buttons[@"Settings"] tap]; if(!app.buttons[@"Appearance"].exists) [app.buttons[@"Categories"] tap]; XCTAssertTrue([app.buttons[@"Appearance"] waitForExistenceWithTimeout:5]); [app.buttons[@"Appearance"] tap]; XCTAssertTrue([app.staticTexts[@"Light"] waitForExistenceWithTimeout:5]); [app.staticTexts[@"Light"] tap]; [self shot:app name:@"Full appearance settings"];
  XCUIElement* sounds=app.switches[@"Menu sounds"]; if(!sounds.hittable) [app.tables.firstMatch swipeUp]; XCTAssertTrue(sounds.exists); NSString* original=[sounds.value description]; [sounds tap]; XCTAssertNotEqualObjects([sounds.value description],original); [sounds tap]; XCTAssertEqualObjects([sounds.value description],original);
 }
+- (void)testDeleteInUseIsBlocked {
+ self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
+ XCUIDevice.sharedDevice.orientation=UIDeviceOrientationPortrait;
+ app.launchEnvironment=@{@"CARA_UI_SCENE":@"library",@"CARA_MENU_SOUND_SELF_TEST":@"1",@"CARA_UI_FILE_IN_USE":@"1"}; [app launch];
+ XCUIElement* game=app.collectionViews.cells.firstMatch; XCTAssertTrue([game waitForExistenceWithTimeout:15]); [game pressForDuration:1.2];
+ XCTAssertTrue([app.buttons[@"Delete game file…"] waitForExistenceWithTimeout:5]); [app.buttons[@"Delete game file…"] tap];
+ XCTAssertTrue([app.alerts[@"Stop this game first"] waitForExistenceWithTimeout:5]); XCTAssertFalse(app.alerts[@"Delete game file?"].exists);
+ [self shot:app name:@"Live game file deletion is blocked"];
+ [app.alerts.buttons[@"OK"] tap]; XCTAssertTrue(app.staticTexts[@"Your collection · 8"].exists);
+}
 @end
