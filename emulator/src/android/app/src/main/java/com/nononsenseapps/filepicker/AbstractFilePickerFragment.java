@@ -597,7 +597,7 @@ public abstract class AbstractFilePickerFragment<T>
     public void onBindViewHolder(@NonNull DirViewHolder vh, int position, @NonNull T data) {
         vh.file = data;
         vh.icon.setImageResource(isDir(data) ? R.drawable.ic_folder_black
-                                             : R.mipmap.ic_country);
+                                             : android.R.drawable.ic_menu_mapmode);
         vh.text.setText(getName(data));
 
         if (isCheckable(data)) {

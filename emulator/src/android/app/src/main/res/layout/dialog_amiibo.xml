@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Cara contributors; GPL-2.0-or-later. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent"
+    android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
+    <TextView android:id="@+id/text_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="22sp" />
+    <TextView android:id="@+id/text_amiibo_hint" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/cara_amiibo_hint" />
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/list_settings" android:layout_width="match_parent" android:layout_height="320dp" />
+</LinearLayout>
