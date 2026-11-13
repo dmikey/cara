@@ -359,6 +359,7 @@ static const char* CaraSelectedCPUBackend() {
     CaraSkin* portraitSkin;
     CaraSkin* landscapeSkin;
     CaraStatsView* performanceHUD;
+    CaraSessionIndicator* statusIndicator;
     NSString* pickingSkinOrientation;
     NSDictionary* currentRepresentation;
     UIButton* menuFallback;
@@ -537,7 +538,8 @@ static const char* CaraSelectedCPUBackend() {
     performanceHUD=[[CaraStatsView alloc] initWithFrame:CGRectZero]; [self.view addSubview:performanceHUD];
     status=[UILabel new]; status.text=@"Stopped";
     status.font=[UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium]; status.textColor=[UIColor colorWithRed:.7 green:.8 blue:.7 alpha:1];
-    status.numberOfLines=2; status.userInteractionEnabled=NO; [self.view addSubview:status];
+    status.numberOfLines=2; status.userInteractionEnabled=NO; status.hidden=YES;
+    statusIndicator=[CaraSessionIndicator new]; [self.view addSubview:statusIndicator];
     menuFallback=[UIButton buttonWithType:UIButtonTypeSystem]; menuFallback.configuration=[UIButtonConfiguration filledButtonConfiguration];
     [menuFallback setTitle:@"Menu" forState:UIControlStateNormal]; [menuFallback addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:menuFallback];
     [self reloadSelectedSkins];
@@ -586,6 +588,7 @@ static const char* CaraSelectedCPUBackend() {
     performanceHUD.hidden=[NSUserDefaults.standardUserDefaults objectForKey:statsKey] && ![NSUserDefaults.standardUserDefaults boolForKey:statsKey];
     status.frame=landscape?convert(CGRectMake(statsFrame.origin.x,CGRectGetMaxY(statsFrame)+8,statsFrame.size.width,54)):convert(CGRectMake((mapping.width-600)/2,mapping.height-170,600,48));
     status.numberOfLines=landscape?2:1;
+    statusIndicator.frame=CGRectMake(landscape?CGRectGetMinX(status.frame):CGRectGetMidX(status.frame)-12,CGRectGetMidY(status.frame)-12,24,24);
     status.adjustsFontSizeToFitWidth=YES; status.minimumScaleFactor=0.7;
 #ifdef CARA_IOS_GLES
     if (emuWindow) emuWindow->SetDisplayLayout(top.frame,bottom.frame,self.view.bounds.size,gpuSurface.contentScaleFactor);
@@ -617,6 +620,10 @@ static const char* CaraSelectedCPUBackend() {
     if (state==Cara::SessionPresentation::Failed) label=sessionFailure;
     else if (sessionNotice && !Cara::ClearSessionPresentation(state)) label=[label stringByAppendingFormat:@" · %@",sessionNotice];
     status.text=label;
+    const auto light=state==Cara::SessionPresentation::Running?CaraStatusLightGreen:
+        state==Cara::SessionPresentation::Failed?CaraStatusLightRed:
+        state==Cara::SessionPresentation::Stopped?CaraStatusLightDim:CaraStatusLightAmber;
+    [statusIndicator updateLight:light accessibilityStatus:label];
     if (Cara::ClearSessionPresentation(state)) {
         top.image=nil; bottom.image=nil;
         [performanceHUD showInactiveGuestClock:fixedGuestClock.load() adaptive:adaptiveCPU.load()];
