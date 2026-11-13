@@ -987,7 +987,7 @@ The subsequent same-binary sweep measured 25.054/25.431/25.319/25.506/25.251
 ms/refresh for baseline, exact lookup cache, baseline, decode-time contiguous
 transfers and baseline. Guest clock was fixed at 100%, audio enabled, and host
 pacing uncapped for all runs. Pixels and workload matched. Relative to the
-adjacent baseline means, lookup caching was 0.97% slower and transfers 0.87%
+adjacent baseline means, lookup caching was 0.97% slower and transfers 0.88%
 slower. This single bracketed sweep demonstrates no gain; it does not establish
 a precise regression magnitude. Both remain default-off. A 77% shadow hit rate
 and faster native copy microbenchmarks were insufficient to improve gameplay.
