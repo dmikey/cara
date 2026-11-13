@@ -32,6 +32,7 @@ int main() {
         pacer.Reset(3600); // Pause/load: old future deadline must also disappear.
         Near(pacer.Advance(2, 3600.001), 3600 + 2 * period, 1e-10,
              "Reset retained old timeline");
+        pacer.SetSpeedPercent(105, 3600.002);
         pacer.SetSpeedPercent(100, 3601);
         Near(pacer.Advance(1, 3601.001), 3601 + 1.0 / Cara::FramePacer::VBlankHz,
              1e-10, "Live speed change retained previous deadline");
