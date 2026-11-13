@@ -7,7 +7,9 @@ or performance result. Apple builds continue to force CPU JIT off.
 
 Download the APK from the `cara-android-arm64-gles-dynarmic-experimental` Actions
 artifact. Enable installation from your downloader/file manager and open the APK.
-The application ID is `org.cara.emu.debug`. Save in-game and back up important
+The application ID is `org.cara.emu.debug`. The test package targets Android 13
+(API 33) and uses the system document picker for game-folder access. Legacy broad
+storage permissions are limited to older Android versions. Save in-game and back up important
 progress before changing builds. GitHub's temporary debug signing key can change
 between builds; reinstalling may require uninstalling the previous test APK.
 
