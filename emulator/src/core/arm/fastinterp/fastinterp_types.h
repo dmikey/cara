@@ -477,6 +477,12 @@ enum class Opcode : u16 {
 
     VcmpVmrsS, // Opt-in VCMP.S + VMRS APSR pair, original slots retained
 
+    // Default-off decode-time specializations; no flags or PC operands.
+    AddImm,
+    AddLslImm,
+    MovImm,
+    MovLslImm,
+
     OpcodeCount
 };
 

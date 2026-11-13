@@ -1545,6 +1545,29 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         }
     }
 
+    // Run after dead-flag elimination and pair selection: preserve existing
+    // fusion priority, slots, guest tick costs and chain/scheduler boundaries.
+    // Fast handlers remove operand-kind/shift/PC tests from frequent ADD/MOV.
+    static const bool alu_operands = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_ALU_OPERANDS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (alu_operands && !is_thumb) {
+        for (unsigned slot = 0; slot < block->inst_count; ++slot) {
+            auto& inst = block->instructions[slot];
+            const bool add = inst.opcode == Opcode::Add;
+            if ((!add && inst.opcode != Opcode::Mov) || inst.rd == 15 ||
+                (add && inst.dp.rn == 15))
+                continue;
+            if (inst.dp.rm == 0xFF) {
+                inst.opcode = add ? Opcode::AddImm : Opcode::MovImm;
+            } else if (inst.dp.rm != 15 && inst.dp.rs == 0xFF &&
+                       inst.dp.shift_type == ShiftType::LSL && inst.dp.shift_imm < 32) {
+                inst.opcode = add ? Opcode::AddLslImm : Opcode::MovLslImm;
+            }
+        }
+    }
+
     // Append the EndBlock terminator. Every block gets one - conditional
     // block-enders (Bcc, fused not-taken paths, conditional Bx, ...) DISPATCH on
     // their not-taken path, and DISPATCH has no bounds check. The terminator

@@ -174,7 +174,19 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     });
     u64 total = 0;
     for (const auto* block : blocks) total += block->exec_count;
-    output << "{\"core\":" << GetID() << ",\"resident_entries\":" << blocks.size()
+    const char* alu_flag = std::getenv("CARA_FASTINTERP_ALU_OPERANDS");
+    const bool alu_enabled = alu_flag && std::strcmp(alu_flag, "1") == 0;
+    std::array<u64, 4> alu_weighted{};
+    for (const auto* block : blocks)
+        for (unsigned slot = 0; slot < block->inst_count; ++slot) {
+            const auto opcode = block->instructions[slot].opcode;
+            if (opcode >= Opcode::AddImm && opcode <= Opcode::MovLslImm)
+                alu_weighted[unsigned(opcode) - unsigned(Opcode::AddImm)] += block->exec_count;
+        }
+    output << "{\"alu_operands_enabled\":" << (alu_enabled ? "true" : "false")
+           << ",\"alu_resident_entry_weighted_slots\":{\"AddImm\":" << alu_weighted[0]
+           << ",\"AddLslImm\":" << alu_weighted[1] << ",\"MovImm\":" << alu_weighted[2]
+           << ",\"MovLslImm\":" << alu_weighted[3] << "},\"core\":" << GetID() << ",\"resident_entries\":" << blocks.size()
            << ",\"resident_executions\":" << total << ",\"blocks\":[";
     for (size_t i = 0; i < std::min<size_t>(blocks.size(), 128); ++i) {
         const auto& block = *blocks[i];
@@ -693,6 +705,10 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         HANDLER(Vmla4Gather),
         HANDLER(AddCmpImmBcc),
         HANDLER(VcmpVmrsS),
+        HANDLER(AddImm),
+        HANDLER(AddLslImm),
+        HANDLER(MovImm),
+        HANDLER(MovLslImm),
     };
 #undef HANDLER
 

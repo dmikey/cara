@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import struct
 import time
 
 
@@ -59,14 +60,14 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify']) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','pica_repeat_state','pica_command_profile']) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
     if len({config['name'] for config in configs}) != len(configs):
         parser.error('configuration names must be unique')
     args.output.mkdir(parents=True, exist_ok=True)
-    if args.resume_best and any(c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) for c in configs):
+    if args.resume_best and any(c.get('pica_command_profile',False) or c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) for c in configs):
         parser.error('Renderer diagnostics cannot select a performance winner')
     if any(c.get('texture_lookup_verify',False) and not c.get('texture_lookup_reuse',False) for c in configs):
         parser.error('Texture verification requires texture lookup reuse')
@@ -86,7 +87,12 @@ def main():
     checkpoint = args.output / 'profile-comparison.carastate'
     if not copy(checkpoint.name, checkpoint):
         raise RuntimeError('Capture a comparison checkpoint in Cara before running this tool')
-    results = {'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'phase_cpu_sampling': args.phase_cpu_timing, 'cpu_category_timing':args.cpu_category_timing, 'runs': []}
+    checkpoint_bytes = checkpoint.read_bytes()
+    if len(checkpoint_bytes) < 112 or checkpoint_bytes[:8] != b'CARAST01':
+        raise RuntimeError('Invalid comparison checkpoint header')
+    checkpoint_title = struct.unpack_from('<Q', checkpoint_bytes, 16)[0]
+    checkpoint_fingerprint = checkpoint_bytes[48:112].decode('ascii')
+    results = {'checkpoint_sha256': hashlib.sha256(checkpoint_bytes).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'phase_cpu_sampling': args.phase_cpu_timing, 'cpu_category_timing':args.cpu_category_timing, 'runs': []}
 
     def launch(config, benchmark=True):
         settings = {'CARA_FRAME_TIMING': '1', 'CARA_AUDIO_DIAGNOSTICS': '1',
@@ -104,6 +110,9 @@ def main():
                     'CARA_GPU_LIT_PAIR_PROBE':'1' if config.get('lit_pair_probe',False) else '0',
                     'CARA_GPU_LIT_VERTEX_REUSE':'1' if config.get('lit_vertex_reuse',False) else '0',
                     'CARA_FASTINTERP_RAM_BURST':'1' if config.get('ram_burst',False) else '0',
+                    'CARA_FASTINTERP_ALU_OPERANDS':'1' if config.get('alu_operands',False) else '0',
+                    'CARA_PICA_REPEAT_STATE':'1' if config.get('pica_repeat_state',False) else '0',
+                    'CARA_PICA_COMMAND_PROFILE':'1' if config.get('pica_command_profile',False) else '0',
                     'CARA_FASTINTERP_CONTIGUOUS_TRANSFERS':'1' if config.get('contiguous_transfers',False) else '0',
                     'CARA_RENDER_BOOKKEEPING_REUSE':'1' if config.get('render_bookkeeping_reuse',False) else '0',
                     'CARA_RENDER_BOOKKEEPING_PROFILE':'1' if config.get('render_bookkeeping_profile',False) else '0',
@@ -201,7 +210,7 @@ def main():
             raise RuntimeError('Unexpected texture shadow verification in speed comparison')
         means = {key: sum(w[key] for w in windows) / len(windows) for key in fields}
         result = dict(config, fingerprint=report['engine_build_fingerprint'], means=means)
-        for name in ['runtime-status.json', 'audio-status.json', 'benchmark-status.json', 'fastinterp-blocks.json','surface-flushes.json']:
+        for name in ['runtime-status.json', 'audio-status.json', 'benchmark-status.json', 'fastinterp-blocks.json','surface-flushes.json','emulator.log']:
             for attempt in range(5):
                 if copy(name, args.output / (config['name'] + '-' + name)):
                     break
@@ -212,8 +221,28 @@ def main():
             check_path = args.output / (config['name'] + '-gpu-vertex-self-test.json')
             if not copy('gpu-vertex-self-test.json', check_path) or json.loads(check_path.read_text()).get('passed') is not True:
                 raise RuntimeError('GPU fixture did not pass')
+        census = json.loads((args.output / (config['name'] + '-fastinterp-blocks.json')).read_text())
+        alu_enabled = config.get('alu_operands', False)
+        if any(core.get('alu_operands_enabled') != alu_enabled for core in census['cores']):
+            raise RuntimeError('FastInterp operand specialization mode differs from requested configuration')
+        specialized_slots = sum(sum(core.get('alu_resident_entry_weighted_slots', {}).values())
+                                for core in census['cores'])
+        if alu_enabled and specialized_slots <= 0:
+            raise RuntimeError('FastInterp operand specialization did not execute')
+        result['alu_resident_entry_weighted_slots'] = specialized_slots
         status = json.loads((args.output / (config['name'] + '-benchmark-status.json')).read_text())
-        if (status['result_code'] != 0 or status['frames'] != args.frames or
+        if (report['title_id'] != checkpoint_title or
+                report['engine_build_fingerprint'] != checkpoint_fingerprint):
+            raise RuntimeError('Comparison checkpoint title or engine build differs from replay')
+        audio = json.loads((args.output / (config['name'] + '-audio-status.json')).read_text())
+        if (audio.get('muted') is not False or audio.get('queue_running') is not True or
+                audio.get('last_error') != 0 or audio.get('nonzero_frames', 0) <= 0):
+            raise RuntimeError('Benchmark audio is muted, stopped, silent or reports an output error')
+        result['audio'] = {key: audio.get(key) for key in
+                           ['muted', 'queue_running', 'last_error', 'nonzero_frames',
+                            'dsp_underrun_callbacks', 'callbacks', 'sample_rate']}
+        if (status['cpu_backend'] != 'fastinterp' or status['jit'] or status['software_renderer'] or
+                status['gpu_backend'] != 'native_gles3' or status['result_code'] != 0 or status['frames'] != args.frames or
                 status['target_frames'] != args.frames or status['title_id'] != report['title_id'] or
                 status['guest_cpu_percent'] != 100 or status['adaptive_guest_cpu']):
             raise RuntimeError('Benchmark did not complete successfully at fixed 100% clock')

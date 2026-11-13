@@ -476,8 +476,11 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     }
     if (!autoStarted && rom.length && !running) {
         autoStarted=true;
+        [self ensureLibrary];
         NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
         NSURL* url=[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:rom.lastPathComponent]];
+        if (![NSFileManager.defaultManager fileExistsAtPath:url.path])
+            url=[libraryStore.defaultFolder URLByAppendingPathComponent:rom.lastPathComponent];
         if ([NSFileManager.defaultManager fileExistsAtPath:url.path]) [self openGameURL:url];
         else status.text=@"Game file not found.";
     }

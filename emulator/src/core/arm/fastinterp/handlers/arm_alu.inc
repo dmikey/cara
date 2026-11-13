@@ -178,3 +178,30 @@ handle_Mvn: {
     state_.regs[inst->rd] = ~op2;
     ALU_DISPATCH();
 }
+
+// Decode guarantees no flags, rd != PC and all source registers != PC.
+// LSL immediate is bounded to [0,31], including the register-copy case.
+handle_AddImm: {
+    CHECK_COND();
+    state_.regs[inst->rd] = state_.regs[inst->dp.rn] + inst->dp.imm;
+    ADVANCE_AND_DISPATCH();
+}
+
+handle_AddLslImm: {
+    CHECK_COND();
+    state_.regs[inst->rd] = state_.regs[inst->dp.rn] +
+                           (state_.regs[inst->dp.rm] << inst->dp.shift_imm);
+    ADVANCE_AND_DISPATCH();
+}
+
+handle_MovImm: {
+    CHECK_COND();
+    state_.regs[inst->rd] = inst->dp.imm;
+    ADVANCE_AND_DISPATCH();
+}
+
+handle_MovLslImm: {
+    CHECK_COND();
+    state_.regs[inst->rd] = state_.regs[inst->dp.rm] << inst->dp.shift_imm;
+    ADVANCE_AND_DISPATCH();
+}

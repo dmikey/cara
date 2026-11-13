@@ -31,6 +31,120 @@ int main() {
     table->pointers[1] = TestMemory(code);
     memory.SetCurrentPageTable(table);
     fast->SetPageTable(table);
+    if (std::getenv("CARA_ALU_OPERANDS_TEST")) {
+        // DynCom executes exactly the instruction; FastInterp decodes a real
+        // block ending in a flag-neutral self-branch. Unlike Step(), Run()
+        // exercises decode postpasses and the specialized handlers.
+        unsigned cases = 0;
+        u64 trace = 1469598103934665603ull;
+        auto hash = [&](u64 value) { trace = (trace ^ value) * 1099511628211ull; };
+        for (unsigned op : {4u, 13u})
+            for (unsigned cond = 0; cond < 15; ++cond)
+                for (unsigned nzcv = 0; nzcv < 16; ++nzcv)
+                    for (unsigned form = 0; form < 9; ++form)
+                        for (unsigned alias = 0; alias < 4; ++alias) {
+                            const unsigned rd = alias == 1 ? 1 : alias == 2 ? 2 : 0;
+                            const unsigned rn = alias == 3 ? 15 : 1;
+                            const unsigned rm = alias == 3 ? 15 : 2;
+                            const unsigned shift = form == 1 ? 0 : form == 2 ? 1 : 31;
+                            u32 operand = form == 0 ? (1u << 25) | 0x480 :
+                                          form < 4 ? (shift << 7) | rm :
+                                          form < 7 ? ((form - 3) << 5) | (7u << 7) | rm :
+                                          form == 7 ? (3u << 5) | rm :
+                                                      (3u << 8) | (1u << 4) | rm;
+                            const u32 raw = (cond << 28) | (op << 21) | (rn << 16) |
+                                            (rd << 12) | operand;
+                            code.fill(0xEAFFFFFE);
+                            code[0] = raw;
+                            const u32 cpsr = (nzcv << 28) | 0x10;
+                            old->Cpsr = cpsr;
+                            fast->SetCPSR(cpsr);
+                            for (unsigned reg = 0; reg < 15; ++reg) {
+                                const u32 value = reg == 1 ? 0xffffffffu : reg == 2 ? 1u :
+                                                  reg == 3 ? 31u : 0x9e3779b9u * (reg + 1);
+                                old->Reg[reg] = value;
+                                fast->SetReg(reg, value);
+                            }
+                            old->Reg[15] = 0x1000;
+                            fast->SetPC(0x1000);
+                            InvalidateDynComDecodedCache();
+                            old->instruction_cache.clear();
+                            old->NumInstrsToExecute = 1;
+                            InterpreterMainLoop(old.get(), timing.GetTimer(0).get());
+                            fast->ClearInstructionCache();
+                            timing.GetTimer(0)->Advance(1);
+                            const auto before = timing.GetTimer(0)->GetDowncount();
+                            fast->Run();
+                            for (unsigned reg = 0; reg < 16; ++reg) {
+                                if (old->Reg[reg] != fast->GetReg(reg)) {
+                                    std::cerr << "ALU operand mismatch raw=" << std::hex << raw
+                                              << " r=" << reg << " expected=" << old->Reg[reg]
+                                              << " actual=" << fast->GetReg(reg) << '\n';
+                                    return 1;
+                                }
+                                hash(fast->GetReg(reg));
+                            }
+                            if (fast->GetCPSR() != cpsr) {
+                                std::cerr << "ALU operand live flags changed\n";
+                                return 1;
+                            }
+                            hash(fast->GetCPSR());
+                            hash(before - timing.GetTimer(0)->GetDowncount());
+                            ++cases;
+                        }
+        // PC-writing forms stay on existing interworking handlers. Verify both
+        // predicates and ARM/Thumb targets without admitting them to fast opcodes.
+        for (u32 raw : {0xE1A0F001u, 0xE281F004u, 0xE28FF004u})
+            for (bool taken : {false, true})
+                for (bool thumb_target : {false, true}) {
+                    code.fill(0xEAFFFFFE);
+                    code[0] = taken ? raw : (raw & 0x0fffffffu); // failed EQ, Z=0
+                    fast->ClearInstructionCache();
+                    fast->SetCPSR(0xA0000010);
+                    fast->SetPC(0x1000);
+                    fast->SetReg(1, 0x1008 | u32(thumb_target));
+                    timing.GetTimer(0)->Advance(1);
+                    fast->Run();
+                    const bool pc_source = raw == 0xE28FF004u;
+                    const u32 target = raw == 0xE1A0F001u ? 0x1008 : 0x100c;
+                    const u32 expected_cpsr = 0xA0000010u |
+                        (taken && thumb_target && !pc_source ? 0x20u : 0u);
+                    if (fast->GetPC() != (taken ? target : 0x1004) ||
+                        fast->GetCPSR() != expected_cpsr) {
+                        std::cerr << "ALU operand PC fallback mismatch\n";
+                        return 1;
+                    }
+                    hash(fast->GetPC());
+                    hash(fast->GetCPSR());
+                    ++cases;
+                }
+        // One final real block proves every specialized opcode was activated.
+        code = {0xE2810001, 0xE0812182, 0xE3A030FF, 0xE1A04281, 0xEAFFFFFE};
+        fast->ClearInstructionCache();
+        fast->SetCPSR(0x10);
+        fast->SetPC(0x1000);
+        timing.GetTimer(0)->Advance(1);
+        fast->Run();
+        std::ostringstream profile;
+        fast->WriteBlockProfile(profile);
+        const char* flag = std::getenv("CARA_FASTINTERP_ALU_OPERANDS");
+        const bool enabled = flag && std::strcmp(flag, "1") == 0;
+        for (const char* name : {"AddImm", "AddLslImm", "MovImm", "MovLslImm"}) {
+            const std::string marker = std::string("\"") + name + "\":";
+            const auto position = profile.str().find(marker);
+            if (position == std::string::npos) {
+                std::cerr << "ALU operand profile count missing\n";
+                return 1;
+            }
+            const auto count = std::stoull(profile.str().substr(position + marker.size()));
+            if ((count != 0) != enabled) {
+                std::cerr << "ALU operand specialization activation mismatch\n";
+                return 1;
+            }
+        }
+        std::cout << "ALU operand DynCom cases=" << cases << " trace=" << trace << '\n';
+        return 0;
+    }
     if (std::getenv("CARA_CONTIGUOUS_TRANSFERS_TEST")) {
         using Core::FastInterp::ContiguousTransferRangesDisjoint;
         const auto maximum = std::numeric_limits<std::uintptr_t>::max();

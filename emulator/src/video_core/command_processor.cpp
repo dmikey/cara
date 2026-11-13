@@ -1,4 +1,5 @@
 // Copyright 2014 Citra Emulator Project
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
@@ -6,6 +7,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
+#include <cstdint>
 #include <unordered_set>
 #include <memory>
 #include <utility>
@@ -36,6 +39,154 @@
 namespace Pica::CommandProcessor {
 
 MICROPROFILE_DEFINE(GPU_Drawing, "GPU", "Drawing", MP_RGB(50, 50, 240));
+
+// Experiments are deliberately independent of frame-timing diagnostics. Neither
+// mode changes serialized PICA state or the command stream / trigger ordering.
+static bool RepeatStateEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_PICA_REPEAT_STATE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+static bool CommandProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_PICA_COMMAND_PROFILE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+struct CommandProfile {
+    std::uint64_t lists = 0, writes = 0, draws = 0;
+    std::uint64_t list_cpu_ns = 0, draw_cpu_ns = 0, clock_failures = 0;
+    std::uint64_t notifications = 0, repeated_shader_notifications = 0;
+    std::uint64_t code_words = 0, repeated_code_words = 0;
+    std::uint64_t swizzle_words = 0, repeated_swizzle_words = 0;
+    std::array<std::uint64_t, Regs::NUM_REGS> registers{};
+};
+static CommandProfile command_profile;
+
+class CommandCPUProfileScope {
+public:
+    explicit CommandCPUProfileScope(bool draw) : draw(draw) {
+        if (!CommandProfileEnabled()) return;
+        active = Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr, start);
+        if (!active) ++command_profile.clock_failures;
+        if (draw) ++command_profile.draws;
+    }
+    ~CommandCPUProfileScope() {
+        if (!active) return;
+        std::uint64_t end;
+        if (!Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr, end) || end < start) {
+            ++command_profile.clock_failures;
+            return;
+        }
+        (draw ? command_profile.draw_cpu_ns : command_profile.list_cpu_ns) += end - start;
+        if (!draw && ++command_profile.lists % 256 == 0) {
+            // Cumulative values. Difference two complete records to exclude boot
+            // and checkpoint loading. Draw CPU is nested in list CPU, not additive.
+            std::array<std::pair<std::uint64_t, u32>, 4> hottest{};
+            for (u32 id = 0; id < command_profile.registers.size(); ++id) {
+                std::pair<std::uint64_t, u32> entry{command_profile.registers[id], id};
+                for (auto& slot : hottest) {
+                    if (entry.first > slot.first) std::swap(entry, slot);
+                }
+            }
+            LOG_INFO(HW_GPU, "PICA command hottest r{}={} r{}={} r{}={} r{}={}",
+                     hottest[0].second, hottest[0].first, hottest[1].second, hottest[1].first,
+                     hottest[2].second, hottest[2].first, hottest[3].second, hottest[3].first);
+            LOG_INFO(HW_GPU,
+                     "PICA command profile lists={} writes={} draws={} list_cpu_ns={} "
+                     "draw_cpu_ns={} notifications={} repeat_shader_notifications={} "
+                     "code_words={} repeat_code_words={} swizzle_words={} "
+                     "repeat_swizzle_words={} clock_failures={}",
+                     command_profile.lists, command_profile.writes, command_profile.draws,
+                     command_profile.list_cpu_ns, command_profile.draw_cpu_ns,
+                     command_profile.notifications, command_profile.repeated_shader_notifications,
+                     command_profile.code_words, command_profile.repeated_code_words,
+                     command_profile.swizzle_words, command_profile.repeated_swizzle_words,
+                     command_profile.clock_failures);
+        }
+    }
+private:
+    bool draw, active = false;
+    std::uint64_t start = 0;
+};
+
+// Only notifications that exclusively dirty the shader configuration are eligible.
+// In particular, do not skip fixed-function Sync calls: some derive their result
+// from other registers (e.g. logic op / color masks), even on an unchanged write.
+static bool ShaderConfigNotification(u32 id) {
+    switch (id) {
+    case PICA_REG_INDEX(rasterizer.depthmap_enable):
+    case PICA_REG_INDEX(rasterizer.scissor_test.mode):
+    case PICA_REG_INDEX(texturing.main_config):
+    case PICA_REG_INDEX(texturing.texture0.type):
+    case PICA_REG_INDEX(texturing.tev_stage0.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage0.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage0.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage0.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage1.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage1.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage1.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage1.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage2.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage2.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage2.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage2.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage3.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage3.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage3.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage3.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage4.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage4.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage4.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage4.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage5.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage5.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage5.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage5.color_scale):
+    case PICA_REG_INDEX(texturing.tev_combiner_buffer_input):
+    case PICA_REG_INDEX(lighting.light[0].config):
+    case PICA_REG_INDEX(lighting.light[1].config):
+    case PICA_REG_INDEX(lighting.light[2].config):
+    case PICA_REG_INDEX(lighting.light[3].config):
+    case PICA_REG_INDEX(lighting.light[4].config):
+    case PICA_REG_INDEX(lighting.light[5].config):
+    case PICA_REG_INDEX(lighting.light[6].config):
+    case PICA_REG_INDEX(lighting.light[7].config):
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void WriteShaderWord(Shader::ShaderSetup& setup, u32 offset, u32 value, bool swizzle) {
+    auto& word = swizzle ? setup.swizzle_data[offset] : setup.program_code[offset];
+    if (!RepeatStateEnabled() && !CommandProfileEnabled()) {
+        word = value;
+        if (swizzle) setup.MarkSwizzleDataDirty();
+        else setup.MarkProgramCodeDirty();
+        return;
+    }
+    const bool repeated = word == value;
+    if (CommandProfileEnabled()) {
+        if (swizzle) {
+            ++command_profile.swizzle_words;
+            command_profile.repeated_swizzle_words += repeated;
+        } else {
+            ++command_profile.code_words;
+            command_profile.repeated_code_words += repeated;
+        }
+    }
+    word = value;
+    if (!RepeatStateEnabled() || !repeated) {
+        if (swizzle) setup.MarkSwizzleDataDirty();
+        else setup.MarkProgramCodeDirty();
+    }
+}
 
 static const char* GetShaderSetupTypeName(Shader::ShaderSetup& setup) {
     if (&setup == &g_state.vs) {
@@ -125,6 +276,10 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         0xffff0000, 0xffff00ff, 0xffffff00, 0xffffffff,
     };
     // TODO: Figure out how register masking acts on e.g. vs.uniform_setup.set_value
+    if (CommandProfileEnabled()) {
+        ++command_profile.writes;
+        ++command_profile.registers[id];
+    }
     const u32 old_value = regs.reg_array[id];
     const u32 write_mask = expand_bits_to_bytes[mask];
     regs.reg_array[id] = (old_value & ~write_mask) | (value & write_mask);
@@ -259,6 +414,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     case PICA_REG_INDEX(pipeline.trigger_draw):
     case PICA_REG_INDEX(pipeline.trigger_draw_indexed): {
         MICROPROFILE_SCOPE(GPU_Drawing);
+        CommandCPUProfileScope command_draw_profile(true);
 
 #if PICA_LOG_TEV
         DebugUtils::DumpTevStageConfig(regs.GetTevStages());
@@ -435,8 +591,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         if (offset >= 4096) {
             LOG_ERROR(HW_GPU, "Invalid GS program offset {}", offset);
         } else {
-            g_state.gs.program_code[offset] = value;
-            g_state.gs.MarkProgramCodeDirty();
+            WriteShaderWord(g_state.gs, offset, value, false);
             offset++;
         }
         break;
@@ -454,8 +609,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         if (offset >= g_state.gs.swizzle_data.size()) {
             LOG_ERROR(HW_GPU, "Invalid GS swizzle pattern offset {}", offset);
         } else {
-            g_state.gs.swizzle_data[offset] = value;
-            g_state.gs.MarkSwizzleDataDirty();
+            WriteShaderWord(g_state.gs, offset, value, true);
             offset++;
         }
         break;
@@ -504,11 +658,9 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         if (offset >= 512) {
             LOG_ERROR(HW_GPU, "Invalid VS program offset {}", offset);
         } else {
-            g_state.vs.program_code[offset] = value;
-            g_state.vs.MarkProgramCodeDirty();
+            WriteShaderWord(g_state.vs, offset, value, false);
             if (!g_state.regs.pipeline.gs_unit_exclusive_configuration) {
-                g_state.gs.program_code[offset] = value;
-                g_state.gs.MarkProgramCodeDirty();
+                WriteShaderWord(g_state.gs, offset, value, false);
             }
             offset++;
         }
@@ -527,11 +679,9 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         if (offset >= g_state.vs.swizzle_data.size()) {
             LOG_ERROR(HW_GPU, "Invalid VS swizzle pattern offset {}", offset);
         } else {
-            g_state.vs.swizzle_data[offset] = value;
-            g_state.vs.MarkSwizzleDataDirty();
+            WriteShaderWord(g_state.vs, offset, value, true);
             if (!g_state.regs.pipeline.gs_unit_exclusive_configuration) {
-                g_state.gs.swizzle_data[offset] = value;
-                g_state.gs.MarkSwizzleDataDirty();
+                WriteShaderWord(g_state.gs, offset, value, true);
             }
             offset++;
         }
@@ -599,13 +749,29 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         VideoCore::Rasterizer()->SyncProcTexLutData();
         break;
     }
-    default:
-        VideoCore::Rasterizer()->NotifyPicaRegisterChanged(id);
+    default: {
+        const bool repeated_shader_state = (RepeatStateEnabled() || CommandProfileEnabled()) &&
+                                           old_value == regs.reg_array[id] &&
+                                           ShaderConfigNotification(id);
+        if (CommandProfileEnabled()) {
+            ++command_profile.notifications;
+            command_profile.repeated_shader_notifications += repeated_shader_state;
+        }
+        if (!RepeatStateEnabled() || !repeated_shader_state)
+            VideoCore::Rasterizer()->NotifyPicaRegisterChanged(id);
         break;
+    }
     }
 }
 
 void ProcessCommandList(PAddr list, u32 size) {
+    static const bool reported_options = [] {
+        LOG_INFO(HW_GPU, "PICA command options repeat_state={} command_profile={}",
+                 RepeatStateEnabled(), CommandProfileEnabled());
+        return true;
+    }();
+    (void)reported_options;
+    CommandCPUProfileScope command_list_profile(false);
     Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::GPUCommand);
     u32* buffer = (u32*)VideoCore::Memory()->GetPhysicalPointer(list);
     g_state.cmd_list.addr = list;
