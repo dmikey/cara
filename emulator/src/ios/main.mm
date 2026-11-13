@@ -344,6 +344,20 @@ static const char* CaraSelectedCPUBackend() {
     return backend && std::strcmp(backend,"dyncom")==0 ? "dyncom" : "fastinterp";
 }
 
+static BOOL CaraCanTuneEmulation() {
+    return !std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_ADAPTIVE_GUEST_CPU") && !std::getenv("CARA_MAX_SPEED_PERCENT");
+}
+static Cara::PlayPolicy CaraSavedPlayPolicy() {
+    NSUserDefaults* defaults=NSUserDefaults.standardUserDefaults;
+    const NSInteger saved=[defaults integerForKey:@"maximumSpeedPercent"];
+    const unsigned maximum=saved>=50 && saved<=200?unsigned(saved):105;
+    const char* override=std::getenv("CARA_ADAPTIVE_GUEST_CPU");
+    return Cara::MakePlayPolicy([[defaults stringForKey:@"playMode"] isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,
+        maximum,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,override?(std::strcmp(override,"1")==0?1:0):-1,
+        [defaults boolForKey:@"fixedGuestClockEnabled"],unsigned(std::clamp<NSInteger>([defaults integerForKey:@"fixedGuestClockPercent"],25,200)),
+        [defaults boolForKey:@"speedLimitEnabled"]);
+}
+
 @interface EmulatorController : UIViewController <UIDocumentPickerDelegate>
 - (NSUInteger)maximumSpeedPercent;
 - (void)setMaximumSpeedPercent:(NSUInteger)percent;
@@ -397,6 +411,7 @@ static const char* CaraSelectedCPUBackend() {
     std::atomic<bool> adaptiveCPUDirty;
     std::atomic<unsigned> guestClock;
     std::atomic<unsigned> maximumSpeedLimit;
+    std::atomic<bool> speedLimitEnabled;
     std::atomic<unsigned> fixedGuestClock;
     NSString* settingsCategory;
     std::atomic<bool> framePending[2];
@@ -492,15 +507,12 @@ static const char* CaraSelectedCPUBackend() {
     const bool benchmarkMute=std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_BENCHMARK_AUDIO");
     AudioCore::SetIOSAudioMuted(benchmarkMute || [NSUserDefaults.standardUserDefaults boolForKey:@"audioMuted"]);
     stretchAudio=[NSUserDefaults.standardUserDefaults boolForKey:@"audioStretching"]; stretchAudioDirty=false;
-    const char* adaptiveOverride=std::getenv("CARA_ADAPTIVE_GUEST_CPU");
     NSString* mode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"];
     if (![@[@"accuracy",@"performance"] containsObject:mode]) mode=@"performance";
     [NSUserDefaults.standardUserDefaults setObject:mode forKey:@"playMode"];
-    [NSUserDefaults.standardUserDefaults registerDefaults:@{@"maximumSpeedPercent":@105}];
-    const NSInteger savedMaximumSpeed=[NSUserDefaults.standardUserDefaults integerForKey:@"maximumSpeedPercent"];
-    const unsigned requested=(savedMaximumSpeed>=50 && savedMaximumSpeed<=200)?unsigned(savedMaximumSpeed):Cara::FramePacer::DefaultSpeedPercent;
-    const auto policy=Cara::MakePlayPolicy([mode isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,requested,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,adaptiveOverride?(std::strcmp(adaptiveOverride,"1")==0?1:0):-1);
-    adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed;
+    [NSUserDefaults.standardUserDefaults registerDefaults:@{@"maximumSpeedPercent":@105,@"fixedGuestClockEnabled":@NO,@"fixedGuestClockPercent":@100,@"speedLimitEnabled":@YES}];
+    const auto policy=CaraSavedPlayPolicy();
+    adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed; speedLimitEnabled=policy.limit_speed;
     adaptiveCPUDirty=false; guestClock=policy.guest_clock;
     NSURL* saveDocuments=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     saveSync=[[CaraSaveSync alloc] initWithRoot:[saveDocuments URLByAppendingPathComponent:@"cara" isDirectory:YES]];
@@ -600,9 +612,10 @@ static const char* CaraSelectedCPUBackend() {
 }
 - (NSUInteger)maximumSpeedPercent { return maximumSpeedLimit.load(); }
 - (void)setMaximumSpeedPercent:(NSUInteger)percent {
+    if (!CaraCanTuneEmulation() || [[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"] isEqual:@"accuracy"]) return;
     const unsigned value=unsigned(std::clamp<NSUInteger>(percent,Cara::FramePacer::MinSpeedPercent,Cara::FramePacer::MaxSpeedPercent));
-    maximumSpeedLimit=adaptiveCPU.load()?value:105;
     [NSUserDefaults.standardUserDefaults setInteger:value forKey:@"maximumSpeedPercent"];
+    [self applySavedPlayPolicy];
 }
 - (void)showMaximumSpeed {
     UIAlertController* limits=[UIAlertController alertControllerWithTitle:@"Maximum speed" message:@"Limits game speed. 105% is the default." preferredStyle:UIAlertControllerStyleAlert];
@@ -744,9 +757,17 @@ static const char* CaraSelectedCPUBackend() {
         @{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@(!AudioCore::IsIOSAudioMuted()),@"change":^(BOOL on) { AudioCore::SetIOSAudioMuted(!on); [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"audioMuted"]; }},
         @{@"title":@"Audio stretching",@"subtitle":@"Adjust audio when emulation speed varies.",@"symbol":@"waveform",@"value":@(stretchAudio.load()),@"change":^(BOOL on) { EmulatorController* c=owner; if (!c) return; c->stretchAudio=on; c->stretchAudioDirty=true; [NSUserDefaults.standardUserDefaults setBool:on forKey:@"audioStretching"]; }},
     ]}];
+    const BOOL accuracy=[[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"] isEqual:@"accuracy"];
+    const BOOL tuning=CaraCanTuneEmulation() && !accuracy;
+    const BOOL fixed=accuracy || [NSUserDefaults.standardUserDefaults boolForKey:@"fixedGuestClockEnabled"];
     [sections addObject:@{@"title":@"Emulation",@"rows":@[
-        @{@"title":@"Play mode",@"subtitle":adaptiveCPU.load()?@"Performance · adaptive CPU":@"Accuracy · 105% speed cap, normal 100% CPU",@"symbol":@"speedometer"},
-    ],@"footer":@"Choose Accuracy or Performance on the main settings card."}];
+        @{@"title":@"Play mode",@"subtitle":accuracy?@"Accuracy · 100% guest CPU, 105% speed":@"Performance",@"symbol":@"speedometer"},
+        @{@"title":@"Use fixed guest clock",@"subtitle":@"Turn off to let Cara adjust the guest clock automatically.",@"symbol":@"cpu",@"value":@(fixed),@"enabled":@(tuning),@"change":^(BOOL on) { [owner setEmulationPreference:@"fixedGuestClockEnabled" value:@(on) refresh:YES]; }},
+        @{@"title":@"Guest clock",@"subtitle":@"25–200% · Normal guest clock: 100%.",@"enabled":@(tuning && fixed),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:std::clamp<NSInteger>([NSUserDefaults.standardUserDefaults integerForKey:@"fixedGuestClockPercent"],25,200))},@"sliderChange":^(double value) { [owner setEmulationPreference:@"fixedGuestClockPercent" value:@(std::lround(value)) refresh:NO]; }},
+        @{@"title":@"Limit game speed",@"subtitle":@"Turn off to run as fast as the device allows.",@"symbol":@"gauge.with.dots.needle.67percent",@"value":@(speedLimitEnabled.load()),@"enabled":@(tuning),@"change":^(BOOL on) { [owner setEmulationPreference:@"speedLimitEnabled" value:@(on) refresh:YES]; }},
+        @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 105%.",@"enabled":@(tuning && speedLimitEnabled.load()),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(maximumSpeedLimit.load())},@"sliderChange":^(double value) { [owner setMaximumSpeedPercent:NSUInteger(std::lround(value))]; }},
+        action(@"Reset emulation tuning",@"arrow.counterclockwise",tuning,^{ EmulatorController* c=owner; if (!c) return; for (NSString* key in @[@"fixedGuestClockEnabled",@"fixedGuestClockPercent",@"speedLimitEnabled",@"maximumSpeedPercent"]) [NSUserDefaults.standardUserDefaults removeObjectForKey:key]; [c applySavedPlayPolicy]; [c updateSyncFeedback]; }),
+    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 105%. Choose Performance to adjust these controls.":@"Guest clock and game speed are separate controls. Changes take effect when you resume."}];
     for (NSString* orientation in @[@"Landscape",@"Portrait"]) {
         NSString* key=[@"controllerSkin" stringByAppendingString:orientation];
         NSString* selected=[NSUserDefaults.standardUserDefaults stringForKey:key];
@@ -775,19 +796,34 @@ static const char* CaraSelectedCPUBackend() {
     if ([navigation isKindOfClass:UINavigationController.class]) [navigation pushViewController:settings animated:YES];
 }
 - (void)setPlayMode:(NSString*)mode {
-    if (std::getenv("CARA_BENCHMARK_FRAMES") || std::getenv("CARA_ADAPTIVE_GUEST_CPU")) return;
-    BOOL adaptive=[mode isEqual:@"performance"];
-    const auto policy=Cara::MakePlayPolicy(adaptive?Cara::PlayMode::Performance:Cara::PlayMode::Accuracy,unsigned([NSUserDefaults.standardUserDefaults integerForKey:@"maximumSpeedPercent"]));
-    adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed; adaptiveCPUDirty=true;
+    if (!CaraCanTuneEmulation()) return;
     [NSUserDefaults.standardUserDefaults setObject:mode forKey:@"playMode"];
-    [NSUserDefaults.standardUserDefaults setBool:adaptive forKey:@"adaptiveGuestCPU"];
+    [self applySavedPlayPolicy];
+}
+- (void)setEmulationPreference:(NSString*)key value:(NSNumber*)value refresh:(BOOL)refresh {
+    if (!CaraCanTuneEmulation() || [[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"] isEqual:@"accuracy"]) return;
+    if (![@[@"fixedGuestClockEnabled",@"fixedGuestClockPercent",@"speedLimitEnabled"] containsObject:key]) return;
+    [NSUserDefaults.standardUserDefaults setObject:value forKey:key]; [self applySavedPlayPolicy];
+    if (refresh) [self updateSyncFeedback];
+}
+- (void)applySavedPlayPolicy {
+    const auto policy=CaraSavedPlayPolicy();
+    adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed; speedLimitEnabled=policy.limit_speed; adaptiveCPUDirty=true;
+    [NSUserDefaults.standardUserDefaults setBool:policy.adaptive forKey:@"adaptiveGuestCPU"];
+    UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
+    if ([navigation isKindOfClass:UINavigationController.class] && [navigation.viewControllers.firstObject isKindOfClass:CaraQuickSettingsController.class])
+        ((CaraQuickSettingsController*)navigation.viewControllers.firstObject).performanceDetail=[self performanceModeDetail];
+    [self updateSessionPresentation];
+}
+- (NSString*)performanceModeDetail {
+    return [NSUserDefaults.standardUserDefaults boolForKey:@"fixedGuestClockEnabled"]?[NSString stringWithFormat:@"Fixed guest clock · %ld%%",(long)[NSUserDefaults.standardUserDefaults integerForKey:@"fixedGuestClockPercent"]]:@"Adaptive CPU clock";
 }
 - (void)showMenu {
     if (openingGame || self.presentedViewController) return;
     [self ensureLibrary]; modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
     [self updateSessionPresentation];
     CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"]?:@"performance";
-    quick.modeSelectionEnabled=!std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_ADAPTIVE_GUEST_CPU");
+    quick.modeSelectionEnabled=CaraCanTuneEmulation(); quick.performanceDetail=[self performanceModeDetail];
     __weak EmulatorController* owner=self;
     quick.chooseMode=^(NSString* mode) { [owner setPlayMode:mode]; };
     BOOL landscape=self.view.bounds.size.width>self.view.bounds.size.height;
@@ -1171,7 +1207,8 @@ static const char* CaraSelectedCPUBackend() {
             s.frame_limit = u16(self->maximumSpeedLimit.load());
             const char* target_env = std::getenv("CARA_BENCHMARK_FRAMES");
             const unsigned target_frames = target_env ? static_cast<unsigned>(std::clamp(std::strtol(target_env, nullptr, 10), 1L, 18000L)) : 0;
-            const bool pace_frames = !target_frames || std::getenv("CARA_PACED_BENCHMARK") != nullptr;
+            const bool benchmark_paced=std::getenv("CARA_PACED_BENCHMARK")!=nullptr;
+            bool pace_frames = !target_frames || benchmark_paced;
             Common::FrameTiming::counters = {};
             Common::FrameTiming::counters.enabled = std::getenv("CARA_FRAME_TIMING") != nullptr;
             s.init_clock = target_frames ? Settings::InitClock::FixedTime : Settings::InitClock::SystemTime;
@@ -1295,6 +1332,7 @@ static const char* CaraSelectedCPUBackend() {
                     }
                 }
                 Cara::FramePacer frame_pacer(paced_speed);
+                pace_frames=Cara::ShouldPaceFrames(target_frames!=0,benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
                 frame_pacer.Reset(host_seconds(benchmark_start));
                 unsigned paced_frame = emuWindow->frames;
                 unsigned late_paced_frames = 0;
@@ -1742,12 +1780,15 @@ static const char* CaraSelectedCPUBackend() {
                         }
                         clock_frame=emuWindow->frames; clock_frame_time=now; clock_work_seconds=0;
                     }
-                    if (pace_frames && emuWindow->frames != paced_frame) {
+                    if (emuWindow->frames != paced_frame) {
                         const auto now=std::chrono::steady_clock::now();
-                        if (emuWindow->frames<paced_frame) {
-                            frame_pacer.Reset(host_seconds(now)); // Reset/wrap is not a huge forward delta.
+                        const bool should_pace=Cara::ShouldPaceFrames(target_frames!=0,benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
+                        const bool pacing_changed=should_pace!=pace_frames; pace_frames=should_pace;
+                        if (!has_speed_override) paced_speed=self->maximumSpeedLimit.load();
+                        if (!pace_frames || pacing_changed || emuWindow->frames<paced_frame) {
+                            // Uncapped play, policy changes and frame resets discard old deadlines.
+                            frame_pacer.Reset(host_seconds(now));
                         } else {
-                            if (!has_speed_override) paced_speed=self->maximumSpeedLimit.load();
                             frame_pacer.SetSpeedPercent(paced_speed,host_seconds(now));
                             const double deadline=frame_pacer.Advance(emuWindow->frames-paced_frame,host_seconds(now));
                             if (deadline<=host_seconds(now)) ++late_paced_frames;
