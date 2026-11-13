@@ -5,7 +5,7 @@
 
 <img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
 
-**Nintendo 3DS emulator core and emulator shell. Built for Apple hardware.**
+**A new Nintendo 3DS emulator core for Apple hardware.**
 
 Cara brings a performance-first approach to 3DS emulation on iPhone and iPad:
 custom GPU rendering, efficient memory use, and gameplay without CPU JIT.
@@ -55,9 +55,16 @@ rendering foundation to build on. We carry that work forward in three key areas:
   foundation for reusing graphics resources. Cara takes that focus further with
   prepared-input reuse, bounded graphics caches, and fewer CPU/GPU transfers.
 
-**Azahar FastInterp** supplies the interpreter foundation for execution without
-CPU JIT. Cara combines these foundations with Apple-focused performance and memory
-work, a reusable core, and its own native shell.
+**Azahar FastInterp** supplies the interpreter foundation. Cara extends it with
+static arithmetic fast paths, faster instruction-timing lookup, and an eight-way
+decoded-block cache on iOS. Cara also fixes decode-record reuse and execution
+budgets across chained blocks. Guest CPU instructions remain interpreted inside
+the signed app, without runtime CPU code generation.
+
+Cara combines these execution changes with its Apple graphics pipeline, bounded
+memory and upload caches, a reusable core, and its own native shell. Current
+[frame-production research](docs/gpu-frame-production.md) investigates excessive
+guest rendering and GPU completion timing across games.
 
 Explore the [architecture, inherited systems, and Cara enhancements](docs/technology.md).
 

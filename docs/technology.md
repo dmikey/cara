@@ -40,6 +40,20 @@ and uploads. Direct GPU presentation avoids reading every displayed frame back
 into CPU memory. The [performance results](performance.md) distinguish measured
 whole-app outcomes from the purpose of individual optimizations.
 
+## Current execution and frame-production work
+
+Cara extends FastInterp with static arithmetic specialization, bucketed instruction
+timing lookup, an eight-way decoded-block cache on iOS, decode-record reuse fixes,
+and cache-independent chained-block execution budgets. Static paired-instruction
+and load/compare prototypes remain experimental; they are not reported as enabled
+performance gains.
+
+The [guest frame-production investigation](gpu-frame-production.md) records the
+Stories underclock and internal-frame-limit findings, separates host presentation
+from guest draw production, and defines the Luigi, Zelda and Xenoblade checks for
+any reusable engine fix. [Prior art](performance-prior-art.md) links the upstream
+interpreter and GPU timing implementations being evaluated.
+
 ## A reusable core and a native shell
 
 Cara is developed as a reusable 3DS core for integration into Delta, alongside
