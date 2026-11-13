@@ -31,7 +31,7 @@ jobs:
         run: python3 tools/prepare_android_dynarmic.py
       - name: Build experimental ARM64 APK
         working-directory: emulator/src/android
-        run: gradle --no-daemon --max-workers=3 :app:assembleDebug
+        run: gradle --no-daemon --continue --max-workers=3 :app:assembleDebug
       - name: Verify APK and native payload
         run: |
           apk=emulator/src/android/app/build/outputs/apk/debug/app-debug.apk

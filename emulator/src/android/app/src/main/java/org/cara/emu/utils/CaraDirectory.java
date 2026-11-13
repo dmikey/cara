@@ -352,9 +352,8 @@ public final class CaraDirectory {
                 }
                 // background glsl
                 if ("background.glsl".equals(entry.getName())) {
-                    ByteArrayOutputStream output = new ByteArrayOutputStream();
-                    copyFile(zipIn, output);
-                    NativeLibrary.SetBackgroundGLSL(output.toString());
+                    // Custom background GLSL has no native implementation in Cara.
+                    // Image backgrounds and controller images remain supported.
                     continue;
                 }
                 // buttons and background images
