@@ -1547,7 +1547,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         paced_speed=unsigned(value); has_speed_override=true;
                     }
                 }
-                Cara::FramePacer frame_pacer(paced_speed);
+                const char* bounded_pacing_env=std::getenv("CARA_BOUNDED_FRAME_PACING");
+                const bool bounded_frame_pacing=!bounded_pacing_env || std::strcmp(bounded_pacing_env,"1")==0;
+                Cara::FramePacer frame_pacer(paced_speed,bounded_frame_pacing);
                 pace_frames=Cara::ShouldPaceFrames(target_frames!=0,benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
                 const auto reset_pacing=[&](std::chrono::steady_clock::time_point at) {
                     const double seconds=host_seconds(at);
@@ -2096,6 +2098,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                            << ",\"fps\":" << emuWindow->frames / elapsed
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"maximum_speed_percent\":" << paced_speed
+                           << ",\"bounded_frame_pacing\":" << (bounded_frame_pacing?"true":"false")
                            << ",\"late_paced_frames\":" << late_paced_frames
                            << ",\"host_presentation_submissions\":" << emuWindow->presentation_submissions
                            << ",\"host_presentation_min_interval_ms\":" << emuWindow->minimum_presentation_interval*1000
