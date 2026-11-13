@@ -253,7 +253,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
 - (void)openRecent { if(self.canResume && [recent.url.URLByStandardizingPath isEqual:self.activeGameURL.URLByStandardizingPath]) { CaraMenuSound(@"launch"); if(self.resumeGame) self.resumeGame(); } else if(recent) [self showDetails:recent]; }
 - (void)showDetails:(CaraLibraryGame*)game {
     CaraMenuSound(@"select");
-    CaraSettingsController* details=[CaraSettingsController new]; details.title=@"Game details"; __weak CaraLibraryController* owner=self;
+    CaraSettingsController* details=[CaraSettingsController new]; details.title=@"Game details"; details.usesLibraryAppearance=YES; __weak CaraLibraryController* owner=self;
     NSString* artworkKey=[NSString stringWithFormat:@"%@-%@-%llu",game.url,game.modified,game.fileSize]; NSString* displayTitle=[artworkCache objectForKey:artworkKey][@"title"]?:game.title;
     NSMutableArray* rows=[NSMutableArray new]; NSDictionary* info=[self.store metadataForGame:game.url];
     [rows addObject:@{@"title":displayTitle,@"subtitle":[NSString stringWithFormat:@"Nintendo 3DS · %@\n%@%@",[NSByteCountFormatter stringFromByteCount:game.fileSize countStyle:NSByteCountFormatterCountStyleFile],game.url.lastPathComponent,info[@"titleID"]?[@"\nTitle ID: " stringByAppendingString:info[@"titleID"]]:@""],@"symbol":@"gamecontroller"}];
@@ -302,15 +302,15 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
 @end
 
 @interface CaraSliderCell : UITableViewCell
-- (void)configure:(NSDictionary*)row enabled:(BOOL)enabled;
+- (void)configure:(NSDictionary*)row enabled:(BOOL)enabled tint:(UIColor*)tint;
 @end
 @implementation CaraSliderCell
-- (void)configure:(NSDictionary*)row enabled:(BOOL)enabled {
+- (void)configure:(NSDictionary*)row enabled:(BOOL)enabled tint:(UIColor*)tint {
     NSDictionary* spec=row[@"slider"];
     UILabel* title=[UILabel new]; title.text=row[@"title"]; title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; title.adjustsFontForContentSizeCategory=YES; title.numberOfLines=0;
     UILabel* value=[UILabel new]; value.font=[UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightSemibold]; value.textAlignment=NSTextAlignmentRight; value.accessibilityElementsHidden=YES;
     title.textColor=value.textColor=enabled?UIColor.labelColor:UIColor.tertiaryLabelColor;
-    UISlider* slider=[UISlider new]; slider.minimumValue=[spec[@"min"] floatValue]; slider.maximumValue=[spec[@"max"] floatValue]; slider.value=[spec[@"value"] floatValue]; slider.enabled=enabled; slider.minimumTrackTintColor=CaraOrange(); slider.accessibilityLabel=row[@"title"];
+    UISlider* slider=[UISlider new]; slider.minimumValue=[spec[@"min"] floatValue]; slider.maximumValue=[spec[@"max"] floatValue]; slider.value=[spec[@"value"] floatValue]; slider.enabled=enabled; slider.minimumTrackTintColor=tint; slider.accessibilityLabel=row[@"title"];
     const float step=MAX(1,[spec[@"step"] floatValue]);
     value.text=[NSString stringWithFormat:@"%.0f%%",slider.value]; slider.accessibilityValue=value.text;
     __weak UISlider* weakSlider=slider; __weak UILabel* weakValue=value;
@@ -347,7 +347,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
 }
 - (instancetype)init { return [super init]; }
 - (void)viewDidLoad {
-    [super viewDidLoad]; if (!self.title.length) self.title=@"Settings"; self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraAccent();
+    [super viewDidLoad]; if (!self.title.length) self.title=@"Settings"; self.view.backgroundColor=CaraBackground(); self.view.tintColor=(self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange();
     self.tableView=[[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleInsetGrouped]; self.tableView.dataSource=self; self.tableView.delegate=self; self.tableView.backgroundColor=UIColor.clearColor; [self.view addSubview:self.tableView];
     __weak CaraSettingsController* weakSettings=self;
     if(self.categorized) {
@@ -400,18 +400,18 @@ static UIImage* CaraThemePreview(NSInteger style) {
 - (NSString*)tableView:(UITableView*)table titleForFooterInSection:(NSInteger)section { return visibleSections[section][@"footer"]; }
 - (UITableViewCell*)tableView:(UITableView*)table cellForRowAtIndexPath:(NSIndexPath*)path {
     NSDictionary* row=visibleSections[path.section][@"rows"][path.row];
-    if (row[@"slider"]) { CaraSliderCell* cell=[[CaraSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil]; [cell configure:row enabled:!row[@"enabled"] || [row[@"enabled"] boolValue]]; return cell; }
+    if (row[@"slider"]) { CaraSliderCell* cell=[[CaraSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil]; [cell configure:row enabled:!row[@"enabled"] || [row[@"enabled"] boolValue] tint:(self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange()]; return cell; }
     UITableViewCell* cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text=row[@"title"]; cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES; cell.textLabel.numberOfLines=0;
     cell.detailTextLabel.text=row[@"subtitle"]; cell.detailTextLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; cell.detailTextLabel.adjustsFontForContentSizeCategory=YES; cell.detailTextLabel.numberOfLines=0;
-    cell.imageView.image=[UIImage systemImageNamed:row[@"symbol"]?:@"circle"]; cell.imageView.tintColor=row[@"tint"]?:([row[@"destructive"] boolValue]?UIColor.systemRedColor:CaraAccent());
+    cell.imageView.image=[UIImage systemImageNamed:row[@"symbol"]?:@"circle"]; cell.imageView.tintColor=row[@"tint"]?:([row[@"destructive"] boolValue]?UIColor.systemRedColor:((self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange()));
     BOOL enabled=!row[@"enabled"] || [row[@"enabled"] boolValue];
     cell.textLabel.textColor=!enabled?UIColor.tertiaryLabelColor:([row[@"destructive"] boolValue]?UIColor.systemRedColor:UIColor.labelColor);
     cell.selectionStyle=row[@"action"] && enabled?UITableViewCellSelectionStyleDefault:UITableViewCellSelectionStyleNone;
     cell.userInteractionEnabled=enabled;
     if (row[@"value"]) {
         __weak CaraSettingsController* weakSettings=self;
-        UISwitch* toggle=[UISwitch new]; toggle.onTintColor=CaraAccent(); toggle.on=[row[@"value"] boolValue]; toggle.enabled=enabled; toggle.accessibilityLabel=row[@"title"];
+        UISwitch* toggle=[UISwitch new]; toggle.onTintColor=(self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange(); toggle.on=[row[@"value"] boolValue]; toggle.enabled=enabled; toggle.accessibilityLabel=row[@"title"];
         __weak UISwitch* weakToggle=toggle;
         [toggle addAction:[UIAction actionWithHandler:^(UIAction* action) { void(^change)(BOOL)=row[@"change"]; if (change) change(weakToggle.on); CaraMenuSound(@"toggle"); [weakSettings refresh]; }] forControlEvents:UIControlEventValueChanged]; cell.accessoryView=toggle;
     } else if (row[@"action"] && enabled) cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;

@@ -68,6 +68,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     library.syncTitle=[Scenario() isEqual:@"sync-error"]?@"States: Choose a version":@"Saves & states";
     library.syncDetail=[Scenario() isEqual:@"sync-error"]?@"Both versions are preserved. Resolve this in Settings.":@"Saves: Folder updated · States: Waiting for iCloud";
     __weak PreviewRoot* owner=self;
+    library.gameFileInUse=^BOOL(NSURL* url) { return [NSProcessInfo.processInfo.environment[@"CARA_UI_FILE_IN_USE"] isEqual:@"1"]; };
     library.showSettings=^{ [owner showSettings]; };
     library.addGame=^{ [owner showFilePicker:NO]; };
     library.chooseFolder=^{ [owner showFilePicker:YES]; };
