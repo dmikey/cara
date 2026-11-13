@@ -78,14 +78,16 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
+    if any(c.get('experimental_ppf_dependency', False) and not c.get('experimental_p3d_completion', False) for c in configs):
+        parser.error('PPF dependency requires experimental P3D completion')
     if len({config['name'] for config in configs}) != len(configs):
         parser.error('configuration names must be unique')
     args.output.mkdir(parents=True, exist_ok=True)
-    if args.resume_best and any(c.get('draw_cost_profile',False) or c.get('cache_profile',False) or c.get('pica_command_profile',False) or c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) for c in configs):
+    if args.resume_best and any(c.get('draw_cost_profile',False) or c.get('cache_profile',False) or c.get('pica_command_profile',False) or c.get('pica_post_irq_profile',False) or c.get('experimental_p3d_completion',False) or c.get('experimental_ppf_dependency',False) or c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) for c in configs):
         parser.error('Renderer diagnostics cannot select a performance winner')
     if any(type(c.get('guest_cpu_percent',100)) is not int or c.get('guest_cpu_percent',100) not in (50,100) for c in configs):
         parser.error('Diagnostic guest clock must be 50 or 100 percent')
@@ -146,6 +148,9 @@ def main():
                     'CARA_PROFILE_GUEST_CPU_PERCENT':str(config.get('guest_cpu_percent',100)),
                     'CARA_PICA_REPEAT_STATE':'1' if config.get('pica_repeat_state',False) else '0',
                     'CARA_PICA_COMMAND_PROFILE':'1' if config.get('pica_command_profile',False) else '0',
+                    'CARA_PICA_POST_IRQ_PROFILE':'1' if config.get('pica_post_irq_profile',False) else '0',
+                    'CARA_EXPERIMENTAL_PPF_DEPENDENCY':'1' if config.get('experimental_ppf_dependency',False) else '0',
+                    'CARA_EXPERIMENTAL_P3D_COMPLETION':'1' if config.get('experimental_p3d_completion',False) else '0',
                     'CARA_FASTINTERP_CONTIGUOUS_TRANSFERS':'1' if config.get('contiguous_transfers',False) else '0',
                     'CARA_RENDER_BOOKKEEPING_REUSE':'1' if config.get('render_bookkeeping_reuse',False) else '0',
                     'CARA_RENDER_BOOKKEEPING_PROFILE':'1' if config.get('render_bookkeeping_profile',False) else '0',
@@ -173,6 +178,8 @@ def main():
                     'CARA_VERTEX_INDEX_CACHE': '1' if config.get('index_cache', False) else '0',
                     'CARA_VERTEX_UPLOAD_BANK_MIB': str(config['bank_mib']),
                     'CARA_ADAPTIVE_GUEST_CPU': '0' if benchmark else '1'}
+        if config.get('ios_pipeline_cache', False):
+            settings['CARA_IOS_PIPELINE_CACHE']='1'
         if benchmark and args.paced:
             settings['CARA_PACED_BENCHMARK']='1'
             settings['CARA_MAX_SPEED_PERCENT']='100'
@@ -235,6 +242,7 @@ def main():
                   'vertex_reuse_check_ms_per_frame', 'vertex_index_cache_hits',
                   'vertex_index_cache_misses', 'vertex_index_cache_bytes']
         fields += ['draw_framebuffer_acquire_ms_per_frame', 'draw_framebuffer_acquire_calls', 'draw_texture_acquire_ms_per_frame', 'draw_texture_acquire_calls', 'draw_shader_setup_ms_per_frame', 'draw_shader_setup_calls', 'draw_dirty_invalidate_ms_per_frame', 'draw_dirty_invalidate_calls', 'render_reinterpret_check_ms_per_frame', 'render_reinterpret_check_calls', 'render_reinterpret_invocations', 'render_reinterpret_find_calls', 'render_reinterpret_avoided_calls', 'render_reinterpret_repeat_opportunities', 'contiguous_transfer_loads', 'contiguous_transfer_stores', 'contiguous_transfer_bytes']
+        fields += ['pica_command_lists','pica_draw_requests','top_buffer_swaps','stereo_top_buffer_swaps','pica_post_irq_submissions','pica_post_irq_writes','pica_post_irq_draw_requests','pica_post_irq_jumps','pica_first_irq_remaining_words','experimental_p3d_scheduled','experimental_p3d_delivered','experimental_p3d_retired','experimental_p3d_modeled_ns','experimental_p3d_queued_ticks']
         fields += ['guest_cpu_ms_per_frame','draw_ms_per_frame','cpu_shader_ms_per_frame','shader_calls','cpu_surface_invalidations','vertex_gl_subimage_calls','vertex_gl_image_calls','vertex_index_upload_bytes','gpu_input_records','lit_draws','active_light_sum']
         fields += ['texture_lookup_checks', 'texture_lookup_hits', 'texture_lookup_misses', 'texture_lookup_stores', 'texture_lookup_ambiguous_rejects', 'texture_lookup_epoch_rejects', 'texture_lookup_verified_hits', 'texture_lookup_verify_mismatches']
         if args.phase_cpu_timing:
@@ -299,6 +307,12 @@ def main():
             {key: value for key, value in core.items() if key in ('core', 'blocks_decoded', 'resident_entries') or key.startswith('cache_')}
             for core in census['cores']]
         status = json.loads((args.output / (config['name'] + '-benchmark-status.json')).read_text())
+        if config.get('experimental_ppf_dependency', False) and not config.get('experimental_p3d_completion', False):
+            raise RuntimeError('PPF dependency requires experimental P3D completion')
+        if status.get('experimental_ppf_dependency', False) != config.get('experimental_ppf_dependency', False):
+            raise RuntimeError('Experimental PPF dependency mode differs from configuration')
+        if status.get('experimental_p3d_completion', False) != config.get('experimental_p3d_completion', False):
+            raise RuntimeError('Experimental P3D completion mode differs from configuration')
         if status.get('paused_seconds', 0) > 0.001:
             raise RuntimeError('Replay was interrupted or paused; discard timing and workload comparison')
         if (report['title_id'] != checkpoint_title or

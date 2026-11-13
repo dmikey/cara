@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-13; see NOTICE for attribution.
 // Copyright 2018 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -5,6 +6,12 @@
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include <algorithm>
 #include <cstdlib>
+#include <chrono>
+#include <fstream>
+#ifdef CARA_IOS_GLES
+#include <sys/sysctl.h>
+#include "video_core/renderer_opengl/ios_pipeline_cache.h"
+#endif
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -103,7 +110,14 @@ class OGLShaderStage {
 public:
     explicit OGLShaderStage(bool separable) : separable(separable) {}
 
-    void Create(const std::string& shader_code, GLenum type, u64 hash) {
+    void Create(const std::string& shader_code, GLenum type, u64 hash, bool defer = false) {
+#ifdef CARA_IOS_GLES
+        if (Settings::values.use_shader_cache) {
+            source = shader_code;
+            source_digest = IOSPipelineCache::Digest(source.data(), source.size());
+        }
+#endif
+        deferred_type = defer ? type : 0;
         this->hash = hash;
         if (separable) {
             OGLShader shader;
@@ -113,12 +127,19 @@ public:
             if (type == GL_FRAGMENT_SHADER) {
                 SetShaderSamplerBindings(program.handle);
             }
-        } else {
+        } else if (!defer) {
             this->shader.Create(shader_code.c_str(), type);
         }
     }
 
-    GLuint GetHandle() const {
+    bool IsValid() const { return deferred_type || (separable ? program.handle : shader.handle); }
+    const std::string& GetSource() const { return source; }
+    u64 GetSourceDigest() const { return source_digest; }
+    GLuint GetHandle() {
+        if (deferred_type) {
+            shader.Create(source.c_str(), deferred_type);
+            deferred_type = 0;
+        }
         if (separable) {
             return program.handle;
         } else {
@@ -131,6 +152,9 @@ public:
     }
 
 private:
+    std::string source;
+    u64 source_digest = 0;
+    GLenum deferred_type = 0;
     OGLShader shader;
     OGLProgram program;
     bool separable;
@@ -144,7 +168,13 @@ public:
           trivial_geometry_shader(separable) {
         if (separable) {
             pipeline.Create();
-        } else if (Settings::values.use_shader_cache) {
+        }
+#ifdef CARA_IOS_GLES
+        else if (Settings::values.use_shader_cache) {
+            LoadIOSPipelines();
+        }
+#else
+        else if (Settings::values.use_shader_cache) {
             u64 size = LoadProgramCache();
             if (size > 0) {
                 std::string log{"Load Shader Cache"};
@@ -156,12 +186,18 @@ public:
                                 OSD::Color::YELLOW);
             }
         }
-        trivial_vertex_shader.Create(GenerateTrivialVertexShader(separable), GL_VERTEX_SHADER, 0);
+#endif
+        const auto trivial = GenerateTrivialVertexShader(separable);
+        trivial_vertex_shader.Create(trivial, GL_VERTEX_SHADER, 0, CanDeferIOSStage(trivial));
     }
 
     ~Impl() {
         if (!separable && Settings::values.use_shader_cache) {
+#ifdef CARA_IOS_GLES
+            SaveIOSPipelines();
+#else
             SaveProgramCache();
+#endif
         }
     }
 
@@ -170,8 +206,8 @@ public:
         auto [iter, new_shader] = shaders.emplace(code_hash, separable);
         OGLShaderStage& cached_shader = iter->second;
         if (new_shader) {
-            cached_shader.Create(shader_code, shader_type, code_hash);
-            if (cached_shader.GetHandle() == 0) {
+            cached_shader.Create(shader_code, shader_type, code_hash, CanDeferIOSStage(shader_code));
+            if (!cached_shader.IsValid()) {
                 LOG_WARNING(Render_OpenGL, "shader {:04X} create failed!", shader_type);
                 shaders.erase(code_hash);
                 return nullptr;
@@ -289,10 +325,15 @@ public:
     }
 
     void ApplyTo(OpenGLState& state) {
+#ifdef CARA_IOS_GLES
+        if (!separable && Settings::values.use_shader_cache) {
+            ApplyIOSPipeline(state);
+            return;
+        }
+#endif
         GLuint vs = current_shaders.vs->GetHandle();
         GLuint gs = current_shaders.gs->GetHandle();
         GLuint fs = current_shaders.fs->GetHandle();
-
         if (separable) {
             glUseProgramStages(pipeline.handle, GL_VERTEX_SHADER_BIT, vs);
             glUseProgramStages(pipeline.handle, GL_GEOMETRY_SHADER_BIT, gs);
@@ -358,6 +399,149 @@ public:
         SetShaderUniformBlockBindings(program);
         SetShaderSamplerBindings(program);
         return program;
+    }
+#endif
+
+    bool CanDeferIOSStage(const std::string& source) const {
+#ifdef CARA_IOS_GLES
+        if (Settings::values.use_shader_cache) {
+            for (std::size_t i = 0; i < ios_entries.size(); ++i) {
+                const auto& e = ios_entries[i];
+                const auto p = program_cache.find(ios_entry_keys[i]);
+                if (p != program_cache.end() && p->second.handle &&
+                    (source == e.vertex || source == e.fragment)) return true;
+            }
+        }
+#endif
+        return false;
+    }
+#ifdef CARA_IOS_GLES
+    std::string IOSIdentity() {
+        std::string identity = CARA_SHADER_CACHE_SIGNATURE;
+        for (GLenum key : {GL_VENDOR, GL_RENDERER, GL_VERSION, GL_SHADING_LANGUAGE_VERSION}) {
+            const auto value = glGetString(key);
+            identity += "\n";
+            if (value) identity += reinterpret_cast<const char*>(value);
+        }
+        char os[256]{};
+        size_t length = sizeof(os);
+        if (sysctlbyname("kern.osversion", os, &length, nullptr, 0) == 0) identity += os;
+        GLint count = 0;
+        glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &count);
+        if (count > 0 && count <= 64) {
+            ios_formats.resize(count);
+            glGetIntegerv(GL_PROGRAM_BINARY_FORMATS, ios_formats.data());
+        }
+        for (auto format : ios_formats) identity += "\n" + std::to_string(format);
+        return identity;
+    }
+    void BindIOSProgram(OGLProgram& p) {
+        if (p.handle) {
+            SetShaderUniformBlockBindings(p.handle);
+            SetShaderSamplerBindings(p.handle);
+        }
+    }
+    void LoadIOSPipelines() {
+        ios_identity = IOSIdentity();
+        LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
+                 ios_formats.size());
+        std::ifstream file(GetCacheFile() + ".cara-pso1", std::ios::binary | std::ios::ate);
+        if (!file) return;
+        const auto size = file.tellg();
+        if (size < 0 || size > static_cast<std::streamoff>(IOSPipelineCache::MaxBytes)) return;
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+        file.seekg(0);
+        if (!file.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) ||
+            !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries)) return;
+        const auto start = std::chrono::steady_clock::now();
+        unsigned binary_hits = 0, source_links = 0;
+        for (auto& e : ios_entries) {
+            ios_bytes += e.vertex.size() + e.fragment.size() + e.binary.size() + 16;
+            const auto key = IOSPipelineCache::Key(e.vertex, e.fragment);
+            ios_entry_keys.push_back(key);
+            auto& p = program_cache[key];
+            if (!e.binary.empty() && std::find(ios_formats.begin(), ios_formats.end(),
+                                             static_cast<GLint>(e.format)) != ios_formats.end()) {
+                std::vector<GLbyte> binary(e.binary.begin(), e.binary.end());
+                p.Create(e.format, binary);
+                if (p.handle) ++binary_hits;
+            }
+            if (!p.handle) {
+                // Same GL/context thread as ordinary compilation. No background GL context.
+                OGLShader vs, fs;
+                vs.Create(e.vertex.c_str(), GL_VERTEX_SHADER);
+                fs.Create(e.fragment.c_str(), GL_FRAGMENT_SHADER);
+                if (vs.handle && fs.handle) p.Create(false, {vs.handle, fs.handle});
+                if (p.handle) ++source_links;
+                e.binary.clear(); e.format = 0;
+            }
+            BindIOSProgram(p);
+        }
+        LOG_INFO(Render_OpenGL, "Cara iOS prewarm: {} binary hits, {} source links, {} us; {} formats",
+                 binary_hits, source_links,
+                 std::chrono::duration_cast<std::chrono::microseconds>(
+                     std::chrono::steady_clock::now() - start).count(), ios_formats.size());
+    }
+    void SaveIOSPipelines() {
+        if (!ios_dirty) return;
+        const auto bytes = IOSPipelineCache::Encode(ios_identity, ios_entries);
+        if (bytes.empty()) return;
+        const auto destination = GetCacheFile() + ".cara-pso1";
+        const auto temporary = destination + ".tmp";
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        file.close();
+        if (file && FileUtil::Rename(temporary, destination)) {
+            ios_dirty = false;
+            LOG_INFO(Render_OpenGL, "Cara iOS local pipeline checkpoint: {} pipelines, {} bytes",
+                     ios_entries.size(), bytes.size());
+        }
+    }
+    void ApplyIOSPipeline(OpenGLState& state) {
+        const auto& vs_source = current_shaders.vs->GetSource();
+        const auto& fs_source = current_shaders.fs->GetSource();
+        const auto& pair = ios_stage_pairs.Get(current_shaders.vs, current_shaders.fs, [&] {
+            const auto key = IOSPipelineCache::KeyFromDigests(current_shaders.vs->GetSourceDigest(),
+                                                            current_shaders.fs->GetSourceDigest());
+            return IOSStagePair{key, &program_cache[key]};
+        });
+        const auto key = pair.key;
+        auto& p = *pair.program;
+        if (!p.handle && !failed_ios_programs.count(key)) {
+            const auto vs = current_shaders.vs->GetHandle(), fs = current_shaders.fs->GetHandle();
+            if (vs && fs) p.Create(false, {vs, fs});
+            BindIOSProgram(p);
+            if (!p.handle) failed_ios_programs.insert(key);
+            else if (ios_entries.size() < IOSPipelineCache::MaxEntries &&
+                     vs_source.size() <= IOSPipelineCache::MaxSource &&
+                     fs_source.size() <= IOSPipelineCache::MaxSource) {
+                IOSPipelineCache::Entry entry{vs_source, fs_source};
+                if (!ios_formats.empty()) {
+                    GLenum format = 0;
+                    std::vector<GLbyte> binary;
+                    p.GetProgramBinary(format, binary);
+                    if (binary.size() <= IOSPipelineCache::MaxBinary &&
+                        std::find(ios_formats.begin(), ios_formats.end(), static_cast<GLint>(format)) != ios_formats.end()) {
+                        entry.format = format;
+                        entry.binary.assign(binary.begin(), binary.end());
+                    }
+                }
+                const auto cost = entry.vertex.size() + entry.fragment.size() + entry.binary.size() + 16;
+                if (cost <= IOSPipelineCache::MaxBytes &&
+                    ios_bytes <= IOSPipelineCache::MaxBytes - cost) {
+                    ios_bytes += cost;
+                    ios_entries.push_back(std::move(entry));
+                    ios_entry_keys.push_back(key);
+                    ios_dirty = true;
+                    ios_last_miss = std::chrono::steady_clock::now();
+                }
+            }
+        }
+        // Checkpoint only after a quiet interval, keeping disk writes out of compile bursts.
+        if (ios_dirty && std::chrono::steady_clock::now() - ios_last_miss > std::chrono::seconds(2))
+            SaveIOSPipelines();
+        state.draw.shader_program = p.handle;
+        state.draw.program_pipeline = 0;
     }
 #endif
 
@@ -562,6 +746,15 @@ private:
     OGLShaderStage trivial_geometry_shader;
     std::unordered_map<u64, OGLShaderStage*> shaders_ref;
 #ifdef CARA_IOS_GLES
+    struct IOSStagePair { u64 key = 0; OGLProgram* program = nullptr; };
+    IOSPipelineCache::StagePairMemo<IOSStagePair> ios_stage_pairs;
+    std::vector<IOSPipelineCache::Entry> ios_entries;
+    std::vector<u64> ios_entry_keys;
+    std::vector<GLint> ios_formats;
+    std::string ios_identity;
+    std::size_t ios_bytes = 8192; // Header/identity/checksum reserve included in the disk budget.
+    bool ios_dirty = false;
+    std::chrono::steady_clock::time_point ios_last_miss{};
     std::unordered_map<u64,OGLProgram> feedback_programs;
     OGLShader feedback_fragment;
     std::unordered_set<u64> failed_ios_vertex_shaders;

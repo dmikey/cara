@@ -4,6 +4,7 @@
 // Refer to the license.txt file included.
 
 #include "common/cpu_category_timing.h"
+#include "cara/pica_submission_probe.h"
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -258,6 +259,15 @@ static void WriteUniformFloatReg(ShaderRegs& config, Shader::ShaderSetup& setup,
     }
 }
 
+static bool PostIRQProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_PICA_POST_IRQ_PROFILE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled && Common::FrameTiming::counters.enabled;
+}
+static Cara::PicaSubmissionProbe post_irq_submission;
+
 static void WritePicaReg(u32 id, u32 value, u32 mask) {
     auto& regs = g_state.regs;
 
@@ -268,6 +278,8 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
             id, value, mask);
         return;
     }
+
+    if (Cara::ExperimentalP3DCompletionEnabled()) g_state.experimental_p3d_work.Command();
 
     // Expand a 4-bit mask to 4-byte mask, e.g. 0b0101 -> 0x00FF00FF
     static const u32 expand_bits_to_bytes[] = {
@@ -283,6 +295,19 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     const u32 old_value = regs.reg_array[id];
     const u32 write_mask = expand_bits_to_bytes[mask];
     regs.reg_array[id] = (old_value & ~write_mask) | (value & write_mask);
+    if (PostIRQProfileEnabled()) {
+        const bool irq = id == PICA_REG_INDEX(trigger_irq);
+        std::uint64_t remaining_words = 0;
+        if (irq && !post_irq_submission.saw_irq) {
+            const auto used = g_state.cmd_list.current_ptr - g_state.cmd_list.head_ptr;
+            if (used >= 0 && std::uint64_t(used) <= g_state.cmd_list.length)
+                remaining_words = g_state.cmd_list.length - used;
+        }
+        post_irq_submission.Write(irq,
+            id == PICA_REG_INDEX(pipeline.trigger_draw) || id == PICA_REG_INDEX(pipeline.trigger_draw_indexed),
+            id == PICA_REG_INDEX(pipeline.command_buffer.trigger[0]) ||
+                id == PICA_REG_INDEX(pipeline.command_buffer.trigger[1]), remaining_words);
+    }
 
     switch (id) {
     // Trigger IRQ
@@ -413,6 +438,9 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     // It seems like these trigger vertex rendering
     case PICA_REG_INDEX(pipeline.trigger_draw):
     case PICA_REG_INDEX(pipeline.trigger_draw_indexed): {
+        if (Cara::ExperimentalP3DCompletionEnabled())
+            g_state.experimental_p3d_work.Draw(regs.pipeline.num_vertices,
+                                             static_cast<unsigned>(regs.pipeline.triangle_topology.Value()));
         if (Common::FrameTiming::counters.enabled)
             ++Common::FrameTiming::counters.pica_draw_requests;
         MICROPROFILE_SCOPE(GPU_Drawing);
@@ -766,7 +794,12 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     }
 }
 
+u64 TakeExperimentalP3DNanoseconds() {
+    return g_state.experimental_p3d_work.TakeNanoseconds();
+}
+
 void ProcessCommandList(PAddr list, u32 size) {
+    if (PostIRQProfileEnabled()) post_irq_submission = {};
     if (Common::FrameTiming::counters.enabled)
         ++Common::FrameTiming::counters.pica_command_lists;
     static const bool reported_options = [] {
@@ -797,6 +830,19 @@ void ProcessCommandList(PAddr list, u32 size) {
             cmd_id += group_factor;
             WritePicaReg(cmd_id, *g_state.cmd_list.current_ptr++, header.parameter_mask);
         }
+    }
+    if (PostIRQProfileEnabled()) {
+        auto& counters = Common::FrameTiming::counters;
+        counters.pica_post_irq_submissions += post_irq_submission.saw_irq;
+        counters.pica_post_irq_writes += post_irq_submission.writes;
+        counters.pica_post_irq_draw_requests += post_irq_submission.draws;
+        counters.pica_post_irq_jumps += post_irq_submission.jumps;
+        counters.pica_first_irq_remaining_words += post_irq_submission.first_irq_remaining_words;
+        if (counters.pica_command_lists % 256 == 0)
+            LOG_INFO(HW_GPU, "PICA post IRQ profile submissions={} with_irq={} writes={} draws={} jumps={} first_irq_remaining_words={}",
+                     counters.pica_command_lists, counters.pica_post_irq_submissions,
+                     counters.pica_post_irq_writes, counters.pica_post_irq_draw_requests,
+                     counters.pica_post_irq_jumps, counters.pica_first_irq_remaining_words);
     }
 }
 

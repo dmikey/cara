@@ -10,6 +10,11 @@ import tempfile
 
 COUNTS = ('gpu_vertex_draws', 'cpu_vertex_draws', 'gpu_vertices', 'gpu_input_records',
           'pica_command_lists', 'pica_draw_requests', 'top_buffer_swaps', 'stereo_top_buffer_swaps',
+          'pica_post_irq_submissions', 'pica_post_irq_writes', 'pica_post_irq_draw_requests',
+          'pica_post_irq_jumps', 'pica_first_irq_remaining_words',
+          'experimental_ppf_scheduled', 'experimental_ppf_delivered', 'experimental_ppf_modeled_ns', 'experimental_ppf_queued_ticks',
+          'experimental_p3d_scheduled', 'experimental_p3d_delivered', 'experimental_p3d_retired',
+          'experimental_p3d_modeled_ns', 'experimental_p3d_queued_ticks',
           'vertex_gl_subimage_calls', 'vertex_gl_image_calls', 'vertex_upload_bytes',
           'vertex_index_upload_bytes', 'vertex_upload_reused_bytes',
           'draw_texture_acquire_calls', 'draw_framebuffer_acquire_calls',

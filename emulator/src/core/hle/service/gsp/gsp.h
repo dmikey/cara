@@ -20,7 +20,7 @@ namespace Service::GSP {
  * Signals that the specified interrupt type has occurred to userland code
  * @param interrupt_id ID of interrupt that is being signalled
  */
-void SignalInterrupt(InterruptId interrupt_id);
+void SignalInterrupt(InterruptId interrupt_id, u64 transfer_ns = 0);
 
 void InstallInterfaces(Core::System& system);
 

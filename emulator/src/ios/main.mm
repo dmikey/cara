@@ -13,6 +13,7 @@ extern "C" void __llvm_profile_set_filename(const char*);
 extern "C" int __llvm_profile_write_file(void);
 #endif
 #include "audio_core/dsp_interface.h"
+#include "cara/p3d_completion.h"
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
 #import "ios/state_catalog.h"
@@ -1330,6 +1331,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 report << "{\"title_id\":" << title << ",\"frame\":" << frame << ",\"display_fps\":" << fps
                        << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
                        << ",\"presentation_mode\":\"mono_left_top\""
+                       << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
+                       << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
                        << ",\"guest_cpu_percent\":" << controller->guestClock.load()
                        << ",\"maximum_speed_percent\":" << controller->maximumSpeedLimit.load()
                        << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
@@ -1394,7 +1397,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             s.use_separable_shader = false;
             s.allow_shadow = false;
             s.shadow_rendering = false;
-            s.use_shader_cache = false;
+            const char* pipeline_cache = std::getenv("CARA_IOS_PIPELINE_CACHE");
+            s.use_shader_cache = pipeline_cache && std::strcmp(pipeline_cache, "1") == 0; // Experimental.
 #endif
             s.use_virtual_sd = true; s.region_value = Settings::REGION_VALUE_AUTO_SELECT;
             s.resolution_factor = 1; s.use_frame_limit = false; // Frontend counts every presented vblank.
@@ -1994,6 +1998,20 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"shader_calls\":" + std::to_string(current.shader_calls - previous_counters.shader_calls) +
                                 ",\"pica_command_lists\":" + std::to_string(current.pica_command_lists - previous_counters.pica_command_lists) +
                                 ",\"pica_draw_requests\":" + std::to_string(current.pica_draw_requests - previous_counters.pica_draw_requests) +
+                                ",\"pica_post_irq_submissions\":" + std::to_string(current.pica_post_irq_submissions - previous_counters.pica_post_irq_submissions) +
+                                ",\"pica_post_irq_writes\":" + std::to_string(current.pica_post_irq_writes - previous_counters.pica_post_irq_writes) +
+                                ",\"pica_post_irq_draw_requests\":" + std::to_string(current.pica_post_irq_draw_requests - previous_counters.pica_post_irq_draw_requests) +
+                                ",\"pica_post_irq_jumps\":" + std::to_string(current.pica_post_irq_jumps - previous_counters.pica_post_irq_jumps) +
+                                ",\"pica_first_irq_remaining_words\":" + std::to_string(current.pica_first_irq_remaining_words - previous_counters.pica_first_irq_remaining_words) +
+                                ",\"experimental_ppf_scheduled\":" + std::to_string(current.experimental_ppf_scheduled - previous_counters.experimental_ppf_scheduled) +
+                                ",\"experimental_ppf_delivered\":" + std::to_string(current.experimental_ppf_delivered - previous_counters.experimental_ppf_delivered) +
+                                ",\"experimental_ppf_modeled_ns\":" + std::to_string(current.experimental_ppf_modeled_ns - previous_counters.experimental_ppf_modeled_ns) +
+                                ",\"experimental_ppf_queued_ticks\":" + std::to_string(current.experimental_ppf_queued_ticks - previous_counters.experimental_ppf_queued_ticks) +
+                                ",\"experimental_p3d_scheduled\":" + std::to_string(current.experimental_p3d_scheduled - previous_counters.experimental_p3d_scheduled) +
+                                ",\"experimental_p3d_delivered\":" + std::to_string(current.experimental_p3d_delivered - previous_counters.experimental_p3d_delivered) +
+                                ",\"experimental_p3d_retired\":" + std::to_string(current.experimental_p3d_retired - previous_counters.experimental_p3d_retired) +
+                                ",\"experimental_p3d_modeled_ns\":" + std::to_string(current.experimental_p3d_modeled_ns - previous_counters.experimental_p3d_modeled_ns) +
+                                ",\"experimental_p3d_queued_ticks\":" + std::to_string(current.experimental_p3d_queued_ticks - previous_counters.experimental_p3d_queued_ticks) +
                                 ",\"top_buffer_swaps\":" + std::to_string(current.top_buffer_swaps - previous_counters.top_buffer_swaps) +
                                 ",\"stereo_top_buffer_swaps\":" + std::to_string(current.stereo_top_buffer_swaps - previous_counters.stereo_top_buffer_swaps) +
                                 ",\"gpu_vertex_draws\":" + std::to_string(current.gpu_vertex_draws - previous_counters.gpu_vertex_draws) +
@@ -2016,6 +2034,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                           << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
                                           << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
                                           << ",\"presentation_mode\":\"mono_left_top\""
+                                          << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
+                       << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
                                           << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
                                           << ",\"cpu_category_timing\":" << (category_timing?"true":"false")
@@ -2088,6 +2108,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                            << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
                            << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
                            << ",\"presentation_mode\":\"mono_left_top\""
+                           << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
+                       << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
 #ifdef CARA_IOS_GLES
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
                            << ",\"gpu_vertices\":" << Common::FrameTiming::counters.gpu_vertices

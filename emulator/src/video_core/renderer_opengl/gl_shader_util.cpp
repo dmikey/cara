@@ -3,6 +3,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "core/settings.h"
 #include <array>
 #include <string>
 #include <vector>
@@ -127,6 +128,13 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
         glProgramParameteri(program_id, GL_PROGRAM_SEPARABLE, GL_TRUE);
     }
 
+#ifdef CARA_IOS_GLES
+    if (Settings::values.use_shader_cache) {
+        GLint formats = 0;
+        glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats);
+        if (formats > 0) glProgramParameteri(program_id, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
+    }
+#endif
     glLinkProgram(program_id);
 
     // Check the program

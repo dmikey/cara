@@ -10,6 +10,8 @@
 #include "common/microprofile.h"
 #include "common/swap.h"
 #include "core/core.h"
+#include "core/core_timing.h"
+#include "cara/gpu_completion_timeline.h"
 #include "core/hle/ipc.h"
 #include "core/hle/ipc_helpers.h"
 #include "core/hle/kernel/handle_table.h"
@@ -17,12 +19,14 @@
 #include "core/hle/kernel/shared_page.h"
 #include "core/hle/result.h"
 #include "core/hle/service/gsp/gsp_gpu.h"
+#include "core/hle/service/gsp/interrupt_relay_policy.h"
 #include "core/hw/gpu.h"
 #include "core/hw/hw.h"
 #include "core/hw/lcd.h"
 #include "core/memory.h"
 #include "video_core/debug_utils/debug_utils.h"
 #include "video_core/gpu_debugger.h"
+#include "video_core/command_processor.h"
 
 SERIALIZE_EXPORT_IMPL(Service::GSP::SessionData)
 SERIALIZE_EXPORT_IMPL(Service::GSP::GSP_GPU)
@@ -112,6 +116,7 @@ static inline InterruptRelayQueue* GetInterruptRelayQueue(
 
 void GSP_GPU::ClientDisconnected(std::shared_ptr<Kernel::ServerSession> server_session) {
     SessionData* session_data = GetSessionData(server_session);
+    p3d_completions.InvalidateRecipient(session_data->thread_id);
     if (active_thread_id == session_data->thread_id)
         ReleaseRight(session_data);
     SessionRequestHandler::ClientDisconnected(server_session);
@@ -386,6 +391,7 @@ void GSP_GPU::RegisterInterruptRelayQueue(Kernel::HLERequestContext& ctx) {
     interrupt_event->SetName("GSP_GSP_GPU::interrupt_event");
 
     SessionData* session_data = GetSessionData(ctx.Session());
+    p3d_completions.InvalidateRecipient(session_data->thread_id);
     session_data->interrupt_event = std::move(interrupt_event);
     session_data->registered = true;
 
@@ -409,6 +415,7 @@ void GSP_GPU::UnregisterInterruptRelayQueue(Kernel::HLERequestContext& ctx) {
     IPC::RequestParser rp(ctx, 0x14, 0, 0);
 
     SessionData* session_data = GetSessionData(ctx.Session());
+    p3d_completions.InvalidateRecipient(session_data->thread_id);
     session_data->interrupt_event = nullptr;
     session_data->registered = false;
 
@@ -429,14 +436,15 @@ void GSP_GPU::SignalInterruptForThread(InterruptId interrupt_id, u32 thread_id) 
         return;
     }
     InterruptRelayQueue* interrupt_relay_queue = GetInterruptRelayQueue(shared_memory, thread_id);
-    u8 next = interrupt_relay_queue->index;
-    next += interrupt_relay_queue->number_interrupts;
-    next = next % 0x34; // 0x34 is the number of interrupt slots
-
-    interrupt_relay_queue->number_interrupts += 1;
-
-    interrupt_relay_queue->slot[next] = interrupt_id;
-    interrupt_relay_queue->error_code = 0x0; // No error
+    const auto decision = RelayQueuePolicy::Enqueue(*interrupt_relay_queue, interrupt_id,
+                                                   interrupt_relay_queue->padding1);
+    if (decision.outcome == RelayQueuePolicy::Outcome::InvalidHeader ||
+        decision.outcome == RelayQueuePolicy::Outcome::InvalidInterrupt) {
+        LOG_CRITICAL(Service_GSP, "Invalid GSP interrupt relay header/interrupt");
+        system.SetStatus(Core::System::ResultStatus::ErrorUnknown, "Invalid GSP interrupt relay header/interrupt");
+        return;
+    }
+    if (decision.signal_event) interrupt_event->Signal();
 
     // Update framebuffer information if requested
     // TODO(yuriks): Confirm where this code should be called. It is definitely updated without
@@ -445,14 +453,13 @@ void GSP_GPU::SignalInterruptForThread(InterruptId interrupt_id, u32 thread_id) 
     // screen, it is currently unknown what PDC1 does.
     int screen_id =
         (interrupt_id == InterruptId::PDC0) ? 0 : (interrupt_id == InterruptId::PDC1) ? 1 : -1;
-    if (screen_id != -1) {
+    if (screen_id != -1 && decision.update_framebuffer) {
         FrameBufferUpdate* info = GetFrameBufferInfo(thread_id, screen_id);
         if (info->is_dirty) {
             GSP::SetBufferSwap(screen_id, info->framebuffer_info[info->index]);
             info->is_dirty.Assign(false);
         }
     }
-    interrupt_event->Signal();
 }
 
 /**
@@ -461,7 +468,10 @@ void GSP_GPU::SignalInterruptForThread(InterruptId interrupt_id, u32 thread_id) 
  * @todo This should probably take a thread_id parameter and only signal this thread?
  * @todo This probably does not belong in the GSP module, instead move to video_core
  */
-void GSP_GPU::SignalInterrupt(InterruptId interrupt_id) {
+void GSP_GPU::SignalInterrupt(InterruptId interrupt_id, u64 transfer_ns) {
+    const bool delayed_p3d = interrupt_id == InterruptId::P3D && Cara::ExperimentalP3DCompletionEnabled();
+    const bool delayed_ppf = interrupt_id == InterruptId::PPF && Cara::ExperimentalPPFDependencyEnabled();
+    const auto p3d_ns = delayed_p3d ? Pica::CommandProcessor::TakeExperimentalP3DNanoseconds() : 0;
     if (nullptr == shared_memory) {
         LOG_WARNING(Service_GSP, "cannot synchronize until GSP shared memory has been created!");
         return;
@@ -480,6 +490,27 @@ void GSP_GPU::SignalInterrupt(InterruptId interrupt_id) {
     // For normal interrupts, don't do anything if no process has acquired the GPU right.
     if (active_thread_id == -1)
         return;
+
+    if (delayed_p3d || delayed_ppf) {
+        if (!FindRegisteredThreadData(active_thread_id)) return;
+        const auto now = Cara::GPUSubmissionNow(system.CoreTiming());
+        const auto record = p3d_completions.Enqueue(now, Cara::P3DNanosecondsToTicks(delayed_ppf ? transfer_ns : p3d_ns),
+                                                   active_thread_id, delayed_ppf);
+        if (Common::FrameTiming::counters.enabled) {
+            auto& counters = Common::FrameTiming::counters;
+            if (delayed_ppf) {
+                ++counters.experimental_ppf_scheduled;
+                counters.experimental_ppf_modeled_ns += transfer_ns;
+                counters.experimental_ppf_queued_ticks += record.deadline - now;
+            } else {
+                ++counters.experimental_p3d_scheduled;
+                counters.experimental_p3d_modeled_ns += p3d_ns;
+                counters.experimental_p3d_queued_ticks += record.deadline - now;
+            }
+        }
+        Cara::ScheduleGPUCompletion(system.CoreTiming(), record.deadline, p3d_event, record.token);
+        return;
+    }
 
     SignalInterruptForThread(interrupt_id, active_thread_id);
 }
@@ -774,6 +805,7 @@ SessionData* GSP_GPU::FindRegisteredThreadData(u32 thread_id) {
 }
 
 GSP_GPU::GSP_GPU(Core::System& system) : ServiceFramework("gsp::Gpu", 2), system(system) {
+    BindP3DEvent();
     static const FunctionInfo functions[] = {
         {0x00010082, &GSP_GPU::WriteHWRegs, "WriteHWRegs"},
         {0x00020084, &GSP_GPU::WriteHWRegsWithMask, "WriteHWRegsWithMask"},
@@ -818,6 +850,41 @@ GSP_GPU::GSP_GPU(Core::System& system) : ServiceFramework("gsp::Gpu", 2), system
 
     first_initialization = true;
 };
+
+void GSP_GPU::BindP3DEvent() {
+    if (!Cara::ExperimentalP3DCompletionEnabled()) return;
+    p3d_event = system.CoreTiming().RegisterEvent("CaraExperimentalP3DCompletion",
+        P3DCallback{this});
+}
+
+GSP_GPU::~GSP_GPU() {
+    // Event types are shared by name. An old service must not cancel restored
+    // events after a replacement has rebound this callback, even if tokens match.
+    const auto* binding = p3d_event ? p3d_event->callback.target<P3DCallback>() : nullptr;
+    if (binding && binding->owner == this) {
+        for (const auto& record : p3d_completions.records)
+            if (record.active) system.CoreTiming().UnscheduleEvent(p3d_event, record.token);
+        p3d_event->callback = [](u64, int) {}; // No callback may retain a dead service.
+    }
+}
+
+void GSP_GPU::CompleteP3D(u64 token) {
+    const auto ready = p3d_completions.Peek(token);
+    if (ready && FindRegisteredThreadData(ready->recipient)) {
+        const auto* queue = GetInterruptRelayQueue(shared_memory, ready->recipient);
+        if (!RelayQueuePolicy::CanEnqueueCompletion(*queue)) {
+            LOG_CRITICAL(Service_GSP, "Experimental P3D completion relay full/invalid; stopping diagnostic");
+            throw std::runtime_error("Experimental P3D completion cannot be delivered to relay queue");
+        }
+    }
+    const auto record = p3d_completions.Consume(token, Cara::GPUCompletionNow(system.CoreTiming()));
+    if (!record || !FindRegisteredThreadData(record->recipient)) {
+        if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.experimental_p3d_retired;
+        return; // Recipient generation was retired, or a cancelled token.
+    }
+    SignalInterruptForThread(record->transfer ? InterruptId::PPF : InterruptId::P3D, record->recipient);
+    if (Common::FrameTiming::counters.enabled) (record->transfer ? Common::FrameTiming::counters.experimental_ppf_delivered : Common::FrameTiming::counters.experimental_p3d_delivered)++;
+}
 
 std::unique_ptr<Kernel::SessionRequestHandler::SessionDataBase> GSP_GPU::MakeSessionData() {
     return std::make_unique<SessionData>(this);

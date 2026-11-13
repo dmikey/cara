@@ -96,7 +96,11 @@ jobs:
           work/build-mac/bin/cara-texture-lookup-self-test
           work/build-mac/bin/cara-render-bookkeeping-self-test
           work/build-mac/bin/cara-vertex-upload-bank-self-test
+          work/build-mac/bin/cara-ios-pipeline-cache-self-test
           work/build-mac/bin/cara-frame-pacer-self-test
+          work/build-mac/bin/cara-pica-submission-probe-self-test
+          work/build-mac/bin/cara-p3d-completion-self-test
+          work/build-mac/bin/cara-interrupt-relay-policy-self-test
           work/build-mac/bin/cara-presentation-guard-self-test
           work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test

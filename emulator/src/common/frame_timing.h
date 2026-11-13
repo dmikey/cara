@@ -23,6 +23,20 @@ struct Counters {
     // Requests, not unique frames: repeated command lists/draws/swaps count again.
     std::uint64_t pica_command_lists = 0;
     std::uint64_t pica_draw_requests = 0;
+    std::uint64_t pica_post_irq_submissions = 0;
+    std::uint64_t pica_post_irq_writes = 0;
+    std::uint64_t pica_post_irq_draw_requests = 0;
+    std::uint64_t pica_post_irq_jumps = 0;
+    std::uint64_t pica_first_irq_remaining_words = 0;
+    std::uint64_t experimental_ppf_scheduled = 0;
+    std::uint64_t experimental_ppf_delivered = 0;
+    std::uint64_t experimental_ppf_modeled_ns = 0;
+    std::uint64_t experimental_ppf_queued_ticks = 0;
+    std::uint64_t experimental_p3d_scheduled = 0;
+    std::uint64_t experimental_p3d_delivered = 0;
+    std::uint64_t experimental_p3d_retired = 0;
+    std::uint64_t experimental_p3d_modeled_ns = 0;
+    std::uint64_t experimental_p3d_queued_ticks = 0;
     std::uint64_t top_buffer_swaps = 0;
     // Top swaps with nonzero, distinct physical left/right addresses. This does
     // not establish that both views were rendered or presented.

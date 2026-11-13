@@ -33,5 +33,6 @@ static_assert(std::is_standard_layout<CommandHeader>::value == true,
 static_assert(sizeof(CommandHeader) == sizeof(u32), "CommandHeader has incorrect size!");
 
 void ProcessCommandList(PAddr list, u32 size);
+u64 TakeExperimentalP3DNanoseconds();
 
 } // namespace Pica::CommandProcessor
