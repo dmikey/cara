@@ -682,6 +682,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         libraryController.startFromState=^(NSURL* url,NSString* filename) { EmulatorController* c=owner; if(!c) return; c->pendingLibraryState=filename; [c openGameURL:url]; };
         libraryController.gameSettings=^(NSURL* url) { [owner showGameSettings:url]; };
         libraryController.clearGameSettings=^(NSURL* url) { EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":@{}} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { CaraGameOverrides=nil; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
+        libraryController.gameFileInUse=^BOOL(NSURL* url) { EmulatorController* c=owner; return c && (running || c->openingGame) && [url.URLByStandardizingPath isEqual:c->gameURL.URLByStandardizingPath]; };
         libraryController.resumeGame=^{ [owner hideLibrary]; };
         libraryNavigation=[[UINavigationController alloc] initWithRootViewController:libraryController];
         [self addChildViewController:libraryNavigation]; libraryNavigation.view.frame=self.view.bounds;
