@@ -53,8 +53,7 @@ partial rectangles and outside pixels. It also passed 504 generated CPU-write
 cases, eight mixed color/depth-owner cases and 508 failed-export ownership
 checks, including poisoned RAM/staging and simulated restoration. The hardened
 build fingerprint was `80280362f28d99beda54faedd319a0bdbe2ba06dfbde7b74409585cd26135b77`.
-Matched game checkpoint restoration, cross-title rendering and performance
-comparisons remain separate requirements. No speed gain is established yet.
+The later matched-checkpoint and cross-title results are recorded below.
 
 Canonical CPU staging is D24 `[padding, Zlo, Zmid, Zhi]`, D24S8
 `[stencil, Zlo, Zmid, Zhi]`. Guest memory retains its existing packed format.
@@ -79,7 +78,41 @@ source's corresponding bytes; these cannot be overwritten through this path.
 Only the successfully copied interval is marked valid. The overlap requirement
 also prevents a disjoint valid source region from causing a validation loop
 without progress. This changes cache work, not guest timing or hardware events.
-Game performance and the additional engine-level ownership fixture are pending.
+The additional iPad ownership fixture passed six partial/source-authority cases
+and four non-progress checks. Matched game results follow.
+
+## Matched M4 iPad results (2026-11-13)
+
+Stories used the same moving grass checkpoint and scripted route, 100% guest
+CPU, sound, a 100% speed cap, and unchanged guest hardware timing. Each run
+measured 900 refreshes after 300 warm-up refreshes.
+
+| Configuration | Runs | Wall time per refresh | Emulation thread CPU per refresh |
+| --- | ---: | ---: | ---: |
+| Correct RAM depth fallback, 16K interpreter cache | 2 | 37.548418 ms | 25.026771 ms |
+| GPU depth alias, 16K interpreter cache | 4 | 17.785075 ms | 15.752413 ms |
+| GPU depth alias, 32K interpreter cache | 4 | 17.282122 ms | 14.435953 ms |
+
+This compares against the **correct RAM fallback**, not the earlier incorrect
+path that skipped depth publication. The RAM controls performed 5,960 readbacks
+per measured run; GPU-alias runs performed none. All ten runs matched guest
+PC/ticks, draw and vertex workload, and final pixels. The 32K cache separately
+saved 1.316460 ms of thread CPU and 0.502953 ms of wall time versus GPU alias
+with 16K. Heavier route windows still reached roughly 20–21 ms; this does not
+establish sustained full speed throughout the game.
+
+Luigi's Mansion: Dark Moon opening dialogue, Zelda outdoors, and Xenoblade's
+intro were also compared across all three configurations. Each scene matched
+pixels and workload, with approximately 16.712–16.715 ms per refresh. These are
+scene-level checks, not full-game compatibility claims. The tested renderer
+source fingerprint was `fef2bc39dde82df12d5b64cefdc6abe613de1f328c4f0f2080157d4413de428a`.
+
+GPU depth aliasing now defaults on in the core. The iOS frontend selects the
+32K interpreter cache on devices with at least 6 GiB of physical RAM, preserving
+explicit overrides. It adds approximately 42 MiB across four guest cores; the
+target M4 iPad has approximately 8 GB of RAM. Absolute-PC dispatch, deferred
+tick accounting, prepared-texture reuse and relative-dispatch prototypes have
+no established device gain and are not enabled by this integration.
 
 ## Primary references
 
