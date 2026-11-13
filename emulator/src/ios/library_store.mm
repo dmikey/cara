@@ -67,6 +67,7 @@ static NSError* LibraryError(NSString* message) {
 }
 - (BOOL)rememberGame:(NSURL*)url error:(NSError**)error {
     if (![CaraLibraryStore isGameURL:url]) { if (error) *error=LibraryError(@"Choose an extracted 3DS game."); return NO; }
+    NSMutableArray* hidden=[[preferences arrayForKey:@"libraryHiddenPaths"] mutableCopy]; [hidden removeObject:[self keyForGame:url]]; if (hidden) [preferences setObject:hidden forKey:@"libraryHiddenPaths"];
     BOOL scoped=[url startAccessingSecurityScopedResource];
     NSData* bookmark=[url bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:error];
     if (scoped) [url stopAccessingSecurityScopedResource];
@@ -82,10 +83,32 @@ static NSError* LibraryError(NSString* message) {
     [preferences setObject:saved forKey:@"libraryGameBookmarks"];
     return YES;
 }
+- (NSString*)keyForGame:(NSURL*)url { return url.URLByStandardizingPath.path; }
+- (NSDictionary*)metadataForGame:(NSURL*)url { return [preferences dictionaryForKey:@"libraryMetadata"][[self keyForGame:url]]?:@{}; }
+- (void)setMetadata:(NSDictionary*)metadata forGame:(NSURL*)url {
+    NSMutableDictionary* all=[[preferences dictionaryForKey:@"libraryMetadata"] mutableCopy]?:[NSMutableDictionary new];
+    NSMutableDictionary* value=[[self metadataForGame:url] mutableCopy]; [value addEntriesFromDictionary:metadata]; all[[self keyForGame:url]]=value; [preferences setObject:all forKey:@"libraryMetadata"];
+}
+- (void)setFavorite:(BOOL)value game:(NSURL*)url { [self setMetadata:@{@"favorite":@(value)} forGame:url]; }
+- (void)recordPlayed:(NSURL*)url { [self setMetadata:@{@"lastPlayed":NSDate.date} forGame:url]; }
+- (void)removeGame:(NSURL*)url {
+    NSMutableArray* hidden=[[preferences arrayForKey:@"libraryHiddenPaths"] mutableCopy]?:[NSMutableArray new];
+    if (![hidden containsObject:[self keyForGame:url]]) [hidden addObject:[self keyForGame:url]];
+    [preferences setObject:hidden forKey:@"libraryHiddenPaths"];
+    NSMutableArray* saved=[[preferences arrayForKey:@"libraryGameBookmarks"] mutableCopy]?:[NSMutableArray new];
+    [saved removeObjectsAtIndexes:[saved indexesOfObjectsPassingTest:^BOOL(NSData* data,NSUInteger i,BOOL* stop) { NSURL* old=[NSURL URLByResolvingBookmarkData:data options:NSURLBookmarkResolutionWithoutUI relativeToURL:nil bookmarkDataIsStale:nil error:nil]; return [old.URLByStandardizingPath isEqual:url.URLByStandardizingPath]; }]];
+    [preferences setObject:saved forKey:@"libraryGameBookmarks"];
+}
+- (BOOL)deleteGameFile:(NSURL*)url error:(NSError**)error {
+    BOOL scoped=[url startAccessingSecurityScopedResource]; __block BOOL ok=NO; __block NSError* failure=nil;
+    [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateWritingItemAtURL:url options:NSFileCoordinatorWritingForDeleting error:&failure byAccessor:^(NSURL* actual) { ok=[NSFileManager.defaultManager removeItemAtURL:actual error:&failure]; }];
+    if (scoped) [url stopAccessingSecurityScopedResource]; if (ok) [self removeGame:url]; else if(error) *error=failure; return ok;
+}
 - (void)scan:(void(^)(NSArray<CaraLibraryGame*>*,NSString*))completion {
     const unsigned generation=++scanGeneration;
     NSURL* custom=selectedFolder;
     NSString* initialError=_locationError;
+    NSArray* hidden=[[preferences arrayForKey:@"libraryHiddenPaths"] copy]?:@[];
     NSArray* imported=[[preferences arrayForKey:@"libraryGameBookmarks"] copy]?:@[];
     // Take an independent lease so changing locations cannot revoke an in-flight scan.
     BOOL scoped=[custom startAccessingSecurityScopedResource];
@@ -98,7 +121,7 @@ static NSError* LibraryError(NSString* message) {
             NSDictionary* values=[file resourceValuesForKeys:keys error:nil];
             if (![values[NSURLIsRegularFileKey] boolValue] || [values[NSURLIsSymbolicLinkKey] boolValue]) return;
             NSString* identity=file.URLByResolvingSymlinksInPath.URLByStandardizingPath.path;
-            if (games[identity]) return;
+            if (games[identity] || [hidden containsObject:file.URLByStandardizingPath.path]) return;
             CaraLibraryGame* game=[CaraLibraryGame new]; game.url=file;
             game.title=file.lastPathComponent.stringByDeletingPathExtension;
             game.source=source; game.fileSize=[values[NSURLFileSizeKey] unsignedLongLongValue];

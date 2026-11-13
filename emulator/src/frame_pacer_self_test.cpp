@@ -18,8 +18,8 @@ void Near(double actual, double expected, double tolerance, const char* message)
 int main() {
     try {
         Cara::FramePacer pacer;
-        Require(pacer.SpeedPercent() == 105, "Default is not 105 percent");
-        const double period = (1.0 / 59.833997376556916) * (100.0 / 105.0);
+        Require(pacer.SpeedPercent() == 100, "Default is not 100 percent");
+        const double period = (1.0 / 59.833997376556916) * (100.0 / 100.0);
         pacer.Reset(10);
         Near(pacer.Advance(3, 10.002), 10 + 3 * period, 1e-12,
              "Multiple vblanks counted as one frontend iteration");
@@ -32,6 +32,7 @@ int main() {
         pacer.Reset(3600); // Pause/load: old future deadline must also disappear.
         Near(pacer.Advance(2, 3600.001), 3600 + 2 * period, 1e-10,
              "Reset retained old timeline");
+        pacer.SetSpeedPercent(105, 3600.002);
         pacer.SetSpeedPercent(100, 3601);
         Near(pacer.Advance(1, 3601.001), 3601 + 1.0 / Cara::FramePacer::VBlankHz,
              1e-10, "Live speed change retained previous deadline");

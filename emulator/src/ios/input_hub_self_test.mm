@@ -51,5 +51,15 @@ int main() { @autoreleasepool {
     __weak CaraInputHub* weakHub=hub;
     hub.commandChanged=^(NSString* command,BOOL down) { if ([command isEqual:@"menu"] && down) weakHub.active=NO; if ([command isEqual:@"fastForward"]) fast=down; };
     [hub handleKeyboardCode:GCKeyCodeSpacebar pressed:YES]; [hub handleKeyboardCode:GCKeyCodeF1 pressed:YES]; Check(!hub.active && !fast && buttons.count==0,@"reentrant menu action leaves no stuck input");
-    puts("PASS: keyboard/controller input, analog deadzone, mappings, capture quarantine, held commands, lifecycle reset and reentrant menu (native synthetic GameController; no physical controller claim)");
+    hub.active=YES;
+    [hub handleKeyboardCode:GCKeyCodeKeyJ pressed:YES];
+    [hub updateSurface:@"actions" buttons:[NSSet setWithObject:@"a"] circle:CGPointMake(.8,0) cstick:CGPointZero touch:CGPointMake(-1,-1)];
+    [hub updateSurface:@"skin" buttons:[NSSet setWithObject:@"b"] circle:CGPointZero cstick:CGPointMake(0,.5) touch:CGPointMake(123,99)];
+    Check([buttons containsObject:@"a"] && [buttons containsObject:@"b"] && circle.x==.8 && hub.touchPoint.x==123,@"independent surfaces merge with keyboard");
+    [hub clearSurfaces]; Check([buttons containsObject:@"a"] && ![buttons containsObject:@"b"] && hub.touchPoint.x<0,@"surface release retains hardware owner");
+    [hub handleKeyboardCode:GCKeyCodeKeyJ pressed:NO];
+    [hub updateSurface:@"actions" buttons:[NSSet setWithObject:@"b"] circle:CGPointMake(.8,0) cstick:CGPointZero touch:CGPointMake(-1,-1)];
+    hub.active=NO; Check(buttons.count==0 && CGPointEqualToPoint(circle,CGPointZero),@"pause clears surfaces");
+    hub.active=YES; Check(buttons.count==0,@"resume cannot revive surfaces");
+    puts("PASS: keyboard/controller input, analog deadzone, mappings, capture quarantine, held commands, lifecycle reset, merged touch surfaces and reentrant menu (native synthetic GameController; no physical controller claim)");
 } }

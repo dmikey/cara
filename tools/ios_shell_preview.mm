@@ -4,6 +4,11 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "ios/shell_controllers.h"
 #import "ios/skin_controls.h"
+#import "ios/action_layout.h"
+#import "ios/input_hub.h"
+#import "ios_action_layout_checks.h"
+#include "ios/session_presentation.h"
+#include "ios/play_profile.h"
 #include <array>
 #include <cstring>
 
@@ -32,27 +37,42 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     CaraSettingsController* settings;
     NSURL* fixture;
     unsigned toggleActions;
+    CaraSkinControls* previewControls;
+    UIImageView* previewArtwork;
+    CaraStatsView* previewStats;
+    CaraSessionIndicator* previewStatus;
+    NSArray<UIView*>* previewScreens;
+    NSDictionary* previewRepresentation;
+    BOOL fixtureFixed,fixtureLimit;
+    NSUInteger fixtureClock,fixtureMaximum;
 }
 - (BOOL)prefersStatusBarHidden { return [Scenario() containsString:@"skin"]; }
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return [Scenario() containsString:@"landscape"]?UIInterfaceOrientationMaskLandscape:UIInterfaceOrientationMaskPortrait; }
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { if ([Scenario() containsString:@"actions"]) return UIInterfaceOrientationMaskAllButUpsideDown; return [Scenario() containsString:@"landscape"]?UIInterfaceOrientationMaskLandscape:UIInterfaceOrientationMaskPortrait; }
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor=UIColor.blackColor;
-    self.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"light"]?UIUserInterfaceStyleLight:UIUserInterfaceStyleDark;
+    fixtureFixed=NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"]!=nil;
+    fixtureClock=fixtureFixed?[NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"] integerValue]:100;
+    fixtureLimit=![NSProcessInfo.processInfo.environment[@"CARA_UI_UNCAPPED"] isEqual:@"1"]; fixtureMaximum=100;
+    self.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"dark"]?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight;
     NSString* folder=[NSTemporaryDirectory() stringByAppendingPathComponent:@"CaraShellFixture"];
     fixture=[NSURL fileURLWithPath:folder isDirectory:YES];
     [NSFileManager.defaultManager removeItemAtURL:fixture error:nil];
-    store=[[CaraLibraryStore alloc] initWithDocuments:fixture defaults:[[NSUserDefaults alloc] initWithSuiteName:@"com.dmikey.cara.shellfixture"]];
+    NSUserDefaults* fixtureDefaults=[[NSUserDefaults alloc] initWithSuiteName:@"com.dmikey.cara.shellfixture"]; [fixtureDefaults removePersistentDomainForName:@"com.dmikey.cara.shellfixture"];
+    store=[[CaraLibraryStore alloc] initWithDocuments:fixture defaults:fixtureDefaults];
     [store useDefaultFolder];
     if (![Scenario() isEqual:@"empty"]) {
         unsigned seed=1;
         for (NSString* title in @[@"Moon Meadow",@"Citrus Valley",@"Little Lantern",@"Starlight Trail",@"Afterglow",@"Garden Notes",@"Pocket Adventure",@"Cloud Harbor"]) FixtureGame([store.defaultFolder URLByAppendingPathComponent:[title stringByAppendingPathExtension:@"3ds"]],title,seed++);
     }
+    if ([Scenario() containsString:@"actions"]) { [self showActions]; return; }
     if ([Scenario() containsString:@"skin"]) { [self showSkin]; return; }
+    [store recordPlayed:[store.defaultFolder URLByAppendingPathComponent:@"Moon Meadow.3ds"]];
     library=[CaraLibraryController new]; library.store=store;
     library.syncTitle=[Scenario() isEqual:@"sync-error"]?@"States: Choose a version":@"Saves & states";
     library.syncDetail=[Scenario() isEqual:@"sync-error"]?@"Both versions are preserved. Resolve this in Settings.":@"Saves: Folder updated · States: Waiting for iCloud";
     __weak PreviewRoot* owner=self;
+    library.gameFileInUse=^BOOL(NSURL* url) { return [NSProcessInfo.processInfo.environment[@"CARA_UI_FILE_IN_USE"] isEqual:@"1"]; };
     library.showSettings=^{ [owner showSettings]; };
     library.addGame=^{ [owner showFilePicker:NO]; };
     library.chooseFolder=^{ [owner showFilePicker:YES]; };
@@ -60,11 +80,34 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:library];
     [self addChildViewController:nav]; nav.view.frame=self.view.bounds; nav.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:nav.view]; [nav didMoveToParentViewController:self];
 }
+- (void)showActions {
+    CheckActionLayout();
+    NSURL* game=[store.defaultFolder URLByAppendingPathComponent:@"Moon Meadow.3ds"];
+    CaraSettingsController* landing=[CaraSettingsController new]; landing.title=@"Fixture game settings";
+    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:landing]; nav.view.tintColor=UIColor.systemOrangeColor;
+    __weak UINavigationController* weakNav=nav; __weak PreviewRoot* owner=self;
+    void(^openEditor)(void)=^{
+        PreviewRoot* s=owner; if (!s) return;
+        CaraActionLayoutEditor* editor=[CaraActionLayoutEditor new]; editor.skin=[CaraSkin loadURL:[NSBundle.mainBundle URLForResource:@"CarbonDuo" withExtension:@"deltaskin"] error:nil];
+        editor.layout=[s->store metadataForGame:game][@"actionLayout"];
+        editor.saved=^(NSDictionary* layout) { PreviewRoot* root=owner; if (!root) return; [root->store setMetadata:@{@"actionLayout":layout} forGame:game];
+            if ([NSProcessInfo.processInfo.environment[@"CARA_UI_CHECK_GEOMETRY"] isEqual:@"1"]) {
+                NSDictionary* frame=layout[@"portrait"][0][@"frame"];
+                ActionCheck([frame[@"x"] doubleValue]>.06 && [frame[@"width"] doubleValue]>.27,@"drag and resize persisted actual geometry");
+            }
+            ActionCheck([[root->store metadataForGame:game][@"actionLayout"] isEqual:layout],@"per-game layout persisted");
+            ActionCheck([root->store metadataForGame:[root->store.defaultFolder URLByAppendingPathComponent:@"Other.3ds"]][@"actionLayout"]==nil,@"other game unchanged");
+        };
+        [weakNav pushViewController:editor animated:NO];
+    };
+    landing.sections=@[@{@"title":@"Touch controls",@"rows":@[@{@"title":@"Controller Demapping",@"action":openEditor}]}];
+    [self addChildViewController:nav]; nav.view.frame=self.view.bounds; nav.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:nav.view]; [nav didMoveToParentViewController:self]; openEditor();
+}
 - (void)showFilePicker:(BOOL)folder {
     UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[folder?UTTypeFolder:UTTypeData] asCopy:NO]; picker.delegate=self; [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)showSettings {
-    settings=[CaraSettingsController new];
+    settings=[CaraSettingsController new]; settings.categorized=![Scenario() isEqual:@"advanced"];
     __weak PreviewRoot* owner=self;
     void(^toggle)(BOOL)=^(BOOL value) { PreviewRoot* root=owner; if (root) ++root->toggleActions; };
     settings.sections=@[
@@ -75,10 +118,22 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
         @{@"title":@"Landscape skin",@"rows":@[@{@"title":@"Performance bar",@"subtitle":@"Game FPS, speed, and guest CPU.",@"symbol":@"chart.bar",@"value":@YES,@"change":toggle}]},
         @{@"title":@"Portrait skin",@"rows":@[@{@"title":@"Performance bar",@"subtitle":@"Independent of landscape.",@"symbol":@"chart.bar",@"value":@NO,@"change":toggle}]},
     ];
-    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationPageSheet; nav.view.tintColor=[UIColor systemOrangeColor];
+    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=settings.categorized?UIModalPresentationFullScreen:UIModalPresentationPageSheet; nav.view.tintColor=[UIColor systemTealColor];
     nav.sheetPresentationController.detents=@[UISheetPresentationControllerDetent.largeDetent]; nav.sheetPresentationController.prefersGrabberVisible=YES; nav.sheetPresentationController.preferredCornerRadius=28; nav.presentationController.delegate=settings;
     [self presentViewController:nav animated:YES completion:nil];
 }
+- (NSDictionary*)advancedFixtureSection {
+    __weak PreviewRoot* owner=self;
+    BOOL accuracy=[NSProcessInfo.processInfo.environment[@"CARA_UI_MODE"] isEqual:@"accuracy"];
+    const auto policy=Cara::MakePlayPolicy(accuracy?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,unsigned(fixtureMaximum),false,-1,fixtureFixed,unsigned(fixtureClock),fixtureLimit);
+    return @{@"title":@"Emulation",@"rows":@[
+        @{@"title":@"Use fixed guest clock",@"value":@(accuracy||fixtureFixed),@"enabled":@(!accuracy),@"change":^(BOOL on) { PreviewRoot* root=owner; if (!root) return; root->fixtureFixed=on; [root refreshAdvancedFixture]; }},
+        @{@"title":@"Guest clock",@"subtitle":@"25–200% · Normal guest clock: 100%.",@"enabled":@(!accuracy&&fixtureFixed),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(policy.guest_clock)},@"sliderChange":^(double value) { PreviewRoot* root=owner; if (root) root->fixtureClock=NSUInteger(value); }},
+        @{@"title":@"Limit game speed",@"value":@(policy.limit_speed),@"enabled":@(!accuracy),@"change":^(BOOL on) { PreviewRoot* root=owner; if (!root) return; root->fixtureLimit=on; [root refreshAdvancedFixture]; }},
+        @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 100%.",@"enabled":@(!accuracy&&policy.limit_speed),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(policy.maximum_speed)},@"sliderChange":^(double value) { PreviewRoot* root=owner; if (root) root->fixtureMaximum=NSUInteger(value); }},
+    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 100%.":@"Guest clock and game speed are separate controls."};
+}
+- (void)refreshAdvancedFixture { settings.sections=@[[self advancedFixtureSection]]; [settings refresh]; }
 - (void)showSkin {
     NSURL* url=[NSBundle.mainBundle URLForResource:@"CarbonDuo" withExtension:@"deltaskin"];
     CaraSkin* skin=[CaraSkin loadURL:url error:nil];
@@ -86,23 +141,43 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     const BOOL landscape=[Scenario() containsString:@"landscape"];
     NSDictionary* rep=[skin strictRepresentationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:landscape]; controls.representation=rep;
     UIImageView* image=[[UIImageView alloc] initWithImage:controls.artwork]; image.contentMode=UIViewContentModeScaleAspectFit; image.frame=self.view.bounds; image.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:image];
-    NSDictionary* mapping=rep[@"mappingSize"];
-    CGRect canvas=CaraAspectFit(CGSizeMake([mapping[@"width"] doubleValue],[mapping[@"height"] doubleValue]),UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets));
-    // Wait for scene geometry before using exact controls/screen frames.
-    dispatch_async(dispatch_get_main_queue(),^{
-        CGRect fitted=CaraAspectFit(CGSizeMake([mapping[@"width"] doubleValue],[mapping[@"height"] doubleValue]),UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets));
-        image.frame=fitted; controls.frame=fitted; [self.view addSubview:controls];
-        CGFloat scale=fitted.size.width/[mapping[@"width"] doubleValue];
-        for (NSDictionary* screen in rep[@"screens"]) {
-            CGRect r=CaraSkinRect(screen[@"outputFrame"]);
-            UIView* game=[UIView new]; game.backgroundColor=[UIColor colorWithRed:.06 green:.09 blue:.08 alpha:1]; game.frame=CGRectMake(fitted.origin.x+r.origin.x*scale,fitted.origin.y+r.origin.y*scale,r.size.width*scale,r.size.height*scale); [self.view insertSubview:game belowSubview:controls];
-        }
-        CGRect r=CaraSkinRect(rep[@"caraStatsFrame"]); CaraStatsView* stats=[[CaraStatsView alloc] initWithFrame:CGRectMake(fitted.origin.x+r.origin.x*scale,fitted.origin.y+r.origin.y*scale,r.size.width*scale,r.size.height*scale)]; [stats updateGameFPS:30 speed:100 guestClock:75 adaptive:YES]; [self.view addSubview:stats];
-    });
+    previewControls=controls; previewArtwork=image; previewRepresentation=rep;
+    [self.view addSubview:controls];
+    NSMutableArray* screens=[NSMutableArray new];
+    for (NSDictionary* screen in rep[@"screens"]) { UIView* game=[UIView new]; [self.view insertSubview:game belowSubview:controls]; [screens addObject:game]; }
+    previewScreens=screens; previewStats=[CaraStatsView new]; [self.view addSubview:previewStats];
+    previewStatus=[CaraSessionIndicator new]; [self.view addSubview:previewStatus];
+}
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    if (!previewRepresentation) return;
+    NSDictionary* mapping=previewRepresentation[@"mappingSize"];
+    CGRect fitted=CaraAspectFit(CGSizeMake([mapping[@"width"] doubleValue],[mapping[@"height"] doubleValue]),UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets));
+    previewArtwork.frame=previewControls.frame=fitted;
+    const CGFloat scale=fitted.size.width/[mapping[@"width"] doubleValue];
+    const auto convert=[&](CGRect r) { return CGRectMake(fitted.origin.x+r.origin.x*scale,fitted.origin.y+r.origin.y*scale,r.size.width*scale,r.size.height*scale); };
+    NSString* phase=NSProcessInfo.processInfo.environment[@"CARA_UI_SESSION"]?:@"running";
+    const auto state=[phase isEqual:@"stopped"]?Cara::SessionPresentation::Stopped:[phase isEqual:@"paused"]?Cara::SessionPresentation::Paused:[phase isEqual:@"loading"]?Cara::SessionPresentation::Loading:[phase isEqual:@"error"]?Cara::SessionPresentation::Failed:Cara::SessionPresentation::Running;
+    const BOOL inactive=Cara::ClearSessionPresentation(state);
+    for (NSUInteger i=0;i<previewScreens.count;++i) {
+        previewScreens[i].frame=convert(CaraSkinRect(previewRepresentation[@"screens"][i][@"outputFrame"]));
+        previewScreens[i].backgroundColor=inactive?UIColor.blackColor:[UIColor colorWithRed:.07 green:.16 blue:.23 alpha:1];
+    }
+    CGRect r=CaraSkinRect(previewRepresentation[@"caraStatsFrame"]);
+    const CaraHUDLayout hud=CaraSkinHUDLayout(previewRepresentation,fitted);
+    previewStats.frame=hud.metrics;
+    previewStats.hidden=[NSProcessInfo.processInfo.environment[@"CARA_UI_FPS"] isEqual:@"0"];
+    if (inactive) [previewStats showInactiveGuestClock:100 adaptive:YES]; else [previewStats updateGameFPS:30 speed:100 guestClock:75 adaptive:YES];
+    const auto light=state==Cara::SessionPresentation::Running?CaraStatusLightGreen:state==Cara::SessionPresentation::Failed?CaraStatusLightRed:state==Cara::SessionPresentation::Stopped?CaraStatusLightDim:CaraStatusLightAmber;
+    [previewStatus updateLight:light accessibilityStatus:[NSString stringWithUTF8String:Cara::SessionPresentationLabel(state)]];
+    previewStatus.frame=hud.indicator;
+    NSAssert([previewStatus.accessibilityValue isEqual:[NSString stringWithUTF8String:Cara::SessionPresentationLabel(state)]],@"The LED must expose its explicit lifecycle status");
+    NSAssert(!inactive || [previewStats.accessibilityLabel containsString:@"No live game metrics"],@"Inactive sessions must not claim live FPS or speed");
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     if ([Scenario() isEqual:@"settings"] && !self.presentedViewController) [self showSettings];
+    if ([Scenario() isEqual:@"advanced"] && !self.presentedViewController) { [self showSettings]; settings.title=@"Advanced"; [self refreshAdvancedFixture]; }
     if ([Scenario() isEqual:@"quick-settings"] && !self.presentedViewController) {
         CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=@"performance"; quick.showFPS=YES;
         quick.actions=@[@{@"title":@"Library & iCloud",@"symbol":@"folder",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Controllers",@"symbol":@"gamecontroller.fill",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [self showSettings]; }}];
@@ -120,7 +195,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
 @end
 @implementation PreviewScene
 - (void)scene:(UIScene*)scene willConnectToSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options {
-    self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene*)scene]; self.window.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"light"]?UIUserInterfaceStyleLight:UIUserInterfaceStyleDark; self.window.rootViewController=[PreviewRoot new]; [self.window makeKeyAndVisible];
+    self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene*)scene]; self.window.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"dark"]?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight; self.window.rootViewController=[PreviewRoot new]; [self.window makeKeyAndVisible];
 }
 @end
 @interface PreviewApp : UIResponder <UIApplicationDelegate>

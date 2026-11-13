@@ -6,12 +6,20 @@ struct PlayPolicy {
     bool adaptive;
     unsigned guest_clock;
     unsigned maximum_speed;
+    bool limit_speed;
 };
-constexpr PlayPolicy MakePlayPolicy(PlayMode mode,unsigned requestedMaximum,bool benchmark=false,int adaptiveOverride=-1) {
+constexpr PlayPolicy MakePlayPolicy(PlayMode mode,unsigned requestedMaximum,bool benchmark=false,int adaptiveOverride=-1,
+                                  bool fixedGuestRequested=false,unsigned requestedGuest=100,bool limitRequested=true) {
     const unsigned maximum=requestedMaximum<50?50:requestedMaximum>200?200:requestedMaximum;
-    const bool adaptive=adaptiveOverride>=0?adaptiveOverride!=0:(!benchmark && mode==PlayMode::Performance);
+    const bool diagnostic=benchmark || adaptiveOverride>=0;
+    const bool adaptive=adaptiveOverride>=0?adaptiveOverride!=0:(!benchmark && mode==PlayMode::Performance && !fixedGuestRequested);
     const bool accuracy=!benchmark && adaptiveOverride<0 && mode==PlayMode::Accuracy;
-    return {adaptive,100,accuracy?105:maximum};
+    const unsigned guest=requestedGuest<25?25:requestedGuest>200?200:requestedGuest;
+    return {adaptive,!diagnostic && !accuracy && fixedGuestRequested?guest:100,accuracy?100:maximum,
+            accuracy || diagnostic || limitRequested};
 }
 constexpr PlayMode DefaultPlayMode=PlayMode::Performance;
+constexpr bool ShouldPaceFrames(bool benchmark,bool pacedBenchmark,bool speedOverride,bool userLimit) {
+    return benchmark?pacedBenchmark:(speedOverride || userLimit);
+}
 }

@@ -151,8 +151,11 @@ endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJCXX)
-    add_executable(cara-ios MACOSX_BUNDLE ios/main.mm ios/library_store.mm ios/shell_controllers.mm ios/input_hub.mm ios/state_catalog.mm ios/feature_controllers.mm ios/configuration_store.mm ios/save_sync.mm ios/skin_layout.mm ios/skin_controls.mm ios/skins/CarbonDuo.deltaskin)
+    add_executable(cara-ios MACOSX_BUNDLE ios/main.mm ios/action_layout.mm ios/library_store.mm ios/shell_controllers.mm ios/input_hub.mm ios/state_catalog.mm ios/feature_controllers.mm ios/configuration_store.mm ios/save_sync.mm ios/skin_layout.mm ios/skin_controls.mm ios/skins/CarbonDuo.deltaskin)
     set_source_files_properties(ios/skins/CarbonDuo.deltaskin PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    file(GLOB CARA_MENU_SOUNDS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ios/MenuSounds/*.caf")
+    target_sources(cara-ios PRIVATE ${CARA_MENU_SOUNDS} ios/MenuSounds/NOTICE)
+    set_source_files_properties(${CARA_MENU_SOUNDS} ios/MenuSounds/NOTICE PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/MenuSounds")
     target_compile_options(cara-ios PRIVATE -fobjc-arc)
     if (CARA_IOS_HARDWARE_RENDERER)
         target_sources(cara-ios PRIVATE ios/gpu_vertex_self_test.cpp ios/gpu_depth_self_test.cpp ios/gpu_state_self_test.cpp)
@@ -160,7 +163,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         target_link_libraries(cara-ios PRIVATE glad "-framework OpenGLES")
     endif()
     target_link_libraries(cara-ios PRIVATE core common Threads::Threads
-        "-framework Foundation" "-lobjc" "-framework UIKit" "-framework CoreGraphics" "-framework UniformTypeIdentifiers" "-framework ImageIO" "-framework QuartzCore" "-framework GameController" z)
+        "-framework Foundation" "-lobjc" "-framework UIKit" "-framework CoreGraphics" "-framework UniformTypeIdentifiers" "-framework ImageIO" "-framework QuartzCore" "-framework GameController" "-framework AudioToolbox" z)
     set_target_properties(cara-ios PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist"
         XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
