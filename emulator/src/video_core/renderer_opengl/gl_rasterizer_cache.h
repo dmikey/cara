@@ -143,6 +143,7 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
     }
 
     std::vector<u8> gl_buffer;
+    std::vector<u32> depth_upload_buffer; // Normalized UNORM32 upload view of canonical D24 bytes.
     std::vector<u8> rgba_readback_buffer;
 
     // Read/Write data in 3DS memory to/from gl_buffer
@@ -153,7 +154,8 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
     const Core::CustomTexInfo* LoadCustomTexture(u64 tex_hash);
 
     // Upload/Download data in gl_buffer in/to this surface's texture
-    void UploadGLTexture(const Common::Rectangle<u32>& rect);
+    void UploadGLTexture(const Common::Rectangle<u32>& rect,
+                         FormatReinterpreterOpenGL* depth_transfer = nullptr);
     void DownloadGLTexture(const Common::Rectangle<u32>& rect);
     double last_download_wait_seconds = 0;
     double last_download_read_seconds = 0;
@@ -218,6 +220,7 @@ public:
     // ROM-free GPU/cache oracle; invoke before guest execution on an unused scratch page.
     bool RunSmallWriteSelfTest(std::string& error);
     bool RunTextureLookupSelfTest(std::string& error);
+    bool RunDepthCPUCoherenceSelfTest(std::string& error);
 
     /// Blit one surface's texture to another
     bool BlitSurfaces(const Surface& src_surface, const Common::Rectangle<u32>& src_rect,
@@ -284,8 +287,8 @@ private:
     bool IntervalHasInvalidPixelFormat(SurfaceParams& params, const SurfaceInterval& interval);
 
     // Attempt to find a reinterpretable surface in the cache and use it to copy for validation
-    bool ValidateByReinterpretation(const Surface& surface, SurfaceParams& params,
-                                    const SurfaceInterval& interval);
+    bool ValidateByReinterpretation(const Surface& surface, const SurfaceParams& params,
+                                    const SurfaceInterval& interval, SurfaceInterval* copied_interval);
 
     /// Create a new surface
     Surface CreateSurface(const SurfaceParams& params);
@@ -350,6 +353,8 @@ private:
     void RecordFlush(const Surface& surface, u32 requested_bytes, u32 width, u32 height,
                      double seconds);
     void WriteFlushTrace() const;
+    bool ExportDepthForCPU(const Surface& surface, const SurfaceInterval& interval);
+    Surface depth_export_scratch; // Host-only, never registered or given guest ownership.
 
     u16 resolution_scale_factor = 1;
 

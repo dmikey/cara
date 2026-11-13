@@ -11,9 +11,10 @@ using namespace Core::FastInterp;
 static void Require(bool ok) {if(!ok)throw std::runtime_error("secondary token differential mismatch");}
 namespace Core::FastInterp {
 struct SecondaryLinkCacheTestAccess {
-    static unsigned Slot(const BlockCache& c,const BasicBlock* b){return b-c.blocks_.data();}
+    static unsigned Slot(const BlockCache& c,const BasicBlock* b){return b-c.blocks_.get();}
     static void Equal(const BlockCache& a,const BlockCache& b) {
-        Require(a.tags_==b.tags_ && a.lru_state_==b.lru_state_ &&
+        Require(a.capacity_==b.capacity_ &&
+            std::equal(a.tags_.begin(),a.tags_.begin()+a.capacity_,b.tags_.begin()) && a.lru_state_==b.lru_state_ &&
             a.observed_executions_==b.observed_executions_ && a.observed_modes_==b.observed_modes_);
         const auto& x=a.profile_;const auto& y=b.profile_;
         Require(x.lookup_calls==y.lookup_calls&&x.lookup_hits==y.lookup_hits&&
@@ -31,12 +32,12 @@ struct SecondaryLinkCacheTestAccess {
 }
 int main() {
     u64 operations=0;
-    for(unsigned ways:{4u,8u})for(bool profiling:{false,true})for(bool recency:{false,true}) {
-        auto a=std::make_unique<BlockCache>(),b=std::make_unique<BlockCache>();
+    for(unsigned capacity:{DEFAULT_CACHE_SIZE,MAX_CACHE_SIZE})for(unsigned ways:{4u,8u})for(bool profiling:{false,true})for(bool recency:{false,true}) {
+        auto a=std::make_unique<BlockCache>(capacity),b=std::make_unique<BlockCache>(capacity);
         a->SetEightWay(ways==8);b->SetEightWay(ways==8);
         a->SetChainRecency(recency);b->SetChainRecency(recency);
         a->SetProfiling(profiling);b->SetProfiling(profiling);
-        auto index=[ways](u32 pc){u32 h=pc*0x9e3779b9u;h^=h>>16;return(h>>4)&((CACHE_SIZE/ways)-1);};
+        auto index=[ways,capacity](u32 pc){u32 h=pc*0x9e3779b9u;h^=h>>16;return(h>>4)&((capacity/ways)-1);};
         std::vector<u32> pcs;for(u32 pc=0x1000;pcs.size()<ways*4;pc+=2)
             if(index(pc)==index(0x1000))pcs.push_back(pc);
         std::array<u16,64> tokens;tokens.fill(INVALID_BLOCK_SLOT);

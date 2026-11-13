@@ -85,7 +85,7 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['validate_empty_fastpath','surface_upload_trace','secondary_link','al_dispatch','eagl_threaded','host_pc_profile','simd_tags','upload_order_reuse','precise_block_end','state_reuse','chain_recency','guest_pc_profile','used_input_attributes','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','texture_exact_prefilter','texture_acquisition_profile','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['absolute_pc','depth_reinterpret','depth_self_test','validate_empty_fastpath','surface_upload_trace','secondary_link','al_dispatch','eagl_threaded','host_pc_profile','simd_tags','upload_order_reuse','precise_block_end','state_reuse','chain_recency','guest_pc_profile','used_input_attributes','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','texture_exact_prefilter','texture_acquisition_profile','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_entries',16384)) is not int or config.get('cache_entries',16384) not in (16384,32768) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -177,6 +177,8 @@ def main():
                     'CARA_FASTINTERP_PRECISE_BLOCK_END':'1' if config.get('precise_block_end',False) else '0',
                     'CARA_FASTINTERP_CHAIN_RECENCY':'1' if config.get('chain_recency',False) else '0',
                     'CARA_FASTINTERP_CACHE_WAYS':str(config.get('cache_ways',4)),
+                    'CARA_FASTINTERP_CACHE_ENTRIES':str(config.get('cache_entries',16384)),
+                    'CARA_GPU_DEPTH_REINTERPRET':'1' if config.get('depth_reinterpret',False) else '0',
                     'CARA_DRAW_COST_PROFILE':'1' if config.get('draw_cost_profile',False) else '0',
                     'CARA_FASTINTERP_CACHE_PROFILE':'1' if config.get('cache_profile',False) else '0',
                     'CARA_FASTINTERP_ALU_OPERANDS':'1' if config.get('alu_operands',False) else '0',
@@ -240,6 +242,9 @@ def main():
             settings['CARA_PROFILE_MEMORY_U32']=json.dumps(memory_probes)
             settings['CARA_PROFILE_MEMORY_U32_FRAME_300']='1'
         settings['CARA_AUDIO_NO_STRETCH']='1'
+        if config.get('depth_self_test',False):
+            settings['CARA_SURFACE_SELF_TEST']='1'
+            settings['CARA_GPU_DEPTH_SELF_TEST']='1'
         if args.gpu_self_test:
             settings['CARA_VERTEX_SELF_TEST'] = '1'
         if args.host_cpu_timing:
@@ -369,6 +374,10 @@ def main():
             if not copy('gpu-vertex-self-test.json', check_path) or json.loads(check_path.read_text()).get('passed') is not True:
                 raise RuntimeError('GPU fixture did not pass')
         census = json.loads((args.output / (config['name'] + '-fastinterp-blocks.json')).read_text())
+        if (not isinstance(census, dict) or not isinstance(census.get('cores'), list)
+                or len(census['cores']) != 4
+                or any(not isinstance(core, dict) for core in census['cores'])):
+            raise RuntimeError('FastInterp census must contain exactly four core objects')
         pc_profiles = [core.get('guest_pc_cpu', {}) for core in census['cores']]
         pc_enabled = config.get('guest_pc_profile', False)
         if any(p.get('enabled', False) != pc_enabled or p.get('config_error') for p in pc_profiles):
@@ -402,10 +411,16 @@ def main():
             raise RuntimeError('Secondary block-link mode differs from requested configuration')
         if any(core.get('al_dispatch_enabled',False) != config.get('al_dispatch',False) for core in census['cores']):
             raise RuntimeError('Unconditional dispatch mode differs from requested configuration')
+        if 'absolute_pc' in config and any(
+                type(core.get('absolute_pc_enabled')) is not bool
+                or core['absolute_pc_enabled'] != config['absolute_pc'] for core in census['cores']):
+            raise RuntimeError('Compiled absolute-PC mode is missing, invalid, or differs from requested configuration')
         if any(core.get('precise_block_end_enabled') != config.get('precise_block_end', False) for core in census['cores']):
             raise RuntimeError('Precise block termination mode differs from requested configuration')
         if any(core.get('cache_chain_recency') != config.get('chain_recency', False) for core in census['cores']):
             raise RuntimeError('Chain-aware replacement mode differs from requested configuration')
+        if any(core.get('cache_entries') != config.get('cache_entries',16384) for core in census['cores']):
+            raise RuntimeError('FastInterp capacity differs from requested configuration')
         if any(core.get('cache_ways') != config.get('cache_ways', 4) for core in census['cores']):
             raise RuntimeError('FastInterp cache associativity differs from requested configuration')
         if config.get('host_pc_profile', False):

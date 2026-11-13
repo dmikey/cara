@@ -8,6 +8,7 @@
 #include <array>
 #include <cstdlib>
 #include <limits>
+#include <memory>
 #include <ostream>
 #include <cstring>
 #if defined(__aarch64__) && defined(__ARM_NEON)
@@ -23,15 +24,11 @@ namespace Core::FastInterp {
 // Fixed-size set-associative block cache with no per-entry allocation.
 // Four ways are the baseline; eight ways retain the same total block storage.
 
-/// Maximum number of sets: 4096 at four ways, 2048 at eight ways.
-constexpr size_t CACHE_SETS = 4096;
-
-/// Baseline number of ways per set (associativity)
-constexpr size_t CACHE_WAYS = 4;
-
-/// Total number of cache entries
-constexpr size_t CACHE_SIZE = CACHE_SETS * CACHE_WAYS;
-static_assert(CACHE_SIZE < INVALID_BLOCK_SLOT);
+constexpr unsigned CACHE_WAYS = 4;
+constexpr unsigned DEFAULT_CACHE_SIZE = 16384;
+constexpr unsigned MAX_CACHE_SIZE = 32768;
+constexpr unsigned MAX_CACHE_SETS = MAX_CACHE_SIZE / CACHE_WAYS;
+static_assert(MAX_CACHE_SIZE < INVALID_BLOCK_SLOT);
 
 /// Invalid tag marker (a guest PC of 0xFFFFFFFF can never be a real block start)
 constexpr u32 INVALID_TAG = 0xFFFFFFFF;
@@ -40,7 +37,14 @@ constexpr u32 INVALID_TAG = 0xFFFFFFFF;
 class BlockCache {
     friend struct SecondaryLinkCacheTestAccess;
 public:
-    BlockCache() {
+    static unsigned CapacityFromEnvironment() {
+        const char* value = std::getenv("CARA_FASTINTERP_CACHE_ENTRIES");
+        return value && std::strcmp(value, "32768") == 0 ? MAX_CACHE_SIZE : DEFAULT_CACHE_SIZE;
+    }
+    explicit BlockCache(unsigned entries = CapacityFromEnvironment())
+        : capacity_(entries == MAX_CACHE_SIZE ? MAX_CACHE_SIZE : DEFAULT_CACHE_SIZE),
+          four_way_mask_(capacity_ / 4 - 1), eight_way_mask_(capacity_ / 8 - 1),
+          blocks_(new BasicBlock[capacity_]) {
         const char* value = std::getenv("CARA_FASTINTERP_CHAIN_RECENCY");
         chain_recency_ = value && std::strcmp(value, "1") == 0;
         value = std::getenv("CARA_FASTINTERP_SIMD_TAGS");
@@ -82,7 +86,11 @@ public:
         }
     }
     unsigned Ways() const { return eight_way_ ? 8u : 4u; }
-    unsigned Sets() const { return CACHE_SIZE / Ways(); }
+    unsigned Capacity() const { return capacity_; }
+    unsigned Sets() const { return capacity_ / Ways(); }
+    std::size_t BlockStorageBytes() const { return capacity_ * sizeof(BasicBlock); }
+    // Owned storage excludes the allocator's implementation-specific overhead.
+    std::size_t OwnedBytes() const { return sizeof(*this) + BlockStorageBytes(); }
 
     void SetProfiling(bool enabled) { profiling_ = enabled; }
     bool ProfilingEnabled() const { return profiling_; }
@@ -91,10 +99,11 @@ public:
     /// Clear all cache entries
     void Clear() {
         if (profiling_) ++profile_.clears;
-        tags_.fill(INVALID_TAG);
-        observed_executions_.fill(0);
-        observed_modes_.fill(0);
-        for (auto& block : blocks_) {
+        std::fill_n(tags_.begin(), capacity_, INVALID_TAG);
+        std::fill_n(observed_executions_.begin(), capacity_, 0);
+        std::fill_n(observed_modes_.begin(), capacity_, 0);
+        for (unsigned i = 0; i < capacity_; ++i) {
+            auto& block = blocks_[i];
             block.inst_count = 0;
             block.chain_target = nullptr; // Prevent dangling pointers
             block.secondary_slot = INVALID_BLOCK_SLOT;
@@ -110,7 +119,7 @@ public:
         // inst_count is zeroed so surviving pointers to the entry (chain
         // targets) fizzle instead of executing the stale decode.
         const u64 end_addr = static_cast<u64>(start_addr) + length;
-        for (size_t i = 0; i < CACHE_SIZE; ++i) {
+        for (size_t i = 0; i < capacity_; ++i) {
             if (tags_[i] == INVALID_TAG) {
                 continue;
             }
@@ -135,7 +144,7 @@ public:
     // mode/poison rejection stays with the caller AFTER the original hit touch.
     BasicBlock* LookupSecondary(u32 pc, u16 slot) {
         if (profiling_) ++profile_.secondary_probes;
-        if (slot >= CACHE_SIZE || pc == INVALID_TAG || tags_[slot] != pc) return nullptr;
+        if (slot >= capacity_ || pc == INVALID_TAG || tags_[slot] != pc) return nullptr;
         const unsigned shift = eight_way_ ? 3 : 2;
         const unsigned way = slot & ((1u << shift) - 1);
         if (profiling_) {
@@ -157,7 +166,7 @@ public:
 
     template <typename Visitor>
     void VisitResidentBlocks(Visitor visit) const {
-        for (size_t i = 0; i < CACHE_SIZE; ++i)
+        for (size_t i = 0; i < capacity_; ++i)
             if (tags_[i] != INVALID_TAG && blocks_[i].inst_count) visit(blocks_[i]);
     }
 
@@ -169,7 +178,7 @@ public:
             << ",\"counter_discontinuities\":" << profile_.counter_discontinuities
             << ",\"sets\":[";
         bool comma = false;
-        for (unsigned i = 0; i < CACHE_SETS; ++i) {
+        for (unsigned i = 0; i < capacity_ / CACHE_WAYS; ++i) {
             if (!set_profile_[i].misses) continue;
             const auto& item = set_profile_[i];
             out << (comma ? "," : "") << "{\"set\":" << i << ",\"misses\":" << item.misses
@@ -291,11 +300,11 @@ private:
     /// Hash a PC to a set index. Multiply-xor-shift spreads the aligned,
     /// clustered PCs of real code across sets better than bit extraction.
     template <unsigned Ways>
-    static u32 GetSetIndex(u32 pc) {
+    u32 GetSetIndex(u32 pc) const {
         constexpr u32 HASH_MULT = 0x9E3779B9; // 2^32 / golden ratio
         u32 hash = pc * HASH_MULT;
         hash ^= (hash >> 16);
-        return (hash >> 4) & ((CACHE_SIZE / Ways) - 1);
+        return (hash >> 4) & (Ways == 8 ? eight_way_mask_ : four_way_mask_);
     }
 
     /// Update LRU state when way is accessed
@@ -364,20 +373,22 @@ private:
     // Tags hold the full PC, so a match needs no start_pc re-check. Split from
     // the blocks (structure-of-arrays): a 4-way set probe touches one cache
     // line of tags instead of four/eight far-apart block headers.
+    const unsigned capacity_;
+    const u32 four_way_mask_, eight_way_mask_;
     bool chain_recency_{false};
     bool simd_tags_{false};
     bool eight_way_{false};
     bool profiling_{false};
     Profile profile_{};
-    std::array<SetProfile, CACHE_SETS> set_profile_{};
+    std::array<SetProfile, MAX_CACHE_SETS> set_profile_{};
     std::array<ReplacementSample, 128> replacement_samples_{};
     u64 profile_mapping_changes_ = 0;
     u32 victim_interval_ = 0, active_ways_ = 0;
-    std::array<u32, CACHE_SIZE> observed_executions_{};
-    std::array<u8, CACHE_SIZE> observed_modes_{};
-    std::array<u32, CACHE_SIZE> tags_;
-    std::array<BasicBlock, CACHE_SIZE> blocks_;
-    std::array<u8, CACHE_SETS> lru_state_;
+    std::array<u32, MAX_CACHE_SIZE> observed_executions_{};
+    std::array<u8, MAX_CACHE_SIZE> observed_modes_{};
+    std::array<u32, MAX_CACHE_SIZE> tags_;
+    std::unique_ptr<BasicBlock[]> blocks_;
+    std::array<u8, MAX_CACHE_SETS> lru_state_;
 };
 
 } // namespace Core::FastInterp

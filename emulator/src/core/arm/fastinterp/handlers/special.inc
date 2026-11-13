@@ -5,6 +5,8 @@
 // Special handlers: Invalid, Nop, EndBlock, PcSetup
 
 handle_Invalid:
+    // Invalid terminates decode, but its own width/ticks have not executed.
+    SET_PC(BOUNDARY_PC(block->end_pc - inst->inst_size, GET_PC()));
     // Invalid instruction - stop execution
     goto done;
 
@@ -12,6 +14,7 @@ handle_Nop:
     ADVANCE_AND_DISPATCH();
 
 handle_EndBlock:
+    SET_PC(BOUNDARY_PC(block->end_pc, GET_PC()));
     // Synthetic block terminator (zero ticks): chain straight to the next block
     // instead of returning to Run().
     goto chain;

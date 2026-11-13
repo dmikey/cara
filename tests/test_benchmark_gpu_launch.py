@@ -151,6 +151,153 @@ class BenchmarkLaunchTests(unittest.TestCase):
                     exec(code, dict(census={'cores': [bad_core]},
                                     config={'chain_recency': expected}))
 
+    def test_absolute_pc_is_optional_boolean_configuration(self):
+        tree = ast.parse(HARNESS.read_text(), filename=str(HARNESS))
+        checks = [node for node in ast.walk(tree) if isinstance(node, ast.If)
+                  and any(isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
+                          and isinstance(child.func.value, ast.Name)
+                          and child.func.value.id == 'parser' and child.func.attr == 'error'
+                          and any(isinstance(arg, ast.Constant) and arg.value == 'invalid configuration'
+                                  for arg in child.args)
+                          for child in ast.walk(node))]
+        self.assertTrue(checks, 'configuration validation guard must exist')
+        check = min(checks, key=lambda node: len(list(ast.walk(node))))
+        code = compile(ast.fix_missing_locations(ast.Module(body=[check], type_ignores=[])),
+                       str(HARNESS), 'exec')
+        baseline = dict(name='fixture', packed=True, bank_mib=80)
+        for config in (baseline, dict(baseline, absolute_pc=False), dict(baseline, absolute_pc=True)):
+            parser = SimpleNamespace(error=Mock(side_effect=ValueError))
+            exec(code, dict(config=config, parser=parser))
+            parser.error.assert_not_called()
+        for value in (0, 1, None, 'true'):
+            with self.subTest(value=value):
+                parser = SimpleNamespace(error=Mock(side_effect=ValueError))
+                with self.assertRaises(ValueError):
+                    exec(code, dict(config=dict(baseline, absolute_pc=value), parser=parser))
+                parser.error.assert_called_once_with('invalid configuration')
+
+    def test_absolute_pc_compiled_mode_never_sets_runtime_toggle(self):
+        for requested in (None, False, True):
+            with self.subTest(requested=requested):
+                config = dict(packed=True, bank_mib=80)
+                if requested is not None:
+                    config['absolute_pc'] = requested
+                settings, _ = self.capture(config)
+                self.assertFalse(any('ABSOLUTE_PC' in key for key in settings))
+                self.assert_benchmark_contract(settings)
+
+    def test_absolute_pc_census_requires_actual_booleans_only_when_requested(self):
+        message = 'Compiled absolute-PC mode is missing, invalid, or differs from requested configuration'
+        tree = ast.parse(HARNESS.read_text(), filename=str(HARNESS))
+        checks = [node for node in ast.walk(tree) if isinstance(node, ast.If)
+                  and any(isinstance(child, ast.Constant) and child.value == message
+                          for child in ast.walk(node))]
+        self.assertTrue(checks, 'compiled absolute-PC census guard must exist')
+        check = min(checks, key=lambda node: len(list(ast.walk(node))))
+        code = compile(ast.fix_missing_locations(ast.Module(body=[check], type_ignores=[])),
+                       str(HARNESS), 'exec')
+        for requested in (False, True):
+            good = [{'absolute_pc_enabled': requested} for _ in range(4)]
+            exec(code, dict(census={'cores': good}, config={'absolute_pc': requested}))
+            for index in range(4):
+                for bad in ({}, {'absolute_pc_enabled': not requested},
+                            {'absolute_pc_enabled': 0}, {'absolute_pc_enabled': 1},
+                            {'absolute_pc_enabled': None}, {'absolute_pc_enabled': 'true'}):
+                    cores = [dict(core) for core in good]
+                    cores[index] = bad
+                    with self.subTest(requested=requested, index=index, bad=bad):
+                        with self.assertRaisesRegex(RuntimeError, message):
+                            exec(code, dict(census={'cores': cores}, config={'absolute_pc': requested}))
+        # Older artifact comparisons intentionally make no assertion about this
+        # compiled mode unless the configuration explicitly requests one.
+        for core in ({}, {'absolute_pc_enabled': False}, {'absolute_pc_enabled': True},
+                     {'absolute_pc_enabled': None}, {'absolute_pc_enabled': 0}):
+            exec(code, dict(census={'cores': [dict(core) for _ in range(4)]}, config={}))
+
+    def test_cache_capacity_launch_control_defaults_to_16k(self):
+        for entries in (None, 16384, 32768):
+            with self.subTest(entries=entries):
+                config = dict(packed=True, bank_mib=80)
+                if entries is not None:
+                    config['cache_entries'] = entries
+                settings, _ = self.capture(config)
+                self.assertEqual(settings['CARA_FASTINTERP_CACHE_ENTRIES'],
+                                 str(16384 if entries is None else entries))
+                self.assert_benchmark_contract(settings)
+
+    def test_cache_census_requires_exactly_four_core_objects(self):
+        message = 'FastInterp census must contain exactly four core objects'
+        tree = ast.parse(HARNESS.read_text(), filename=str(HARNESS))
+        checks = [node for node in ast.walk(tree) if isinstance(node, ast.If)
+                  and any(isinstance(child, ast.Constant) and child.value == message
+                          for child in ast.walk(node))]
+        self.assertTrue(checks, 'census shape guard must exist')
+        check = min(checks, key=lambda node: len(list(ast.walk(node))))
+        code = compile(ast.fix_missing_locations(ast.Module(body=[check], type_ignores=[])),
+                       str(HARNESS), 'exec')
+        exec(code, dict(census={'cores': [{} for _ in range(4)]}))
+        invalid = [None, [], {}, {'cores': None}, {'cores': {}}, {'cores': 'four'},
+                   {'cores': ()}, {'cores': []}, {'cores': [{} for _ in range(3)]},
+                   {'cores': [{} for _ in range(5)]}]
+        for index in range(4):
+            cores = [{} for _ in range(4)]
+            cores[index] = None
+            invalid.append({'cores': cores})
+        for census in invalid:
+            with self.subTest(census=census):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    exec(code, dict(census=census))
+
+    def test_cache_capacity_census_requires_every_core_to_match(self):
+        # Execute the real guard, including its default, rather than a copy of
+        # its comparison. A healthy core must not hide another core's report.
+        message = 'FastInterp capacity differs from requested configuration'
+        tree = ast.parse(HARNESS.read_text(), filename=str(HARNESS))
+        checks = [node for node in ast.walk(tree) if isinstance(node, ast.If)
+                  and any(isinstance(child, ast.Constant) and child.value == message
+                          for child in ast.walk(node))]
+        self.assertTrue(checks, 'capacity census guard must exist')
+        check = min(checks, key=lambda node: len(list(ast.walk(node))))
+        code = compile(ast.fix_missing_locations(ast.Module(body=[check], type_ignores=[])),
+                       str(HARNESS), 'exec')
+        for requested in (None, 16384, 32768):
+            config = {} if requested is None else {'cache_entries': requested}
+            expected = 16384 if requested is None else requested
+            good = [{'cache_entries': expected} for _ in range(4)]
+            with self.subTest(requested=requested, case='four matching cores'):
+                exec(code, dict(census={'cores': good}, config=config))
+            for index in range(4):
+                for bad in ({}, {'cache_entries': None},
+                            {'cache_entries': 32768 if expected == 16384 else 16384}):
+                    cores = [dict(core) for core in good]
+                    cores[index] = bad
+                    with self.subTest(requested=requested, index=index, bad=bad):
+                        with self.assertRaisesRegex(RuntimeError, message):
+                            exec(code, dict(census={'cores': cores}, config=config))
+
+    def test_depth_alias_and_presence_based_self_tests_are_independent(self):
+        for alias in (None, False, True):
+            for self_test in (None, False, True):
+                for gpu_self_test in (False, True):
+                    with self.subTest(alias=alias, self_test=self_test,
+                                      gpu_self_test=gpu_self_test):
+                        config = dict(packed=True, bank_mib=80)
+                        if alias is not None:
+                            config['depth_reinterpret'] = alias
+                        if self_test is not None:
+                            config['depth_self_test'] = self_test
+                        settings, _ = self.capture(config, gpu_self_test=gpu_self_test)
+                        self.assertEqual(settings['CARA_GPU_DEPTH_REINTERPRET'],
+                                         '1' if alias else '0')
+                        # The app tests getenv presence; a disabled flag with
+                        # value "0" would still run these expensive fixtures.
+                        for key in ('CARA_GPU_DEPTH_SELF_TEST', 'CARA_SURFACE_SELF_TEST'):
+                            self.assertEqual(key in settings, bool(self_test))
+                            if self_test:
+                                self.assertEqual(settings[key], '1')
+                        self.assertEqual('CARA_VERTEX_SELF_TEST' in settings, gpu_self_test)
+                        self.assert_benchmark_contract(settings)
+
     def test_used_input_staging_is_opt_in(self):
         for enabled in (None, False, True):
             config = dict(packed=True, bank_mib=80)

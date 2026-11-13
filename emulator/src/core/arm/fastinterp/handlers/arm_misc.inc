@@ -19,7 +19,7 @@ handle_Clz: {
 handle_Swi: {
     CHECK_COND(Swi);
     // Software interrupt - dispatch to kernel SVC handler
-    SET_PC(GET_PC() + inst->inst_size);
+    SET_PC(BOUNDARY_PC(block->end_pc, GET_PC() + inst->inst_size));
     SYNC_PC();
     {
         u32 svc_num = inst->imm32 & 0xFF;

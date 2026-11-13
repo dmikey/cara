@@ -32,8 +32,10 @@ handle_Blx: {
     CHECK_COND(Blx);
     // BLX register (immediate form is BlxImm); this is the ARM encoding, so
     // the block is ARM mode (Thumb BLX is ThumbBlxReg)
-    state_.regs[14] = GET_PC() + 4;
-    u32 target = state_.regs[inst->branch.rm];
+    // Rm may be LR: preserve its branch target before overwriting the link.
+    const u32 target = state_.regs[inst->branch.rm];
+    // Register BLX terminates decode, including a single-step block.
+    state_.regs[14] = BOUNDARY_PC(block->end_pc, GET_PC() + 4);
     state_.thumb_mode = (target & 1) != 0;
     SET_PC(target & ~1u);
     executed += inst->ticks;

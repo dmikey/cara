@@ -135,3 +135,48 @@ exact tags, NRU states, victims and logical counters. The CPU fixture compares
 clocks, including SVCs, mode changes and address-space changes. The existing
 full instruction and timing regressions pass in all four AL/secondary mode
 combinations. Device performance remains a separate measurement.
+
+
+## Bounded decoded-cache capacity experiment
+
+`CARA_FASTINTERP_CACHE_ENTRIES` accepts exactly `16384` or `32768`; the default
+and unsupported-value fallback are `16384`. Capacity is fixed when each CPU's
+cache is constructed. Its decoded blocks occupy one contiguous heap allocation
+sized to that capacity; metadata arrays support at most 32,768 entries. No live
+resize, executable allocation or serialized-cache format is introduced.
+
+Both capacities retain the original PC hash, 4/8-way NRU replacement, primary
+chain policy and exact-tag secondary-slot validation. Lookup uses the selected
+capacity's set mask and a stable block-storage pointer. Instruction ticks,
+decoded block limits, chain budgets and hot-loop iteration limits are unchanged.
+
+The census reports effective `cache_entries` and `cache_sets`, plus
+`cache_metadata_bytes`, `cache_block_storage_bytes` and `cache_owned_bytes`.
+Owned bytes sum the metadata object and its block allocation, excluding allocator
+bookkeeping. `cache_object_bytes` continues to mean `sizeof(BlockCache)`; it no
+longer includes the separately allocated blocks. On the native ARM64 build:
+
+| Entries per CPU | Metadata bytes | Block bytes | Owned bytes |
+|---|---:|---:|---:|
+| 16,384 | 439,456 | 11,010,048 | 11,449,504 |
+| 32,768 | 439,456 | 22,020,096 | 22,459,552 |
+
+The standalone capacity test checks strict environment parsing, construction-time
+immutability, byte accounting and 400,000 operations against an independent
+hash/NRU/victim model. Existing SIMD-tag and secondary-slot differential fixtures
+each compare 1,600,000 operations across both capacities; recency/coherence and
+lookup-counter fixtures also cover both sizes.
+
+`CARA_FASTINTERP_CAPACITY_TEST=1` runs 24,576 native slices against an independent
+original-block/timer/event oracle. It combines both capacities, AL-entry and
+secondary-slot modes, 4/8-way policies, 75/100/133% guest clocks, text invalidation
+and cache clear. Forced synthetic conflicts produce 851,780 versus 132,216
+allocation misses; these are fixture counts, not game measurements. Victim
+identities are compared within a policy, not across different capacities.
+
+All 59 native regression configurations passed, including eight full 22,000-case
+ARM/Thumb runs with RAM bursts, hot/cold budget oracles, SVC boundaries, LDM-PC,
+decode reuse, cache diagnostics and both 4,224-case scalar-double runs. These
+checks provide bounded semantic and timing coverage. Device speed and memory
+must be measured separately, including a current-build control against the new
+heap-backed 16k default before attributing any 32k result to capacity.

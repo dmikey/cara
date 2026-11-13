@@ -4,13 +4,17 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <exception>
 #include <vector>
 #include "common/scope_exit.h"
 #include "common/frame_timing.h"
+#include "common/logging/log.h"
 #include "core/memory.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_rasterizer_cache.h"
+#include "video_core/renderer_opengl/gl_format_reinterpreter.h"
 #include "video_core/renderer_opengl/gl_state.h"
+#include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/video_core.h"
 
 namespace OpenGL {
@@ -218,6 +222,9 @@ bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
 }
 
 bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
+    const char* depth_test=std::getenv("CARA_GPU_DEPTH_SELF_TEST");
+    if(depth_test&&std::strcmp(depth_test,"1")==0&&!RunDepthReinterpretSelfTest(error))return false;
+    if(depth_test&&std::strcmp(depth_test,"1")==0&&!RunDepthCPUCoherenceSelfTest(error))return false;
     if ((texture_lookup_reuse || texture_exact_prefilter) && !RunTextureLookupSelfTest(error)) return false;
     if (const GLenum initial_error = glGetError(); initial_error != GL_NO_ERROR) {
         error = "surface coherence entered with GL error=" + std::to_string(initial_error);
@@ -826,4 +833,345 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
     }
     return true;
 }
+// Generated scratch-VRAM cache oracle. This is not a real game/save-state file.
+// Direct encoder byte/state tests run first under the same explicit self-test flag.
+bool RasterizerCacheOpenGL::RunDepthCPUCoherenceSelfTest(std::string& error) {
+    using PixelFormat = SurfaceParams::PixelFormat;
+    if (!GLES) return true;
+    constexpr u32 scratch_bytes=64*1024;
+    constexpr PAddr scratch=Memory::VRAM_PADDR_END-scratch_bytes;
+    const SurfaceInterval scratch_interval(scratch,scratch+scratch_bytes);
+    const auto cached=surface_cache.equal_range(scratch_interval);
+    const auto dirty=dirty_regions.equal_range(scratch_interval);
+    if (cached.first!=cached.second || dirty.first!=dirty.second) {
+        error="depth CPU oracle requires unused scratch VRAM"; return false;
+    }
+    u8* memory=VideoCore::Memory()->GetPhysicalPointer(scratch);
+    if (!memory || glGetError()!=GL_NO_ERROR) { error="depth CPU oracle initial state"; return false; }
+    const std::vector<u8> backup(memory,memory+scratch_bytes);
+    const auto saved_state=OpenGLState::GetCurState();
+    const auto saved_counters=Common::FrameTiming::counters;
+    const bool saved_trace=trace_flushes,saved_retain=retain_small_cpu_writes;
+    const bool saved_skip=Settings::values.skip_cpu_write;
+    trace_flushes=false;Settings::values.skip_cpu_write=false;
+    Common::FrameTiming::counters.enabled=true;
+    std::vector<Surface> created;
+    const auto retire=[&] {
+        dirty_regions.erase(scratch_interval);
+        for (auto& surface:created) {
+            OpenGLState::ResetTexture(surface->texture.handle);
+            if (surface->registered) UnregisterSurface(surface);
+            remove_surfaces.erase(surface);
+        }
+        created.clear();
+    };
+    SCOPE_EXIT({
+        retire(); trace_flushes=saved_trace;retain_small_cpu_writes=saved_retain;
+        Settings::values.skip_cpu_write=saved_skip;
+        std::memcpy(memory,backup.data(),backup.size());
+        OpenGLState::InvalidateRasterState();saved_state.Apply();
+        Common::FrameTiming::counters=saved_counters;
+    });
+    const auto owned_by=[&](const Surface& owner) {
+        SurfaceRegions result;
+        const auto range=dirty_regions.equal_range(scratch_interval);
+        for (auto it=range.first;it!=range.second;++it)
+            if (it->second==owner) result+=it->first&scratch_interval;
+        return result;
+    };
+    u64 cases=0,bulk_ownership_cases=0,alias_cases=0,failed_exports=0;
+    try {
+        for (auto format:{PixelFormat::D16,PixelFormat::D24,PixelFormat::D24S8}) {
+            for (bool tiled:{false,true}) for (bool retain:{false,true}) {
+                for (u32 offset:{0u,1u,2u,3u,63u,127u,255u}) for (u32 count:{1u,3u,8u,9u,17u,33u}) {
+                    retire();retain_small_cpu_writes=retain;
+                    SurfaceParams params;params.addr=scratch;params.width=params.stride=16;params.height=16;
+                    params.pixel_format=format;params.is_tiled=tiled;params.res_scale=1;params.UpdateParams();
+                    std::vector<u8> expected(params.size);
+                    for (u32 i=0;i<params.size;++i) expected[i]=u8(i*79+(i>>3)*17+23);
+                    std::memcpy(memory,expected.data(),expected.size());
+                    auto producer=GetSurface(params,ScaleMatch::Exact,true);created.push_back(producer);
+                    InvalidateRegion(params.addr,params.size,producer);
+                    std::fill_n(memory,params.size,0x6B);
+                    std::fill(producer->gl_buffer.begin(),producer->gl_buffer.end(),0x2C);
+                    // A genuine cache CPU-read/export request must recover GPU
+                    // bytes, not the poisoned RAM or poisoned staging buffer.
+                    FlushRegion(params.addr,params.size,producer);
+                    if (!std::equal(expected.begin(),expected.end(),memory)) {
+                        error="depth CPU oracle initial GPU export format="+std::to_string(unsigned(format));return false;
+                    }
+                    InvalidateRegion(params.addr,params.size,producer);
+                    // The option retains RGBA8 only: depth writes <=8 bytes
+                    // always evict. Bulk writes must split depth ownership.
+                    std::fill_n(memory,params.size,0x6B);
+                    const SurfaceInterval cpu_write(params.addr+offset,params.addr+offset+count);
+                    InvalidateRegion(params.addr+offset,count,nullptr);
+                    if (count>8) {
+                        SurfaceRegions remaining;remaining+=params.GetInterval();remaining-=cpu_write;
+                        if (!producer->registered || owned_by(producer)!=remaining ||
+                            !boost::icl::contains(producer->invalid_regions,cpu_write)) {
+                            error="depth CPU oracle bulk ownership was not split exactly";return false;
+                        }
+                        ++bulk_ownership_cases;
+                    } else if (producer->registered || !owned_by(producer).empty()) {
+                        error="depth CPU oracle small write did not evict depth";return false;
+                    }
+                    for (u32 i=0;i<count;++i) memory[offset+i]=expected[offset+i]=u8(0xD3+i*7);
+                    auto reacquired=GetSurface(params,ScaleMatch::Exact,true);created.push_back(reacquired);
+                    if (!reacquired->IsRegionValid(params.GetInterval())) {
+                        error="depth CPU oracle RAM write remained invalid";return false;
+                    }
+                    InvalidateRegion(params.addr,params.size,reacquired);
+                    std::fill_n(memory,params.size,0xA5);
+                    std::fill(reacquired->gl_buffer.begin(),reacquired->gl_buffer.end(),0x37);
+                    FlushAll(); // Production save-state CPU publication boundary.
+                    if (!std::equal(expected.begin(),expected.end(),memory)) {
+                        error="depth CPU oracle partial write/FlushAll format="+std::to_string(unsigned(format))+
+                            " tiled="+std::to_string(tiled)+" retain_rgba8_option="+std::to_string(retain)+
+                            " offset="+std::to_string(offset)+" count="+std::to_string(count);return false;
+                    }
+                    const auto saved=expected;
+                    retire();std::memcpy(memory,saved.data(),saved.size());
+                    auto restored=GetSurface(params,ScaleMatch::Exact,true);created.push_back(restored);
+                    InvalidateRegion(params.addr,params.size,restored);
+                    std::fill_n(memory,params.size,0x19);
+                    std::fill(restored->gl_buffer.begin(),restored->gl_buffer.end(),0x31);
+                    FlushRegion(params.addr,params.size,restored);
+                    if (!std::equal(saved.begin(),saved.end(),memory) || glGetError()!=GL_NO_ERROR) {
+                        error="depth CPU oracle simulated restore/reacquire";return false;
+                    }
+                    // Unsupported export must fail explicitly without consuming
+                    // ownership or publishing the poisoned RAM as current.
+                    InvalidateRegion(params.addr,params.size,restored);
+                    std::fill_n(memory,params.size,0x7D);
+                    restored->res_scale=2;
+                    bool failed=false;
+                    try { FlushRegion(params.addr,params.size,restored); }
+                    catch (const std::exception&) { failed=true; }
+                    restored->res_scale=1;
+                    if (!failed || !boost::icl::contains(dirty_regions,params.GetInterval()) ||
+                        !std::all_of(memory,memory+params.size,[](u8 b){return b==0x7D;})) {
+                        error="depth CPU oracle failed export consumed ownership or RAM";return false;
+                    }
+                    ++cases;++failed_exports;
+                }
+            }
+        }
+        // Distinct real GPU images share guest bytes: a depth producer owns
+        // the outside spans, RGBA8 owns an unaligned middle span, and the CPU
+        // overwrites eight or nine bytes across their ownership boundary.
+        for (bool tiled:{false,true}) for (bool retain_rgba8:{false,true})
+            for (u32 cpu_count:{8u,9u}) {
+            retire();retain_small_cpu_writes=retain_rgba8;
+            SurfaceParams depth_params;depth_params.addr=scratch;
+            depth_params.width=depth_params.stride=16;depth_params.height=16;
+            depth_params.pixel_format=PixelFormat::D24S8;depth_params.is_tiled=tiled;
+            depth_params.res_scale=1;depth_params.UpdateParams();
+            std::vector<u8> depth_bytes(depth_params.size),color_bytes(depth_params.size);
+            for (u32 i=0;i<depth_params.size;++i) {
+                depth_bytes[i]=u8(i*71+(i>>3)*13+29);
+                color_bytes[i]=u8(depth_bytes[i]^0xD7);
+            }
+            std::memcpy(memory,depth_bytes.data(),depth_bytes.size());
+            auto depth=GetSurface(depth_params,ScaleMatch::Exact,true);created.push_back(depth);
+            InvalidateRegion(depth_params.addr,depth_params.size,depth);
+            auto color_params=depth_params;color_params.pixel_format=PixelFormat::RGBA8;
+            color_params.UpdateParams();
+            auto color=CreateSurface(color_params);created.push_back(color);RegisterSurface(color);
+            std::memcpy(memory,color_bytes.data(),color_bytes.size());
+            color->LoadGLBuffer(color_params.addr,color_params.end);
+            color->UploadGLTexture(color->GetRect());
+            const SurfaceInterval color_owned(scratch+63,scratch+100);
+            InvalidateRegion(scratch+63,37,color);
+            const SurfaceInterval cpu_owned(scratch+60,scratch+60+cpu_count);
+            std::fill_n(memory,depth_params.size,0xA5);
+            std::fill(depth->gl_buffer.begin(),depth->gl_buffer.end(),0x2C);
+            std::fill(color->gl_buffer.begin(),color->gl_buffer.end(),0x37);
+            InvalidateRegion(scratch+60,cpu_count,nullptr);
+            std::vector<u8> expected=depth_bytes;
+            std::copy(color_bytes.begin()+63,color_bytes.begin()+100,expected.begin()+63);
+            for (u32 i=0;i<cpu_count;++i)memory[60+i]=expected[60+i]=u8(0xE1+i*3);
+            SurfaceRegions depth_owned,remaining_color;
+            if (cpu_count>8) {
+                depth_owned+=depth_params.GetInterval();depth_owned-=color_owned;depth_owned-=cpu_owned;
+            }
+            if (cpu_count>8 || retain_rgba8) {remaining_color+=color_owned;remaining_color-=cpu_owned;}
+            if (owned_by(depth)!=depth_owned || owned_by(color)!=remaining_color ||
+                depth->registered!=(cpu_count>8) || color->registered!=(cpu_count>8 || retain_rgba8)) {
+                error="depth CPU alias oracle lost exact per-producer ownership tiled="+std::to_string(tiled)+
+                    " retain_rgba8_option="+std::to_string(retain_rgba8)+" cpu_bytes="+std::to_string(cpu_count);return false;
+            }
+            // Fail a partial request, preserving BOTH GPU producers and the
+            // committed CPU hole, not only a full-surface dirty membership bit.
+            if (cpu_count>8) {
+                const auto before_dirty=dirty_regions;
+                const std::vector<u8> before_ram(memory,memory+depth_params.size);
+                depth->res_scale=2;bool failed=false;
+                try { FlushRegion(scratch+16,32,depth); }
+                catch (const std::exception&) { failed=true; }
+                depth->res_scale=1;
+                if (!failed || dirty_regions!=before_dirty ||
+                    !std::equal(before_ram.begin(),before_ram.end(),memory)) {
+                    error="depth CPU alias oracle partial failure changed owners or RAM tiled="+std::to_string(tiled)+
+                    " retain_rgba8_option="+std::to_string(retain_rgba8)+" cpu_bytes="+std::to_string(cpu_count);return false;
+                }
+                ++failed_exports;
+            }
+            FlushAll();
+            if (!std::equal(expected.begin(),expected.end(),memory)) {
+                error="depth CPU alias oracle FlushAll mixed GPU/CPU bytes incorrectly tiled="+std::to_string(tiled)+
+                    " retain_rgba8_option="+std::to_string(retain_rgba8)+" cpu_bytes="+std::to_string(cpu_count);return false;
+            }
+            auto coherent=GetSurface(depth_params,ScaleMatch::Exact,true);created.push_back(coherent);
+            if (!coherent->IsRegionValid(depth_params.GetInterval())) {
+                error="depth CPU alias oracle reacquisition remained invalid tiled="+std::to_string(tiled)+
+                    " retain_rgba8_option="+std::to_string(retain_rgba8)+" cpu_bytes="+std::to_string(cpu_count);return false;
+            }
+            InvalidateRegion(depth_params.addr,depth_params.size,coherent);
+            std::fill_n(memory,depth_params.size,0x19);
+            std::fill(coherent->gl_buffer.begin(),coherent->gl_buffer.end(),0x31);
+            FlushAll();
+            if (!std::equal(expected.begin(),expected.end(),memory)) {
+                error="depth CPU alias oracle depth reacquisition lost mixed bytes tiled="+std::to_string(tiled)+
+                    " retain_rgba8_option="+std::to_string(retain_rgba8)+" cpu_bytes="+std::to_string(cpu_count);return false;
+            }
+            retire();std::memcpy(memory,expected.data(),expected.size());
+            auto restored=GetSurface(depth_params,ScaleMatch::Exact,true);created.push_back(restored);
+            InvalidateRegion(depth_params.addr,depth_params.size,restored);
+            std::fill_n(memory,depth_params.size,0x7D);
+            std::fill(restored->gl_buffer.begin(),restored->gl_buffer.end(),0x42);
+            FlushAll();
+            if (!std::equal(expected.begin(),expected.end(),memory) || glGetError()!=GL_NO_ERROR) {
+                error="depth CPU alias oracle simulated restore lost mixed bytes tiled="+std::to_string(tiled)+
+                    " retain_rgba8_option="+std::to_string(retain_rgba8)+" cpu_bytes="+std::to_string(cpu_count);return false;
+            }
+            ++alias_cases;
+        }
+        // Broader valid source copies may cover padding outside the current
+        // validation request. This experiment is optional; CPU-only coherence
+        // coverage above must also run with depth aliases disabled.
+        const char* alias_flag=std::getenv("CARA_GPU_DEPTH_REINTERPRET");
+        if (alias_flag && std::strcmp(alias_flag,"1")==0) {
+            struct CopyCase {SurfaceParams params;Surface source,destination;std::vector<u8> bytes,initial;};
+            const auto setup=[&](bool tiled) {
+                retire();CopyCase c;c.params.addr=scratch;
+                c.params.width=c.params.stride=16;c.params.height=16;c.params.res_scale=1;
+                c.params.is_tiled=tiled;c.params.pixel_format=PixelFormat::D24S8;c.params.UpdateParams();
+                c.bytes.resize(c.params.size);c.initial.resize(c.params.size);
+                for(u32 i=0;i<c.params.size;++i){c.bytes[i]=u8(i*53+(i>>2)*19+31);c.initial[i]=u8(c.bytes[i]^0xB7);}
+                std::memcpy(memory,c.bytes.data(),c.bytes.size());
+                c.source=GetSurface(c.params,ScaleMatch::Exact,true);created.push_back(c.source);
+                InvalidateRegion(scratch,c.params.size,c.source);
+                c.params.pixel_format=PixelFormat::RGBA8;c.params.UpdateParams();
+                c.destination=CreateSurface(c.params);created.push_back(c.destination);RegisterSurface(c.destination);
+                std::memcpy(memory,c.initial.data(),c.initial.size());
+                c.destination->LoadGLBuffer(scratch,scratch+c.params.size);
+                c.destination->UploadGLTexture(c.destination->GetRect());
+                std::fill_n(memory,c.params.size,0x6B);
+                std::fill(c.source->gl_buffer.begin(),c.source->gl_buffer.end(),0x2C);
+                return c;
+            };
+            const auto verify_image=[&](const Surface& image,const std::vector<u8>& expected) {
+                const std::vector<u8> ram(memory,memory+expected.size());
+                SCOPE_EXIT({std::memcpy(memory,ram.data(),ram.size());});
+                image->DownloadGLTexture(image->GetRect());
+                image->FlushGLBuffer(image->addr,image->end);
+                return glGetError()==GL_NO_ERROR && std::equal(expected.begin(),expected.end(),memory);
+            };
+            u32 copies=0,nonprogress=0;
+            for(bool tiled:{false,true})for(unsigned neighbor:{0u,1u,2u}) {
+                auto c=setup(tiled);
+                auto view=c.params;view.width=tiled?8:12;view.UpdateParams();
+                const SurfaceInterval outside(scratch+view.size,scratch+c.params.size);
+                auto expected=c.bytes;
+                if(neighbor) {
+                    std::vector<u8> other(c.params.size);
+                    for(u32 i=0;i<c.params.size;++i)other[i]=u8(c.bytes[i]^0xD3);
+                    if(neighbor==1) {
+                        InvalidateRegion(scratch+view.size,c.params.size-view.size,nullptr);
+                        std::copy(other.begin()+view.size,other.end(),memory+view.size);
+                    } else {
+                        auto owner=CreateSurface(c.params);created.push_back(owner);RegisterSurface(owner);
+                        std::memcpy(memory,other.data(),other.size());
+                        owner->LoadGLBuffer(scratch,scratch+c.params.size);owner->UploadGLTexture(owner->GetRect());
+                        InvalidateRegion(scratch+view.size,c.params.size-view.size,owner);
+                        std::fill_n(memory,c.params.size,0x6B);
+                    }
+                    if(!boost::icl::contains(c.source->invalid_regions,outside)) {
+                        error="broader copy oracle did not invalidate overridden source neighbor";return false;
+                    }
+                    std::copy(other.begin()+view.size,other.end(),expected.begin()+view.size);
+                }
+                // A nonzero start also checks copying valid source neighbors
+                // before the requested partial row/tile span.
+                const u32 offset=neighbor?0u:(tiled?256u:60u);
+                const auto before=Common::FrameTiming::counters.surface_download_calls;
+                const std::vector<u8> before_ram(memory,memory+c.params.size);
+                ValidateSurface(c.destination,scratch+offset,view.size-offset);
+                const SurfaceInterval requested(scratch+offset,scratch+view.size);
+                if(Common::FrameTiming::counters.surface_download_calls!=before ||
+                    !c.destination->IsRegionValid(requested) ||
+                    !std::equal(before_ram.begin(),before_ram.end(),memory)) {
+                    error="broader copy oracle used RAM/readback or failed progress";return false;
+                }
+                auto interim=c.bytes;
+                if(neighbor) {
+                    std::copy(c.initial.begin()+view.size,c.initial.end(),interim.begin()+view.size);
+                    if(!boost::icl::contains(c.destination->invalid_regions,outside)) {
+                        error="broader copy oracle overwrote authority outside the requested span";return false;
+                    }
+                }
+                if(!verify_image(c.destination,interim)) {error="broader copy oracle consumer pixels differ";return false;}
+                if(neighbor) {
+                    const auto downloads=Common::FrameTiming::counters.surface_download_calls;
+                    ValidateSurface(c.destination,scratch+view.size,c.params.size-view.size);
+                    if(Common::FrameTiming::counters.surface_download_calls!=downloads ||
+                        !verify_image(c.destination,expected)) {
+                        error="broader copy oracle lost CPU/other-GPU neighbor";return false;
+                    }
+                }
+                ++copies;
+            }
+            for(bool tiled:{false,true}) {
+                auto c=setup(tiled);
+                const u32 unit=tiled?256u:64u;
+                const SurfaceInterval hole(scratch+unit,scratch+2*unit);
+                InvalidateRegion(scratch+unit,unit,nullptr);
+                std::fill_n(memory+unit,unit,0xD9);
+                auto actual_source=c.params;actual_source.pixel_format=PixelFormat::D24S8;
+                const auto large=actual_source.GetCopyableInterval(c.source);
+                for(u32 start:{unit,unit/2}) {
+                    const SurfaceInterval current(scratch+start,scratch+2*unit);
+                    if(boost::icl::length(large)==0 || boost::icl::length(large&current)!=0) {
+                        error="nonprogress oracle missing larger disjoint source candidate";return false;
+                    }
+                    if(start!=unit) {
+                        const auto narrow=actual_source.FromInterval(current).GetCopyableInterval(c.source);
+                        if(boost::icl::length(narrow&current)==0) {
+                            error="nonprogress oracle did not exercise initial overlapping selection";return false;
+                        }
+                    }
+                    const auto invalid=c.destination->invalid_regions;
+                    const auto owners=dirty_regions;
+                    SurfaceInterval copied(scratch+3,scratch+5);const auto unchanged=copied;
+                    const auto downloads=Common::FrameTiming::counters.surface_download_calls;
+                    if(ValidateByReinterpretation(c.destination,c.params,current,&copied) || copied!=unchanged ||
+                        c.destination->invalid_regions!=invalid || dirty_regions!=owners ||
+                        Common::FrameTiming::counters.surface_download_calls!=downloads) {
+                        error="nonprogress oracle accepted disjoint source or changed ownership";return false;
+                    }
+                    ++nonprogress;
+                }
+                if(!verify_image(c.destination,c.initial)) {error="nonprogress oracle modified consumer pixels";return false;}
+            }
+            LOG_INFO(Render_OpenGL,"Depth broader-copy oracle: {} GPU-only partial-span/neighbor cases, {} direct nonprogress rejections",copies,nonprogress);
+        }
+    } catch (const std::exception& exception) {
+        error=std::string("depth CPU oracle exception: ")+exception.what();return false;
+    }
+    LOG_INFO(Render_OpenGL,"Depth CPU coherence oracle: {} format/write cases, {} bulk depth ownership splits, {} RGBA8/depth alias cases, {} failed exports; small-write retain option applies to RGBA8 only",
+             cases,bulk_ownership_cases,alias_cases,failed_exports);
+    return true;
+}
+
 } // namespace OpenGL

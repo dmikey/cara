@@ -42,14 +42,14 @@ static void Sampler() {
     for(unsigned n=0;n<1024;++n){auto t=negative.BeforeDecode(true);negative.AfterDecode(t);}
     Require(negative.GetStats().invalid_delta_samples==2&&!negative.GetStats().sampled_cpu_ns&&!negative.GetStats().calibration_completed,"backwards clocks were accepted");
 }
-static std::vector<u32> Collisions(unsigned ways){
-    auto index=[ways](u32 pc){u32 h=pc*0x9e3779b9;h^=h>>16;return(h>>4)&((CACHE_SIZE/ways)-1);};
+static std::vector<u32> Collisions(unsigned ways,unsigned capacity){
+    auto index=[ways,capacity](u32 pc){u32 h=pc*0x9e3779b9;h^=h>>16;return(h>>4)&((capacity/ways)-1);};
     std::vector<u32> result;for(u32 pc=0x1000;result.size()<ways+1;pc+=4)if(index(pc)==index(0x1000))result.push_back(pc);return result;
 }
 static void Counters() {
-    for(unsigned ways:{4u,8u})for(bool enabled:{false,true}){
-        auto cache=std::make_unique<BlockCache>();cache->SetEightWay(ways==8);cache->SetProfiling(enabled);
-        const auto pcs=Collisions(ways);
+    for(unsigned capacity:{DEFAULT_CACHE_SIZE,MAX_CACHE_SIZE})for(unsigned ways:{4u,8u})for(bool enabled:{false,true}){
+        auto cache=std::make_unique<BlockCache>(capacity);cache->SetEightWay(ways==8);cache->SetProfiling(enabled);
+        const auto pcs=Collisions(ways,capacity);
         for(unsigned i=0;i<ways;++i){bool hit;auto* b=cache->LookupOrAllocate(pcs[i],hit);Require(!hit,"unexpected allocation hit");b->inst_count=1;b->end_pc=b->start_pc+4;}
         for(unsigned i=0;i<ways;++i){Require(cache->Lookup(pcs[i]),"lookup lost tag");bool hit;cache->LookupOrAllocate(pcs[i],hit);Require(hit,"allocation lookup lost tag");}
         Require(!cache->Lookup(pcs.back()),"missing tag became a hit");

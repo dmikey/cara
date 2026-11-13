@@ -13,25 +13,25 @@
 #include "core/arm/fastinterp/fastinterp_cache.h"
 using namespace Core::FastInterp;
 static void Check(bool ok) { if (!ok) throw std::runtime_error("SIMD/scalar mismatch"); }
-static u32 Index(u32 pc, unsigned ways) {
+static u32 Index(u32 pc, unsigned ways, unsigned capacity) {
     u32 h = pc * 0x9e3779b9u; h ^= h >> 16;
-    return (h >> 4) & ((CACHE_SIZE / ways) - 1);
+    return (h >> 4) & ((capacity / ways) - 1);
 }
-static std::vector<u32> PCs(unsigned ways, unsigned sets = 64) {
+static std::vector<u32> PCs(unsigned ways, unsigned capacity, unsigned sets = 64) {
     std::vector<u32> pcs; std::vector<unsigned> counts(sets);
     for (u32 pc = 0x1000; pcs.size() < sets * ways; pc += 4) {
-        auto set = Index(pc, ways);
+        auto set = Index(pc, ways, capacity);
         if (set < sets && counts[set] < ways) { pcs.push_back(pc); ++counts[set]; }
     }
     return pcs;
 }
-static void Differential(unsigned ways, bool profiling, bool recency) {
-    auto a = std::make_unique<BlockCache>(), b = std::make_unique<BlockCache>();
+static void Differential(unsigned capacity, unsigned ways, bool profiling, bool recency) {
+    auto a = std::make_unique<BlockCache>(capacity), b = std::make_unique<BlockCache>(capacity);
     a->SetEightWay(ways == 8); b->SetEightWay(ways == 8);
     a->SetChainRecency(recency); b->SetChainRecency(recency);
     a->SetSimdTags(false); b->SetSimdTags(true);
     a->SetProfiling(profiling); b->SetProfiling(profiling);
-    auto pcs = PCs(ways, 4); std::mt19937 rng(7231);
+    auto pcs = PCs(ways, capacity, 4); std::mt19937 rng(7231);
     std::unordered_map<BasicBlock*, BasicBlock*> slots;
     for (unsigned i = 0; i < 100000; ++i) {
         auto pc = pcs[rng() % pcs.size()];
@@ -72,7 +72,7 @@ static void Differential(unsigned ways, bool profiling, bool recency) {
 static volatile u64 sink;
 static double Bench(unsigned ways, bool simd, unsigned pattern, bool allocate) {
     auto cache = std::make_unique<BlockCache>(); cache->SetEightWay(ways == 8); cache->SetSimdTags(simd);
-    auto pcs = PCs(ways); bool hit;
+    auto pcs = PCs(ways, cache->Capacity()); bool hit;
     for (auto pc : pcs) cache->LookupOrAllocate(pc, hit)->inst_count = 1;
     std::vector<u32> trace(1 << 16); std::mt19937 rng(813);
     for (auto& pc : trace) {
@@ -90,9 +90,9 @@ static double Bench(unsigned ways, bool simd, unsigned pattern, bool allocate) {
     return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now()-start).count() / (trace.size()*128);
 }
 int main(int argc, char** argv) {
-    for (auto ways : {4u, 8u}) for (bool profiling : {false, true}) for (bool recency : {false, true})
-        Differential(ways, profiling, recency);
-    std::cout << "Differential 800000 operations passed.\n";
+    for (auto capacity : {DEFAULT_CACHE_SIZE, MAX_CACHE_SIZE}) for (auto ways : {4u, 8u}) for (bool profiling : {false, true}) for (bool recency : {false, true})
+        Differential(capacity, ways, profiling, recency);
+    std::cout << "Differential 1600000 operations passed.\n";
     if (argc == 2 && std::strcmp(argv[1], "--test-only") == 0) return 0;
     for (auto ways : {4u, 8u}) for (unsigned pattern = 0; pattern < 4; ++pattern) for (bool allocate : {false,true}) {
         std::vector<double> scalar, simd;

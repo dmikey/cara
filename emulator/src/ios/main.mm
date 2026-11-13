@@ -639,11 +639,17 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (!std::getenv("CARA_GPU_PACKED_INPUTS")) setenv("CARA_GPU_PACKED_INPUTS","1",0);
     // Keep eligible tiled/linear RGBA8 aliases on the GPU; other layouts fall back.
     if (!std::getenv("CARA_GPU_SURFACE_REMAP")) setenv("CARA_GPU_SURFACE_REMAP","1",0);
+    if (!std::getenv("CARA_GPU_DEPTH_REINTERPRET")) setenv("CARA_GPU_DEPTH_REINTERPRET","1",0);
     if (!std::getenv("CARA_VS_UNIFORM_REUSE")) setenv("CARA_VS_UNIFORM_REUSE","1",0);
     if (!std::getenv("CARA_FASTINTERP_ALU_OPERANDS")) setenv("CARA_FASTINTERP_ALU_OPERANDS","1",0);
     if (!std::getenv("CARA_FASTINTERP_TICK_BUCKETS")) setenv("CARA_FASTINTERP_TICK_BUCKETS","1",0);
     if (!std::getenv("CARA_FASTINTERP_CHAIN_BUDGET")) setenv("CARA_FASTINTERP_CHAIN_BUDGET","1",0);
     if (!std::getenv("CARA_FASTINTERP_CACHE_WAYS")) setenv("CARA_FASTINTERP_CACHE_WAYS","8",0);
+    // A larger decoded working set reduces repeated interpretation setup on
+    // devices with enough RAM. Explicit diagnostic overrides remain intact.
+    if (!std::getenv("CARA_FASTINTERP_CACHE_ENTRIES") &&
+        NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
+        setenv("CARA_FASTINTERP_CACHE_ENTRIES","32768",0);
     if (!std::getenv("CARA_GL_STATE_REUSE")) setenv("CARA_GL_STATE_REUSE","1",0);
     if (!std::getenv("CARA_FASTINTERP_RAM_BURST")) setenv("CARA_FASTINTERP_RAM_BURST","1",0);
     if (!std::getenv("CARA_FASTINTERP_AL_DISPATCH")) setenv("CARA_FASTINTERP_AL_DISPATCH","1",0);

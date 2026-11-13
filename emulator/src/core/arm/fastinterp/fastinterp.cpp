@@ -26,6 +26,13 @@
 #include "video_core/video_core.h"
 #include "core/memory.h"
 
+// Compile-time experiment: preserve the default interpreter's PC shadow behavior.
+// Both builds share guest timing and state formats; census reports the actual mode.
+#ifndef CARA_FASTINTERP_ABSOLUTE_PC
+#define CARA_FASTINTERP_ABSOLUTE_PC 0
+#endif
+static_assert(CARA_FASTINTERP_ABSOLUTE_PC == 0 || CARA_FASTINTERP_ABSOLUTE_PC == 1);
+
 class FastInterpThreadContext final : public ARM_Interface::ThreadContext {
 public:
     FastInterpThreadContext() {
@@ -252,9 +259,13 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
            << ",\"precise_block_end_enabled\":" << (precise_block_end_ ? "true" : "false")
            << ",\"al_dispatch_enabled\":" << (al_dispatch_ ? "true" : "false")
            << ",\"secondary_link_enabled\":" << (secondary_link_ ? "true" : "false")
+           << ",\"absolute_pc_enabled\":" << (CARA_FASTINTERP_ABSOLUTE_PC ? "true" : "false")
            << ",\"cache_ways\":" << cache_.Ways()
-           << ",\"cache_sets\":" << cache_.Sets() << ",\"cache_entries\":" << CACHE_SIZE
+           << ",\"cache_sets\":" << cache_.Sets() << ",\"cache_entries\":" << cache_.Capacity()
            << ",\"cache_object_bytes\":" << sizeof(cache_)
+           << ",\"cache_metadata_bytes\":" << sizeof(cache_)
+           << ",\"cache_block_storage_bytes\":" << cache_.BlockStorageBytes()
+           << ",\"cache_owned_bytes\":" << cache_.OwnedBytes()
            << ",\"hot_blocks_reoptimized\":" << fusion_stats_.hot_blocks_reoptimized
            << ",\"unrolled_resident_blocks\":" << unrolled_blocks
            << ",\"unrolled_resident_entry_weighted_dispatches\":" << unrolled_dispatches
@@ -1173,6 +1184,14 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
 #define SET_PC(val) (local_pc = (val))
 #define SYNC_PC() (state_.regs[15] = local_pc)
 
+// Absolute expressions require decoder-proven block boundaries. Keep ordinary
+// advances below: LLVM removes them when all PC observers are absolute.
+#if CARA_FASTINTERP_ABSOLUTE_PC
+#define BOUNDARY_PC(absolute, legacy) (absolute)
+#else
+#define BOUNDARY_PC(absolute, legacy) (legacy)
+#endif
+
 // No bounds check: every block ends with an EndBlock terminator.
 #define DISPATCH()                                                                                 \
     do {                                                                                           \
@@ -1509,6 +1528,7 @@ done:
 
 #undef GET_PC
 #undef SET_PC
+#undef BOUNDARY_PC
 #undef SYNC_PC
 #undef DISPATCH
 #undef KEEP_PAGE_TABLE_REGISTER

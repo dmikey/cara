@@ -98,3 +98,21 @@ success or completion; errors retain their existing renderer behavior. Diagnosti
 clocks, fixed-table scans and serialization perturb execution, so compare
 performance using separate matched runs with tracing disabled. A successful
 aggregation/syntax fixture is not device validation of a new diagnostic build.
+
+## Dirty-owner context
+
+Before each traced RAM fallback flush, `preflush_dirty_owners` snapshots the dirty
+interval owners intersecting the requested RAM range. Up to eight owner
+fragments are retained per entry; overflow byte/fragment totals remain explicit.
+The record includes format, tiling, stride, scale, allocation identity, address
+range and owner-invalid bytes, plus the intended flush disposition. It is a
+pre-flush ownership observation, not a GPU completion receipt.
+
+`GLES_depth_CPU_export` identifies depth bytes requiring correct publication for
+a CPU/RAM consumer. The old renderer skipped these downloads while consuming
+ownership, so a zero historical readback count did not establish coherence.
+Depth exports now use legal RGBA readback and record four transferred bytes per
+pixel, including D16. Their flush wall time includes GPU encoding, readback, CPU
+packing and exact guest-byte publication. Ordinary color flush wall time covers
+its existing texture download scope; these are different timing boundaries.
+Do not add flush wall time to its nested readback or packing phases.

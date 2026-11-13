@@ -69,9 +69,14 @@ jobs:
       - name: Native file I/O regression check (no ROM required)
         if: matrix.platform == 'mac'
         run: |
+          work/build-mac/bin/cara-fastinterp-capacity-self-test
+          CARA_FASTINTERP_CAPACITY_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_CACHE_ENTRIES=32768 CARA_FASTINTERP_SECONDARY_LINK=1 CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-fastinterp-secondary-link-self-test
           CARA_FASTINTERP_SECONDARY_LINK_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_AL_DISPATCH_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_BLX_LINK_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_PC_BOUNDARY_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_SECONDARY_LINK=1 CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-fastinterp-simd-tags-self-test --test-only

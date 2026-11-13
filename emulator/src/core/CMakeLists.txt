@@ -3,6 +3,11 @@
 option(CARA_FASTINTERP_NO_LTO "Compile the interpreter without ThinLTO for comparison" OFF)
 option(CARA_FASTINTERP_NO_TAIL_MERGE "Compare separate interpreter dispatch tails" OFF)
 option(CARA_FASTINTERP_PIN_PAGE_TABLE "Compare ARM64 page-table base pinned to x28" OFF)
+option(CARA_FASTINTERP_ABSOLUTE_PC "Materialize guest PC from decoded block boundaries" OFF)
+if(CARA_FASTINTERP_ABSOLUTE_PC)
+    set_property(SOURCE arm/fastinterp/fastinterp.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS CARA_FASTINTERP_ABSOLUTE_PC=1)
+endif()
 if(CARA_FASTINTERP_PIN_PAGE_TABLE)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "CARA_FASTINTERP_PIN_PAGE_TABLE requires Clang")

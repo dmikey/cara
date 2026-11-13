@@ -11,8 +11,9 @@ static int VerifyFastInterpDecodeCost(Core::System& system) {
         std::vector<u64> state,events;
         bool operator==(const Trace&) const = default;
     };
+    const auto capacity=BlockCache::CapacityFromEnvironment();
     for(unsigned ways:{4u,8u}) {
-        auto index=[ways](u32 pc) {u32 h=pc*0x9e3779b9u;h^=h>>16;return(h>>4)&((CACHE_SIZE/ways)-1);};
+        auto index=[ways,capacity](u32 pc) {u32 h=pc*0x9e3779b9u;h^=h>>16;return(h>>4)&((capacity/ways)-1);};
         std::vector<u32> pcs;
         for(u32 pc=0x1000;pcs.size()<ways+5;pc+=16)
             if(index(pc)==index(0x1000))pcs.push_back(pc);
@@ -20,8 +21,9 @@ static int VerifyFastInterpDecodeCost(Core::System& system) {
         for(unsigned mode=0;mode<2;++mode) {
             Memory::MemorySystem memory;Core::Timing timing;
             auto table=std::make_shared<Memory::PageTable>();
-            auto bytes=std::make_shared<BufferMem>(0x100000);
-            for(unsigned p=0;p<256;++p) {
+            const unsigned ram_size=std::max(0x100000u,(pcs.back()+0x100fu)&~0xfffu);
+            auto bytes=std::make_shared<BufferMem>(ram_size);
+            for(unsigned p=0;p<ram_size/4096;++p) {
                 table->attributes[p]=Memory::PageType::Memory;
                 table->pointers[p]=MemoryRef(bytes,p*4096);
             }

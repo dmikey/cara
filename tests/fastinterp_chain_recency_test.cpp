@@ -10,10 +10,10 @@
 #include "core/arm/fastinterp/fastinterp_cache.h"
 using namespace Core::FastInterp;
 static void Require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
-static std::vector<u32> Collisions(unsigned ways, unsigned count) {
-    const auto index = [ways](u32 pc) {
+static std::vector<u32> Collisions(unsigned ways, unsigned count, unsigned capacity) {
+    const auto index = [ways,capacity](u32 pc) {
         u32 hash = pc * 0x9e3779b9u; hash ^= hash >> 16;
-        return (hash >> 4) & ((CACHE_SIZE / ways) - 1);
+        return (hash >> 4) & ((capacity / ways) - 1);
     };
     std::vector<u32> result;
     for (u32 pc = 0x1000; result.size() < count; pc += 4)
@@ -28,10 +28,10 @@ static BasicBlock* Allocate(BlockCache& cache, u32 pc, bool* was_hit = nullptr) 
     return block;
 }
 struct Result { unsigned hot_misses = 0, next_hot_misses = 0; u64 misses = 0; };
-static Result Stream(unsigned ways, bool lazy, bool profiling) {
+static Result Stream(unsigned capacity, unsigned ways, bool lazy, bool profiling) {
     constexpr unsigned rounds = 1000, second_rounds = 500;
-    const auto pcs = Collisions(ways, ways + rounds + second_rounds + 2);
-    auto cache = std::make_unique<BlockCache>();
+    const auto pcs = Collisions(ways, ways + rounds + second_rounds + 2, capacity);
+    auto cache = std::make_unique<BlockCache>(capacity);
     cache->SetEightWay(ways == 8); cache->SetChainRecency(lazy); cache->SetProfiling(profiling);
     std::array<BasicBlock*, 2> hot{};
     for (unsigned i = 0; i < ways; ++i) {
@@ -78,10 +78,10 @@ static Result Stream(unsigned ways, bool lazy, bool profiling) {
     } else Require(result.misses == 0, "disabled diagnostics changed profile totals");
     return result;
 }
-static void Coherence(unsigned ways) {
-    auto cache = std::make_unique<BlockCache>(); cache->SetEightWay(ways == 8);
+static void Coherence(unsigned capacity, unsigned ways) {
+    auto cache = std::make_unique<BlockCache>(capacity); cache->SetEightWay(ways == 8);
     cache->SetChainRecency(true); cache->SetProfiling(true);
-    const auto pcs = Collisions(ways, ways + 5);
+    const auto pcs = Collisions(ways, ways + 5, capacity);
     std::vector<BasicBlock*> blocks;
     for (unsigned i = 0; i < ways; ++i) {
         auto* block = Allocate(*cache, pcs[i]); block->exec_count = UINT32_MAX; blocks.push_back(block);
@@ -104,15 +104,15 @@ static void Coherence(unsigned ways) {
     Require(fresh->exec_count == 0 && !fresh->IsThumb(), "clear/allocation retained stale activity or mode");
 }
 int main() {
-    for (unsigned ways : {4u, 8u}) {
-        const auto baseline = Stream(ways, false, true);
-        const auto candidate = Stream(ways, true, true);
-        const auto quiet = Stream(ways, true, false);
+    for (unsigned capacity : {DEFAULT_CACHE_SIZE,MAX_CACHE_SIZE}) for (unsigned ways : {4u, 8u}) {
+        const auto baseline = Stream(capacity, ways, false, true);
+        const auto candidate = Stream(capacity, ways, true, true);
+        const auto quiet = Stream(capacity, ways, true, false);
         Require(baseline.hot_misses > candidate.hot_misses, "fixture did not expose chain recency gap");
         Require(quiet.hot_misses == candidate.hot_misses && quiet.next_hot_misses == candidate.next_hot_misses,
                 "diagnostic toggle changed victim behavior");
-        Coherence(ways);
-        std::cout << "ways=" << ways << " legacy_hot_redecodes=" << baseline.hot_misses
+        Coherence(capacity, ways);
+        std::cout << "capacity=" << capacity << " ways=" << ways << " legacy_hot_redecodes=" << baseline.hot_misses
                   << " lazy_hot_redecodes=" << candidate.hot_misses
                   << " lazy_phase2_hot_redecodes=" << candidate.next_hot_misses << '\n';
     }

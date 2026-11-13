@@ -23,6 +23,7 @@
 
 namespace Core::FastInterp {
 struct DecodeRecordSelfTestAccess {
+    static unsigned CacheCapacity(const ARM_FastInterp& cpu) {return cpu.cache_.Capacity();}
     static void ConfigureSecondary(ARM_FastInterp& cpu,bool enabled) {cpu.secondary_link_=enabled;cpu.cache_.SetProfiling(true);cpu.ClearInstructionCache();}
     static void ConfigureAlDispatch(ARM_FastInterp& cpu, bool enabled) {
         cpu.al_dispatch_ = enabled; cpu.ClearInstructionCache();
@@ -70,11 +71,20 @@ struct DecodeRecordSelfTestAccess {
 #include "fastinterp_decode_cost_self_test.h"
 #include "fastinterp_al_dispatch_self_test.h"
 #include "fastinterp_secondary_link_self_test.h"
+#include "fastinterp_capacity_self_test.h"
+#include "fastinterp_blx_link_self_test.h"
+#include "fastinterp_pc_boundary_self_test.h"
 
 int main() {
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
+    if (std::getenv("CARA_FASTINTERP_PC_BOUNDARY_TEST"))
+        return VerifyFastInterpPCBoundary(system);
+    if (std::getenv("CARA_FASTINTERP_BLX_LINK_TEST"))
+        return VerifyFastInterpBlxLink(system);
+    if (std::getenv("CARA_FASTINTERP_CAPACITY_TEST"))
+        return VerifyFastInterpCapacity(system);
     if (std::getenv("CARA_FASTINTERP_SECONDARY_LINK_TEST"))
         return VerifyFastInterpSecondaryLink(system);
     if (std::getenv("CARA_FASTINTERP_AL_DISPATCH_TEST"))
@@ -505,17 +515,18 @@ int main() {
     }
     if (std::getenv("CARA_CACHE_PROFILE_TEST")) {
         using namespace Core::FastInterp;
+        for (unsigned capacity : {DEFAULT_CACHE_SIZE,MAX_CACHE_SIZE})
         for (unsigned ways : {4u, 8u})
         for (bool enabled : {false, true}) {
-            auto cache = std::make_unique<BlockCache>();
+            auto cache = std::make_unique<BlockCache>(capacity);
             cache->SetEightWay(ways == 8);
             cache->SetProfiling(enabled);
             std::array<u32, 9> colliding{};
             unsigned found = 0;
-            auto set_index = [ways](u32 pc) {
+            auto set_index = [ways,capacity](u32 pc) {
                 u32 value = pc * 0x9E3779B9u;
                 value ^= value >> 16;
-                return (value >> 4) & ((CACHE_SIZE / ways) - 1);
+                return (value >> 4) & ((capacity / ways) - 1);
             };
             for (u32 pc = 0x1000; found < ways + 1; pc += 4)
                 if (set_index(pc) == set_index(0x1000)) colliding[found++] = pc;
@@ -595,8 +606,8 @@ int main() {
         const char* way_flag = std::getenv("CARA_FASTINTERP_CACHE_WAYS");
         const unsigned expected_ways = way_flag && std::strcmp(way_flag, "8") == 0 ? 8 : 4;
         if (field("cache_ways") != expected_ways ||
-            field("cache_sets") != CACHE_SIZE / expected_ways ||
-            field("cache_entries") != CACHE_SIZE ||
+            field("cache_sets") != DecodeRecordSelfTestAccess::CacheCapacity(*fast) / expected_ways ||
+            field("cache_entries") != DecodeRecordSelfTestAccess::CacheCapacity(*fast) ||
             field("blocks_decoded") != 2 ||
             field("cache_allocation_misses") != (enabled ? 1u : 0u) ||
             field("cache_mode_redecodes") != (enabled ? 1u : 0u) ||
