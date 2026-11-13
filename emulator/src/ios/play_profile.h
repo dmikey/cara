@@ -15,7 +15,7 @@ constexpr PlayPolicy MakePlayPolicy(PlayMode mode,unsigned requestedMaximum,bool
     const bool adaptive=adaptiveOverride>=0?adaptiveOverride!=0:(!benchmark && mode==PlayMode::Performance && !fixedGuestRequested);
     const bool accuracy=!benchmark && adaptiveOverride<0 && mode==PlayMode::Accuracy;
     const unsigned guest=requestedGuest<25?25:requestedGuest>200?200:requestedGuest;
-    return {adaptive,!diagnostic && !accuracy && fixedGuestRequested?guest:100,accuracy?105:maximum,
+    return {adaptive,!diagnostic && !accuracy && fixedGuestRequested?guest:100,accuracy?100:maximum,
             accuracy || diagnostic || limitRequested};
 }
 constexpr PlayMode DefaultPlayMode=PlayMode::Performance;

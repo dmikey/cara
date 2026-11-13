@@ -538,7 +538,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
         UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem];
         UIButtonConfiguration* config=[UIButtonConfiguration borderedButtonConfiguration];
         config.title=accuracy?@"Accuracy Mode":@"Performance Mode";
-        config.subtitle=accuracy?@"105% speed · 100% guest CPU":(self.performanceDetail?:@"Adaptive CPU clock");
+        config.subtitle=accuracy?@"100% speed · 100% guest CPU":(self.performanceDetail?:@"Adaptive CPU clock");
         config.image=[UIImage systemImageNamed:accuracy?@"scope":@"bolt.fill"];
         config.imagePadding=18; config.titleAlignment=UIButtonConfigurationTitleAlignmentLeading;
         config.contentInsets=NSDirectionalEdgeInsetsMake(25,22,25,22); config.cornerStyle=UIButtonConfigurationCornerStyleLarge;

@@ -30,7 +30,7 @@ int main() {
         const auto diagnostic=Cara::MakePlayPolicy(Cara::PlayMode::Performance,125,true,-1,true,clock,false);
         const auto forced=Cara::MakePlayPolicy(Cara::PlayMode::Performance,125,false,0,true,clock,false);
         const auto automatic=Cara::MakePlayPolicy(Cara::PlayMode::Performance,105,false,-1,false,clock);
-        if (locked.adaptive || locked.guest_clock!=100 || locked.maximum_speed!=105 || !locked.limit_speed ||
+        if (locked.adaptive || locked.guest_clock!=100 || locked.maximum_speed!=100 || !locked.limit_speed ||
             diagnostic.adaptive || diagnostic.guest_clock!=100 || !diagnostic.limit_speed ||
             forced.adaptive || forced.guest_clock!=100 || !forced.limit_speed || !automatic.adaptive || automatic.guest_clock!=100) return 1;
     }
@@ -41,11 +41,11 @@ int main() {
         const auto performance=Cara::MakePlayPolicy(Cara::PlayMode::Performance,maximum);
         const auto benchmark=Cara::MakePlayPolicy(Cara::PlayMode::Performance,maximum,true);
         const auto overridden=Cara::MakePlayPolicy(Cara::PlayMode::Performance,maximum,false,0);
-        if (accuracy.adaptive || accuracy.guest_clock!=100 || accuracy.maximum_speed!=105 ||
+        if (accuracy.adaptive || accuracy.guest_clock!=100 || accuracy.maximum_speed!=100 ||
             !performance.adaptive || performance.guest_clock!=100 || performance.maximum_speed<50 || performance.maximum_speed>200 ||
             benchmark.adaptive || benchmark.guest_clock!=100 || overridden.adaptive || overridden.guest_clock!=100) return 1;
     }
-    std::cout<<"PASS: Performance default; Accuracy105% speed/100% guest; bounded Performance cap; benchmark and explicit fixed-clock overrides\n";
+    std::cout<<"PASS: Performance default; Accuracy100% speed/100% guest; bounded Performance cap; benchmark and explicit fixed-clock overrides\n";
     std::cout<<"PASS: session loading/pause/stop/failure transitions, retained paused display and rejection of queued/stale frames\n";
     std::cout<<"PASS: fixed-clock bounds, optional speed limit, locked Accuracy preset and benchmark isolation from saved tuning\n";
 }

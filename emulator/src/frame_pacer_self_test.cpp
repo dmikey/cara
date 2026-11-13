@@ -18,8 +18,8 @@ void Near(double actual, double expected, double tolerance, const char* message)
 int main() {
     try {
         Cara::FramePacer pacer;
-        Require(pacer.SpeedPercent() == 105, "Default is not 105 percent");
-        const double period = (1.0 / 59.833997376556916) * (100.0 / 105.0);
+        Require(pacer.SpeedPercent() == 100, "Default is not 100 percent");
+        const double period = (1.0 / 59.833997376556916) * (100.0 / 100.0);
         pacer.Reset(10);
         Near(pacer.Advance(3, 10.002), 10 + 3 * period, 1e-12,
              "Multiple vblanks counted as one frontend iteration");

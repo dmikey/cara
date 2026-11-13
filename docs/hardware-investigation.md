@@ -905,3 +905,8 @@ arrays; native bounds/reclamation tests run against that same helper, including
 all 70 classes and class 69. ASan/UBSan checks passed locally. Finite raster and
 special-value GPU equivalence tests must pass before any speed result can be
 accepted; modeled shader reuse is not a measured gain.
+
+Normal pacing and Accuracy default to 100% speed; Accuracy also fixes guest CPU
+at 100%. Audio stretching defaults off and remains optional. Explicit higher
+speed limits remain available in Advanced. These defaults do not guarantee
+artifact-free audio in scenes that cannot maintain real time.
