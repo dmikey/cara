@@ -318,8 +318,14 @@
             }
           ],
           "translucent": false,
-          "caraStatsFrame": {
+          "caraStatusFrame": {
             "x": 52,
+            "y": 50,
+            "width": 64,
+            "height": 102
+          },
+          "caraStatsFrame": {
+            "x": 128,
             "y": 50,
             "width": 430,
             "height": 102
@@ -636,8 +642,14 @@
               }
             }
           ],
-          "caraStatsFrame": {
+          "caraStatusFrame": {
             "x": 48,
+            "y": 26,
+            "width": 64,
+            "height": 82
+          },
+          "caraStatsFrame": {
+            "x": 124,
             "y": 26,
             "width": 430,
             "height": 82
@@ -960,8 +972,14 @@
             }
           ],
           "translucent": false,
-          "caraStatsFrame": {
+          "caraStatusFrame": {
             "x": 52,
+            "y": 50,
+            "width": 64,
+            "height": 102
+          },
+          "caraStatsFrame": {
+            "x": 128,
             "y": 50,
             "width": 430,
             "height": 102
@@ -1278,8 +1296,14 @@
               }
             }
           ],
-          "caraStatsFrame": {
+          "caraStatusFrame": {
             "x": 48,
+            "y": 26,
+            "width": 64,
+            "height": 82
+          },
+          "caraStatsFrame": {
+            "x": 124,
             "y": 26,
             "width": 430,
             "height": 82

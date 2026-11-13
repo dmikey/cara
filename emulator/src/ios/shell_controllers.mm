@@ -465,8 +465,9 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
-    socket.frame=CGRectMake(CGRectGetMidX(self.bounds)-9,CGRectGetMidY(self.bounds)-9,18,18); socket.cornerRadius=9;
-    light.frame=CGRectInset(socket.frame,4,4); light.cornerRadius=5;
+    const CGFloat diameter=MAX(4,MIN(18,MIN(self.bounds.size.width,self.bounds.size.height)-2));
+    socket.frame=CGRectMake(CGRectGetMidX(self.bounds)-diameter/2,CGRectGetMidY(self.bounds)-diameter/2,diameter,diameter); socket.cornerRadius=diameter/2;
+    light.frame=CGRectInset(socket.frame,diameter*2/9,diameter*2/9); light.cornerRadius=light.bounds.size.width/2;
     light.shadowPath=[UIBezierPath bezierPathWithOvalInRect:light.bounds].CGPath;
 }
 - (void)updateLight:(CaraStatusLight)state accessibilityStatus:(NSString*)status {
@@ -492,8 +493,6 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     UIScrollView* scroll=[UIScrollView new]; scroll.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:scroll];
     UIStackView* body=[UIStackView new]; body.axis=UILayoutConstraintAxisVertical; body.spacing=16; body.translatesAutoresizingMaskIntoConstraints=NO;
     [scroll addSubview:body];
-    UILabel* title=[UILabel new]; title.text=@"Play your way"; title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle1]; title.adjustsFontForContentSizeCategory=YES;
-    [body addArrangedSubview:title];
     __weak CaraQuickSettingsController* weakSelf=self;
     NSMutableArray* modes=[NSMutableArray new];
     for (NSString* mode in @[@"accuracy",@"performance"]) {

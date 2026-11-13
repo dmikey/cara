@@ -583,12 +583,13 @@ static const char* CaraSelectedCPUBackend() {
     top.frame=convert(skinControls.upperScreen); bottom.frame=convert(skinControls.lowerScreen);
     CGRect statsFrame=CaraSkinRect(rep[@"caraStatsFrame"]);
     if (statsFrame.size.width<=0 || statsFrame.size.height<=0) statsFrame=CGRectMake(52,50,430,102);
-    performanceHUD.frame=convert(statsFrame);
+    const CaraHUDLayout hud=CaraSkinHUDLayout(rep,canvas);
+    performanceHUD.frame=hud.metrics;
     NSString* statsKey=landscape?@"landscapeStatsVisible":@"portraitStatsVisible";
     performanceHUD.hidden=[NSUserDefaults.standardUserDefaults objectForKey:statsKey] && ![NSUserDefaults.standardUserDefaults boolForKey:statsKey];
     status.frame=landscape?convert(CGRectMake(statsFrame.origin.x,CGRectGetMaxY(statsFrame)+8,statsFrame.size.width,54)):convert(CGRectMake((mapping.width-600)/2,mapping.height-170,600,48));
     status.numberOfLines=landscape?2:1;
-    statusIndicator.frame=CGRectMake(landscape?CGRectGetMinX(status.frame):CGRectGetMidX(status.frame)-12,CGRectGetMidY(status.frame)-12,24,24);
+    statusIndicator.frame=hud.indicator;
     status.adjustsFontSizeToFitWidth=YES; status.minimumScaleFactor=0.7;
 #ifdef CARA_IOS_GLES
     if (emuWindow) emuWindow->SetDisplayLayout(top.frame,bottom.frame,self.view.bounds.size,gpuSurface.contentScaleFactor);

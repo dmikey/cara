@@ -32,7 +32,6 @@ def portrait(width, height, phone):
     bottom = dict(x=185 if phone else 434,y=840 if phone else 930,width=800,height=600)
     box(0,0,width,height,'#000000',radius=0)
     box(24,24,width-48,height-48,'#000000','#17231b',44)
-    box(48,26,430,82,'#080d09',radius=22)
     for f in [top,bottom]:
         box(f['x']-12,f['y']-12,f['width']+24,f['height']+24,'#000000','#26362a',20)
     shoulder_y=1480 if phone else 1570
@@ -72,7 +71,8 @@ def portrait(width, height, phone):
     c.showPage(); c.save()
     return dict(assets=dict(resizable=name),mappingSize=dict(width=width,height=height),items=items,
                 screens=[dict(inputFrame=dict(x=0,y=0,width=400,height=240),outputFrame=top),dict(inputFrame=dict(x=40,y=240,width=320,height=240),outputFrame=bottom)],
-                caraStatsFrame=dict(x=48,y=26,width=430,height=82),translucent=False)
+                caraStatusFrame=dict(x=48,y=26,width=64,height=82),
+                caraStatsFrame=dict(x=124,y=26,width=430,height=82),translucent=False)
 
 
 def main():
@@ -91,7 +91,6 @@ def main():
         c.circle(x, H-y, r, stroke=1, fill=1)
     box(0, 0, W, H, '#000000')
     box(24, 24, W-48, H-48, '#000000', '#17231b', 54)
-    box(52, 50, 430, 102, '#080d09', None, 28)
     for f in [TOP, BOTTOM]:
         box(f['x']-18, f['y']-18, f['width']+36, f['height']+36, '#000000', '#26362a', 24, 3)
         box(**dict(x=f['x'], y=f['y'], w=f['width'], h=f['height']), fill='#000000')
@@ -133,7 +132,8 @@ def main():
     draw.ellipse((45,45,467,467), fill='#1b2f20', outline='#3a5637', width=4)
     thumb.save(DEST/'thumbstick.png')
     rep=dict(assets=dict(resizable=pdf.name), mappingSize=dict(width=W,height=H),items=items,
-             screens=[dict(inputFrame=dict(x=0,y=0,width=400,height=240),outputFrame=TOP),dict(inputFrame=dict(x=40,y=240,width=320,height=240),outputFrame=BOTTOM)],translucent=False, caraStatsFrame=dict(x=52,y=50,width=430,height=102))
+             screens=[dict(inputFrame=dict(x=0,y=0,width=400,height=240),outputFrame=TOP),dict(inputFrame=dict(x=40,y=240,width=320,height=240),outputFrame=BOTTOM)],translucent=False,
+             caraStatusFrame=dict(x=52,y=50,width=64,height=102),caraStatsFrame=dict(x=128,y=50,width=430,height=102))
     portrait_pad=portrait(1668,2420,False)
     portrait_phone=portrait(1170,2532,True)
     info=dict(name='Cara Carbon Duo',identifier='com.dmikey.cara.carbon-duo.v2',gameTypeIdentifier='com.dmikey.cara.game.3ds',debug=False,representations=dict(ipad=dict(standard=dict(landscape=rep,portrait=portrait_pad)),iphone=dict(standard=dict(landscape=rep,portrait=portrait_phone))))
