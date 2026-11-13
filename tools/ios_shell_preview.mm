@@ -50,7 +50,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     self.view.backgroundColor=UIColor.blackColor;
     fixtureFixed=NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"]!=nil;
     fixtureClock=fixtureFixed?[NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"] integerValue]:100;
-    fixtureLimit=![NSProcessInfo.processInfo.environment[@"CARA_UI_UNCAPPED"] isEqual:@"1"]; fixtureMaximum=105;
+    fixtureLimit=![NSProcessInfo.processInfo.environment[@"CARA_UI_UNCAPPED"] isEqual:@"1"]; fixtureMaximum=100;
     self.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"light"]?UIUserInterfaceStyleLight:UIUserInterfaceStyleDark;
     NSString* folder=[NSTemporaryDirectory() stringByAppendingPathComponent:@"CaraShellFixture"];
     fixture=[NSURL fileURLWithPath:folder isDirectory:YES];
@@ -100,8 +100,8 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
         @{@"title":@"Use fixed guest clock",@"value":@(accuracy||fixtureFixed),@"enabled":@(!accuracy),@"change":^(BOOL on) { PreviewRoot* root=owner; if (!root) return; root->fixtureFixed=on; [root refreshAdvancedFixture]; }},
         @{@"title":@"Guest clock",@"subtitle":@"25–200% · Normal guest clock: 100%.",@"enabled":@(!accuracy&&fixtureFixed),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(policy.guest_clock)},@"sliderChange":^(double value) { PreviewRoot* root=owner; if (root) root->fixtureClock=NSUInteger(value); }},
         @{@"title":@"Limit game speed",@"value":@(policy.limit_speed),@"enabled":@(!accuracy),@"change":^(BOOL on) { PreviewRoot* root=owner; if (!root) return; root->fixtureLimit=on; [root refreshAdvancedFixture]; }},
-        @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 105%.",@"enabled":@(!accuracy&&policy.limit_speed),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(policy.maximum_speed)},@"sliderChange":^(double value) { PreviewRoot* root=owner; if (root) root->fixtureMaximum=NSUInteger(value); }},
-    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 105%.":@"Guest clock and game speed are separate controls."};
+        @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 100%.",@"enabled":@(!accuracy&&policy.limit_speed),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(policy.maximum_speed)},@"sliderChange":^(double value) { PreviewRoot* root=owner; if (root) root->fixtureMaximum=NSUInteger(value); }},
+    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 100%.":@"Guest clock and game speed are separate controls."};
 }
 - (void)refreshAdvancedFixture { settings.sections=@[[self advancedFixtureSection]]; [settings refresh]; }
 - (void)showSkin {

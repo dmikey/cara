@@ -860,7 +860,7 @@ rotate and redundant instruction reread; independent ADD and dead-flag ADD.S
 oracles and timer traces pass. Its small native synthetic improvement is not a
 game-speed claim.
 
-Normal play now has a persisted `maximumSpeedPercent` preference, default 105,
+Normal play has a persisted `maximumSpeedPercent` preference, now default 100,
 with a frame-pacing policy independent of guest CPU underclocking. It counts all
 advanced vblanks per frontend iteration and discards overdue pacing debt, so slow
 frames or resume do not create catch-up bursts. Pause, load, counter reset and
@@ -905,3 +905,108 @@ arrays; native bounds/reclamation tests run against that same helper, including
 all 70 classes and class 69. ASan/UBSan checks passed locally. Finite raster and
 special-value GPU equivalence tests must pass before any speed result can be
 accepted; modeled shader reuse is not a measured gain.
+
+
+On the iPad, the fixed boot checkpoint saved at frame 600 and reloaded through
+another 1,200 refreshes. Explicit lit-pair GPU fixtures then found a test-only
+invalid indexed sampler query; using the active texture unit's GLES sampler
+query fixed it. Enabled finite/interpreter, indexed raster and exact special
+quaternion fixtures now pass, as do surface-coherence and uniform-reuse checks.
+
+Correctness did not establish a speed gain. With the same grass checkpoint,
+100% guest CPU and audio, lit-pair rendering measured 28.005 ms/refresh versus
+25.068 and 25.321 baselines at 80 MiB/bank. All work and final pixels matched.
+The new path filled the three-bank limit and incurred orphan allocations.
+112/128 MiB removed those fallbacks but still measured 26.089/26.032 versus
+24.713/25.186 baselines. Existing-path 80/128 MiB counters were identical through
+all 20 windows, so the small baseline timing difference does not justify a
+capacity change. Keep the existing 80 MiB selection and lit-pair mode disabled.
+
+The page-table x28 compiler variant likewise had no stable game gain:
+unpinned/pinned/unpinned measured 24.799/25.177/25.289 ms with identical checkpoint,
+work and final pixels. Native scalar-copy gains do not generalize to this route.
+A public iOS worker-QoS experiment successfully changed requested class21 to33
+(return0), but default/interactive/default measured 24.645/25.200/25.165 ms.
+Requested QoS is not effective core identity. Both experiments remain off.
+
+Further diagnostic scopes partition emulation-thread CPU time exclusively among
+RunLoop other work, CPU execution including memory, SVC/HLE, GPU command processing
+and scheduled DSP HLE ticks. Nested GPU work subtracts from its SVC/CPU parents;
+audio-queue callback CPU is outside these categories. These are CPU timings, not
+hardware GPU execution. Raw counts, clock failures/overflow and a clock-read cost
+calibration accompany the data. Diagnostics are opt-in and their frame times
+must not be used as uninstrumented performance results.
+
+
+The exclusive Stories grass capture at full guest clock and audio partitions
+23.38 ms/refresh of RunLoop CPU into 12.03 ms CPU execution/memory and 11.08 ms
+graphics-command CPU, with 0.10 ms SVC and 0.03 ms scheduled DSP work. Coverage
+was 99.77% of thread CPU; no clock failures/overflow occurred. Clock-read cost
+was estimated at 0.126 ms/refresh. The matched categories-off baseline was
+25.252 ms/refresh wall time; diagnostic pixels and workload matched. These are
+CPU measurements, not GPU execution timings.
+
+Two independent default-off experiments now target that split.
+`CARA_RENDER_BOOKKEEPING_REUSE` memoizes repeated pure format lookups within one
+validation call, preserving format mutations and warning order. Optional
+`CARA_RENDER_BOOKKEEPING_PROFILE` separates framebuffer/texture acquisition,
+shader setup and dirty-region invalidation; reinterpretation timing is nested
+and must not be added twice. `CARA_FASTINTERP_CONTIGUOUS_TRANSFERS` uses exact
+16/32-byte copies for decoded contiguous register groups wholly within mapped
+RAM, retaining existing PC/writeback and fallback behavior. Target comparisons
+must use one binary and one newly compatible checkpoint, with independent
+controls and identical rendered output before any default is changed.
+
+The first same-build grass sweep measured 25.187/25.448/25.424/25.467/25.464
+ms/refresh for baseline, lookup reuse, baseline, contiguous transfers and baseline.
+All final pixels and workloads matched. Neither candidate demonstrated a gain.
+Lookup reuse avoided about 87 searches per refresh; its baseline counters were
+not enabled, so zero baseline counts do not establish absence of work. The bulk
+transfer path handled about 19,977 transfers and 319,630 bytes per refresh.
+Native copy-loop gains did not translate to this first game measurement.
+
+A separate narrow diagnostic measured texture acquisition at 2.016 ms/refresh,
+framebuffer acquisition at 0.170, shader setup at 0.064 and dirty invalidation at
+0.220. Reinterpretation checks were 0.063 ms nested inside acquisition. Total
+StateApply was about 0.22 ms, limiting the value of skipping an otherwise-empty
+mipmap restore. These are instrumented wall timings, with overlapping nested
+phases; do not sum them as exclusive CPU totals. Follow-up work resolves the
+memory experiment at decode time and investigates safely reusing exact texture
+lookups, with normal validation and alias/registration guards retained.
+
+The second renderer candidate uses an eight-entry exact-surface lookup cache.
+Admission requires unique highest-scale selection; hits require matching keys,
+unchanged structural generation, registered identity, live watcher and valid
+requested interval. Normal validation, mip/custom handling and usage tracking
+remain intact. The iPad surface, vertex and uniform oracles passed, including
+no-load lookup cases. A separate grass shadow replay verified all 1,701,670
+proposed hits against original selection with zero mismatches. Final pixels
+matched controls byte-for-byte and all 20 windows matched 16 workload counters.
+
+The subsequent same-binary sweep measured 25.054/25.431/25.319/25.506/25.251
+ms/refresh for baseline, exact lookup cache, baseline, decode-time contiguous
+transfers and baseline. Guest clock was fixed at 100%, audio enabled, and host
+pacing uncapped for all runs. Pixels and workload matched. Relative to the
+adjacent baseline means, lookup caching was 0.97% slower and transfers 0.88%
+slower. This single bracketed sweep demonstrates no gain; it does not establish
+a precise regression magnitude. Both remain default-off. A 77% shadow hit rate
+and faster native copy microbenchmarks were insufficient to improve gameplay.
+Shader compilation and surface download were absent in these measured windows;
+remaining work needs to target the CPU command/dispatch costs with game-level
+evidence rather than add more cache bookkeeping on this path.
+
+
+Apple builds now decode AAC-LC mono/stereo through AudioToolbox. Original synthetic
+32/44.1/48 kHz fixtures match the same host's file-decoder PCM, including fragmented
+input, resets and malformed-input recovery. On iPad, Pokemon X requested 48 kHz
+stereo AAC and produced nonzero PCM with zero reported decoding errors; music
+continued after a fresh-build save/load test, and the user confirmed hearing it.
+The previous Apple build selected NullDecoder for these requests.
+
+Normal pacing and Accuracy now default to 100% speed; Accuracy also fixes guest
+CPU at 100%. Audio stretching defaults off but remains optional. Sustained 105%
+emulation with stretching off overproduces samples for the fixed-rate audio FIFO,
+whose full-buffer losses are not represented by underrun counts. With stretching
+on, the tempo adjustment can affect music even without underruns. Explicit higher
+speed limits remain available in Advanced. These defaults do not guarantee
+artifact-free audio in scenes that cannot maintain real time.

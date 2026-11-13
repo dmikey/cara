@@ -347,7 +347,7 @@ static BOOL CaraCanTuneEmulation() {
 static Cara::PlayPolicy CaraSavedPlayPolicy() {
     NSUserDefaults* defaults=NSUserDefaults.standardUserDefaults;
     const NSInteger saved=[defaults integerForKey:@"maximumSpeedPercent"];
-    const unsigned maximum=saved>=50 && saved<=200?unsigned(saved):105;
+    const unsigned maximum=saved>=50 && saved<=200?unsigned(saved):100;
     const char* override=std::getenv("CARA_ADAPTIVE_GUEST_CPU");
     return Cara::MakePlayPolicy([[defaults stringForKey:@"playMode"] isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,
         maximum,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,override?(std::strcmp(override,"1")==0?1:0):-1,
@@ -507,7 +507,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     NSString* mode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"];
     if (![@[@"accuracy",@"performance"] containsObject:mode]) mode=@"performance";
     [NSUserDefaults.standardUserDefaults setObject:mode forKey:@"playMode"];
-    [NSUserDefaults.standardUserDefaults registerDefaults:@{@"maximumSpeedPercent":@105,@"fixedGuestClockEnabled":@NO,@"fixedGuestClockPercent":@100,@"speedLimitEnabled":@YES}];
+    [NSUserDefaults.standardUserDefaults registerDefaults:@{@"maximumSpeedPercent":@100,@"audioStretching":@NO,@"fixedGuestClockEnabled":@NO,@"fixedGuestClockPercent":@100,@"speedLimitEnabled":@YES}];
     const auto policy=CaraSavedPlayPolicy();
     adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed; speedLimitEnabled=policy.limit_speed;
     adaptiveCPUDirty=false; guestClock=policy.guest_clock;
@@ -615,9 +615,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     [self applySavedPlayPolicy];
 }
 - (void)showMaximumSpeed {
-    UIAlertController* limits=[UIAlertController alertControllerWithTitle:@"Maximum speed" message:@"Limits game speed. 105% is the default." preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController* limits=[UIAlertController alertControllerWithTitle:@"Maximum speed" message:@"Limits game speed. 100% is the default." preferredStyle:UIAlertControllerStyleAlert];
     for (NSUInteger percent : {100u,105u,125u,150u,200u}) {
-        NSString* title=[NSString stringWithFormat:@"%@%lu%%%@",maximumSpeedLimit.load()==percent?@"✓ ":@"",(unsigned long)percent,percent==105?@" (Default)":@""];
+        NSString* title=[NSString stringWithFormat:@"%@%lu%%%@",maximumSpeedLimit.load()==percent?@"✓ ":@"",(unsigned long)percent,percent==100?@" (Default)":@""];
         [limits addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
             [self setMaximumSpeedPercent:percent]; [self resumeFromMenu];
         }]];
@@ -758,13 +758,13 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     const BOOL tuning=CaraCanTuneEmulation() && !accuracy;
     const BOOL fixed=accuracy || [NSUserDefaults.standardUserDefaults boolForKey:@"fixedGuestClockEnabled"];
     [sections addObject:@{@"title":@"Emulation",@"rows":@[
-        @{@"title":@"Play mode",@"subtitle":accuracy?@"Accuracy · 100% guest CPU, 105% speed":@"Performance",@"symbol":@"speedometer"},
+        @{@"title":@"Play mode",@"subtitle":accuracy?@"Accuracy · 100% guest CPU, 100% speed":@"Performance",@"symbol":@"speedometer"},
         @{@"title":@"Use fixed guest clock",@"subtitle":@"Turn off to let Cara adjust the guest clock automatically.",@"symbol":@"cpu",@"value":@(fixed),@"enabled":@(tuning),@"change":^(BOOL on) { [owner setEmulationPreference:@"fixedGuestClockEnabled" value:@(on) refresh:YES]; }},
         @{@"title":@"Guest clock",@"subtitle":@"25–200% · Normal guest clock: 100%.",@"enabled":@(tuning && fixed),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:std::clamp<NSInteger>([NSUserDefaults.standardUserDefaults integerForKey:@"fixedGuestClockPercent"],25,200))},@"sliderChange":^(double value) { [owner setEmulationPreference:@"fixedGuestClockPercent" value:@(std::lround(value)) refresh:NO]; }},
         @{@"title":@"Limit game speed",@"subtitle":@"Turn off to run as fast as the device allows.",@"symbol":@"gauge.with.dots.needle.67percent",@"value":@(speedLimitEnabled.load()),@"enabled":@(tuning),@"change":^(BOOL on) { [owner setEmulationPreference:@"speedLimitEnabled" value:@(on) refresh:YES]; }},
-        @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 105%.",@"enabled":@(tuning && speedLimitEnabled.load()),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(maximumSpeedLimit.load())},@"sliderChange":^(double value) { [owner setMaximumSpeedPercent:NSUInteger(std::lround(value))]; }},
+        @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 100%.",@"enabled":@(tuning && speedLimitEnabled.load()),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(maximumSpeedLimit.load())},@"sliderChange":^(double value) { [owner setMaximumSpeedPercent:NSUInteger(std::lround(value))]; }},
         action(@"Reset emulation tuning",@"arrow.counterclockwise",tuning,^{ EmulatorController* c=owner; if (!c) return; for (NSString* key in @[@"fixedGuestClockEnabled",@"fixedGuestClockPercent",@"speedLimitEnabled",@"maximumSpeedPercent"]) [NSUserDefaults.standardUserDefaults removeObjectForKey:key]; [c applySavedPlayPolicy]; [c updateSyncFeedback]; [c resumeFromMenu]; }),
-    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 105%. Choose Performance to adjust these controls.":@"Guest clock and game speed are separate controls. Changes take effect when you resume."}];
+    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 100%. Choose Performance to adjust these controls.":@"Guest clock and game speed are separate controls. Changes take effect when you resume."}];
     for (NSString* orientation in @[@"Landscape",@"Portrait"]) {
         NSString* key=[@"controllerSkin" stringByAppendingString:orientation];
         NSString* selected=[NSUserDefaults.standardUserDefaults stringForKey:key];
