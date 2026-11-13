@@ -48,6 +48,18 @@ int main() {
     assert(get(&vs_b, &fs_a, 23) == 23 && factories == 2);
     assert(get(&vs_b, &fs_b, 29) == 29 && factories == 3);
     assert(get(&vs_a, &fs_a, 17) == 17 && factories == 4);
+    CheckpointRetry retry;
+    const auto start = CheckpointRetry::Clock::time_point{} + std::chrono::seconds(100);
+    unsigned attempts = 0;
+    for (unsigned second = 0; second < 10000; ++second) {
+        const auto now = start + std::chrono::seconds(second);
+        if (retry.CanAttempt(now)) { ++attempts; retry.Failed(now); }
+        if (second < 30) assert(attempts == 1);
+        else if (second < 60) assert(attempts == 2);
+        else assert(attempts == 3);
+    }
+    retry.Succeeded();
+    assert(retry.CanAttempt(start));
     std::cout << "PASS: source-only/binary roundtrip, all truncations and byte corruptions, "
-                 "identity/length/count limits, transactional fallback, bounded hot-path memo\n";
+                 "identity/length/count limits, transactional fallback, bounded hot-path memo, checkpoint retry budget\n";
 }

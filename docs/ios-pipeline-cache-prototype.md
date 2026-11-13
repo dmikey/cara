@@ -89,3 +89,9 @@ A same-build, cache-off checkpoint replay completed at 17.0 ms per refresh with
 sound and fixed 100% guest CPU. A conditional BKPT diagnostic also appeared in
 successful runs; it does not establish a checkpoint restore failure. No cache
 speedup has been established by these initial tests.
+
+The hot-path correction returned the cold-boot window ending at refresh 420 to
+16.7 ms, but the experiment then stopped advancing before its intended endpoint.
+It was stopped and the app reopened with caching and completion experiments off.
+Cache persistence failure handling is under investigation; this is not a passed
+cold/warm validation and must not be enabled by default.

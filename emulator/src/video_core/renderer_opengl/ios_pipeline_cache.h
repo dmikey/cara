@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <array>
+#include <chrono>
 #include <string>
 #include <vector>
 #include <utility>
@@ -53,6 +54,18 @@ public:
         }
         return slot.value;
     }
+};
+// A disposable cache must never make a filesystem failure a per-draw workload.
+// After three failed attempts, give up until the next renderer session.
+class CheckpointRetry {
+public:
+    using Clock = std::chrono::steady_clock;
+    bool CanAttempt(Clock::time_point now) const { return failures < 3 && now >= next; }
+    void Failed(Clock::time_point now) { ++failures; next = now + std::chrono::seconds(30); }
+    void Succeeded() { failures = 0; next = {}; }
+private:
+    unsigned failures = 0;
+    Clock::time_point next{};
 };
 inline void Put(std::vector<std::uint8_t>& out, std::uint64_t n, unsigned width) {
     for (unsigned i = 0; i < width; ++i) out.push_back(static_cast<std::uint8_t>(n >> (i * 8)));

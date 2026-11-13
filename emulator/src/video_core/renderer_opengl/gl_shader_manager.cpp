@@ -443,9 +443,10 @@ public:
     }
     void LoadIOSPipelines() {
         ios_identity = IOSIdentity();
+        ios_cache_path = GetCacheFile() + ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
-        std::ifstream file(GetCacheFile() + ".cara-pso1", std::ios::binary | std::ios::ate);
+        std::ifstream file(ios_cache_path, std::ios::binary | std::ios::ate);
         if (!file) return;
         const auto size = file.tellg();
         if (size < 0 || size > static_cast<std::streamoff>(IOSPipelineCache::MaxBytes)) return;
@@ -483,19 +484,32 @@ public:
                      std::chrono::steady_clock::now() - start).count(), ios_formats.size());
     }
     void SaveIOSPipelines() {
-        if (!ios_dirty) return;
-        const auto bytes = IOSPipelineCache::Encode(ios_identity, ios_entries);
-        if (bytes.empty()) return;
-        const auto destination = GetCacheFile() + ".cara-pso1";
-        const auto temporary = destination + ".tmp";
+        const auto now = std::chrono::steady_clock::now();
+        if (!ios_dirty || !ios_checkpoint_retry.CanAttempt(now)) return;
+        const auto fail = [&](const char* operation) {
+            ios_checkpoint_retry.Failed(now);
+            LOG_WARNING(Render_OpenGL, "Cara iOS cache checkpoint failed ({}); retry delayed 30s, maximum 3 failures/session",
+                        operation);
+        };
+        // iOS previously disabled disk caches, so this directory may not exist.
+        if (!FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::CacheDir))) {
+            fail("create directory");
+            return;
+        }
+        const auto temporary = ios_cache_path + ".tmp";
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        if (!file) { fail("open"); return; }
+        // Serialize at most once per permitted attempt, never on a denied retry.
+        const auto bytes = IOSPipelineCache::Encode(ios_identity, ios_entries);
+        if (bytes.empty()) { file.close(); fail("encode"); return; }
         file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
         file.close();
-        if (file && FileUtil::Rename(temporary, destination)) {
-            ios_dirty = false;
-            LOG_INFO(Render_OpenGL, "Cara iOS local pipeline checkpoint: {} pipelines, {} bytes",
-                     ios_entries.size(), bytes.size());
-        }
+        if (!file) { fail("write/close"); return; }
+        if (!FileUtil::Rename(temporary, ios_cache_path)) { fail("rename"); return; }
+        ios_dirty = false;
+        ios_checkpoint_retry.Succeeded();
+        LOG_INFO(Render_OpenGL, "Cara iOS local pipeline checkpoint: {} pipelines, {} bytes",
+                 ios_entries.size(), bytes.size());
     }
     void ApplyIOSPipeline(OpenGLState& state) {
         const auto& vs_source = current_shaders.vs->GetSource();
@@ -752,6 +766,8 @@ private:
     std::vector<u64> ios_entry_keys;
     std::vector<GLint> ios_formats;
     std::string ios_identity;
+    std::string ios_cache_path;
+    IOSPipelineCache::CheckpointRetry ios_checkpoint_retry;
     std::size_t ios_bytes = 8192; // Header/identity/checksum reserve included in the disk budget.
     bool ios_dirty = false;
     std::chrono::steady_clock::time_point ios_last_miss{};
