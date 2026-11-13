@@ -85,3 +85,7 @@ sources, individual copyright notices and license texts are included under
 emulator/externals/sevenzip. Upstream releases:
 https://github.com/libarchive/libarchive/releases/tag/v3.8.11
 https://github.com/tukaani-project/xz/releases/tag/v5.8.4
+
+cubeb Android audio build tooling includes sanitizers-cmake by its contributors.
+Its original license is retained in emulator/externals/cubeb/cmake/sanitizers-cmake/.
+The exact revision is recorded in emulator/VENDORED_SOURCE.json.

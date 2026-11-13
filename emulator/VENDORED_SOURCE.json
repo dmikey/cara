@@ -106,6 +106,12 @@
       "tag": "v1.5.7"
     },
     {
+      "path": "externals/cubeb/cmake/sanitizers-cmake",
+      "source": "https://github.com/arsenm/sanitizers-cmake.git",
+      "revision": "f09151bc87ba210f955d58dffc07b0ee1e755234",
+      "bundled": true
+    },
+    {
       "name": "Dynarmic CPU-only optional backend",
       "path": "externals/dynarmic",
       "source": "https://github.com/azahar-emu/dynarmic.git",
