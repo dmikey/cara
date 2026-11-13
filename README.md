@@ -44,6 +44,7 @@ requirements.
 
 ## Documentation
 
+- [Library artwork](docs/library-artwork.md)
 - [Save states](docs/save-states.md)
 - [Adaptive CPU clock](docs/adaptive-clock.md)
 - [Performance measurements](docs/performance.md)

@@ -19,7 +19,7 @@ sdk = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-
 command = ['xcrun', '--sdk', 'iphonesimulator', 'clang++', '-target', 'arm64-apple-ios17.0-simulator', '-isysroot', sdk,
            '-std=c++20', '-fobjc-arc', '-Wno-deprecated-declarations', '-I', str(ROOT / 'emulator/src'),
            str(ROOT / 'tools/ios_shell_preview.mm')]
-command += [str(ROOT / 'emulator/src/ios' / name) for name in ['library_store.mm', 'shell_controllers.mm', 'skin_layout.mm', 'skin_controls.mm', 'action_layout.mm', 'input_hub.mm']]
+command += [str(ROOT / 'emulator/src/ios' / name) for name in ['library_store.mm', 'artwork_store.mm', 'shell_controllers.mm', 'skin_layout.mm', 'skin_controls.mm', 'action_layout.mm', 'input_hub.mm']]
 command += ['-framework', 'GameController', '-framework', 'UIKit', '-framework', 'AudioToolbox', '-framework', 'Foundation', '-framework', 'CoreGraphics', '-framework', 'QuartzCore', '-framework', 'ImageIO', '-framework', 'UniformTypeIdentifiers', '-lz', '-o', str(app / 'CaraShellPreview')]
 subprocess.run(command, env=env, check=True)
 info = dict(CFBundleExecutable='CaraShellPreview', CFBundleIdentifier='com.dmikey.cara.shellpreview', CFBundleName='Cara Shell Preview',

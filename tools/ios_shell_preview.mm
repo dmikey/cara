@@ -7,6 +7,7 @@
 #import "ios/action_layout.h"
 #import "ios/input_hub.h"
 #import "ios_action_layout_checks.h"
+#import "ios_artwork_checks.h"
 #include "ios/session_presentation.h"
 #include "ios/play_profile.h"
 #include <array>
@@ -50,6 +51,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { if ([Scenario() containsString:@"actions"]) return UIInterfaceOrientationMaskAllButUpsideDown; return [Scenario() containsString:@"landscape"]?UIInterfaceOrientationMaskLandscape:UIInterfaceOrientationMaskPortrait; }
 - (void)viewDidLoad {
     [super viewDidLoad];
+    if([Scenario() isEqual:@"artwork-checks"]) { dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ CheckArtwork(); [@"passed" writeToFile:[NSTemporaryDirectory() stringByAppendingPathComponent:@"artwork-checks.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil]; }); return; }
     self.view.backgroundColor=UIColor.blackColor;
     fixtureFixed=NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"]!=nil;
     fixtureClock=fixtureFixed?[NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"] integerValue]:100;
