@@ -147,13 +147,13 @@ void BootGame(const std::string& path) {
             }
         } else {
             // Ensure no audio bleeds out while game is paused
-            const float volume = Settings::values.volume;
-            Settings::values.volume = 0;
+            const float volume = Settings::values.audio_volume;
+            Settings::values.audio_volume = 0;
 
             std::unique_lock lock{s_running_mutex};
             s_running_cv.wait(lock, [] { return s_is_running || s_stop_running; });
             s_render_window->PollEvents();
-            Settings::values.volume = volume;
+            Settings::values.audio_volume = volume;
         }
     }
 
@@ -307,7 +307,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SetUserPath(JNIEnv* env, 
     FileUtil::SetUserPath(path);
 
     // create user directory
-    FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::AmiiboDir));
+    FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "amiibo/");
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::CacheDir));
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir));
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::LogDir));
@@ -452,10 +452,10 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.accurate_rcp_rsq = false;
     Settings::values.skip_load_buffer = false;
     Settings::values.merge_framebuffer = false;
-    Settings::values.use_hw_gs = Config::Get(Config::USE_HW_GS);
+    Settings::values.hw_gs_mode = Config::Get(Config::HW_GS_MODE);
     Settings::values.use_gles = Config::Get(Config::USE_GLES);
     Settings::values.show_fps = Config::Get(Config::SHOW_FPS);
-    Settings::values.use_hw_renderer = Config::Get(Config::USE_HW_RENDERER);
+    Settings::values.use_hw_renderer = true;
     Settings::values.use_hw_shader = Config::Get(Config::USE_HW_SHADER);
     Settings::values.use_shader_jit = Config::Get(Config::USE_SHADER_JIT);
     Settings::values.shaders_accurate_mul = Config::Get(Config::SHADERS_ACCURATE_MUL);
@@ -468,14 +468,15 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.remote_shader_host = Config::Get(Config::REMOTE_SHADER_HOST);
     // audio
     Settings::values.enable_dsp_lle = Config::Get(Config::ENABLE_DSP_LLE);
-    Settings::values.enable_dsp_lle_multithread = Config::Get(Config::DSP_LLE_MULTITHREAD);
-    Settings::values.volume = Config::Get(Config::AUDIO_VOLUME);
-    Settings::values.sink_id = Config::Get(Config::AUDIO_ENGINE);
-    Settings::values.audio_device_id = Config::Get(Config::AUDIO_DEVICE);
+    Settings::values.dsp_lle_multithread = Config::Get(Config::DSP_LLE_MULTITHREAD);
+    Settings::values.audio_volume = Config::Get(Config::AUDIO_VOLUME);
+    Settings::values.sink_id = (Config::Get(Config::AUDIO_OUTPUT_TYPE) == 2 ? "cubeb" : "null");
+    Settings::values.audio_device_id = Config::Get(Config::AUDIO_OUTPUT_DEVICE);
     Settings::values.enable_audio_stretching = Config::Get(Config::AUDIO_STRETCHING);
     // mic
-    Settings::values.mic_input_type = Config::Get(Config::MIC_INPUT_TYPE);
-    Settings::values.mic_input_device = Config::Get(Config::MIC_INPUT_DEVICE);
+    const auto mic_type = Config::Get(Config::AUDIO_INPUT_TYPE);
+    Settings::values.mic_input_type = mic_type == 3 ? Settings::MicInputType::Real : mic_type == 2 ? Settings::MicInputType::Static : Settings::MicInputType::None;
+    Settings::values.mic_input_device = Config::Get(Config::AUDIO_INPUT_DEVICE);
     // debug
     Settings::values.shadow_rendering = Config::Get(Config::SHADOW_RENDERING);
     Settings::values.use_present_thread = Config::Get(Config::USE_PRESENT_THREAD);
@@ -494,7 +495,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::SetLLEModules(Config::Get(Config::LLE_MODULES));
     // custom layout
     Settings::values.swap_screen = false;
-    Settings::values.custom_layout = Config::Get(Config::USE_CUSTOM_LAYOUT);
+    // UpdateDisplayRotation loads the orientation-specific layout below.
     UpdateDisplayRotation();
     //
     Settings::values.init_clock = Settings::InitClock::SystemTime;
@@ -567,7 +568,7 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(J
     settings[i++] = Settings::values.skip_cpu_write;
     settings[i++] = Settings::values.skip_texture_copy;
     settings[i++] = Settings::values.force_texture_filter;
-    settings[i++] = Settings::values.use_hw_gs;
+    settings[i++] = Settings::values.hw_gs_mode;
     settings[i++] = Settings::values.shadow_rendering;
     settings[i++] = Settings::values.async_shader_compile;
     settings[i++] = std::min(std::max(Settings::values.resolution_factor - 1, 0), 3);
@@ -606,8 +607,8 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv
     Config::Set(Config::FORCE_TEXTURE_FILTER, Settings::values.force_texture_filter);
 
     // Use HW GS
-    Settings::values.use_hw_gs = settings[i++] > 0;
-    Config::Set(Config::USE_HW_GS, Settings::values.use_hw_gs);
+    Settings::values.hw_gs_mode = static_cast<u8>(std::clamp(settings[i++], 0, 2));
+    Config::Set(Config::HW_GS_MODE, Settings::values.hw_gs_mode);
 
     // Shadow Rendering
     Settings::values.shadow_rendering = settings[i++] > 0;
@@ -635,7 +636,10 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv
 
     // Custom Layout
     Settings::values.custom_layout = settings[i++] > 0;
-    Config::Set(Config::USE_CUSTOM_LAYOUT, Settings::values.custom_layout);
+    if (NativeLibrary::IsPortrait())
+        Config::Set(Config::PORTRAIT_CUSTOM_LAYOUT, Settings::values.custom_layout);
+    else
+        Config::Set(Config::LANDSCAPE_CUSTOM_LAYOUT, Settings::values.custom_layout);
 
     // Frame Limit
     Settings::values.frame_limit = std::max(settings[i++], 1);
