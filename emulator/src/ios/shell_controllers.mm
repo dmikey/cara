@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import "ios/shell_controllers.h"
+#import <QuartzCore/QuartzCore.h>
 #include <array>
 #include <cstring>
 #include <cmath>
@@ -444,6 +445,39 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     values[1].textColor=UIColor.secondaryLabelColor;
     self.accessibilityLabel=adaptive?@"No live game metrics, adaptive guest CPU":
         [NSString stringWithFormat:@"No live game metrics, configured guest CPU %u percent",clock];
+}
+@end
+
+@implementation CaraSessionIndicator {
+    CALayer* socket;
+    CALayer* light;
+}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if ((self=[super initWithFrame:frame])) {
+        self.userInteractionEnabled=NO; self.isAccessibilityElement=YES;
+        self.accessibilityIdentifier=@"game-status-light"; self.accessibilityLabel=@"Game status";
+        socket=[CALayer layer]; socket.backgroundColor=[UIColor colorWithWhite:.035 alpha:1].CGColor;
+        socket.borderWidth=1; socket.borderColor=[UIColor colorWithWhite:.24 alpha:1].CGColor;
+        light=[CALayer layer]; light.shadowOffset=CGSizeZero; light.shadowRadius=5;
+        [self.layer addSublayer:socket]; [self.layer addSublayer:light];
+        [self updateLight:CaraStatusLightDim accessibilityStatus:@"Stopped"];
+    } return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    socket.frame=CGRectMake(CGRectGetMidX(self.bounds)-9,CGRectGetMidY(self.bounds)-9,18,18); socket.cornerRadius=9;
+    light.frame=CGRectInset(socket.frame,4,4); light.cornerRadius=5;
+    light.shadowPath=[UIBezierPath bezierPathWithOvalInRect:light.bounds].CGPath;
+}
+- (void)updateLight:(CaraStatusLight)state accessibilityStatus:(NSString*)status {
+    UIColor* color=state==CaraStatusLightGreen?[UIColor colorWithRed:.43 green:.82 blue:.36 alpha:1]:
+        state==CaraStatusLightAmber?[UIColor colorWithRed:1 green:.67 blue:.23 alpha:1]:
+        state==CaraStatusLightRed?[UIColor colorWithRed:1 green:.28 blue:.23 alpha:1]:
+        [UIColor colorWithRed:.25 green:.29 blue:.23 alpha:1];
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    light.backgroundColor=color.CGColor; light.shadowColor=color.CGColor;
+    light.shadowOpacity=state==CaraStatusLightDim?0:.55;
+    [CATransaction commit]; self.accessibilityValue=status;
 }
 @end
 
