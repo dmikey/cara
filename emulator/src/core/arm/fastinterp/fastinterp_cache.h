@@ -36,8 +36,22 @@ public:
         Clear();
     }
 
+    struct Profile {
+        u64 allocation_misses{};
+        u64 empty_allocations{};
+        u64 live_replacements{};
+        u64 clears{};
+        u64 invalidation_calls{};
+        u64 invalidated_entries{};
+    };
+
+    void SetProfiling(bool enabled) { profiling_ = enabled; }
+    bool ProfilingEnabled() const { return profiling_; }
+    const Profile& GetProfile() const { return profile_; }
+
     /// Clear all cache entries
     void Clear() {
+        if (profiling_) ++profile_.clears;
         tags_.fill(INVALID_TAG);
         for (auto& block : blocks_) {
             block.inst_count = 0;
@@ -48,6 +62,7 @@ public:
 
     /// Invalidate cache entries whose decoded range intersects [start_addr, start_addr+length)
     void InvalidateRange(u32 start_addr, u32 length) {
+        if (profiling_) ++profile_.invalidation_calls;
         // Set indices are hashed, so an address range does not map to a set
         // range: walk every entry and match on the block's own address range.
         // inst_count is zeroed so surviving pointers to the entry (chain
@@ -58,6 +73,7 @@ public:
                 continue;
             }
             if (blocks_[i].start_pc < end_addr && blocks_[i].end_pc > start_addr) {
+                if (profiling_) ++profile_.invalidated_entries;
                 tags_[i] = INVALID_TAG;
                 blocks_[i].inst_count = 0;
                 blocks_[i].chain_target = nullptr;
@@ -95,6 +111,13 @@ public:
         was_hit = false;
         u32 victim_way = GetLRUVictim(set_idx);
         BasicBlock& block = blocks_[base + victim_way];
+        // Diagnostics touch only an existing allocation slow path, never hits
+        // or direct block chaining. Clear/invalidation retain lifetime totals.
+        if (profiling_) {
+            ++profile_.allocation_misses;
+            if (tags_[base + victim_way] == INVALID_TAG) ++profile_.empty_allocations;
+            else ++profile_.live_replacements;
+        }
 
         tags_[base + victim_way] = pc;
         block.start_pc = pc;
@@ -152,6 +175,8 @@ private:
     // Tags hold the full PC, so a match needs no start_pc re-check. Split from
     // the blocks (structure-of-arrays): a 4-way set probe touches one cache
     // line of tags instead of 4 far-apart block headers.
+    bool profiling_{false};
+    Profile profile_{};
     std::array<u32, CACHE_SIZE> tags_;
     std::array<BasicBlock, CACHE_SIZE> blocks_;
     std::array<u8, CACHE_SETS> lru_state_;

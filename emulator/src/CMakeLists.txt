@@ -125,6 +125,8 @@ if (ENABLE_WEB_SERVICE)
 endif()
 
 if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-arm-tick-self-test arm_tick_self_test.cpp)
+    target_include_directories(cara-arm-tick-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(cara-texture-lookup-self-test texture_lookup_self_test.cpp)
     target_include_directories(cara-texture-lookup-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(cara-render-bookkeeping-self-test render_bookkeeping_self_test.cpp)

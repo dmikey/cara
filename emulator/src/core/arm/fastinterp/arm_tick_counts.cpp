@@ -3,7 +3,11 @@
 // Refer to the misc/licenses/gplv2.txt file included.
 
 #include <bit>
+#include <cstdlib>
+#include <cstring>
 #include <functional>
+#include <limits>
+#include <vector>
 #include "common/common_types.h"
 #include "common/string_literal.h"
 #include "core/arm/fastinterp/arm_tick_counts.h"
@@ -545,6 +549,46 @@ const std::array thumb32_matchers{
     // clang-format on
 };
 
+// Filter only bits 27:20. Every candidate keeps its original table position:
+// overlapping encodings must continue to use the first full-mask match. This
+// index stores no tick results; operand-dependent cycle functions run unchanged.
+struct ArmTickBuckets {
+    std::array<u16, 257> offsets{};
+    std::vector<u16> indices;
+
+    ArmTickBuckets() {
+        static_assert(arm_matchers.size() * 256 <= std::numeric_limits<u16>::max());
+        const auto eligible = [](const Matcher& matcher, u32 prefix) {
+            return (prefix & ((matcher.mask >> 20) & 0xFF)) ==
+                   ((matcher.expect >> 20) & 0xFF);
+        };
+        // Count first so the immutable compact list allocates exactly once.
+        size_t count = 0;
+        for (u32 prefix = 0; prefix < 256; ++prefix)
+            for (const auto& matcher : arm_matchers)
+                count += eligible(matcher, prefix);
+        indices.reserve(count);
+        for (u32 prefix = 0; prefix < 256; ++prefix) {
+            offsets[prefix] = static_cast<u16>(indices.size());
+            for (size_t index = 0; index < arm_matchers.size(); ++index)
+                if (eligible(arm_matchers[index], prefix))
+                    indices.push_back(static_cast<u16>(index));
+        }
+        offsets[256] = static_cast<u16>(indices.size());
+    }
+};
+
+u64 BucketedArmTicks(u32 instruction) {
+    static const ArmTickBuckets buckets;
+    const u32 prefix = (instruction >> 20) & 0xFF;
+    for (u16 offset = buckets.offsets[prefix]; offset < buckets.offsets[prefix + 1]; ++offset) {
+        const auto& matcher = arm_matchers[buckets.indices[offset]];
+        if ((instruction & matcher.mask) == matcher.expect)
+            return matcher.fn(instruction);
+    }
+    return 1;
+}
+
 } // namespace
 
 namespace Core {
@@ -573,6 +617,15 @@ u64 TicksForInstruction(bool is_thumb, u32 instruction) {
         }
         return 1;
     }
+
+    // Decode-time experiment, never a guest instruction execution check. Thumb
+    // selection and all canonical tick functions remain on the original path.
+    static const bool use_buckets = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_TICK_BUCKETS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (use_buckets)
+        return BucketedArmTicks(instruction);
 
     auto iter = std::find_if(arm_matchers.begin(), arm_matchers.end(), matches_instruction);
     if (iter != arm_matchers.end()) {

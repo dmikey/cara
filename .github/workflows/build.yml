@@ -65,6 +65,11 @@ jobs:
           CARA_ALU_OPERANDS_TEST=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test > work/alu-operands-on.txt
           diff -u work/alu-operands-off.txt work/alu-operands-on.txt
           CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_CACHE_PROFILE_TEST=1 CARA_FASTINTERP_CACHE_PROFILE=0 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_CACHE_PROFILE_TEST=1 CARA_FASTINTERP_CACHE_PROFILE=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_TICK_BUCKETS=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_TICK_BUCKETS=0 work/build-mac/bin/cara-arm-tick-self-test
+          CARA_FASTINTERP_TICK_BUCKETS=1 work/build-mac/bin/cara-arm-tick-self-test
           work/build-mac/bin/cara-texture-lookup-self-test
           work/build-mac/bin/cara-render-bookkeeping-self-test
           work/build-mac/bin/cara-vertex-upload-bank-self-test

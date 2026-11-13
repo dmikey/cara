@@ -1010,3 +1010,66 @@ whose full-buffer losses are not represented by underrun counts. With stretching
 on, the tempo adjustment can affect music even without underruns. Explicit higher
 speed limits remain available in Advanced. These defaults do not guarantee
 artifact-free audio in scenes that cannot maintain real time.
+
+## Stories grass: operand specialization and CPU call stacks (2026-11-12)
+
+The iPad replay uses 100% guest clock, sound, FastInterp and native GLES3 with
+no JIT. Host pacing is uncapped only for throughput comparisons. A recreated
+checkpoint retains the original grass route's final RGBA hash. The comparison
+tool now rejects paused runs, mismatched checkpoint titles/fingerprints,
+incorrect CPU/render backends and silent/stopped/erroring audio output. An
+interrupted first operand run recorded 3.28955 paused seconds and different
+work/pixels; it is excluded from all speed conclusions.
+
+Clean same-binary controls measured 25.459/25.550/25.606 ms per refresh, with
+ADD/MOV operand specialization at 25.030 and 25.280 between adjacent controls.
+The local reductions in frame time are 1.86% and 1.17%. Final pixels and rendering
+work matched; intermediate frames were not all compared. Native checks cover
+17,292 instruction cases and 9,600 cached/chained mixed-budget slices with
+identical disabled/enabled state and tick traces, plus existing differential
+regressions. The iOS frontend enables `CARA_FASTINTERP_ALU_OPERANDS` unless an
+explicit environment override is present. The core's experimental default stays
+off for other hosts pending their own measurements.
+
+The shader-only repeated-state candidate did not establish a gain: 25.601 ms
+versus 25.594/25.562 surrounding controls, with matching final pixels and work.
+It remains disabled. Instrumented PICA command-list diagnostics attributed 93.29%
+of inclusive list CPU to nested draw execution, leaving 6.71% for the remainder
+and diagnostic overhead. Repeated writes are common but do not explain most of
+this CPU budget. Draw CPU is nested in list CPU and must not be added to it.
+
+An attach-only 20-second Time Profiler capture produced 19,029 emulation-thread
+samples. ExecuteBlock accounts for 39.71% self samples and DecodeBlockInto for
+4.79% self. Graphics attribution includes glDrawArrays at 15.05% inclusive and
+vertex/index glTexSubImage2D uploads at 6.86% inclusive. Driver
+`gleRunVertexSubmitARM` accounts for 7.51% self samples nested under draw
+submission; it is host driver work, not evidence that PICA vertex programs run
+on the CPU. Morton texture decoding is 2.09% self, and shader-interpreter work is
+2.49% inclusive, predominantly geometry-shader submission. These sampled CPU
+shares are not hardware GPU timings and are not additive across nested calls.
+
+The same diagnostic route submits about 934 GPU draws per refresh. Exact input
+reuse avoids 15.24 MB and approximately 1,636 texture updates per refresh, while
+actual upload traffic is 2.29 MB and 231 updates. Input shadow comparisons have
+a measured purpose; removing them without equivalent write/coherence tracking
+would trade CPU comparisons for substantially more transport work. The earlier
+PBO staging experiment already failed its matched device comparison.
+
+Disassembly of sampled decode addresses identifies the ordered instruction
+pattern scan used for canonical tick costs. `CARA_FASTINTERP_TICK_BUCKETS` selects
+a default-off, 1,818-byte prefix index retaining original first-match order and
+dynamic tick functions. A permanent independent linear oracle exercises
+4,468,896 words and bucket eligibility/order, including exhaustive Thumb16 and
+ARM operand/mask boundaries. Native disabled/enabled traces match; device benefit
+must be measured independently. `CARA_FASTINTERP_CACHE_PROFILE` separately
+records allocation, replacement, invalidation, mode and page-table causes on
+existing slow paths, without changing cache policy. Resident entries alone are
+not evidence of cache saturation or a hit-rate denominator.
+
+`tools/profile_cpu_stacks.py --process cara-ios` attaches without launching;
+process-name attachment worked where Instruments could not resolve a valid
+CoreDevice PID. The parser accepts both backtrace XML forms and retains sampled
+addresses, binary UUID/load addresses, and per-location self/inclusive weights.
+Raw traces and the matching UUID-verified binary are preserved privately under
+`profiles/command-alu`. CPU-stack sampling, command counters and CPU clocks are
+run separately from uninstrumented speed comparisons.

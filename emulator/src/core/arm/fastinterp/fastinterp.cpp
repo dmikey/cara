@@ -131,6 +131,8 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     ram_burst_ = burst && std::strcmp(burst, "1") == 0;
     const char* contiguous = std::getenv("CARA_FASTINTERP_CONTIGUOUS_TRANSFERS");
     contiguous_transfers_ = contiguous && std::strcmp(contiguous, "1") == 0;
+    const char* cache_profile = std::getenv("CARA_FASTINTERP_CACHE_PROFILE");
+    cache_.SetProfiling(cache_profile && std::strcmp(cache_profile, "1") == 0);
 }
 
 ARM_FastInterp::~ARM_FastInterp() = default;
@@ -183,7 +185,18 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
             if (opcode >= Opcode::AddImm && opcode <= Opcode::MovLslImm)
                 alu_weighted[unsigned(opcode) - unsigned(Opcode::AddImm)] += block->exec_count;
         }
-    output << "{\"alu_operands_enabled\":" << (alu_enabled ? "true" : "false")
+    const auto& cache_profile = cache_.GetProfile();
+    output << "{\"blocks_decoded\":" << fusion_stats_.blocks_decoded
+           << ",\"cache_profile_enabled\":" << (cache_.ProfilingEnabled() ? "true" : "false")
+           << ",\"cache_allocation_misses\":" << cache_profile.allocation_misses
+           << ",\"cache_empty_allocations\":" << cache_profile.empty_allocations
+           << ",\"cache_live_replacements\":" << cache_profile.live_replacements
+           << ",\"cache_clears\":" << cache_profile.clears
+           << ",\"cache_invalidation_calls\":" << cache_profile.invalidation_calls
+           << ",\"cache_invalidated_entries\":" << cache_profile.invalidated_entries
+           << ",\"cache_mode_redecodes\":" << cache_mode_redecodes_
+           << ",\"cache_page_table_changes\":" << cache_page_table_changes_
+           << ",\"alu_operands_enabled\":" << (alu_enabled ? "true" : "false")
            << ",\"alu_resident_entry_weighted_slots\":{\"AddImm\":" << alu_weighted[0]
            << ",\"AddLslImm\":" << alu_weighted[1] << ",\"MovImm\":" << alu_weighted[2]
            << ",\"MovLslImm\":" << alu_weighted[3] << "},\"core\":" << GetID() << ",\"resident_entries\":" << blocks.size()
@@ -244,6 +257,7 @@ void ARM_FastInterp::Run() {
         bool cache_hit;
         BasicBlock* block = cache_.LookupOrAllocate(pc, cache_hit);
         if (cache_hit && block->IsThumb() != state_.thumb_mode) {
+            if (cache_.ProfilingEnabled()) ++cache_mode_redecodes_;
             cache_hit = false; // Cached block is for wrong mode, re-decode
         }
         if (!cache_hit) {
@@ -1221,6 +1235,7 @@ void ARM_FastInterp::SetPageTable(const std::shared_ptr<Memory::PageTable>& page
     if (page_table_ == page_table) {
         return;
     }
+    if (cache_.ProfilingEnabled()) ++cache_page_table_changes_;
     page_table_ = page_table;
     if (page_table) {
         state_.page_pointers = page_table->GetPointerArray().data();

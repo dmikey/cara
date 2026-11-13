@@ -31,6 +31,98 @@ int main() {
     table->pointers[1] = TestMemory(code);
     memory.SetCurrentPageTable(table);
     fast->SetPageTable(table);
+    if (std::getenv("CARA_CACHE_PROFILE_TEST")) {
+        using namespace Core::FastInterp;
+        for (bool enabled : {false, true}) {
+            auto cache = std::make_unique<BlockCache>();
+            cache->SetProfiling(enabled);
+            std::array<u32, 5> colliding{};
+            unsigned found = 0;
+            auto set_index = [](u32 pc) {
+                u32 value = pc * 0x9E3779B9u;
+                value ^= value >> 16;
+                return (value >> 4) & (CACHE_SETS - 1);
+            };
+            for (u32 pc = 0x1000; found < colliding.size(); pc += 4)
+                if (set_index(pc) == set_index(0x1000)) colliding[found++] = pc;
+            for (unsigned i = 0; i < 4; ++i) {
+                bool hit;
+                auto* block = cache->LookupOrAllocate(colliding[i], hit);
+                if (hit) return 1;
+                block->inst_count = 1;
+                block->end_pc = block->start_pc + 4;
+            }
+            // Hits must neither allocate nor change diagnostic totals.
+            for (u32 pc : {colliding[0], colliding[1], colliding[2], colliding[3]}) {
+                bool hit;
+                if (!cache->Lookup(pc) || !cache->LookupOrAllocate(pc, hit) || !hit) return 1;
+            }
+            bool hit;
+            auto* replaced = cache->LookupOrAllocate(colliding[4], hit);
+            if (hit) return 1;
+            replaced->inst_count = 1;
+            replaced->end_pc = replaced->start_pc + 4;
+            auto* surviving = cache->Lookup(colliding[3]);
+            if (!surviving || surviving == replaced) return 1;
+            surviving->chain_target = replaced;
+            cache->InvalidateRange(colliding[4], 4);
+            if (cache->Lookup(colliding[4]) || replaced->inst_count || replaced->chain_target ||
+                !surviving->chain_target || surviving->chain_target->inst_count) return 1;
+            cache->InvalidateRange(0, 4); // No match still counts the call.
+            const auto before_clear = cache->GetProfile();
+            cache->Clear();
+            unsigned resident = 0;
+            cache->VisitResidentBlocks([&](const auto&) { ++resident; });
+            const auto& stats = cache->GetProfile();
+            if (resident || stats.allocation_misses != (enabled ? 5u : 0u) ||
+                stats.empty_allocations != (enabled ? 4u : 0u) ||
+                stats.live_replacements != (enabled ? 1u : 0u) ||
+                stats.invalidation_calls != (enabled ? 2u : 0u) ||
+                stats.invalidated_entries != (enabled ? 1u : 0u) ||
+                stats.clears != (enabled ? 1u : 0u) ||
+                stats.allocation_misses != before_clear.allocation_misses) {
+                std::cerr << "Cache profile accounting/coherence mismatch\n";
+                return 1;
+            }
+        }
+        // Run-level causes: a genuine mode mismatch and distinct page table.
+        code = {0xE1A00000, 0xEAFFFFFE};
+        fast->SetCPSR(0x10);
+        fast->SetPC(0x1000);
+        timing.GetTimer(0)->Advance(1);
+        fast->Run();
+        code[0] = 0xE7FEE7FE; // Thumb B self, at the same PC as cached ARM.
+        fast->SetPC(0x1001);
+        timing.GetTimer(0)->Advance(1);
+        fast->Run();
+        fast->SetPageTable(table); // Same address space must not clear.
+        auto second = std::make_shared<Memory::PageTable>();
+        fast->SetPageTable(second);
+        fast->SetPageTable(second);
+        fast->InvalidateCacheRange(0x1000, 4);
+        std::ostringstream profile;
+        fast->WriteBlockProfile(profile);
+        const char* flag = std::getenv("CARA_FASTINTERP_CACHE_PROFILE");
+        const bool enabled = flag && std::strcmp(flag, "1") == 0;
+        auto field = [&](const char* name) {
+            const std::string marker = std::string("\"") + name + "\":";
+            const auto position = profile.str().find(marker);
+            if (position == std::string::npos) return ~0ull;
+            return std::stoull(profile.str().substr(position + marker.size()));
+        };
+        if (field("blocks_decoded") != 2 ||
+            field("cache_allocation_misses") != (enabled ? 1u : 0u) ||
+            field("cache_mode_redecodes") != (enabled ? 1u : 0u) ||
+            field("cache_page_table_changes") != (enabled ? 2u : 0u) ||
+            field("cache_clears") != (enabled ? 2u : 0u) ||
+            field("cache_invalidation_calls") != (enabled ? 1u : 0u)) {
+            std::cerr << "Run cache causes mismatch " << profile.str() << '\n';
+            return 1;
+        }
+        std::cout << "Cache diagnostic off/on collisions, hit accounting, invalidation, "
+                     "stale chains, clears, modes and page tables passed\n";
+        return 0;
+    }
     if (std::getenv("CARA_ALU_OPERANDS_TEST")) {
         // DynCom executes exactly the instruction; FastInterp decodes a real
         // block ending in a flag-neutral self-branch. Unlike Step(), Run()
@@ -118,6 +210,36 @@ int main() {
                     hash(fast->GetCPSR());
                     ++cases;
                 }
+        // Reuse/chaining/hot-count thresholds and narrow scheduler slices.
+        // Keep the loop ADDs away from immediate-CMP pair fusion so this path
+        // exercises specialized handlers repeatedly in the same cached block.
+        for (unsigned prefix : {0u, 27u, 28u, 29u, 30u, 31u}) {
+            code.fill(0xE1A05005);
+            code[prefix] = 0xE0800081;     // ADD r0,r0,r1,LSL#1
+            code[prefix + 1] = 0xE1A02000; // MOV r2,r0
+            code[prefix + 2] = 0xE2820001; // ADD r0,r2,#1
+            code[prefix + 3] = 0xE1A01081; // MOV r1,r1,LSL#1
+            code[prefix + 4] = 0xE2911001; // ADDS r1,r1,#1
+            code[prefix + 5] = 0xE2544001; // SUBS r4,r4,#1
+            const s32 branch_words = -s32(prefix + 8);
+            code[prefix + 6] = 0x1A000000u | (u32(branch_words) & 0xffffffu);
+            code[prefix + 7] = 0xEAFFFFFE;
+            fast->ClearInstructionCache();
+            fast->SetCPSR(0xA0000010);
+            fast->SetPC(0x1000);
+            for (unsigned reg = 0; reg < 15; ++reg)
+                fast->SetReg(reg, reg == 4 ? 1000000u : 0x12345678u * (reg + 1));
+            for (unsigned slice = 0; slice < 1600; ++slice) {
+                const std::array<unsigned, 8> budgets{1, 2, 5, 6, 7, 31, 32, 128};
+                timing.GetTimer(0)->Advance(budgets[slice % budgets.size()]);
+                const auto before = timing.GetTimer(0)->GetDowncount();
+                fast->Run();
+                for (unsigned reg = 0; reg < 16; ++reg)
+                    hash(fast->GetReg(reg));
+                hash(fast->GetCPSR());
+                hash(before - timing.GetTimer(0)->GetDowncount());
+            }
+        }
         // One final real block proves every specialized opcode was activated.
         code = {0xE2810001, 0xE0812182, 0xE3A030FF, 0xE1A04281, 0xEAFFFFFE};
         fast->ClearInstructionCache();
