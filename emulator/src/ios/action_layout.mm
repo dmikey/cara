@@ -93,6 +93,9 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
         if ([kind isEqual:@"floating"] || [kind isEqual:@"drag"]) { CGPoint origin=[contact[@"origin"] CGPointValue]; CGFloat travel=c[@"travel"]?[c[@"travel"] doubleValue]:64; r=CGRectMake(origin.x-travel,origin.y-travel,travel*2,travel*2); }
         vector=CaraStickPoint(p,r);
         if ([kind isEqual:@"dpad"]) { unsigned d=CaraDPadDirections(p,r); vector=CGPointMake(bool(d&8)-bool(d&4),bool(d&1)-bool(d&2)); if ([binding isEqual:@"dpad"]) { if (d&1) [pressed addObject:@"up"]; if (d&2) [pressed addObject:@"down"]; if (d&4) [pressed addObject:@"left"]; if (d&8) [pressed addObject:@"right"]; } }
+        // An analog D-pad diagonal has the same unit range as a physical stick.
+        const double magnitude=std::hypot(vector.x,vector.y);
+        if (magnitude>1) { vector.x/=magnitude; vector.y/=magnitude; }
         if ([binding isEqual:@"circle"]) circle=vector; else if ([binding isEqual:@"cstick"]) cstick=vector;
     }
     if (self.inputChanged) self.inputChanged(pressed,circle,cstick); [self setNeedsDisplay];

@@ -2,6 +2,7 @@
 // Runs only in the ROM-free UIKit fixture host.
 #import "ios/action_layout.h"
 #import "ios/input_hub.h"
+#include <cmath>
 static void ActionCheck(BOOL ok,NSString* label) { if (!ok) @throw [NSException exceptionWithName:@"ActionLayoutRegression" reason:label userInfo:nil]; }
 static void CheckActionLayout() {
     NSDictionary* starter=CaraNewActionLayout(); ActionCheck(CaraValidateActionLayout(starter,nil),@"starter validates");
@@ -36,6 +37,7 @@ static void CheckActionLayout() {
     [view updateContact:one atPoint:CGPointMake(150,150)]; [view updateContact:one atPoint:CGPointMake(182,150)]; ActionCheck(circle.x>.99,@"invisible floating zone has independent travel"); [view endContact:one];
     c=[c mutableCopy]; c[@"kind"]=@"stick"; c[@"binding"]=@"cstick"; view.controls=@[c]; [view updateContact:one atPoint:CGPointMake(299.9,200)]; ActionCheck(stick.x>.99,@"fixed stick binding"); [view endContact:one];
     c=[c mutableCopy]; c[@"kind"]=@"dpad"; c[@"binding"]=@"dpad"; view.controls=@[c]; [view updateContact:one atPoint:CGPointMake(200,110)]; ActionCheck([buttons containsObject:@"up"],@"digital dpad binding"); [view endContact:one];
+    c=[c mutableCopy]; c[@"binding"]=@"circle"; view.controls=@[c]; [view updateContact:one atPoint:CGPointMake(280,120)]; ActionCheck(circle.x>.70 && circle.y>.70 && std::hypot(circle.x,circle.y)<1.001,@"analog D-pad diagonals stay in unit range"); [view endContact:one];
     c=[c mutableCopy]; c[@"kind"]=@"drag"; c[@"binding"]=@"cstick"; view.controls=@[c]; [view updateContact:one atPoint:CGPointMake(120,120)]; [view updateContact:one atPoint:CGPointMake(120,220)]; ActionCheck(stick.y<-.99,@"drag zone uses displacement"); [view endContact:one];
     c=[c mutableCopy]; c[@"kind"]=@"button"; c[@"binding"]=@"a"; view.controls=@[c];
     NSMutableDictionary* second=[c mutableCopy]; second[@"id"]=@"second"; second[@"binding"]=@"b"; second[@"frame"]=@{@"x":@.5,@"y":@.5,@"width":@.2,@"height":@.2}; view.controls=@[c,second];
