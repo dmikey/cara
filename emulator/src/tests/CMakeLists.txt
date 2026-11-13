@@ -27,3 +27,12 @@ target_link_libraries(tests PRIVATE common core video_core audio_core)
 target_link_libraries(tests PRIVATE ${PLATFORM_LIBRARIES} catch-single-include nihstro-headers Threads::Threads)
 
 add_test(NAME tests COMMAND tests)
+
+# Original synthetic AAC, no game audio; also usable independently of the emulator test binary.
+if(APPLE AND NOT ENABLE_MF AND NOT ENABLE_FFMPEG_AUDIO_DECODER)
+    add_executable(cara-apple-aac-test audio_core/apple_aac_test.cpp
+        ../audio_core/hle/apple_aac_codec.cpp)
+    target_include_directories(cara-apple-aac-test PRIVATE ..)
+    target_link_libraries(cara-apple-aac-test PRIVATE "-framework AudioToolbox" "-framework CoreFoundation")
+    add_test(NAME cara-apple-aac-test COMMAND cara-apple-aac-test)
+endif()

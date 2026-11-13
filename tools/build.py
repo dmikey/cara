@@ -61,6 +61,7 @@ def main():
                '-DBoost_NO_SYSTEM_PATHS=ON', '-DBoost_NO_BOOST_CMAKE=ON']
     targets = ['cara-texture-lookup-self-test', 'cara-render-bookkeeping-self-test', 'cara-cpu-category-self-test', 'cara-vertex-upload-bank-self-test', 'cara-frame-pacer-self-test', 'cara-clock-self-test', 'cara-fastinterp-self-test', 'cara-audio-buffer-self-test', 'cara-no-jit-probe', 'cara-raster-self-test', 'cara-core-cache-self-test', 'cara-interval-cache-self-test', 'cara-input-self-test']
     if args.platform == 'mac':
+        targets.append('cara-apple-aac-test')
         targets.extend(['cara-skin-self-test', 'cara-library-self-test', 'cara-play-profile-self-test', 'cara-input-hub-self-test', 'cara-state-catalog-self-test', 'cara-configuration-self-test', 'cara-save-sync-self-test', 'cara-save-state-self-test', 'cara-extdata-state-self-test'])
     if args.platform != 'mac':
         command += ['-DCMAKE_SYSTEM_NAME=iOS', '-DCMAKE_OSX_ARCHITECTURES=arm64',
