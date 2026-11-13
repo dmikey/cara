@@ -303,3 +303,30 @@ FIFO, recipient, transfer dependency, overflow and capacity fixtures also pass.
 This is synthetic/native evidence; real-game queue bounds, game progress and
 matched fixed-100%-clock/audio device captures remain admission requirements.
 Both experiment flags remain default off.
+
+## Device result after relative-latency correction
+
+The later Luigi lab dialogue checkpoint completed 1,200-refresh off/on/off runs
+at fixed 100% guest CPU with sound: 23.826 / 16.725 / 23.857 ms per refresh.
+Emulation-thread CPU time was 14.718 / 7.975 / 14.773 ms per refresh. The two
+controls had identical pixels. Timing-on changed the workload and final pixels;
+it is not an equivalent-work rendering optimization. Pending counts at sampled
+60-refresh boundaries stayed between four and seven, rather than growing toward
+256. Top-buffer applications fell from 1.0 to about 0.923 per refresh. Keep the
+experiment opt-in pending broader game-timing validation.
+
+Zelda completed its three comparison runs without queue overflow. Xenoblade's
+actual opening-battle replay also completed, but timing-on gave no meaningful
+benefit (18.559 / 18.579 / 18.567 ms). Its slowdown was subsequently addressed by
+host pacing; see [frame pacing](frame-pacing.md). Stories validation remains
+outstanding for this revision.
+
+## Bounded drain follow-up
+
+No production overflow-drain mechanism is implemented yet. A full 52-entry
+interrupt relay cannot accept an immediate dump of the 256 pending records
+without loss or altered ordering. Lossless recovery needs a scheduler-driven
+drain and resumable submission admission before another IRQ is emitted. It must
+avoid recursively advancing kernel time inside a GPU/HLE command, retain blocked
+tokens, and serialize parked command/retry state. The relative-latency correction
+removes the observed artificial accumulation; it does not replace this work.

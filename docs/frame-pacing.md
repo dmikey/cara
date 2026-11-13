@@ -28,3 +28,8 @@ Bounded pacing is the iOS default. `CARA_BOUNDED_FRAME_PACING=0` selects the leg
 policy for diagnosis; `1` selects bounded pacing. The comparison harness accepts
 `bounded_pacing` and verifies the runtime status. Use `--paced` for these tests.
 The standalone policy constructor retains its legacy default for other callers.
+
+After installing the default-enabled policy and restoring normal saved settings,
+the device user confirmed Xenoblade stayed near 100% with correct animation and
+sound. Experimental GPU completion timing and shader caching were disabled for
+that confirmation.
