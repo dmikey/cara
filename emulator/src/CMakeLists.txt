@@ -234,3 +234,10 @@ if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_definitions(cara-skin-self-test PRIVATE CARA_BUILTIN_SKIN="${CMAKE_CURRENT_SOURCE_DIR}/ios/skins/CarbonDuo.deltaskin")
     target_link_libraries(cara-skin-self-test PRIVATE "-framework Foundation" "-framework CoreGraphics" z)
 endif()
+
+# CPU JIT validation is opt-in and never participates in iOS builds.
+if(CARA_ENABLE_JIT AND NOT ANDROID AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-dynarmic-self-test ../../tests/dynarmic_smoke_test.cpp)
+    target_link_libraries(cara-dynarmic-self-test PRIVATE dynarmic)
+    target_compile_options(cara-dynarmic-self-test PRIVATE -UNDEBUG)
+endif()

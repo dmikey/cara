@@ -34,3 +34,8 @@ isolate GPU performance. No ROMs, firmware or keys are packaged.
 The No-JIT workflow now also packages `Cara-iOS-gles3-unsigned.ipa`. It contains
 `Payload/Cara.app` and must be signed with your own provisioning before installation.
 The original unsigned app ZIP and no-JIT audit remain available.
+
+The backend also has an opt-in ARM64 host smoke test covering arithmetic,
+context restoration, instruction-cache invalidation, and successful/failed
+exclusive stores. This is synthetic CPU validation, not an Android device or
+GLES correctness test.
