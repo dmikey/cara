@@ -973,3 +973,24 @@ mipmap restore. These are instrumented wall timings, with overlapping nested
 phases; do not sum them as exclusive CPU totals. Follow-up work resolves the
 memory experiment at decode time and investigates safely reusing exact texture
 lookups, with normal validation and alias/registration guards retained.
+
+The second renderer candidate uses an eight-entry exact-surface lookup cache.
+Admission requires unique highest-scale selection; hits require matching keys,
+unchanged structural generation, registered identity, live watcher and valid
+requested interval. Normal validation, mip/custom handling and usage tracking
+remain intact. The iPad surface, vertex and uniform oracles passed, including
+no-load lookup cases. A separate grass shadow replay verified all 1,701,670
+proposed hits against original selection with zero mismatches. Final pixels
+matched controls byte-for-byte and all 20 windows matched 16 workload counters.
+
+The subsequent same-binary sweep measured 25.054/25.431/25.319/25.506/25.251
+ms/refresh for baseline, exact lookup cache, baseline, decode-time contiguous
+transfers and baseline. Guest clock was fixed at 100%, audio enabled, and host
+pacing uncapped for all runs. Pixels and workload matched. Relative to the
+adjacent baseline means, lookup caching was 0.97% slower and transfers 0.87%
+slower. This single bracketed sweep demonstrates no gain; it does not establish
+a precise regression magnitude. Both remain default-off. A 77% shadow hit rate
+and faster native copy microbenchmarks were insufficient to improve gameplay.
+Shader compilation and surface download were absent in these measured windows;
+remaining work needs to target the CPU command/dispatch costs with game-level
+evidence rather than add more cache bookkeeping on this path.
