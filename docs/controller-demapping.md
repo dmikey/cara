@@ -12,7 +12,7 @@ Buttons support hold or toggle. Analog controls support fixed sticks, floating s
 
 **Test touches** uses a separate instance of the same input hub, without taking ownership of physical controllers. It displays the resulting buttons and analog values; it does not run a ROM. Saved layouts feed the gameplay input hub, merged with classic touchscreen input and hardware. Paused/stopped gameplay ignores new action touches. The lower screen remains touchable outside action zones; an action zone intentionally placed over it owns that region. Menu stays available above the overlay.
 
-**Save** applies both variants only to this game. **Cancel** discards the draft. **Layout → Reset this orientation** requires confirmation and replaces only that draft variant with unbound starter actions. **Restore classic controls** disables action layouts while retaining the draft controls; tap Save to apply. Re-enable the switch to return to the saved action controls.
+**Save** applies both variants only to this game. **Cancel** discards the draft. **Layout → Reset this orientation** requires confirmation and replaces only that draft variant with unbound starter actions. **Restore classic controls** disables action layouts while retaining the draft controls; tap Save to apply. Re-enable the switch to return to the saved action controls. The separate Game details → Clear game settings confirmation resets both emulation overrides and the controller layout, returning to classic controls.
 
 ## Data and source
 
