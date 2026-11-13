@@ -617,6 +617,102 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
         }
     }
     }
+    const char* cleanup_value = std::getenv("CARA_SELECTIVE_SURFACE_CLEANUP");
+    if (cleanup_value && std::strcmp(cleanup_value, "1") == 0) {
+        const auto saved_counters = Common::FrameTiming::counters;
+        Common::FrameTiming::counters.enabled = true;
+        // CleanUp operates on the complete cache. Keep any earlier fixtures or
+        // setup surfaces recent, then restore their original age after the test.
+        SurfaceSet protected_surfaces;
+        for (const auto& group : surface_cache)
+            protected_surfaces.insert(group.second.begin(), group.second.end());
+        std::vector<std::pair<Surface, u32>> saved_frames;
+        for (const auto& surface : protected_surfaces) {
+            saved_frames.emplace_back(surface, surface->last_used_frame);
+            surface->last_used_frame = 2;
+        }
+        SCOPE_EXIT({
+            for (const auto& entry : saved_frames) entry.first->last_used_frame = entry.second;
+            Common::FrameTiming::counters = saved_counters;
+        });
+        retain_small_cpu_writes = true;
+        for (bool tiled : {false, true}) {
+            for (bool stale_dirty : {false, true}) {
+                SurfaceParams stale;
+                stale.addr = scratch;
+                stale.width = stale.stride = stale.height = 16;
+                stale.pixel_format = SurfaceParams::PixelFormat::RGBA8;
+                stale.is_tiled = tiled;
+                stale.res_scale = 1;
+                stale.UpdateParams();
+                std::vector<u8> old_bytes(stale.size);
+                for (size_t i = 0; i < old_bytes.size(); ++i) old_bytes[i] = u8(i * 73 + 17);
+                std::memcpy(memory, old_bytes.data(), old_bytes.size());
+                test_surface = GetSurface(stale, ScaleMatch::Exact, true);
+                InvalidateRegion(stale.addr, stale.size, test_surface);
+
+                // The live alias splits the stale surface across interval-map
+                // segments. It owns either the entire range (clean eviction) or
+                // only the middle, leaving two stale-owned ranges to export.
+                SurfaceParams live = stale;
+                live.width = live.stride = 8;
+                live.height = stale_dirty ? 16 : 32;
+                live.addr += stale_dirty ? 256 : 0;
+                live.UpdateParams();
+                std::vector<u8> live_bytes(live.size);
+                for (size_t i = 0; i < live_bytes.size(); ++i) live_bytes[i] = u8(i * 113 + 5);
+                std::memcpy(memory + live.addr - scratch, live_bytes.data(), live_bytes.size());
+                remap_destination = CreateSurface(live);
+                RegisterSurface(remap_destination);
+                remap_destination->LoadGLBuffer(live.addr, live.end);
+                remap_destination->UploadGLTexture(remap_destination->GetRect());
+                InvalidateRegion(live.addr, live.size, remap_destination);
+                if (stale_dirty) InvalidateRegion(scratch + 3, 1, nullptr);
+                std::fill_n(memory, scratch_size, 0x6B);
+                if (stale_dirty) memory[3] = 0xA7;
+                std::fill(test_surface->gl_buffer.begin(), test_surface->gl_buffer.end(), 0x2C);
+                std::fill(remap_destination->gl_buffer.begin(), remap_destination->gl_buffer.end(), 0x2C);
+                auto retained_dirty = dirty_regions;
+                for (const auto& entry : dirty_regions)
+                    if (entry.second == test_surface) retained_dirty.erase(entry.first);
+                test_surface->last_used_frame = 0;
+                remap_destination->last_used_frame = 2;
+                const auto download_calls = Common::FrameTiming::counters.surface_download_calls;
+                CleanUp(1);
+                std::vector<u8> expected(stale.size, 0x6B);
+                if (stale_dirty) {
+                    std::copy_n(old_bytes.data(), 256, expected.data());
+                    std::copy(old_bytes.begin() + 768, old_bytes.end(), expected.begin() + 768);
+                    expected[3] = 0xA7;
+                }
+                if (test_surface->registered || !remap_destination->registered ||
+                    dirty_regions != retained_dirty ||
+                    !std::equal(expected.begin(), expected.end(), memory) ||
+                    !std::all_of(memory + stale.size, memory + scratch_size, [](u8 b) { return b == 0x6B; }) ||
+                    (!stale_dirty && Common::FrameTiming::counters.surface_download_calls != download_calls) ||
+                    glGetError() != GL_NO_ERROR) {
+                    error = "selective cleanup changed retained GPU ownership or CPU bytes tiled=" +
+                            std::to_string(tiled) + " stale_dirty=" + std::to_string(stale_dirty);
+                    return false;
+                }
+                // Evicting the alias must not consume the live producer. A later
+                // real CPU request must still recover its original GPU bytes.
+                FlushRegion(live.addr, live.size, remap_destination);
+                std::copy(live_bytes.begin(), live_bytes.end(), expected.begin() + live.addr - scratch);
+                if (!std::equal(expected.begin(), expected.end(), memory) ||
+                    glGetError() != GL_NO_ERROR) {
+                    error = "selective cleanup lost later live-owner readback";
+                    return false;
+                }
+                dirty_regions.erase(stale.GetInterval());
+                OpenGLState::ResetTexture(remap_destination->texture.handle);
+                UnregisterSurface(remap_destination);
+                remap_destination.reset();
+                OpenGLState::ResetTexture(test_surface->texture.handle);
+                test_surface.reset();
+            }
+        }
+    }
     return true;
 }
 } // namespace OpenGL

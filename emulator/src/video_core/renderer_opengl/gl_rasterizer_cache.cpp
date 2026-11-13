@@ -1066,7 +1066,7 @@ void RasterizerCacheOpenGL::WriteFlushTrace() const {
     std::ofstream file(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "surface-flushes.json");
     const char* wait = std::getenv("CARA_READBACK_WAIT_TRACE");
     file << "{\"wait_instrumented\":" << (wait && std::strcmp(wait, "1") == 0 ? "true" : "false")
-         << ",\"reasons\":[\"external\",\"validation\",\"small_cpu_write\",\"all\"],\"entries\":[";
+         << ",\"reasons\":[\"external\",\"validation\",\"small_cpu_write\",\"all\",\"cleanup\"],\"entries\":[";
     for (size_t i = 0; i < flush_trace.size(); ++i) {
         const auto& item = flush_trace[i];
         file << (i ? "," : "") << "{\"reason\":" << unsigned(item.reason)
@@ -2042,6 +2042,24 @@ void RasterizerCacheOpenGL::CleanUp(u32 deadline_frame) {
                 unused.push_back(surface);
             }
         }
+    }
+    static const bool selective = [] {
+        const char* value = std::getenv("CARA_SELECTIVE_SURFACE_CLEANUP");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (selective) {
+        // Interval-map segments may list the same surface more than once. Only
+        // export bytes owned by each evicted producer; a stale clean alias must
+        // not force unrelated live render targets back through guest RAM.
+        const SurfaceSet evicted(unused.begin(), unused.end());
+        const auto previous_reason = flush_reason;
+        flush_reason = FlushReason::Cleanup;
+        SCOPE_EXIT({ flush_reason = previous_reason; });
+        for (const auto& surface : evicted) {
+            FlushRegion(surface->addr, surface->size, surface);
+            UnregisterSurface(surface);
+        }
+        return;
     }
     if (!unused.empty()) {
         FlushAll();

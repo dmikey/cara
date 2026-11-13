@@ -78,7 +78,7 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -130,7 +130,7 @@ def main():
                     'CARA_PHASE_CPU_TIMING':'1' if args.phase_cpu_timing else '0',
                     'CARA_BENCHMARK_CAPTURE':'1',
                     'CARA_GPU_SURFACE_REMAP':'1' if config.get('surface_remap',False) else '0',
-                    'CARA_GPU_BYTE_SURFACE_REMAP':'1' if config.get('byte_surface_remap',False) else '0',
+                    'CARA_GPU_BYTE_SURFACE_REMAP':'1' if config.get('byte_surface_remap','selective_surface_cleanup',False) else '0',
                     'CARA_GPU_RETAIN_INPUT_BINDINGS':'1' if config.get('retain_input_bindings',False) else '0',
                     'CARA_GPU_PACKED_FETCH_REUSE':'1' if config.get('packed_fetch_reuse',False) else '0',
                     'CARA_FASTINTERP_VFP_SIMD':str(int(config.get('vfp_simd',0))),

@@ -62,3 +62,44 @@ when available.
 Readback diagnostics now sample wall and thread CPU separately for the complete
 surface download and the `glReadPixels` call itself. Explicit diagnostic
 `glFinish()` remains a separate scope and is not enabled for normal comparisons.
+
+## Matched Luigi result
+
+The a03251e implementation was tested off/on/off in the advanced laboratory
+dialogue on the physical M4 iPad. All three runs restored the same checkpoint
+(`47f35e2e4e3ec0da57f516040bb8fc1ed76be724b67aa36a69de2eb629a145c3`),
+ran 1,200 refreshes, excluded 300 warmup refreshes, and used 100% guest CPU,
+100% speed cap, bounded pacing and sound. GPU completion timing was disabled.
+
+| Per measured refresh | Off A | Byte remap | Off B |
+| --- | ---: | ---: | ---: |
+| Elapsed including pacing | 24.466 ms | 16.713 ms | 24.543 ms |
+| Emulation-thread CPU | 15.170 ms | 12.995 ms | 15.222 ms |
+| Surface download | 10.269 ms | 0 ms | 10.311 ms |
+| Downloads | 6 | 0 | 6 |
+
+All three final RGBA hashes match:
+`2d2cfbfc69888d04ae06a56df835f59a537380ff91eed98f281dd0b85d109c9e`.
+The first two runs recorded 639 and 16 audio underrun callbacks over the whole
+run respectively, with active nonzero audio and zero backend errors. These
+counts include startup and are not per-refresh measurements.
+
+This is a repeatable scene-level gain with unchanged final pixels and no guest
+underclock. Capped elapsed time hides remaining headroom. It does not establish
+full-speed performance across all Luigi scenes or other games. Private evidence:
+`byte-surface-remap-20261113/luigi-comparison/comparison.json`.
+
+## Selective stale-surface cleanup
+
+`CARA_SELECTIVE_SURFACE_CLEANUP=1` replaces global `FlushAll()` during stale
+surface eviction with owner-filtered `FlushRegion()` calls for the deduplicated
+eviction set. Live dirty aliases remain GPU-authoritative. Cleanup flushes have
+a separate trace reason. This targets periodic eviction stalls; it is not an
+explanation for sustained alias readback in the Luigi replay.
+
+The combined byte-remap and cleanup GPU suite passed on the physical M4 iPad.
+Cleanup cases cover linear/tiled layouts, zero-download eviction of clean aliases,
+export of only stale-owned dirty spans, preservation of CPU-written bytes and
+subsequent readback from retained live producers. Game-level gains from cleanup
+remain unmeasured. See [residency prior art](gpu-residency-prior-art.md) for the
+small-write investigation, trace semantics and pinned Mikage source references.

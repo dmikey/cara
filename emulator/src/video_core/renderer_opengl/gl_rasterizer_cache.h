@@ -299,7 +299,7 @@ private:
     /// Increase/decrease the number of surface in pages touching the specified region
     void UpdatePagesCachedCount(PAddr addr, u32 size, int delta);
 
-    enum class FlushReason : u32 { External, Validation, SmallCPUWrite, All };
+    enum class FlushReason : u32 { External, Validation, SmallCPUWrite, All, Cleanup };
     struct FlushTraceFrame {
         std::uintptr_t address{}, image_base{};
         std::string image, symbol;
