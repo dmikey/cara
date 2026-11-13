@@ -14,6 +14,20 @@ CGRect CaraAspectFit(CGSize source, CGRect destination) {
     const double scale=MIN(destination.size.width/source.width,destination.size.height/source.height);
     return CGRectMake(CGRectGetMidX(destination)-source.width*scale/2,CGRectGetMidY(destination)-source.height*scale/2,source.width*scale,source.height*scale);
 }
+CaraHUDLayout CaraSkinHUDLayout(NSDictionary* rep,CGRect canvas) {
+    const CGFloat width=[rep[@"mappingSize"][@"width"] doubleValue],height=[rep[@"mappingSize"][@"height"] doubleValue];
+    if (width<=0 || height<=0) return {CGRectZero,CGRectZero};
+    const auto convert=[&](CGRect r) { return CGRectMake(canvas.origin.x+r.origin.x/width*canvas.size.width,canvas.origin.y+r.origin.y/height*canvas.size.height,r.size.width/width*canvas.size.width,r.size.height/height*canvas.size.height); };
+    CGRect stats=CaraSkinRect(rep[@"caraStatsFrame"]);
+    if (CGRectIsNull(stats) || CGRectIsEmpty(stats)) stats=CGRectMake(52,50,430,102);
+    CGRect metrics=convert(stats),indicator=CaraSkinRect(rep[@"caraStatusFrame"]);
+    if (!CGRectIsNull(indicator) && !CGRectIsEmpty(indicator)) return {convert(indicator),metrics};
+    // Imported skins keep their original artwork and reserved HUD footprint.
+    const CGFloat ledWidth=MIN(24,metrics.size.width*.18),gap=MIN(8,metrics.size.width*.04);
+    indicator=CGRectMake(metrics.origin.x,metrics.origin.y,ledWidth,metrics.size.height);
+    metrics.origin.x+=ledWidth+gap; metrics.size.width=MAX(0,metrics.size.width-ledWidth-gap);
+    return {indicator,metrics};
+}
 CGPoint CaraStickPoint(CGPoint p,CGRect r) {
     if (r.size.width<=0 || r.size.height<=0) return CGPointZero;
     const double x=(p.x-CGRectGetMidX(r))/(r.size.width/2),y=(CGRectGetMidY(r)-p.y)/(r.size.height/2);

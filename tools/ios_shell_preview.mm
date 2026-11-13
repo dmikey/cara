@@ -116,13 +116,13 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
         previewScreens[i].backgroundColor=inactive?UIColor.blackColor:[UIColor colorWithRed:.07 green:.16 blue:.23 alpha:1];
     }
     CGRect r=CaraSkinRect(previewRepresentation[@"caraStatsFrame"]);
-    previewStats.frame=convert(r);
+    const CaraHUDLayout hud=CaraSkinHUDLayout(previewRepresentation,fitted);
+    previewStats.frame=hud.metrics;
+    previewStats.hidden=[NSProcessInfo.processInfo.environment[@"CARA_UI_FPS"] isEqual:@"0"];
     if (inactive) [previewStats showInactiveGuestClock:100 adaptive:YES]; else [previewStats updateGameFPS:30 speed:100 guestClock:75 adaptive:YES];
     const auto light=state==Cara::SessionPresentation::Running?CaraStatusLightGreen:state==Cara::SessionPresentation::Failed?CaraStatusLightRed:state==Cara::SessionPresentation::Stopped?CaraStatusLightDim:CaraStatusLightAmber;
     [previewStatus updateLight:light accessibilityStatus:[NSString stringWithUTF8String:Cara::SessionPresentationLabel(state)]];
-    const BOOL landscape=[Scenario() containsString:@"landscape"];
-    CGRect status=convert(landscape?CGRectMake(r.origin.x,CGRectGetMaxY(r)+8,r.size.width,54):CGRectMake(([mapping[@"width"] doubleValue]-600)/2,[mapping[@"height"] doubleValue]-170,600,48));
-    previewStatus.frame=CGRectMake(landscape?CGRectGetMinX(status):CGRectGetMidX(status)-12,CGRectGetMidY(status)-12,24,24);
+    previewStatus.frame=hud.indicator;
     NSAssert([previewStatus.accessibilityValue isEqual:[NSString stringWithUTF8String:Cara::SessionPresentationLabel(state)]],@"The LED must expose its explicit lifecycle status");
     NSAssert(!inactive || [previewStats.accessibilityLabel containsString:@"No live game metrics"],@"Inactive sessions must not claim live FPS or speed");
 }
