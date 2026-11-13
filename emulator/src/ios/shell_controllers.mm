@@ -1,15 +1,49 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import "ios/shell_controllers.h"
 #import <QuartzCore/QuartzCore.h>
+#import <AudioToolbox/AudioToolbox.h>
 #include <array>
 #include <cstring>
 #include <cmath>
 #include <atomic>
 
+// These short bundled UI sounds use the existing system-sound session policy.
+// Never activate or reconfigure the emulator's AudioQueue session here.
+static NSDictionary<NSString*,NSNumber*>* CaraMenuSoundIDs;
+static void CaraPrepareMenuSounds() {
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        [NSUserDefaults.standardUserDefaults registerDefaults:@{@"libraryMenuSounds":@YES}];
+        NSMutableDictionary* sounds=[NSMutableDictionary new];
+        for(NSString* name in @[@"focus",@"select",@"back",@"favorite",@"confirm",@"cancel",@"launch",@"toggle"]) {
+            NSURL* url=[NSBundle.mainBundle URLForResource:name withExtension:@"caf" subdirectory:@"MenuSounds"];
+            SystemSoundID identifier=0;
+            if(url && AudioServicesCreateSystemSoundID((__bridge CFURLRef)url,&identifier)==kAudioServicesNoError) sounds[name]=@(identifier);
+        }
+        CaraMenuSoundIDs=sounds;
+        if([NSProcessInfo.processInfo.environment[@"CARA_MENU_SOUND_SELF_TEST"] isEqual:@"1"]) {
+            if(sounds.count!=8) @throw [NSException exceptionWithName:@"CaraMenuSounds" reason:@"All eight bundled sounds must preload with AudioServices." userInfo:nil];
+            NSLog(@"Cara menu sound self-test: all eight bundled CAF sounds preloaded.");
+        }
+    });
+}
+static void CaraMenuSound(NSString* name) {
+    CaraPrepareMenuSounds();
+    if(![NSUserDefaults.standardUserDefaults boolForKey:@"libraryMenuSounds"]) return;
+    static CFTimeInterval last=0;
+    CFTimeInterval now=CACurrentMediaTime(); if(now-last<.075) return;
+    SystemSoundID identifier=CaraMenuSoundIDs[name].unsignedIntValue;
+    if(identifier) { last=now; AudioServicesPlaySystemSound(identifier); }
+}
+
 static UIColor* CaraOrange() { return [UIColor colorWithRed:1 green:.48 blue:.24 alpha:1]; }
+static UIColor* CaraAccent() {
+    NSInteger index=[NSUserDefaults.standardUserDefaults integerForKey:@"libraryAccent"];
+    return @[[UIColor colorWithRed:0 green:.67 blue:.70 alpha:1],UIColor.systemBlueColor,UIColor.systemPinkColor,UIColor.systemPurpleColor,UIColor.systemGrayColor][MAX(0,MIN(4,index))];
+}
 static UIColor* CaraBackground() {
     return [UIColor colorWithDynamicProvider:^UIColor*(UITraitCollection* traits) {
-        return traits.userInterfaceStyle==UIUserInterfaceStyleDark?UIColor.blackColor:UIColor.systemGroupedBackgroundColor;
+        return traits.userInterfaceStyle==UIUserInterfaceStyleDark?[UIColor colorWithRed:.08 green:.09 blue:.10 alpha:1]:[UIColor colorWithRed:.98 green:.97 blue:.97 alpha:1];
     }];
 }
 
@@ -87,10 +121,10 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
         UIView* tile=[UIView new]; tile.translatesAutoresizingMaskIntoConstraints=NO;
-        tile.backgroundColor=[UIColor colorWithDynamicProvider:^UIColor*(UITraitCollection* t) { return t.userInterfaceStyle==UIUserInterfaceStyleDark?[UIColor colorWithRed:.16 green:.10 blue:.07 alpha:1]:[UIColor colorWithRed:1 green:.91 blue:.83 alpha:1]; }];
+        tile.backgroundColor=[UIColor colorWithDynamicProvider:^UIColor*(UITraitCollection* t) { return t.userInterfaceStyle==UIUserInterfaceStyleDark?[UIColor colorWithRed:.10 green:.20 blue:.21 alpha:1]:[UIColor colorWithRed:.84 green:.95 blue:.94 alpha:1]; }];
         tile.layer.cornerRadius=22; tile.clipsToBounds=YES;
         _artwork=[UIImageView new]; _artwork.translatesAutoresizingMaskIntoConstraints=NO; _artwork.contentMode=UIViewContentModeScaleAspectFill; _artwork.clipsToBounds=YES;
-        _monogram=[UILabel new]; _monogram.translatesAutoresizingMaskIntoConstraints=NO; _monogram.font=[UIFont systemFontOfSize:42 weight:UIFontWeightSemibold]; _monogram.textColor=CaraOrange(); _monogram.textAlignment=NSTextAlignmentCenter;
+        _monogram=[UILabel new]; _monogram.translatesAutoresizingMaskIntoConstraints=NO; _monogram.font=[UIFont systemFontOfSize:42 weight:UIFontWeightSemibold]; _monogram.textColor=CaraAccent(); _monogram.textAlignment=NSTextAlignmentCenter;
         [tile addSubview:_artwork]; [tile addSubview:_monogram];
         _titleLabel=[UILabel new]; _titleLabel.numberOfLines=2; _titleLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; _titleLabel.adjustsFontForContentSizeCategory=YES;
         _subtitle=[UILabel new]; _subtitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; _subtitle.adjustsFontForContentSizeCategory=YES; _subtitle.textColor=UIColor.secondaryLabelColor;
@@ -116,7 +150,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     self.titleLabel.text=game.title;
     self.subtitle.text=[NSByteCountFormatter stringFromByteCount:game.fileSize countStyle:NSByteCountFormatterCountStyleFile];
     self.accessibilityLabel=[NSString stringWithFormat:@"%@, %@",game.title,self.subtitle.text];
-    self.accessibilityHint=@"Opens this game";
+    self.accessibilityHint=@"Opens game details. Long press for library actions.";
 }
 - (void)setHighlighted:(BOOL)value { [super setHighlighted:value]; self.contentView.alpha=value?.65:1; }
 @end
@@ -127,238 +161,143 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     UICollectionView* collection;
     NSArray<CaraLibraryGame*>* games;
     NSArray<CaraLibraryGame*>* filtered;
-    UILabel* countLabel;
-    UILabel* locationLabel;
-    UILabel* feedbackTitle;
-    UILabel* feedbackDetail;
-    UIActivityIndicatorView* feedbackSpinner;
-    UIView* emptyView;
-    UILabel* emptyTitle;
-    UILabel* emptyDetail;
-    UIRefreshControl* refreshControl;
+    UISegmentedControl* tabs;
     UISearchController* search;
-    NSCache* artworkCache;
-    dispatch_queue_t artworkQueue;
-    BOOL scanning;
-    BOOL reloadPending;
-    std::atomic<unsigned> artworkGeneration;
-    NSString* scanError;
-    UIStackView* stage;
-    UIView* hero;
-    UIImageView* heroArtwork;
+    UILabel* countLabel;
     UILabel* heroTitle;
     UILabel* heroSubtitle;
-    UIButton* openButton;
-    NSLayoutConstraint* heroHeight;
-    NSLayoutConstraint* heroWidth;
-    NSLayoutConstraint* feedbackHeight;
-    UIStackView* feedbackCard;
-    BOOL gridMode;
-    NSInteger selectedIndex;
+    UIImageView* heroArtwork;
+    UIView* hero;
+    UIButton* heroPlay;
+    NSCache* artworkCache;
+    dispatch_queue_t artworkQueue;
+    std::atomic<unsigned> artworkGeneration;
+    CaraLibraryGame* recent;
+    BOOL scanning;
+    BOOL sortRecent;
+    UILabel* syncLabel;
+    UIStackView* libraryBody;
 }
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraOrange(); self.title=@"HOME";
-    self.navigationController.navigationBar.prefersLargeTitles=YES;
-    self.navigationItem.largeTitleDisplayMode=UINavigationItemLargeTitleDisplayModeAlways;
-    self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"gearshape"] style:UIBarButtonItemStylePlain target:self action:@selector(settingsTapped)];
-    self.navigationItem.leftBarButtonItem.accessibilityLabel=@"Settings";
-    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"plus"] style:UIBarButtonItemStylePlain target:self action:@selector(addTapped)];
-    self.navigationItem.rightBarButtonItem.accessibilityLabel=@"Add games";
-    search=[[UISearchController alloc] initWithSearchResultsController:nil]; search.searchResultsUpdater=self; search.obscuresBackgroundDuringPresentation=NO; search.searchBar.placeholder=@"Search your games";
-    self.navigationItem.searchController=search; self.navigationItem.hidesSearchBarWhenScrolling=NO; self.definesPresentationContext=YES;
-    countLabel=[UILabel new]; countLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; countLabel.adjustsFontForContentSizeCategory=YES;
-    locationLabel=[UILabel new]; locationLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; locationLabel.adjustsFontForContentSizeCategory=YES; locationLabel.textColor=UIColor.secondaryLabelColor; locationLabel.numberOfLines=2;
-    UIStackView* heading=[[UIStackView alloc] initWithArrangedSubviews:@[countLabel,locationLabel]]; heading.axis=UILayoutConstraintAxisVertical; heading.spacing=5; heading.translatesAutoresizingMaskIntoConstraints=NO;
-    [self.view addSubview:heading];
-    UICollectionViewLayout* layout=[self gameLayout];
-    collection=[[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout]; collection.translatesAutoresizingMaskIntoConstraints=NO; collection.backgroundColor=UIColor.clearColor; collection.alwaysBounceVertical=YES; collection.keyboardDismissMode=UIScrollViewKeyboardDismissModeOnDrag;
-    collection.dataSource=self; collection.delegate=self; [collection registerClass:CaraGameCell.class forCellWithReuseIdentifier:@"game"];
-    refreshControl=[UIRefreshControl new]; [refreshControl addTarget:self action:@selector(reloadLibrary) forControlEvents:UIControlEventValueChanged]; collection.refreshControl=refreshControl;
-    hero=[UIView new]; hero.layer.cornerRadius=28; hero.clipsToBounds=YES;
-    hero.backgroundColor=[UIColor colorWithDynamicProvider:^UIColor*(UITraitCollection* traits) { return traits.userInterfaceStyle==UIUserInterfaceStyleDark?[UIColor colorWithRed:.085 green:.065 blue:.045 alpha:1]:[UIColor colorWithRed:1 green:.96 blue:.90 alpha:1]; }];
-    heroArtwork=[UIImageView new]; heroArtwork.contentMode=UIViewContentModeScaleAspectFit; heroArtwork.clipsToBounds=YES; heroArtwork.layer.cornerRadius=24;
-    heroTitle=[UILabel new]; heroTitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle1]; heroTitle.adjustsFontForContentSizeCategory=YES; heroTitle.numberOfLines=2; heroTitle.textAlignment=NSTextAlignmentCenter;
-    heroSubtitle=[UILabel new]; heroSubtitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; heroSubtitle.adjustsFontForContentSizeCategory=YES; heroSubtitle.numberOfLines=2; heroSubtitle.textAlignment=NSTextAlignmentCenter; heroSubtitle.textColor=UIColor.secondaryLabelColor;
-    openButton=[UIButton buttonWithType:UIButtonTypeSystem]; openButton.configuration=[UIButtonConfiguration filledButtonConfiguration]; [openButton setTitle:@"Open" forState:UIControlStateNormal]; [openButton addTarget:self action:@selector(openSelected) forControlEvents:UIControlEventTouchUpInside];
-    UIStackView* heroContent=[[UIStackView alloc] initWithArrangedSubviews:@[heroArtwork,heroTitle,heroSubtitle,openButton]]; heroContent.axis=UILayoutConstraintAxisVertical; heroContent.spacing=10; heroContent.alignment=UIStackViewAlignmentCenter; heroContent.translatesAutoresizingMaskIntoConstraints=NO;
-    [hero addSubview:heroContent];
-    NSLayoutConstraint* iconHeight=[heroArtwork.heightAnchor constraintEqualToAnchor:hero.heightAnchor multiplier:.32]; iconHeight.priority=750;
-    [NSLayoutConstraint activateConstraints:@[[heroContent.centerYAnchor constraintEqualToAnchor:hero.centerYAnchor],[heroContent.topAnchor constraintGreaterThanOrEqualToAnchor:hero.topAnchor constant:16],[heroContent.bottomAnchor constraintLessThanOrEqualToAnchor:hero.bottomAnchor constant:-16],[heroContent.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:18],[heroContent.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-18],iconHeight,[heroArtwork.widthAnchor constraintEqualToAnchor:heroArtwork.heightAnchor],[heroArtwork.heightAnchor constraintLessThanOrEqualToConstant:150],[openButton.widthAnchor constraintGreaterThanOrEqualToConstant:145]]];
-    stage=[[UIStackView alloc] initWithArrangedSubviews:@[hero,collection]]; stage.axis=UILayoutConstraintAxisVertical; stage.spacing=8; stage.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:stage];
-    heroHeight=[hero.heightAnchor constraintEqualToAnchor:stage.heightAnchor multiplier:.52]; heroHeight.priority=750; heroHeight.active=YES;
-    heroWidth=[hero.widthAnchor constraintEqualToAnchor:stage.widthAnchor multiplier:.45]; heroWidth.priority=750;
-    UIBarButtonItem* layoutToggle=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"square.grid.2x2"] style:UIBarButtonItemStylePlain target:self action:@selector(toggleLayout)]; layoutToggle.accessibilityLabel=@"Switch library layout";
-    self.navigationItem.leftBarButtonItems=@[self.navigationItem.leftBarButtonItem,layoutToggle];
-    feedbackTitle=[UILabel new]; feedbackTitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; feedbackTitle.adjustsFontForContentSizeCategory=YES; feedbackTitle.numberOfLines=2;
-    feedbackDetail=[UILabel new]; feedbackDetail.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; feedbackDetail.adjustsFontForContentSizeCategory=YES; feedbackDetail.textColor=UIColor.secondaryLabelColor; feedbackDetail.numberOfLines=3;
-    UIStackView* feedbackLabels=[[UIStackView alloc] initWithArrangedSubviews:@[feedbackTitle,feedbackDetail]]; feedbackLabels.axis=UILayoutConstraintAxisVertical; feedbackLabels.spacing=3;
-    UIImageView* cloud=[[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"icloud"]]; cloud.tintColor=CaraOrange(); cloud.contentMode=UIViewContentModeScaleAspectFit; [cloud.widthAnchor constraintEqualToConstant:26].active=YES;
-    feedbackSpinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium]; feedbackSpinner.hidesWhenStopped=YES;
-    UIStackView* feedback=[[UIStackView alloc] initWithArrangedSubviews:@[cloud,feedbackLabels,feedbackSpinner]]; feedback.spacing=12; feedback.alignment=UIStackViewAlignmentCenter; feedback.translatesAutoresizingMaskIntoConstraints=NO; feedback.layoutMarginsRelativeArrangement=YES; feedback.directionalLayoutMargins=NSDirectionalEdgeInsetsMake(14,16,14,16); feedback.backgroundColor=UIColor.secondarySystemGroupedBackgroundColor; feedback.layer.cornerRadius=20;
-    feedbackCard=feedback; feedbackHeight=[feedback.heightAnchor constraintEqualToConstant:76]; feedbackHeight.active=YES;
-    [self.view addSubview:feedback];
-    UILayoutGuide* safe=self.view.safeAreaLayoutGuide;
-    [NSLayoutConstraint activateConstraints:@[
-        [heading.topAnchor constraintEqualToAnchor:safe.topAnchor constant:12],[heading.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:24],[heading.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-24],
-        [stage.topAnchor constraintEqualToAnchor:heading.bottomAnchor constant:12],[stage.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],[stage.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16],[stage.bottomAnchor constraintEqualToAnchor:feedback.topAnchor constant:-12],
-        [feedback.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:20],[feedback.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-20],[feedback.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-12],
-    ]];
-    emptyTitle=[UILabel new]; emptyTitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; emptyTitle.adjustsFontForContentSizeCategory=YES; emptyTitle.textAlignment=NSTextAlignmentCenter; emptyTitle.numberOfLines=0;
-    emptyDetail=[UILabel new]; emptyDetail.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; emptyDetail.adjustsFontForContentSizeCategory=YES; emptyDetail.textColor=UIColor.secondaryLabelColor; emptyDetail.textAlignment=NSTextAlignmentCenter; emptyDetail.numberOfLines=0;
-    UIImageView* emptyIcon=[[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"square.grid.2x2"]]; emptyIcon.contentMode=UIViewContentModeScaleAspectFit; emptyIcon.tintColor=CaraOrange(); [emptyIcon.heightAnchor constraintEqualToConstant:52].active=YES;
-    UIButton* add=[UIButton buttonWithType:UIButtonTypeSystem]; add.configuration=[UIButtonConfiguration filledButtonConfiguration]; [add setTitle:@"Add a game" forState:UIControlStateNormal]; [add addTarget:self action:@selector(openTapped) forControlEvents:UIControlEventTouchUpInside];
-    UIButton* folder=[UIButton buttonWithType:UIButtonTypeSystem]; [folder setTitle:@"Choose ROMs folder" forState:UIControlStateNormal]; [folder addTarget:self action:@selector(folderTapped) forControlEvents:UIControlEventTouchUpInside];
-    UIStackView* empty=[[UIStackView alloc] initWithArrangedSubviews:@[emptyIcon,emptyTitle,emptyDetail,add,folder]]; empty.axis=UILayoutConstraintAxisVertical; empty.spacing=16; empty.alignment=UIStackViewAlignmentCenter; empty.translatesAutoresizingMaskIntoConstraints=NO;
-    emptyView=[UIView new]; emptyView.translatesAutoresizingMaskIntoConstraints=NO; [emptyView addSubview:empty]; [self.view addSubview:emptyView];
-    [NSLayoutConstraint activateConstraints:@[[emptyView.topAnchor constraintEqualToAnchor:collection.topAnchor],[emptyView.bottomAnchor constraintEqualToAnchor:collection.bottomAnchor],[emptyView.leadingAnchor constraintEqualToAnchor:collection.leadingAnchor],[emptyView.trailingAnchor constraintEqualToAnchor:collection.trailingAnchor],[empty.centerYAnchor constraintEqualToAnchor:emptyView.centerYAnchor],[empty.centerXAnchor constraintEqualToAnchor:emptyView.centerXAnchor],[empty.widthAnchor constraintLessThanOrEqualToConstant:360],[empty.leadingAnchor constraintGreaterThanOrEqualToAnchor:emptyView.leadingAnchor constant:28],[empty.trailingAnchor constraintLessThanOrEqualToAnchor:emptyView.trailingAnchor constant:-28]]];
-    selectedIndex=0;
-    artworkCache=[NSCache new]; artworkCache.countLimit=160; artworkQueue=dispatch_queue_create("com.dmikey.cara.artwork",DISPATCH_QUEUE_SERIAL);
-    [self updateFeedback]; [self reloadLibrary];
+    [super viewDidLoad]; CaraPrepareMenuSounds(); self.title=@"Cara"; self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraAccent();
+    self.navigationController.navigationBar.prefersLargeTitles=NO;
+    tabs=[[UISegmentedControl alloc] initWithItems:@[@"Collection",@"Favorites",@"Recently played"]]; tabs.selectedSegmentIndex=0; tabs.selectedSegmentTintColor=CaraAccent();
+    [tabs addTarget:self action:@selector(tabChanged) forControlEvents:UIControlEventValueChanged]; self.navigationItem.titleView=tabs;
+    UIBarButtonItem* settings=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"gearshape"] style:UIBarButtonItemStylePlain target:self action:@selector(settingsTapped)]; settings.accessibilityLabel=@"Settings";
+    UIImageView* brandIcon=[[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"rectangle.on.rectangle"]]; brandIcon.tintColor=CaraAccent(); brandIcon.contentMode=UIViewContentModeScaleAspectFit; [brandIcon.widthAnchor constraintEqualToConstant:28].active=YES;
+    UILabel* brandTitle=[UILabel new]; brandTitle.text=@"Cara"; brandTitle.font=[UIFont systemFontOfSize:25 weight:UIFontWeightBold]; UIStackView* brand=[[UIStackView alloc] initWithArrangedSubviews:@[brandIcon,brandTitle]]; brand.spacing=8; brand.alignment=UIStackViewAlignmentCenter; brand.userInteractionEnabled=NO;
+    self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithCustomView:brand];
+    self.navigationItem.rightBarButtonItem=settings;
+    search=[[UISearchController alloc] initWithSearchResultsController:nil]; search.searchResultsUpdater=self; search.obscuresBackgroundDuringPresentation=NO; search.searchBar.placeholder=@"Search your collection"; self.navigationItem.searchController=search; self.navigationItem.hidesSearchBarWhenScrolling=NO; self.definesPresentationContext=YES;
+    artworkCache=[NSCache new]; artworkQueue=dispatch_queue_create("com.dmikey.cara.library.artwork",DISPATCH_QUEUE_SERIAL);
+    hero=[UIView new]; hero.backgroundColor=UIColor.secondarySystemGroupedBackgroundColor; hero.layer.cornerRadius=24; hero.clipsToBounds=YES;
+    heroArtwork=[UIImageView new]; heroArtwork.contentMode=UIViewContentModeScaleAspectFit; heroArtwork.layer.cornerRadius=20; heroArtwork.clipsToBounds=YES; heroArtwork.tintColor=CaraAccent();
+    UILabel* eyebrow=[UILabel new]; eyebrow.text=@"JUMP BACK IN"; eyebrow.font=[UIFont systemFontOfSize:12 weight:UIFontWeightBold]; eyebrow.textColor=CaraAccent();
+    heroTitle=[UILabel new]; heroTitle.font=[UIFont systemFontOfSize:28 weight:UIFontWeightBold]; heroTitle.numberOfLines=2;
+    heroSubtitle=[UILabel new]; heroSubtitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; heroSubtitle.textColor=UIColor.secondaryLabelColor; heroSubtitle.numberOfLines=2;
+    heroPlay=[UIButton buttonWithType:UIButtonTypeSystem]; heroPlay.configuration=[UIButtonConfiguration filledButtonConfiguration]; [heroPlay addTarget:self action:@selector(openRecent) forControlEvents:UIControlEventTouchUpInside]; heroPlay.layer.cornerRadius=20;
+    UIStackView* copy=[[UIStackView alloc] initWithArrangedSubviews:@[eyebrow,heroTitle,heroSubtitle,heroPlay]]; copy.axis=UILayoutConstraintAxisVertical; copy.spacing=10;
+    UIStackView* heroBody=[[UIStackView alloc] initWithArrangedSubviews:@[copy,heroArtwork]]; heroBody.spacing=24; heroBody.alignment=UIStackViewAlignmentCenter; heroBody.translatesAutoresizingMaskIntoConstraints=NO; [hero addSubview:heroBody];
+    [NSLayoutConstraint activateConstraints:@[[heroBody.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:24],[heroBody.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-24],[heroBody.topAnchor constraintEqualToAnchor:hero.topAnchor constant:20],[heroBody.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:-20],[heroArtwork.widthAnchor constraintEqualToAnchor:heroBody.widthAnchor multiplier:.30],[heroArtwork.heightAnchor constraintEqualToConstant:145]]];
+    countLabel=[UILabel new]; countLabel.font=[UIFont systemFontOfSize:23 weight:UIFontWeightBold]; countLabel.text=@"Your collection";
+    UIButton* sort=[UIButton buttonWithType:UIButtonTypeSystem]; sort.configuration=[UIButtonConfiguration borderedButtonConfiguration]; [sort setTitle:@"Sort" forState:UIControlStateNormal]; sort.showsMenuAsPrimaryAction=YES;
+    __weak CaraLibraryController* owner=self;
+    sort.menu=[UIMenu menuWithChildren:@[[UIAction actionWithTitle:@"Title" image:[UIImage systemImageNamed:@"textformat.abc"] identifier:nil handler:^(UIAction* a) { CaraLibraryController* c=owner; if(c) { c->sortRecent=NO; CaraMenuSound(@"select"); [c filterGames]; } }],[UIAction actionWithTitle:@"Recently played" image:[UIImage systemImageNamed:@"clock"] identifier:nil handler:^(UIAction* a) { CaraLibraryController* c=owner; if(c) { c->sortRecent=YES; CaraMenuSound(@"select"); [c filterGames]; } }]]];
+    UIStackView* heading=[[UIStackView alloc] initWithArrangedSubviews:@[countLabel,[UIView new],sort]]; heading.alignment=UIStackViewAlignmentCenter;
+    UICollectionViewFlowLayout* layout=[UICollectionViewFlowLayout new]; layout.minimumInteritemSpacing=18; layout.minimumLineSpacing=22;
+    collection=[[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout]; collection.backgroundColor=UIColor.clearColor; collection.alwaysBounceVertical=YES; collection.delegate=self; collection.dataSource=self; [collection registerClass:CaraGameCell.class forCellWithReuseIdentifier:@"game"];
+    UIRefreshControl* refresh=[UIRefreshControl new]; [refresh addTarget:self action:@selector(reloadLibrary) forControlEvents:UIControlEventValueChanged]; collection.refreshControl=refresh;
+    UIButton* add=[UIButton buttonWithType:UIButtonTypeSystem]; add.configuration=[UIButtonConfiguration borderedButtonConfiguration]; [add setTitle:@"＋  Add games" forState:UIControlStateNormal]; [add addTarget:self action:@selector(addTapped) forControlEvents:UIControlEventTouchUpInside];
+    syncLabel=[UILabel new]; syncLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; syncLabel.textColor=UIColor.secondaryLabelColor; syncLabel.numberOfLines=2;
+    UIStackView* footer=[[UIStackView alloc] initWithArrangedSubviews:@[add,syncLabel]]; footer.spacing=20; footer.alignment=UIStackViewAlignmentCenter;
+    UIStackView* body=[[UIStackView alloc] initWithArrangedSubviews:@[hero,heading,collection,footer]]; libraryBody=body; body.axis=UILayoutConstraintAxisVertical; body.spacing=18; body.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:body];
+    [NSLayoutConstraint activateConstraints:@[[body.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:24],[body.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-24],[body.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],[body.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-12]]];
+    [self reloadLibrary];
 }
-- (UICollectionViewLayout*)gameLayout {
-    const BOOL grid=gridMode;
-    UICollectionViewCompositionalLayout* layout=[[UICollectionViewCompositionalLayout alloc] initWithSectionProvider:^NSCollectionLayoutSection*(NSInteger section,id<NSCollectionLayoutEnvironment> environment) {
-        CGFloat width=environment.container.effectiveContentSize.width;
-        if (!grid) {
-            CGFloat availableHeight=environment.container.effectiveContentSize.height;
-            CGFloat side=MAX(64,MIN(180,availableHeight-24));
-            NSCollectionLayoutItem* item=[NSCollectionLayoutItem itemWithLayoutSize:[NSCollectionLayoutSize sizeWithWidthDimension:[NSCollectionLayoutDimension fractionalWidthDimension:1] heightDimension:[NSCollectionLayoutDimension fractionalHeightDimension:1]]];
-            NSCollectionLayoutGroup* group=[NSCollectionLayoutGroup verticalGroupWithLayoutSize:[NSCollectionLayoutSize sizeWithWidthDimension:[NSCollectionLayoutDimension absoluteDimension:side] heightDimension:[NSCollectionLayoutDimension absoluteDimension:side]] subitems:@[item]];
-            NSCollectionLayoutSection* result=[NSCollectionLayoutSection sectionWithGroup:group]; result.interGroupSpacing=18; result.contentInsets=NSDirectionalEdgeInsetsMake(MAX(12,(availableHeight-side)/2),MAX(18,(width-side)/2),MAX(12,(availableHeight-side)/2),MAX(18,(width-side)/2)); return result;
-        }
-        BOOL accessibility=UIContentSizeCategoryIsAccessibilityCategory(environment.traitCollection.preferredContentSizeCategory);
-        NSInteger columns=MAX(1,MIN(6,NSInteger((width-32)/(accessibility?230:160))));
-        CGFloat itemWidth=(width-40-16*(columns-1))/columns;
-        NSCollectionLayoutItem* item=[NSCollectionLayoutItem itemWithLayoutSize:[NSCollectionLayoutSize sizeWithWidthDimension:[NSCollectionLayoutDimension fractionalWidthDimension:1.0/columns] heightDimension:[NSCollectionLayoutDimension estimatedDimension:itemWidth+(accessibility?150:88)]]];
-        NSCollectionLayoutGroup* group=[NSCollectionLayoutGroup horizontalGroupWithLayoutSize:[NSCollectionLayoutSize sizeWithWidthDimension:[NSCollectionLayoutDimension fractionalWidthDimension:1] heightDimension:[NSCollectionLayoutDimension estimatedDimension:itemWidth+(accessibility?150:88)]] subitem:item count:columns];
-        group.interItemSpacing=[NSCollectionLayoutSpacing fixedSpacing:16]; NSCollectionLayoutSection* result=[NSCollectionLayoutSection sectionWithGroup:group]; result.interGroupSpacing=20; result.contentInsets=NSDirectionalEdgeInsetsMake(18,12,24,12); return result;
-    }];
-    UICollectionViewCompositionalLayoutConfiguration* config=[UICollectionViewCompositionalLayoutConfiguration new]; config.scrollDirection=grid?UICollectionViewScrollDirectionVertical:UICollectionViewScrollDirectionHorizontal; layout.configuration=config; return layout;
-}
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self applyAppearance]; }
+- (void)applyAppearance { NSInteger style=[NSUserDefaults.standardUserDefaults integerForKey:@"libraryTheme"]; self.navigationController.overrideUserInterfaceStyle=style==1?UIUserInterfaceStyleLight:style==2?UIUserInterfaceStyleDark:UIUserInterfaceStyleUnspecified; self.view.tintColor=CaraAccent(); self.navigationController.navigationBar.tintColor=CaraAccent(); tabs.selectedSegmentTintColor=CaraAccent(); [collection reloadData]; }
 - (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    BOOL compact=self.view.bounds.size.height<500;
-    locationLabel.hidden=compact; feedbackDetail.hidden=compact; heroArtwork.hidden=compact; heroSubtitle.hidden=compact;
-    heroTitle.font=[UIFont preferredFontForTextStyle:compact?UIFontTextStyleHeadline:UIFontTextStyleTitle1]; heroTitle.numberOfLines=compact?1:2;
-    CGFloat labelsWidth=MAX(100,feedbackCard.bounds.size.width-90);
-    CGFloat measured=28+[feedbackTitle sizeThatFits:CGSizeMake(labelsWidth,CGFLOAT_MAX)].height+(compact?0:[feedbackDetail sizeThatFits:CGSizeMake(labelsWidth,CGFLOAT_MAX)].height+3);
-    if (fabs(feedbackHeight.constant-measured)>.5) feedbackHeight.constant=measured;
-    stage.axis=compact?UILayoutConstraintAxisHorizontal:UILayoutConstraintAxisVertical;
-    heroWidth.active=compact && !gridMode; heroHeight.active=!compact && !gridMode;
-    self.navigationItem.largeTitleDisplayMode=compact?UINavigationItemLargeTitleDisplayModeNever:UINavigationItemLargeTitleDisplayModeAlways;
+    [super viewDidLayoutSubviews]; CGFloat width=collection.bounds.size.width; NSInteger columns=MAX(2,MIN(6,NSInteger(width/158))); CGFloat side=floor((width-(columns-1)*18)/columns);
+    UICollectionViewFlowLayout* layout=(id)collection.collectionViewLayout; CGSize size=CGSizeMake(side,side+64); if(!CGSizeEqualToSize(layout.itemSize,size)) layout.itemSize=size;
+    hero.hidden=!recent || self.view.bounds.size.height<600; heroArtwork.hidden=self.view.bounds.size.width<600;
+    tabs.apportionsSegmentWidthsByContent=YES;
+    BOOL narrow=self.view.bounds.size.width<700; self.navigationItem.title=narrow?@"":@"Cara";
+    if(narrow && tabs.superview!=libraryBody) { self.navigationItem.titleView=nil; [libraryBody insertArrangedSubview:tabs atIndex:0]; }
+    else if(!narrow && tabs.superview==libraryBody) { [libraryBody removeArrangedSubview:tabs]; [tabs removeFromSuperview]; self.navigationItem.titleView=tabs; }
+    if(!narrow) tabs.frame=CGRectMake(0,0,MIN(560,self.view.bounds.size.width-200),34);
 }
-- (void)toggleLayout {
-    gridMode=!gridMode; heroHeight.active=!gridMode && self.view.bounds.size.height>=500; heroWidth.active=!gridMode && self.view.bounds.size.height<500; hero.hidden=gridMode; [collection setCollectionViewLayout:[self gameLayout] animated:YES]; [self.view setNeedsLayout];
+- (void)reloadLibrary { [self applyAppearance]; if(scanning) return; scanning=YES; [self.store scan:^(NSArray* result,NSString* error) { self->scanning=NO; self->games=result; [self->collection.refreshControl endRefreshing]; [self filterGames]; if(error) self->syncLabel.text=error; }]; }
+- (void)tabChanged { CaraMenuSound(@"focus"); [self filterGames]; }
+- (void)filterGames {
+    NSString* query=search.searchBar.text?:@""; NSInteger tab=tabs.selectedSegmentIndex;
+    filtered=[games filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(CaraLibraryGame* game,NSDictionary* b) { NSDictionary* metadata=[self.store metadataForGame:game.url]; return (!query.length || [game.title localizedStandardContainsString:query]) && (tab!=1 || [metadata[@"favorite"] boolValue]) && (tab!=2 || metadata[@"lastPlayed"]); }]];
+    filtered=[filtered sortedArrayUsingComparator:^NSComparisonResult(CaraLibraryGame* a,CaraLibraryGame* b) { if(self->sortRecent || tab==2) { NSComparisonResult date=[[self.store metadataForGame:b.url][@"lastPlayed"]?:NSDate.distantPast compare:[self.store metadataForGame:a.url][@"lastPlayed"]?:NSDate.distantPast]; if(date!=NSOrderedSame) return date; } return [a.title localizedStandardCompare:b.title]; }];
+    countLabel.text=[NSString stringWithFormat:@"%@ · %lu",tab==1?@"Favorites":tab==2?@"Recently played":@"Your collection",(unsigned long)filtered.count];
+    recent=nil; NSDate* latest=NSDate.distantPast; for(CaraLibraryGame* game in games) { NSDate* date=[self.store metadataForGame:game.url][@"lastPlayed"]; if(date && [date compare:latest]==NSOrderedDescending) { latest=date; recent=game; } }
+    if(recent) { heroTitle.text=recent.title; heroSubtitle.text=[@"Last played " stringByAppendingString:[NSDateFormatter localizedStringFromDate:latest dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle]]; BOOL resume=self.canResume && [recent.url.URLByStandardizingPath isEqual:self.activeGameURL.URLByStandardizingPath]; [heroPlay setTitle:resume?@"▶  Resume game":@"▶  Game details" forState:UIControlStateNormal]; [self artwork:recent completion:^(NSDictionary* m) { self->heroArtwork.image=m[@"image"]?:[UIImage systemImageNamed:@"gamecontroller"]; self->heroTitle.text=m[@"title"]?:self->recent.title; }]; }
+    syncLabel.text=self.syncDetail?:@"Add games from Files. Your saves stay on this device."; [collection reloadData]; [self.view setNeedsLayout];
+    if(!filtered.count) { UILabel* empty=[UILabel new]; empty.text=games.count?@"No games match this view.":@"Your collection starts here.\nAdd a game or choose your ROMs folder."; empty.numberOfLines=0; empty.textAlignment=NSTextAlignmentCenter; empty.textColor=UIColor.secondaryLabelColor; collection.backgroundView=empty; } else collection.backgroundView=nil;
 }
-- (void)openSelected { if (selectedIndex>=0 && selectedIndex<(NSInteger)filtered.count && self.openGame) self.openGame(filtered[selectedIndex].url); }
-- (void)updateHero {
-    if (!filtered.count) { heroHeight.active=NO; heroWidth.active=NO; hero.hidden=YES; openButton.enabled=NO; return; }
-    hero.hidden=gridMode; [self.view setNeedsLayout]; selectedIndex=MAX(0,MIN(selectedIndex,(NSInteger)filtered.count-1));
-    CaraLibraryGame* game=filtered[selectedIndex]; heroTitle.text=game.title; heroSubtitle.text=game.source; heroArtwork.image=[UIImage systemImageNamed:@"gamecontroller.fill"]; heroArtwork.tintColor=CaraOrange(); openButton.enabled=YES;
-    NSString* key=[NSString stringWithFormat:@"%@-%@-%llu",game.url.absoluteString,game.modified,game.fileSize];
-    NSDictionary* cached=[artworkCache objectForKey:key];
-    if (cached.count) { heroArtwork.image=cached[@"image"]; heroTitle.text=cached[@"title"]; }
-    else { const unsigned generation=artworkGeneration.load(); dispatch_async(artworkQueue,^{ @autoreleasepool {
-        if (generation!=self->artworkGeneration.load()) return;
-        NSDictionary* metadata=ReadGameArtwork(game)?:@{}; [self->artworkCache setObject:metadata forKey:key];
-        dispatch_async(dispatch_get_main_queue(),^{ if (metadata.count && self->filtered.count && self->selectedIndex<(NSInteger)self->filtered.count && [self->filtered[self->selectedIndex].url isEqual:game.url]) { self->heroArtwork.image=metadata[@"image"]; self->heroTitle.text=metadata[@"title"]; } });
-    } }); }
+- (void)updateSearchResultsForSearchController:(UISearchController*)controller { [self filterGames]; }
+- (void)artwork:(CaraLibraryGame*)game completion:(void(^)(NSDictionary*))apply {
+    NSString* key=[NSString stringWithFormat:@"%@-%@-%llu",game.url,game.modified,game.fileSize]; NSDictionary* cached=[artworkCache objectForKey:key]; if(cached) { apply(cached); return; }
+    unsigned generation=artworkGeneration.load(); dispatch_async(artworkQueue,^{ NSDictionary* metadata=ReadGameArtwork(game)?:@{}; [self->artworkCache setObject:metadata forKey:key]; dispatch_async(dispatch_get_main_queue(),^{ if(generation==self->artworkGeneration.load()) apply(metadata); }); });
 }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; self.navigationController.navigationBar.tintColor=CaraOrange(); [self updateResume]; }
-- (void)setCanResume:(BOOL)value { _canResume=value; if (self.isViewLoaded) [self updateResume]; }
-- (void)updateResume {
-    UIBarButtonItem* add=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"plus"] style:UIBarButtonItemStylePlain target:self action:@selector(addTapped)]; add.accessibilityLabel=@"Add games";
-    if (self.canResume) {
-        UIBarButtonItem* resume=[[UIBarButtonItem alloc] initWithTitle:@"Resume game" style:UIBarButtonItemStyleDone target:self action:@selector(resumeTapped)];
-        self.navigationItem.rightBarButtonItems=@[add,resume];
-    } else self.navigationItem.rightBarButtonItems=@[add];
-}
-- (void)setSyncTitle:(NSString*)value { _syncTitle=[value copy]; if (self.isViewLoaded) [self updateFeedback]; }
-- (void)setSyncDetail:(NSString*)value { _syncDetail=[value copy]; if (self.isViewLoaded) [self updateFeedback]; }
-- (void)setSyncing:(BOOL)value { _syncing=value; if (self.isViewLoaded) [self updateFeedback]; }
-- (void)updateFeedback {
-    feedbackTitle.text=self.syncTitle?:@"Saves stay with you";
-    feedbackDetail.text=self.syncDetail?:@"Connect iCloud Drive in Settings to sync saves and states.";
-    if (self.syncing) [feedbackSpinner startAnimating]; else [feedbackSpinner stopAnimating];
-}
-- (void)settingsTapped { if (self.showSettings) self.showSettings(); }
-- (void)openTapped { if (self.addGame) self.addGame(); }
-- (void)folderTapped { if (self.chooseFolder) self.chooseFolder(); }
-- (void)resumeTapped { if (self.resumeGame) self.resumeGame(); }
-- (void)addTapped {
-    UIAlertController* sheet=[UIAlertController alertControllerWithTitle:@"Add games" message:@"Open a game from Files, or keep your collection in a ROMs folder." preferredStyle:UIAlertControllerStyleActionSheet];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Open game…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { [self openTapped]; }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Choose ROMs folder…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { [self folderTapped]; }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Refresh library" style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { [self reloadLibrary]; }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    sheet.popoverPresentationController.barButtonItem=self.navigationItem.rightBarButtonItems.firstObject;
-    [self presentViewController:sheet animated:YES completion:nil];
-}
-- (void)reloadLibrary {
-    if (!self.isViewLoaded) return;
-    if (scanning) { reloadPending=YES; return; }
-    scanning=YES; countLabel.text=@"Finding your games…";
-    __weak CaraLibraryController* weak=self;
-    [self.store scan:^(NSArray<CaraLibraryGame*>* entries,NSString* error) {
-        CaraLibraryController* owner=weak; if (!owner) return;
-        owner->scanning=NO; owner->games=entries; owner->scanError=error;
-        [owner->refreshControl endRefreshing]; [owner updateSearchResultsForSearchController:owner->search];
-        if (owner->reloadPending) { owner->reloadPending=NO; [owner reloadLibrary]; }
-    }];
-}
-- (void)updateSearchResultsForSearchController:(UISearchController*)controller {
-    NSString* query=controller.searchBar.text?:@"";
-    filtered=query.length?[games filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(CaraLibraryGame* game,NSDictionary* bindings) { return [game.title localizedStandardContainsString:query]; }]]:games;
-    countLabel.text=[NSString stringWithFormat:@"%lu %@",(unsigned long)filtered.count,filtered.count==1?@"game":@"games"];
-    locationLabel.text=scanError?:[NSString stringWithFormat:@"%@%@",self.store.folderName,self.store.hasCustomFolder?@" · includes games stored in Cara":@" · On My iPad / Cara"];
-    if (UIDevice.currentDevice.userInterfaceIdiom!=UIUserInterfaceIdiomPad && !scanError && !self.store.hasCustomFolder) locationLabel.text=@"Roms · On My iPhone / Cara";
-    locationLabel.textColor=scanError?UIColor.systemOrangeColor:UIColor.secondaryLabelColor;
-    emptyView.hidden=filtered.count!=0;
-    emptyTitle.text=query.length?@"No matching games":@"Your games live here";
-    emptyDetail.text=query.length?@"Try another title.":@"Add a game from Files, or choose a folder for your collection.";
-    [collection reloadData]; [self updateHero];
-}
-- (void)suspendArtwork { ++artworkGeneration; }
 - (NSInteger)collectionView:(UICollectionView*)view numberOfItemsInSection:(NSInteger)section { return filtered.count; }
-- (__kindof UICollectionViewCell*)collectionView:(UICollectionView*)view cellForItemAtIndexPath:(NSIndexPath*)path {
-    CaraGameCell* cell=[view dequeueReusableCellWithReuseIdentifier:@"game" forIndexPath:path]; CaraLibraryGame* game=filtered[path.item]; [cell configure:game];
-    cell.titleLabel.hidden=!gridMode; cell.subtitle.hidden=!gridMode;
-    cell.artwork.superview.layer.borderColor=CaraOrange().CGColor; cell.artwork.superview.layer.borderWidth=path.item==selectedIndex && !gridMode?2.5:0;
-    NSString* key=cell.gameKey;
-    void(^apply)(NSDictionary*)=^(NSDictionary* metadata) {
-        if (!metadata.count || ![cell.gameKey isEqual:key]) return;
-        cell.artwork.image=metadata[@"image"]; cell.monogram.hidden=YES; cell.titleLabel.text=metadata[@"title"];
-        cell.accessibilityLabel=[NSString stringWithFormat:@"%@, %@",cell.titleLabel.text,cell.subtitle.text];
-    };
-    NSDictionary* cached=[artworkCache objectForKey:key];
-    if (cached) apply(cached);
-    else { const unsigned generation=artworkGeneration.load(); dispatch_async(artworkQueue,^{ @autoreleasepool {
-        if (generation!=self->artworkGeneration.load()) return;
-        NSDictionary* metadata=ReadGameArtwork(game)?:@{}; [self->artworkCache setObject:metadata forKey:key];
-        dispatch_async(dispatch_get_main_queue(),^{ if (metadata.count && generation==self->artworkGeneration.load()) apply(metadata); });
-    } }); }
-    return cell;
+- (UICollectionViewCell*)collectionView:(UICollectionView*)view cellForItemAtIndexPath:(NSIndexPath*)path {
+    CaraGameCell* cell=[view dequeueReusableCellWithReuseIdentifier:@"game" forIndexPath:path]; CaraLibraryGame* game=filtered[path.item]; [cell configure:game]; NSString* key=cell.gameKey; cell.titleLabel.hidden=[NSUserDefaults.standardUserDefaults boolForKey:@"libraryHideTitles"]; cell.subtitle.text=[[self.store metadataForGame:game.url][@"favorite"] boolValue]?@"★ Favorite":@"Nintendo 3DS";
+    [self artwork:game completion:^(NSDictionary* m) { if([cell.gameKey isEqual:key] && m.count) { cell.artwork.image=m[@"image"]; cell.monogram.hidden=YES; cell.titleLabel.text=m[@"title"]; } }]; return cell;
 }
-- (void)scrollViewDidEndDecelerating:(UIScrollView*)scroll { [self selectCenteredTile]; }
-- (void)scrollViewDidEndScrollingAnimation:(UIScrollView*)scroll { [self selectCenteredTile]; }
-- (void)selectCenteredTile {
-    if (gridMode || !filtered.count) return;
-    CGFloat center=collection.contentOffset.x+collection.bounds.size.width/2;
-    NSIndexPath* nearest=nil; CGFloat distance=CGFLOAT_MAX;
-    for (NSIndexPath* path in collection.indexPathsForVisibleItems) {
-        UICollectionViewLayoutAttributes* attributes=[collection layoutAttributesForItemAtIndexPath:path]; CGFloat d=fabs(attributes.center.x-center);
-        if (d<distance) { distance=d; nearest=path; }
-    }
-    if (!nearest || nearest.item==selectedIndex) return;
-    selectedIndex=nearest.item;
-    for (NSIndexPath* path in collection.indexPathsForVisibleItems) { CaraGameCell* cell=(CaraGameCell*)[collection cellForItemAtIndexPath:path]; cell.artwork.superview.layer.borderWidth=path.item==selectedIndex?2.5:0; }
-    [self updateHero];
+- (void)collectionView:(UICollectionView*)view didSelectItemAtIndexPath:(NSIndexPath*)path { [self showDetails:filtered[path.item]]; }
+- (void)openRecent { if(self.canResume && [recent.url.URLByStandardizingPath isEqual:self.activeGameURL.URLByStandardizingPath]) { CaraMenuSound(@"launch"); if(self.resumeGame) self.resumeGame(); } else if(recent) [self showDetails:recent]; }
+- (void)showDetails:(CaraLibraryGame*)game {
+    CaraMenuSound(@"select");
+    CaraSettingsController* details=[CaraSettingsController new]; details.title=@"Game details"; __weak CaraLibraryController* owner=self;
+    NSString* artworkKey=[NSString stringWithFormat:@"%@-%@-%llu",game.url,game.modified,game.fileSize]; NSString* displayTitle=[artworkCache objectForKey:artworkKey][@"title"]?:game.title;
+    NSMutableArray* rows=[NSMutableArray new]; NSDictionary* info=[self.store metadataForGame:game.url];
+    [rows addObject:@{@"title":displayTitle,@"subtitle":[NSString stringWithFormat:@"Nintendo 3DS · %@\n%@%@",[NSByteCountFormatter stringFromByteCount:game.fileSize countStyle:NSByteCountFormatterCountStyleFile],game.url.lastPathComponent,info[@"titleID"]?[@"\nTitle ID: " stringByAppendingString:info[@"titleID"]]:@""],@"symbol":@"gamecontroller"}];
+    [rows addObject:@{@"title":@"Favorite",@"symbol":@"star",@"value":info[@"favorite"]?:@NO,@"change":^(BOOL value) { CaraMenuSound(@"favorite"); [owner.store setFavorite:value game:game.url]; [owner filterGames]; }}];
+    BOOL active=self.canResume && [game.url.URLByStandardizingPath isEqual:self.activeGameURL.URLByStandardizingPath];
+    if(active) [rows addObject:@{@"title":@"Resume game",@"sound":@"launch",@"symbol":@"play.fill",@"action":^{ if(owner.resumeGame) owner.resumeGame(); }}];
+    NSArray* states=self.statesForGame?self.statesForGame(game.url):@[]; NSDictionary* latest=nil; for(NSDictionary* record in states) if([record[@"compatible"] boolValue]) { latest=record; break; }
+    if(!active && latest) { NSString* filename=latest[@"filename"]; [rows addObject:@{@"title":@"Resume latest state",@"sound":@"launch",@"symbol":@"play.fill",@"action":^{ if(owner.startFromState) owner.startFromState(game.url,filename); }}]; }
+    [rows addObject:@{@"title":active||latest?@"Start from beginning":@"Start game",@"subtitle":@"Keeps in-game saves and save states.",@"sound":@"launch",@"symbol":@"play",@"action":^{ if(owner.openGame) owner.openGame(game.url); }}];
+    NSMutableArray* sections=[NSMutableArray arrayWithObject:@{@"title":@"GAME",@"rows":rows}]; NSMutableArray* stateRows=[NSMutableArray new];
+    for(NSDictionary* record in states) { NSMutableDictionary* row=[@{@"title":record[@"title"]?:@"Save state",@"subtitle":record[@"subtitle"]?:@"",@"symbol":@"clock.arrow.circlepath",@"enabled":record[@"compatible"]?:@NO} mutableCopy]; if([record[@"compatible"] boolValue] && self.startFromState) { row[@"sound"]=@"launch"; row[@"action"]=^{ if(owner.startFromState) owner.startFromState(game.url,record[@"filename"]); }; } [stateRows addObject:row]; }
+    if(!stateRows.count) [stateRows addObject:@{@"title":@"No save states on this device",@"subtitle":@"Create a state from the game menu. In-game saves are separate.",@"symbol":@"tray"}];
+    [sections addObject:@{@"title":@"Save states",@"rows":stateRows,@"footer":@"States require the same engine, game revision, CPU backend, and system mode. Cara checks compatibility again when loading."}];
+    if(self.gameSettings) [sections addObject:@{@"title":@"Preferences",@"rows":@[@{@"title":@"Game settings",@"symbol":@"slider.horizontal.3",@"action":^{ if(owner.gameSettings) owner.gameSettings(game.url); }}]}];
+    [sections addObject:@{@"title":@"Manage game",@"rows":@[@{@"title":@"Clear game settings",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner confirmGame:game operation:@"settings"]; }},@{@"title":@"Remove from library…",@"symbol":@"minus.circle",@"destructive":@YES,@"action":^{ [owner confirmGame:game operation:@"remove"]; }},@{@"title":@"Delete game file…",@"symbol":@"trash",@"destructive":@YES,@"action":^{ [owner confirmGame:game operation:@"delete"]; }}]}];
+    details.sections=sections;
+    [details loadViewIfNeeded];
+    UIView* banner=[[UIView alloc] initWithFrame:CGRectMake(0,0,600,190)]; banner.backgroundColor=[CaraAccent() colorWithAlphaComponent:.08];
+    UIImageView* image=[[UIImageView alloc] initWithFrame:CGRectMake(0,14,600,164)]; image.autoresizingMask=UIViewAutoresizingFlexibleWidth; image.contentMode=UIViewContentModeScaleAspectFit; image.image=[UIImage systemImageNamed:@"gamecontroller"]; image.tintColor=CaraAccent(); [banner addSubview:image]; details.tableView.tableHeaderView=banner;
+    [self artwork:game completion:^(NSDictionary* metadata) { if(metadata[@"image"]) image.image=metadata[@"image"]; }];
+    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:details]; nav.modalPresentationStyle=UIModalPresentationPageSheet; nav.preferredContentSize=CGSizeMake(620,850); nav.sheetPresentationController.detents=@[UISheetPresentationControllerDetent.largeDetent]; nav.sheetPresentationController.prefersGrabberVisible=YES; nav.sheetPresentationController.preferredCornerRadius=28;
+    [self presentViewController:nav animated:YES completion:nil];
 }
-- (void)collectionView:(UICollectionView*)view didSelectItemAtIndexPath:(NSIndexPath*)path {
-    if (gridMode || path.item==selectedIndex) { if (self.openGame) self.openGame(filtered[path.item].url); return; }
-    selectedIndex=path.item; [collection reloadData]; [self updateHero];
-    [collection scrollToItemAtIndexPath:path atScrollPosition:UICollectionViewScrollPositionCenteredHorizontally animated:YES];
+- (UIContextMenuConfiguration*)collectionView:(UICollectionView*)view contextMenuConfigurationForItemAtIndexPath:(NSIndexPath*)path point:(CGPoint)point {
+    CaraMenuSound(@"focus"); CaraLibraryGame* game=filtered[path.item]; __weak CaraLibraryController* owner=self;
+    return [UIContextMenuConfiguration configurationWithIdentifier:nil previewProvider:nil actionProvider:^UIMenu*(NSArray* suggested) {
+        BOOL favorite=[[owner.store metadataForGame:game.url][@"favorite"] boolValue];
+        UIAction* star=[UIAction actionWithTitle:favorite?@"Remove favorite":@"Favorite" image:[UIImage systemImageNamed:@"star"] identifier:nil handler:^(UIAction* a) { CaraMenuSound(@"favorite"); [owner.store setFavorite:!favorite game:game.url]; [owner filterGames]; }];
+        NSMutableArray* actions=[NSMutableArray arrayWithObject:star]; for(NSString* operation in @[@"settings",@"remove",@"delete"]) { UIAction* action=[UIAction actionWithTitle:[operation isEqual:@"settings"]?@"Clear game settings…":[operation isEqual:@"remove"]?@"Remove from library…":@"Delete game file…" image:[UIImage systemImageNamed:[operation isEqual:@"settings"]?@"arrow.counterclockwise":@"trash"] identifier:nil handler:^(UIAction* a) { [owner confirmGame:game operation:operation]; }]; if(![operation isEqual:@"settings"]) action.attributes=UIMenuElementAttributesDestructive; [actions addObject:action]; } return [UIMenu menuWithTitle:game.title children:actions]; }];
 }
+- (void)confirmGame:(CaraLibraryGame*)game operation:(NSString*)operation {
+    BOOL deleteFile=[operation isEqual:@"delete"], settings=[operation isEqual:@"settings"];
+    if(deleteFile && self.canResume && [game.url.URLByStandardizingPath isEqual:self.activeGameURL.URLByStandardizingPath]) { UIAlertController* active=[UIAlertController alertControllerWithTitle:@"Stop this game first" message:@"Stop the running game from the game menu before deleting its file." preferredStyle:UIAlertControllerStyleAlert]; [active addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]]; [self presentViewController:active animated:YES completion:nil]; return; }
+    UIAlertController* alert=[UIAlertController alertControllerWithTitle:settings?@"Clear game settings?":deleteFile?@"Delete game file?":@"Remove from library?" message:settings?@"This game will use your global settings. Saves and states are kept.":deleteFile?[NSString stringWithFormat:@"Permanently delete %@ from its original location? In-game saves and save states are kept.",game.url.lastPathComponent]:@"The game file, in-game saves, and save states are kept. Add the game from Files to show it again." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* a) { CaraMenuSound(@"cancel"); }]];
+    [alert addAction:[UIAlertAction actionWithTitle:settings?@"Clear settings":deleteFile?@"Delete game file":@"Remove from library" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* a) { CaraMenuSound(@"confirm"); if(settings) { if(self.clearGameSettings) self.clearGameSettings(game.url); } else if(deleteFile) { NSError* error=nil; if(![self.store deleteGameFile:game.url error:&error]) { UIAlertController* failure=[UIAlertController alertControllerWithTitle:@"Couldn’t delete game" message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert]; [failure addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]]; [self presentViewController:failure animated:YES completion:nil]; } } else [self.store removeGame:game.url]; [self reloadLibrary]; }]]; [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)settingsTapped { CaraMenuSound(@"select"); if(self.showSettings) self.showSettings(); }
+- (void)addTapped {
+    CaraMenuSound(@"select");
+    UIAlertController* sheet=[UIAlertController alertControllerWithTitle:@"Add games" message:@"Games stay in their original location." preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Open game from Files…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { if(self.addGame) self.addGame(); }]]; [sheet addAction:[UIAlertAction actionWithTitle:@"Choose ROMs folder…" style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { if(self.chooseFolder) self.chooseFolder(); }]]; [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* a) { CaraMenuSound(@"cancel"); }]]; sheet.popoverPresentationController.sourceView=self.view; sheet.popoverPresentationController.sourceRect=CGRectMake(30,self.view.bounds.size.height-40,1,1); [self presentViewController:sheet animated:YES completion:nil];
+}
+- (void)setSyncDetail:(NSString*)value { _syncDetail=[value copy]; syncLabel.text=value; }
+- (void)suspendArtwork { ++artworkGeneration; }
 @end
 
 @interface CaraSliderCell : UITableViewCell
@@ -389,48 +328,99 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
 }
 @end
 
+static UIImage* CaraThemePreview(NSInteger style) {
+    UIGraphicsImageRenderer* renderer=[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(100,65)];
+    return [renderer imageWithActions:^(UIGraphicsImageRendererContext* context) {
+        BOOL dark=style==2; [(dark?[UIColor colorWithWhite:.16 alpha:1]:[UIColor colorWithWhite:.96 alpha:1]) setFill]; [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0,0,100,65) cornerRadius:8] fill];
+        [[CaraAccent() colorWithAlphaComponent:.45] setFill]; [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(8,17,84,22) cornerRadius:4] fill];
+        [CaraAccent() setFill]; [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(8,7,25,5) cornerRadius:2] fill];
+        NSArray* colors=@[CaraAccent(),UIColor.systemOrangeColor,UIColor.systemPurpleColor,UIColor.systemGreenColor]; for(NSUInteger i=0;i<4;++i) { [[colors[i] colorWithAlphaComponent:.45] setFill]; [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(8+i*22,45,18,14) cornerRadius:3] fill]; }
+        if(style==0) { [[UIColor colorWithWhite:.12 alpha:.65] setFill]; UIBezierPath* half=[UIBezierPath bezierPath]; [half moveToPoint:CGPointMake(100,0)]; [half addLineToPoint:CGPointMake(100,65)]; [half addLineToPoint:CGPointMake(25,65)]; [half closePath]; [half fill]; }
+    }];
+}
 @implementation CaraSettingsController {
     BOOL completed;
+    UIStackView* sidebar;
+    NSString* selectedCategory;
+    NSArray* visibleSections;
 }
-- (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
+- (instancetype)init { return [super init]; }
 - (void)viewDidLoad {
-    [super viewDidLoad]; if (!self.title.length) self.title=@"Settings"; self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraOrange();
+    [super viewDidLoad]; if (!self.title.length) self.title=@"Settings"; self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraAccent();
+    self.tableView=[[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleInsetGrouped]; self.tableView.dataSource=self; self.tableView.delegate=self; self.tableView.backgroundColor=UIColor.clearColor; [self.view addSubview:self.tableView];
+    __weak CaraSettingsController* weakSettings=self;
+    if(self.categorized) {
+        selectedCategory=@"General"; sidebar=[UIStackView new]; sidebar.axis=UILayoutConstraintAxisVertical; sidebar.spacing=10;
+        for(NSString* category in @[@"General",@"Appearance",@"Emulation",@"Audio",@"Controls",@"Library & storage",@"Save data",@"About Cara"]) { UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* config=[UIButtonConfiguration tintedButtonConfiguration]; config.image=[UIImage systemImageNamed:@{@"General":@"gearshape",@"Appearance":@"paintpalette",@"Emulation":@"cpu",@"Audio":@"speaker.wave.2",@"Controls":@"gamecontroller",@"Library & storage":@"externaldrive",@"Save data":@"sdcard",@"About Cara":@"info.circle"}[category]]; config.imagePadding=12; button.configuration=config; [button setTitle:category forState:UIControlStateNormal]; button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading; [button.heightAnchor constraintEqualToConstant:52].active=YES; [button addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraSettingsController* controller=weakSettings; if(controller) { CaraMenuSound(@"select"); controller->selectedCategory=category; [controller refresh]; } }] forControlEvents:UIControlEventTouchUpInside]; [sidebar addArrangedSubview:button]; } [self.view addSubview:sidebar];
+        self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Categories" style:UIBarButtonItemStylePlain target:self action:@selector(chooseCategory)];
+    }
+    [self updateVisibleSections];
     self.tableView.rowHeight=UITableViewAutomaticDimension; self.tableView.estimatedRowHeight=62;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
 }
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews]; BOOL wide=self.categorized && self.view.bounds.size.width>=800; CGFloat left=wide?260:0; sidebar.hidden=!wide; sidebar.frame=CGRectMake(20,self.view.safeAreaInsets.top+24,220,500); self.tableView.frame=CGRectMake(left,0,self.view.bounds.size.width-left,self.view.bounds.size.height);
+}
+- (void)chooseCategory {
+    UIAlertController* menu=[UIAlertController alertControllerWithTitle:@"Settings" message:nil preferredStyle:UIAlertControllerStyleActionSheet]; for(NSString* name in @[@"General",@"Appearance",@"Emulation",@"Audio",@"Controls",@"Library & storage",@"Save data",@"About Cara"]) [menu addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { self->selectedCategory=name; [self refresh]; }]]; [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* a) { CaraMenuSound(@"cancel"); }]]; menu.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem; [self presentViewController:menu animated:YES completion:nil];
+}
+- (void)updateVisibleSections {
+    if(self.sectionsProvider) self.sections=self.sectionsProvider();
+    if(!self.categorized) { visibleSections=self.sections; return; }
+    self.title=selectedCategory;
+    self.tableView.tableHeaderView=nil;
+    for(UIButton* button in sidebar.arrangedSubviews) { UIButtonConfiguration* config=button.configuration; BOOL selected=[button.currentTitle isEqual:selectedCategory]; config.baseForegroundColor=selected?CaraAccent():UIColor.labelColor; config.background.backgroundColor=selected?[CaraAccent() colorWithAlphaComponent:.12]:UIColor.clearColor; button.configuration=config; button.accessibilityTraits=UIAccessibilityTraitButton|(selected?UIAccessibilityTraitSelected:0); }
+    if([selectedCategory isEqual:@"Appearance"]) {
+        __weak CaraSettingsController* owner=self;
+        NSInteger theme=[NSUserDefaults.standardUserDefaults integerForKey:@"libraryTheme"];
+        UIView* preview=[[UIView alloc] initWithFrame:CGRectMake(0,0,600,180)];
+        UIStackView* cards=[UIStackView new]; cards.axis=UILayoutConstraintAxisHorizontal; cards.distribution=UIStackViewDistributionFillEqually; cards.spacing=12; cards.frame=CGRectMake(20,10,560,150); cards.autoresizingMask=UIViewAutoresizingFlexibleWidth; [preview addSubview:cards];
+        for(NSInteger i=0;i<3;++i) { NSInteger chosen=i; UIButton* card=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* config=[UIButtonConfiguration borderedButtonConfiguration]; config.title=@[@"System",@"Light",@"Dark"][i]; config.image=CaraThemePreview(i); config.imagePlacement=NSDirectionalRectEdgeTop; config.imagePadding=12; config.background.strokeColor=theme==i?CaraAccent():UIColor.separatorColor; config.background.strokeWidth=theme==i?2:1; config.baseForegroundColor=UIColor.labelColor; card.configuration=config; card.accessibilityTraits=UIAccessibilityTraitButton|(theme==i?UIAccessibilityTraitSelected:0); [card addAction:[UIAction actionWithHandler:^(UIAction* a) { [NSUserDefaults.standardUserDefaults setInteger:chosen forKey:@"libraryTheme"]; CaraMenuSound(@"select"); owner.navigationController.overrideUserInterfaceStyle=chosen==1?UIUserInterfaceStyleLight:chosen==2?UIUserInterfaceStyleDark:UIUserInterfaceStyleUnspecified; [owner refresh]; }] forControlEvents:UIControlEventTouchUpInside]; [cards addArrangedSubview:card]; }
+        self.tableView.tableHeaderView=preview;
+        NSMutableArray* accents=[NSMutableArray new]; for(NSInteger i=0;i<5;++i) { NSInteger value=i; [accents addObject:@{@"title":@[@"Teal",@"Blue",@"Rose",@"Purple",@"Graphite"][i],@"tint":@[[UIColor colorWithRed:0 green:.67 blue:.70 alpha:1],UIColor.systemBlueColor,UIColor.systemPinkColor,UIColor.systemPurpleColor,UIColor.systemGrayColor][i],@"symbol":[NSUserDefaults.standardUserDefaults integerForKey:@"libraryAccent"]==i?@"checkmark.circle.fill":@"circle.fill",@"keepOpen":@YES,@"action":^{ CaraMenuSound(@"select"); [NSUserDefaults.standardUserDefaults setInteger:value forKey:@"libraryAccent"]; owner.view.tintColor=CaraAccent(); owner.navigationController.view.tintColor=CaraAccent(); [owner refresh]; }}]; }
+        visibleSections=@[@{@"title":@"Accent color",@"rows":accents},@{@"title":@"Collection",@"rows":@[@{@"title":@"Menu sounds",@"symbol":@"speaker.wave.2",@"value":@(![NSUserDefaults.standardUserDefaults objectForKey:@"libraryMenuSounds"] || [NSUserDefaults.standardUserDefaults boolForKey:@"libraryMenuSounds"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:@"libraryMenuSounds"]; }},@{@"title":@"Show game titles",@"value":@(![NSUserDefaults.standardUserDefaults boolForKey:@"libraryHideTitles"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"libraryHideTitles"]; }}],@"footer":@"Artwork comes from the game’s embedded icon. The OLED game skin stays independent of the library theme."}]; return;
+    }
+    if([selectedCategory isEqual:@"About Cara"]) { visibleSections=@[@{@"title":@"Cara",@"rows":@[@{@"title":@"Nintendo 3DS emulation",@"subtitle":@"Cara is built on the open-source Citra emulator. See the bundled source and license notices.",@"symbol":@"info.circle"},@{@"title":@"Version",@"subtitle":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"Development build",@"symbol":@"app"}]}]; return; }
+    visibleSections=[self.sections filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* b) { NSString* title=section[@"title"]; if([self->selectedCategory isEqual:@"General"]) return [title isEqual:@"Current game"] || [title isEqual:@"Play mode"]; if([self->selectedCategory isEqual:@"Controls"]) return [title hasSuffix:@"skin"]; if([self->selectedCategory isEqual:@"Library & storage"]) return [title isEqual:@"Game library"]; if([self->selectedCategory isEqual:@"Save data"]) return [title isEqual:@"iCloud & Files"]; return [title isEqual:self->selectedCategory]; }]];
+    if(!visibleSections.count) visibleSections=@[@{@"title":selectedCategory,@"rows":@[@{@"title":@"Ready to play",@"subtitle":@"Use Emulation to choose a play mode, or Library & storage to add your games.",@"symbol":@"checkmark.circle"}]}];
+}
 - (void)refresh {
+    [self updateVisibleSections];
     if (!self.isViewLoaded) return;
     NSMutableArray* views=[NSMutableArray arrayWithArray:self.tableView.visibleCells];
     while (views.count) { UIView* view=views.lastObject; [views removeLastObject]; if ([view isKindOfClass:UISlider.class] && ((UISlider*)view).tracking) return; [views addObjectsFromArray:view.subviews]; }
     [self.tableView reloadData];
 }
-- (void)done { completed=YES; [self dismissViewControllerAnimated:YES completion:^{ if (self.finished) self.finished(); }]; }
+- (void)done { CaraMenuSound(@"back"); completed=YES; [self dismissViewControllerAnimated:YES completion:^{ if (self.finished) self.finished(); }]; }
 - (void)presentationControllerDidDismiss:(UIPresentationController*)controller { if (!completed && self.finished) self.finished(); completed=YES; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView*)table { return self.sections.count; }
-- (NSInteger)tableView:(UITableView*)table numberOfRowsInSection:(NSInteger)section { return [self.sections[section][@"rows"] count]; }
-- (NSString*)tableView:(UITableView*)table titleForHeaderInSection:(NSInteger)section { return self.sections[section][@"title"]; }
-- (NSString*)tableView:(UITableView*)table titleForFooterInSection:(NSInteger)section { return self.sections[section][@"footer"]; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView*)table { return visibleSections.count; }
+- (NSInteger)tableView:(UITableView*)table numberOfRowsInSection:(NSInteger)section { return [visibleSections[section][@"rows"] count]; }
+- (NSString*)tableView:(UITableView*)table titleForHeaderInSection:(NSInteger)section { return visibleSections[section][@"title"]; }
+- (NSString*)tableView:(UITableView*)table titleForFooterInSection:(NSInteger)section { return visibleSections[section][@"footer"]; }
 - (UITableViewCell*)tableView:(UITableView*)table cellForRowAtIndexPath:(NSIndexPath*)path {
-    NSDictionary* row=self.sections[path.section][@"rows"][path.row];
+    NSDictionary* row=visibleSections[path.section][@"rows"][path.row];
     if (row[@"slider"]) { CaraSliderCell* cell=[[CaraSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil]; [cell configure:row enabled:!row[@"enabled"] || [row[@"enabled"] boolValue]]; return cell; }
     UITableViewCell* cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text=row[@"title"]; cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES; cell.textLabel.numberOfLines=0;
     cell.detailTextLabel.text=row[@"subtitle"]; cell.detailTextLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; cell.detailTextLabel.adjustsFontForContentSizeCategory=YES; cell.detailTextLabel.numberOfLines=0;
-    cell.imageView.image=[UIImage systemImageNamed:row[@"symbol"]?:@"circle"]; cell.imageView.tintColor=[row[@"destructive"] boolValue]?UIColor.systemRedColor:CaraOrange();
+    cell.imageView.image=[UIImage systemImageNamed:row[@"symbol"]?:@"circle"]; cell.imageView.tintColor=row[@"tint"]?:([row[@"destructive"] boolValue]?UIColor.systemRedColor:CaraAccent());
     BOOL enabled=!row[@"enabled"] || [row[@"enabled"] boolValue];
     cell.textLabel.textColor=!enabled?UIColor.tertiaryLabelColor:([row[@"destructive"] boolValue]?UIColor.systemRedColor:UIColor.labelColor);
     cell.selectionStyle=row[@"action"] && enabled?UITableViewCellSelectionStyleDefault:UITableViewCellSelectionStyleNone;
     cell.userInteractionEnabled=enabled;
     if (row[@"value"]) {
-        UISwitch* toggle=[UISwitch new]; toggle.onTintColor=CaraOrange(); toggle.on=[row[@"value"] boolValue]; toggle.enabled=enabled; toggle.accessibilityLabel=row[@"title"];
+        __weak CaraSettingsController* weakSettings=self;
+        UISwitch* toggle=[UISwitch new]; toggle.onTintColor=CaraAccent(); toggle.on=[row[@"value"] boolValue]; toggle.enabled=enabled; toggle.accessibilityLabel=row[@"title"];
         __weak UISwitch* weakToggle=toggle;
-        [toggle addAction:[UIAction actionWithHandler:^(UIAction* action) { void(^change)(BOOL)=row[@"change"]; if (change) change(weakToggle.on); }] forControlEvents:UIControlEventValueChanged]; cell.accessoryView=toggle;
+        [toggle addAction:[UIAction actionWithHandler:^(UIAction* action) { void(^change)(BOOL)=row[@"change"]; if (change) change(weakToggle.on); CaraMenuSound(@"toggle"); [weakSettings refresh]; }] forControlEvents:UIControlEventValueChanged]; cell.accessoryView=toggle;
     } else if (row[@"action"] && enabled) cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
     return cell;
 }
 - (void)tableView:(UITableView*)table didSelectRowAtIndexPath:(NSIndexPath*)path {
-    [table deselectRowAtIndexPath:path animated:YES]; NSDictionary* row=self.sections[path.section][@"rows"][path.row];
+    [table deselectRowAtIndexPath:path animated:YES]; NSDictionary* row=visibleSections[path.section][@"rows"][path.row];
     void(^action)(void)=row[@"action"]; if (!action || (row[@"enabled"] && ![row[@"enabled"] boolValue])) return;
+    CaraMenuSound(row[@"sound"]?:@"select");
+    if([row[@"keepOpen"] boolValue]) { action(); return; }
     completed=YES; [self dismissViewControllerAnimated:YES completion:action];
 }
 @end
@@ -545,7 +535,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
         config.titleTextAttributesTransformer=^NSDictionary*(NSDictionary* attributes) { NSMutableDictionary* result=[attributes mutableCopy]; result[NSFontAttributeName]=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; return result; };
         config.subtitleTextAttributesTransformer=^NSDictionary*(NSDictionary* attributes) { NSMutableDictionary* result=[attributes mutableCopy]; result[NSFontAttributeName]=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; return result; };
         button.configuration=config; button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading; button.enabled=self.modeSelectionEnabled;
-        [button addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraQuickSettingsController* owner=weakSelf; if (!owner) return; owner.playMode=mode; if (owner.chooseMode) owner.chooseMode(mode); }] forControlEvents:UIControlEventTouchUpInside];
+        [button addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraQuickSettingsController* owner=weakSelf; if (!owner) return; CaraMenuSound(@"select"); owner.playMode=mode; if (owner.chooseMode) owner.chooseMode(mode); }] forControlEvents:UIControlEventTouchUpInside];
         button.accessibilityIdentifier=[@"mode-" stringByAppendingString:mode];
         [body addArrangedSubview:button]; [modes addObject:button];
     }
@@ -553,7 +543,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     UILabel* fpsLabel=[UILabel new]; fpsLabel.text=@"FPS meter"; fpsLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; fpsLabel.adjustsFontForContentSizeCategory=YES;
     UISwitch* fpsToggle=[UISwitch new]; fpsToggle.on=self.showFPS; fpsToggle.onTintColor=CaraOrange(); fpsToggle.accessibilityLabel=@"FPS meter";
     __weak UISwitch* weakToggle=fpsToggle;
-    [fpsToggle addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraQuickSettingsController* owner=weakSelf; if (owner.toggleFPS) owner.toggleFPS(weakToggle.on); }] forControlEvents:UIControlEventValueChanged];
+    [fpsToggle addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraQuickSettingsController* owner=weakSelf; if (owner.toggleFPS) owner.toggleFPS(weakToggle.on); CaraMenuSound(@"toggle"); }] forControlEvents:UIControlEventValueChanged];
     UIStackView* fpsRow=[[UIStackView alloc] initWithArrangedSubviews:@[fpsLabel,[UIView new],fpsToggle]]; fpsRow.spacing=12; fpsRow.alignment=UIStackViewAlignmentCenter; fpsRow.layoutMarginsRelativeArrangement=YES; fpsRow.directionalLayoutMargins=NSDirectionalEdgeInsetsMake(18,20,18,20); fpsRow.backgroundColor=UIColor.secondarySystemGroupedBackgroundColor; fpsRow.layer.cornerRadius=18; [body addArrangedSubview:fpsRow];
     UILabel* detail=[UILabel new]; detail.text=@"Choose a mode, then leave the tuning to Cara. More controls are available in Advanced."; detail.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; detail.textColor=UIColor.secondaryLabelColor; detail.numberOfLines=0; detail.adjustsFontForContentSizeCategory=YES; [body addArrangedSubview:detail];
     UIStackView* row=nil;
@@ -566,7 +556,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
         config.titleTextAttributesTransformer=^NSDictionary*(NSDictionary* attributes) { NSMutableDictionary* result=[attributes mutableCopy]; result[NSFontAttributeName]=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; return result; };
         button.configuration=config; button.enabled=!item[@"enabled"] || [item[@"enabled"] boolValue];
         [button addAction:[UIAction actionWithHandler:^(UIAction* action) {
-            void(^run)(void)=item[@"action"]; if (!run) return;
+            void(^run)(void)=item[@"action"]; if (!run) return; CaraMenuSound(@"select");
             if ([item[@"keepOpen"] boolValue]) run();
             else { CaraQuickSettingsController* owner=weakSelf; if (!owner) return; owner->completed=YES; [owner dismissViewControllerAnimated:YES completion:run]; }
         }] forControlEvents:UIControlEventTouchUpInside];
@@ -591,6 +581,6 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
         button.accessibilityTraits=UIAccessibilityTraitButton|(selected?UIAccessibilityTraitSelected:0);
     }
 }
-- (void)done { completed=YES; [self dismissViewControllerAnimated:YES completion:^{ if (self.finished) self.finished(); }]; }
+- (void)done { CaraMenuSound(@"back"); completed=YES; [self dismissViewControllerAnimated:YES completion:^{ if (self.finished) self.finished(); }]; }
 - (void)presentationControllerDidDismiss:(UIPresentationController*)controller { if (!completed && self.finished) self.finished(); completed=YES; }
 @end

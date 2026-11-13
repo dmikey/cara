@@ -10,6 +10,7 @@
 - (instancetype)init { if ((self=[super init])) _values=[NSMutableDictionary new]; return self; }
 - (id)objectForKey:(NSString*)key { return self.values[key]; }
 - (NSData*)dataForKey:(NSString*)key { return self.values[key]; }
+- (NSDictionary*)dictionaryForKey:(NSString*)key { return self.values[key]; }
 - (NSArray*)arrayForKey:(NSString*)key { return self.values[key]; }
 - (void)setObject:(id)value forKey:(NSString*)key { self.values[key]=value; }
 - (void)removeObjectForKey:(NSString*)key { [self.values removeObjectForKey:key]; }
@@ -48,6 +49,16 @@ int main() { @autoreleasepool {
     Check(![store rememberGame:[NSURL fileURLWithPath:@"/private/tmp/not-a-rom.zip"] error:&error],@"ZIP remains unsupported");
     [store useDefaultFolder]; Check(!store.hasCustomFolder && Scan(store).count==4,@"return to default keeps local and explicitly opened games");
     Check([NSFileManager.defaultManager fileExistsAtPath:[external URLByAppendingPathComponent:@"Fourth.cxi"].path],@"changing folder never deletes/moves game");
+    NSURL* local=[store.defaultFolder URLByAppendingPathComponent:@"Third.3dsx"];
+    [store setFavorite:YES game:local]; [store recordPlayed:local];
+    Check([[store metadataForGame:local][@"favorite"] boolValue] && [store metadataForGame:local][@"lastPlayed"],@"real per-game favorite and recent metadata");
+    NSURL* save=[docs URLByAppendingPathComponent:@"cara/sdmc/save.dat"]; Put(save);
+    NSURL* state=[docs URLByAppendingPathComponent:@"cara/states/example.carastate"]; Put(state);
+    [store removeGame:local]; Check(Scan(store).count==3 && [NSFileManager.defaultManager fileExistsAtPath:local.path],@"removal hides scanned games without deleting ROM");
+    store=[[CaraLibraryStore alloc] initWithDocuments:docs defaults:defaults]; Check(Scan(store).count==3,@"hidden games survive relaunch");
+    Check([store rememberGame:local error:&error] && Scan(store).count==4,@"explicit re-add restores hidden file");
+    Check([store deleteGameFile:local error:&error] && ![NSFileManager.defaultManager fileExistsAtPath:local.path] && Scan(store).count==3,@"explicit delete removes only requested fixture ROM");
+    Check([NSFileManager.defaultManager fileExistsAtPath:save.path] && [NSFileManager.defaultManager fileExistsAtPath:state.path],@"game removal and deletion preserve saves and states");
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     puts("PASS: Roms creation, nested/legacy discovery, bookmarks, external file registration, deduplication and non-destructive folder selection (local simulation)");
 } }
