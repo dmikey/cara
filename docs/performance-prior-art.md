@@ -170,3 +170,63 @@ oracles, then matched 100%-clock physical-device comparisons. Near-full speed at
 50% guest clock does not prove a twofold interpreter unlock: it can also reduce
 graphics commands and guest memory writes. No idle skipping is justified by the
 current census alone.
+
+## Stories submission and completion timing
+
+The instrumented 100%/50% guest-clock replay counted 956.5167 versus 513.6244
+PICA draw requests per display refresh. Both runs recorded one applied top-buffer
+swap per refresh, zero stereo top-buffer swaps, and a zero 3D slider setting.
+These observations do not establish duplicated host rendering or rule out guest
+render overproduction. `pica_draw_requests` counts guest draw triggers, including
+requests that take different rendering paths; it is not a unique-frame count.
+
+`top_buffer_swaps` counts applications of `GSP::SetBufferSwap`, not every present
+queued by the guest. In the shared-memory path, GSP checks `is_dirty` at VBlank
+and applies the selected framebuffer entry. Multiple updates before that check
+can coalesce. Consequently, one applied swap per refresh cannot falsify multiple
+guest render cycles or overwritten pending presentations. `stereo_top_buffer_swaps`
+only counts applied top swaps with nonzero, distinct physical left/right
+addresses; zero does not prove absence of right-eye draws to intermediate targets.
+`presentation_mode="mono_left_top"` describes host output, separately from guest
+render work. The local `GPU::VBlankCallback` already invokes renderer
+`SwapBuffers()` once per event.
+
+[Azahar #2095](https://github.com/azahar-emu/azahar/pull/2095) addresses the same
+class of timing discrepancy: synchronous emulation made draw/transfer completion
+interrupts appear instantaneous to guest software. Upstream schedules delayed
+interrupts in guest time and corrects interrupt-queue capacity handling. This is
+evidence for investigating completion timing, not proof that delaying Cara's
+interrupts will improve Stories. The [3D delay model](https://github.com/azahar-emu/azahar/blob/master/src/video_core/pica/pica_core.h)
+is explicitly approximate: geometry/culling assumptions and an unmeasured
+per-command estimate are not a calibrated Stories timing oracle. Its vertex
+inputs are original PICA counts/topology, not Cara's expanded GLES vertex count.
+[Azahar #2274](https://github.com/azahar-emu/azahar/pull/2274) defaults the feature
+off because it remains experimental and can reduce games to hardware frame
+rates. [Monster Hunter timing reports](https://github.com/azahar-emu/azahar/issues/2231)
+include MH3U, MH4U and MHXX; they do not validate a Stories fix.
+
+[GBATEK's conditional FINALIZE description](https://mgba-emu.github.io/gbatek/#3ds-gpu-internal-registers---finalize-interrupt-registers)
+distinguishes an interrupt from command-list termination. Matching enabled
+request/comparison bytes raises P3D; AUTOSTOP bit 0 determines whether execution
+also stops. Nintendo normally initializes comparison word 0 to `0x12345678`,
+the low mask to `0xFFFFFFF0`, and AUTOSTOP to one. The researcher
+[documented the optional-stop discovery](https://forums.nesdev.org/viewtopic.php?start=255&t=18490)
+in May 2020. The local `trigger_irq` path signals P3D and continues. A diagnostic
+must count actual writes, draw triggers and jumps after FINALIZE before
+attributing work to stale command-list tails. Unconditionally stopping on every
+nonzero write would not implement the documented condition.
+
+The [original Stories code author's report](https://gbatemp.net/threads/monster-hunter-stories-fps-cap-30-60-and-improved-rendering-codes.538299/)
+identifies an apparent 200-fps game cap and publishes pointer-based 30/60-fps
+controls. The author targets EU version 1.0 and explicitly leaves USA
+compatibility uncertain. The rendering preset later described as disabling
+stereo is originally labelled FSAA-related, so it must be treated as a compound
+flag change rather than an isolated stereo bit. Before any temporary RAM-only
+experiment, verify the exact title/version, live pointer mapping and original
+field value. Test cap and rendering flags independently and restore the untouched
+checkpoint with cheats removed afterward. Do not substitute the thread's filter
+instruction patches or label changed graphics settings an engine optimization.
+
+Next evidence should connect guest command submissions, P3D/PPF completion,
+framebuffer targets and pending-presentation updates using guest timestamps.
+Changing IRQ latency or arbitrarily skipping draw requests is not a proven fix.

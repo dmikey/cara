@@ -41,6 +41,7 @@ jobs:
           python3 tools/prepare.py
           python3 tools/audit_branding.py
           python3 tools/compare_guest_clocks.py --self-test
+          python3 tools/benchmark_gpu_inputs.py --help > /dev/null
           python3 -m py_compile tools/compare_guest_clocks.py tools/benchmark_gpu_inputs.py tools/capture_profile_checkpoint.py tools/summarize_phase_cpu.py tools/sample_device_stacks.py tools/_sample_device_stacks_lldb.py tools/benchmark_speed_cap.py tools/build_ios_shell_preview.py tools/make_skin.py
       - name: Build
         run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
@@ -96,6 +97,7 @@ jobs:
           work/build-mac/bin/cara-render-bookkeeping-self-test
           work/build-mac/bin/cara-vertex-upload-bank-self-test
           work/build-mac/bin/cara-frame-pacer-self-test
+          work/build-mac/bin/cara-presentation-guard-self-test
           work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=2 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test

@@ -22,6 +22,8 @@ def main():
     parser.add_argument('--config', action='append', required=True,
                         help='JSON object: name, packed (boolean), bank_mib (16..128), optional reuse and index_cache (booleans)')
     parser.add_argument('--resume-best', action='store_true')
+    parser.add_argument('--paced', action='store_true', help='Cap emulated time at 100%%; wall timings include pacing sleep')
+    parser.add_argument('--memory-probes', help='Read-only diagnostic JSON probes: address and optional pointer_offset (at most eight)')
     parser.add_argument('--screenshots', action='store_true')
     parser.add_argument('--press-a-frames', default='0',
                         help='Comma-separated emulated frames for six-frame A presses; 0 disables')
@@ -34,6 +36,22 @@ def main():
     parser.add_argument('--circle-segments', default='',
                         help='Comma-separated begin:end:x:y stick movements; neutral between segments')
     args = parser.parse_args()
+    memory_probes=None
+    if args.memory_probes:
+        try:
+            memory_probes=json.loads(args.memory_probes)
+            if not isinstance(memory_probes,list) or not 1<=len(memory_probes)<=8:
+                raise ValueError()
+            for probe in memory_probes:
+                if not isinstance(probe,dict) or 'address' not in probe or set(probe)-{'address','pointer_offset'}:
+                    raise ValueError()
+                for value in probe.values():
+                    if isinstance(value,str): value=int(value,16 if value.lower().startswith('0x') else 10)
+                    if type(value) is not int or not 0<=value<=0xffffffff: raise ValueError()
+        except (ValueError,TypeError):
+            parser.error('memory-probes requires 1..8 unsigned 32-bit address/pointer_offset objects')
+    if args.resume_best and (args.paced or memory_probes):
+        parser.error('Paced or memory-probe diagnostics cannot select a performance winner')
     if args.cpu_category_timing and args.resume_best:
         parser.error('CPU category diagnostics cannot select a performance winner')
     if args.frames <= args.warmup or args.frames % 60 or args.warmup % 60:
@@ -100,7 +118,7 @@ def main():
         raise RuntimeError('Invalid comparison checkpoint header')
     checkpoint_title = struct.unpack_from('<Q', checkpoint_bytes, 16)[0]
     checkpoint_fingerprint = checkpoint_bytes[48:112].decode('ascii')
-    results = {'checkpoint_sha256': hashlib.sha256(checkpoint_bytes).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'phase_cpu_sampling': args.phase_cpu_timing, 'cpu_category_timing':args.cpu_category_timing, 'runs': []}
+    results = {'checkpoint_sha256': hashlib.sha256(checkpoint_bytes).hexdigest(), 'press_a_frames': press_frames, 'circle_segments': circle_segments, 'touch_input_locked': True, 'phase_cpu_sampling': args.phase_cpu_timing, 'cpu_category_timing':args.cpu_category_timing, 'paced':args.paced, 'memory_probes':memory_probes, 'runs': []}
 
     def launch(config, benchmark=True):
         settings = {'CARA_FRAME_TIMING': '1', 'CARA_AUDIO_DIAGNOSTICS': '1',
@@ -155,6 +173,13 @@ def main():
                     'CARA_VERTEX_INDEX_CACHE': '1' if config.get('index_cache', False) else '0',
                     'CARA_VERTEX_UPLOAD_BANK_MIB': str(config['bank_mib']),
                     'CARA_ADAPTIVE_GUEST_CPU': '0' if benchmark else '1'}
+        if benchmark and args.paced:
+            settings['CARA_PACED_BENCHMARK']='1'
+            settings['CARA_MAX_SPEED_PERCENT']='100'
+        if benchmark and memory_probes:
+            settings['CARA_PROFILE_MEMORY_U32']=json.dumps(memory_probes)
+            settings['CARA_PROFILE_MEMORY_U32_FRAME_300']='1'
+        settings['CARA_AUDIO_NO_STRETCH']='1'
         if args.gpu_self_test:
             settings['CARA_VERTEX_SELF_TEST'] = '1'
         if args.host_cpu_timing:
@@ -233,6 +258,17 @@ def main():
                 time.sleep(0.2)
             else:
                 raise RuntimeError('Unable to read ' + name)
+        if memory_probes:
+            probe_path=args.output / (config['name']+'-profile-memory-u32.json')
+            if not copy('profile-memory-u32.json',probe_path):
+                raise RuntimeError('Missing fresh memory probe report')
+            probe_report=json.loads(probe_path.read_text())
+            if (probe_report.get('title_id') != report['title_id'] or
+                    probe_report.get('engine_build_fingerprint') != report['engine_build_fingerprint'] or
+                    probe_report.get('read_only') is not True or not probe_report.get('samples')):
+                raise RuntimeError('Memory probe report identity or safety mode differs')
+            if probe_report.get('configuration_error'):
+                raise RuntimeError('Memory probe rejected: '+probe_report['configuration_error'])
         if args.gpu_self_test:
             check_path = args.output / (config['name'] + '-gpu-vertex-self-test.json')
             if not copy('gpu-vertex-self-test.json', check_path) or json.loads(check_path.read_text()).get('passed') is not True:
@@ -280,6 +316,8 @@ def main():
                 status['target_frames'] != args.frames or status['title_id'] != report['title_id'] or
                 status['guest_cpu_percent'] != config.get('guest_cpu_percent',100) or status['adaptive_guest_cpu']):
             raise RuntimeError('Benchmark did not complete successfully at the requested fixed guest clock')
+        if bool(status.get('paced',False)) != args.paced or (args.paced and status.get('maximum_speed_percent') != 100):
+            raise RuntimeError('Replay pacing differs from the requested mode')
         for name in ['benchmark-frame.json', 'benchmark-frame.rgba']:
             if not copy(name, args.output / (config['name'] + '-' + name)):
                 raise RuntimeError('Unable to read final renderer pixels: ' + name)

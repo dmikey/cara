@@ -35,6 +35,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "ios/button_state.h"
 #include "cara/adaptive_clock.h"
 #include "cara/frame_pacer.h"
+#include "cara/presentation_guard.h"
 #include "ios/play_profile.h"
 #include "ios/session_presentation.h"
 #include <algorithm>
@@ -63,6 +64,9 @@ extern "C" int __llvm_profile_write_file(void);
 #include "core/frontend/emu_window.h"
 #include "core/frontend/input.h"
 #include "core/settings.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/process.h"
+#include "core/memory.h"
 
 #ifdef CARA_IOS_GLES
 @interface CaraGPUView : UIView
@@ -81,6 +85,97 @@ extern "C" int __llvm_profile_write_file(void);
 }
 @end
 #endif
+
+// Benchmark-only, bounded reads of ordinary process RAM. Strings accept decimal
+// or 0x hexadecimal integers only; no expressions, signed offsets or write API.
+static bool ProfileMemoryU32Integer(id object, u32& value) {
+    if ([object isKindOfClass:NSNumber.class]) {
+        if (CFGetTypeID((__bridge CFTypeRef)object)==CFBooleanGetTypeID()) return false;
+        const double number=[object doubleValue];
+        if (!std::isfinite(number) || number<0 || number>4294967295.0 || std::floor(number)!=number)
+            return false;
+        value=static_cast<u32>(number); return true;
+    }
+    if (![object isKindOfClass:NSString.class]) return false;
+    const char* text=[object UTF8String];
+    const auto length=[object lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    if (!text || !length || length>10 || std::strlen(text)!=length) return false;
+    unsigned base=10;
+    if (text[0]=='0' && (text[1]=='x' || text[1]=='X')) { base=16; text+=2; }
+    if (!*text) return false;
+    u64 parsed=0;
+    for (;*text;++text) {
+        const unsigned char c=*text;
+        const unsigned digit=c>='0' && c<='9'?c-'0':c>='a' && c<='f'?c-'a'+10:
+                             c>='A' && c<='F'?c-'A'+10:16;
+        if (digit>=base || parsed>(4294967295ULL-digit)/base) return false;
+        parsed=parsed*base+digit;
+    }
+    value=static_cast<u32>(parsed); return true;
+}
+
+static NSString* ProfileMemoryU32Read(Core::System& system, const Kernel::Process* process,
+                                      u32 address, u32& value) {
+    if (!process || !process->vm_manager.page_table) return @"no_current_process";
+    const u64 end=u64(address)+4;
+    const auto inside=[&](u32 begin,u32 limit) { return address>=begin && end<=limit; };
+    if (end>0x100000000ULL ||
+        !(inside(Memory::PROCESS_IMAGE_VADDR,Memory::PROCESS_IMAGE_VADDR_END) ||
+          inside(Memory::HEAP_VADDR,Memory::HEAP_VADDR_END) ||
+          inside(Memory::LINEAR_HEAP_VADDR,Memory::LINEAR_HEAP_VADDR_END) ||
+          inside(Memory::NEW_LINEAR_HEAP_VADDR,Memory::NEW_LINEAR_HEAP_VADDR_END)))
+        return @"outside_image_or_heap";
+    const auto& pages=*process->vm_manager.page_table;
+    for (u64 byte=address;byte<end;++byte) {
+        const auto page=static_cast<std::size_t>(byte>>Memory::PAGE_BITS);
+        // Exclude MMIO, unmapped and rasterizer-cached pages. This diagnostic
+        // deliberately declines reads that could invoke a device or GPU flush.
+        if (pages.attributes[page]!=Memory::PageType::Memory ||
+            !Memory::IsValidVirtualAddress(*process,static_cast<u32>(byte)))
+            return @"not_ordinary_mapped_ram";
+    }
+    std::array<u8,4> bytes{};
+    system.Memory().ReadBlock(*process,address,bytes.data(),bytes.size());
+    value=u32(bytes[0]) | (u32(bytes[1])<<8) | (u32(bytes[2])<<16) | (u32(bytes[3])<<24);
+    return nil;
+}
+
+static NSDictionary* CaptureProfileMemoryU32(Core::System& system, NSArray* probes,
+                                             unsigned frame, NSString* phase) {
+    NSMutableArray* values=[NSMutableArray arrayWithCapacity:probes.count];
+    const auto process=system.Kernel().GetCurrentProcess();
+    for (id item in probes) {
+        NSMutableDictionary* entry=[@{@"address":NSNull.null,@"address_mapped":@NO,
+            @"field_address":NSNull.null,@"mapped":@NO,@"raw_u32":NSNull.null} mutableCopy];
+        u32 address=0,offset=0;
+        NSDictionary* probe=[item isKindOfClass:NSDictionary.class]?item:nil;
+        const bool indirect=probe && probe[@"pointer_offset"]!=nil;
+        if (!probe || probe.count!=(indirect?2u:1u) ||
+            !ProfileMemoryU32Integer(probe[@"address"],address) ||
+            (indirect && !ProfileMemoryU32Integer(probe[@"pointer_offset"],offset))) {
+            entry[@"status"]=@"invalid_probe"; [values addObject:entry]; continue;
+        }
+        entry[@"address"]=@(address);
+        if (indirect) { entry[@"pointer_offset"]=@(offset); entry[@"pointer"]=NSNull.null; }
+        u32 word=0;
+        NSString* error=ProfileMemoryU32Read(system,process.get(),address,word);
+        entry[@"address_mapped"]=@(error==nil);
+        if (!error && indirect) {
+            entry[@"pointer"]=@(word);
+            const u64 field=u64(word)+offset;
+            if (field>4294967292ULL) error=@"pointer_offset_overflow";
+            else {
+                entry[@"field_address"]=@(static_cast<u32>(field));
+                error=ProfileMemoryU32Read(system,process.get(),static_cast<u32>(field),word);
+            }
+        } else if (!indirect) entry[@"field_address"]=@(address);
+        entry[@"mapped"]=@(error==nil);
+        entry[@"status"]=error?:@"ok";
+        if (!error) entry[@"raw_u32"]=@(word);
+        [values addObject:entry];
+    }
+    return @{@"frame":@(frame),@"phase":phase,@"probes":values};
+}
 
 static bool CaptureBurst(unsigned frame) {
     const char* start_env = std::getenv("CARA_CAPTURE_BURST_START");
@@ -144,6 +239,36 @@ public:
     std::function<void(unsigned, unsigned, unsigned, const std::vector<u8>&, unsigned)> present;
     std::function<void(unsigned)> frame_presented;
     unsigned frames = 0;
+    // Emulation-thread policy, independent of guest CPU underclocking.
+    Cara::PresentationGuard presentation_guard;
+    bool presentation_paced = true;
+    unsigned presentation_speed = 100;
+    u64 presentation_submissions = 0;
+    double last_presentation_start = 0;
+    double minimum_presentation_interval = 0;
+    void WaitForPresentation() {
+        const auto seconds=[]() { return std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count(); };
+        double now=seconds();
+        for (;;) {
+            const double ready=presentation_guard.ReadyAt(now,presentation_paced,presentation_speed);
+            if (ready<=now) break;
+            const auto wake=std::chrono::steady_clock::time_point(std::chrono::duration_cast<
+                std::chrono::steady_clock::duration>(std::chrono::duration<double>(ready)));
+            std::this_thread::sleep_until(wake);
+            now=seconds();
+        }
+        // Use the same fresh timestamp for checking and recording the call start.
+        presentation_guard.MarkSubmitted(now);
+        if (presentation_submissions) {
+            const double interval=now-last_presentation_start;
+            minimum_presentation_interval=minimum_presentation_interval>0?
+                std::min(minimum_presentation_interval,interval):interval;
+        }
+        last_presentation_start=now;
+        ++presentation_submissions;
+    }
+
     std::string graphics_error;
 #ifdef CARA_IOS_GLES
     EAGLContext* __strong graphics_context = nil;
@@ -297,6 +422,7 @@ public:
                     glBlitFramebuffer(screen?40:0,screen?0:240,screen?360:400,screen?240:480,x0,y0,x1,y1,GL_COLOR_BUFFER_BIT,GL_NEAREST);
                 }
                 if (scissor) glEnable(GL_SCISSOR_TEST);
+                WaitForPresentation();
                 if (![graphics_context presentRenderbuffer:GL_RENDERBUFFER])
                     graphics_error = "iOS screen presentation failed";
                 OpenGL::OpenGLState::BindRenderbuffer(previous_renderbuffer);
@@ -1238,7 +1364,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
                                      "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
                                      "surface-flushes.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
-                                     "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json"})
+                                     "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json",
+                                     "profile-memory-u32.json"})
                 FileUtil::Delete(user+name);
 
 #ifdef CARA_PGO_GENERATE
@@ -1502,6 +1629,42 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 // frontend policy before the first slice, including fixed-clock tests.
                 reset_clock_samples();
                 LOG_INFO(Frontend,"Session guest CPU policy: {}%",policy_clock());
+                // Read-only field diagnostics run only in an explicit benchmark,
+                // after state restoration and current-clock policy application.
+                NSMutableDictionary* profile_memory_report=nil;
+                NSArray* profile_memory_probes=nil;
+                bool profile_memory_frame_300=false;
+                bool profile_memory_frame_300_done=false;
+                const auto write_profile_memory=[&](NSString* phase) {
+                    if (!profile_memory_report) return;
+                    if (profile_memory_probes)
+                        [profile_memory_report[@"samples"] addObject:CaptureProfileMemoryU32(system,
+                            profile_memory_probes,emuWindow->frames,phase)];
+                    NSError* error=nil;
+                    NSData* json=[NSJSONSerialization dataWithJSONObject:profile_memory_report
+                        options:NSJSONWritingPrettyPrinted error:&error];
+                    NSString* path=[NSString stringWithUTF8String:(user+"profile-memory-u32.json").c_str()];
+                    if (!json || ![json writeToFile:path options:NSDataWritingAtomic error:&error])
+                        LOG_ERROR(Frontend,"Memory u32 diagnostic report: {}",error.localizedDescription.UTF8String?:"unknown error");
+                };
+                if (target_frames) {
+                    if (const char* input=std::getenv("CARA_PROFILE_MEMORY_U32")) {
+                        profile_memory_report=[@{@"title_id":@(system.GetTitleID()),
+                            @"engine_build_fingerprint":[NSString stringWithUTF8String:Core::GetSaveStateBuildFingerprint()],
+                            @"read_only":@YES,@"benchmark_only":@YES,@"ordinary_ram_only":@YES,
+                            @"samples":[NSMutableArray array]} mutableCopy];
+                        const std::size_t length=strnlen(input,4097);
+                        NSError* error=nil;
+                        id parsed=length<=4096?[NSJSONSerialization JSONObjectWithData:
+                            [NSData dataWithBytes:input length:length] options:0 error:&error]:nil;
+                        if (![parsed isKindOfClass:NSArray.class] || [parsed count]<1 || [parsed count]>8)
+                            profile_memory_report[@"configuration_error"]=@"Expected JSON array of 1..8 probes, at most 4096 bytes";
+                        else profile_memory_probes=parsed;
+                        const char* repeat=std::getenv("CARA_PROFILE_MEMORY_U32_FRAME_300");
+                        profile_memory_frame_300=profile_memory_probes && repeat && std::strcmp(repeat,"1")==0;
+                        write_profile_memory(@"before_runloop_after_clock_reset");
+                    }
+                }
                 const auto state_test_frame=[](const char* name) -> unsigned {
                     const char* value=std::getenv(name);
                     return value?unsigned(std::clamp(std::strtol(value,nullptr,10),0L,100000L)):0;
@@ -1633,7 +1796,15 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                     if (generation!=observedSave) { observedSave=generation; saveFrame=emuWindow->frames+120; }
                     if (saveFrame && emuWindow->frames>=saveFrame) { saveFrame=0; std::fflush(nullptr); [saveSync captureCommittedSave]; }
                     const auto work_started=clock_control.Enabled()?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
+                    emuWindow->presentation_paced=Cara::ShouldPaceFrames(target_frames!=0,
+                        benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
+                    emuWindow->presentation_speed=has_speed_override?paced_speed:self->maximumSpeedLimit.load();
                     result = system.RunLoop();
+                    if (profile_memory_frame_300 && !profile_memory_frame_300_done && emuWindow->frames>=300 &&
+                        result==Core::System::ResultStatus::Success) {
+                        profile_memory_frame_300_done=true;
+                        write_profile_memory(@"frame_300_or_next_runloop_boundary");
+                    }
                     if (clock_control.Enabled()) clock_work_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-work_started).count();
                     if (audio_diagnostics && emuWindow->frames >= audio_report_frame+60) {
                         const auto audio=system.DSP().GetOutputCounters();
@@ -1897,6 +2068,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"maximum_speed_percent\":" << paced_speed
                            << ",\"late_paced_frames\":" << late_paced_frames
+                           << ",\"host_presentation_submissions\":" << emuWindow->presentation_submissions
+                           << ",\"host_presentation_min_interval_ms\":" << emuWindow->minimum_presentation_interval*1000
+                           << ",\"host_presentation_paced\":" << (emuWindow->presentation_paced?"true":"false")
                            << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "dyncom") == 0) ? "dyncom" : "fastinterp") << "\""
                            << ",\"adaptive_guest_cpu\":" << (clock_control.Enabled()?"true":"false")
                            << ",\"guest_cpu_percent\":" << policy_clock()
