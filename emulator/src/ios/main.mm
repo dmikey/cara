@@ -5,6 +5,8 @@
 #include <sys/resource.h>
 #include <time.h>
 #import "ios/skin_controls.h"
+#import "ios/action_layout.h"
+#import "ios/input_hub.h"
 #include "audio_core/ios_sink.h"
 #ifdef CARA_PGO_GENERATE
 extern "C" void __llvm_profile_set_filename(const char*);
@@ -372,6 +374,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     UILabel* status;
     UIImageView* skinArt;
     CaraSkinControls* skinControls;
+    CaraInputHub* inputHub;
+    CaraActionControls* actionControls;
+    NSDictionary* actionLayout;
+    NSString* actionVariant;
     CaraSkin* activeSkin;
     CaraSkin* portraitSkin;
     CaraSkin* landscapeSkin;
@@ -431,9 +437,20 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     return [NSBundle.mainBundle URLForResource:@"CarbonDuo" withExtension:@"deltaskin"];
 }
 - (void)resetSkinInput {
-    [skinControls reset]; uiButtonMask=0; buttons.Clear();
-    circleX=0; circleY=0; cstickX=0; cstickY=0;
-    if (emuWindow) emuWindow->touch=-1;
+    [skinControls reset]; [actionControls reset];
+    // Discard pending short-tap latches, then restore any hardware-owned holds.
+    buttons.Clear(); uiButtonMask=0; [inputHub clearSurfaces];
+}
+- (void)reloadActionLayout {
+    NSDictionary* saved=gameURL?[libraryStore metadataForGame:gameURL][@"actionLayout"]:nil;
+    actionLayout=CaraValidateActionLayout(saved,nil)?saved:nil; actionVariant=nil;
+    [self resetSkinInput]; currentRepresentation=nil; [self.view setNeedsLayout];
+}
+- (void)editActionLayout:(NSURL*)url navigation:(UINavigationController*)navigation {
+    CaraActionLayoutEditor* editor=[CaraActionLayoutEditor new]; editor.layout=[libraryStore metadataForGame:url][@"actionLayout"]; editor.skin=portraitSkin?:[CaraSkin loadURL:[self defaultSkinURL] error:nil]; editor.landscapeSkin=landscapeSkin;
+    __weak EmulatorController* owner=self;
+    editor.saved=^(NSDictionary* layout) { EmulatorController* c=owner; if (!c) return; [c->libraryStore setMetadata:@{@"actionLayout":layout} forGame:url]; if ([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) [c reloadActionLayout]; };
+    [navigation pushViewController:editor animated:YES];
 }
 - (void)applySkin:(CaraSkin*)skin {
     activeSkin=skin; currentRepresentation=nil; skinControls.skin=skin;
@@ -531,7 +548,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     __weak EmulatorController* weakSelf=self;
     const char* inputLock=std::getenv("CARA_BENCHMARK_INPUT_LOCK");
     const bool benchmarkInputLock=std::getenv("CARA_BENCHMARK_FRAMES") && inputLock && std::strcmp(inputLock,"1")==0;
-    skinControls.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick,CGPoint touch) {
+    inputHub=[[CaraInputHub alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
+    inputHub.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick) {
         EmulatorController* controller=weakSelf; if (!controller) return;
         // Scripted benchmarks own game inputs; the menu remains available.
         if (benchmarkInputLock && controller->running) return;
@@ -547,9 +565,14 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         }
         controller->uiButtonMask=mask;
         circleX=float(circle.x); circleY=float(circle.y); cstickX=float(cstick.x); cstickY=float(cstick.y);
+        CGPoint touch=controller->inputHub.touchPoint;
         if (controller->emuWindow) controller->emuWindow->touch=touch.x<0 ? -1 : int(unsigned(touch.x) | (unsigned(touch.y)<<16));
     };
+    skinControls.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick,CGPoint touch) { EmulatorController* c=weakSelf; if(c) [c->inputHub updateSurface:@"skin" buttons:pressed circle:circle cstick:cstick touch:touch]; };
     skinControls.menuPressed=^{ [weakSelf showMenu]; };
+    actionControls=[[CaraActionControls alloc] initWithFrame:CGRectZero]; [self.view addSubview:actionControls];
+    actionControls.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick) { EmulatorController* c=weakSelf; if(c) [c->inputHub updateSurface:@"actions" buttons:pressed circle:circle cstick:cstick touch:CGPointMake(-1,-1)]; };
+    inputHub.commandChanged=^(NSString* command,BOOL down) { if (down && [command isEqual:@"menu"]) [weakSelf showMenu]; };
     performanceHUD=[[CaraStatsView alloc] initWithFrame:CGRectZero]; [self.view addSubview:performanceHUD];
     status=[UILabel new]; status.text=@"Stopped";
     status.font=[UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium]; status.textColor=[UIColor colorWithRed:.7 green:.8 blue:.7 alpha:1];
@@ -581,18 +604,30 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     CaraSkin* selected=landscape?landscapeSkin:portraitSkin;
     if (selected && selected!=activeSkin) { activeSkin=selected; skinControls.skin=selected; currentRepresentation=nil; }
     NSDictionary* rep=[activeSkin representationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:self.view.bounds.size.width>self.view.bounds.size.height];
-    menuFallback.hidden=rep!=nil;
+    BOOL actionsEnabled=[actionLayout[@"enabled"] boolValue];
+    menuFallback.hidden=rep!=nil && !actionsEnabled;
+    if (actionsEnabled) menuFallback.frame=CGRectMake(self.view.safeAreaInsets.left+16,self.view.safeAreaInsets.top+8,100,44);
+    skinArt.hidden=actionsEnabled; actionControls.hidden=!actionsEnabled;
     if (!rep) { menuFallback.frame=CGRectMake(24,48,120,44); return; }
     if (rep!=currentRepresentation) {
-        currentRepresentation=rep; skinControls.representation=rep; skinArt.image=skinControls.artwork;
+        currentRepresentation=rep;
+        if (actionsEnabled) {
+            NSMutableDictionary* touchRepresentation=[rep mutableCopy]; NSMutableArray* items=[NSMutableArray new];
+            for (NSDictionary* item in rep[@"items"]) if ([item[@"inputs"] isKindOfClass:NSDictionary.class] && [item[@"inputs"][@"x"] isEqual:@"touchScreenX"]) [items addObject:item];
+            touchRepresentation[@"items"]=items; skinControls.representation=touchRepresentation;
+        } else skinControls.representation=rep;
+        skinArt.image=skinControls.artwork;
         BOOL circle=NO;
         for (NSDictionary* item in rep[@"items"]) if ([item[@"inputs"] isKindOfClass:NSDictionary.class] && [item[@"inputs"][@"x"] isEqual:@"circlePadX"]) circle=YES;
-        digitalToCircle=!circle;
+        digitalToCircle=actionsEnabled?NO:!circle;
     }
     CGSize mapping=CGSizeMake([rep[@"mappingSize"][@"width"] doubleValue],[rep[@"mappingSize"][@"height"] doubleValue]);
     CGRect safe=UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets);
     CGRect canvas=CaraAspectFit(mapping,safe);
     if (!CGSizeEqualToSize(lastSkinSize,canvas.size)) { [self resetSkinInput]; lastSkinSize=canvas.size; }
+    actionControls.frame=canvas;
+    NSString* variant=landscape?@"landscape":@"portrait";
+    if (![actionVariant isEqual:variant]) { actionVariant=variant; actionControls.controls=actionsEnabled?actionLayout[variant]:@[]; }
     skinArt.frame=canvas; skinControls.frame=canvas; [skinControls setNeedsDisplay];
     const auto convert=[&](CGRect r) { return CGRectMake(canvas.origin.x+r.origin.x/mapping.width*canvas.size.width,canvas.origin.y+r.origin.y/mapping.height*canvas.size.height,r.size.width/mapping.width*canvas.size.width,r.size.height/mapping.height*canvas.size.height); };
     top.frame=convert(skinControls.upperScreen); bottom.frame=convert(skinControls.lowerScreen);
@@ -633,6 +668,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 }
 - (void)updateSessionPresentation {
     const auto state=[self sessionPresentation];
+    BOOL acceptsInput=state==Cara::SessionPresentation::Running;
+    BOOL wasAcceptingInput=inputHub.active; inputHub.active=acceptsInput;
+    if (wasAcceptingInput && !acceptsInput) [self resetSkinInput];
+    actionControls.userInteractionEnabled=acceptsInput;
     NSString* label=[NSString stringWithUTF8String:Cara::SessionPresentationLabel(state)];
     if (state==Cara::SessionPresentation::Failed) label=sessionFailure;
     else if (sessionNotice && !Cara::ClearSessionPresentation(state)) label=[label stringByAppendingFormat:@" · %@",sessionNotice];
@@ -848,7 +887,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     id(^value)(NSString*)=^id(NSString* key) { return values[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; };
     settings.sectionsProvider=^NSArray* {
     BOOL accuracy=[value(@"playMode") isEqual:@"accuracy"];
-    return @[@{@"title":@"Emulation",@"rows":@[
+    return @[@{@"title":@"Touch controls",@"rows":@[@{@"title":@"Controller Demapping",@"subtitle":@"Arrange actions and bind them to 3DS inputs",@"symbol":@"hand.draw",@"action":^{ EmulatorController* c=owner; if (c) [c editActionLayout:url navigation:(UINavigationController*)c.presentedViewController]; }}]},@{@"title":@"Emulation",@"rows":@[
         @{@"title":@"Accuracy mode",@"subtitle":@"Locks guest clock and speed to 100%. Uses the same 100% guest clock and speed as global Accuracy mode.",@"value":@(accuracy),@"change":^(BOOL on) { save(@"playMode",on?@"accuracy":@"performance"); }},
         @{@"title":@"Fixed guest clock",@"value":@(accuracy || [value(@"fixedGuestClockEnabled") boolValue]),@"enabled":@(!accuracy),@"change":^(BOOL on) { save(@"fixedGuestClockEnabled",@(on)); }},
         @{@"title":@"Guest clock",@"enabled":@(!accuracy && [value(@"fixedGuestClockEnabled") boolValue]),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:([value(@"fixedGuestClockPercent") integerValue]?:100))},@"sliderChange":^(double v) { save(@"fixedGuestClockPercent",@(lround(v))); }},
@@ -1006,7 +1045,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (gameScoped) [gameURL stopAccessingSecurityScopedResource];
     CaraGameOverrides=[libraryStore metadataForGame:url][@"overrides"];
     [self applySavedPlayPolicy]; stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue];
-    gameURL=url; gameScoped=[url startAccessingSecurityScopedResource];
+    gameURL=url; [self reloadActionLayout]; gameScoped=[url startAccessingSecurityScopedResource];
     NSData* bookmark=[url bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
     if (bookmark) [NSUserDefaults.standardUserDefaults setObject:bookmark forKey:@"recentGameBookmark"];
     if (!std::getenv("CARA_BENCHMARK_FRAMES")) [libraryStore rememberGame:url error:nil];
@@ -1097,6 +1136,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 }
 - (void)runSkinInputCheck {
     if (!std::getenv("CARA_SKIN_SELF_TEST") || !currentRepresentation) return;
+    const BOOL previousInputActive=inputHub.active; inputHub.active=YES;
     NSMutableArray* failures=[NSMutableArray new]; unsigned checks=0;
     const auto require=[&](BOOL ok,NSString* name) { ++checks; if (!ok) [failures addObject:name]; };
     NSDictionary* mapping=currentRepresentation[@"mappingSize"];
@@ -1137,6 +1177,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     require(emuWindow && (emuWindow->touch.load()&65535)==160 && (emuWindow->touch.load()>>16)==120,@"touch center");
     [skinControls endContact:one]; require(emuWindow && emuWindow->touch.load()<0,@"touch release");
     [self resetSkinInput];
+    inputHub.active=previousInputActive;
     NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
     NSDictionary* result=@{@"passed":@(failures.count==0),@"checks":@(checks),@"failures":failures,@"skin":activeSkin.info[@"name"]?:@"none",@"scope":@"Same contact dispatch and HID/analog adapters used by UIKit; not physical finger input"};
     [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[documents stringByAppendingPathComponent:@"skin-input-check.json"] atomically:YES];
