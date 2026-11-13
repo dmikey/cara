@@ -26,6 +26,12 @@ handle_Swi: {
         // Flush accumulated ticks to timer before kernel call so the
         // kernel sees correct time state for scheduling decisions.
         executed += inst->ticks;
+        if (Common::FrameTiming::counters.enabled) {
+            auto& counters = Common::FrameTiming::counters;
+            counters.guest_ticks += executed;
+            counters.guest_core_ticks[GetID()] += executed;
+            counters.last_guest_pc[GetID()] = state_.PC();
+        }
         timer->AddTicks(executed);
         executed = 0;
 

@@ -1338,6 +1338,13 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     // EndBlock terminator appended below (DISPATCH has no bounds check).
     while (!end_block && block->inst_count < MAX_BLOCK_SIZE - 1) {
         DecodedInst& inst = block->instructions[block->inst_count];
+        // A cache victim retains prior union operands and rd. Decoders write
+        // only their instruction's fields, while shared block/flag analysis
+        // also inspects common fields. Match Step's fresh-record contract so
+        // cache replacement history cannot change block boundaries or operands.
+        // This is the next free slot: a PcSetup prefix copied its real record
+        // into the previous slot before the shared instruction count advanced.
+        std::memset(&inst, 0, sizeof(inst));
 
         if (state_.thumb_mode) {
             u16 thumb_inst = ReadMemory16(current_pc);

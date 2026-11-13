@@ -63,6 +63,7 @@ protected:
     std::shared_ptr<Memory::PageTable> GetPageTable() const override;
 
 private:
+    friend struct DecodeRecordSelfTestAccess;
     /// Execute a single basic block, returns number of instructions executed
     u64 ExecuteBlock(BasicBlock* block);
 

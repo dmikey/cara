@@ -3,6 +3,7 @@
 #include <bit>
 #include <limits>
 #include "core/arm/fastinterp/arm_tick_counts.h"
+#include "common/frame_timing.h"
 #include <bit>
 #include <chrono>
 #include <cstdlib>
@@ -10,6 +11,7 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <vector>
 #include "core/arm/dyncom/arm_dyncom_interpreter.h"
 #include "core/arm/dyncom/arm_dyncom_trans.h"
 #include "core/arm/fastinterp/fastinterp.h"
@@ -17,6 +19,21 @@
 #include "core/core.h"
 #include "fastinterp_vfp_self_test.h"
 #include "test_memory.h"
+
+namespace Core::FastInterp {
+struct DecodeRecordSelfTestAccess {
+    static void Decode(ARM_FastInterp& cpu, BasicBlock& block, u32 pc) {
+        cpu.DecodeBlockInto(&block, pc);
+    }
+    static u64 ExecuteOnce(ARM_FastInterp& cpu, BasicBlock& block) {
+        cpu.stepping_ = true;
+        cpu.halted_ = false;
+        const auto ticks = cpu.ExecuteBlock(&block);
+        cpu.stepping_ = false;
+        return ticks;
+    }
+};
+} // namespace Core::FastInterp
 
 int main() {
     Memory::MemorySystem memory;
@@ -31,6 +48,126 @@ int main() {
     table->pointers[1] = TestMemory(code);
     memory.SetCurrentPageTable(table);
     fast->SetPageTable(table);
+    if (std::getenv("CARA_DECODE_REUSE_TEST")) {
+        using namespace Core::FastInterp;
+        struct Fixture {
+            const char* name;
+            bool thumb;
+            std::array<u32,4> words;
+            bool prefix = false;
+            unsigned invalid_size = 0;
+        };
+        const std::array fixtures{
+            Fixture{"arm_vmul",false,{0xEE240A08,0xE2800001,0xEAFFFFFE}},
+            Fixture{"arm_vldr",false,{0xED910A00,0xE2800001,0xEAFFFFFE}},
+            Fixture{"arm_vstr",false,{0xED810A00,0xE2800001,0xEAFFFFFE}},
+            Fixture{"arm_vmov",false,{0xEE000A10,0xE2800001,0xEAFFFFFE}},
+            Fixture{"arm_vmrs",false,{0xEEF1FA10,0xE2800001,0xEAFFFFFE}},
+            Fixture{"arm_ldm",false,{0xE891000D,0xE2800001,0xEAFFFFFE}},
+            Fixture{"arm_stm",false,{0xE881000D,0xE2800001,0xEAFFFFFE}},
+            Fixture{"arm_ldrstr",false,{0xE5910000,0xE5810004,0xEAFFFFFE}},
+            Fixture{"arm_dp",false,{0xE0810F82,0xE1A03000,0xEAFFFFFE}},
+            Fixture{"arm_pc_prefix",false,{0xE5DF5000,0xE2800001,0xEAFFFFFE},true},
+            Fixture{"arm_pc_shift",false,{0xE081521F,0xE2800001,0xEAFFFFFE},true},
+            Fixture{"arm_bx",false,{0xE12FFF1E,0xEAFFFFFE}},
+            Fixture{"arm_invalid",false,{0xF0000000},false,4},
+            Fixture{"thumb_dp",true,{0x30012001,0xE7FEE7FE}},
+            Fixture{"thumb_ldrstr",true,{0x60486808,0xE7FEE7FE}},
+            Fixture{"thumb_ldm",true,{0xE7FEC90D}},
+            Fixture{"thumb_stm",true,{0xE7FEC10D}},
+            Fixture{"thumb_literal",true,{0x30014800,0xE7FEE7FE}},
+            Fixture{"thumb_invalid",true,{0xE7FEDE00},false,2},
+            Fixture{"thumb32_vmul",true,{0x0A08EE24,0xE7FE3001}},
+            Fixture{"thumb32_literal",true,{0x0A00ED9F,0xE7FE3001},true},
+            Fixture{"thumb32_invalid",true,{0x0A00EF00},false,4},
+        };
+        std::array<u32,1024> ram{};
+        table->attributes[3]=Memory::PageType::Memory;
+        table->pointers[3]=TestMemory(ram);
+        auto capture = [&](BasicBlock& block, bool thumb) {
+            for(unsigned r=0;r<15;++r) fast->SetReg(r,0x01010101u*(r+1));
+            fast->SetReg(0,0);fast->SetReg(1,0x3000);fast->SetReg(2,0);
+            fast->SetReg(13,0x3000);fast->SetReg(14,0x1009);
+            for(unsigned r=0;r<64;++r)fast->SetVFPReg(r,0x3f800000u+r*64);
+            for(unsigned i=0;i<ram.size();++i)ram[i]=0x40000000u+i*64;
+            fast->SetVFPSystemReg(VFP_FPSCR,0xA0000000);
+            fast->SetVFPSystemReg(VFP_FPEXC,0x40000000);
+            fast->SetCPSR(0xA0000010u|(thumb?0x20u:0u));
+            fast->SetPC(0x1000|unsigned(thumb));fast->ClearExclusiveState();
+            timing.GetTimer(0)->Advance(1000);
+            std::vector<u64> state;
+            state.push_back(DecodeRecordSelfTestAccess::ExecuteOnce(*fast,block));
+            for(unsigned r=0;r<16;++r)state.push_back(fast->GetReg(r));
+            for(unsigned r=0;r<64;++r)state.push_back(fast->GetVFPReg(r));
+            state.push_back(fast->GetCPSR());state.push_back(fast->GetVFPSystemReg(VFP_FPSCR));
+            for(auto word:ram)state.push_back(word);
+            return state;
+        };
+        unsigned cases=0;
+        u64 trace=1469598103934665603ull;
+        for(const auto& fixture:fixtures)
+            for(unsigned pattern:{0u,0xA5u,0xFFu,0x0Fu})
+                for(bool stale_pc:{false,true}) {
+                    code.fill(0);std::copy(fixture.words.begin(),fixture.words.end(),code.begin());
+                    auto fresh=std::make_unique<BasicBlock>();
+                    auto reused=std::make_unique<BasicBlock>();
+                    std::memset(fresh.get(),0,sizeof(*fresh));
+                    std::memset(reused.get(),0,sizeof(*reused));
+                    std::memset(reused->instructions.data(),pattern,sizeof(reused->instructions));
+                    if(stale_pc)for(auto& inst:reused->instructions)inst.rd=15;
+                    fresh->start_pc=reused->start_pc=0x1000;
+                    fast->SetCPSR(0x10|(fixture.thumb?0x20:0));
+                    DecodeRecordSelfTestAccess::Decode(*fast,*fresh,0x1000);
+                    DecodeRecordSelfTestAccess::Decode(*fast,*reused,0x1000);
+                    bool same=fresh->inst_count==reused->inst_count&&fresh->end_pc==reused->end_pc&&
+                              fresh->flags==reused->flags;
+                    for(unsigned slot=0;same&&slot<=fresh->inst_count;++slot)
+                        same=std::memcmp(&fresh->instructions[slot],&reused->instructions[slot],
+                                         sizeof(DecodedInst))==0;
+                    bool prefix=false;
+                    for(unsigned slot=0;slot<fresh->inst_count;++slot)
+                        prefix|=fresh->instructions[slot].opcode==Opcode::PcSetup;
+                    if(!same||(fixture.prefix&&!prefix)||
+                       (fixture.invalid_size&&(fresh->instructions[0].opcode!=Opcode::Invalid||
+                         fresh->instructions[0].inst_size!=fixture.invalid_size||
+                         fresh->end_pc!=0x1000+fixture.invalid_size))) {
+                        std::cerr<<"Fresh/reused decode record mismatch "<<fixture.name
+                                 <<" pattern="<<pattern<<" stale_pc="<<stale_pc<<'\n';return 1;
+                    }
+                    const auto expected=capture(*fresh,fixture.thumb);
+                    const auto actual=capture(*reused,fixture.thumb);
+                    if(expected!=actual) {
+                        std::cerr<<"Fresh/reused semantic mismatch "<<fixture.name<<'\n';return 1;
+                    }
+                    for(auto value:actual)trace=(trace^value)*1099511628211ull;
+                    ++cases;
+                }
+        // Reproduce the original failure through public APIs: Clear leaves the
+        // payload storage reusable, so prior MOV pc,lr must not truncate VMUL.
+        for(bool prior_pc:{false,true}) {
+            code={prior_pc?0xE1A0F00Eu:0xE1A05005u,0xEAFFFFFE,0xEAFFFFFE};
+            fast->ClearInstructionCache();fast->SetCPSR(0x10);fast->SetPC(0x1000);
+            fast->SetReg(14,0x1008);timing.GetTimer(0)->Advance(1);fast->Run();
+            fast->ClearInstructionCache();code={0xEE240A08,0xE2800001,0xEAFFFFFE};
+            fast->SetCPSR(0x10);fast->SetPC(0x1000);fast->SetReg(0,0);
+            timing.GetTimer(0)->Advance(1);const auto before=timing.GetTimer(0)->GetDowncount();
+            fast->Run();
+            if(fast->GetReg(0)!=1||fast->GetPC()!=0x1008||
+               before-timing.GetTimer(0)->GetDowncount()!=3) {
+                std::cerr<<"Public cache-reuse block boundary mismatch\n";return 1;
+            }
+        }
+        for(const auto& fixture:fixtures)if(fixture.invalid_size) {
+            code.fill(0);std::copy(fixture.words.begin(),fixture.words.end(),code.begin());
+            fast->ClearInstructionCache();fast->SetCPSR(0x10|(fixture.thumb?0x20:0));
+            fast->SetPC(0x1000|unsigned(fixture.thumb));timing.GetTimer(0)->Advance(1);fast->Run();
+            if(fast->GetPC()!=0x1000+fixture.invalid_size) {
+                std::cerr<<"Invalid decode made no progress "<<fixture.name<<'\n';return 1;
+            }
+        }
+        std::cout<<"Decode reuse byte/state/tick cases="<<cases<<" public_reuse=2 invalid_progress=3 trace="
+                 <<trace<<'\n';return 0;
+    }
     if (std::getenv("CARA_UNROLL_BUDGET_TEST")) {
         const char* flag = std::getenv("CARA_FASTINTERP_CHAIN_BUDGET");
         if (!flag || std::strcmp(flag, "1") != 0) {
@@ -167,6 +304,11 @@ int main() {
                 fast->SetPC(0x1000 | unsigned(thumb));
                 timing.GetTimer(0)->Advance(budget);
                 const s64 before = timing.GetTimer(0)->GetDowncount();
+                auto& counters = Common::FrameTiming::counters;
+                counters.enabled = true;
+                counters.guest_ticks = 0;
+                counters.guest_core_ticks.fill(0);
+                counters.last_guest_pc.fill(0);
                 fast->Run();
                 const s64 consumed = before - timing.GetTimer(0)->GetDowncount();
                 const s64 first = thumb ? 2 : 9;
@@ -184,6 +326,13 @@ int main() {
                               << " expected=" << expected_ticks << '\n';
                     return 1;
                 }
+                if (counters.guest_ticks != u64(consumed) ||
+                    counters.guest_core_ticks[0] != u64(consumed) ||
+                    counters.last_guest_pc[0] != (consumed ? pc : 0)) {
+                    std::cerr << "SVC pending tick counter/PC mismatch\n";
+                    return 1;
+                }
+                counters.enabled = false;
                 hash(fast->GetReg(0)); hash(fast->GetPC());
                 hash(fast->GetCPSR()); hash(consumed);
                 ++cases;

@@ -1104,3 +1104,20 @@ submitted-vertex size and draw path, while retaining full counts. These counters
 change no GL calls. They distinguish possible per-call overhead from per-vertex
 work before batching is proposed. Tiny-call CPU samples include clock overhead
 and can exceed their wall samples; their difference is not precise GPU wait time.
+
+A further native reproducer isolated cache-history-dependent decoding. Decoders
+populate opcode-specific fields, but DecodeBlockInto reused complete records
+without initializing the remaining fields. The generic PC-destination block-end
+check could see a previous rd=15 in a VFP record: identical VMUL/ADD/B bytes then
+decoded as one instruction instead of three. Each newly decoded 20-byte record
+is now cleared before ARM/Thumb decoding. Cache hits and the PcSetup prefix copy
+flow are unchanged. A permanent regression compares fresh and poisoned records,
+architectural results, boundaries and ticks across 176 reuse cases in both cache
+policies. Device equivalence must be rechecked after this correction.
+
+Diagnostic guest-tick accounting also now includes the pending work flushed by
+ARM and Thumb SVC handlers. Previously, those ticks reached the emulated timer
+but were absent from FrameTiming counters, so changing chain length could change
+the reported counter without changing actual time. Native SVC tests verify total
+and per-core counters against timer deltas. These diagnostic changes do not alter
+actual tick advancement.

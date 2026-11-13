@@ -1046,6 +1046,12 @@ handle_ThumbSwi: {
     {
         u32 svc_num = inst->imm32 & 0xFF;
         executed += inst->ticks;
+        if (Common::FrameTiming::counters.enabled) {
+            auto& counters = Common::FrameTiming::counters;
+            counters.guest_ticks += executed;
+            counters.guest_core_ticks[GetID()] += executed;
+            counters.last_guest_pc[GetID()] = state_.PC();
+        }
         timer->AddTicks(executed);
         executed = 0;
 
