@@ -174,6 +174,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     std::atomic<unsigned> artworkGeneration;
     CaraLibraryGame* recent;
     BOOL scanning;
+    BOOL reloadPending;
     BOOL sortRecent;
     UILabel* syncLabel;
     UIStackView* libraryBody;
@@ -226,7 +227,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     else if(!narrow && tabs.superview==libraryBody) { [libraryBody removeArrangedSubview:tabs]; [tabs removeFromSuperview]; self.navigationItem.titleView=tabs; }
     if(!narrow) tabs.frame=CGRectMake(0,0,MIN(560,self.view.bounds.size.width-200),34);
 }
-- (void)reloadLibrary { [self applyAppearance]; if(scanning) return; scanning=YES; [self.store scan:^(NSArray* result,NSString* error) { self->scanning=NO; self->games=result; [self->collection.refreshControl endRefreshing]; [self filterGames]; if(error) self->syncLabel.text=error; }]; }
+- (void)reloadLibrary { [self applyAppearance]; if(scanning) { reloadPending=YES; return; } scanning=YES; [self.store scan:^(NSArray* result,NSString* error) { self->scanning=NO; self->games=result; [self->collection.refreshControl endRefreshing]; [self filterGames]; if(error) self->syncLabel.text=error; if(self->reloadPending) { self->reloadPending=NO; [self reloadLibrary]; } }]; }
 - (void)tabChanged { CaraMenuSound(@"focus"); [self filterGames]; }
 - (void)filterGames {
     NSString* query=search.searchBar.text?:@""; NSInteger tab=tabs.selectedSegmentIndex;
