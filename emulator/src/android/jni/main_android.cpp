@@ -470,6 +470,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.enable_dsp_lle = Config::Get(Config::ENABLE_DSP_LLE);
     Settings::values.dsp_lle_multithread = Config::Get(Config::DSP_LLE_MULTITHREAD);
     Settings::values.audio_volume = Config::Get(Config::AUDIO_VOLUME);
+    Settings::values.mic_volume = Config::Get(Config::MIC_VOLUME);
     Settings::values.sink_id = (Config::Get(Config::AUDIO_OUTPUT_TYPE) == 2 ? "cubeb" : "null");
     Settings::values.audio_device_id = Config::Get(Config::AUDIO_OUTPUT_DEVICE);
     Settings::values.enable_audio_stretching = Config::Get(Config::AUDIO_STRETCHING);
@@ -756,7 +757,7 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_loadPageTable(JNIEnv
     Core::System& system{Core::System::GetInstance()};
     auto pagetable = system.Memory().GetCurrentPageTable();
 
-    for (u32 i = 0; i < pagetable->pointers.size(); ++i) {
+    for (u32 i = 0; i < pagetable->GetPointerArray().size(); ++i) {
         auto p = pagetable->pointers[i];
         if (p != nullptr) {
             u32 addr = i << Memory::PAGE_BITS;

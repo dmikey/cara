@@ -44,8 +44,12 @@ jobs:
           CCACHE_DIR: ${{ runner.temp }}/cara-ccache
           CCACHE_BASEDIR: ${{ github.workspace }}
           CCACHE_MAXSIZE: 1G
+          CCACHE_COMPILERCHECK: content
         working-directory: emulator/src/android
         run: gradle --no-daemon --continue --max-workers=3 :app:assembleDebug
+      - name: Compiler cache statistics
+        if: always()
+        run: CCACHE_DIR="${{ runner.temp }}/cara-ccache" ccache --show-stats || true
       - uses: actions/cache/save@v4
         if: always()
         with:
