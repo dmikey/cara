@@ -165,3 +165,40 @@ This retention fix passed a private native ThinLTO link/dSYM/source-line smoke
 test with the installed Xcode toolchain. It has not yet been relinked and
 validated on the iPad; it does not restore missing line tables in the first
 capture's existing dSYM. Verify the next exact binary/dSYM before using its lines.
+
+## Offline app-only analysis
+
+Archive the capture with its exact app binary and dSYM, then run on a Mac with
+Xcode command-line tools available:
+
+```sh
+python3 tools/symbolize_host_pc.py capture.json \
+  --binary archive/Cara.app/cara-ios \
+  --dsym archive/Cara.dSYM \
+  --output analysis.json
+```
+
+Optionally pass `--expected-uuid UUID` to pin a known capture artifact. The tool
+requires exact UUID and architecture agreement, checks the app's Mach-O segment
+bounds and runtime slide, and sends only app executable-range PCs to batched
+`atos`. It retains non-app/unknown addresses without assigning shared-cache
+symbols from the host OS. The output separates all valid wall PCs from natural
+RUNNING records and reports Mach failures, resume balance, clock validity,
+capacity/drop checks and measured suspension duration. A matching dSYM may still
+lack source lines; function/offset output must not be mistaken for handler-level
+source attribution. Capture-quality warnings remain visible in the JSON.
+
+Focused tests mock Apple tools and need no device or Xcode:
+
+```sh
+python3 -m unittest discover -s tools -p test_symbolize_host_pc.py
+```
+
+The next iPad capture verified optimized line tables after the ThinLTO retention
+fix: UUID `C0B3D341-AE30-391D-BECC-879067902F8D`, 1,297 valid samples over
+16.270 seconds, no Mach failures and no quality warnings. Explicit disassembly
+resolved ambiguous source line zero and function-entry line records: 70 were
+dispatch-table loads before indirect branches and only two were actual prologue
+instructions. Function/source-line labels alone therefore cannot justify
+assigning samples to entry overhead. Block lookup, operand/page access and
+Morton conversion remain concrete targets; these are wall-residency clues.

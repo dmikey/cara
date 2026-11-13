@@ -31,12 +31,14 @@ constexpr size_t CACHE_WAYS = 4;
 
 /// Total number of cache entries
 constexpr size_t CACHE_SIZE = CACHE_SETS * CACHE_WAYS;
+static_assert(CACHE_SIZE < INVALID_BLOCK_SLOT);
 
 /// Invalid tag marker (a guest PC of 0xFFFFFFFF can never be a real block start)
 constexpr u32 INVALID_TAG = 0xFFFFFFFF;
 
 /// Set-associative block cache with recently-used-bit replacement
 class BlockCache {
+    friend struct SecondaryLinkCacheTestAccess;
 public:
     BlockCache() {
         const char* value = std::getenv("CARA_FASTINTERP_CHAIN_RECENCY");
@@ -61,6 +63,7 @@ public:
 
     struct Profile {
         u64 lookup_calls{}, lookup_hits{}, lookup_tag_comparisons{};
+        u64 secondary_probes{}, secondary_hits{};
         u64 lookup_or_allocate_calls{}, lookup_or_allocate_hits{}, lookup_or_allocate_tag_comparisons{};
         u64 allocation_misses{};
         u64 empty_allocations{};
@@ -94,6 +97,7 @@ public:
         for (auto& block : blocks_) {
             block.inst_count = 0;
             block.chain_target = nullptr; // Prevent dangling pointers
+            block.secondary_slot = INVALID_BLOCK_SLOT;
         }
         std::memset(lru_state_.data(), 0, lru_state_.size());
     }
@@ -116,13 +120,34 @@ public:
                 observed_executions_[i] = 0; observed_modes_[i] = 0;
                 blocks_[i].inst_count = 0;
                 blocks_[i].chain_target = nullptr;
+                blocks_[i].secondary_slot = INVALID_BLOCK_SLOT;
             }
         }
     }
 
-    BasicBlock* Lookup(u32 pc) {
+    BasicBlock* Lookup(u32 pc, u16* slot = nullptr) {
         if (profiling_) ++profile_.lookup_calls;
-        return eight_way_ ? LookupImpl<8>(pc) : LookupImpl<4>(pc);
+        return eight_way_ ? LookupImpl<8>(pc, slot) : LookupImpl<4>(pc, slot);
+    }
+
+    // Stale probes change neither request counters nor NRU state before the
+    // caller's ordinary Lookup. Exact current tags validate recycled slots;
+    // mode/poison rejection stays with the caller AFTER the original hit touch.
+    BasicBlock* LookupSecondary(u32 pc, u16 slot) {
+        if (profiling_) ++profile_.secondary_probes;
+        if (slot >= CACHE_SIZE || pc == INVALID_TAG || tags_[slot] != pc) return nullptr;
+        const unsigned shift = eight_way_ ? 3 : 2;
+        const unsigned way = slot & ((1u << shift) - 1);
+        if (profiling_) {
+            ++profile_.secondary_hits;
+            ++profile_.lookup_calls;
+            ++profile_.lookup_hits;
+            // Logical scalar-equivalent prefix count, not physical probes.
+            profile_.lookup_tag_comparisons += way + 1;
+        }
+        if (eight_way_) UpdateLRU<8>(slot >> 3, way);
+        else UpdateLRU<4>(slot >> 2, way);
+        return &blocks_[slot];
     }
     BasicBlock* LookupOrAllocate(u32 pc, bool& was_hit) {
         if (profiling_) ++profile_.lookup_or_allocate_calls;
@@ -200,7 +225,7 @@ private:
     };
     /// Look up a block by PC (returns nullptr if not found)
     template <unsigned Ways>
-    BasicBlock* LookupImpl(u32 pc) {
+    BasicBlock* LookupImpl(u32 pc, u16* slot) {
         u32 set_idx = GetSetIndex<Ways>(pc);
         u32 base = set_idx * Ways;
 
@@ -208,6 +233,7 @@ private:
         if (way != Ways) {
             if (profiling_) { ++profile_.lookup_hits; profile_.lookup_tag_comparisons += way + 1; }
             UpdateLRU<Ways>(set_idx, way);
+            if (slot) *slot = static_cast<u16>(base + way);
             return &blocks_[base + way];
         }
         if (profiling_) profile_.lookup_tag_comparisons += Ways;
@@ -256,6 +282,7 @@ private:
         block.exec_count = 0;
         block.flags = 0;
         block.chain_target = nullptr;
+        block.secondary_slot = INVALID_BLOCK_SLOT;
 
         UpdateLRU<Ways>(set_idx, victim_way);
         return &block;

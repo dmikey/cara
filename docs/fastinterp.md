@@ -96,3 +96,42 @@ NZCV combinations, pending lazy flags, Step, blocks and hot rewrites. Existing
 ARM/Thumb, poisoned-decode, SVC, budget, return, cache, ALU operand/pair and VCMP
 regressions also passed in both modes. These are correctness checks; device
 performance remains an independent measurement.
+
+A subsequent fixed-clock M4 iPad moving-grass comparison on build fingerprint
+`64cd37b23a1d4f19595daaf7c3a0307807b98e00c15ad2070e8256bd564a9d3d`
+measured 18.274363/18.294200 ms per refresh with checked entries versus
+18.054946/18.014223 with unconditional entries. Upload-order reuse was enabled
+in both, sound synthesis was active, and guest CPU/speed cap were both 100%.
+The repeated means are 18.284282 versus 18.034585 ms (1.37% lower wall time);
+emulation-thread CPU means are 16.603791 versus 16.269044 ms. Corresponding
+window workloads and endpoint pixels matched exactly. This bounded route result
+does not establish locked full speed or every-frame equivalence. The core flag defaults off. After matching 600-refresh
+Luigi opening-dialogue, Zelda outdoor-gameplay and Xenoblade intro comparisons
+at 100% guest CPU, the iOS GLES frontend selects it by default unless explicitly
+overridden. These paced scene pairs all matched pixels/work and were already
+at full speed, so no additional cross-title speedup is claimed.
+
+## Secondary successor slot (experiment)
+
+`CARA_FASTINTERP_SECONDARY_LINK=1` is a default-off shortcut for a successful
+fallback block lookup. A block remembers the last fallback successor's cache
+slot. Before repeating the tag search, the cache validates that slot against the
+full current PC tag. A stale or empty hint falls through to the original search.
+A valid hint performs the original request/hit accounting and exact NRU touch;
+ARM/Thumb and poisoned-entry checks remain with the original caller. Primary
+chain selection, guest ticks, chain limits and event checks are unchanged.
+
+The token is cleared on allocation, decode, invalidation and full cache clear.
+A recycled slot containing the same PC identifies its current block, so the hint
+does not hold an obsolete allocation alive. The additional block-header storage
+increases host cache footprint slightly; census exports actual object size,
+`secondary_link_enabled`, `cache_secondary_probes` and `cache_secondary_hits`.
+Reported tag comparisons remain logical scalar-equivalent prefix probes, not a
+count of physically executed comparisons after a shortcut.
+
+The standalone native test compares 800,000 real cache operations, including
+exact tags, NRU states, victims and logical counters. The CPU fixture compares
+12,288 slices across both AL-entry modes, 4/8-way policies and 75/100/133%
+clocks, including SVCs, mode changes and address-space changes. The existing
+full instruction and timing regressions pass in all four AL/secondary mode
+combinations. Device performance remains a separate measurement.

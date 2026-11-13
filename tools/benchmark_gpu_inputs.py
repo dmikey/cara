@@ -85,7 +85,7 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['al_dispatch','eagl_threaded','host_pc_profile','simd_tags','upload_order_reuse','precise_block_end','state_reuse','chain_recency','guest_pc_profile','used_input_attributes','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','texture_exact_prefilter','texture_acquisition_profile','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['validate_empty_fastpath','surface_upload_trace','secondary_link','al_dispatch','eagl_threaded','host_pc_profile','simd_tags','upload_order_reuse','precise_block_end','state_reuse','chain_recency','guest_pc_profile','used_input_attributes','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','texture_exact_prefilter','texture_acquisition_profile','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -172,6 +172,7 @@ def main():
                     'CARA_EAGL_THREADED':'1' if config.get('eagl_threaded',False) else '0',
                     'CARA_FASTINTERP_SIMD_TAGS':'1' if config.get('simd_tags',False) else '0',
                     'CARA_FASTINTERP_AL_DISPATCH':'1' if config.get('al_dispatch',False) else '0',
+                    'CARA_FASTINTERP_SECONDARY_LINK':'1' if config.get('secondary_link',False) else '0',
                     'CARA_VERTEX_UPLOAD_ORDER_REUSE':'1' if config.get('upload_order_reuse',False) else '0',
                     'CARA_FASTINTERP_PRECISE_BLOCK_END':'1' if config.get('precise_block_end',False) else '0',
                     'CARA_FASTINTERP_CHAIN_RECENCY':'1' if config.get('chain_recency',False) else '0',
@@ -195,6 +196,10 @@ def main():
                     'CARA_TEXTURE_ACQUISITION_PROFILE':'1' if config.get('texture_acquisition_profile',False) else '0',
                     'CARA_FASTINTERP_DECODE_BKPT':'1' if config.get('decode_bkpt',False) else '0',
                     'CARA_SURFACE_FLUSH_TRACE':'1',
+                    'CARA_SURFACE_UPLOAD_TRACE':'1' if config.get('surface_upload_trace',False) else '0',
+                    'CARA_VALIDATE_EMPTY_FASTPATH':'1' if config.get('validate_empty_fastpath',True) else '0',
+                    'CARA_SURFACE_UPLOAD_TRACE_START_FRAME':str(args.warmup),
+                    'CARA_SURFACE_UPLOAD_TRACE_END_FRAME':str(args.frames),
                     'CARA_RETAIN_SMALL_CPU_WRITES':'1' if config.get('retain_small_writes',False) else '0',
                     'CARA_GPU_QUATERNION_SLICE':'1' if config.get('quaternion_slice',False) else '0',
                     'CARA_GL_IMPLICIT_FLUSH':'1' if config.get('implicit_flush',False) else '0',
@@ -323,13 +328,31 @@ def main():
                    if all(key in w for w in windows)]
         means = {key: sum(w[key] for w in windows) / len(windows) for key in fields}
         result = dict(config, fingerprint=report['engine_build_fingerprint'], means=means)
-        for name in ['runtime-status.json', 'audio-status.json', 'benchmark-status.json', 'fastinterp-blocks.json','surface-flushes.json','emulator.log']:
+        report_files = ['runtime-status.json', 'audio-status.json', 'benchmark-status.json', 'fastinterp-blocks.json','surface-flushes.json','emulator.log']
+        if config.get('surface_upload_trace',False):
+            report_files.append('surface-uploads.json')
+        for name in report_files:
             for attempt in range(5):
                 if copy(name, args.output / (config['name'] + '-' + name)):
                     break
                 time.sleep(0.2)
             else:
                 raise RuntimeError('Unable to read ' + name)
+        if config.get('surface_upload_trace',False):
+            upload_path = args.output / (config['name'] + '-surface-uploads.json')
+            for attempt in range(10):
+                if copy('surface-uploads.json',upload_path):
+                    try:
+                        uploads=json.loads(upload_path.read_text())
+                    except (ValueError,OSError):
+                        uploads={}
+                    if (uploads.get('enabled') is True and uploads.get('read_only_diagnostic') is True and
+                            uploads.get('kind') == 'validate_surface_guest_ram_fallback_uploads' and
+                            uploads.get('written_frame',-1) >= args.frames):
+                        break
+                time.sleep(0.2)
+            else:
+                raise RuntimeError('Missing completed upload trace; an early restored-cache report is not accepted')
         if memory_probes:
             probe_path=args.output / (config['name']+'-profile-memory-u32.json')
             if not copy('profile-memory-u32.json',probe_path):
@@ -375,6 +398,8 @@ def main():
             raise RuntimeError('FastInterp chain budget mode differs from requested configuration')
         if any(core.get('simd_tags_enabled') != config.get('simd_tags', False) for core in census['cores']):
             raise RuntimeError('SIMD tag lookup mode differs from requested configuration')
+        if any(core.get('secondary_link_enabled',False) != config.get('secondary_link',False) for core in census['cores']):
+            raise RuntimeError('Secondary block-link mode differs from requested configuration')
         if any(core.get('al_dispatch_enabled',False) != config.get('al_dispatch',False) for core in census['cores']):
             raise RuntimeError('Unconditional dispatch mode differs from requested configuration')
         if any(core.get('precise_block_end_enabled') != config.get('precise_block_end', False) for core in census['cores']):

@@ -1310,6 +1310,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     block->SetThumb(state_.thumb_mode);
     block->inst_count = 0; // Reset before decoding (critical for re-decode on mode change)
     block->chain_target = nullptr;
+    block->secondary_slot = INVALID_BLOCK_SLOT;
     fusion_stats_.blocks_decoded++;
 
     u32 current_pc = pc;

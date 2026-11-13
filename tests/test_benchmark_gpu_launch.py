@@ -24,7 +24,7 @@ def actual_launch(args, runner, memory_probes=None):
 
 
 def arguments(**changes):
-    values = dict(guest_pc_episode_start=None, guest_pc_episode_end=None, guest_pc_ranges='', guest_pc_start_frame=300, guest_pc_window_frames=4,
+    values = dict(warmup=300, guest_pc_episode_start=None, guest_pc_episode_end=None, guest_pc_ranges='', guest_pc_start_frame=300, guest_pc_window_frames=4,
                   guest_pc_period_frames=120, guest_pc_windows=4, cpu_category_timing=False, phase_cpu_timing=False, paced=True,
                   gpu_self_test=False, host_cpu_timing=False, frames=1200,
                   press_a_frames='0', circle_segments='', rom=None,

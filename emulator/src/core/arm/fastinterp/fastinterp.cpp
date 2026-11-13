@@ -135,6 +135,8 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     decode_breakpoints_ = bkpt && std::strcmp(bkpt, "1") == 0;
     const char* al_dispatch = std::getenv("CARA_FASTINTERP_AL_DISPATCH");
     al_dispatch_ = al_dispatch && std::strcmp(al_dispatch, "1") == 0;
+    const char* secondary_link = std::getenv("CARA_FASTINTERP_SECONDARY_LINK");
+    secondary_link_ = secondary_link && std::strcmp(secondary_link, "1") == 0;
     const char* burst = std::getenv("CARA_FASTINTERP_RAM_BURST");
     ram_burst_ = burst && std::strcmp(burst, "1") == 0;
     const char* contiguous = std::getenv("CARA_FASTINTERP_CONTIGUOUS_TRANSFERS");
@@ -232,13 +234,15 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     guest_pc_cpu_.Write(output);
     output << ",\"simd_tags_enabled\":" << (cache_.SimdTagsEnabled() ? "true" : "false")
            << ",\"simd_tags_supported\":" << (BlockCache::SimdTagsSupported() ? "true" : "false")
-           << ",\"tag_comparison_semantics\":\"scalar_equivalent_prefix_probes\"";
+           << ",\"tag_comparison_semantics\":\"logical_scalar_equivalent_prefix_probes\"";
     output << ",\"cache_chain_recency\":" << (cache_.ChainRecencyEnabled() ? "true" : "false")
            << ",\"cache_replacement_profile\":";
     cache_.WriteReplacementProfile(output);
     output << ",\"decode_cost_profile\":";
     decode_cost_.Write(output);
-    output << ",\"cache_lookup_calls\":" << cache_profile.lookup_calls
+    output << ",\"cache_secondary_probes\":" << cache_profile.secondary_probes
+           << ",\"cache_secondary_hits\":" << cache_profile.secondary_hits
+           << ",\"cache_lookup_calls\":" << cache_profile.lookup_calls
            << ",\"cache_lookup_hits\":" << cache_profile.lookup_hits
            << ",\"cache_lookup_tag_comparisons\":" << cache_profile.lookup_tag_comparisons
            << ",\"cache_lookup_or_allocate_calls\":" << cache_profile.lookup_or_allocate_calls
@@ -247,6 +251,7 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     output << ",\"chain_budget_enabled\":" << (chain_budget_ ? "true" : "false")
            << ",\"precise_block_end_enabled\":" << (precise_block_end_ ? "true" : "false")
            << ",\"al_dispatch_enabled\":" << (al_dispatch_ ? "true" : "false")
+           << ",\"secondary_link_enabled\":" << (secondary_link_ ? "true" : "false")
            << ",\"cache_ways\":" << cache_.Ways()
            << ",\"cache_sets\":" << cache_.Sets() << ",\"cache_entries\":" << CACHE_SIZE
            << ",\"cache_object_bytes\":" << sizeof(cache_)
@@ -1460,10 +1465,19 @@ chain:
         // Slow path: look up next block
         // Only cache if we don't already have a chain_target (don't thrash on alternating branches)
         decode_cost_.ChainLookup();
-        next = cache_.Lookup(next_pc);
+        u16 next_slot = INVALID_BLOCK_SLOT;
+        if (secondary_link_) {
+            next_slot = block->secondary_slot;
+            next = cache_.LookupSecondary(next_pc, next_slot);
+            if (!next) next = cache_.Lookup(next_pc, &next_slot);
+        } else {
+            next = cache_.Lookup(next_pc);
+        }
         if (next && next->IsThumb() == state_.thumb_mode) {
             if (!block->chain_target) {
                 block->chain_target = next; // Cache for next time
+            } else if (secondary_link_) {
+                block->secondary_slot = next_slot;
             }
             chain_count++;
             block->exec_count++;

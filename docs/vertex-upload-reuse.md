@@ -1,6 +1,6 @@
 # Exact vertex upload reuse across moving draw order
 
-The default-off `CARA_VERTEX_UPLOAD_ORDER_REUSE=1` experiment reduces avoidable
+The `CARA_VERTEX_UPLOAD_ORDER_REUSE=1` path reduces avoidable
 packed vertex/index texture uploads when visible draw order changes. A repeated
 Stories walking route measured **19.055433 -> 18.085450 ms per completed display
 refresh**, a **0.969983 ms / 5.09% reduction**. Emulation-thread CPU fell
@@ -113,8 +113,9 @@ An initialization-only ordinal-comparison refinement subsequently passed
 for the initial slot and edge filtering for alternate candidates; its device
 results must be measured separately from the build above.
 
-Cross-title checks and remaining host profiling belong in a later addition.
-The experiment remains default-off pending those results. No PBO staging,
+Cross-title checks are recorded below. Remaining host profiling is independent.
+The engine switch defaults off; the iOS frontend selects it when exact upload
+shadows are enabled. Explicit environment overrides retain reproducible controls. No PBO staging,
 extra bank capacity, transformed-vertex cache, timing changes or skipped guest
 work are included.
 
@@ -122,3 +123,36 @@ Private evidence roots: `stories-lunch-grass-20261113/candidate-comparison`,
 `order-confirmation`, `boundary-420`, `boundary-660`; each has comparison receipts,
 raw framebuffer, window timings, runtime/audio status and logs. Derived checked
 values are retained privately in `order-consolidated-evidence.json`.
+
+## Cross-title device checks
+
+The same exact-match experiment also completed 600-refresh matched replays
+(120-refresh warmup) in Luigi’s Mansion: Dark Moon’s opening dialogue, Zelda:
+A Link Between Worlds’ outdoor gameplay, and Xenoblade Chronicles 3D’s intro.
+All used 100% guest CPU with active sound synthesis. Baseline/order pairs matched
+endpoint pixels and rendering work; no upload, timing or guest-work skipping
+was introduced. These paced scenes already meet full speed, so small wall-time
+differences are not performance gains:
+
+| Title / sampled scene | Baseline ms/ref | Order reuse ms/ref | Pixels / workload |
+| --- | ---: | ---: | --- |
+| Luigi, opening dialogue | 16.714579 | 16.712477 | Match |
+| Zelda, outdoors | 16.712594 | 16.713128 | Match |
+| Xenoblade, intro | 16.713483 | 16.713162 | Match |
+
+These are short scene regressions, not full-game compatibility proof. Every run
+restored a compatible build-specific checkpoint; original user save slots and
+in-game saves were preserved.
+
+## Refined ordinal comparison
+
+The follow-up build retained the original ordinal direct-full-compare behavior
+and used edge filtering only for alternate entries. Its isolated order runs
+measured 18.143401/18.357533 ms per refresh against 19.154169/19.212078 controls.
+All seven configurations in that matrix matched final pixels and guest draw
+work, including interpreter and EAGL-worker experiments. The EAGL worker
+measured 18.222758 ms against 18.143401/18.357533 order controls, while combining
+it with unconditional interpreter entries measured 18.025449 against 17.939157
+for unconditional entries alone. No additional worker benefit is established;
+it remains disabled. Unconditional dispatch was independently repeated, as
+recorded in [FastInterp](fastinterp.md).

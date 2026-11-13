@@ -648,6 +648,8 @@ constexpr u16 BLOCK_FLAG_REOPTIMIZED = 0x04; // Block has been reoptimized
 /// Threshold for considering a block "hot" (frequently executed)
 constexpr u32 HOT_BLOCK_THRESHOLD = 1000;
 
+constexpr u16 INVALID_BLOCK_SLOT = 0xffff;
+
 /// Basic block of decoded instructions
 struct BasicBlock {
     u32 start_pc;   // Starting PC of this block
@@ -662,6 +664,9 @@ struct BasicBlock {
     // Chain target for block chaining (kept in the header so the chain fast
     // path and the other hot header fields share a cache line)
     BasicBlock* chain_target; // Next block for chaining
+
+    // Full current tag is validated before the original fallback NRU touch.
+    u16 secondary_slot;
 
     // Decoded instructions (inline for cache locality)
     std::array<DecodedInst, MAX_BLOCK_SIZE> instructions;

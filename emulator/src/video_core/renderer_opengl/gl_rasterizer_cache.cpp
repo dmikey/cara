@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #endif
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <unordered_set>
@@ -1005,6 +1006,210 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
     return match_surface;
 }
 
+// Runtime-opt-in, fixed-capacity metadata only. This observes fallback calls,
+// not GPU completion or definitive invalidation causality.
+struct RasterizerCacheOpenGL::SurfaceUploadTrace {
+    static constexpr size_t Capacity = 256;
+    struct State {
+        std::weak_ptr<CachedSurface> surface;
+        u64 generation = 0, fallback_calls = 0, invalidation_count = 0;
+        u32 created_frame = 0, invalidated_frame = 0;
+        PAddr invalid_start = 0, invalid_end = 0;
+        // 0 unknown, 1 initial allocation, 2 CPU write, 3 other GPU owner, 4 mixed.
+        u32 invalidation = 0;
+    };
+    struct Totals {
+        u64 calls = 0, guest_bytes = 0, gl_bytes = 0;
+        double load_seconds = 0, upload_seconds = 0;
+        void Add(u64 guest, u64 gl, double load, double upload) {
+            ++calls; guest_bytes += guest; gl_bytes += gl;
+            load_seconds += load; upload_seconds += upload;
+        }
+    };
+    struct Entry {
+        SurfaceParams params{};
+        u64 generation = 0, frame_group = 0, frames_seen = 0;
+        u64 observed_invalidations = 0;
+        u32 created_frame = 0, first_frame = 0, last_frame = 0, invalidated_frame = 0;
+        PAddr load_start = 0, load_end = 0, invalid_start = 0, invalid_end = 0;
+        Common::Rectangle<u32> rect{};
+        u32 invalidation = 0, texture_handle = 0;
+        bool first_fallback = false, custom_texture = false, texture_context = false;
+        Totals totals{};
+    };
+    std::array<State, Capacity> states{};
+    std::array<Entry, Capacity> entries{};
+    size_t entry_count = 0;
+    u64 allocations = 0, untracked_allocations = 0, unknown_identity_calls = 0;
+    u32 start_frame = 300, end_frame = 1200, min_frame = 0, max_frame = 0;
+    Totals totals{}, overflow{};
+    explicit SurfaceUploadTrace() {
+        const auto frame = [](const char* name, u32 fallback) {
+            const char* text = std::getenv(name);
+            if (!text || !*text || *text == '-') return fallback;
+            char* end = nullptr;
+            const auto parsed = std::strtoull(text, &end, 10);
+            return end && !*end && parsed <= std::numeric_limits<u32>::max()
+                ? static_cast<u32>(parsed) : fallback;
+        };
+        start_frame = frame("CARA_SURFACE_UPLOAD_TRACE_START_FRAME", 300);
+        end_frame = frame("CARA_SURFACE_UPLOAD_TRACE_END_FRAME", 1200);
+    }
+    bool InWindow(u32 frame) const { return frame >= start_frame && frame < end_frame; }
+    State* Find(const Surface& surface) {
+        for (auto& state : states) {
+            if (state.surface.lock() == surface) return &state;
+        }
+        return nullptr;
+    }
+    void Created(const Surface& surface) {
+        const auto generation = ++allocations;
+        for (auto& state : states) {
+            if (!state.surface.expired()) continue;
+            state = {};
+            state.surface = surface; state.generation = generation;
+            state.created_frame = VideoCore::GetCurrentFrame();
+            state.invalidated_frame = state.created_frame;
+            state.invalidation = 1; state.invalidation_count = 1;
+            state.invalid_start = surface->addr; state.invalid_end = surface->end;
+            return;
+        }
+        ++untracked_allocations;
+    }
+    void Invalidated(const Surface& surface, PAddr start, PAddr end, bool gpu_owner) {
+        if (auto* state = Find(surface)) {
+            const u32 reason = gpu_owner ? 3 : 2;
+            if (state->invalidation_count) {
+                // Multiple observed events, including a still-unconsumed initial
+                // allocation. The envelope is metadata, not an exact dirty set.
+                state->invalidation = 4;
+                state->invalid_start = std::min(state->invalid_start, start);
+                state->invalid_end = std::max(state->invalid_end, end);
+            } else {
+                state->invalidation = reason;
+                state->invalid_start = start; state->invalid_end = end;
+            }
+            ++state->invalidation_count;
+            state->invalidated_frame = VideoCore::GetCurrentFrame();
+        }
+    }
+    void Record(const Surface& surface, PAddr start, PAddr end,
+                const Common::Rectangle<u32>& rect, double load, double upload) {
+        const u32 frame = VideoCore::GetCurrentFrame();
+        auto* state = Find(surface);
+        const u64 generation = state ? state->generation : 0;
+        const bool first = state && state->fallback_calls == 0;
+        const bool custom = surface->custom_tex_info != nullptr;
+        const bool texture_context = Common::FrameTiming::TextureAcquisitionTracingActive();
+        const u32 reason = state ? state->invalidation : 0;
+        const u64 invalidations = state ? state->invalidation_count : 0;
+        const u64 guest_bytes = u64(end) - start;
+        const u64 gl_bytes = custom
+            ? u64(surface->custom_tex_info->width) * surface->custom_tex_info->height * 4
+            : u64(rect.GetWidth()) * rect.GetHeight() * CachedSurface::GetGLBytesPerPixel(surface->pixel_format);
+        if (state) {
+            ++state->fallback_calls;
+            state->invalidation = 0; state->invalidation_count = 0;
+        }
+        if (!InWindow(frame)) return;
+        if (!totals.calls) min_frame = max_frame = frame;
+        min_frame = std::min(min_frame, frame); max_frame = std::max(max_frame, frame);
+        totals.Add(guest_bytes, gl_bytes, load, upload);
+        if (!generation) ++unknown_identity_calls;
+        const auto same_rect = [&](const Entry& e) {
+            return e.rect.left == rect.left && e.rect.right == rect.right &&
+                   e.rect.top == rect.top && e.rect.bottom == rect.bottom;
+        };
+        Entry* entry = nullptr;
+        for (size_t i = 0; i < entry_count; ++i) {
+            auto& e = entries[i];
+            if (e.generation == generation && e.frame_group == frame / 60 &&
+                e.params.ExactMatch(*surface) && e.params.type == surface->type &&
+                e.params.res_scale == surface->res_scale && e.load_start == start && e.load_end == end &&
+                same_rect(e) && e.first_fallback == first && e.custom_texture == custom &&
+                e.texture_context == texture_context && e.texture_handle == surface->texture.handle &&
+                e.invalidation == reason &&
+                e.observed_invalidations == invalidations &&
+                (!state || (e.invalid_start == state->invalid_start && e.invalid_end == state->invalid_end &&
+                            e.invalidated_frame == state->invalidated_frame))) {
+                entry = &e; break;
+            }
+        }
+        if (!entry && entry_count < Capacity) {
+            entry = &entries[entry_count++];
+            entry->params = *surface; entry->generation = generation;
+            entry->frame_group = frame / 60; entry->first_frame = entry->last_frame = frame;
+            entry->load_start = start; entry->load_end = end; entry->rect = rect;
+            entry->first_fallback = first; entry->custom_texture = custom;
+            entry->texture_context = texture_context; entry->invalidation = reason;
+            entry->observed_invalidations = invalidations; entry->texture_handle = surface->texture.handle;
+            if (state) {
+                entry->created_frame = state->created_frame;
+                entry->invalid_start = state->invalid_start; entry->invalid_end = state->invalid_end;
+                entry->invalidated_frame = state->invalidated_frame;
+            }
+        }
+        if (!entry) { overflow.Add(guest_bytes, gl_bytes, load, upload); return; }
+        entry->first_frame = std::min(entry->first_frame, frame);
+        entry->last_frame = std::max(entry->last_frame, frame);
+        entry->frames_seen |= u64{1} << (frame % 60);
+        entry->totals.Add(guest_bytes, gl_bytes, load, upload);
+    }
+    void Write() const {
+        std::ofstream out(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "surface-uploads.json");
+        const auto write_totals = [&](const Totals& value) {
+            out << "{\"calls\":" << value.calls << ",\"requested_guest_bytes\":" << value.guest_bytes
+                << ",\"gl_upload_payload_bytes\":" << value.gl_bytes << ",\"load_seconds\":" << value.load_seconds
+                << ",\"upload_seconds\":" << value.upload_seconds << '}';
+        };
+        out << std::setprecision(12)
+            << "{\"kind\":\"validate_surface_guest_ram_fallback_uploads\",\"enabled\":true,\"read_only_diagnostic\":true"
+            << ",\"written_frame\":" << VideoCore::GetCurrentFrame()
+            << ",\"window_start_inclusive\":" << start_frame << ",\"window_end_exclusive\":" << end_frame
+            << ",\"frame_clock\":\"VideoCore::GetCurrentFrame\",\"actual_min_frame\":";
+        if (totals.calls) out << min_frame; else out << "null";
+        out << ",\"actual_max_frame\":";
+        if (totals.calls) out << max_frame; else out << "null";
+        out << ",\"aggregate_capacity\":" << Capacity << ",\"identity_capacity\":" << Capacity
+            << ",\"observed_surface_allocations_all_frames\":" << allocations
+            << ",\"untracked_surface_allocations_all_frames\":" << untracked_allocations
+            << ",\"unknown_identity_calls\":" << unknown_identity_calls
+            << ",\"invalidation_labels\":[\"unknown\",\"initial_allocation\",\"CPU_write\",\"other_GPU_owner\",\"mixed\"]"
+            << ",\"limitations\":\"Last observed invalidation is context, not proven cause; interval envelopes may contain gaps. Calls and requested bytes do not prove GPU completion, successful RAM load, or GL success. Initial means first fallback for tracked surface lifetime, not first GL use. Frame groups are original VideoCore frame/60, not benchmark refresh IDs.\""
+            << ",\"totals\":";
+        write_totals(totals); out << ",\"overflow_totals\":"; write_totals(overflow);
+        out << ",\"entries\":[";
+        for (size_t i = 0; i < entry_count; ++i) {
+            const auto& e = entries[i];
+            unsigned distinct = 0;
+            for (auto mask = e.frames_seen; mask; mask &= mask - 1) ++distinct;
+            out << (i ? "," : "") << "{\"allocation_generation\":" << e.generation
+                << ",\"identity_known\":" << (e.generation ? "true" : "false")
+                << ",\"created_frame\":" << e.created_frame << ",\"texture_handle\":" << e.texture_handle
+                << ",\"surface_address\":" << e.params.addr << ",\"surface_end_exclusive\":" << e.params.end
+                << ",\"surface_size\":" << e.params.size << ",\"format\":" << unsigned(e.params.pixel_format)
+                << ",\"surface_type\":" << unsigned(e.params.type) << ",\"width\":" << e.params.width
+                << ",\"height\":" << e.params.height << ",\"stride\":" << e.params.stride
+                << ",\"tiled\":" << (e.params.is_tiled ? "true" : "false") << ",\"scale\":" << e.params.res_scale
+                << ",\"frame_group_start\":" << e.frame_group * 60 << ",\"first_frame\":" << e.first_frame
+                << ",\"last_frame\":" << e.last_frame << ",\"distinct_original_frames\":" << distinct
+                << ",\"load_start\":" << e.load_start << ",\"load_end_exclusive\":" << e.load_end
+                << ",\"destination_rect\":{\"left\":" << e.rect.left << ",\"right\":" << e.rect.right
+                << ",\"bottom\":" << e.rect.bottom << ",\"top\":" << e.rect.top << '}'
+                << ",\"first_fallback_for_allocation\":" << (e.first_fallback ? "true" : "false")
+                << ",\"custom_texture\":" << (e.custom_texture ? "true" : "false")
+                << ",\"inside_texture_acquisition_context\":" << (e.texture_context ? "true" : "false")
+                << ",\"last_observed_invalidation\":" << e.invalidation
+                << ",\"observed_invalidations_since_previous_fallback\":" << e.observed_invalidations
+                << ",\"last_invalidation_frame\":" << e.invalidated_frame
+                << ",\"invalidation_envelope_start\":" << e.invalid_start
+                << ",\"invalidation_envelope_end_exclusive\":" << e.invalid_end << ",\"totals\":";
+            write_totals(e.totals); out << '}';
+        }
+        out << "]}\n";
+    }
+};
+
 RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
     const auto enabled = [](const char* name) {
         const char* value = std::getenv(name);
@@ -1014,6 +1219,8 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
     texture_lookup_verify = enabled("CARA_TEXTURE_LOOKUP_VERIFY");
     texture_exact_prefilter = enabled("CARA_TEXTURE_EXACT_PREFILTER");
     trace_flushes = enabled("CARA_SURFACE_FLUSH_TRACE");
+    if (enabled("CARA_SURFACE_UPLOAD_TRACE"))
+        surface_upload_trace = std::make_unique<SurfaceUploadTrace>();
     retain_small_cpu_writes = enabled("CARA_RETAIN_SMALL_CPU_WRITES");
     gpu_surface_remap = enabled("CARA_GPU_SURFACE_REMAP");
     resolution_scale_factor = VideoCore::GetResolutionScaleFactor();
@@ -1025,6 +1232,7 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
 
 RasterizerCacheOpenGL::~RasterizerCacheOpenGL() {
     if (trace_flushes) WriteFlushTrace();
+    if (surface_upload_trace) surface_upload_trace->Write();
     g_read_framebuffer.Release();
     g_draw_framebuffer.Release();
 }
@@ -1859,6 +2067,16 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
         return;
     }
 
+    // An entirely valid surface has no regions for the validation loop to
+    // process. Avoid constructing its empty intersection; retain the timing
+    // scope and the size/Fill sanity checks above. The override permits a
+    // same-build comparison with the original path.
+    static const bool empty_fastpath = [] {
+        const char* value = std::getenv("CARA_VALIDATE_EMPTY_FASTPATH");
+        return !value || std::strcmp(value, "0") != 0;
+    }();
+    if (empty_fastpath && surface->invalid_regions.empty()) return;
+
     auto validate_regions = surface->invalid_regions & validate_interval;
     auto notify_validated = [&](SurfaceInterval interval) {
         surface->invalid_regions.erase(interval);
@@ -1923,8 +2141,20 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
                 SCOPE_EXIT({ flush_reason = previous_reason; validation_destination = previous_destination; });
                 FlushRegion(params.addr, params.size);
             }
-            surface->LoadGLBuffer(params.addr, params.end);
-            surface->UploadGLTexture(surface->GetSubRect(params));
+            if (surface_upload_trace) {
+                const auto rect = surface->GetSubRect(params);
+                const auto started = std::chrono::steady_clock::now();
+                surface->LoadGLBuffer(params.addr, params.end);
+                const auto loaded = std::chrono::steady_clock::now();
+                surface->UploadGLTexture(rect);
+                const auto uploaded = std::chrono::steady_clock::now();
+                surface_upload_trace->Record(surface, params.addr, params.end, rect,
+                    std::chrono::duration<double>(loaded - started).count(),
+                    std::chrono::duration<double>(uploaded - loaded).count());
+            } else {
+                surface->LoadGLBuffer(params.addr, params.end);
+                surface->UploadGLTexture(surface->GetSubRect(params));
+            }
         } else {
             LOG_INFO(Render_OpenGL, "ValidateSurface load depth: {}", (u32)surface->pixel_format);
         }
@@ -2166,6 +2396,9 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
             // discard only overwritten GPU bytes and preserve every other dirty byte.
             const auto interval = cached_surface->GetInterval() & invalid_interval;
             cached_surface->invalid_regions.insert(interval);
+            if (surface_upload_trace)
+                surface_upload_trace->Invalidated(cached_surface, boost::icl::first(interval),
+                    boost::icl::last_next(interval), region_owner != nullptr);
             cached_surface->InvalidateAllWatcher();
 
             // Remove only "empty" fill surfaces to avoid destroying and recreating OGL textures
@@ -2208,6 +2441,7 @@ Surface RasterizerCacheOpenGL::CreateSurface(const SurfaceParams& params) {
     surface->invalid_regions.insert(surface->GetInterval());
     AllocateSurfaceTexture(surface->texture.handle, GetFormatTuple(surface->pixel_format),
                            surface->GetScaledWidth(), surface->GetScaledHeight());
+    if (surface_upload_trace) surface_upload_trace->Created(surface);
 
     return surface;
 }

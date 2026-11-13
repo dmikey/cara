@@ -23,6 +23,7 @@
 
 namespace Core::FastInterp {
 struct DecodeRecordSelfTestAccess {
+    static void ConfigureSecondary(ARM_FastInterp& cpu,bool enabled) {cpu.secondary_link_=enabled;cpu.cache_.SetProfiling(true);cpu.ClearInstructionCache();}
     static void ConfigureAlDispatch(ARM_FastInterp& cpu, bool enabled) {
         cpu.al_dispatch_ = enabled; cpu.ClearInstructionCache();
     }
@@ -68,11 +69,14 @@ struct DecodeRecordSelfTestAccess {
 #include "fastinterp_ldm_pc_self_test.h"
 #include "fastinterp_decode_cost_self_test.h"
 #include "fastinterp_al_dispatch_self_test.h"
+#include "fastinterp_secondary_link_self_test.h"
 
 int main() {
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
+    if (std::getenv("CARA_FASTINTERP_SECONDARY_LINK_TEST"))
+        return VerifyFastInterpSecondaryLink(system);
     if (std::getenv("CARA_FASTINTERP_AL_DISPATCH_TEST"))
         return VerifyFastInterpAlDispatch(system);
     if (std::getenv("CARA_FASTINTERP_DECODE_COST_TEST"))

@@ -644,6 +644,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (!std::getenv("CARA_FASTINTERP_TICK_BUCKETS")) setenv("CARA_FASTINTERP_TICK_BUCKETS","1",0);
     if (!std::getenv("CARA_FASTINTERP_CHAIN_BUDGET")) setenv("CARA_FASTINTERP_CHAIN_BUDGET","1",0);
     if (!std::getenv("CARA_FASTINTERP_CACHE_WAYS")) setenv("CARA_FASTINTERP_CACHE_WAYS","8",0);
+    if (!std::getenv("CARA_GL_STATE_REUSE")) setenv("CARA_GL_STATE_REUSE","1",0);
+    if (!std::getenv("CARA_FASTINTERP_RAM_BURST")) setenv("CARA_FASTINTERP_RAM_BURST","1",0);
+    if (!std::getenv("CARA_FASTINTERP_AL_DISPATCH")) setenv("CARA_FASTINTERP_AL_DISPATCH","1",0);
     if (!std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
@@ -653,6 +656,11 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
         setenv("CARA_VERTEX_UPLOAD_REUSE","1",0);
+    if (!std::getenv("CARA_VERTEX_UPLOAD_ORDER_REUSE")) {
+        const char* reuse = std::getenv("CARA_VERTEX_UPLOAD_REUSE");
+        if (reuse && std::strcmp(reuse,"1")==0)
+            setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE","1",0);
+    }
     if (!std::getenv("CARA_VERTEX_INDEX_CACHE") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
@@ -1380,7 +1388,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             // never mistaken for evidence from this launch.
             for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
                                      "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
-                                     "surface-flushes.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
+                                     "surface-flushes.json","surface-uploads.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
                                      "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json",
                                      "profile-memory-u32.json"})
                 FileUtil::Delete(user+name);

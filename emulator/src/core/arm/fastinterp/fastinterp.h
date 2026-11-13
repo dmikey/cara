@@ -153,6 +153,7 @@ private:
     bool chain_budget_{false};
     bool precise_block_end_{true};
     bool al_dispatch_{false};
+    bool secondary_link_{false};
     static bool AluPairsEnabled();
     u64 cache_mode_redecodes_{};
     u64 cache_page_table_changes_{};
