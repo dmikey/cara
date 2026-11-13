@@ -259,3 +259,148 @@ the interpreter's decoded block boundaries fit the profiler's intervals.
 The static class mappings remain hypotheses for attribution; no filter cost,
 active-pass ownership or redundant rendering conclusion follows from this run.
 Private evidence: `stories-scalar-double-20261113/named-filter-profile/`.
+
+
+## Corrected LDM-PC return comparison
+
+The rejected function trace led to a confirmed generic decoder/liveness defect:
+LDM-PC uses the register list for its PC write, while the old block-end check
+looked for rd==15. Unreachable decoded instructions after an unconditional
+return could influence backward dead-flag elimination. An authored synthetic
+ADDS/LDM-PC/unreachable-CMP witness returned the right PC/value but wrong NZCV.
+
+Precise mode now preserves flags across every LDM-PC possible exit. It shortens
+only unconditional AL LDM-PC blocks when chain-budget mode is enabled. It keeps
+conditional and chain-budget-off block shapes to preserve scheduling boundaries.
+A broader interim version changed tiny-budget event lateness and was rejected.
+The final 112-case timing probe found zero legacy/corrected differences in PCs,
+consumed ticks, instruction markers and event lateness across tested modes,
+predicates, cold/warm caches and budgets. Six separate chain-budget-off cases
+verified corrected flags with unchanged spans/PCs/ticks. Native targeted tests
+(136), full differential cases (22,000), scalar-double regression cases (4,224),
+iOS build and no-JIT audit passed. Precise mode defaults on; explicit zero is a
+comparison/diagnostic escape, not a recommended game setting.
+
+A fresh compatible checkpoint recreated Secret Path in build
+`e2de13d1fc475d99cf0c747e2def5f0d6370399ed0d8a51b3a51b24f1fe501b0`.
+At 100% guest CPU, sound and unchanged clock/event policies:
+
+| Run | Wall ms/refresh | Emulation-thread CPU ms/refresh |
+| --- | ---: | ---: |
+| Legacy A | 20.901386 | 19.137904 |
+| Precise A | 20.813455 | 19.029317 |
+| Precise B | 20.862442 | 19.047667 |
+| Legacy B | 20.973072 | 19.111285 |
+
+The point estimate is 0.099281 ms (0.474%) faster; this short run is not a
+statistical confidence interval or evidence of a large speed unlock. All final
+RGBA hashes and graphics workload matched; allocation/decode counts remained
+2,623,500 in every run. This is primarily a demonstrated correctness fix with
+a small measured timing difference. No required guest work was skipped.
+
+Private evidence: `stories-precise-return-20261113/comparison/comparison.json`,
+`precise-return-final-native-test.log`, `precise-return-final-differential.log`,
+`ldm-budget-probe-final.summary.json` and `ldm-chain0-flags-proof.json`.
+
+
+## Corrected named-function trace and combined stack
+
+With precise return mode enabled, the same eight-range probe completed all 48
+sampled refreshes with zero straddling blocks, clock failures or unassigned
+intervals and `coverage_complete=true`. Raw body-only CPU ms per sampled
+refresh: bloom 0.053108, common filter setup 0.003482, filter quad 0.005889,
+draw-layer state 0.039327, viewport state 0.025763, target state 0.030914; DOF and
+multi-blur bodies had zero sampled CPU. This does not assign callee/SVC/GPU work
+to a pass or prove those passes never run outside the sparse windows. Shared
+helper bodies also include other callers. No overhead estimate is subtracted.
+The trace had 239,456 clock reads at 91.2698 ns/read; classification/bookkeeping
+cost is additional. Evidence: `stories-precise-return-20261113/named-filter-profile`.
+
+The combined stack keeps the established packed GPU inputs, an 80 MiB upload bank,
+upload/index reuse, surface+byte remapping, selective cleanup, uniform reuse,
+ALU operand specialization, tick buckets, eight-way cache, chain budget and bounded
+pacing. Precise return handling is enabled in every run. State reuse and RAM
+bursts are the remaining tested variables. All tests use 100% guest CPU, sound,
+100% speed cap, no JIT and unchanged hardware timing policy.
+
+| Configuration | Wall ms/refresh | Emulation-thread CPU ms/refresh |
+| --- | ---: | ---: |
+| Corrected baseline A |20.710050|18.900159|
+| State reuse only |20.608592|18.763991|
+| State reuse + RAM A |20.472015|18.674131|
+| State reuse + RAM B |20.494088|18.697098|
+| Corrected baseline B |20.954117|19.108637|
+
+The two combined runs average 20.483051 ms versus 20.832083 ms for the bracketing
+controls: 0.349032 ms or 1.675% less wall time. The repeated combined runs differ
+by 0.022073 ms; controls drift 0.244067 ms. This is a modest checkpoint-specific
+measurement, not proof of 100% speed or a cross-title performance profile.
+State-only has a single run here, so the incremental RAM contribution remains
+less well constrained than the full-stack comparison. The rejected chain-recency
+policy, used-input pruning and timing experiments remain disabled.
+
+All five final RGBA hashes matched `27abdd96894604882b8b5374ad6e6acc45333c25b1e527fa6b623ae115e22004`;
+graphics workload matched. Sound was running with nonzero output; underruns
+remain at this sub-full-speed workload. A separate full-stack run passed GPU
+state and vertex, surface-coherence and uniform-reuse oracles, loaded a compatible
+checkpoint and produced the same final pixels. The combined settings were left
+running interactively on the iPad; experimental defaults are not globally
+promoted by this test.
+
+Evidence: private `stories-precise-return-20261113/stack-comparison/comparison.json`
+and `stack-oracle/`. Source commit `cbed54810339a20f819a1948057f24e96251e7fc`
+passed all four jobs in GitHub run 43484126572: iOS software, iOS GLES3, macOS
+software and Go relay race checks. The published code has no ROM/firmware data.
+
+
+## Decode cost and successful-lookup traffic
+
+A temporary diagnostic build (`f7221d5437073a4c6d501b23ba7d7a99515aa0199c1eb5c0b288c7d17e722f1c`)
+recreated Secret Path with the same combined stack, 100% guest CPU, sound,
+100% speed cap and unchanged guest timing. Off/on controls preserved exact
+register/tick/event/cache-victim traces over 1,024 native collision slices;
+the full 22,000-case differential suite, iOS build and no-JIT audit passed.
+
+All three device runs had identical final pixels and graphics workload.
+Baseline/probe/baseline measured 20.558649 / 20.393665 / 20.383700 ms per refresh
+in the 900-frame timing window. The probe being below the mean controls is
+ordinary observer/run variation, not a speed improvement.
+
+The lifetime diagnostic covers all 1,200 completed refreshes, including warmup
+and state restoration; it cannot isolate the 900-frame benchmark interval.
+Frame observations include both endpoints (0 through 1200), with no gaps or
+resets. Core 0 was active; the other cores were unused.
+
+| Counter | Whole-run value |
+| --- | ---: |
+| Allocation-miss decodes | 2,623,500 |
+| Mode redecodes | 0 |
+| Chain-fallback Lookup calls | 127,553,678 |
+| Chain-fallback PC-tag hits | 125,042,682 (98.031%) |
+| Run LookupOrAllocate calls | 30,788,399 |
+| Run PC-tag hits | 28,164,899 (91.479%) |
+| Successful chained dispatches | 443,921,870 |
+| Dispatches through fallback Lookup | 125,042,682 (28.168%) |
+
+Together the two lookup entry points receive about 131,952 requests per
+completed refresh. Tag comparisons total 631,842,158, or about 526,535 per
+completed refresh. These counts do not measure lookup CPU time.
+
+The ordinal-hash sampler selected 40,667 allocation-miss decodes (1.550%).
+All samples completed, with zero drops, invalid clock deltas or clock failures.
+Raw sampled means were 384.239 ns CPU and 350.210 ns wall per decode. Empty
+calibration brackets averaged 136.688 ns CPU and 125 ns wall; neither is
+subtracted. The overhead-inclusive, sample-weighted estimate is 0.840 ms CPU
+per whole-run refresh. This estimate assumes representative ordinal sampling,
+includes clocks and other observer effects, excludes unsampled mode-redecode
+cost and is not an exact production or benchmark-window cost.
+
+The data makes re-decoding a secondary target rather than an explanation of
+the entire 4–5 ms shortfall. The much higher successful-lookup traffic warrants
+a separate hit-path experiment that preserves full-PC/mode/slot validity and
+NRU replacement updates. No lookup speed gain is established by these counts.
+The tested app and compatible full-stack checkpoint were restored after the
+capture; instrumentation is not the user-facing performance result.
+
+Private evidence: `stories-decode-cost-20261113/comparison/comparison.json`,
+`cache_profile-fastinterp-blocks.json`, and `decode-cost-analysis.json`.

@@ -145,6 +145,7 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     cache_.SetEightWay(cache_ways && std::strcmp(cache_ways, "8") == 0);
     const char* cache_profile = std::getenv("CARA_FASTINTERP_CACHE_PROFILE");
     cache_.SetProfiling(cache_profile && std::strcmp(cache_profile, "1") == 0);
+    decode_cost_.SetEnabled(cache_.ProfilingEnabled());
 }
 
 ARM_FastInterp::~ARM_FastInterp() = default;
@@ -227,9 +228,20 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     const auto& cache_profile = cache_.GetProfile();
     output << "{\"guest_pc_cpu\":";
     guest_pc_cpu_.Write(output);
+    output << ",\"simd_tags_enabled\":" << (cache_.SimdTagsEnabled() ? "true" : "false")
+           << ",\"simd_tags_supported\":" << (BlockCache::SimdTagsSupported() ? "true" : "false")
+           << ",\"tag_comparison_semantics\":\"scalar_equivalent_prefix_probes\"";
     output << ",\"cache_chain_recency\":" << (cache_.ChainRecencyEnabled() ? "true" : "false")
            << ",\"cache_replacement_profile\":";
     cache_.WriteReplacementProfile(output);
+    output << ",\"decode_cost_profile\":";
+    decode_cost_.Write(output);
+    output << ",\"cache_lookup_calls\":" << cache_profile.lookup_calls
+           << ",\"cache_lookup_hits\":" << cache_profile.lookup_hits
+           << ",\"cache_lookup_tag_comparisons\":" << cache_profile.lookup_tag_comparisons
+           << ",\"cache_lookup_or_allocate_calls\":" << cache_profile.lookup_or_allocate_calls
+           << ",\"cache_lookup_or_allocate_hits\":" << cache_profile.lookup_or_allocate_hits
+           << ",\"cache_lookup_or_allocate_tag_comparisons\":" << cache_profile.lookup_or_allocate_tag_comparisons;
     output << ",\"chain_budget_enabled\":" << (chain_budget_ ? "true" : "false")
            << ",\"precise_block_end_enabled\":" << (precise_block_end_ ? "true" : "false")
            << ",\"cache_ways\":" << cache_.Ways()
@@ -291,6 +303,7 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
 void ARM_FastInterp::Run() {
     Common::FrameTiming::Scope timing_scope(Common::FrameTiming::Phase::GuestCPU);
     halted_ = false;
+    if (decode_cost_.Enabled()) decode_cost_.ObserveRunFrame(VideoCore::GetCurrentFrame());
     if (guest_pc_cpu_.Enabled()) {
         profile_thread_id_ = ProfileThreadId();
         guest_pc_cpu_.BeginRun(VideoCore::GetCurrentFrame(), profile_thread_id_);
@@ -320,12 +333,21 @@ void ARM_FastInterp::Run() {
 
         bool cache_hit;
         BasicBlock* block = cache_.LookupOrAllocate(pc, cache_hit);
+        const bool allocation_miss = !cache_hit;
         if (cache_hit && block->IsThumb() != state_.thumb_mode) {
             if (cache_.ProfilingEnabled()) ++cache_mode_redecodes_;
             cache_hit = false; // Cached block is for wrong mode, re-decode
         }
         if (!cache_hit) {
-            DecodeBlockInto(block, pc);
+            if (decode_cost_.Enabled()) {
+                // Sample only allocation misses; mode-only redecodes retain a
+                // matching cache tag and are counted separately without clocks.
+                const auto sample = decode_cost_.BeforeDecode(allocation_miss);
+                DecodeBlockInto(block, pc);
+                decode_cost_.AfterDecode(sample);
+            } else {
+                DecodeBlockInto(block, pc);
+            }
         }
 
         u64 executed = ExecuteBlock(block);
@@ -1106,6 +1128,7 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
+                decode_cost_.ChainSelf();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
                 goto* dispatch_table[static_cast<size_t>(inst->opcode)];
             }
@@ -1120,6 +1143,7 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
+                decode_cost_.ChainPrimary();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
                 goto* dispatch_table[static_cast<size_t>(inst->opcode)];
             }
@@ -1127,6 +1151,7 @@ chain:
 
         // Slow path: look up next block
         // Only cache if we don't already have a chain_target (don't thrash on alternating branches)
+        decode_cost_.ChainLookup();
         next = cache_.Lookup(next_pc);
         if (next && next->IsThumb() == state_.thumb_mode) {
             if (!block->chain_target) {
@@ -1138,6 +1163,7 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
+                decode_cost_.ChainFallback();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
                 goto* dispatch_table[static_cast<size_t>(inst->opcode)];
             }

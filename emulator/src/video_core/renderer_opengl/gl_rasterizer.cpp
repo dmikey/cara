@@ -40,6 +40,7 @@
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_vertex_upload_ranges.h"
+#include "video_core/renderer_opengl/gl_vertex_upload_order_reuse.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -975,6 +976,16 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     OGLTexture* selected_texture = &ios_vertex_fallback_texture;
     OGLTexture* selected_indices = &ios_vertex_index_fallback_texture;
     IOSVertexUpload* selected_upload = nullptr;
+    bool order_reuse_checked = false;
+    bool order_reuse_input = false, order_reuse_index = false;
+    static const bool order_reuse_enabled = [] {
+        const char* value = std::getenv("CARA_VERTEX_UPLOAD_ORDER_REUSE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    static const bool upload_reuse_enabled = [] {
+        const char* value = std::getenv("CARA_VERTEX_UPLOAD_REUSE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
     const unsigned index_rows = static_cast<unsigned>(input_indices.size() /
         (IOS_VERTEX_INPUT_WIDTH * (ios_lit_pair_vertex_reuse ? 2 : 1)));
     const unsigned element_rows = static_cast<unsigned>((element_indices.size() + IOS_VERTEX_INPUT_WIDTH - 1) / IOS_VERTEX_INPUT_WIDTH);
@@ -1025,6 +1036,35 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             }
         }
         if (bank.used[size_class] < pool.size()) {
+            const size_t ordinal = bank.used[size_class];
+            // Only swap unused entries within this exact format/height class.
+            // Complete entries move together: textures, shadows and ownership.
+            // No GL resource is changed; each entry remains single-use this frame.
+            if (order_reuse_enabled && upload_reuse_enabled && raw_inputs &&
+                !ios_direct_vertex_reuse && !ios_lit_pair_vertex_reuse &&
+                !ios_feedback_vertex_reuse && !resize_storage) {
+                Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
+                const auto match = IOSVertexUploadOrderReuse::Find(
+                    pool, ordinal, 32, ios_vertex_inputs.data(),
+                    ios_vertex_inputs.size() * sizeof(GLvec4), input_indices.data(),
+                    input_indices.size() * sizeof(u16), [rows](const IOSVertexUpload& entry) {
+                        return entry.rows == rows && entry.texture.handle && entry.indices.handle;
+                    });
+                order_reuse_checked = true;
+                order_reuse_input = match.input_equal;
+                order_reuse_index = match.index_equal;
+                if (match.selected != ordinal) std::swap(pool[ordinal], pool[match.selected]);
+                // Bounded diagnostic proof; frame_timing can expose these later.
+                struct Totals { u64 checks=0, candidates=0, full=0, swaps=0; unsigned logs=0, frame=~0u; };
+                static Totals totals;
+                ++totals.checks; totals.candidates += match.candidates;
+                totals.full += match.full_comparisons; totals.swaps += match.selected != ordinal;
+                if (totals.logs < 24 && totals.frame != frame && frame % 120 == 0) {
+                    totals.frame = frame; ++totals.logs;
+                    LOG_INFO(Render_OpenGL, "Vertex order reuse frame={} checks={} candidates={} full_comparisons={} swaps={}",
+                             frame, totals.checks, totals.candidates, totals.full, totals.swaps);
+                }
+            }
             auto& upload = pool[bank.used[size_class]++];
             storage_rows = upload.rows;
             selected_texture = &upload.texture;
@@ -1075,11 +1115,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         glBindSampler(8, 0);
         glActiveTexture(GL_TEXTURE7);
     }
-    static const bool reuse_enabled=[] {
-        const char* value=std::getenv("CARA_VERTEX_UPLOAD_REUSE");
-        return value && std::strcmp(value,"1")==0;
-    }();
-    const bool cache_inputs=raw_inputs && reuse_enabled && selected_upload;
+    const bool cache_inputs=raw_inputs && upload_reuse_enabled && selected_upload;
     const size_t input_bytes=ios_vertex_inputs.size()*sizeof(GLvec4);
     const size_t index_bytes=input_indices.size()*sizeof(u16);
     bool reuse_input=false,reuse_index=false,reuse_elements=false;
@@ -1088,8 +1124,10 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         const auto matches=[](const std::vector<u8>& shadow,const void* data,size_t bytes) {
             return shadow.size()==bytes && bytes && std::memcmp(shadow.data(),data,bytes)==0;
         };
-        reuse_input=matches(selected_upload->input_shadow,ios_vertex_inputs.data(),input_bytes);
-        reuse_index=matches(selected_upload->index_shadow,input_indices.data(),index_bytes);
+        reuse_input=order_reuse_checked ? order_reuse_input :
+            matches(selected_upload->input_shadow,ios_vertex_inputs.data(),input_bytes);
+        reuse_index=order_reuse_checked ? order_reuse_index :
+            matches(selected_upload->index_shadow,input_indices.data(),index_bytes);
         if (ios_lit_pair_vertex_reuse) reuse_elements=matches(selected_upload->elements_shadow,element_indices.data(),element_bytes);
     }
     if (Common::FrameTiming::counters.enabled) {

@@ -10,6 +10,9 @@
 #include <limits>
 #include <ostream>
 #include <cstring>
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #include "core/arm/fastinterp/fastinterp_types.h"
 
 namespace Core::FastInterp {
@@ -38,14 +41,27 @@ public:
     BlockCache() {
         const char* value = std::getenv("CARA_FASTINTERP_CHAIN_RECENCY");
         chain_recency_ = value && std::strcmp(value, "1") == 0;
+        value = std::getenv("CARA_FASTINTERP_SIMD_TAGS");
+        SetSimdTags(value && std::strcmp(value, "1") == 0);
         Clear();
     }
+    bool SimdTagsEnabled() const { return simd_tags_; }
+    static constexpr bool SimdTagsSupported() {
+#if defined(__aarch64__) && defined(__ARM_NEON)
+        return true;
+#else
+        return false;
+#endif
+    }
+    void SetSimdTags(bool enabled) { simd_tags_ = enabled && SimdTagsSupported(); }
     bool ChainRecencyEnabled() const { return chain_recency_; }
     void SetChainRecency(bool enabled) {
         if (chain_recency_ != enabled) { chain_recency_ = enabled; Clear(); }
     }
 
     struct Profile {
+        u64 lookup_calls{}, lookup_hits{}, lookup_tag_comparisons{};
+        u64 lookup_or_allocate_calls{}, lookup_or_allocate_hits{}, lookup_or_allocate_tag_comparisons{};
         u64 allocation_misses{};
         u64 empty_allocations{};
         u64 live_replacements{};
@@ -105,9 +121,11 @@ public:
     }
 
     BasicBlock* Lookup(u32 pc) {
+        if (profiling_) ++profile_.lookup_calls;
         return eight_way_ ? LookupImpl<8>(pc) : LookupImpl<4>(pc);
     }
     BasicBlock* LookupOrAllocate(u32 pc, bool& was_hit) {
+        if (profiling_) ++profile_.lookup_or_allocate_calls;
         return eight_way_ ? LookupOrAllocateImpl<8>(pc, was_hit)
                           : LookupOrAllocateImpl<4>(pc, was_hit);
     }
@@ -151,6 +169,29 @@ public:
     }
 
 private:
+    // Return the first matching way, including the original INVALID_TAG
+    // behavior. Only tag search changes: callers still perform the same NRU
+    // touch and retain responsibility for decoded/live and ARM/Thumb checks.
+    template <unsigned Ways>
+    u32 FindTag(u32 base, u32 pc) const {
+#if defined(__aarch64__) && defined(__ARM_NEON)
+        if (simd_tags_) {
+            const auto wanted = vdupq_n_u32(pc);
+            const uint32x4_t low_bits = {1, 2, 4, 8};
+            auto matches = vandq_u32(vceqq_u32(vld1q_u32(tags_.data() + base), wanted), low_bits);
+            if constexpr (Ways == 8) {
+                const uint32x4_t high_bits = {16, 32, 64, 128};
+                matches = vorrq_u32(matches, vandq_u32(
+                    vceqq_u32(vld1q_u32(tags_.data() + base + 4), wanted), high_bits));
+            }
+            const auto mask = vaddvq_u32(matches);
+            return mask ? static_cast<u32>(__builtin_ctz(mask)) : Ways;
+        }
+#endif
+        for (u32 way = 0; way < Ways; ++way)
+            if (tags_[base + way] == pc) return way;
+        return Ways;
+    }
     struct SetProfile { u64 misses = 0, replacements = 0; };
     struct ReplacementSample {
         u64 miss = 0;
@@ -163,12 +204,13 @@ private:
         u32 set_idx = GetSetIndex<Ways>(pc);
         u32 base = set_idx * Ways;
 
-        for (u32 way = 0; way < Ways; ++way) {
-            if (tags_[base + way] == pc) {
-                UpdateLRU<Ways>(set_idx, way);
-                return &blocks_[base + way];
-            }
+        const u32 way = FindTag<Ways>(base, pc);
+        if (way != Ways) {
+            if (profiling_) { ++profile_.lookup_hits; profile_.lookup_tag_comparisons += way + 1; }
+            UpdateLRU<Ways>(set_idx, way);
+            return &blocks_[base + way];
         }
+        if (profiling_) profile_.lookup_tag_comparisons += Ways;
         return nullptr;
     }
 
@@ -178,14 +220,15 @@ private:
         u32 set_idx = GetSetIndex<Ways>(pc);
         u32 base = set_idx * Ways;
 
-        for (u32 way = 0; way < Ways; ++way) {
-            if (tags_[base + way] == pc) {
-                UpdateLRU<Ways>(set_idx, way);
-                was_hit = true;
-                return &blocks_[base + way];
-            }
+        const u32 way = FindTag<Ways>(base, pc);
+        if (way != Ways) {
+            if (profiling_) { ++profile_.lookup_or_allocate_hits; profile_.lookup_or_allocate_tag_comparisons += way + 1; }
+            UpdateLRU<Ways>(set_idx, way);
+            was_hit = true;
+            return &blocks_[base + way];
         }
 
+        if (profiling_) profile_.lookup_or_allocate_tag_comparisons += Ways;
         was_hit = false;
         u32 victim_way = GetLRUVictim<Ways>(set_idx);
         BasicBlock& block = blocks_[base + victim_way];
@@ -295,6 +338,7 @@ private:
     // the blocks (structure-of-arrays): a 4-way set probe touches one cache
     // line of tags instead of four/eight far-apart block headers.
     bool chain_recency_{false};
+    bool simd_tags_{false};
     bool eight_way_{false};
     bool profiling_{false};
     Profile profile_{};

@@ -8,6 +8,7 @@
 #include <ostream>
 #include "core/arm/arm_interface.h"
 #include "core/arm/fastinterp/fastinterp_cache.h"
+#include "core/arm/fastinterp/decode_cost_profile.h"
 #include "core/arm/fastinterp/fastinterp_types.h"
 #include "core/arm/fastinterp/guest_pc_cpu_profile.h"
 
@@ -120,6 +121,7 @@ private:
     Memory::MemorySystem& memory_;
     InterpreterState state_;
     BlockCache cache_;
+    DecodeCostProfile decode_cost_;
     std::shared_ptr<Memory::PageTable> page_table_;
 
     // Per-core LDREX/STREX reservation. FastInterp handles exclusives itself

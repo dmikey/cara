@@ -2,6 +2,9 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include "cara/guest_gpu_trace.h"
+#ifdef CARA_INTERNAL_HOST_PC_SAMPLER
+#include "cara/host_pc_sampler.h"
+#endif
 #include <mach/mach.h>
 #include <pthread/qos.h>
 #include <sys/qos.h>
@@ -1707,7 +1710,23 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                     report << "{\"saved\":" << state_saved << ",\"loaded\":" << state_loaded << ",\"frame\":" << emuWindow->frames << ",\"failed\":" << !error.empty() << "}";
                     if (!error.empty()) LOG_ERROR(Frontend,"Save-state device test: {}",error);
                 };
+#ifdef CARA_INTERNAL_HOST_PC_SAMPLER
+                const char* host_pc_switch=std::getenv("CARA_HOST_PC_SAMPLER");
+                const bool host_pc_enabled=target_frames && host_pc_switch && std::strcmp(host_pc_switch,"1")==0;
+                Cara::HostPcSampler host_pc_sampler(host_pc_enabled);
+                // Guard owns teardown on exceptional exits too. The sampler must join
+                // while its registered emulation thread and core still exist.
+                const auto finish_host_pc=[&](Cara::HostPcSampler*) noexcept {
+                    try {
+                        host_pc_sampler.StopAndWrite(user+"host-pc-samples.json",Core::GetSaveStateBuildFingerprint());
+                    } catch (...) { /* Destructor still joins; report writing is best effort. */ }
+                };
+                std::unique_ptr<Cara::HostPcSampler,decltype(finish_host_pc)> host_pc_guard(&host_pc_sampler,finish_host_pc);
+#endif
                 while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
+#ifdef CARA_INTERNAL_HOST_PC_SAMPLER
+                    host_pc_sampler.OnFrame(emuWindow->frames);
+#endif
                     if (self->adaptiveCPUDirty.exchange(false)) {
                         clock_control.SetEnabled(self->adaptiveCPU.load()); reset_clock_samples();
                     }
@@ -2226,6 +2245,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                     }
                     profile << "]}\n";
                 }
+#ifdef CARA_INTERNAL_HOST_PC_SAMPLER
+                host_pc_sampler.OnFrame(emuWindow->frames);
+                host_pc_guard.reset(); // Stop/join/write before core teardown.
+#endif
                 Cara::GuestGPUTrace::Flush(true);
                 if (Cara::GuestGPUTrace::TakeExportError())
                     LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);

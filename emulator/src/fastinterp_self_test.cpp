@@ -23,6 +23,18 @@
 
 namespace Core::FastInterp {
 struct DecodeRecordSelfTestAccess {
+    static const DecodeCostProfile::Stats& DecodeCostStats(const ARM_FastInterp& cpu) { return cpu.decode_cost_.GetStats(); }
+    static const BlockCache::Profile& CacheStats(const ARM_FastInterp& cpu) { return cpu.cache_.GetProfile(); }
+    static u64 CacheDigest(const ARM_FastInterp& cpu) {
+        u64 hash=1469598103934665603ull;
+        const auto add=[&](u64 value) {hash=(hash^value)*1099511628211ull;};
+        cpu.cache_.VisitResidentBlocks([&](const BasicBlock& block) {
+            add(block.start_pc);add(block.end_pc);add(block.flags);add(block.inst_count);add(block.exec_count);
+            add(block.chain_target ? block.chain_target->start_pc : ~0u);
+            add(block.chain_target ? block.chain_target->inst_count : 0);
+        });
+        return hash;
+    }
     static void ConfigurePCProfile(ARM_FastInterp& cpu, bool enabled, bool episode = false) {
         auto config = GuestPCCPU::Parse(enabled ? "fixture=0x1000:0x2000" : "");
         config.start_frame = 0; config.window_frames = 1; config.period_frames = 1; config.windows = 1;
@@ -44,11 +56,14 @@ struct DecodeRecordSelfTestAccess {
 } // namespace Core::FastInterp
 
 #include "fastinterp_ldm_pc_self_test.h"
+#include "fastinterp_decode_cost_self_test.h"
 
 int main() {
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
+    if (std::getenv("CARA_FASTINTERP_DECODE_COST_TEST"))
+        return VerifyFastInterpDecodeCost(system);
     if (std::getenv("CARA_FASTINTERP_LDM_PC_TEST"))
         return VerifyFastInterpLdmPc(system, timing);
     if (std::getenv("CARA_FASTINTERP_SCALAR_DOUBLE_TEST"))

@@ -61,6 +61,10 @@ jobs:
           python3 tools/benchmark_gpu_inputs.py --help > /dev/null
           python3 -m py_compile tools/compare_guest_clocks.py tools/benchmark_gpu_inputs.py tools/capture_profile_checkpoint.py tools/summarize_phase_cpu.py tools/sample_device_stacks.py tools/_sample_device_stacks_lldb.py tools/benchmark_speed_cap.py tools/build_ios_shell_preview.py tools/make_skin.py
           python3 -m unittest discover -s tests -p 'test_*.py' -v
+          work/build-mac/bin/cara-fastinterp-simd-tags-self-test --test-only
+          work/build-mac/bin/cara-vertex-upload-order-self-test
+          clang++ -std=c++17 -O2 -gline-tables-only -DCARA_INTERNAL_HOST_PC_SAMPLER=1 emulator/src/cara/host_pc_sampler.cpp emulator/src/cara/host_pc_sampler_self_test.cpp -o work/host-pc-sampler-smoke
+          work/host-pc-sampler-smoke
       - name: Build
         run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
       - name: Audit linked no-JIT binary
@@ -127,6 +131,9 @@ jobs:
           CARA_GUEST_PC_CPU_EQUIVALENCE_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_SCALAR_DOUBLE_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_LDM_PC_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_DECODE_COST_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          clang++ -std=c++20 -Wall -Wextra -Werror -I emulator/src tests/fastinterp_decode_cost_test.cpp -o work/decode-cost-contract-test
+          work/decode-cost-contract-test
           work/build-mac/bin/cara-ios-pipeline-cache-self-test
           work/build-mac/bin/cara-surface-remap-layout-self-test
           work/build-mac/bin/cara-frame-pacer-self-test
