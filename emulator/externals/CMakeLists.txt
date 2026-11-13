@@ -98,6 +98,9 @@ target_include_directories(enet INTERFACE ./enet/include)
 if (ENABLE_CUBEB)
     set(BUILD_TESTS OFF CACHE BOOL "")
     add_subdirectory(cubeb EXCLUDE_FROM_ALL)
+    if (ANDROID)
+        target_compile_definitions(cubeb PRIVATE CARA_CUBEB_JNI_CALLBACKS=1)
+    endif()
 endif()
 
 # DiscordRPC
