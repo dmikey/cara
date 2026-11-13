@@ -42,11 +42,11 @@ is b7a343b (documentation HEAD 5ffd683); state fingerprint alone does not identi
 all frontend/header changes. This document records a bottleneck, not a validated
 optimization gain.
 
-## Experimental byte remapper
+## GPU byte remapper
 
-`CARA_GPU_BYTE_SURFACE_REMAP=1` enables source-owned partial-interval conversion
-in the existing remapper. It is off by default and also requires surface remapping
-to be enabled. Dense native RGB8/RGBA8 surfaces are supported in either tiling
+Source-owned partial-interval conversion is enabled by default in the existing
+remapper and also requires surface remapping to be enabled. Set
+`CARA_GPU_BYTE_SURFACE_REMAP=0` to restore the legacy path for comparison. Dense native RGB8/RGBA8 surfaces are supported in either tiling
 layout. The original equal-format one-fetch path remains available. Unsupported
 formats, padding, scaling and ownership seams inside a destination pixel/tile
 fall back to existing validation.
@@ -91,9 +91,10 @@ full-speed performance across all Luigi scenes or other games. Private evidence:
 
 ## Selective stale-surface cleanup
 
-`CARA_SELECTIVE_SURFACE_CLEANUP=1` replaces global `FlushAll()` during stale
-surface eviction with owner-filtered `FlushRegion()` calls for the deduplicated
-eviction set. Live dirty aliases remain GPU-authoritative. Cleanup flushes have
+Selective cleanup replaces global `FlushAll()` during stale surface eviction
+with owner-filtered `FlushRegion()` calls for the deduplicated eviction set.
+It is enabled by default; `CARA_SELECTIVE_SURFACE_CLEANUP=0` restores the legacy
+cleanup for comparison. Live dirty aliases remain GPU-authoritative. Cleanup flushes have
 a separate trace reason. This targets periodic eviction stalls; it is not an
 explanation for sustained alias readback in the Luigi replay.
 

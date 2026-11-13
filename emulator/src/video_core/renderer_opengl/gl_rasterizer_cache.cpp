@@ -1734,7 +1734,7 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                                                const SurfaceInterval* requested_interval) {
     static const bool byte_remap = [] {
         const char* value = std::getenv("CARA_GPU_BYTE_SURFACE_REMAP");
-        return value && std::strcmp(value, "1") == 0;
+        return !value || std::strcmp(value, "1") == 0;
     }();
     if (!byte_remap) {
         const auto eligible = [](const Surface& surface) {
@@ -2045,7 +2045,7 @@ void RasterizerCacheOpenGL::CleanUp(u32 deadline_frame) {
     }
     static const bool selective = [] {
         const char* value = std::getenv("CARA_SELECTIVE_SURFACE_CLEANUP");
-        return value && std::strcmp(value, "1") == 0;
+        return !value || std::strcmp(value, "1") == 0;
     }();
     if (selective) {
         // Interval-map segments may list the same surface more than once. Only

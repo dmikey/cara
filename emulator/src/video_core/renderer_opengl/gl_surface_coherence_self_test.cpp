@@ -295,7 +295,7 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
     // partial destination rectangles, and a CPU-write invalidation fallback.
     gpu_surface_remap = true;
     const char* byte_remap_value = std::getenv("CARA_GPU_BYTE_SURFACE_REMAP");
-    const bool byte_remap = byte_remap_value && std::strcmp(byte_remap_value, "1") == 0;
+    const bool byte_remap = !byte_remap_value || std::strcmp(byte_remap_value, "1") == 0;
     for (const auto source_format : {SurfaceParams::PixelFormat::RGBA8, SurfaceParams::PixelFormat::RGB8}) {
       for (const auto destination_format : {SurfaceParams::PixelFormat::RGBA8, SurfaceParams::PixelFormat::RGB8}) {
         if (!byte_remap && (source_format != SurfaceParams::PixelFormat::RGBA8 ||
@@ -618,7 +618,7 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
     }
     }
     const char* cleanup_value = std::getenv("CARA_SELECTIVE_SURFACE_CLEANUP");
-    if (cleanup_value && std::strcmp(cleanup_value, "1") == 0) {
+    if (!cleanup_value || std::strcmp(cleanup_value, "1") == 0) {
         const auto saved_counters = Common::FrameTiming::counters;
         Common::FrameTiming::counters.enabled = true;
         // CleanUp operates on the complete cache. Keep any earlier fixtures or
