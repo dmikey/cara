@@ -31,6 +31,13 @@
 - (void)showInactiveGuestClock:(unsigned)clock adaptive:(BOOL)adaptive;
 @end
 
+typedef NS_ENUM(NSUInteger,CaraStatusLight) {
+    CaraStatusLightDim, CaraStatusLightGreen, CaraStatusLightAmber, CaraStatusLightRed
+};
+@interface CaraSessionIndicator : UIView
+- (void)updateLight:(CaraStatusLight)light accessibilityStatus:(NSString*)status;
+@end
+
 @interface CaraQuickSettingsController : UIViewController <UIAdaptivePresentationControllerDelegate>
 @property(copy,nonatomic) NSString* playMode;
 @property(nonatomic) BOOL modeSelectionEnabled;
