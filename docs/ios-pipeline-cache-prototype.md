@@ -95,3 +95,25 @@ The hot-path correction returned the cold-boot window ending at refresh 420 to
 It was stopped and the app reopened with caching and completion experiments off.
 Cache persistence failure handling is under investigation; this is not a passed
 cold/warm validation and must not be enabled by default.
+
+## Corrected persistence and device comparison
+
+The failed-write path now creates the cache directory and limits retries before
+serialization or filesystem work. Native fake-clock tests bound persistent
+failure to three attempts per session with 30-second retry spacing.
+
+After that correction, three 2,400-refresh Luigi boots completed with sound,
+100% guest CPU, and a 100% speed cap. Cold launch recorded 123 gameplay shader
+compile/link calls; a warm launch recorded seven after 55 source programs were
+prewarmed in 63.6 ms at startup. Apple M4 advertised zero binary formats. This
+moves repeat compilation into startup; it does not remove the work entirely.
+
+An exact 600-refresh checkpoint comparison produced identical final RGBA pixels
+and matched vertex/draw workloads. Cache-on averaged 16.857 ms per refresh and
+cache-off 16.888 ms; these paced timings do not establish a sustained rendering
+speedup. The setting remains opt-in pending broader title coverage.
+
+The physical corruption test also completed: an invalid cache header fell back
+to ordinary compilation, with identical final pixels to the cache-off checkpoint
+control and active audio output (no output error). The valid cache was restored
+and the iPad returned to normal play with experimental flags disabled.

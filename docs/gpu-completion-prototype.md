@@ -249,3 +249,13 @@ A no-IRQ draw list followed by transfer is not represented by the render fence;
 compare logical-list and with-IRQ probe counts before assuming every submission
 is finalized. Delayed completion does not block synchronous GX queue draining;
 a guest producer waiting on another interrupt or polling may still outrun it.
+
+## Physical-device rejection
+
+The M4 Luigi checkpoint exhausted the 256 pending records with P3D-only timing.
+Adding PPF dependencies and a single owner timer still exhausted the queue about
+2.9 seconds after launch. Both modes remain disabled. Increasing queue capacity
+would hide producer overrun rather than establish hardware behavior. Next work
+must identify which guest wait/event gates production and whether render work
+without a terminal IRQ bypasses the modeled fence. No performance gain or
+cross-title compatibility is claimed for this model.
