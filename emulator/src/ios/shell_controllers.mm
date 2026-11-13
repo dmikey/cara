@@ -13,7 +13,7 @@ static NSDictionary<NSString*,NSNumber*>* CaraMenuSoundIDs;
 static void CaraPrepareMenuSounds() {
     static dispatch_once_t once;
     dispatch_once(&once,^{
-        [NSUserDefaults.standardUserDefaults registerDefaults:@{@"libraryMenuSounds":@YES}];
+        [NSUserDefaults.standardUserDefaults registerDefaults:@{@"libraryMenuSounds":@YES,@"libraryTheme":@1}];
         NSMutableDictionary* sounds=[NSMutableDictionary new];
         for(NSString* name in @[@"focus",@"select",@"back",@"favorite",@"confirm",@"cancel",@"launch",@"toggle"]) {
             NSURL* url=[NSBundle.mainBundle URLForResource:name withExtension:@"caf" subdirectory:@"MenuSounds"];
@@ -184,7 +184,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     tabs=[[UISegmentedControl alloc] initWithItems:@[@"Collection",@"Favorites",@"Recently played"]]; tabs.selectedSegmentIndex=0; tabs.selectedSegmentTintColor=CaraAccent();
     [tabs addTarget:self action:@selector(tabChanged) forControlEvents:UIControlEventValueChanged]; self.navigationItem.titleView=tabs;
     UIBarButtonItem* settings=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"gearshape"] style:UIBarButtonItemStylePlain target:self action:@selector(settingsTapped)]; settings.accessibilityLabel=@"Settings";
-    UIImageView* brandIcon=[[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"rectangle.on.rectangle"]]; brandIcon.tintColor=CaraAccent(); brandIcon.contentMode=UIViewContentModeScaleAspectFit; [brandIcon.widthAnchor constraintEqualToConstant:28].active=YES;
+    UIImageView* brandIcon=[[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"rectangle.on.rectangle"]]; brandIcon.contentMode=UIViewContentModeScaleAspectFit; [brandIcon.widthAnchor constraintEqualToConstant:28].active=YES;
     UILabel* brandTitle=[UILabel new]; brandTitle.text=@"Cara"; brandTitle.font=[UIFont systemFontOfSize:25 weight:UIFontWeightBold]; UIStackView* brand=[[UIStackView alloc] initWithArrangedSubviews:@[brandIcon,brandTitle]]; brand.spacing=8; brand.alignment=UIStackViewAlignmentCenter; brand.userInteractionEnabled=NO;
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithCustomView:brand];
     self.navigationItem.rightBarButtonItem=settings;
