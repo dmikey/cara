@@ -15,6 +15,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "audio_core/dsp_interface.h"
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
+#import "ios/state_catalog.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #ifdef CARA_IOS_GLES
 #import <OpenGLES/EAGL.h>
@@ -347,15 +348,16 @@ static const char* CaraSelectedCPUBackend() {
 static BOOL CaraCanTuneEmulation() {
     return !std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_ADAPTIVE_GUEST_CPU") && !std::getenv("CARA_MAX_SPEED_PERCENT");
 }
+static NSDictionary* CaraGameOverrides;
+static id CaraEmulationValue(NSString* key) { return CaraGameOverrides[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; }
 static Cara::PlayPolicy CaraSavedPlayPolicy() {
-    NSUserDefaults* defaults=NSUserDefaults.standardUserDefaults;
-    const NSInteger saved=[defaults integerForKey:@"maximumSpeedPercent"];
+    const NSInteger saved=[CaraEmulationValue(@"maximumSpeedPercent") integerValue];
     const unsigned maximum=saved>=50 && saved<=200?unsigned(saved):100;
     const char* override=std::getenv("CARA_ADAPTIVE_GUEST_CPU");
-    return Cara::MakePlayPolicy([[defaults stringForKey:@"playMode"] isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,
+    return Cara::MakePlayPolicy([CaraEmulationValue(@"playMode") isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,
         maximum,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,override?(std::strcmp(override,"1")==0?1:0):-1,
-        [defaults boolForKey:@"fixedGuestClockEnabled"],unsigned(std::clamp<NSInteger>([defaults integerForKey:@"fixedGuestClockPercent"],25,200)),
-        [defaults boolForKey:@"speedLimitEnabled"]);
+        [CaraEmulationValue(@"fixedGuestClockEnabled") boolValue],unsigned(std::clamp<NSInteger>([CaraEmulationValue(@"fixedGuestClockPercent") integerValue],25,200)),
+        [CaraEmulationValue(@"speedLimitEnabled") boolValue]);
 }
 
 @interface EmulatorController : UIViewController <UIDocumentPickerDelegate>
@@ -364,6 +366,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 - (void)showMaximumSpeed;
 @end
 @implementation EmulatorController {
+    NSString* pendingLibraryState;
     UIImageView* top;
     UIImageView* bottom;
 #ifdef CARA_IOS_GLES
@@ -671,10 +674,14 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (!libraryController) {
         libraryController=[CaraLibraryController new]; libraryController.store=libraryStore;
         __weak EmulatorController* owner=self;
-        libraryController.openGame=^(NSURL* url) { [owner openGameURL:url]; };
+        libraryController.openGame=^(NSURL* url) { EmulatorController* c=owner; if(c) c->pendingLibraryState=nil; [owner openGameURL:url]; };
         libraryController.addGame=^{ EmulatorController* controller=owner; if (!controller) return; controller->pickingSkin=NO; [controller openROM]; };
         libraryController.chooseFolder=^{ [owner chooseROMsFolder]; };
-        libraryController.showSettings=^{ [owner showMenu]; };
+        libraryController.showSettings=^{ [owner showFullSettings]; };
+        libraryController.statesForGame=^NSArray*(NSURL* url) { return [owner libraryStatesForGame:url]; };
+        libraryController.startFromState=^(NSURL* url,NSString* filename) { EmulatorController* c=owner; if(!c) return; c->pendingLibraryState=filename; [c openGameURL:url]; };
+        libraryController.gameSettings=^(NSURL* url) { [owner showGameSettings:url]; };
+        libraryController.clearGameSettings=^(NSURL* url) { EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":@{}} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { CaraGameOverrides=nil; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
         libraryController.resumeGame=^{ [owner hideLibrary]; };
         libraryNavigation=[[UINavigationController alloc] initWithRootViewController:libraryController];
         [self addChildViewController:libraryNavigation]; libraryNavigation.view.frame=self.view.bounds;
@@ -683,7 +690,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     }
     libraryVisible=YES; modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
     [self updateSessionPresentation];
-    libraryNavigation.view.hidden=NO; [self.view bringSubviewToFront:libraryNavigation.view]; libraryController.canResume=running && !stop;
+    libraryNavigation.view.hidden=NO; [self.view bringSubviewToFront:libraryNavigation.view]; libraryController.canResume=running && !stop; libraryController.activeGameURL=gameURL;
     [libraryController reloadLibrary]; [self updateSyncFeedback];
     [self setNeedsStatusBarAppearanceUpdate];
     if (@available(iOS 16.0,*)) [self setNeedsUpdateOfSupportedInterfaceOrientations];
@@ -763,6 +770,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         @{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@(!AudioCore::IsIOSAudioMuted()),@"change":^(BOOL on) { AudioCore::SetIOSAudioMuted(!on); [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"audioMuted"]; }},
         @{@"title":@"Audio stretching",@"subtitle":@"Adjust audio when emulation speed varies.",@"symbol":@"waveform",@"value":@(stretchAudio.load()),@"change":^(BOOL on) { EmulatorController* c=owner; if (!c) return; c->stretchAudio=on; c->stretchAudioDirty=true; [NSUserDefaults.standardUserDefaults setBool:on forKey:@"audioStretching"]; }},
     ]}];
+    [sections addObject:@{@"title":@"Play mode",@"rows":@[@{@"title":@"Accuracy mode",@"subtitle":@"Locks game speed and guest clock at 100%.",@"symbol":@"scope",@"value":@([[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"] isEqual:@"accuracy"]),@"change":^(BOOL on) { [owner setPlayMode:on?@"accuracy":@"performance"]; [owner updateSyncFeedback]; }}]}];
     const BOOL accuracy=[[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"] isEqual:@"accuracy"];
     const BOOL tuning=CaraCanTuneEmulation() && !accuracy;
     const BOOL fixed=accuracy || [NSUserDefaults.standardUserDefaults boolForKey:@"fixedGuestClockEnabled"];
@@ -823,6 +831,40 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 }
 - (NSString*)performanceModeDetail {
     return [NSUserDefaults.standardUserDefaults boolForKey:@"fixedGuestClockEnabled"]?[NSString stringWithFormat:@"Fixed guest clock · %ld%%",(long)[NSUserDefaults.standardUserDefaults integerForKey:@"fixedGuestClockPercent"]]:@"Adaptive CPU clock";
+}
+- (NSArray*)libraryStatesForGame:(NSURL*)url {
+    NSDictionary* info=[libraryStore metadataForGame:url]; if(!info[@"stateID"] || !info[@"gameHash"]) return @[@{@"title":@"Open this game to check its states",@"subtitle":@"Cara needs the title identity and game revision before it can list compatible states.",@"compatible":@NO}];
+    NSURL* documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    CaraStateCatalog* catalog=[[CaraStateCatalog alloc] initWithDirectory:[documents URLByAppendingPathComponent:@"cara/states"] gameID:info[@"stateID"] fingerprint:[NSString stringWithUTF8String:Core::GetSaveStateBuildFingerprint()] gameHash:info[@"gameHash"] new3DS:[info[@"new3DS"] boolValue] backend:strcmp(CaraSelectedCPUBackend(),"dyncom")==0?1:0];
+    BOOL access=[url startAccessingSecurityScopedResource]; NSDictionary* fileInfo=[url resourceValuesForKeys:@[NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil]; if(access) [url stopAccessingSecurityScopedResource];
+    BOOL sameRevision=info[@"romModified"] && [info[@"romModified"] isEqual:fileInfo[NSURLContentModificationDateKey]] && [info[@"romSize"] isEqual:fileInfo[NSURLFileSizeKey]];
+    NSMutableArray* records=[NSMutableArray new];
+    for(CaraStateRecord* state in catalog.records) [records addObject:@{@"title":state.name,@"filename":state.filename,@"compatible":@(state.compatible && sameRevision),@"subtitle":[NSString stringWithFormat:@"%@ · %@",[NSDateFormatter localizedStringFromDate:state.date dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle],!sameRevision?@"Open the game again to verify its revision":state.compatible?@"Ready to load":@"Incompatible with this build or game"]}];
+    return records;
+}
+- (void)showFullSettings {
+    if(self.presentedViewController) return;
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.categorized=YES; settings.sections=[self settingsSections]; settingsController=settings; settingsCategory=@"All";
+    __weak EmulatorController* owner=self; settings.finished=^{ EmulatorController* c=owner; if(c) [c->libraryController reloadLibrary]; [owner resumeFromMenu]; };
+    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationFullScreen; [self presentViewController:nav animated:YES completion:nil];
+}
+- (void)showGameSettings:(NSURL*)url {
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings";
+    NSMutableDictionary* values=[[[libraryStore metadataForGame:url] objectForKey:@"overrides"] mutableCopy]?:[NSMutableDictionary new];
+    __weak EmulatorController* owner=self;
+    void(^save)(NSString*,id)=^(NSString* key,id value) { values[key]=value; EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":values} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { CaraGameOverrides=[values copy]; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
+    id(^value)(NSString*)=^id(NSString* key) { return values[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; };
+    settings.sectionsProvider=^NSArray* {
+    BOOL accuracy=[value(@"playMode") isEqual:@"accuracy"];
+    return @[@{@"title":@"Emulation",@"rows":@[
+        @{@"title":@"Accuracy mode",@"subtitle":@"Locks guest clock and speed to 100%. Uses the same 100% guest clock and speed as global Accuracy mode.",@"value":@(accuracy),@"change":^(BOOL on) { save(@"playMode",on?@"accuracy":@"performance"); }},
+        @{@"title":@"Fixed guest clock",@"value":@(accuracy || [value(@"fixedGuestClockEnabled") boolValue]),@"enabled":@(!accuracy),@"change":^(BOOL on) { save(@"fixedGuestClockEnabled",@(on)); }},
+        @{@"title":@"Guest clock",@"enabled":@(!accuracy && [value(@"fixedGuestClockEnabled") boolValue]),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:([value(@"fixedGuestClockPercent") integerValue]?:100))},@"sliderChange":^(double v) { save(@"fixedGuestClockPercent",@(lround(v))); }},
+        @{@"title":@"Limit game speed",@"value":@(accuracy || [value(@"speedLimitEnabled") boolValue]),@"enabled":@(!accuracy),@"change":^(BOOL on) { save(@"speedLimitEnabled",@(on)); }},
+        @{@"title":@"Maximum speed",@"enabled":@(!accuracy && [value(@"speedLimitEnabled") boolValue]),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(accuracy?100:([value(@"maximumSpeedPercent") integerValue]?:100))},@"sliderChange":^(double v) { save(@"maximumSpeedPercent",@(lround(v))); }},
+    ],@"footer":@"Only this game uses these overrides. Clear game settings in Game details to use global preferences again."},@{@"title":@"Audio",@"rows":@[@{@"title":@"Audio stretching",@"value":@([value(@"audioStretching") boolValue]),@"change":^(BOOL on) { save(@"audioStretching",@(on)); }}]}];
+    };
+    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationPageSheet; nav.preferredContentSize=CGSizeMake(620,800); [self presentViewController:nav animated:YES completion:nil];
 }
 - (void)showMenu {
     if (openingGame || self.presentedViewController) return;
@@ -970,12 +1012,14 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];
     if (worker.joinable()) worker.join();
     if (gameScoped) [gameURL stopAccessingSecurityScopedResource];
+    CaraGameOverrides=[libraryStore metadataForGame:url][@"overrides"];
+    [self applySavedPlayPolicy]; stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue];
     gameURL=url; gameScoped=[url startAccessingSecurityScopedResource];
     NSData* bookmark=[url bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:nil];
     if (bookmark) [NSUserDefaults.standardUserDefaults setObject:bookmark forKey:@"recentGameBookmark"];
     if (!std::getenv("CARA_BENCHMARK_FRAMES")) [libraryStore rememberGame:url error:nil];
     [self syncSaves:nil completion:^(BOOL ok) {
-        if (!ok) { self->openingGame=NO; [self updateSessionPresentation]; return; }
+        if (!ok) { self->openingGame=NO; self->pendingLibraryState=nil; [self updateSessionPresentation]; return; }
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
             __block NSError* error=nil; __block NSURL* readable=nil;
             [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL* actual) {
@@ -1107,6 +1151,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 }
 - (void)startROM:(NSURL*)url {
     [self hideLibrary];
+    NSString* requestedState=pendingLibraryState; pendingLibraryState=nil;
     const unsigned session=++sessionGeneration;
     framePending[0]=false; framePending[1]=false;
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
@@ -1165,7 +1210,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     emuWindow->present = [weakSelf,session](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
-    worker = std::thread([self,rom,user,session] {
+    worker = std::thread([self,rom,user,session,url,requestedState] {
         // Diagnostic only: requested QoS is not evidence of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
         const bool worker_interactive_qos = interactive_qos_env &&
@@ -1279,6 +1324,24 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 return;
             }
             auto result = system.Load(*emuWindow,rom);
+            if(result==Core::System::ResultStatus::Success) {
+                NSString* titleID=[NSString stringWithFormat:@"%016llX",(unsigned long long)system.GetTitleID()];
+                NSData* hash=[NSData dataWithBytes:system.StateGameHash().data() length:32];
+                BOOL new3DS=Settings::values.is_new_3ds;
+                NSMutableString* identity=[NSMutableString stringWithString:@"homebrew-"]; for(auto byte:system.StateGameHash()) [identity appendFormat:@"%02X",byte];
+                NSString* stateID=system.GetTitleID()?titleID:identity;
+                dispatch_async(dispatch_get_main_queue(),^{ if(self->sessionGeneration==session) { NSMutableDictionary* metadata=[@{@"titleID":titleID,@"stateID":stateID,@"gameHash":hash,@"new3DS":@(new3DS)} mutableCopy]; NSDictionary* fileInfo=[url resourceValuesForKeys:@[NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil]; if(fileInfo[NSURLContentModificationDateKey]) metadata[@"romModified"]=fileInfo[NSURLContentModificationDateKey]; if(fileInfo[NSURLFileSizeKey]) metadata[@"romSize"]=fileInfo[NSURLFileSizeKey]; [self->libraryStore setMetadata:metadata forGame:url]; [self->libraryStore recordPlayed:url]; } });
+                if(requestedState.length) {
+                    try {
+                        if(![requestedState.lastPathComponent isEqual:requestedState] || ![requestedState hasPrefix:[stateID stringByAppendingString:@"."]] || ![requestedState hasSuffix:@".carastate"]) throw std::runtime_error("Invalid state location");
+                        system.LoadStateFromPath(FileUtil::GetUserPath(FileUtil::UserPath::StatesDir)+requestedState.UTF8String);
+                    } catch(const std::exception& error) {
+                        NSString* message=[NSString stringWithUTF8String:error.what()];
+                        dispatch_async(dispatch_get_main_queue(),^{ [self shellError:@"State couldn’t load" message:message]; });
+                        paused=true;
+                    }
+                }
+            }
 #ifdef CARA_IOS_GLES
             if (result==Core::System::ResultStatus::Success && std::getenv("CARA_UNIFORM_SELF_TEST")) {
                 std::string error;

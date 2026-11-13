@@ -51,17 +51,19 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     fixtureFixed=NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"]!=nil;
     fixtureClock=fixtureFixed?[NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"] integerValue]:100;
     fixtureLimit=![NSProcessInfo.processInfo.environment[@"CARA_UI_UNCAPPED"] isEqual:@"1"]; fixtureMaximum=100;
-    self.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"light"]?UIUserInterfaceStyleLight:UIUserInterfaceStyleDark;
+    self.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"dark"]?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight;
     NSString* folder=[NSTemporaryDirectory() stringByAppendingPathComponent:@"CaraShellFixture"];
     fixture=[NSURL fileURLWithPath:folder isDirectory:YES];
     [NSFileManager.defaultManager removeItemAtURL:fixture error:nil];
-    store=[[CaraLibraryStore alloc] initWithDocuments:fixture defaults:[[NSUserDefaults alloc] initWithSuiteName:@"com.dmikey.cara.shellfixture"]];
+    NSUserDefaults* fixtureDefaults=[[NSUserDefaults alloc] initWithSuiteName:@"com.dmikey.cara.shellfixture"]; [fixtureDefaults removePersistentDomainForName:@"com.dmikey.cara.shellfixture"];
+    store=[[CaraLibraryStore alloc] initWithDocuments:fixture defaults:fixtureDefaults];
     [store useDefaultFolder];
     if (![Scenario() isEqual:@"empty"]) {
         unsigned seed=1;
         for (NSString* title in @[@"Moon Meadow",@"Citrus Valley",@"Little Lantern",@"Starlight Trail",@"Afterglow",@"Garden Notes",@"Pocket Adventure",@"Cloud Harbor"]) FixtureGame([store.defaultFolder URLByAppendingPathComponent:[title stringByAppendingPathExtension:@"3ds"]],title,seed++);
     }
     if ([Scenario() containsString:@"skin"]) { [self showSkin]; return; }
+    [store recordPlayed:[store.defaultFolder URLByAppendingPathComponent:@"Moon Meadow.3ds"]];
     library=[CaraLibraryController new]; library.store=store;
     library.syncTitle=[Scenario() isEqual:@"sync-error"]?@"States: Choose a version":@"Saves & states";
     library.syncDetail=[Scenario() isEqual:@"sync-error"]?@"Both versions are preserved. Resolve this in Settings.":@"Saves: Folder updated · States: Waiting for iCloud";
@@ -77,7 +79,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[folder?UTTypeFolder:UTTypeData] asCopy:NO]; picker.delegate=self; [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)showSettings {
-    settings=[CaraSettingsController new];
+    settings=[CaraSettingsController new]; settings.categorized=![Scenario() isEqual:@"advanced"];
     __weak PreviewRoot* owner=self;
     void(^toggle)(BOOL)=^(BOOL value) { PreviewRoot* root=owner; if (root) ++root->toggleActions; };
     settings.sections=@[
@@ -88,7 +90,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
         @{@"title":@"Landscape skin",@"rows":@[@{@"title":@"Performance bar",@"subtitle":@"Game FPS, speed, and guest CPU.",@"symbol":@"chart.bar",@"value":@YES,@"change":toggle}]},
         @{@"title":@"Portrait skin",@"rows":@[@{@"title":@"Performance bar",@"subtitle":@"Independent of landscape.",@"symbol":@"chart.bar",@"value":@NO,@"change":toggle}]},
     ];
-    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationPageSheet; nav.view.tintColor=[UIColor systemOrangeColor];
+    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=settings.categorized?UIModalPresentationFullScreen:UIModalPresentationPageSheet; nav.view.tintColor=[UIColor systemTealColor];
     nav.sheetPresentationController.detents=@[UISheetPresentationControllerDetent.largeDetent]; nav.sheetPresentationController.prefersGrabberVisible=YES; nav.sheetPresentationController.preferredCornerRadius=28; nav.presentationController.delegate=settings;
     [self presentViewController:nav animated:YES completion:nil];
 }
@@ -165,7 +167,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
 @end
 @implementation PreviewScene
 - (void)scene:(UIScene*)scene willConnectToSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options {
-    self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene*)scene]; self.window.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"light"]?UIUserInterfaceStyleLight:UIUserInterfaceStyleDark; self.window.rootViewController=[PreviewRoot new]; [self.window makeKeyAndVisible];
+    self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene*)scene]; self.window.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"dark"]?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight; self.window.rootViewController=[PreviewRoot new]; [self.window makeKeyAndVisible];
 }
 @end
 @interface PreviewApp : UIResponder <UIApplicationDelegate>
