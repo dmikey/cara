@@ -12,6 +12,7 @@
 @property(copy,nonatomic) void(^gameSettings)(NSURL*);
 @property(copy,nonatomic) void(^clearGameSettings)(NSURL*);
 @property(copy,nonatomic) NSURL* activeGameURL;
+@property(copy,nonatomic) BOOL(^gameFileInUse)(NSURL*);
 @property(copy,nonatomic) void(^addGame)(void);
 @property(copy,nonatomic) void(^chooseFolder)(void);
 @property(copy,nonatomic) void(^showSettings)(void);
