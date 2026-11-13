@@ -32,3 +32,19 @@ license are in emulator/externals/zstd/; its revision is recorded in emulator/VE
 Physical memory pointer lookup adapts Azahar PR #1587, commit
 47cd41cc58a4671147ad5f7727fc7ccb0b194826 (GPL-2.0-or-later).
 https://github.com/azahar-emu/azahar/pull/1587
+
+Development inspection tools and references
+
+Capstone disassembly framework 5.0.6, designed and implemented by Nguyen Anh
+Quynh; Copyright (c) 2013, COSEINC. Used through its Python bindings for private
+ARM/Thumb instruction inspection. Capstone is distributed under its BSD-style
+license and is not bundled with the Cara application.
+https://www.capstone-engine.org/
+
+3dsrecomp and Zakuro by fearkov were consulted for guest-image inspection and
+emulator design research. No source from these projects was imported into Cara.
+3dsrecomp declares MIT in its package manifest; Zakuro carries the MIT license,
+Copyright (c) 2026 fearkov. Reviewed revisions and usage are recorded in
+docs/inspection-tool-attributions.md and docs/zakuro-recomp-prior-art.md.
+https://github.com/fearkov/3dsrecomp
+https://github.com/fearkov/zakuro

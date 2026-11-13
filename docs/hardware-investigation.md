@@ -1139,3 +1139,7 @@ and audio-validation limits.
 This is an emulator resource-selection issue, not evidence that 3DS hardware
 ignores guest draws, duplicate swaps, or early input polling. Required changed
 payloads still upload, and no guest commands or display events are skipped.
+Normal pacing and Accuracy default to 100% speed; Accuracy also fixes guest CPU
+at 100%. Audio stretching defaults off and remains optional. Explicit higher
+speed limits remain available in Advanced. These defaults do not guarantee
+artifact-free audio in scenes that cannot maintain real time.

@@ -4,6 +4,10 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "ios/shell_controllers.h"
 #import "ios/skin_controls.h"
+#import "ios/action_layout.h"
+#import "ios/input_hub.h"
+#import "ios_action_layout_checks.h"
+#import "ios_artwork_checks.h"
 #include "ios/session_presentation.h"
 #include "ios/play_profile.h"
 #include <array>
@@ -44,9 +48,10 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     NSUInteger fixtureClock,fixtureMaximum;
 }
 - (BOOL)prefersStatusBarHidden { return [Scenario() containsString:@"skin"]; }
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return [Scenario() containsString:@"landscape"]?UIInterfaceOrientationMaskLandscape:UIInterfaceOrientationMaskPortrait; }
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { if ([Scenario() containsString:@"actions"]) return UIInterfaceOrientationMaskAllButUpsideDown; return [Scenario() containsString:@"landscape"]?UIInterfaceOrientationMaskLandscape:UIInterfaceOrientationMaskPortrait; }
 - (void)viewDidLoad {
     [super viewDidLoad];
+    if([Scenario() isEqual:@"artwork-checks"]) { dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ CheckArtwork(); [@"passed" writeToFile:[NSTemporaryDirectory() stringByAppendingPathComponent:@"artwork-checks.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil]; }); return; }
     self.view.backgroundColor=UIColor.blackColor;
     fixtureFixed=NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"]!=nil;
     fixtureClock=fixtureFixed?[NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"] integerValue]:100;
@@ -62,6 +67,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
         unsigned seed=1;
         for (NSString* title in @[@"Moon Meadow",@"Citrus Valley",@"Little Lantern",@"Starlight Trail",@"Afterglow",@"Garden Notes",@"Pocket Adventure",@"Cloud Harbor"]) FixtureGame([store.defaultFolder URLByAppendingPathComponent:[title stringByAppendingPathExtension:@"3ds"]],title,seed++);
     }
+    if ([Scenario() containsString:@"actions"]) { [self showActions]; return; }
     if ([Scenario() containsString:@"skin"]) { [self showSkin]; return; }
     [store recordPlayed:[store.defaultFolder URLByAppendingPathComponent:@"Moon Meadow.3ds"]];
     library=[CaraLibraryController new]; library.store=store;
@@ -75,6 +81,29 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     library.openGame=^(NSURL* url) { UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Fixture selected" message:url.lastPathComponent preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]]; [owner presentViewController:alert animated:YES completion:nil]; };
     UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:library];
     [self addChildViewController:nav]; nav.view.frame=self.view.bounds; nav.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:nav.view]; [nav didMoveToParentViewController:self];
+}
+- (void)showActions {
+    CheckActionLayout();
+    NSURL* game=[store.defaultFolder URLByAppendingPathComponent:@"Moon Meadow.3ds"];
+    CaraSettingsController* landing=[CaraSettingsController new]; landing.title=@"Fixture game settings";
+    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:landing]; nav.view.tintColor=UIColor.systemOrangeColor;
+    __weak UINavigationController* weakNav=nav; __weak PreviewRoot* owner=self;
+    void(^openEditor)(void)=^{
+        PreviewRoot* s=owner; if (!s) return;
+        CaraActionLayoutEditor* editor=[CaraActionLayoutEditor new]; editor.skin=[CaraSkin loadURL:[NSBundle.mainBundle URLForResource:@"CarbonDuo" withExtension:@"deltaskin"] error:nil];
+        editor.layout=[s->store metadataForGame:game][@"actionLayout"];
+        editor.saved=^(NSDictionary* layout) { PreviewRoot* root=owner; if (!root) return; [root->store setMetadata:@{@"actionLayout":layout} forGame:game];
+            if ([NSProcessInfo.processInfo.environment[@"CARA_UI_CHECK_GEOMETRY"] isEqual:@"1"]) {
+                NSDictionary* frame=layout[@"portrait"][0][@"frame"];
+                ActionCheck([frame[@"x"] doubleValue]>.06 && [frame[@"width"] doubleValue]>.27,@"drag and resize persisted actual geometry");
+            }
+            ActionCheck([[root->store metadataForGame:game][@"actionLayout"] isEqual:layout],@"per-game layout persisted");
+            ActionCheck([root->store metadataForGame:[root->store.defaultFolder URLByAppendingPathComponent:@"Other.3ds"]][@"actionLayout"]==nil,@"other game unchanged");
+        };
+        [weakNav pushViewController:editor animated:NO];
+    };
+    landing.sections=@[@{@"title":@"Touch controls",@"rows":@[@{@"title":@"Controller Demapping",@"action":openEditor}]}];
+    [self addChildViewController:nav]; nav.view.frame=self.view.bounds; nav.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:nav.view]; [nav didMoveToParentViewController:self]; openEditor();
 }
 - (void)showFilePicker:(BOOL)folder {
     UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[folder?UTTypeFolder:UTTypeData] asCopy:NO]; picker.delegate=self; [self presentViewController:picker animated:YES completion:nil];

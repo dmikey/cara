@@ -27,17 +27,21 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
     BOOL captureKeyboard;
     void(^captureCompletion)(NSError*);
     unsigned captureGeneration;
+    NSMutableDictionary* surfaces;
     NSDictionary* cachedPad;
     NSDictionary* cachedKeys;
 }
-- (instancetype)initWithDefaults:(NSUserDefaults*)defaults {
+- (instancetype)initWithDefaults:(NSUserDefaults*)defaults { return [self initWithDefaults:defaults observesDevices:YES]; }
+- (instancetype)initWithDefaults:(NSUserDefaults*)defaults observesDevices:(BOOL)observesDevices {
     if ((self=[super init])) {
-        preferences=defaults; keysDown=[NSMutableSet new]; padDown=[NSMutableSet new]; suppressedKeys=[NSMutableSet new]; suppressedPad=[NSMutableSet new]; lastCommands=[NSSet new];
+        preferences=defaults; surfaces=[NSMutableDictionary new]; _touchPoint=CGPointMake(-1,-1); keysDown=[NSMutableSet new]; padDown=[NSMutableSet new]; suppressedKeys=[NSMutableSet new]; suppressedPad=[NSMutableSet new]; lastCommands=[NSSet new];
+        if (observesDevices) {
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(devicesChanged:) name:GCControllerDidConnectNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(devicesChanged:) name:GCControllerDidDisconnectNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(devicesChanged:) name:GCKeyboardDidConnectNotification object:nil];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(devicesChanged:) name:GCKeyboardDidDisconnectNotification object:nil];
         [self devicesChanged:nil];
+        }
     } return self;
 }
 - (NSArray<NSString*>*)actions { static NSArray* names; static dispatch_once_t once; dispatch_once(&once,^{ names=@[@"a",@"b",@"x",@"y",@"l",@"r",@"zl",@"zr",@"start",@"select",@"up",@"down",@"left",@"right",@"circleUp",@"circleDown",@"circleLeft",@"circleRight",@"cstickUp",@"cstickDown",@"cstickLeft",@"cstickRight",@"menu",@"quickSave",@"quickLoad",@"fastForward"]; }); return names; }
@@ -94,10 +98,15 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
     padCStick=NormalizeStick(CGPointMake(p.rightThumbstick.xAxis.value,p.rightThumbstick.yAxis.value),.15);
     [self rebuild];
 }
+- (void)updateSurface:(NSString*)source buttons:(NSSet<NSString*>*)buttons circle:(CGPoint)circle cstick:(CGPoint)cstick touch:(CGPoint)touch {
+    if (!self.active) return;
+    surfaces[source]=@{@"buttons":[buttons copy],@"cx":@(circle.x),@"cy":@(circle.y),@"sx":@(cstick.x),@"sy":@(cstick.y),@"tx":@(touch.x),@"ty":@(touch.y)}; [self rebuild];
+}
+- (void)clearSurfaces { [surfaces removeAllObjects]; [self rebuild]; }
 - (void)setActive:(BOOL)value {
     if (_active==value) return; _active=value;
     [keysDown removeAllObjects]; [padDown removeAllObjects];
-    if (value) [self pollPad]; else { padCircle=padCStick=CGPointZero; [self rebuild]; }
+    if (value) [self pollPad]; else { [surfaces removeAllObjects]; padCircle=padCStick=CGPointZero; [self rebuild]; }
 }
 - (void)handleKeyboardCode:(GCKeyCode)code pressed:(BOOL)pressed {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{ [self handleKeyboardCode:code pressed:pressed]; }); return; }
@@ -127,6 +136,14 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
     CGPoint keyboardCStick=NormalizeStick(CGPointMake(axis(@"cstickRight",@"cstickLeft"),axis(@"cstickUp",@"cstickDown")),0);
     CGPoint circle=self.active && !captureTarget?(CGPointEqualToPoint(padCircle,CGPointZero)?keyboardCircle:padCircle):CGPointZero;
     CGPoint cstick=self.active && !captureTarget?(CGPointEqualToPoint(padCStick,CGPointZero)?keyboardCStick:padCStick):CGPointZero;
+    _touchPoint=CGPointMake(-1,-1);
+    if (self.active && !captureTarget) for (NSString* source in [surfaces.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSDictionary* surface=surfaces[source]; [logical unionSet:surface[@"buttons"]];
+        CGPoint surfaceCircle=CGPointMake([surface[@"cx"] doubleValue],[surface[@"cy"] doubleValue]),surfaceStick=CGPointMake([surface[@"sx"] doubleValue],[surface[@"sy"] doubleValue]),touch=CGPointMake([surface[@"tx"] doubleValue],[surface[@"ty"] doubleValue]);
+        if (CGPointEqualToPoint(circle,CGPointZero)) circle=surfaceCircle;
+        if (CGPointEqualToPoint(cstick,CGPointZero)) cstick=surfaceStick;
+        if (touch.x>=0) _touchPoint=touch;
+    }
     if (self.inputChanged) self.inputChanged(logical,circle,cstick);
     for (NSString* command in @[@"menu",@"quickSave",@"quickLoad",@"fastForward"]) {
         if (self.active!=wasActive || captureTarget!=previousCapture) break;
