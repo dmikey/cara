@@ -95,11 +95,14 @@ empty afterward; later engine comparisons restore the untouched checkpoint.
 
 ## Engine implications
 
-- Host display pacing and guest render production are separate. A host guard
-  spaces actual `presentRenderbuffer` submission starts at the configured period
-  (about 16.7 ms at 100%). It preserves guest draws and interrupts. Use one pacing
-  owner per presentation path and exclude host pacing sleep from adaptive CPU
-  workload estimates.
+- Host display pacing and guest render production are separate. An iOS display
+  callback grants one presentation ticket; repeated host submissions within that
+  ticket are coalesced. The existing frame pacer controls emulated time at the
+  configured speed. No guest draws or interrupts are dropped, and the presentation
+  guard adds no sleep to adaptive CPU workload estimates. A strict sleep-based
+  prototype reduced capped playback through host scheduling jitter and was replaced
+  with display-callback admission. Physical scanout and host call timestamps are
+  different measurements.
 - Local `GPU::VBlankCallback` already calls renderer `SwapBuffers()` once per
   emulated VBlank. `SetBufferSwap` updates framebuffer registers rather than
   invoking scene rendering. Repeated buffer addresses do not prove unchanged

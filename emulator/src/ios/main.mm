@@ -68,7 +68,14 @@ extern "C" int __llvm_profile_write_file(void);
 #include "core/hle/kernel/process.h"
 #include "core/memory.h"
 
+static std::atomic<u64> displayLinkSequence{0};
 #ifdef CARA_IOS_GLES
+@interface CaraDisplayClock : NSObject
+- (void)tick:(CADisplayLink*)link;
+@end
+@implementation CaraDisplayClock
+- (void)tick:(CADisplayLink*)link { displayLinkSequence.fetch_add(1,std::memory_order_relaxed); }
+@end
 @interface CaraGPUView : UIView
 @end
 @implementation CaraGPUView
@@ -244,29 +251,18 @@ public:
     bool presentation_paced = true;
     unsigned presentation_speed = 100;
     u64 presentation_submissions = 0;
+    u64 presentation_coalesced = 0;
     double last_presentation_start = 0;
     double minimum_presentation_interval = 0;
-    void WaitForPresentation() {
-        const auto seconds=[]() { return std::chrono::duration<double>(
-            std::chrono::steady_clock::now().time_since_epoch()).count(); };
-        double now=seconds();
-        for (;;) {
-            const double ready=presentation_guard.ReadyAt(now,presentation_paced,presentation_speed);
-            if (ready<=now) break;
-            const auto wake=std::chrono::steady_clock::time_point(std::chrono::duration_cast<
-                std::chrono::steady_clock::duration>(std::chrono::duration<double>(ready)));
-            std::this_thread::sleep_until(wake);
-            now=seconds();
-        }
-        // Use the same fresh timestamp for checking and recording the call start.
-        presentation_guard.MarkSubmitted(now);
+    void RecordPresentation() {
+        const double now=std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
         if (presentation_submissions) {
             const double interval=now-last_presentation_start;
             minimum_presentation_interval=minimum_presentation_interval>0?
                 std::min(minimum_presentation_interval,interval):interval;
         }
-        last_presentation_start=now;
-        ++presentation_submissions;
+        last_presentation_start=now; ++presentation_submissions;
     }
 
     std::string graphics_error;
@@ -392,6 +388,7 @@ public:
     void SwapBuffers() override {
 #ifdef CARA_IOS_GLES
         if (drawable_framebuffer) {
+            if (presentation_guard.Admit(displayLinkSequence.load(std::memory_order_relaxed))) {
             CGRect destinations[2]; int desired_width,desired_height;
             {
                 std::lock_guard<std::mutex> lock(display_mutex);
@@ -422,13 +419,14 @@ public:
                     glBlitFramebuffer(screen?40:0,screen?0:240,screen?360:400,screen?240:480,x0,y0,x1,y1,GL_COLOR_BUFFER_BIT,GL_NEAREST);
                 }
                 if (scissor) glEnable(GL_SCISSOR_TEST);
-                WaitForPresentation();
+                RecordPresentation();
                 if (![graphics_context presentRenderbuffer:GL_RENDERBUFFER])
                     graphics_error = "iOS screen presentation failed";
                 OpenGL::OpenGLState::BindRenderbuffer(previous_renderbuffer);
                 OpenGL::OpenGLState::BindDrawFramebuffer(previous_draw);
                 OpenGL::OpenGLState::BindReadFramebuffer(previous_read);
             }
+            } else { ++presentation_coalesced; }
             if (Common::FrameTiming::counters.enabled && std::getenv("CARA_GPU_WAIT_TIMING")) {
                 Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GPUWait);
                 glFinish();
@@ -537,6 +535,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     CGSize lastSkinSize;
     std::unique_ptr<IOSWindow> emuWindow;
     std::thread worker;
+    CADisplayLink* presentationLink;
     std::atomic<bool> stop;
     std::atomic<bool> running;
     std::atomic<bool> gameLoaded;
@@ -669,6 +668,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 #ifdef CARA_IOS_GLES
     gpuSurface=[[CaraGPUView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:gpuSurface];
+    presentationLink=[CADisplayLink displayLinkWithTarget:[CaraDisplayClock new] selector:@selector(tick:)];
+    if (@available(iOS 15.0,*)) presentationLink.preferredFrameRateRange=CAFrameRateRangeMake(60,60,60);
+    else presentationLink.preferredFramesPerSecond=60;
+    [presentationLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 #endif
     skinArt=[UIImageView new]; skinArt.opaque=NO; skinArt.userInteractionEnabled=NO; [self.view addSubview:skinArt];
     skinControls=[[CaraSkinControls alloc] initWithFrame:CGRectZero]; [self.view addSubview:skinControls];
@@ -791,6 +794,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     }
 #ifdef CARA_IOS_GLES
     gpuSurface.hidden=Cara::ClearSessionPresentation(state);
+    presentationLink.paused=state!=Cara::SessionPresentation::Running;
 #endif
 }
 - (void)resumeFromMenu {
@@ -1541,7 +1545,12 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 }
                 Cara::FramePacer frame_pacer(paced_speed);
                 pace_frames=Cara::ShouldPaceFrames(target_frames!=0,benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
-                frame_pacer.Reset(host_seconds(benchmark_start));
+                const auto reset_pacing=[&](std::chrono::steady_clock::time_point at) {
+                    const double seconds=host_seconds(at);
+                    frame_pacer.Reset(seconds);
+                    emuWindow->presentation_guard.Reset();
+                };
+                reset_pacing(benchmark_start);
                 unsigned paced_frame = emuWindow->frames;
                 unsigned late_paced_frames = 0;
                 bool was_paused = false;
@@ -1722,7 +1731,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                             system.LoadStateFromPath(user+"device-test.carastate");
                             if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
                             state_loaded=true; state_test_report(""); reset_clock_samples();
-                            frame_pacer.Reset(host_seconds(std::chrono::steady_clock::now())); paced_frame=emuWindow->frames;
+                            reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
                             AudioCore::SetIOSAudioPaused(paused);
                         }
                     } catch (const std::exception& error) {
@@ -1736,7 +1745,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                             else system.LoadState(unsigned(-command));
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
-                        frame_pacer.Reset(host_seconds(std::chrono::steady_clock::now())); paced_frame=emuWindow->frames;
+                        reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
                         const bool powered=system.IsPoweredOn();
                         NSString* message=failure.empty()?[NSString stringWithFormat:@"State %@ in slot %d",command>0?@"saved":@"loaded",std::abs(command)]:[NSString stringWithUTF8String:failure.c_str()];
                         if (command==101 && failure.empty()) message=@"Comparison checkpoint saved";
@@ -1763,7 +1772,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         const auto resumed = std::chrono::steady_clock::now();
                         paused_duration += resumed - pause_started;
                         last_frame_time += resumed - pause_started;
-                        frame_pacer.Reset(host_seconds(resumed)); paced_frame=emuWindow->frames;
+                        reset_pacing(resumed); paced_frame=emuWindow->frames;
                         was_paused = false; reset_clock_samples();
                     }
                     if (test_start_frame && !test_start_pressed && emuWindow->frames>=test_start_frame) {
@@ -2046,7 +2055,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         const bool pacing_changed=should_pace!=pace_frames; pace_frames=should_pace;
                         if (!has_speed_override) paced_speed=self->maximumSpeedLimit.load();
                         if (!pace_frames || pacing_changed || emuWindow->frames<paced_frame) {
-                            // Uncapped play, policy changes and frame resets discard old deadlines.
+                            // The aggregate frame pacer owns emulated time; display tickets never sleep.
                             frame_pacer.Reset(host_seconds(now));
                         } else {
                             frame_pacer.SetSpeedPercent(paced_speed,host_seconds(now));
@@ -2071,6 +2080,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                            << ",\"host_presentation_submissions\":" << emuWindow->presentation_submissions
                            << ",\"host_presentation_min_interval_ms\":" << emuWindow->minimum_presentation_interval*1000
                            << ",\"host_presentation_paced\":" << (emuWindow->presentation_paced?"true":"false")
+                           << ",\"host_presentation_coalesced\":" << emuWindow->presentation_coalesced
+                           << ",\"host_presentation_clock\":\"ios_display_link_60\""
                            << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "dyncom") == 0) ? "dyncom" : "fastinterp") << "\""
                            << ",\"adaptive_guest_cpu\":" << (clock_control.Enabled()?"true":"false")
                            << ",\"guest_cpu_percent\":" << policy_clock()
@@ -2161,6 +2172,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 - (void)dealloc {
     stop = true;
     if (worker.joinable()) worker.join();
+    [presentationLink invalidate];
     [cloudFeedbackTimer invalidate];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
