@@ -103,3 +103,11 @@ export of only stale-owned dirty spans, preservation of CPU-written bytes and
 subsequent readback from retained live producers. Game-level gains from cleanup
 remain unmeasured. See [residency prior art](gpu-residency-prior-art.md) for the
 small-write investigation, trace semantics and pinned Mikage source references.
+
+Selective cleanup also drains unregistered producers still referenced by dirty
+ownership. Deferred framebuffer replacement can leave those owners outside the
+registered surface cache; omitting them would retain dirty producers indefinitely.
+The cleanup fixture includes the real deferred-unregister path. This safeguard
+does not resolve the preexisting page-protection window between unregistering a
+producer and later cleanup. That lifetime issue needs a separate audit before
+claiming all guest CPU visibility cases are solved.

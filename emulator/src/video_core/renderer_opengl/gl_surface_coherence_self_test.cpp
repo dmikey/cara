@@ -638,6 +638,7 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
         retain_small_cpu_writes = true;
         for (bool tiled : {false, true}) {
             for (bool stale_dirty : {false, true}) {
+              for (bool orphan : {false, true}) {
                 SurfaceParams stale;
                 stale.addr = scratch;
                 stale.width = stale.stride = stale.height = 16;
@@ -667,6 +668,18 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
                 remap_destination->LoadGLBuffer(live.addr, live.end);
                 remap_destination->UploadGLTexture(remap_destination->GetRect());
                 InvalidateRegion(live.addr, live.size, remap_destination);
+                if (orphan) {
+                    // Exercise the real deferred replacement path: an old
+                    // framebuffer is queued, then a different producer updates
+                    // only its own draw interval. Old dirty prefix/suffix bytes
+                    // must survive unregister until selective cleanup drains them.
+                    remove_surfaces.emplace(test_surface);
+                    InvalidateRegion(live.addr, live.size, remap_destination);
+                    if (test_surface->registered) {
+                        error = "cleanup orphan fixture did not unregister deferred producer";
+                        return false;
+                    }
+                }
                 if (stale_dirty) InvalidateRegion(scratch + 3, 1, nullptr);
                 std::fill_n(memory, scratch_size, 0x6B);
                 if (stale_dirty) memory[3] = 0xA7;
@@ -692,7 +705,8 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
                     (!stale_dirty && Common::FrameTiming::counters.surface_download_calls != download_calls) ||
                     glGetError() != GL_NO_ERROR) {
                     error = "selective cleanup changed retained GPU ownership or CPU bytes tiled=" +
-                            std::to_string(tiled) + " stale_dirty=" + std::to_string(stale_dirty);
+                            std::to_string(tiled) + " stale_dirty=" + std::to_string(stale_dirty) +
+                            " orphan=" + std::to_string(orphan);
                     return false;
                 }
                 // Evicting the alias must not consume the live producer. A later
@@ -710,6 +724,7 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
                 remap_destination.reset();
                 OpenGLState::ResetTexture(test_surface->texture.handle);
                 test_surface.reset();
+              }
             }
         }
     }

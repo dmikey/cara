@@ -2051,7 +2051,13 @@ void RasterizerCacheOpenGL::CleanUp(u32 deadline_frame) {
         // Interval-map segments may list the same surface more than once. Only
         // export bytes owned by each evicted producer; a stale clean alias must
         // not force unrelated live render targets back through guest RAM.
-        const SurfaceSet evicted(unused.begin(), unused.end());
+        SurfaceSet evicted(unused.begin(), unused.end());
+        // Deferred framebuffer replacement can unregister an old producer while
+        // dirty_regions still owns its untouched bytes. These orphan producers
+        // no longer appear in surface_cache, but must be drained before their
+        // final GPU allocation is released. Registered live owners stay resident.
+        for (const auto& entry : dirty_regions)
+            if (!entry.second->registered) evicted.insert(entry.second);
         const auto previous_reason = flush_reason;
         flush_reason = FlushReason::Cleanup;
         SCOPE_EXIT({ flush_reason = previous_reason; });
