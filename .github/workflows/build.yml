@@ -1,6 +1,7 @@
 name: No-JIT builds
 on:
   push:
+    branches-ignore: [feature/android-gles-dynarmic]
   pull_request:
   workflow_dispatch:
 permissions:
