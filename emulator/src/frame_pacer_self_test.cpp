@@ -32,14 +32,16 @@ int main() {
         pacer.Reset(3600); // Pause/load: old future deadline must also disappear.
         Near(pacer.Advance(2, 3600.001), 3600 + 2 * period, 1e-10,
              "Reset retained old timeline");
-        pacer.SetSpeedPercent(100, 3601);
-        Near(pacer.Advance(1, 3601.001), 3601 + 1.0 / Cara::FramePacer::VBlankHz,
+        const unsigned changed_speed=pacer.SpeedPercent()==100?200:100;
+        const double changed_period=(1.0 / Cara::FramePacer::VBlankHz)*(100.0/changed_speed);
+        pacer.SetSpeedPercent(changed_speed, 3601);
+        Near(pacer.Advance(1, 3601.001), 3601 + changed_period,
              1e-10, "Live speed change retained previous deadline");
         const double before = pacer.Advance(1, 3601.002);
-        pacer.SetSpeedPercent(100, 3601.003);
+        pacer.SetSpeedPercent(changed_speed, 3601.003);
         Near(pacer.Advance(0, 3601.004), before, 1e-10,
              "Unchanged speed unexpectedly reset schedule");
-        Near(pacer.Advance(1, 3), 3 + 1.0 / Cara::FramePacer::VBlankHz,
+        Near(pacer.Advance(1, 3), 3 + changed_period,
              1e-12, "Backward clock retained stale future deadline");
         Require(Cara::FramePacer(0).SpeedPercent() == 50, "Lower clamp failed");
         Require(Cara::FramePacer(999).SpeedPercent() == 200, "Upper clamp failed");
