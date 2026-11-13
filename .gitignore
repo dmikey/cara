@@ -26,4 +26,4 @@ __pycache__/
 /emulator/src/common/scm_rev.cpp
 
 # Optional Android JIT dependency (pinned fetch; not part of Apple builds)
-/emulator/externals/dynarmic/
+/emulator/externals/dynarmic

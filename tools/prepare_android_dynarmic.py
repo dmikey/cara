@@ -15,6 +15,12 @@ def main():
     actual = subprocess.check_output(['git', '-C', str(DEST), 'rev-parse', 'HEAD'], text=True).strip()
     if actual != REVISION:
         raise SystemExit('Existing Dynarmic checkout differs; refusing to overwrite it')
+    patch = ROOT / 'tools/android-dynarmic-fmt6.patch'
+    command = ['git', '-C', str(DEST), 'apply']
+    if subprocess.run(command + ['--check', str(patch)], capture_output=True).returncode == 0:
+        subprocess.run(command + [str(patch)], check=True)
+    elif subprocess.run(command + ['--reverse', '--check', str(patch)], capture_output=True).returncode != 0:
+        raise SystemExit('Dynarmic fmt compatibility patch does not match this source')
     print('Android Dynarmic pinned:', actual)
 if __name__ == '__main__':
     main()

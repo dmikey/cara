@@ -1,0 +1,127 @@
+diff --git a/src/dynarmic/frontend/A32/a32_location_descriptor.h b/src/dynarmic/frontend/A32/a32_location_descriptor.h
+index c53e75d..dfa8d09 100644
+--- a/src/dynarmic/frontend/A32/a32_location_descriptor.h
++++ b/src/dynarmic/frontend/A32/a32_location_descriptor.h
+@@ -156,7 +156,7 @@ struct hash<Dynarmic::A32::LocationDescriptor> {
+ template<>
+ struct fmt::formatter<Dynarmic::A32::LocationDescriptor> : fmt::formatter<std::string> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::A32::LocationDescriptor descriptor, FormatContext& ctx) const {
++    auto format(Dynarmic::A32::LocationDescriptor descriptor, FormatContext& ctx) {
+         return formatter<std::string>::format(Dynarmic::A32::ToString(descriptor), ctx);
+     }
+ };
+diff --git a/src/dynarmic/frontend/A32/a32_types.h b/src/dynarmic/frontend/A32/a32_types.h
+index 6f56bea..5cebce7 100644
+--- a/src/dynarmic/frontend/A32/a32_types.h
++++ b/src/dynarmic/frontend/A32/a32_types.h
+@@ -147,7 +147,7 @@ inline ExtReg ToVector(bool Q, size_t base, bool bit) {
+ template<>
+ struct fmt::formatter<Dynarmic::A32::Reg> : fmt::formatter<const char*> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::A32::Reg reg, FormatContext& ctx) const {
++    auto format(Dynarmic::A32::Reg reg, FormatContext& ctx) {
+         return formatter<const char*>::format(Dynarmic::A32::RegToString(reg), ctx);
+     }
+ };
+@@ -155,7 +155,7 @@ struct fmt::formatter<Dynarmic::A32::Reg> : fmt::formatter<const char*> {
+ template<>
+ struct fmt::formatter<Dynarmic::A32::ExtReg> : fmt::formatter<const char*> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::A32::ExtReg reg, FormatContext& ctx) const {
++    auto format(Dynarmic::A32::ExtReg reg, FormatContext& ctx) {
+         return formatter<const char*>::format(Dynarmic::A32::ExtRegToString(reg), ctx);
+     }
+ };
+@@ -163,7 +163,7 @@ struct fmt::formatter<Dynarmic::A32::ExtReg> : fmt::formatter<const char*> {
+ template<>
+ struct fmt::formatter<Dynarmic::A32::CoprocReg> : fmt::formatter<const char*> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::A32::CoprocReg reg, FormatContext& ctx) const {
++    auto format(Dynarmic::A32::CoprocReg reg, FormatContext& ctx) {
+         return formatter<const char*>::format(Dynarmic::A32::CoprocRegToString(reg), ctx);
+     }
+ };
+@@ -171,7 +171,7 @@ struct fmt::formatter<Dynarmic::A32::CoprocReg> : fmt::formatter<const char*> {
+ template<>
+ struct fmt::formatter<Dynarmic::A32::RegList> : fmt::formatter<std::string> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::A32::RegList reg_list, FormatContext& ctx) const {
++    auto format(Dynarmic::A32::RegList reg_list, FormatContext& ctx) {
+         return formatter<std::string>::format(Dynarmic::A32::RegListToString(reg_list), ctx);
+     }
+ };
+diff --git a/src/dynarmic/frontend/A64/a64_location_descriptor.h b/src/dynarmic/frontend/A64/a64_location_descriptor.h
+index 122bebb..5f05c2d 100644
+--- a/src/dynarmic/frontend/A64/a64_location_descriptor.h
++++ b/src/dynarmic/frontend/A64/a64_location_descriptor.h
+@@ -109,7 +109,7 @@ struct hash<Dynarmic::A64::LocationDescriptor> {
+ template<>
+ struct fmt::formatter<Dynarmic::A64::LocationDescriptor> : fmt::formatter<std::string> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::A64::LocationDescriptor descriptor, FormatContext& ctx) const {
++    auto format(Dynarmic::A64::LocationDescriptor descriptor, FormatContext& ctx) {
+         return formatter<std::string>::format(Dynarmic::A64::ToString(descriptor), ctx);
+     }
+ };
+diff --git a/src/dynarmic/frontend/A64/a64_types.h b/src/dynarmic/frontend/A64/a64_types.h
+index 6bc7a24..57292ea 100644
+--- a/src/dynarmic/frontend/A64/a64_types.h
++++ b/src/dynarmic/frontend/A64/a64_types.h
+@@ -128,7 +128,7 @@ inline Vec operator+(Vec vec, size_t number) {
+ template<>
+ struct fmt::formatter<Dynarmic::A64::Reg> : fmt::formatter<std::string> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::A64::Reg reg, FormatContext& ctx) const {
++    auto format(Dynarmic::A64::Reg reg, FormatContext& ctx) {
+         return formatter<std::string>::format(Dynarmic::A64::RegToString(reg), ctx);
+     }
+ };
+@@ -136,7 +136,7 @@ struct fmt::formatter<Dynarmic::A64::Reg> : fmt::formatter<std::string> {
+ template<>
+ struct fmt::formatter<Dynarmic::A64::Vec> : fmt::formatter<std::string> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::A64::Vec vec, FormatContext& ctx) const {
++    auto format(Dynarmic::A64::Vec vec, FormatContext& ctx) {
+         return formatter<std::string>::format(Dynarmic::A64::VecToString(vec), ctx);
+     }
+ };
+diff --git a/src/dynarmic/ir/location_descriptor.h b/src/dynarmic/ir/location_descriptor.h
+index 48e5e32..55a9d1a 100644
+--- a/src/dynarmic/ir/location_descriptor.h
++++ b/src/dynarmic/ir/location_descriptor.h
+@@ -58,7 +58,7 @@ struct hash<Dynarmic::IR::LocationDescriptor> {
+ template<>
+ struct fmt::formatter<Dynarmic::IR::LocationDescriptor> : fmt::formatter<std::string> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::IR::LocationDescriptor descriptor, FormatContext& ctx) const {
++    auto format(Dynarmic::IR::LocationDescriptor descriptor, FormatContext& ctx) {
+         return formatter<std::string>::format(ToString(descriptor), ctx);
+     }
+ };
+diff --git a/src/dynarmic/ir/opcodes.h b/src/dynarmic/ir/opcodes.h
+index 404f4cd..3bffff4 100644
+--- a/src/dynarmic/ir/opcodes.h
++++ b/src/dynarmic/ir/opcodes.h
+@@ -48,7 +48,7 @@ std::string GetNameOf(Opcode op);
+ template<>
+ struct fmt::formatter<Dynarmic::IR::Opcode> : fmt::formatter<std::string> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::IR::Opcode op, FormatContext& ctx) const {
++    auto format(Dynarmic::IR::Opcode op, FormatContext& ctx) {
+         return formatter<std::string>::format(Dynarmic::IR::GetNameOf(op), ctx);
+     }
+ };
+diff --git a/src/dynarmic/ir/type.h b/src/dynarmic/ir/type.h
+index 65fe76d..39ba84c 100644
+--- a/src/dynarmic/ir/type.h
++++ b/src/dynarmic/ir/type.h
+@@ -54,7 +54,7 @@ bool AreTypesCompatible(Type t1, Type t2);
+ template<>
+ struct fmt::formatter<Dynarmic::IR::Type> : fmt::formatter<std::string> {
+     template<typename FormatContext>
+-    auto format(Dynarmic::IR::Type type, FormatContext& ctx) const {
++    auto format(Dynarmic::IR::Type type, FormatContext& ctx) {
+         return formatter<std::string>::format(Dynarmic::IR::GetNameOf(type), ctx);
+     }
+ };

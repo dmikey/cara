@@ -14,7 +14,9 @@ between builds; reinstalling may require uninstalling the previous test APK.
 The dependency fetch is explicit and pinned: `python3 tools/prepare_android_dynarmic.py`.
 The inherited MMJ Dynarmic URL is unavailable, so this experiment uses the
 ARM64-capable upstream revision recorded in NOTICE. Its adapter retains shared
-page-table ownership and uses coherent atomic exclusive-write callbacks.
+page-table ownership and uses coherent atomic exclusive-write callbacks. A checked,
+idempotent patch adapts formatter constness to Cara’s bundled fmt version; it
+does not modify guest instruction handling.
 
 GLES uses the same atlas shader path selected by the legacy `CARA_IOS_GLES` macro.
 Android enables this through `CARA_ANDROID_GLES_EXPERIMENT`; EGL context ownership

@@ -12,6 +12,9 @@ target_include_directories(catch-single-include INTERFACE catch/single_include)
 add_subdirectory(cryptopp)
 
 # Define the shared fmt target before optional Dynarmic dependencies inspect it.
+if(CARA_ENABLE_JIT)
+    set(FMT_INSTALL ON CACHE BOOL "Required by Dynarmic export metadata" FORCE)
+endif()
 add_subdirectory(fmt)
 add_library(fmt::fmt ALIAS fmt)
 
