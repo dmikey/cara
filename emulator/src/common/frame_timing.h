@@ -74,6 +74,8 @@ struct Counters {
     PhaseCPUSamples stream_unmap_cpu_samples;
     PhaseCPUSamples uniform_upload_cpu_samples;
     PhaseCPUSamples vertex_subimage_cpu_samples;
+    PhaseCPUSamples surface_download_cpu_samples;
+    PhaseCPUSamples surface_read_pixels_cpu_samples;
     double shader_seconds = 0;
     double guest_cpu_seconds = 0;
     double draw_seconds = 0;
@@ -131,6 +133,8 @@ struct Counters {
     std::uint64_t surface_remap_bytes = 0;
     double surface_pack_seconds = 0;
     double surface_download_seconds = 0;
+    double surface_read_pixels_seconds = 0;
+    std::uint64_t surface_read_pixels_calls = 0;
     double shader_compile_seconds = 0;
     double gpu_wait_seconds = 0;
     std::uint64_t surface_download_calls = 0;
@@ -170,7 +174,7 @@ inline bool RenderBookkeepingProfileEnabled() {
     return enabled;
 }
 
-enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
+enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
 class Scope {
 public:
     explicit Scope(Phase phase_, bool enabled = true) : phase(phase_), active(counters.enabled && enabled) {
@@ -183,8 +187,10 @@ public:
         else if (phase == Phase::StreamUnmap) sample_phase = 3;
         else if (phase == Phase::UniformUpload) sample_phase = 4;
         else if (phase == Phase::VertexSubImageUpload) sample_phase = 5;
+        else if (phase == Phase::SurfaceDownload) sample_phase = 6;
+        else if (phase == Phase::SurfaceReadPixels) sample_phase = 7;
         if (sample_phase < 0 || !CPUSamplingEnabled()) return;
-        static thread_local std::array<std::uint64_t, 6> sample_sequence{};
+        static thread_local std::array<std::uint64_t, 8> sample_sequence{};
         // Use high bits of a multiplicative hash, avoiding a fixed draw-slot
         // pattern when a frame repeatedly submits a multiple of 64 draws.
         const auto mixed = std::uint32_t(++sample_sequence[sample_phase]) * 0x9E3779B9u;
@@ -194,7 +200,9 @@ public:
                                        : sample_phase == 2 ? &counters.stream_map_cpu_samples
                    : sample_phase == 3 ? &counters.stream_unmap_cpu_samples
                    : sample_phase == 4 ? &counters.uniform_upload_cpu_samples
-                                       : &counters.vertex_subimage_cpu_samples;
+                                       : sample_phase == 5 ? &counters.vertex_subimage_cpu_samples
+                   : sample_phase == 6 ? &counters.surface_download_cpu_samples
+                                       : &counters.surface_read_pixels_cpu_samples;
         cpu_started = ReadThreadCPUTime();
         if (cpu_started < 0) {
             ++cpu_sample->clock_failures;
@@ -251,6 +259,9 @@ public:
             counters.draw_submit_seconds += seconds;
         } else if (phase == Phase::SurfaceDownload) {
             counters.surface_download_seconds += seconds;
+        } else if (phase == Phase::SurfaceReadPixels) {
+            counters.surface_read_pixels_seconds += seconds;
+            ++counters.surface_read_pixels_calls;
         } else if (phase == Phase::ShaderCompile) {
             counters.shader_compile_seconds += seconds;
             ++counters.shader_compile_calls;

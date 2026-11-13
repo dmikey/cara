@@ -337,7 +337,9 @@ private:
     bool retain_small_cpu_writes = false;
     bool gpu_surface_remap = false;
     std::unique_ptr<SurfaceRemapper> surface_remapper;
-    bool TryRemapSurface(const Surface& destination, const SurfaceParams& params);
+    bool TryRemapSurface(const Surface& destination, const SurfaceParams& params,
+                         SurfaceInterval* remapped_interval = nullptr,
+                         const SurfaceInterval* requested_interval = nullptr);
     FlushReason flush_reason = FlushReason::External;
     std::vector<FlushTrace> flush_trace;
     SurfaceParams validation_destination{};

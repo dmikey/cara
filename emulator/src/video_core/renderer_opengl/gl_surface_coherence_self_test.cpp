@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include "common/scope_exit.h"
@@ -220,6 +221,7 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
     trace_flushes = false;
     Surface test_surface;
     Surface remap_destination;
+    Surface second_remap_source;
     const bool old_remap = gpu_surface_remap;
     SCOPE_EXIT({
         if (remap_destination) {
@@ -227,6 +229,11 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
             UnregisterSurface(remap_destination);
         }
         gpu_surface_remap = old_remap;
+        if (second_remap_source) {
+            dirty_regions.erase(second_remap_source->GetInterval());
+            OpenGLState::ResetTexture(second_remap_source->texture.handle);
+            UnregisterSurface(second_remap_source);
+        }
         if (test_surface) {
             dirty_regions.erase(test_surface->GetInterval());
             OpenGLState::ResetTexture(test_surface->texture.handle);
@@ -287,6 +294,12 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
     // Match the observed framebuffer alias, plus both GL/guest orientations,
     // partial destination rectangles, and a CPU-write invalidation fallback.
     gpu_surface_remap = true;
+    const char* byte_remap_value = std::getenv("CARA_GPU_BYTE_SURFACE_REMAP");
+    const bool byte_remap = byte_remap_value && std::strcmp(byte_remap_value, "1") == 0;
+    for (const auto source_format : {SurfaceParams::PixelFormat::RGBA8, SurfaceParams::PixelFormat::RGB8}) {
+      for (const auto destination_format : {SurfaceParams::PixelFormat::RGBA8, SurfaceParams::PixelFormat::RGB8}) {
+        if (!byte_remap && (source_format != SurfaceParams::PixelFormat::RGBA8 ||
+                           destination_format != SurfaceParams::PixelFormat::RGBA8)) continue;
     for (bool source_tiled : {false, true}) {
         for (bool destination_tiled : {false, true}) {
             for (bool partial : {false, true}) {
@@ -294,7 +307,7 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
                 source_params.addr = scratch;
                 source_params.width = source_params.stride = 256;
                 source_params.height = 416;
-                source_params.pixel_format = SurfaceParams::PixelFormat::RGBA8;
+                source_params.pixel_format = source_format;
                 source_params.is_tiled = source_tiled;
                 source_params.res_scale = 1;
                 source_params.UpdateParams();
@@ -302,6 +315,7 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
                 destination_params.addr += 16384;
                 destination_params.width = destination_params.stride = 128;
                 destination_params.height = 384;
+                destination_params.pixel_format = destination_format;
                 destination_params.is_tiled = destination_tiled;
                 destination_params.UpdateParams();
                 std::vector<u8> original(source_params.size);
@@ -405,6 +419,104 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
                 test_surface.reset();
             }
         }
+    }
+      }
+    }
+    // Observed Luigi dimensions: no single source covers the destination. The
+    // RGB source's byte seam is inside a destination tile row and the second
+    // source starts after it. Validation must progress through both producers
+    // without ever exporting their bytes to RAM.
+    if (byte_remap) {
+      for (bool source_tiled : {false, true}) {
+        for (bool destination_tiled : {false, true}) {
+            SurfaceParams first;
+            first.addr = scratch;
+            first.width = first.stride = 128;
+            first.height = 416;
+            first.pixel_format = SurfaceParams::PixelFormat::RGB8;
+            first.is_tiled = source_tiled;
+            first.res_scale = 1;
+            first.UpdateParams();
+            SurfaceParams second = first;
+            second.addr = first.end;
+            second.height = 288;
+            second.pixel_format = SurfaceParams::PixelFormat::RGBA8;
+            second.UpdateParams();
+            SurfaceParams destination = first;
+            destination.width = destination.stride = 240;
+            destination.height = 320;
+            destination.pixel_format = SurfaceParams::PixelFormat::RGBA8;
+            destination.is_tiled = destination_tiled;
+            destination.UpdateParams();
+            if (second.end != destination.end) {
+                error = "byte remap fixture source coverage mismatch";
+                return false;
+            }
+            std::vector<u8> expected(destination.size);
+            u32 random = 0xC09FE219;
+            for (auto& byte : expected) {
+                random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+                byte = u8(random);
+            }
+            std::memcpy(memory, expected.data(), expected.size());
+            test_surface = GetSurface(first, ScaleMatch::Exact, true);
+            second_remap_source = GetSurface(second, ScaleMatch::Exact, true);
+            std::fill_n(memory, destination.size, 0xD9);
+            remap_destination = CreateSurface(destination);
+            RegisterSurface(remap_destination);
+            remap_destination->LoadGLBuffer(destination.addr, destination.end);
+            remap_destination->UploadGLTexture(remap_destination->GetRect());
+            InvalidateRegion(first.addr, first.size, test_surface);
+            InvalidateRegion(second.addr, second.size, second_remap_source);
+            std::fill_n(memory, scratch_size, 0x6B);
+            std::fill(test_surface->gl_buffer.begin(), test_surface->gl_buffer.end(), 0x2C);
+            std::fill(second_remap_source->gl_buffer.begin(), second_remap_source->gl_buffer.end(), 0x2C);
+            // A byte-fragment request may only produce complete destination
+            // pixels/tiles inside it. Report exactly what was rendered.
+            const SurfaceInterval requested(scratch + 13, scratch + 513);
+            SurfaceInterval copied;
+            if (!TryRemapSurface(remap_destination, remap_destination->FromInterval(requested),
+                                 &copied, &requested) ||
+                boost::icl::first(copied) < boost::icl::first(requested) ||
+                boost::icl::last_next(copied) > boost::icl::last_next(requested) ||
+                boost::icl::length(copied) == 0) {
+                error = "byte remap partial ownership did not make bounded progress";
+                return false;
+            }
+            remap_destination->DownloadGLTexture(remap_destination->GetRect());
+            remap_destination->FlushGLBuffer(destination.addr, destination.end);
+            std::vector<u8> partial_expected(destination.size, 0xD9);
+            const auto offset = boost::icl::first(copied) - scratch;
+            std::copy_n(expected.data() + offset, boost::icl::length(copied), partial_expected.data() + offset);
+            if (!std::equal(partial_expected.begin(), partial_expected.end(), memory)) {
+                error = "byte remap partial ownership overwrote neighboring bytes";
+                return false;
+            }
+            std::fill_n(memory, scratch_size, 0x6B);
+            ValidateSurface(remap_destination, destination.addr, destination.size);
+            if (!remap_destination->IsRegionValid(destination.GetInterval()) ||
+                !std::all_of(memory, memory + scratch_size, [](u8 b) { return b == 0x6B; })) {
+                error = "byte remap spanning producers used RAM or left invalid bytes";
+                return false;
+            }
+            remap_destination->DownloadGLTexture(remap_destination->GetRect());
+            remap_destination->FlushGLBuffer(destination.addr, destination.end);
+            if (!std::equal(expected.begin(), expected.end(), memory) || glGetError() != GL_NO_ERROR) {
+                error = "byte remap spanning producers changed RGB/RGBA guest bytes";
+                return false;
+            }
+            dirty_regions.erase(destination.GetInterval());
+            OpenGLState::ResetTexture(remap_destination->texture.handle);
+            UnregisterSurface(remap_destination);
+            remap_destination.reset();
+            OpenGLState::ResetTexture(test_surface->texture.handle);
+            UnregisterSurface(test_surface);
+            test_surface.reset();
+            OpenGLState::ResetTexture(second_remap_source->texture.handle);
+            UnregisterSurface(second_remap_source);
+            second_remap_source.reset();
+        }
+      }
     }
     gpu_surface_remap = old_remap;
 

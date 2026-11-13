@@ -45,6 +45,7 @@
 #include "video_core/renderer_opengl/gl_format_reinterpreter.h"
 #include "video_core/renderer_opengl/gl_color_readback.h"
 #include "video_core/renderer_opengl/gl_surface_remap.h"
+#include "video_core/renderer_opengl/gl_surface_remap_layout.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_rasterizer_cache.h"
 #include "video_core/renderer_opengl/gl_state.h"
@@ -807,11 +808,15 @@ void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
         }
         last_download_wait_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         started = std::chrono::steady_clock::now();
-        glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
-                     static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
-                     read_destination);
+        {
+            Common::FrameTiming::Scope read_timing(Common::FrameTiming::Phase::SurfaceReadPixels);
+            glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
+                         static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
+                         read_destination);
+        }
         last_download_read_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     } else {
+        Common::FrameTiming::Scope read_timing(Common::FrameTiming::Phase::SurfaceReadPixels);
         glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
                      static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
                      read_destination);
@@ -1724,35 +1729,89 @@ void RasterizerCacheOpenGL::DuplicateSurface(const Surface& src_surface,
     }
 }
 
-bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const SurfaceParams& params) {
+bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const SurfaceParams& params,
+                                               SurfaceInterval* remapped_interval,
+                                               const SurfaceInterval* requested_interval) {
+    static const bool byte_remap = [] {
+        const char* value = std::getenv("CARA_GPU_BYTE_SURFACE_REMAP");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (!byte_remap) {
+        const auto eligible = [](const Surface& surface) {
+            return surface->pixel_format == PixelFormat::RGBA8 && surface->res_scale == 1 &&
+                   surface->width != 0 && surface->height != 0 && surface->width == surface->stride &&
+                   (!surface->is_tiled || ((surface->width | surface->height) & 7) == 0) &&
+                   (surface->addr & 3) == 0 && surface->texture.handle != 0 && !surface->custom_tex_info;
+        };
+        if (!GLES || !eligible(destination)) return false;
+        const auto interval = params.GetInterval();
+        if (params.addr < destination->addr || params.end > destination->end) return false;
+        for (const auto& group : RangeFromInterval(surface_cache, interval)) {
+            for (const auto& source : group.second) {
+                if (source == destination || !eligible(source) ||
+                    source->texture.handle == destination->texture.handle ||
+                    params.addr < source->addr || params.end > source->end ||
+                    !source->IsRegionValid(interval) || destination->addr < source->addr ||
+                    destination->end > source->end) continue;
+                Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceRemap);
+                if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
+                if (!surface_remapper->RemapRGBA8(source->texture.handle, *source,
+                                                  destination->texture.handle, *destination,
+                                                  destination->GetSubRect(params))) continue;
+                destination->InvalidateAllWatcher();
+                if (Common::FrameTiming::counters.enabled) {
+                    ++Common::FrameTiming::counters.surface_remap_calls;
+                    Common::FrameTiming::counters.surface_remap_bytes += params.size;
+                }
+                if (remapped_interval) *remapped_interval = interval;
+                return true;
+            }
+        }
+        return false;
+    }
     const auto eligible = [](const Surface& surface) {
-        return surface->pixel_format == PixelFormat::RGBA8 && surface->res_scale == 1 &&
+        return (surface->pixel_format == PixelFormat::RGBA8 ||
+                surface->pixel_format == PixelFormat::RGB8) && surface->res_scale == 1 &&
                surface->width != 0 && surface->height != 0 && surface->width == surface->stride &&
                (!surface->is_tiled || ((surface->width | surface->height) & 7) == 0) &&
-               (surface->addr & 3) == 0 && surface->texture.handle != 0 && !surface->custom_tex_info;
+               surface->texture.handle != 0 && !surface->custom_tex_info;
     };
     if (!GLES || !eligible(destination)) return false;
-    const auto interval = params.GetInterval();
+    const auto interval = requested_interval ? *requested_interval : params.GetInterval();
     if (params.addr < destination->addr || params.end > destination->end) return false;
     for (const auto& group : RangeFromInterval(surface_cache, interval)) {
         for (const auto& source : group.second) {
-            // A cached byte interval can cover padding that has no corresponding
-            // texel. Restrict this first path to dense, native-resolution surfaces.
             if (source == destination || !eligible(source) ||
-                source->texture.handle == destination->texture.handle ||
-                params.addr < source->addr || params.end > source->end ||
-                !source->IsRegionValid(interval)) continue;
-            Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceRemap);
-            if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
-            if (!surface_remapper->RemapRGBA8(source->texture.handle, *source,
-                                              destination->texture.handle, *destination,
-                                              destination->GetSubRect(params))) continue;
-            destination->InvalidateAllWatcher();
-            if (Common::FrameTiming::counters.enabled) {
-                ++Common::FrameTiming::counters.surface_remap_calls;
-                Common::FrameTiming::counters.surface_remap_bytes += params.size;
+                source->texture.handle == destination->texture.handle) continue;
+            // Split at valid source ownership boundaries before selecting a whole
+            // pixel/tile rectangle. Never align outwards across CPU-owned bytes.
+            const auto valid_regions = SurfaceRegions(interval & source->GetInterval()) -
+                                       source->invalid_regions;
+            for (const auto& valid : valid_regions) {
+                const u64 unit = destination->BytesInPixels(destination->is_tiled ? 64 : 1);
+                const u64 row = destination->BytesInPixels(destination->stride *
+                                                          (destination->is_tiled ? 8 : 1));
+                const auto span = SurfaceRemapLayout::RectangleSpan(destination->addr, row, unit,
+                    {boost::icl::first(valid), boost::icl::last_next(valid)});
+                if (!span) continue;
+                const SurfaceInterval candidate(static_cast<PAddr>(span.begin),
+                                                static_cast<PAddr>(span.end));
+                if (!remapped_interval && candidate != interval) continue;
+                const auto copy_params = destination->FromInterval(candidate);
+                if (copy_params.GetInterval() != candidate || !source->IsRegionValid(candidate)) continue;
+                Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceRemap);
+                if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
+                if (!surface_remapper->RemapBytes(source->texture.handle, *source,
+                                                  destination->texture.handle, *destination,
+                                                  destination->GetSubRect(copy_params))) continue;
+                destination->InvalidateAllWatcher();
+                if (Common::FrameTiming::counters.enabled) {
+                    ++Common::FrameTiming::counters.surface_remap_calls;
+                    Common::FrameTiming::counters.surface_remap_bytes += span.end - span.begin;
+                }
+                if (remapped_interval) *remapped_interval = candidate;
+                return true;
             }
-            return true;
         }
     }
     return false;
@@ -1796,8 +1855,9 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
 
         // Preserve guest byte addressing across a tiling/stride alias without
         // synchronously exporting the source render target through CPU memory.
-        if (gpu_surface_remap && TryRemapSurface(surface, params)) {
-            notify_validated(params.GetInterval());
+        SurfaceInterval remapped_interval;
+        if (gpu_surface_remap && TryRemapSurface(surface, params, &remapped_interval, &interval)) {
+            notify_validated(remapped_interval);
             continue;
         }
 

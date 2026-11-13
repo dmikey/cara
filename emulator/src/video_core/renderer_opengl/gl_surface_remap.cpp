@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <limits>
 #include "common/scope_exit.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_surface_remap.h"
@@ -23,7 +24,8 @@ uniform highp sampler2D source_texture;
 // Width, height, stride, tiled flag. Coordinates in textures are GL coordinates.
 uniform highp ivec4 source_layout;
 uniform highp ivec4 destination_layout;
-uniform highp int pixel_offset;
+uniform highp int byte_offset;
+uniform highp ivec2 bytes_per_pixel;
 out highp vec4 color;
 
 int interleave(int x, int y) {
@@ -32,6 +34,22 @@ int interleave(int x, int y) {
 }
 int deinterleave(int value) {
     return (value & 1) | ((value >> 1) & 2) | ((value >> 2) & 4);
+}
+// Read a byte in guest order, undoing GLES RGB/BGRA upload byte reversal.
+float guest_byte(int offset) {
+    int pixel = offset / bytes_per_pixel.x;
+    int component = bytes_per_pixel.x - 1 - (offset % bytes_per_pixel.x);
+    ivec2 source;
+    if (source_layout.w != 0) {
+        int tile = pixel / 64;
+        int within = pixel & 63;
+        source.x = (tile % (source_layout.z / 8)) * 8 + deinterleave(within);
+        source.y = source_layout.y - 1 -
+                   ((tile / (source_layout.z / 8)) * 8 + deinterleave(within >> 1));
+    } else {
+        source = ivec2(pixel % source_layout.z, pixel / source_layout.z);
+    }
+    return texelFetch(source_texture, source, 0)[component];
 }
 void main() {
     ivec2 destination = ivec2(gl_FragCoord.xy);
@@ -43,19 +61,28 @@ void main() {
     } else {
         pixel = destination.y * destination_layout.z + destination.x;
     }
-    pixel += pixel_offset;
-    ivec2 source;
-    if (source_layout.w != 0) {
-        int tile = pixel / 64;
-        int within = pixel & 63;
-        source.x = (tile % (source_layout.z / 8)) * 8 + deinterleave(within);
-        source.y = source_layout.y - 1 -
-                   ((tile / (source_layout.z / 8)) * 8 + deinterleave(within >> 1));
+    int offset = pixel * bytes_per_pixel.y + byte_offset;
+    if (bytes_per_pixel.x == bytes_per_pixel.y && byte_offset % bytes_per_pixel.x == 0) {
+        // Preserve the original one-fetch path for equal formats.
+        int source_pixel = offset / bytes_per_pixel.x;
+        ivec2 source;
+        if (source_layout.w != 0) {
+            int tile = source_pixel / 64;
+            int within = source_pixel & 63;
+            source = ivec2((tile % (source_layout.z / 8)) * 8 + deinterleave(within),
+                          source_layout.y - 1 -
+                          ((tile / (source_layout.z / 8)) * 8 + deinterleave(within >> 1)));
+        } else {
+            source = ivec2(source_pixel % source_layout.z, source_pixel / source_layout.z);
+        }
+        color = texelFetch(source_texture, source, 0);
+    } else if (bytes_per_pixel.y == 4) {
+        color = vec4(guest_byte(offset + 3), guest_byte(offset + 2),
+                     guest_byte(offset + 1), guest_byte(offset));
     } else {
-        source = ivec2(pixel % source_layout.z, pixel / source_layout.z);
+        color = vec4(guest_byte(offset + 2), guest_byte(offset + 1),
+                     guest_byte(offset), 1.0);
     }
-    // Both views are RGBA8: the guest ABGR packing cancels between them.
-    color = texelFetch(source_texture, source, 0);
 }
 )";
     program.Create(vertex, fragment);
@@ -67,7 +94,8 @@ void main() {
     glUniform1i(glGetUniformLocation(program.handle, "source_texture"), 0);
     source_layout_location = glGetUniformLocation(program.handle, "source_layout");
     destination_layout_location = glGetUniformLocation(program.handle, "destination_layout");
-    pixel_offset_location = glGetUniformLocation(program.handle, "pixel_offset");
+    byte_offset_location = glGetUniformLocation(program.handle, "byte_offset");
+    bytes_per_pixel_location = glGetUniformLocation(program.handle, "bytes_per_pixel");
     OpenGLState::BindShaderProgram(previous);
     return true;
 }
@@ -75,20 +103,40 @@ void main() {
 bool SurfaceRemapper::RemapRGBA8(GLuint source_texture, const SurfaceParams& source,
                                GLuint destination_texture, const SurfaceParams& destination,
                                const Common::Rectangle<u32>& rectangle) {
+    if (source.pixel_format != SurfaceParams::PixelFormat::RGBA8 ||
+        destination.pixel_format != SurfaceParams::PixelFormat::RGBA8) return false;
+    return RemapBytes(source_texture, source, destination_texture, destination, rectangle);
+}
+
+bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& source,
+                               GLuint destination_texture, const SurfaceParams& destination,
+                               const Common::Rectangle<u32>& rectangle) {
     const auto supported = [](const SurfaceParams& surface) {
-        return surface.pixel_format == SurfaceParams::PixelFormat::RGBA8 &&
+        return (surface.pixel_format == SurfaceParams::PixelFormat::RGBA8 ||
+                surface.pixel_format == SurfaceParams::PixelFormat::RGB8) &&
                surface.res_scale == 1 && surface.width != 0 && surface.height != 0 &&
-               surface.width == surface.stride && (surface.addr & 3) == 0 &&
-               u64(surface.width) * surface.height * 4 == surface.size &&
+               surface.width == surface.stride &&
+               u64(surface.width) * surface.height * (surface.GetFormatBpp() / 8) == surface.size &&
+               surface.size <= u32(std::numeric_limits<GLint>::max()) &&
                (!surface.is_tiled || ((surface.width | surface.height) & 7) == 0);
     };
     if (!source_texture || !destination_texture || source_texture == destination_texture ||
-        !supported(source) || !supported(destination) || destination.addr < source.addr ||
-        u64(destination.addr) + destination.size > u64(source.addr) + source.size ||
+        !supported(source) || !supported(destination) ||
         rectangle.left >= rectangle.right || rectangle.bottom >= rectangle.top ||
         rectangle.right > destination.width || rectangle.top > destination.height) {
         return false;
     }
+    // Require whole tiles; the conservative enclosing interval must be inside
+    // the source. The cache additionally chooses rectangles without row gaps.
+    if (destination.is_tiled && ((rectangle.left | rectangle.right | rectangle.top |
+                                  rectangle.bottom) & 7)) return false;
+    const auto interval = destination.GetSubRectInterval(rectangle);
+    const auto begin = boost::icl::first(interval);
+    const auto end = boost::icl::last_next(interval);
+    const s64 byte_offset = s64(destination.addr) - s64(source.addr);
+    if (begin < source.addr || u64(end) > u64(source.addr) + source.size ||
+        begin >= end || byte_offset < std::numeric_limits<GLint>::min() ||
+        byte_offset > std::numeric_limits<GLint>::max()) return false;
     const OpenGLState previous = OpenGLState::GetCurState();
     GLint previous_active_texture = GL_TEXTURE0;
     glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
@@ -127,7 +175,9 @@ bool SurfaceRemapper::RemapRGBA8(GLuint source_texture, const SurfaceParams& sou
     glUniform4i(source_layout_location, source.width, source.height, source.stride, source.is_tiled);
     glUniform4i(destination_layout_location, destination.width, destination.height,
                 destination.stride, destination.is_tiled);
-    glUniform1i(pixel_offset_location, (destination.addr - source.addr) / 4);
+    glUniform1i(byte_offset_location, static_cast<GLint>(byte_offset));
+    glUniform2i(bytes_per_pixel_location, source.GetFormatBpp() / 8,
+                destination.GetFormatBpp() / 8);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     return glGetError() == GL_NO_ERROR;
 }

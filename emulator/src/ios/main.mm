@@ -1938,6 +1938,16 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"vertex_subimage_sample_cpu_ms\":" + std::to_string((current.vertex_subimage_cpu_samples.cpu_seconds - previous_counters.vertex_subimage_cpu_samples.cpu_seconds)*1000.0) +
                                 ",\"vertex_subimage_samples\":" + std::to_string((current.vertex_subimage_cpu_samples.samples - previous_counters.vertex_subimage_cpu_samples.samples)) +
                                 ",\"vertex_subimage_sample_clock_failures\":" + std::to_string((current.vertex_subimage_cpu_samples.clock_failures - previous_counters.vertex_subimage_cpu_samples.clock_failures)) +
+                                ",\"surface_download_sample_wall_ms\":" + std::to_string((current.surface_download_cpu_samples.wall_seconds - previous_counters.surface_download_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"surface_download_sample_cpu_ms\":" + std::to_string((current.surface_download_cpu_samples.cpu_seconds - previous_counters.surface_download_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"surface_download_samples\":" + std::to_string((current.surface_download_cpu_samples.samples - previous_counters.surface_download_cpu_samples.samples)) +
+                                ",\"surface_download_sample_clock_failures\":" + std::to_string((current.surface_download_cpu_samples.clock_failures - previous_counters.surface_download_cpu_samples.clock_failures)) +
+                                ",\"surface_read_pixels_sample_wall_ms\":" + std::to_string((current.surface_read_pixels_cpu_samples.wall_seconds - previous_counters.surface_read_pixels_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"surface_read_pixels_sample_cpu_ms\":" + std::to_string((current.surface_read_pixels_cpu_samples.cpu_seconds - previous_counters.surface_read_pixels_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"surface_read_pixels_samples\":" + std::to_string((current.surface_read_pixels_cpu_samples.samples - previous_counters.surface_read_pixels_cpu_samples.samples)) +
+                                ",\"surface_read_pixels_sample_clock_failures\":" + std::to_string((current.surface_read_pixels_cpu_samples.clock_failures - previous_counters.surface_read_pixels_cpu_samples.clock_failures)) +
+                                ",\"surface_read_pixels_ms_per_frame\":" + std::to_string((current.surface_read_pixels_seconds - previous_counters.surface_read_pixels_seconds)*1000.0/count) +
+                                ",\"surface_read_pixels_calls\":" + std::to_string(current.surface_read_pixels_calls - previous_counters.surface_read_pixels_calls) +
                                 ",\"uniform_upload_ms_per_frame\":" + std::to_string((current.uniform_upload_seconds - previous_counters.uniform_upload_seconds)*1000.0/count) +
                                 ",\"surface_remap_ms_per_frame\":" + std::to_string((current.surface_remap_seconds - previous_counters.surface_remap_seconds)*1000.0/count) +
                                 ",\"surface_remap_calls\":" + std::to_string(current.surface_remap_calls - previous_counters.surface_remap_calls) +

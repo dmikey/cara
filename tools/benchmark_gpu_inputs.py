@@ -78,7 +78,7 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -130,6 +130,7 @@ def main():
                     'CARA_PHASE_CPU_TIMING':'1' if args.phase_cpu_timing else '0',
                     'CARA_BENCHMARK_CAPTURE':'1',
                     'CARA_GPU_SURFACE_REMAP':'1' if config.get('surface_remap',False) else '0',
+                    'CARA_GPU_BYTE_SURFACE_REMAP':'1' if config.get('byte_surface_remap',False) else '0',
                     'CARA_GPU_RETAIN_INPUT_BINDINGS':'1' if config.get('retain_input_bindings',False) else '0',
                     'CARA_GPU_PACKED_FETCH_REUSE':'1' if config.get('packed_fetch_reuse',False) else '0',
                     'CARA_FASTINTERP_VFP_SIMD':str(int(config.get('vfp_simd',0))),
@@ -236,7 +237,7 @@ def main():
         if any(w['guest_cpu_percent'] != config.get('guest_cpu_percent',100) or w['packed_validation_failures'] != 0
                or w['packed_verified_draws'] != 0 for w in windows):
             raise RuntimeError('Unexpected clock, validation failure or active shadow decoder')
-        fields = ['surface_remap_ms_per_frame','surface_remap_calls','surface_remap_bytes','gpu_feedback_vertex_draws','gpu_feedback_source_vertices','surface_pack_ms_per_frame','surface_download_ms_per_frame','surface_download_calls','surface_download_bytes','shader_compile_ms_per_frame','gpu_wait_ms_per_frame','uniform_upload_ms_per_frame','stream_map_ms_per_frame','stream_unmap_ms_per_frame','stream_map_calls','stream_unmap_calls','stream_mapped_bytes','state_apply_ms_per_frame','gpu_direct_vertex_draws','gpu_direct_vertices','gpu_direct_unique_inputs','gpu_lit_pair_draws','gpu_lit_pair_vertices','gpu_lit_pair_ids','mean_ms', 'vertex_prepare_ms_per_frame', 'vertex_upload_ms_per_frame',
+        fields = ['surface_remap_ms_per_frame','surface_remap_calls','surface_remap_bytes','gpu_feedback_vertex_draws','gpu_feedback_source_vertices','surface_pack_ms_per_frame','surface_download_ms_per_frame','surface_read_pixels_ms_per_frame','surface_read_pixels_calls','surface_download_calls','surface_download_bytes','shader_compile_ms_per_frame','gpu_wait_ms_per_frame','uniform_upload_ms_per_frame','stream_map_ms_per_frame','stream_unmap_ms_per_frame','stream_map_calls','stream_unmap_calls','stream_mapped_bytes','state_apply_ms_per_frame','gpu_direct_vertex_draws','gpu_direct_vertices','gpu_direct_unique_inputs','gpu_lit_pair_draws','gpu_lit_pair_vertices','gpu_lit_pair_ids','mean_ms', 'vertex_prepare_ms_per_frame', 'vertex_upload_ms_per_frame',
                   'draw_submit_ms_per_frame', 'vertex_upload_bytes', 'gpu_vertices',
                   'gpu_vertex_draws', 'gpu_packed_input_draws', 'vertex_upload_fallbacks',
                   'vertex_upload_reused_bytes', 'vertex_upload_reused_textures',
@@ -247,7 +248,7 @@ def main():
         fields += ['guest_cpu_ms_per_frame','draw_ms_per_frame','cpu_shader_ms_per_frame','shader_calls','cpu_surface_invalidations','vertex_gl_subimage_calls','vertex_gl_image_calls','vertex_index_upload_bytes','gpu_input_records','lit_draws','active_light_sum']
         fields += ['texture_lookup_checks', 'texture_lookup_hits', 'texture_lookup_misses', 'texture_lookup_stores', 'texture_lookup_ambiguous_rejects', 'texture_lookup_epoch_rejects', 'texture_lookup_verified_hits', 'texture_lookup_verify_mismatches']
         if args.phase_cpu_timing:
-            fields += [phase+'_'+suffix for phase in ['draw_submit','vertex_orphan','stream_map','stream_unmap','uniform_upload','vertex_subimage']
+            fields += [phase+'_'+suffix for phase in ['draw_submit','vertex_orphan','stream_map','stream_unmap','uniform_upload','vertex_subimage','surface_download','surface_read_pixels']
                        for suffix in ['sample_wall_ms','sample_cpu_ms','samples','sample_clock_failures']]
         if args.host_cpu_timing:
             fields += ['emulation_thread_cpu_ms_per_frame', 'process_cpu_ms_per_frame']
