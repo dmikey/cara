@@ -860,7 +860,7 @@ rotate and redundant instruction reread; independent ADD and dead-flag ADD.S
 oracles and timer traces pass. Its small native synthetic improvement is not a
 game-speed claim.
 
-Normal play now has a persisted `maximumSpeedPercent` preference, default 105,
+Normal play has a persisted `maximumSpeedPercent` preference, now default 100,
 with a frame-pacing policy independent of guest CPU underclocking. It counts all
 advanced vblanks per frontend iteration and discards overdue pacing debt, so slow
 frames or resume do not create catch-up bursts. Pause, load, counter reset and
@@ -994,3 +994,19 @@ and faster native copy microbenchmarks were insufficient to improve gameplay.
 Shader compilation and surface download were absent in these measured windows;
 remaining work needs to target the CPU command/dispatch costs with game-level
 evidence rather than add more cache bookkeeping on this path.
+
+
+Apple builds now decode AAC-LC mono/stereo through AudioToolbox. Original synthetic
+32/44.1/48 kHz fixtures match the same host's file-decoder PCM, including fragmented
+input, resets and malformed-input recovery. On iPad, Pokemon X requested 48 kHz
+stereo AAC and produced nonzero PCM with zero reported decoding errors; music
+continued after a fresh-build save/load test, and the user confirmed hearing it.
+The previous Apple build selected NullDecoder for these requests.
+
+Normal pacing and Accuracy now default to 100% speed; Accuracy also fixes guest
+CPU at 100%. Audio stretching defaults off but remains optional. Sustained 105%
+emulation with stretching off overproduces samples for the fixed-rate audio FIFO,
+whose full-buffer losses are not represented by underrun counts. With stretching
+on, the tempo adjustment can affect music even without underruns. Explicit higher
+speed limits remain available in Advanced. These defaults do not guarantee
+artifact-free audio in scenes that cannot maintain real time.

@@ -12,7 +12,7 @@ namespace Cara {
 // the returned absolute deadline. This never changes the emulated CPU clock.
 class FramePacer {
 public:
-    static constexpr unsigned DefaultSpeedPercent = 105;
+    static constexpr unsigned DefaultSpeedPercent = 100;
     static constexpr unsigned MinSpeedPercent = 50;
     static constexpr unsigned MaxSpeedPercent = 200;
     static constexpr double VBlankHz = 59.833997376556916;
