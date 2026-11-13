@@ -89,11 +89,19 @@ jobs:
       - name: Package unsigned iOS app
         if: matrix.platform == 'ios'
         run: ditto -c -k --norsrc --noextattr --keepParent 'work/build-ios${{ matrix.suffix }}/bin/cara-ios.app' 'work/Cara-iOS-${{ matrix.renderer }}-unsigned.zip'
+      - name: Package unsigned IPA
+        if: matrix.platform == 'ios'
+        run: |
+          mkdir -p work/ipa/Payload
+          ditto --norsrc --noextattr 'work/build-ios${{ matrix.suffix }}/bin/cara-ios.app' work/ipa/Payload/Cara.app
+          cd work/ipa
+          zip -qr '../Cara-iOS-${{ matrix.renderer }}-unsigned.ipa' Payload
       - uses: actions/upload-artifact@v4
         with:
           name: cara-${{ matrix.platform }}-${{ matrix.renderer }}-no-jit
           if-no-files-found: error
           path: |
             work/Cara-iOS-*-unsigned.zip
+            work/Cara-iOS-*-unsigned.ipa
             work/build-${{ matrix.platform }}${{ matrix.suffix }}/bin/cara-no-jit-probe
             work/build-${{ matrix.platform }}${{ matrix.suffix }}/no-jit-audit.json

@@ -113,7 +113,7 @@ bundled in the repository, with build tools and validation guides included.
 
 [Build Cara](docs/build.md) · [Performance](docs/performance.md) ·
 [Architecture](docs/technology.md) · [Save states](docs/save-states.md) ·
-[Validation](docs/validation.md)
+[Validation](docs/validation.md) · [Experimental Android and IPA artifacts](docs/android-experimental.md)
 
 ## Build and contribute
 

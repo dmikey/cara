@@ -11,20 +11,27 @@ target_include_directories(catch-single-include INTERFACE catch/single_include)
 # Crypto++
 add_subdirectory(cryptopp)
 
-# Dynarmic
-if (CARA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
-    if (ARCHITECTURE_x86_64)
-        # Dynarmic will skip defining xbyak if it's already defined, we then define it below
-        add_library(xbyak INTERFACE)
-    endif()
-    option(DYNARMIC_TESTS OFF)
-    set(DYNARMIC_NO_BUNDLED_FMT ON)
-    add_subdirectory(dynarmic)
-endif()
-
-# libfmt
+# Define the shared fmt target before optional Dynarmic dependencies inspect it.
 add_subdirectory(fmt)
 add_library(fmt::fmt ALIAS fmt)
+
+# Android's optional Dynarmic dependency is fetched at an exact source revision.
+if(CARA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dynarmic/CMakeLists.txt")
+        message(FATAL_ERROR "Run tools/prepare_android_dynarmic.py before enabling JIT")
+    endif()
+    function(cara_add_dynarmic)
+        if(ARCHITECTURE_ARM64)
+            set(ARCHITECTURE arm64)
+        elseif(ARCHITECTURE_x86_64)
+            set(ARCHITECTURE x86_64)
+        endif()
+        set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
+        set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+        add_subdirectory(dynarmic)
+    endfunction()
+    cara_add_dynarmic()
+endif()
 
 # getopt
 if (MSVC)

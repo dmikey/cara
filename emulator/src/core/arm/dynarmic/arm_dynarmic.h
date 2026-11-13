@@ -6,7 +6,7 @@
 
 #include <map>
 #include <memory>
-#include <dynarmic/A32/a32.h>
+#include <dynarmic/interface/A32/a32.h>
 #include "common/common_types.h"
 #include "core/arm/arm_interface.h"
 #include "core/arm/dynarmic/arm_dynarmic_cp15.h"
@@ -51,11 +51,11 @@ public:
 
     void ClearInstructionCache() override;
     void InvalidateCacheRange(u32 start_address, std::size_t length) override;
-    void SetPageTable(Memory::PageTable* page_table) override;
+    void SetPageTable(const std::shared_ptr<Memory::PageTable>& page_table) override;
     void PurgeState() override;
 
 protected:
-    Memory::PageTable* GetPageTable() const override;
+    std::shared_ptr<Memory::PageTable> GetPageTable() const override;
 
 private:
     void ServeBreak();
@@ -70,6 +70,6 @@ private:
     CP15State cp15_state;
 
     Dynarmic::A32::Jit* jit = nullptr;
-    Memory::PageTable* current_page_table = nullptr;
-    std::map<Memory::PageTable*, std::unique_ptr<Dynarmic::A32::Jit>> jits;
+    std::shared_ptr<Memory::PageTable> current_page_table;
+    std::map<std::shared_ptr<Memory::PageTable>, std::unique_ptr<Dynarmic::A32::Jit>> jits;
 };

@@ -8,7 +8,7 @@ include(CMakeDependentOption)
 
 project(cara)
 
-if (APPLE)
+if (APPLE OR ANDROID)
     # Boost 1.70 uses the C++14 function base classes removed from newer libc++.
     add_definitions(-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION)
 endif()
@@ -60,6 +60,14 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     if (CARA_IOS_HARDWARE_RENDERER)
         add_definitions(-DCARA_IOS_GLES=1)
     endif()
+endif()
+# The GLES3 atlas pipeline has a legacy iOS macro name, but no Apple API dependency.
+option(CARA_ANDROID_GLES_EXPERIMENT "Use Cara's GLES3 atlas pipeline on Android" OFF)
+if(CARA_ANDROID_GLES_EXPERIMENT)
+    if(NOT ANDROID)
+        message(FATAL_ERROR "CARA_ANDROID_GLES_EXPERIMENT requires Android")
+    endif()
+    add_definitions(-DCARA_IOS_GLES=1 -DCARA_ANDROID_GLES_EXPERIMENT=1)
 endif()
 option(CARA_SOFTWARE_PRESENTATION "Present CPU-rendered LCDs without OpenGL" OFF)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")

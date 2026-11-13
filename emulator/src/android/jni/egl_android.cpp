@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "egl_android.h"
 
 #include <android/native_window_jni.h>
@@ -62,6 +63,13 @@ private:
 EGLAndroid::EGLAndroid(bool use_shared_context) : use_shared_context(use_shared_context) {}
 
 bool EGLAndroid::Initialize(ANativeWindow* surface) {
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+    setenv("CARA_GPU_PACKED_INPUTS", "1", 1);
+    setenv("CARA_VERTEX_UPLOAD_REUSE", "1", 1);
+    setenv("CARA_VERTEX_INDEX_CACHE", "1", 1);
+    setenv("CARA_VERTEX_UPLOAD_BANK_MIB", "80", 1);
+    setenv("CARA_VS_UNIFORM_REUSE", "1", 1);
+#endif
     host_window = surface;
     egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (!egl_display) {

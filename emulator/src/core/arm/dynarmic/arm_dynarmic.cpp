@@ -3,9 +3,11 @@
 // Refer to the license.txt file included.
 
 #include <cstring>
-#include <dynarmic/A32/a32.h>
-#include <dynarmic/A32/context.h>
+#include <dynarmic/interface/A32/a32.h>
+#include <dynarmic/interface/A32/context.h>
 #include "common/assert.h"
+#include "common/atomic_ops.h"
+#include <dynarmic/interface/exclusive_monitor.h>
 #include "common/microprofile.h"
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #include "core/arm/dynarmic/arm_dynarmic_cp15.h"
@@ -15,6 +17,11 @@
 #include "core/hle/kernel/svc.h"
 #include "core/memory.h"
 #include "core/settings.h"
+
+static Dynarmic::ExclusiveMonitor& GlobalExclusiveMonitor() {
+    static Dynarmic::ExclusiveMonitor monitor(4);
+    return monitor;
+}
 
 class DynarmicThreadContext final : public ARM_Interface::ThreadContext {
 public:
@@ -101,10 +108,22 @@ public:
         memory.Write64(vaddr, value);
     }
 
+    template<typename T>
+    bool WriteExclusive(VAddr address, T value, T expected) {
+        if (address % alignof(T)) return false;
+        Memory::RasterizerFlushVirtualRegion(address, sizeof(T), Memory::FlushMode::FlushAndInvalidate);
+        auto* ptr = memory.GetPointer(address);
+        return ptr && Common::AtomicCompareAndSwap(reinterpret_cast<volatile T*>(ptr), value, expected);
+    }
+    bool MemoryWriteExclusive8(VAddr a, u8 v, u8 e) override { return WriteExclusive(a, v, e); }
+    bool MemoryWriteExclusive16(VAddr a, u16 v, u16 e) override { return WriteExclusive(a, v, e); }
+    bool MemoryWriteExclusive32(VAddr a, u32 v, u32 e) override { return WriteExclusive(a, v, e); }
+    bool MemoryWriteExclusive64(VAddr a, u64 v, u64 e) override { return WriteExclusive(a, v, e); }
+
     void InterpreterFallback(VAddr pc, std::size_t num_instructions) override {
         // Should never happen.
-        UNREACHABLE_MSG("InterpeterFallback reached with pc = 0x{:08x}, code = 0x{:08x}, num = {}",
-                        pc, MemoryReadCode(pc), num_instructions);
+        UNREACHABLE_MSG("InterpeterFallback reached with pc = 0x{:08x}, code unavailable, num = {}",
+                        pc, num_instructions);
     }
 
     void CallSVC(std::uint32_t swi) override {
@@ -129,12 +148,13 @@ public:
         case Dynarmic::A32::Exception::WaitForInterrupt:
         case Dynarmic::A32::Exception::WaitForEvent:
         case Dynarmic::A32::Exception::Yield:
+        case Dynarmic::A32::Exception::PreloadInstruction:
         case Dynarmic::A32::Exception::PreloadData:
         case Dynarmic::A32::Exception::PreloadDataWithIntentToWrite:
             return;
         }
         ASSERT_MSG(false, "ExceptionRaised(exception = {}, pc = {:08X}, code = {:08X})",
-                   static_cast<std::size_t>(exception), pc, MemoryReadCode(pc));
+                   static_cast<std::size_t>(exception), pc, MemoryRead32(pc));
     }
 
     void AddTicks(std::uint64_t ticks) override {
@@ -153,7 +173,7 @@ public:
 
 ARM_Dynarmic::ARM_Dynarmic(Core::System* system, u32 id, std::shared_ptr<Core::Timing::Timer> timer)
     : ARM_Interface(id, timer), system(*system), memory(system->Memory()),
-      cb(std::make_unique<DynarmicUserCallbacks>(*this)) {}
+      cb(std::make_unique<DynarmicUserCallbacks>(*this)) { GlobalExclusiveMonitor().ClearProcessor(id); }
 
 ARM_Dynarmic::~ARM_Dynarmic() = default;
 
@@ -267,6 +287,8 @@ void ARM_Dynarmic::LoadContext(const std::unique_ptr<ThreadContext>& arg) {
     ASSERT(ctx);
 
     jit->LoadContext(ctx->ctx);
+    jit->ClearExclusiveState();
+    GlobalExclusiveMonitor().ClearProcessor(GetID());
     fpexc = ctx->fpexc;
 }
 
@@ -287,11 +309,11 @@ void ARM_Dynarmic::InvalidateCacheRange(u32 start_address, std::size_t length) {
     LOG_DEBUG(Core_ARM11, "arm jit invalidate cache range");
 }
 
-Memory::PageTable* ARM_Dynarmic::GetPageTable() const {
+std::shared_ptr<Memory::PageTable> ARM_Dynarmic::GetPageTable() const {
     return current_page_table;
 }
 
-void ARM_Dynarmic::SetPageTable(Memory::PageTable* page_table) {
+void ARM_Dynarmic::SetPageTable(const std::shared_ptr<Memory::PageTable>& page_table) {
     current_page_table = page_table;
     Dynarmic::A32::Context ctx{};
     if (jit) {
@@ -321,7 +343,10 @@ void ARM_Dynarmic::ServeBreak() {
 std::unique_ptr<Dynarmic::A32::Jit> ARM_Dynarmic::MakeJit() {
     Dynarmic::A32::UserConfig config;
     config.callbacks = cb.get();
-    config.page_table = &current_page_table->pointers;
+    config.processor_id = GetID();
+    config.global_monitor = &GlobalExclusiveMonitor();
+    config.arch_version = Dynarmic::A32::ArchVersion::v6K;
+    config.page_table = &current_page_table->GetPointerArray();
     config.coprocessors[15] = std::make_shared<DynarmicCP15>(cp15_state);
     config.define_unpredictable_behaviour = true;
     return std::make_unique<Dynarmic::A32::Jit>(config);
