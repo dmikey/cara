@@ -28,29 +28,29 @@
 
 // VFP Register Transfer: VMOV ARM to single VFP
 handle_VmovArmToS:
-    CHECK_COND();
+    CHECK_COND(VmovArmToS);
     VFP_S_WRITE_U32(inst->vfp.sd, state_.regs[inst->vfp.rt]);
     ADVANCE_AND_DISPATCH();
 
 handle_VmovSToArm:
-    CHECK_COND();
+    CHECK_COND(VmovSToArm);
     state_.regs[inst->vfp.rt] = VFP_S_READ_U32(inst->vfp.sd);
     ADVANCE_AND_DISPATCH();
 
 handle_VmovArmToD:
-    CHECK_COND();
+    CHECK_COND(VmovArmToD);
     state_.vfp_regs[inst->vfp.sd * 2] = state_.regs[inst->vfp.rt];
     state_.vfp_regs[inst->vfp.sd * 2 + 1] = state_.regs[inst->vfp.rt2];
     ADVANCE_AND_DISPATCH();
 
 handle_VmovDToArm:
-    CHECK_COND();
+    CHECK_COND(VmovDToArm);
     state_.regs[inst->vfp.rt] = state_.vfp_regs[inst->vfp.sd * 2];
     state_.regs[inst->vfp.rt2] = state_.vfp_regs[inst->vfp.sd * 2 + 1];
     ADVANCE_AND_DISPATCH();
 
 handle_Vmrs:
-    CHECK_COND();
+    CHECK_COND(Vmrs);
     if (inst->vfp.rt == 15) {
         // Move FPSCR flags to CPSR (APSR_nzcv); SetPacked masks to bits 31-28
         state_.lazy_flags.SetPacked(state_.fpscr);
@@ -60,22 +60,22 @@ handle_Vmrs:
     ADVANCE_AND_DISPATCH();
 
 handle_Vmsr:
-    CHECK_COND();
+    CHECK_COND(Vmsr);
     state_.fpscr = state_.regs[inst->vfp.rt];
     ADVANCE_AND_DISPATCH();
 
 handle_VaddS:
-    CHECK_COND();
+    CHECK_COND(VaddS);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) + VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VsubS:
-    CHECK_COND();
+    CHECK_COND(VsubS);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) - VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmulS:
-    CHECK_COND();
+    CHECK_COND(VmulS);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
@@ -189,136 +189,136 @@ handle_Vmla4Gather: {
 }
 
 handle_VdivS:
-    CHECK_COND();
+    CHECK_COND(VdivS);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) / VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmlaS:
-    CHECK_COND();
+    CHECK_COND(VmlaS);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sd) + VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmlsS:
-    CHECK_COND();
+    CHECK_COND(VmlsS);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sd) - VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmlaS:
-    CHECK_COND();
+    CHECK_COND(VnmlaS);
     VFP_S_WRITE(inst->vfp.sd, -VFP_S_READ(inst->vfp.sd) - VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmlsS:
-    CHECK_COND();
+    CHECK_COND(VnmlsS);
     VFP_S_WRITE(inst->vfp.sd, -VFP_S_READ(inst->vfp.sd) + VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmulS:
-    CHECK_COND();
+    CHECK_COND(VnmulS);
     VFP_S_WRITE(inst->vfp.sd, -(VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VabsS:
-    CHECK_COND();
+    CHECK_COND(VabsS);
     VFP_S_WRITE(inst->vfp.sd, std::fabs(VFP_S_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VnegS:
-    CHECK_COND();
+    CHECK_COND(VnegS);
     VFP_S_WRITE(inst->vfp.sd, -VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VsqrtS:
-    CHECK_COND();
+    CHECK_COND(VsqrtS);
     VFP_S_WRITE(inst->vfp.sd, std::sqrt(VFP_S_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VmovS:
-    CHECK_COND();
+    CHECK_COND(VmovS);
     VFP_S_WRITE_U32(inst->vfp.sd, VFP_S_READ_U32(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 // Expanded constant precomputed at decode into vimm.lo
 handle_VmovImmS:
-    CHECK_COND();
+    CHECK_COND(VmovImmS);
     VFP_S_WRITE_U32(inst->vimm.sd, inst->vimm.lo);
     ADVANCE_AND_DISPATCH();
 
 handle_VaddD:
-    CHECK_COND();
+    CHECK_COND(VaddD);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sn) + VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VsubD:
-    CHECK_COND();
+    CHECK_COND(VsubD);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sn) - VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmulD:
-    CHECK_COND();
+    CHECK_COND(VmulD);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VdivD:
-    CHECK_COND();
+    CHECK_COND(VdivD);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sn) / VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmlaD:
-    CHECK_COND();
+    CHECK_COND(VmlaD);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sd) + VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmlsD:
-    CHECK_COND();
+    CHECK_COND(VmlsD);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sd) - VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmlaD:
-    CHECK_COND();
+    CHECK_COND(VnmlaD);
     VFP_D_WRITE(inst->vfp.sd, -VFP_D_READ(inst->vfp.sd) - VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmlsD:
-    CHECK_COND();
+    CHECK_COND(VnmlsD);
     VFP_D_WRITE(inst->vfp.sd, -VFP_D_READ(inst->vfp.sd) + VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmulD:
-    CHECK_COND();
+    CHECK_COND(VnmulD);
     VFP_D_WRITE(inst->vfp.sd, -(VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VabsD:
-    CHECK_COND();
+    CHECK_COND(VabsD);
     VFP_D_WRITE(inst->vfp.sd, std::fabs(VFP_D_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VnegD:
-    CHECK_COND();
+    CHECK_COND(VnegD);
     VFP_D_WRITE(inst->vfp.sd, -VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VsqrtD:
-    CHECK_COND();
+    CHECK_COND(VsqrtD);
     VFP_D_WRITE(inst->vfp.sd, std::sqrt(VFP_D_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VmovD:
-    CHECK_COND();
+    CHECK_COND(VmovD);
     state_.vfp_regs[inst->vfp.sd * 2] = state_.vfp_regs[inst->vfp.sm * 2];
     state_.vfp_regs[inst->vfp.sd * 2 + 1] = state_.vfp_regs[inst->vfp.sm * 2 + 1];
     ADVANCE_AND_DISPATCH();
 
 // Expanded constant precomputed at decode into vimm.lo/hi
 handle_VmovImmD:
-    CHECK_COND();
+    CHECK_COND(VmovImmD);
     state_.vfp_regs[inst->vimm.sd * 2] = inst->vimm.lo;
     state_.vfp_regs[inst->vimm.sd * 2 + 1] = inst->vimm.hi;
     ADVANCE_AND_DISPATCH();
 
 handle_VcmpS:
-    CHECK_COND();
+    CHECK_COND(VcmpS);
     {
         float a = VFP_S_READ(inst->vfp.sd);
         float b = VFP_S_READ(inst->vfp.sm);
@@ -359,7 +359,7 @@ handle_VcmpVmrsS:
     DISPATCH();
 
 handle_VcmpD:
-    CHECK_COND();
+    CHECK_COND(VcmpD);
     {
         double a = VFP_D_READ(inst->vfp.sd);
         double b = VFP_D_READ(inst->vfp.sm);
@@ -378,7 +378,7 @@ handle_VcmpD:
     ADVANCE_AND_DISPATCH();
 
 handle_VcmpzS:
-    CHECK_COND();
+    CHECK_COND(VcmpzS);
     {
         float a = VFP_S_READ(inst->vfp.sd);
         u32 flags = 0;
@@ -396,7 +396,7 @@ handle_VcmpzS:
     ADVANCE_AND_DISPATCH();
 
 handle_VcmpzD:
-    CHECK_COND();
+    CHECK_COND(VcmpzD);
     {
         double a = VFP_D_READ(inst->vfp.sd);
         u32 flags = 0;
@@ -414,7 +414,7 @@ handle_VcmpzD:
     ADVANCE_AND_DISPATCH();
 
 handle_VcvtSToInt:
-    CHECK_COND();
+    CHECK_COND(VcvtSToInt);
     {
         float val = VFP_S_READ(inst->vfp.sm);
         // VCVT truncates towards zero; the cast does that directly. Out-of-range/NaN
@@ -432,7 +432,7 @@ handle_VcvtSToInt:
     ADVANCE_AND_DISPATCH();
 
 handle_VcvtIntToS:
-    CHECK_COND();
+    CHECK_COND(VcvtIntToS);
     {
         u32 bits = VFP_S_READ_U32(inst->vfp.sm);
         float result;
@@ -448,17 +448,17 @@ handle_VcvtIntToS:
     ADVANCE_AND_DISPATCH();
 
 handle_VcvtDToS:
-    CHECK_COND();
+    CHECK_COND(VcvtDToS);
     VFP_S_WRITE(inst->vfp.sd, static_cast<float>(VFP_D_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VcvtSToD:
-    CHECK_COND();
+    CHECK_COND(VcvtSToD);
     VFP_D_WRITE(inst->vfp.sd, static_cast<double>(VFP_S_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VcvtDToInt:
-    CHECK_COND();
+    CHECK_COND(VcvtDToInt);
     {
         double val = VFP_D_READ(inst->vfp.sm);
         // VCVT truncates towards zero; the cast does that directly. Out-of-range/NaN
@@ -476,7 +476,7 @@ handle_VcvtDToInt:
     ADVANCE_AND_DISPATCH();
 
 handle_VcvtIntToD:
-    CHECK_COND();
+    CHECK_COND(VcvtIntToD);
     {
         u32 bits = VFP_S_READ_U32(inst->vfp.sm);
         double result;
@@ -492,7 +492,7 @@ handle_VcvtIntToD:
     ADVANCE_AND_DISPATCH();
 
 handle_VldrS:
-    CHECK_COND();
+    CHECK_COND(VldrS);
     {
         u32 addr = state_.regs[inst->vfp.rn] + inst->vfp.offset;
         VFP_S_WRITE_U32(inst->vfp.sd, MemRead32(addr));
@@ -500,7 +500,7 @@ handle_VldrS:
     ADVANCE_AND_DISPATCH();
 
 handle_VstrS:
-    CHECK_COND();
+    CHECK_COND(VstrS);
     {
         u32 addr = state_.regs[inst->vfp.rn] + inst->vfp.offset;
         MemWrite32(addr, VFP_S_READ_U32(inst->vfp.sd));
@@ -508,7 +508,7 @@ handle_VstrS:
     ADVANCE_AND_DISPATCH();
 
 handle_VldrD:
-    CHECK_COND();
+    CHECK_COND(VldrD);
     {
         u32 addr = state_.regs[inst->vfp.rn] + inst->vfp.offset;
         // Only ordinary RAM can combine the two ordered word accesses. Null
@@ -526,7 +526,7 @@ handle_VldrD:
     ADVANCE_AND_DISPATCH();
 
 handle_VstrD:
-    CHECK_COND();
+    CHECK_COND(VstrD);
     {
         u32 addr = state_.regs[inst->vfp.rn] + inst->vfp.offset;
         u8* page = ram_burst_ ? local_page_ptrs[addr >> FASTINTERP_PAGE_BITS] : nullptr;
@@ -543,7 +543,7 @@ handle_VstrD:
 // vfp.sd = first Sd register, vfp.sn = count, vfp.rn = base register
 // vfp.flags: bit 0 = writeback, bit 1 = DB mode
 handle_VldmS:
-    CHECK_COND();
+    CHECK_COND(VldmS);
     {
         u32 count = inst->vfp.sn;
         u32 first_reg = inst->vfp.sd;
@@ -571,7 +571,7 @@ handle_VldmS:
     ADVANCE_AND_DISPATCH();
 
 handle_VstmS:
-    CHECK_COND();
+    CHECK_COND(VstmS);
     {
         u32 count = inst->vfp.sn;
         u32 first_reg = inst->vfp.sd;
@@ -599,7 +599,7 @@ handle_VstmS:
     ADVANCE_AND_DISPATCH();
 
 handle_VldmD:
-    CHECK_COND();
+    CHECK_COND(VldmD);
     {
         u32 count = inst->vfp.sn;
         u32 first_reg = inst->vfp.sd;
@@ -628,7 +628,7 @@ handle_VldmD:
     ADVANCE_AND_DISPATCH();
 
 handle_VstmD:
-    CHECK_COND();
+    CHECK_COND(VstmD);
     {
         u32 count = inst->vfp.sn;
         u32 first_reg = inst->vfp.sd;

@@ -68,6 +68,8 @@ jobs:
       - name: Native file I/O regression check (no ROM required)
         if: matrix.platform == 'mac'
         run: |
+          CARA_FASTINTERP_AL_DISPATCH_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-fastinterp-simd-tags-self-test --test-only
           work/build-mac/bin/cara-vertex-upload-order-self-test
           clang++ -std=c++17 -O2 -gline-tables-only -DCARA_INTERNAL_HOST_PC_SAMPLER=1 emulator/src/cara/host_pc_sampler.cpp emulator/src/cara/host_pc_sampler_self_test.cpp -o work/host-pc-sampler-smoke

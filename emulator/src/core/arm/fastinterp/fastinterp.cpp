@@ -133,6 +133,8 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     state_.page_pointers = empty_page_table; // Never null
     const char* bkpt = std::getenv("CARA_FASTINTERP_DECODE_BKPT");
     decode_breakpoints_ = bkpt && std::strcmp(bkpt, "1") == 0;
+    const char* al_dispatch = std::getenv("CARA_FASTINTERP_AL_DISPATCH");
+    al_dispatch_ = al_dispatch && std::strcmp(al_dispatch, "1") == 0;
     const char* burst = std::getenv("CARA_FASTINTERP_RAM_BURST");
     ram_burst_ = burst && std::strcmp(burst, "1") == 0;
     const char* contiguous = std::getenv("CARA_FASTINTERP_CONTIGUOUS_TRANSFERS");
@@ -244,6 +246,7 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
            << ",\"cache_lookup_or_allocate_tag_comparisons\":" << cache_profile.lookup_or_allocate_tag_comparisons;
     output << ",\"chain_budget_enabled\":" << (chain_budget_ ? "true" : "false")
            << ",\"precise_block_end_enabled\":" << (precise_block_end_ ? "true" : "false")
+           << ",\"al_dispatch_enabled\":" << (al_dispatch_ ? "true" : "false")
            << ",\"cache_ways\":" << cache_.Ways()
            << ",\"cache_sets\":" << cache_.Sets() << ",\"cache_entries\":" << CACHE_SIZE
            << ",\"cache_object_bytes\":" << sizeof(cache_)
@@ -427,6 +430,7 @@ void ARM_FastInterp::Step() {
     term.cond = 0xE;
     block->inst_count = slot + 1;
     block->end_pc = pc + size;
+    for (u16 i = 0; i <= block->inst_count; ++i) PrepareDispatch(block->instructions[i]);
     stepping_ = true;
 
     u64 executed = ExecuteBlock(block);
@@ -818,11 +822,311 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         HANDLER(MovPairLslImm),
         HANDLER(MovPairLslLsl),
 
+
+        // AL entries share each checked handler body after its predicate gate.
+        &&handle_Invalid,
+        &&handle_Nop,
+        &&handle_EndBlock,
+        &&handle_And_al,
+        &&handle_Eor_al,
+        &&handle_Sub_al,
+        &&handle_Rsb_al,
+        &&handle_Add_al,
+        &&handle_Adc_al,
+        &&handle_Sbc_al,
+        &&handle_Rsc_al,
+        &&handle_Tst_al,
+        &&handle_Teq_al,
+        &&handle_Cmp_al,
+        &&handle_Cmn_al,
+        &&handle_Orr_al,
+        &&handle_Mov_al,
+        &&handle_Bic_al,
+        &&handle_Mvn_al,
+        &&handle_AndS_al,
+        &&handle_EorS_al,
+        &&handle_SubS_al,
+        &&handle_RsbS_al,
+        &&handle_AddS_al,
+        &&handle_AdcS_al,
+        &&handle_SbcS_al,
+        &&handle_RscS_al,
+        &&handle_OrrS_al,
+        &&handle_MovS_al,
+        &&handle_BicS_al,
+        &&handle_MvnS_al,
+        &&handle_Mul_al,
+        &&handle_MulS_al,
+        &&handle_Mla_al,
+        &&handle_MlaS_al,
+        &&handle_Umull_al,
+        &&handle_UmullS_al,
+        &&handle_Umlal_al,
+        &&handle_UmlalS_al,
+        &&handle_Smull_al,
+        &&handle_SmullS_al,
+        &&handle_Smlal_al,
+        &&handle_SmlalS_al,
+        &&handle_Ldr_al,
+        &&handle_LdrB_al,
+        &&handle_LdrH_al,
+        &&handle_LdrSB_al,
+        &&handle_LdrSH_al,
+        &&handle_Str_al,
+        &&handle_StrB_al,
+        &&handle_StrH_al,
+        &&handle_Ldm_al,
+        &&handle_Stm_al,
+        &&handle_B_al,
+        &&handle_Bl_al,
+        &&handle_Bx_al,
+        &&handle_Blx_al,
+        &&handle_Clz_al,
+        &&handle_Swi_al,
+        &&handle_Mrs_al,
+        &&handle_Msr_al,
+        &&handle_Sxtb_al,
+        &&handle_Sxth_al,
+        &&handle_Uxtb_al,
+        &&handle_Uxth_al,
+        &&handle_Rev_al,
+        &&handle_Rev16_al,
+        &&handle_Revsh_al,
+        &&handle_Qadd_al,
+        &&handle_Qsub_al,
+        &&handle_Qdadd_al,
+        &&handle_Qdsub_al,
+        &&handle_Ssat_al,
+        &&handle_Usat_al,
+        &&handle_Sadd16_al,
+        &&handle_Ssub16_al,
+        &&handle_Sadd8_al,
+        &&handle_Ssub8_al,
+        &&handle_Uadd16_al,
+        &&handle_Usub16_al,
+        &&handle_Uadd8_al,
+        &&handle_Usub8_al,
+        &&handle_Uqadd16_al,
+        &&handle_Uqsub16_al,
+        &&handle_Uqadd8_al,
+        &&handle_Uqsub8_al,
+        &&handle_Qadd16_al,
+        &&handle_Qsub16_al,
+        &&handle_Qadd8_al,
+        &&handle_Qsub8_al,
+        &&handle_Shadd16_al,
+        &&handle_Shsub16_al,
+        &&handle_Shadd8_al,
+        &&handle_Shsub8_al,
+        &&handle_Uhadd16_al,
+        &&handle_Uhsub16_al,
+        &&handle_Uhadd8_al,
+        &&handle_Uhsub8_al,
+        &&handle_Sxtab_al,
+        &&handle_Sxtab16_al,
+        &&handle_Sxtah_al,
+        &&handle_Uxtab_al,
+        &&handle_Uxtab16_al,
+        &&handle_Uxtah_al,
+        &&handle_Bfc_al,
+        &&handle_Bfi_al,
+        &&handle_Sbfx_al,
+        &&handle_Ubfx_al,
+        &&handle_Rbit_al,
+        &&handle_Movt_al,
+        &&handle_Pkhbt_al,
+        &&handle_Pkhtb_al,
+        &&handle_Sel_al,
+        &&handle_Usad8_al,
+        &&handle_Usada8_al,
+        &&handle_VmovArmToS_al,
+        &&handle_VmovSToArm_al,
+        &&handle_VmovArmToD_al,
+        &&handle_VmovDToArm_al,
+        &&handle_Vmrs_al,
+        &&handle_Vmsr_al,
+        &&handle_VaddS_al,
+        &&handle_VsubS_al,
+        &&handle_VmulS_al,
+        &&handle_VdivS_al,
+        &&handle_VmlaS_al,
+        &&handle_VmlsS_al,
+        &&handle_VnmlaS_al,
+        &&handle_VnmlsS_al,
+        &&handle_VnmulS_al,
+        &&handle_VabsS_al,
+        &&handle_VnegS_al,
+        &&handle_VsqrtS_al,
+        &&handle_VmovS_al,
+        &&handle_VmovImmS_al,
+        &&handle_VaddD_al,
+        &&handle_VsubD_al,
+        &&handle_VmulD_al,
+        &&handle_VdivD_al,
+        &&handle_VmlaD_al,
+        &&handle_VmlsD_al,
+        &&handle_VnmlaD_al,
+        &&handle_VnmlsD_al,
+        &&handle_VnmulD_al,
+        &&handle_VabsD_al,
+        &&handle_VnegD_al,
+        &&handle_VsqrtD_al,
+        &&handle_VmovD_al,
+        &&handle_VmovImmD_al,
+        &&handle_VcmpS_al,
+        &&handle_VcmpD_al,
+        &&handle_VcmpzS_al,
+        &&handle_VcmpzD_al,
+        &&handle_VcvtSToInt_al,
+        &&handle_VcvtIntToS_al,
+        &&handle_VcvtDToS_al,
+        &&handle_VcvtSToD_al,
+        &&handle_VcvtDToInt_al,
+        &&handle_VcvtIntToD_al,
+        &&handle_VldrS_al,
+        &&handle_VstrS_al,
+        &&handle_VldrD_al,
+        &&handle_VstrD_al,
+        &&handle_VldmS_al,
+        &&handle_VstmS_al,
+        &&handle_VldmD_al,
+        &&handle_VstmD_al,
+        &&handle_ThumbLslImm,
+        &&handle_ThumbLsrImm,
+        &&handle_ThumbAsrImm,
+        &&handle_ThumbAddReg3,
+        &&handle_ThumbSubReg3,
+        &&handle_ThumbAddImm3,
+        &&handle_ThumbSubImm3,
+        &&handle_ThumbMovImm8,
+        &&handle_ThumbCmpImm8,
+        &&handle_ThumbAddImm8,
+        &&handle_ThumbSubImm8,
+        &&handle_ThumbAnd,
+        &&handle_ThumbEor,
+        &&handle_ThumbLslReg,
+        &&handle_ThumbLsrReg,
+        &&handle_ThumbAsrReg,
+        &&handle_ThumbAdc,
+        &&handle_ThumbSbc,
+        &&handle_ThumbRor,
+        &&handle_ThumbTst,
+        &&handle_ThumbNeg,
+        &&handle_ThumbCmpReg,
+        &&handle_ThumbCmn,
+        &&handle_ThumbOrr,
+        &&handle_ThumbMul,
+        &&handle_ThumbBic,
+        &&handle_ThumbMvn,
+        &&handle_ThumbAddHi,
+        &&handle_ThumbCmpHi,
+        &&handle_ThumbMovHi,
+        &&handle_ThumbBx,
+        &&handle_ThumbBlxReg,
+        &&handle_ThumbLdrReg,
+        &&handle_ThumbStrReg,
+        &&handle_ThumbLdrImm5,
+        &&handle_ThumbStrImm5,
+        &&handle_ThumbLdrbReg,
+        &&handle_ThumbStrbReg,
+        &&handle_ThumbLdrbImm5,
+        &&handle_ThumbStrbImm5,
+        &&handle_ThumbLdrhReg,
+        &&handle_ThumbStrhReg,
+        &&handle_ThumbLdrhImm5,
+        &&handle_ThumbStrhImm5,
+        &&handle_ThumbLdrsb,
+        &&handle_ThumbLdrsh,
+        &&handle_ThumbLdrSp,
+        &&handle_ThumbStrSp,
+        &&handle_ThumbLdrPc,
+        &&handle_ThumbAddPcImm,
+        &&handle_ThumbAddSpImm,
+        &&handle_ThumbAddSpImm7,
+        &&handle_ThumbSubSpImm7,
+        &&handle_ThumbPush,
+        &&handle_ThumbPop,
+        &&handle_ThumbLdmia,
+        &&handle_ThumbStmia,
+        &&handle_ThumbBCond,
+        &&handle_ThumbB,
+        &&handle_ThumbSwi,
+        &&handle_ThumbSxth,
+        &&handle_ThumbSxtb,
+        &&handle_ThumbUxth,
+        &&handle_ThumbUxtb,
+        &&handle_ThumbRev,
+        &&handle_ThumbRev16,
+        &&handle_ThumbRevsh,
+        &&handle_ThumbBl,
+        &&handle_ThumbBlxImm,
+        &&handle_FusedSubsBcc,
+        &&handle_FusedSubsRegBcc,
+        &&handle_FusedCmpBcc,
+        &&handle_FusedCmpRegBcc,
+        &&handle_FusedTstBcc,
+        &&handle_FusedTstRegBcc,
+        &&handle_FusedTeqBcc,
+        &&handle_FusedTeqRegBcc,
+        &&handle_ThumbFusedSubsBcc,
+        &&handle_ThumbFusedCmpBcc,
+        &&handle_ThumbFusedCmpRegBcc,
+        &&handle_ThumbFusedTstBcc,
+        &&handle_FusedAddCmpBcc,
+        &&handle_ThumbUnrolledSubsLoop,
+        &&handle_ArmUnrolledSubsLoop,
+        &&handle_ThumbUnrolledCmpLoop,
+        &&handle_Mrc_al,
+        &&handle_Mcr_al,
+        &&handle_Ldrex,
+        &&handle_Strex,
+        &&handle_Ldrexb,
+        &&handle_Strexb,
+        &&handle_Ldrexh,
+        &&handle_Strexh,
+        &&handle_Ldrexd,
+        &&handle_Strexd,
+        &&handle_Clrex,
+        &&handle_Ldrd_al,
+        &&handle_Strd_al,
+        &&handle_Smulxy_al,
+        &&handle_Smlaxy_al,
+        &&handle_Smulwy_al,
+        &&handle_Smlawy_al,
+        &&handle_Smlalxy_al,
+        &&handle_LdrImm_al,
+        &&handle_StrImm_al,
+        &&handle_LdrBImm_al,
+        &&handle_StrBImm_al,
+        &&handle_LdrHImm_al,
+        &&handle_StrHImm_al,
+        &&handle_BlxImm_al,
+        &&handle_LdrLit_al,
+        &&handle_PcSetup,
+        &&handle_Bkpt_al,
+        &&handle_Vmul4S,
+        &&handle_Vmul4Gather,
+        &&handle_Vmla4S,
+        &&handle_Vmla4Gather,
+        &&handle_AddCmpImmBcc,
+        &&handle_VcmpVmrsS,
+        &&handle_AddImm_al,
+        &&handle_AddLslImm_al,
+        &&handle_MovImm_al,
+        &&handle_MovLslImm_al,
+        &&handle_AddPairImmImm,
+        &&handle_AddPairImmLsl,
+        &&handle_AddPairLslImm,
+        &&handle_AddPairLslLsl,
+        &&handle_MovPairImmImm,
+        &&handle_MovPairImmLsl,
+        &&handle_MovPairLslImm,
+        &&handle_MovPairLslLsl,
     };
 #undef HANDLER
 
     static_assert(sizeof(dispatch_table) / sizeof(dispatch_table[0]) ==
-                      static_cast<size_t>(Opcode::OpcodeCount),
+                      2 * static_cast<size_t>(Opcode::OpcodeCount),
                   "Dispatch table size mismatch");
 
     const DecodedInst* inst = block->instructions.data();
@@ -869,10 +1173,10 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
     do {                                                                                           \
         KEEP_PAGE_TABLE_REGISTER();                                                               \
         ++inst;                                                                                    \
-        goto* dispatch_table[static_cast<size_t>(inst->opcode)];                                   \
+        goto* dispatch_table[inst->dispatch_index];                                                 \
     } while (0)
 
-#define CHECK_COND()                                                                               \
+#define CHECK_COND_GATE()                                                                          \
     do {                                                                                           \
         if (inst->cond != 0xE && !CheckCondition(inst->cond)) {                                    \
             executed += inst->ticks;                                                               \
@@ -880,6 +1184,10 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
             DISPATCH();                                                                            \
         }                                                                                          \
     } while (0)
+
+// AL labels must precede all handler-local initialization and side effects.
+// Helpers that initialize locals before their gate use CHECK_COND_GATE instead.
+#define CHECK_COND(name) CHECK_COND_GATE(); handle_##name##_al:
 
 #define ADVANCE_AND_DISPATCH()                                                                     \
     do {                                                                                           \
@@ -1076,7 +1384,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
     // must not execute their stale instructions.
     if (inst >= end)
         goto done;
-    goto* dispatch_table[static_cast<size_t>(inst->opcode)];
+    goto* dispatch_table[inst->dispatch_index];
 
     // ========================================================================
     // Instruction Handlers
@@ -1130,7 +1438,7 @@ chain:
             if (inst < end) {
                 decode_cost_.ChainSelf();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
-                goto* dispatch_table[static_cast<size_t>(inst->opcode)];
+                goto* dispatch_table[inst->dispatch_index];
             }
         }
 
@@ -1145,7 +1453,7 @@ chain:
             if (inst < end) {
                 decode_cost_.ChainPrimary();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
-                goto* dispatch_table[static_cast<size_t>(inst->opcode)];
+                goto* dispatch_table[inst->dispatch_index];
             }
         }
 
@@ -1165,7 +1473,7 @@ chain:
             if (inst < end) {
                 decode_cost_.ChainFallback();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
-                goto* dispatch_table[static_cast<size_t>(inst->opcode)];
+                goto* dispatch_table[inst->dispatch_index];
             }
         }
     }
@@ -1191,6 +1499,7 @@ done:
 #undef DISPATCH
 #undef KEEP_PAGE_TABLE_REGISTER
 #undef CHECK_COND
+#undef CHECK_COND_GATE
 #undef ADVANCE_AND_DISPATCH
 #undef MEM_READ8
 #undef MEM_READ16

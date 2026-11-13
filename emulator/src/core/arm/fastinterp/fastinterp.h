@@ -99,6 +99,11 @@ private:
     /// Check if a condition passes
     bool CheckCondition(u8 cond);
 
+    void PrepareDispatch(DecodedInst& inst) const {
+        inst.dispatch_index = static_cast<u16>(inst.opcode) +
+            ((al_dispatch_ && inst.cond == 0xE) ? static_cast<u16>(Opcode::OpcodeCount) : 0);
+    }
+
     /// Log the instruction at pc as unhandled (once per unique encoding)
     void LogUnhandledInstruction(u32 pc);
 
@@ -147,6 +152,7 @@ private:
     bool contiguous_transfers_{false};
     bool chain_budget_{false};
     bool precise_block_end_{true};
+    bool al_dispatch_{false};
     static bool AluPairsEnabled();
     u64 cache_mode_redecodes_{};
     u64 cache_page_table_changes_{};

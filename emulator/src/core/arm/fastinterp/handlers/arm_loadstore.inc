@@ -8,7 +8,7 @@
 //     doubleword (Ldrd, Strd), and block transfer (Ldm, Stm)
 
 handle_Ldr: {
-    CHECK_COND();
+    CHECK_COND(Ldr);
     // rn==15 is only reachable behind a PcSetup prefix (regs[15] = pipeline
     // PC): word literals fold to LdrLit at decode, and the Thumb byte/half
     // literal alignment is baked into the decoded offset.
@@ -53,7 +53,7 @@ handle_Ldr: {
 }
 
 handle_LdrB: {
-    CHECK_COND();
+    CHECK_COND(LdrB);
     u32 addr = state_.regs[inst->ls.rn];
     s32 offset = inst->ls.offset;
     if (inst->ls.rm != 0xFF) {
@@ -84,7 +84,7 @@ handle_LdrB: {
 }
 
 handle_LdrH: {
-    CHECK_COND();
+    CHECK_COND(LdrH);
     u32 addr = state_.regs[inst->ls.rn];
     s32 offset = inst->ls.offset;
     if (inst->ls.rm != 0xFF) {
@@ -114,7 +114,7 @@ handle_LdrH: {
 }
 
 handle_LdrSB: {
-    CHECK_COND();
+    CHECK_COND(LdrSB);
     u32 addr = state_.regs[inst->ls.rn];
     s32 offset = inst->ls.offset;
     if (inst->ls.rm != 0xFF) {
@@ -144,7 +144,7 @@ handle_LdrSB: {
 }
 
 handle_LdrSH: {
-    CHECK_COND();
+    CHECK_COND(LdrSH);
     u32 addr = state_.regs[inst->ls.rn];
     s32 offset = inst->ls.offset;
     if (inst->ls.rm != 0xFF) {
@@ -174,7 +174,7 @@ handle_LdrSH: {
 }
 
 handle_Str: {
-    CHECK_COND();
+    CHECK_COND(Str);
     u32 addr = state_.regs[inst->ls.rn];
     s32 offset = inst->ls.offset;
     if (inst->ls.rm != 0xFF) {
@@ -205,7 +205,7 @@ handle_Str: {
 }
 
 handle_StrB: {
-    CHECK_COND();
+    CHECK_COND(StrB);
     u32 addr = state_.regs[inst->ls.rn];
     s32 offset = inst->ls.offset;
     if (inst->ls.rm != 0xFF) {
@@ -236,7 +236,7 @@ handle_StrB: {
 }
 
 handle_StrH: {
-    CHECK_COND();
+    CHECK_COND(StrH);
     u32 addr = state_.regs[inst->ls.rn];
     s32 offset = inst->ls.offset;
     if (inst->ls.rm != 0xFF) {
@@ -269,31 +269,31 @@ handle_StrH: {
 // immediate offset, rd != 15, rn != 15)
 
 handle_LdrImm: {
-    CHECK_COND();
+    CHECK_COND(LdrImm);
     MEM_READ32(state_.regs[inst->ls.rn] + inst->ls.offset, state_.regs[inst->rd]);
     ADVANCE_AND_DISPATCH();
 }
 
 handle_StrImm: {
-    CHECK_COND();
+    CHECK_COND(StrImm);
     MEM_WRITE32(state_.regs[inst->ls.rn] + inst->ls.offset, state_.regs[inst->rd]);
     ADVANCE_AND_DISPATCH();
 }
 
 handle_LdrBImm: {
-    CHECK_COND();
+    CHECK_COND(LdrBImm);
     MEM_READ8(state_.regs[inst->ls.rn] + inst->ls.offset, state_.regs[inst->rd]);
     ADVANCE_AND_DISPATCH();
 }
 
 handle_StrBImm: {
-    CHECK_COND();
+    CHECK_COND(StrBImm);
     MEM_WRITE8(state_.regs[inst->ls.rn] + inst->ls.offset, state_.regs[inst->rd]);
     ADVANCE_AND_DISPATCH();
 }
 
 handle_LdrHImm: {
-    CHECK_COND();
+    CHECK_COND(LdrHImm);
     u16 val;
     MEM_READ16(state_.regs[inst->ls.rn] + inst->ls.offset, val);
     state_.regs[inst->rd] = val; // zero-extend (matches generic LdrH)
@@ -301,7 +301,7 @@ handle_LdrHImm: {
 }
 
 handle_StrHImm: {
-    CHECK_COND();
+    CHECK_COND(StrHImm);
     MEM_WRITE16(state_.regs[inst->ls.rn] + inst->ls.offset, state_.regs[inst->rd]);
     ADVANCE_AND_DISPATCH();
 }
@@ -310,7 +310,7 @@ handle_StrHImm: {
 // precomputed at decode from the pipeline-adjusted PC. rd==15 is a branch
 // (ARM jump tables use LDR PC, [PC, #imm]).
 handle_LdrLit: {
-    CHECK_COND();
+    CHECK_COND(LdrLit);
     u32 value;
     MEM_READ32(static_cast<u32>(inst->ls.offset), value);
     state_.regs[inst->rd] = value;
@@ -329,7 +329,7 @@ handle_LdrLit: {
 // ----------------------------------------------------------------------------
 
 handle_Ldrd: {
-    CHECK_COND();
+    CHECK_COND(Ldrd);
     // rn==15 (LDRD literal) arrives behind a PcSetup prefix with the
     // alignment baked into the decoded offset
     u32 addr = state_.regs[inst->ls.rn];
@@ -369,7 +369,7 @@ handle_Ldrd: {
 }
 
 handle_Strd: {
-    CHECK_COND();
+    CHECK_COND(Strd);
     u32 addr = state_.regs[inst->ls.rn];
     s32 offset = inst->ls.offset;
     if (inst->ls.rm != 0xFF) {
@@ -402,7 +402,7 @@ handle_Strd: {
 // ----------------------------------------------------------------------------
 
 handle_Ldm: {
-    CHECK_COND();
+    CHECK_COND(Ldm);
     u32 addr = state_.regs[inst->lsm.rn];
     u16 reg_list = inst->lsm.reg_list;
     bool writeback = (inst->lsm.flags & 0x01) != 0;  // W bit (bit 0)
@@ -481,7 +481,7 @@ handle_Ldm: {
 }
 
 handle_Stm: {
-    CHECK_COND();
+    CHECK_COND(Stm);
     u32 addr = state_.regs[inst->lsm.rn];
     u16 reg_list = inst->lsm.reg_list;
     bool writeback = (inst->lsm.flags & 0x01) != 0;  // W bit (bit 0)

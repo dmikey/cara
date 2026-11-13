@@ -73,3 +73,26 @@ Compiler experiments are opt-in: tools/build.py supports --cpu apple-m4 --lto,
 --pgo-generate, --pgo-use PROFILE, and --build-dir DIRECTORY. PGO profiles must
 come from the same source and target variant. Benchmark runs mute physical audio
 by default while retaining audio processing; CARA_BENCHMARK_AUDIO opts into output.
+
+## Unconditional handler entries (experiment)
+
+`CARA_FASTINTERP_AL_DISPATCH=1` selects a default-off predecoded dispatch
+index for instructions whose ARM condition is AL. These entries land after
+the predicate gate in the same compiled handler body. Conditional instructions
+retain the original condition and lazy-flag checks. Handlers with initialization
+before their gate, including exclusive-memory helper macros, keep their normal
+entry. No executable code is generated, and canonical ticks, event boundaries,
+semantic opcodes and conditions remain unchanged.
+
+The index occupies two former padding bytes, retaining a 20-byte `DecodedInst`.
+Complete decode, Step, terminators, synthetic prefixes and hot opcode rewrites
+prepare it; test-only mode changes clear the decoded cache. Census reports
+`al_dispatch_enabled`. The implementation includes table-capacity/layout guards
+and independent checks that both dispatch-table halves retain opcode order.
+
+`CARA_FASTINTERP_AL_DISPATCH_TEST=1 cara-fastinterp-self-test` compares disabled
+and enabled execution in 9,666 native cases, covering instruction predicates,
+NZCV combinations, pending lazy flags, Step, blocks and hot rewrites. Existing
+ARM/Thumb, poisoned-decode, SVC, budget, return, cache, ALU operand/pair and VCMP
+regressions also passed in both modes. These are correctness checks; device
+performance remains an independent measurement.

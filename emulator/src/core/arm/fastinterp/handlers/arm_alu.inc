@@ -19,42 +19,42 @@
 } while(0)
 
 handle_And: {
-    CHECK_COND();
+    CHECK_COND(And);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] & op2;
     ALU_DISPATCH();
 }
 
 handle_Eor: {
-    CHECK_COND();
+    CHECK_COND(Eor);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] ^ op2;
     ALU_DISPATCH();
 }
 
 handle_Sub: {
-    CHECK_COND();
+    CHECK_COND(Sub);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] - op2;
     ALU_DISPATCH();
 }
 
 handle_Rsb: {
-    CHECK_COND();
+    CHECK_COND(Rsb);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = op2 - state_.regs[inst->dp.rn];
     ALU_DISPATCH();
 }
 
 handle_Add: {
-    CHECK_COND();
+    CHECK_COND(Add);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] + op2;
     ALU_DISPATCH();
 }
 
 handle_Adc: {
-    CHECK_COND();
+    CHECK_COND(Adc);
     u32 op2 = GetOp2Fast();
     u32 c = state_.lazy_flags.GetC() ? 1 : 0;
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] + op2 + c;
@@ -62,7 +62,7 @@ handle_Adc: {
 }
 
 handle_Sbc: {
-    CHECK_COND();
+    CHECK_COND(Sbc);
     u32 op2 = GetOp2Fast();
     u32 c = state_.lazy_flags.GetC() ? 1 : 0;
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] - op2 - (1 - c);
@@ -70,7 +70,7 @@ handle_Sbc: {
 }
 
 handle_Rsc: {
-    CHECK_COND();
+    CHECK_COND(Rsc);
     u32 op2 = GetOp2Fast();
     u32 c = state_.lazy_flags.GetC() ? 1 : 0;
     state_.regs[inst->rd] = op2 - state_.regs[inst->dp.rn] - (1 - c);
@@ -78,7 +78,7 @@ handle_Rsc: {
 }
 
 handle_Tst: {
-    CHECK_COND();
+    CHECK_COND(Tst);
     const u32 old_nzcv = state_.lazy_flags.GetPacked();
     bool carry = (old_nzcv >> 29) & 1;
     u32 op2 = GetOp2(carry);
@@ -97,7 +97,7 @@ handle_Tst: {
 }
 
 handle_Teq: {
-    CHECK_COND();
+    CHECK_COND(Teq);
     const u32 old_nzcv = state_.lazy_flags.GetPacked();
     bool carry = (old_nzcv >> 29) & 1;
     u32 op2 = GetOp2(carry);
@@ -116,7 +116,7 @@ handle_Teq: {
 }
 
 handle_Cmp: {
-    CHECK_COND();
+    CHECK_COND(Cmp);
     u32 op1 = state_.regs[inst->dp.rn];
     u32 op2 = GetOp2Fast();
 #ifdef __aarch64__
@@ -134,7 +134,7 @@ handle_Cmp: {
 }
 
 handle_Cmn: {
-    CHECK_COND();
+    CHECK_COND(Cmn);
     u32 op1 = state_.regs[inst->dp.rn];
     u32 op2 = GetOp2Fast();
 #ifdef __aarch64__
@@ -152,28 +152,28 @@ handle_Cmn: {
 }
 
 handle_Orr: {
-    CHECK_COND();
+    CHECK_COND(Orr);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] | op2;
     ALU_DISPATCH();
 }
 
 handle_Mov: {
-    CHECK_COND();
+    CHECK_COND(Mov);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = op2;
     ALU_DISPATCH();
 }
 
 handle_Bic: {
-    CHECK_COND();
+    CHECK_COND(Bic);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] & ~op2;
     ALU_DISPATCH();
 }
 
 handle_Mvn: {
-    CHECK_COND();
+    CHECK_COND(Mvn);
     u32 op2 = GetOp2Fast();
     state_.regs[inst->rd] = ~op2;
     ALU_DISPATCH();
@@ -182,26 +182,26 @@ handle_Mvn: {
 // Decode guarantees no flags, rd != PC and all source registers != PC.
 // LSL immediate is bounded to [0,31], including the register-copy case.
 handle_AddImm: {
-    CHECK_COND();
+    CHECK_COND(AddImm);
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] + inst->dp.imm;
     ADVANCE_AND_DISPATCH();
 }
 
 handle_AddLslImm: {
-    CHECK_COND();
+    CHECK_COND(AddLslImm);
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] +
                            (state_.regs[inst->dp.rm] << inst->dp.shift_imm);
     ADVANCE_AND_DISPATCH();
 }
 
 handle_MovImm: {
-    CHECK_COND();
+    CHECK_COND(MovImm);
     state_.regs[inst->rd] = inst->dp.imm;
     ADVANCE_AND_DISPATCH();
 }
 
 handle_MovLslImm: {
-    CHECK_COND();
+    CHECK_COND(MovLslImm);
     state_.regs[inst->rd] = state_.regs[inst->dp.rm] << inst->dp.shift_imm;
     ADVANCE_AND_DISPATCH();
 }

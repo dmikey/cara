@@ -23,6 +23,6 @@ handle_PcSetup:
     DISPATCH();
 
 handle_Bkpt:
-    CHECK_COND();
+    CHECK_COND(Bkpt);
     LogBreakpointInstruction(inst->imm32);
     ADVANCE_AND_DISPATCH();

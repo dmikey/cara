@@ -30,6 +30,25 @@ static Entry Make(unsigned id) {
     e.index_shadow[20]=static_cast<std::uint8_t>(id*17);
     return e;
 }
+// Previous helper semantics, independently expressed as an exhaustive bounded
+// full-byte reference. Comparison-call counts are diagnostic implementation
+// details; selection, candidate count and independent hit flags must agree.
+static Result Reference(const std::vector<Entry>& pool, std::size_t first,
+                        const Entry& wanted, std::size_t limit) {
+    Result result; result.selected=first;
+    if (first>=pool.size()) return result;
+    const auto same=[](const auto& a,const auto& b) { return !a.empty() && a==b; };
+    const auto stop=first+std::min(limit,pool.size()-first-1);
+    for (auto i=first;i<=stop;++i) {
+        if (!eligible(pool[i])) continue;
+        ++result.candidates;
+        const bool a=same(pool[i].input_shadow,wanted.input_shadow);
+        const bool b=(i==first || a) && same(pool[i].index_shadow,wanted.index_shadow);
+        if (i==first) {result.input_equal=a;result.index_equal=b;}
+        if (a && b) {result.selected=i;result.input_equal=true;result.index_equal=true;break;}
+    }
+    return result;
+}
 int main() {
     std::size_t cases=0;
     std::mt19937 rng(0x4c415241);
@@ -99,6 +118,29 @@ int main() {
         pool={tiny};result=Search(pool,0,tiny);
         REQUIRE(result.input_equal==(length!=0));
         REQUIRE(result.index_equal==(length!=0)); ++cases;
+    }
+    for (unsigned trial=0;trial<20000;++trial) {
+        Entry target=Make(rng()%8);
+        target.input_shadow.resize(rng()%257);target.index_shadow.resize(rng()%129);
+        pool.clear();
+        for (unsigned i=0,n=rng()%48;i<n;++i) {
+            auto entry=target;
+            const auto change=[&](auto& bytes) {
+                if (rng()%4==0) bytes.resize(rng()%257);
+                if (!bytes.empty() && rng()%2) bytes[rng()%bytes.size()]^=1;
+            };
+            change(entry.input_shadow);change(entry.index_shadow);
+            if (rng()%17==0) entry.live=false;
+            if (rng()%19==0) entry.format=1;
+            if (rng()%23==0) entry.rows=8;
+            pool.push_back(std::move(entry));
+        }
+        const auto first=rng()%50, limit=rng()%40;
+        const auto before=pool;
+        const auto actual=Search(pool,first,target,limit), expected=Reference(pool,first,target,limit);
+        REQUIRE(actual.selected==expected.selected && actual.candidates==expected.candidates &&
+                actual.input_equal==expected.input_equal && actual.index_equal==expected.index_equal);
+        REQUIRE(pool==before);++cases;
     }
     std::cout << "vertex order reuse: " << cases << " cases passed\n";
 }

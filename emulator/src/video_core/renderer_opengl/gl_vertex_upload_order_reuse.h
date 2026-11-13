@@ -15,12 +15,14 @@ struct Result {
     bool index_equal = false;
 };
 inline bool Equal(const std::vector<std::uint8_t>& shadow, const void* bytes,
-                  std::size_t size, std::size_t& full_comparisons) {
+                  std::size_t size, std::size_t& full_comparisons, bool filter_edges = true) {
     if (!size || shadow.size() != size) return false;
     const auto* data = static_cast<const std::uint8_t*>(bytes);
-    const auto edge = std::min<std::size_t>(16, size);
-    if (std::memcmp(shadow.data(), data, edge) ||
-        std::memcmp(shadow.data() + size - edge, data + size - edge, edge)) return false;
+    if (filter_edges) {
+        const auto edge = std::min<std::size_t>(16, size);
+        if (std::memcmp(shadow.data(), data, edge) ||
+            std::memcmp(shadow.data() + size - edge, data + size - edge, edge)) return false;
+    }
     ++full_comparisons;
     return std::memcmp(shadow.data(), data, size) == 0;
 }
@@ -36,11 +38,15 @@ Result Find(const std::vector<Entry>& pool, std::size_t first, std::size_t looka
     const auto compare = [&](std::size_t position, bool both) {
         if (!eligible(pool[position])) return false;
         ++result.candidates;
-        const bool a = Equal(pool[position].input_shadow, input, input_size, result.full_comparisons);
+        // The ordinal entry is usually an exact hit. Compare it directly as the
+        // original upload-reuse path did; edge filters only help the search of
+        // alternates, where mismatches are expected.
+        const bool a = Equal(pool[position].input_shadow, input, input_size,
+                             result.full_comparisons, both);
         // The initial entry needs both booleans even if input differs, because
         // unchanged indices must still skip their original upload on a miss.
         const bool b = (!both || a) && Equal(pool[position].index_shadow, index, index_size,
-                                           result.full_comparisons);
+                                           result.full_comparisons, both);
         if (position == first) { result.input_equal = a; result.index_equal = b; }
         if (!a || !b) return false;
         result.selected = position; result.input_equal = true; result.index_equal = true;

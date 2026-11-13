@@ -5,14 +5,14 @@
 // ARM Branch handlers: B, Bl, Bx, Blx, BlxImm
 
 handle_B: {
-    CHECK_COND();
+    CHECK_COND(B);
     SET_PC(inst->branch.target); // Absolute target precomputed at decode
     executed += inst->ticks;
     goto chain;
 }
 
 handle_Bl: {
-    CHECK_COND();
+    CHECK_COND(Bl);
     state_.regs[14] = inst->branch.lr; // Precomputed at decode
     SET_PC(inst->branch.target);
     executed += inst->ticks;
@@ -20,7 +20,7 @@ handle_Bl: {
 }
 
 handle_Bx: {
-    CHECK_COND();
+    CHECK_COND(Bx);
     u32 target = state_.regs[inst->branch.rm];
     state_.thumb_mode = (target & 1) != 0;
     SET_PC(target & ~1u);
@@ -29,7 +29,7 @@ handle_Bx: {
 }
 
 handle_Blx: {
-    CHECK_COND();
+    CHECK_COND(Blx);
     // BLX register (immediate form is BlxImm); this is the ARM encoding, so
     // the block is ARM mode (Thumb BLX is ThumbBlxReg)
     state_.regs[14] = GET_PC() + 4;
@@ -41,7 +41,7 @@ handle_Blx: {
 }
 
 handle_BlxImm: {
-    CHECK_COND();
+    CHECK_COND(BlxImm);
     // ARM BLX immediate: target, LR, and destination mode precomputed at decode
     state_.regs[14] = inst->branch.lr;
     state_.thumb_mode = inst->branch.rm != 0;

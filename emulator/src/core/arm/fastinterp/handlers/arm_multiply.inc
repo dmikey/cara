@@ -7,14 +7,14 @@
 //     Smulwy, Smlawy, Smlalxy
 
 handle_Mul: {
-    CHECK_COND();
+    CHECK_COND(Mul);
     u32 result = state_.regs[inst->mul.rm] * state_.regs[inst->mul.rs];
     state_.regs[inst->rd] = result;
     ADVANCE_AND_DISPATCH();
 }
 
 handle_MulS: {
-    CHECK_COND();
+    CHECK_COND(MulS);
     u32 result = state_.regs[inst->mul.rm] * state_.regs[inst->mul.rs];
     state_.regs[inst->rd] = result;
     state_.lazy_flags.Materialize();
@@ -24,14 +24,14 @@ handle_MulS: {
 }
 
 handle_Mla: {
-    CHECK_COND();
+    CHECK_COND(Mla);
     u32 result = state_.regs[inst->mul.rm] * state_.regs[inst->mul.rs] + state_.regs[inst->mul.rn];
     state_.regs[inst->rd] = result;
     ADVANCE_AND_DISPATCH();
 }
 
 handle_MlaS: {
-    CHECK_COND();
+    CHECK_COND(MlaS);
     u32 result = state_.regs[inst->mul.rm] * state_.regs[inst->mul.rs] + state_.regs[inst->mul.rn];
     state_.regs[inst->rd] = result;
     state_.lazy_flags.Materialize();
@@ -41,7 +41,7 @@ handle_MlaS: {
 }
 
 handle_Umull: {
-    CHECK_COND();
+    CHECK_COND(Umull);
     u64 result = static_cast<u64>(state_.regs[inst->mul.rm]) * state_.regs[inst->mul.rs];
     state_.regs[inst->rd] = static_cast<u32>(result);
     state_.regs[inst->mul.rdhi] = static_cast<u32>(result >> 32);
@@ -49,7 +49,7 @@ handle_Umull: {
 }
 
 handle_UmullS: {
-    CHECK_COND();
+    CHECK_COND(UmullS);
     u64 result = static_cast<u64>(state_.regs[inst->mul.rm]) * state_.regs[inst->mul.rs];
     state_.regs[inst->rd] = static_cast<u32>(result);
     state_.regs[inst->mul.rdhi] = static_cast<u32>(result >> 32);
@@ -63,7 +63,7 @@ handle_UmullS: {
 }
 
 handle_Umlal: {
-    CHECK_COND();
+    CHECK_COND(Umlal);
     u64 accum = (static_cast<u64>(state_.regs[inst->mul.rdhi]) << 32) | state_.regs[inst->rd];
     u64 result = static_cast<u64>(state_.regs[inst->mul.rm]) * state_.regs[inst->mul.rs] + accum;
     state_.regs[inst->rd] = static_cast<u32>(result);
@@ -72,7 +72,7 @@ handle_Umlal: {
 }
 
 handle_UmlalS: {
-    CHECK_COND();
+    CHECK_COND(UmlalS);
     u64 accum = (static_cast<u64>(state_.regs[inst->mul.rdhi]) << 32) | state_.regs[inst->rd];
     u64 result = static_cast<u64>(state_.regs[inst->mul.rm]) * state_.regs[inst->mul.rs] + accum;
     state_.regs[inst->rd] = static_cast<u32>(result);
@@ -86,7 +86,7 @@ handle_UmlalS: {
 }
 
 handle_Smull: {
-    CHECK_COND();
+    CHECK_COND(Smull);
     s64 result = static_cast<s64>(static_cast<s32>(state_.regs[inst->mul.rm])) *
                  static_cast<s32>(state_.regs[inst->mul.rs]);
     state_.regs[inst->rd] = static_cast<u32>(result);
@@ -95,7 +95,7 @@ handle_Smull: {
 }
 
 handle_SmullS: {
-    CHECK_COND();
+    CHECK_COND(SmullS);
     s64 result = static_cast<s64>(static_cast<s32>(state_.regs[inst->mul.rm])) *
                  static_cast<s32>(state_.regs[inst->mul.rs]);
     state_.regs[inst->rd] = static_cast<u32>(result);
@@ -109,7 +109,7 @@ handle_SmullS: {
 }
 
 handle_Smlal: {
-    CHECK_COND();
+    CHECK_COND(Smlal);
     s64 accum = (static_cast<s64>(state_.regs[inst->mul.rdhi]) << 32) |
                 static_cast<u64>(state_.regs[inst->rd]);
     s64 result = static_cast<s64>(static_cast<s32>(state_.regs[inst->mul.rm])) *
@@ -120,7 +120,7 @@ handle_Smlal: {
 }
 
 handle_SmlalS: {
-    CHECK_COND();
+    CHECK_COND(SmlalS);
     s64 accum = (static_cast<s64>(state_.regs[inst->mul.rdhi]) << 32) |
                 static_cast<u64>(state_.regs[inst->rd]);
     s64 result = static_cast<s64>(static_cast<s32>(state_.regs[inst->mul.rm])) *
@@ -141,7 +141,7 @@ handle_SmlalS: {
 // SMLAL<x><y> accumulates into 64 bits and does not affect Q.
 
 handle_Smulxy: {
-    CHECK_COND();
+    CHECK_COND(Smulxy);
     const u32 rm_val = state_.regs[inst->mul.rm];
     const u32 rs_val = state_.regs[inst->mul.rs];
     const s32 op1 = static_cast<s16>((inst->mul.flags & 1) ? (rm_val >> 16) : rm_val);
@@ -151,7 +151,7 @@ handle_Smulxy: {
 }
 
 handle_Smlaxy: {
-    CHECK_COND();
+    CHECK_COND(Smlaxy);
     const u32 rm_val = state_.regs[inst->mul.rm];
     const u32 rs_val = state_.regs[inst->mul.rs];
     const s32 op1 = static_cast<s16>((inst->mul.flags & 1) ? (rm_val >> 16) : rm_val);
@@ -167,7 +167,7 @@ handle_Smlaxy: {
 }
 
 handle_Smulwy: {
-    CHECK_COND();
+    CHECK_COND(Smulwy);
     const u32 rs_val = state_.regs[inst->mul.rs];
     const s32 op2 = static_cast<s16>((inst->mul.flags & 2) ? (rs_val >> 16) : rs_val);
     const s64 product = static_cast<s64>(static_cast<s32>(state_.regs[inst->mul.rm])) * op2;
@@ -176,7 +176,7 @@ handle_Smulwy: {
 }
 
 handle_Smlawy: {
-    CHECK_COND();
+    CHECK_COND(Smlawy);
     const u32 rs_val = state_.regs[inst->mul.rs];
     const s32 op2 = static_cast<s16>((inst->mul.flags & 2) ? (rs_val >> 16) : rs_val);
     const s64 product = static_cast<s64>(static_cast<s32>(state_.regs[inst->mul.rm])) * op2;
@@ -191,7 +191,7 @@ handle_Smlawy: {
 }
 
 handle_Smlalxy: {
-    CHECK_COND();
+    CHECK_COND(Smlalxy);
     const u32 rm_val = state_.regs[inst->mul.rm];
     const u32 rs_val = state_.regs[inst->mul.rs];
     const s32 op1 = static_cast<s16>((inst->mul.flags & 1) ? (rm_val >> 16) : rm_val);

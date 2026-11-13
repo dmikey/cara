@@ -1644,6 +1644,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     std::memset(&term, 0, sizeof(term));
     term.opcode = Opcode::EndBlock;
     term.cond = 0xE;
+    for (u16 i = 0; i <= block->inst_count; ++i) PrepareDispatch(block->instructions[i]);
 }
 
 // ============================================================================
@@ -1677,6 +1678,7 @@ void ARM_FastInterp::ReoptimizeHotBlock(BasicBlock* block) {
     if (inst.opcode == Opcode::ThumbFusedSubsBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
         inst.opcode = Opcode::ThumbUnrolledSubsLoop;
+        PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
     }
@@ -1685,6 +1687,7 @@ void ARM_FastInterp::ReoptimizeHotBlock(BasicBlock* block) {
     if (inst.opcode == Opcode::ThumbFusedCmpRegBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
         inst.opcode = Opcode::ThumbUnrolledCmpLoop;
+        PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
     }
@@ -1693,6 +1696,7 @@ void ARM_FastInterp::ReoptimizeHotBlock(BasicBlock* block) {
     if (inst.opcode == Opcode::FusedSubsBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
         inst.opcode = Opcode::ArmUnrolledSubsLoop;
+        PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
     }

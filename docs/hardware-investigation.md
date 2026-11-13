@@ -1121,3 +1121,21 @@ but were absent from FrameTiming counters, so changing chain length could change
 the reported counter without changing actual time. Native SVC tests verify total
 and per-core counters against timer deltas. These diagnostic changes do not alter
 actual tick advancement.
+
+
+## Moving draw order and avoidable host uploads
+
+A repeated Stories grass route identified an avoidable host transport cost,
+without changing guest work or hardware timing. The old ordinal-only vertex
+upload pool retransmitted unchanged packed data after draw order changed.
+Bounded exact-payload selection within unused format/height pools reduced
+moving-window upload scopes from roughly 4.9/6.9 ms to 0.5/0.8 ms. Independent
+route repeats measured 19.055 to 18.085 ms per refresh at 100% guest CPU, with
+active sound synthesis and no JIT; endpoint and two movement-boundary pixels
+and per-window guest work matched. This is not proof of full-speed playback.
+See [vertex upload reuse](vertex-upload-reuse.md) for scope, tradeoffs, evidence
+and audio-validation limits.
+
+This is an emulator resource-selection issue, not evidence that 3DS hardware
+ignores guest draws, duplicate swaps, or early input polling. Required changed
+payloads still upload, and no guest commands or display events are skipped.

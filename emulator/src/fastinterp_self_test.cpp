@@ -23,6 +23,16 @@
 
 namespace Core::FastInterp {
 struct DecodeRecordSelfTestAccess {
+    static void ConfigureAlDispatch(ARM_FastInterp& cpu, bool enabled) {
+        cpu.al_dispatch_ = enabled; cpu.ClearInstructionCache();
+    }
+    static void PendingCompare(ARM_FastInterp& cpu, u32 a, u32 b) {
+        cpu.state_.lazy_flags.op = FlagOp::Cmp;
+        cpu.state_.lazy_flags.operand1 = a; cpu.state_.lazy_flags.operand2 = b;
+        cpu.state_.lazy_flags.result = a - b;
+    }
+    static void Reoptimize(ARM_FastInterp& cpu, BasicBlock& block) { cpu.ReoptimizeHotBlock(&block); }
+
     static const DecodeCostProfile::Stats& DecodeCostStats(const ARM_FastInterp& cpu) { return cpu.decode_cost_.GetStats(); }
     static const BlockCache::Profile& CacheStats(const ARM_FastInterp& cpu) { return cpu.cache_.GetProfile(); }
     static u64 CacheDigest(const ARM_FastInterp& cpu) {
@@ -57,11 +67,14 @@ struct DecodeRecordSelfTestAccess {
 
 #include "fastinterp_ldm_pc_self_test.h"
 #include "fastinterp_decode_cost_self_test.h"
+#include "fastinterp_al_dispatch_self_test.h"
 
 int main() {
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
+    if (std::getenv("CARA_FASTINTERP_AL_DISPATCH_TEST"))
+        return VerifyFastInterpAlDispatch(system);
     if (std::getenv("CARA_FASTINTERP_DECODE_COST_TEST"))
         return VerifyFastInterpDecodeCost(system);
     if (std::getenv("CARA_FASTINTERP_LDM_PC_TEST"))

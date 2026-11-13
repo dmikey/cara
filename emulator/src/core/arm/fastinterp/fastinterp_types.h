@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include "common/common_types.h"
@@ -621,9 +622,14 @@ struct DecodedInst {
 
     // Tick cost for this instruction (matches Dynarmic's variable tick model)
     u8 ticks;
+
+    // Uses former tail padding; semantic opcode/condition stay intact.
+    u16 dispatch_index;
 };
 
 static_assert(sizeof(DecodedInst) == 20, "DecodedInst should be 20 bytes");
+static_assert(offsetof(DecodedInst, dispatch_index) == 18, "Dispatch index must use tail padding");
+static_assert(2u * static_cast<unsigned>(Opcode::OpcodeCount) <= 65536u);
 
 // ============================================================================
 // Basic Block Structure

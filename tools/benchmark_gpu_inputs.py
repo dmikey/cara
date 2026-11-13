@@ -85,7 +85,7 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['host_pc_profile','simd_tags','upload_order_reuse','precise_block_end','state_reuse','chain_recency','guest_pc_profile','used_input_attributes','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','texture_exact_prefilter','texture_acquisition_profile','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['al_dispatch','eagl_threaded','host_pc_profile','simd_tags','upload_order_reuse','precise_block_end','state_reuse','chain_recency','guest_pc_profile','used_input_attributes','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','texture_exact_prefilter','texture_acquisition_profile','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -169,7 +169,9 @@ def main():
                     'CARA_FASTINTERP_TICK_BUCKETS':'1' if config.get('tick_buckets',False) else '0',
                     'CARA_FASTINTERP_CHAIN_BUDGET':'1' if config.get('chain_budget',False) else '0',
                     'CARA_HOST_PC_SAMPLER':'1' if config.get('host_pc_profile',False) else '0',
+                    'CARA_EAGL_THREADED':'1' if config.get('eagl_threaded',False) else '0',
                     'CARA_FASTINTERP_SIMD_TAGS':'1' if config.get('simd_tags',False) else '0',
+                    'CARA_FASTINTERP_AL_DISPATCH':'1' if config.get('al_dispatch',False) else '0',
                     'CARA_VERTEX_UPLOAD_ORDER_REUSE':'1' if config.get('upload_order_reuse',False) else '0',
                     'CARA_FASTINTERP_PRECISE_BLOCK_END':'1' if config.get('precise_block_end',False) else '0',
                     'CARA_FASTINTERP_CHAIN_RECENCY':'1' if config.get('chain_recency',False) else '0',
@@ -373,6 +375,8 @@ def main():
             raise RuntimeError('FastInterp chain budget mode differs from requested configuration')
         if any(core.get('simd_tags_enabled') != config.get('simd_tags', False) for core in census['cores']):
             raise RuntimeError('SIMD tag lookup mode differs from requested configuration')
+        if any(core.get('al_dispatch_enabled',False) != config.get('al_dispatch',False) for core in census['cores']):
+            raise RuntimeError('Unconditional dispatch mode differs from requested configuration')
         if any(core.get('precise_block_end_enabled') != config.get('precise_block_end', False) for core in census['cores']):
             raise RuntimeError('Precise block termination mode differs from requested configuration')
         if any(core.get('cache_chain_recency') != config.get('chain_recency', False) for core in census['cores']):
@@ -427,6 +431,8 @@ def main():
                 status['target_frames'] != args.frames or status['title_id'] != report['title_id'] or
                 status['guest_cpu_percent'] != config.get('guest_cpu_percent',100) or status['adaptive_guest_cpu']):
             raise RuntimeError('Benchmark did not complete successfully at the requested fixed guest clock')
+        if status.get('eagl_multithreaded',False) != config.get('eagl_threaded',False):
+            raise RuntimeError('EAGL driver worker mode differs from requested configuration')
         if status.get('bounded_frame_pacing',False) != config.get('bounded_pacing',False):
             raise RuntimeError('Frame pacing policy differs from requested configuration')
         if bool(status.get('paced',False)) != args.paced or (args.paced and status.get('maximum_speed_percent') != 100):

@@ -312,7 +312,13 @@ public:
     }
     void MakeCurrent() override {
 #ifdef CARA_IOS_GLES
-        if (!graphics_context) graphics_context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+        if (!graphics_context) {
+            graphics_context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+            // Driver-owned workers preserve command order; the application still
+            // accesses this context exclusively from its emulation thread.
+            const char* threaded = std::getenv("CARA_EAGL_THREADED");
+            graphics_context.multiThreaded = threaded && std::strcmp(threaded, "1") == 0;
+        }
         if (!graphics_context || ![EAGLContext setCurrentContext:graphics_context]) {
             graphics_error = "Unable to create an iOS GLES3 context"; return;
         }
@@ -2198,6 +2204,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                            << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
                        << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
 #ifdef CARA_IOS_GLES
+                           << ",\"eagl_multithreaded\":" << (emuWindow->graphics_context.isMultiThreaded ? "true" : "false")
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
                            << ",\"gpu_vertices\":" << Common::FrameTiming::counters.gpu_vertices
                            << ",\"cpu_vertex_draws\":" << Common::FrameTiming::counters.cpu_vertex_draws

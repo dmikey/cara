@@ -206,6 +206,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_options(cara-ios PRIVATE -fobjc-arc)
     if(CARA_INTERNAL_HOST_PC_SAMPLER)
         target_link_libraries(cara-ios PRIVATE cara-host-pc-sampler)
+        # ThinLTO backend objects carry optimized line tables needed by dsymutil.
+        target_link_options(cara-ios PRIVATE
+            "LINKER:-object_path_lto,${CMAKE_CURRENT_BINARY_DIR}/cara-host-pc-lto-objects")
     endif()
     if (CARA_IOS_HARDWARE_RENDERER)
         target_sources(cara-ios PRIVATE ios/gpu_vertex_self_test.cpp ios/gpu_depth_self_test.cpp ios/gpu_state_self_test.cpp)
