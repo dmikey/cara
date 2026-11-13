@@ -12,6 +12,8 @@
 @end
 
 CGRect CaraSkinRect(NSDictionary* value);
+typedef struct { CGRect indicator; CGRect metrics; } CaraHUDLayout;
+CaraHUDLayout CaraSkinHUDLayout(NSDictionary* representation,CGRect canvas);
 CGRect CaraAspectFit(CGSize source, CGRect destination);
 BOOL CaraValidateRepresentation(NSDictionary* rep);
 CGPoint CaraStickPoint(CGPoint point, CGRect frame);

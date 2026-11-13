@@ -40,6 +40,17 @@ int main(int argc,char** argv) { @autoreleasepool {
         require(CaraValidateRepresentation(orientation),"Built-in portrait/landscape representation missing");
         CGRect stats=CaraSkinRect(orientation[@"caraStatsFrame"]);
         require(stats.size.width>0 && stats.size.height>0,"Stats corner missing");
+        CGRect canvas=CGRectMake(0,0,[orientation[@"mappingSize"][@"width"] doubleValue],[orientation[@"mappingSize"][@"height"] doubleValue]);
+        CaraHUDLayout hud=CaraSkinHUDLayout(orientation,canvas);
+        require(CGRectContainsRect(canvas,hud.indicator) && CGRectContainsRect(canvas,hud.metrics),"HUD outside skin bounds");
+        require(CGRectGetMaxX(hud.indicator)<CGRectGetMinX(hud.metrics),"LED must precede metrics without overlapping");
+        for (NSDictionary* screen in orientation[@"screens"]) {
+            CGRect output=CaraSkinRect(screen[@"outputFrame"]);
+            require(!CGRectIntersectsRect(output,hud.indicator) && !CGRectIntersectsRect(output,hud.metrics),"HUD covers a game screen");
+        }
+        NSMutableDictionary* legacy=[orientation mutableCopy]; [legacy removeObjectForKey:@"caraStatusFrame"];
+        CaraHUDLayout fallback=CaraSkinHUDLayout(legacy,canvas);
+        require(CGRectContainsRect(stats,fallback.indicator) && CGRectContainsRect(stats,fallback.metrics),"Imported skin HUD footprint changed");
         require([orientation[@"screens"] count]==2,"Both screens required in each orientation");
     }
     NSMutableDictionary* bad=[rep mutableCopy]; bad[@"mappingSize"]=@{@"width":@0,@"height":@100};
