@@ -68,8 +68,9 @@ accuracy limits inherited from the narrow heuristic. Integer fifth-nanosecond
 arithmetic preserves the constants without floating-point accumulation drift.
 
 With only this flag, only P3D is delayed. Original draw commands and guest-visible writes execute in
-the existing order. Each completion deadline is the prior serial render deadline
-or current guest time, whichever is later, plus modeled duration. Nanoseconds are
+the existing order. Each completion deadline is current guest time plus modeled latency, fenced
+after the preceding render completion by at least one guest tick. The estimate
+is not accumulated as serial engine service time. Nanoseconds are
 converted to 268,111,856-Hz guest ticks using checked quotient/remainder arithmetic
 and ceiling rounding. No universal 16-ms delay or host-time measurement is used.
 
@@ -128,8 +129,8 @@ UBSan result. Linked existing CoreTiming/Boost archives are not instrumented.
    DMA/PPF/fill remain immediate.
    Do not use host execution time or a universal per-frame delay. Reject stale
    tokens after unregister/re-register; do not deliver to a reused thread slot.
-3. Extend engine ordering only with evidence: operation completion in a serial
-   engine cannot overtake older work; independent transfer/render engines may
+3. Extend engine ordering only with evidence: completion visibility for an engine
+   cannot overtake older work; independent transfer/render engines may
    overlap. A simple per-operation timer can reorder dependent submissions.
    Trace actual guest submission/dependency chains to distinguish these cases.
    Upstream's 300 µs service estimate is included for comparison with its P3D
@@ -190,8 +191,8 @@ uses the requested byte size. Duration uses checked integer upward rounding plus
 the same approximate 300 microsecond service estimate. These are not DMA rates.
 No title-specific extra texture-copy delay is included.
 
-PPF completion starts after the maximum of current guest time, preceding render
-deadline and preceding transfer deadline, then adds its transfer duration. Later
+PPF completion is current guest time plus its estimated latency, fenced after
+the preceding render and transfer deadlines by at least one guest tick. Later
 P3D work remains independent of an earlier transfer and may finish before it.
 Consume/restore validation enforces each engine's order and the earlier-render
 fence for PPF without requiring global token order across independent engines.
@@ -259,3 +260,46 @@ would hide producer overrun rather than establish hardware behavior. Next work
 must identify which guest wait/event gates production and whether render work
 without a terminal IRQ bypasses the modeled fence. No performance gain or
 cross-title compatibility is claimed for this model.
+
+
+## Submission-relative latency correction after the second Luigi falsification
+
+The P3D+PPF device experiment still exhausted 256 records at about 2.9 seconds.
+The first two 60-refresh windows accumulated about 1.21 and 1.20 seconds of P3D
+estimates per guest second. The implementation had treated every estimate as
+serial service time: `max(now, previous_deadline) + estimate`. This creates
+permanent artificial debt whenever summed estimates exceed elapsed guest time,
+regardless of whether the guest waits for P3D, PPF, or neither.
+
+The pinned upstream `gsp_gpu.cpp`, `SignalInterruptForThread`, lines 449-458,
+schedules `ScheduleEvent(nsToCycles(wait_delay_ns), ...)` relative to the current
+guest time; it does not add the previous completion deadline. The local pinned
+source was re-inspected for this correction. Its pending-queue overflow fallback
+is not adopted: Cara still fails explicitly on capacity exhaustion.
+
+Cara now treats these borrowed estimates as submission-relative asynchronous
+completion latency. Render visibility is `max(now + latency, previous_render + 1)`;
+PPF visibility is `max(now + latency, previous_render + 1, previous_transfer + 1)`.
+The one-tick fences preserve strict engine ordering and the explicitly experimental
+render-to-transfer dependency without adding a second copy of estimated work
+behind every prior completion. Arithmetic overflow is checked before mutation.
+Every accepted record keeps its own token and IRQ, and capacity remains 256.
+This changes only the default-off timing model; it adds no admission stall,
+host sleep, interrupt dropping, command skip, or title-specific adjustment.
+
+`TriggerCmdReqQueue` executes commands synchronously and clears the request count;
+`ProcessCommandList` executes register writes synchronously. Thus deferred IRQ
+visibility alone is not submission backpressure. This correction does not claim
+to emulate a serialized hardware command engine or prove its throughput. The
+conditional-IRQ/AUTOSTOP and shared command-ring semantics remain separate issues.
+Pending checkpoints should be recreated: their stored deadlines remain valid
+but may carry artificial serial debt computed by the old implementation.
+
+The native regression drives an ungated producer for 100 modeled seconds at
+200 renders and 400 PPFs per second, with render estimates summing to 1.2 seconds
+per second. It accepts and delivers all 60,003 records, with at most six pending,
+and fails under the former cumulative implementation. Existing CoreTiming/archive,
+FIFO, recipient, transfer dependency, overflow and capacity fixtures also pass.
+This is synthetic/native evidence; real-game queue bounds, game progress and
+matched fixed-100%-clock/audio device captures remain admission requirements.
+Both experiment flags remain default off.

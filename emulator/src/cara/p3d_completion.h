@@ -95,12 +95,18 @@ struct P3DCompletionQueue {
             throw std::invalid_argument("Invalid P3D completion request");
         auto slot = std::find_if(records.begin(), records.end(), [](const auto& r) { return !r.active; });
         if (slot == records.end()) throw std::runtime_error("Experimental P3D pending records exhausted");
-        const auto begin = transfer ? std::max({now, render_deadline, transfer_deadline})
-                                    : std::max(now, render_deadline);
-        if (duration > std::numeric_limits<std::int64_t>::max() - begin ||
+        // The pinned upstream estimate is completion latency relative to this
+        // submission, not a service time to add to an unbounded serial backlog.
+        // Host work has already executed. Preserve visibility order (including
+        // the experimental render->transfer fence) with one-tick separation.
+        const auto previous = transfer ? std::max(render_deadline, transfer_deadline)
+                                       : render_deadline;
+        if (duration > std::numeric_limits<std::int64_t>::max() - now ||
+            previous == std::numeric_limits<std::int64_t>::max() ||
             next_token == std::numeric_limits<std::uint64_t>::max())
             throw std::overflow_error("Experimental P3D timeline/token overflow");
-        *slot = {next_token++, generations[recipient], begin + duration, recipient, true, transfer};
+        const auto deadline = std::max(now + duration, previous + 1);
+        *slot = {next_token++, generations[recipient], deadline, recipient, true, transfer};
         (transfer ? transfer_deadline : render_deadline) = slot->deadline;
         return *slot;
     }

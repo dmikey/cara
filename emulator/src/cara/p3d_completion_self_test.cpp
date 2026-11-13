@@ -80,7 +80,7 @@ int main() {
         const auto render = queue.Enqueue(0, 100, 0);
         const auto transfer = queue.Enqueue(0, 10, 0, true);
         const auto overlapping_render = queue.Enqueue(0, 1, 0);
-        Require(transfer.deadline == 110 && overlapping_render.deadline == 101,
+        Require(transfer.deadline == 101 && overlapping_render.deadline == 101,
                 "PPF dependency or independent later render deadline incorrect");
         queue.Validate();
         Reject<std::runtime_error>([&] { queue.Consume(transfer.token, 100); });
@@ -98,6 +98,46 @@ int main() {
             queue.Consume(t.token, t.deadline);
             producer_time = t.deadline;
         }
+        // Ungated producer: 200 renders/s at 6ms estimated latency contributes
+        // 1.2 modeled seconds per guest second. This is latency, not utilization:
+        // adding it cumulatively used to exhaust 256 records after ~6 seconds.
+        // PPFs arrive twice per render; every accepted IRQ must be delivered.
+        queue = {};
+        std::vector<Cara::PendingP3D> outstanding;
+        unsigned accepted = 0, completed = 0;
+        std::size_t high_water = 0;
+        constexpr s64 submission_interval = 268111856 / 200;
+        const auto render_latency = Cara::P3DNanosecondsToTicks(6000000);
+        const auto transfer_latency = Cara::P3DNanosecondsToTicks(1000000);
+        for (s64 i = 0; i <= 20000; ++i) {
+            const auto now = i * submission_interval;
+            while (!outstanding.empty() && outstanding.front().deadline <= now) {
+                Require(queue.Consume(outstanding.front().token, now).has_value(),
+                        "Sustained producer lost completion");
+                outstanding.erase(outstanding.begin());
+                ++completed;
+            }
+            const auto r = queue.Enqueue(now, render_latency, 0);
+            outstanding.push_back(r);
+            outstanding.push_back(queue.Enqueue(now, transfer_latency, 0, true));
+            outstanding.push_back(queue.Enqueue(now, transfer_latency, 0, true));
+            accepted += 3;
+            high_water = std::max(high_water, outstanding.size());
+            Require(r.deadline == now + render_latency, "Latency accumulated serial work debt");
+            queue.Validate();
+        }
+        for (const auto& pending : outstanding) {
+            Require(queue.Consume(pending.token, pending.deadline).has_value(),
+                    "Final sustained completion lost");
+            ++completed;
+        }
+        Require(high_water == 6 && accepted == completed,
+                "Ungated producer backlog grew or completion was dropped");
+        queue = {};
+        const auto last = queue.Enqueue(0, INT64_MAX, 0);
+        Reject<std::overflow_error>([&] { queue.Enqueue(0, 1, 0); });
+        Reject<std::overflow_error>([&] { queue.Enqueue(0, 1, 0, true); });
+        Require(queue.Peek(last.token).has_value(), "Overflow corrupted accepted record");
         // Kernel Advance may execute timer0 events while current_timer still
         // names the last CPU that ran. Submit across timers, then intentionally
         // leave that selector behind the deadlines while advancing only owner0.
@@ -147,7 +187,7 @@ int main() {
         Cara::ScheduleGPUCompletion(enabled_timing, restored_render.deadline, enabled_event, restored_render.token);
         const auto restored_ppf = enabled_queue.Enqueue(Cara::GPUSubmissionNow(enabled_timing), 10, 1, true);
         Cara::ScheduleGPUCompletion(enabled_timing, restored_ppf.deadline, enabled_event, restored_ppf.token);
-        Require(restored_render.deadline == 10100 && restored_ppf.deadline == 10110,
+        Require(restored_render.deadline == 10100 && restored_ppf.deadline == 10101,
                 "Off-mode checkpoint lost selected CPU time");
         RunUntilEmpty(enabled_timing, enabled_queue);
         Require(enabled_delivered == std::vector<unsigned>({0, 1}), "Off-to-on completion restore failed");
@@ -175,7 +215,7 @@ int main() {
         Cara::P3DWorkEstimate loaded_work;
         { boost::archive::binary_iarchive in(state); in >> restored >> loaded >> loaded_work; }
         loaded.Validate();
-        Require(loaded.records[1].transfer && loaded.transfer_deadline == 200, "PPF kind/deadline lost across restore");
+        Require(loaded.records[1].transfer && loaded.transfer_deadline == 101, "PPF kind/deadline lost across restore");
         Require(loaded_work.TakeNanoseconds() == 300000 + 22 + 2 * 288, "Partial work lost across state restore");
         std::vector<unsigned> delivered;
         auto* restored_event = restored.RegisterEvent("CaraExperimentalP3DCompletion",
