@@ -1073,3 +1073,34 @@ addresses, binary UUID/load addresses, and per-location self/inclusive weights.
 Raw traces and the matching UUID-verified binary are preserved privately under
 `profiles/command-alu`. CPU-stack sampling, command counters and CPU clocks are
 run separately from uninstrumented speed comparisons.
+
+Tick buckets subsequently measured 24.690/24.773 ms between
+24.903/25.151/25.146 controls at 100% guest CPU with sound. The local frame-time
+reductions were 1.35% and 1.49%, with matching final pixels and work. The iOS
+frontend selects this path by default unless explicitly overridden.
+
+Cache cause counters explain persistent decoding: the 1,200-refresh grass replay
+recorded 6,826,270 allocations, including 6,813,401 live replacements and only
+12,869 empty allocations. There were no invalidation calls or mode redecodes.
+A default-off 8-way/2,048-set experiment keeps the same 16,384 blocks and backing
+arrays as the 4-way/4,096-set baseline. Diagnostics report the effective policy
+and cache object size; resident totals alone cannot measure the replacement rate.
+
+Native forced collisions exposed two cache-dependent timing boundaries before
+promotion. Cached chains could execute past a requested budget where a miss
+returned sooner. After a shared chain check corrected that boundary, hot
+SUBS/BNE handlers could still execute sixteen iterations before the check;
+cache retention changes when these handlers become hot. With
+`CARA_FASTINTERP_CHAIN_BUDGET=1`, chaining respects the live remaining block budget
+and unrolled handlers cap iteration count to its overflow-safe ceiling. Tests
+compare hot/cold ARM/Thumb loops, cache policies, SVC exits, flags, PC and ticks
+against independent block-budget models. This does not claim per-instruction
+or MMIO visibility of pending ticks. The first device cache experiment retained
+matching rendering counters but different final pixels, and its apparent speed
+gain is excluded pending the unrolled-loop correction and a fresh comparison.
+
+`CARA_DRAW_COST_PROFILE=1` separately samples driver-call CPU and wall time by
+submitted-vertex size and draw path, while retaining full counts. These counters
+change no GL calls. They distinguish possible per-call overhead from per-vertex
+work before batching is proposed. Tiny-call CPU samples include clock overhead
+and can exceed their wall samples; their difference is not precise GPU wait time.

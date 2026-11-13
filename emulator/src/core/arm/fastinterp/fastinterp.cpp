@@ -12,6 +12,7 @@
 #endif
 #include <cstring>
 
+#include "common/assert.h"
 #include "common/atomic_ops.h"
 #include "common/logging/log.h"
 #include "core/arm/fastinterp/arm_tick_counts.h"
@@ -131,6 +132,10 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     ram_burst_ = burst && std::strcmp(burst, "1") == 0;
     const char* contiguous = std::getenv("CARA_FASTINTERP_CONTIGUOUS_TRANSFERS");
     contiguous_transfers_ = contiguous && std::strcmp(contiguous, "1") == 0;
+    const char* chain_budget = std::getenv("CARA_FASTINTERP_CHAIN_BUDGET");
+    chain_budget_ = chain_budget && std::strcmp(chain_budget, "1") == 0;
+    const char* cache_ways = std::getenv("CARA_FASTINTERP_CACHE_WAYS");
+    cache_.SetEightWay(cache_ways && std::strcmp(cache_ways, "8") == 0);
     const char* cache_profile = std::getenv("CARA_FASTINTERP_CACHE_PROFILE");
     cache_.SetProfiling(cache_profile && std::strcmp(cache_profile, "1") == 0);
 }
@@ -185,8 +190,25 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
             if (opcode >= Opcode::AddImm && opcode <= Opcode::MovLslImm)
                 alu_weighted[unsigned(opcode) - unsigned(Opcode::AddImm)] += block->exec_count;
         }
+    u64 unrolled_blocks = 0, unrolled_dispatches = 0;
+    for (const auto* block : blocks)
+        for (unsigned slot = 0; slot < block->inst_count; ++slot) {
+            const auto opcode = block->instructions[slot].opcode;
+            if (opcode == Opcode::ArmUnrolledSubsLoop ||
+                opcode == Opcode::ThumbUnrolledSubsLoop || opcode == Opcode::ThumbUnrolledCmpLoop) {
+                ++unrolled_blocks;
+                unrolled_dispatches += block->exec_count;
+            }
+        }
     const auto& cache_profile = cache_.GetProfile();
-    output << "{\"blocks_decoded\":" << fusion_stats_.blocks_decoded
+    output << "{\"chain_budget_enabled\":" << (chain_budget_ ? "true" : "false")
+           << ",\"cache_ways\":" << cache_.Ways()
+           << ",\"cache_sets\":" << cache_.Sets() << ",\"cache_entries\":" << CACHE_SIZE
+           << ",\"cache_object_bytes\":" << sizeof(cache_)
+           << ",\"hot_blocks_reoptimized\":" << fusion_stats_.hot_blocks_reoptimized
+           << ",\"unrolled_resident_blocks\":" << unrolled_blocks
+           << ",\"unrolled_resident_entry_weighted_dispatches\":" << unrolled_dispatches
+           << ",\"blocks_decoded\":" << fusion_stats_.blocks_decoded
            << ",\"cache_profile_enabled\":" << (cache_.ProfilingEnabled() ? "true" : "false")
            << ",\"cache_allocation_misses\":" << cache_profile.allocation_misses
            << ",\"cache_empty_allocations\":" << cache_profile.empty_allocations
@@ -745,6 +767,17 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
     // local_pc syncs back to regs[15] at chain/done (SYNC_PC) and before SVC.
     u32 local_pc = state_.regs[15];
 
+    // A hot singleton represents repeated executions of its original block.
+    // Its batch must obey the same budget boundary as cold fused dispatches.
+    auto UnrollLimit = [this, &executed](u8 ticks) -> int {
+        if (!chain_budget_) return 16;
+        DEBUG_ASSERT(ticks != 0);
+        const s64 budget = timer->GetDowncount();
+        const u64 remaining = budget > 0 && static_cast<u64>(budget) > executed
+            ? static_cast<u64>(budget) - executed : 0;
+        return remaining ? static_cast<int>(std::min<u64>(16, (remaining - 1) / ticks + 1)) : 1;
+    };
+
 #if defined(__aarch64__) && defined(CARA_FASTINTERP_PIN_PAGE_TABLE) && CARA_FASTINTERP_PIN_PAGE_TABLE
 // Private compiler experiment: keep the page-table base in a callee-saved
 // register across dispatch. No guards, memory ordering or slow paths change.
@@ -997,6 +1030,17 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
 
 chain:
     SYNC_PC();
+
+    // Default-off accuracy experiment: a warm chain must stop at the same
+    // decoded-block boundary as Run() after a cache miss. GetDowncount returns
+    // remaining guest cycles (including configured clock scaling); negative
+    // budgets must not become huge unsigned values. SVC already flushes and
+    // exits via done. This check does not flush pending ticks per block, so
+    // MMIO inside a block still sees the existing batched timer visibility.
+    if (chain_budget_ &&
+        (halted_ || executed >= static_cast<u64>(std::max<s64>(timer->GetDowncount(), 0)))) {
+        goto done;
+    }
 
     // Try to chain to the next block instead of returning to Run()
     if (!stepping_ && chain_count < MAX_CHAINS) {

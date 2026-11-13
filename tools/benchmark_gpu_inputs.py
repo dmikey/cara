@@ -60,15 +60,17 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','tick_buckets','cache_profile','pica_repeat_state','pica_command_profile']) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
     if len({config['name'] for config in configs}) != len(configs):
         parser.error('configuration names must be unique')
     args.output.mkdir(parents=True, exist_ok=True)
-    if args.resume_best and any(c.get('cache_profile',False) or c.get('pica_command_profile',False) or c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) for c in configs):
+    if args.resume_best and any(c.get('draw_cost_profile',False) or c.get('cache_profile',False) or c.get('pica_command_profile',False) or c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) for c in configs):
         parser.error('Renderer diagnostics cannot select a performance winner')
+    if any(c.get('cache_ways',4) == 8 and not c.get('chain_budget',False) for c in configs):
+        parser.error('Eight-way comparisons require cache-independent chain budget checks')
     if any(c.get('texture_lookup_verify',False) and not c.get('texture_lookup_reuse',False) for c in configs):
         parser.error('Texture verification requires texture lookup reuse')
     env = os.environ.copy()
@@ -111,6 +113,9 @@ def main():
                     'CARA_GPU_LIT_VERTEX_REUSE':'1' if config.get('lit_vertex_reuse',False) else '0',
                     'CARA_FASTINTERP_RAM_BURST':'1' if config.get('ram_burst',False) else '0',
                     'CARA_FASTINTERP_TICK_BUCKETS':'1' if config.get('tick_buckets',False) else '0',
+                    'CARA_FASTINTERP_CHAIN_BUDGET':'1' if config.get('chain_budget',False) else '0',
+                    'CARA_FASTINTERP_CACHE_WAYS':str(config.get('cache_ways',4)),
+                    'CARA_DRAW_COST_PROFILE':'1' if config.get('draw_cost_profile',False) else '0',
                     'CARA_FASTINTERP_CACHE_PROFILE':'1' if config.get('cache_profile',False) else '0',
                     'CARA_FASTINTERP_ALU_OPERANDS':'1' if config.get('alu_operands',False) else '0',
                     'CARA_PICA_REPEAT_STATE':'1' if config.get('pica_repeat_state',False) else '0',
@@ -234,6 +239,10 @@ def main():
         result['alu_resident_entry_weighted_slots'] = specialized_slots
         if any(core.get('cache_profile_enabled') != config.get('cache_profile', False) for core in census['cores']):
             raise RuntimeError('FastInterp cache diagnostic mode differs from requested configuration')
+        if any(core.get('chain_budget_enabled') != config.get('chain_budget', False) for core in census['cores']):
+            raise RuntimeError('FastInterp chain budget mode differs from requested configuration')
+        if any(core.get('cache_ways') != config.get('cache_ways', 4) for core in census['cores']):
+            raise RuntimeError('FastInterp cache associativity differs from requested configuration')
         result['fastinterp_cache'] = [
             {key: value for key, value in core.items() if key in ('core', 'blocks_decoded', 'resident_entries') or key.startswith('cache_')}
             for core in census['cores']]

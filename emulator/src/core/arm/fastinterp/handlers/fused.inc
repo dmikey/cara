@@ -484,7 +484,7 @@ handle_FusedAddCmpBcc: {
 handle_ThumbUnrolledSubsLoop: {
     // Thumb: SUBS Rd, #imm8; BNE self - tight countdown loop
     // Execute up to 16 iterations inline before returning to dispatcher
-    constexpr int UNROLL_COUNT = 16;
+    const int UNROLL_COUNT = UnrollLimit(inst->ticks);
 
     u8 rd = inst->rd;
     u32 imm = inst->fused.imm;
@@ -531,7 +531,7 @@ handle_ThumbUnrolledSubsLoop: {
 
 handle_ArmUnrolledSubsLoop: {
     // ARM: SUBS Rd, Rn, #imm; BNE self - tight countdown loop
-    constexpr int UNROLL_COUNT = 16;
+    const int UNROLL_COUNT = UnrollLimit(inst->ticks);
 
     u8 rd = inst->rd;
     u8 rn = inst->fused.rn;

@@ -68,6 +68,15 @@ jobs:
           CARA_CACHE_PROFILE_TEST=1 CARA_FASTINTERP_CACHE_PROFILE=0 work/build-mac/bin/cara-fastinterp-self-test
           CARA_CACHE_PROFILE_TEST=1 CARA_FASTINTERP_CACHE_PROFILE=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_TICK_BUCKETS=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test
+          for cara_cache_ways in 4 8; do
+            CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test
+            CARA_UNROLL_BUDGET_TEST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test
+            CARA_CHAIN_SVC_TEST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test
+            CARA_CACHE_CONFLICT_TRACE=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test > work/cache-conflict-$cara_cache_ways.txt
+            CARA_HOT_LOOP_TRACE=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test > work/hot-loop-$cara_cache_ways.txt
+          done
+          diff -u work/cache-conflict-4.txt work/cache-conflict-8.txt
+          diff -u work/hot-loop-4.txt work/hot-loop-8.txt
           CARA_FASTINTERP_TICK_BUCKETS=0 work/build-mac/bin/cara-arm-tick-self-test
           CARA_FASTINTERP_TICK_BUCKETS=1 work/build-mac/bin/cara-arm-tick-self-test
           work/build-mac/bin/cara-texture-lookup-self-test

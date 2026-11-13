@@ -31,21 +31,240 @@ int main() {
     table->pointers[1] = TestMemory(code);
     memory.SetCurrentPageTable(table);
     fast->SetPageTable(table);
+    if (std::getenv("CARA_UNROLL_BUDGET_TEST")) {
+        const char* flag = std::getenv("CARA_FASTINTERP_CHAIN_BUDGET");
+        if (!flag || std::strcmp(flag, "1") != 0) {
+            std::cerr << "Unroll budget oracle requires CHAIN_BUDGET=1\n";
+            return 1;
+        }
+        const std::array<u32, 10> starts{0, 1, 2, 6, 7, 0x7fffffffu,
+                                        0x80000000u, 0xffffffffu, 0xfffffffeu, 0x12345678u};
+        u64 trace = 1469598103934665603ull;
+        unsigned cases = 0;
+        auto hash = [&](u64 value) { trace = (trace ^ value) * 1099511628211ull; };
+        auto subtract_flags = [](u32 a, u32 b) {
+            const u32 r = a - b;
+            return (r & 0x80000000u) | (r == 0 ? 0x40000000u : 0u) |
+                   (a >= b ? 0x20000000u : 0u) |
+                   ((((a ^ b) & (a ^ r)) >> 3) & 0x10000000u);
+        };
+        for (unsigned variant = 0; variant < 3; ++variant)
+            for (u32 imm : {0u, 1u, 2u, 7u})
+                for (bool hot : {false, true}) {
+                    const bool thumb = variant == 2, different_rn = variant == 1;
+                    const unsigned ticks = thumb ? 2 : 5; // Existing fused-block cycle model.
+                    code.fill(0);
+                    if (thumb) {
+                        const std::array<u16, 3> program{u16(0x3800 | imm), 0xD1FD, 0xE7FE};
+                        std::memcpy(code.data(), program.data(), sizeof(program));
+                    } else {
+                        code = {0xE2500000u | (different_rn ? 1u << 16 : 0u) | imm,
+                                0x1AFFFFFD, 0xEAFFFFFE};
+                    }
+                    fast->ClearInstructionCache();
+                    fast->ResetFusionStats();
+                    fast->SetReoptimizationEnabled(hot);
+                    if (hot) {
+                        fast->SetCPSR(0x10 | (thumb ? 0x20 : 0));
+                        fast->SetPC(0x1000 | unsigned(thumb));
+                        fast->SetReg(0, 0xfffffff0u);
+                        fast->SetReg(1, 0xfffffff0u);
+                        for (unsigned warm = 0; warm < 1001; ++warm) {
+                            timing.GetTimer(0)->Advance(1);
+                            fast->Run();
+                            if ((warm == 998 && fast->GetFusionStats().hot_blocks_reoptimized) ||
+                                (warm == 999 && fast->GetFusionStats().hot_blocks_reoptimized != 1)) {
+                                std::cerr << "Unroll hot-threshold activation mismatch\n";
+                                return 1;
+                            }
+                        }
+                    }
+                    for (u32 start : starts)
+                        for (unsigned budget : {0u, 1u, ticks - 1, ticks, ticks + 1,
+                                                15 * ticks, 16 * ticks, 16 * ticks + 1, 63u, 128u}) {
+                            const u32 initial_cpsr = 0xA0000010u | (thumb ? 0x20u : 0u);
+                            fast->SetCPSR(initial_cpsr);
+                            fast->SetPC(0x1000 | unsigned(thumb));
+                            fast->SetReg(0, different_rn ? ~start : start);
+                            fast->SetReg(1, start);
+                            timing.GetTimer(0)->Advance(budget);
+                            const auto before = timing.GetTimer(0)->GetDowncount();
+                            fast->Run();
+                            u32 value = different_rn ? ~start : start, pc = 0x1000;
+                            u32 cpsr = initial_cpsr;
+                            s64 consumed = 0;
+                            while (consumed < before) {
+                                if (pc == 0x1000) {
+                                    const u32 operand = different_rn ? start : value;
+                                    value = operand - imm;
+                                    cpsr = subtract_flags(operand, imm) | 0x10 | (thumb ? 0x20 : 0);
+                                    if (!value) pc = thumb ? 0x1004 : 0x1008;
+                                    consumed += ticks;
+                                } else ++consumed; // Terminal B self, one guest tick.
+                            }
+                            if (fast->GetReg(0) != value || fast->GetReg(1) != start ||
+                                fast->GetPC() != pc || fast->GetCPSR() != cpsr ||
+                                before - timing.GetTimer(0)->GetDowncount() != consumed) {
+                                std::cerr << "Hot/cold unroll block oracle mismatch variant=" << variant
+                                          << " hot=" << hot << " imm=" << imm << " start=" << start
+                                          << " budget=" << before << '\n';
+                                return 1;
+                            }
+                            hash(value); hash(pc); hash(cpsr); hash(consumed);
+                            ++cases;
+                        }
+                }
+        std::cout << "Hot/cold ARM/Thumb unroll oracle cases=" << cases << " trace=" << trace << '\n';
+        return 0;
+    }
+    if (std::getenv("CARA_HOT_LOOP_TRACE")) {
+        code = {0xE2500001, 0x1AFFFFFD, 0xEAFFFFFE};
+        fast->SetCPSR(0x10);
+        fast->SetReg(0, 1000000);
+        fast->SetPC(0x1000);
+        const char* disable = std::getenv("CARA_HOT_LOOP_DISABLE");
+        fast->SetReoptimizationEnabled(!(disable && std::strcmp(disable, "1") == 0));
+        u64 trace = 1469598103934665603ull, ticks = 0;
+        for (unsigned slice = 0; slice < 1100; ++slice) {
+            timing.GetTimer(0)->Advance(1);
+            const auto before = timing.GetTimer(0)->GetDowncount();
+            fast->Run();
+            const auto consumed = before - timing.GetTimer(0)->GetDowncount();
+            ticks += consumed;
+            trace = (trace ^ fast->GetReg(0)) * 1099511628211ull;
+            trace = (trace ^ consumed) * 1099511628211ull;
+        }
+        std::cout << "Hot singleton trace r0=" << fast->GetReg(0) << " ticks=" << ticks
+                  << " trace=" << trace << " hot=" << fast->GetFusionStats().hot_blocks_reoptimized << '\n';
+        return 0;
+    }
+    if (std::getenv("CARA_CHAIN_SVC_TEST")) {
+#ifndef NDEBUG
+        std::cerr << "Unknown-SVC boundary fixture requires Release: debug kernel assertions "
+                     "require a fully initialized process\n";
+        return 1;
+#else
+        // Unknown SVC 0xff takes the real tick-flush/reload/exit path without
+        // accessing a process service. This checks dispatch boundaries only;
+        // process-context-changing SVCs still require target-game validation.
+        const char* flag = std::getenv("CARA_FASTINTERP_CHAIN_BUDGET");
+        const bool bounded = flag && std::strcmp(flag, "1") == 0;
+        unsigned cases = 0;
+        u64 trace = 1469598103934665603ull;
+        auto hash = [&](u64 value) { trace = (trace ^ value) * 1099511628211ull; };
+        for (bool thumb : {false, true})
+            for (unsigned budget : {0u, 1u, 2u, 7u, 8u, 9u, 10u, 11u, 31u, 128u}) {
+                code.fill(0);
+                if (thumb) {
+                    const std::array<u16, 4> program{0x3001, 0xDFFF, 0x3001, 0xE7FE};
+                    std::memcpy(code.data(), program.data(), sizeof(program));
+                } else {
+                    code = {0xE2800001, 0xEF0000FF, 0xE2800001, 0xEAFFFFFE};
+                }
+                fast->ClearInstructionCache();
+                fast->SetCPSR(0xA0000010u | (thumb ? 0x20u : 0u));
+                fast->SetReg(0, 0);
+                fast->SetPC(0x1000 | unsigned(thumb));
+                timing.GetTimer(0)->Advance(budget);
+                const s64 before = timing.GetTimer(0)->GetDowncount();
+                fast->Run();
+                const s64 consumed = before - timing.GetTimer(0)->GetDowncount();
+                const s64 first = thumb ? 2 : 9;
+                const unsigned adds = before <= 0 ? 0 : before <= first ? 1 : 2;
+                const u32 pc = adds == 0 ? 0x1000 :
+                               adds == 1 ? (thumb ? 0x1004 : 0x1008) :
+                                           (thumb ? 0x1006 : 0x100c);
+                const u32 cpsr = thumb ? (adds ? 0x30u : 0xA0000030u) : 0xA0000010u;
+                const s64 expected_ticks = before <= 0 ? 0 : before <= first ? first :
+                                           before <= first + 2 ? first + 2 : before;
+                if (fast->GetReg(0) != adds || fast->GetPC() != pc ||
+                    fast->GetCPSR() != cpsr || (bounded && consumed != expected_ticks)) {
+                    std::cerr << "ARM/Thumb SVC block-budget mismatch thumb=" << thumb
+                              << " budget=" << before << " consumed=" << consumed
+                              << " expected=" << expected_ticks << '\n';
+                    return 1;
+                }
+                hash(fast->GetReg(0)); hash(fast->GetPC());
+                hash(fast->GetCPSR()); hash(consumed);
+                ++cases;
+            }
+        std::cout << "ARM/Thumb real-SVC flush boundaries cases=" << cases
+                  << " trace=" << trace << '\n';
+        return 0;
+#endif
+    }
+    if (std::getenv("CARA_CACHE_CONFLICT_TRACE")) {
+        auto large_code = std::make_unique<std::array<u32, 32768>>();
+        auto conflict_table = std::make_shared<Memory::PageTable>();
+        auto backing = TestMemory(*large_code);
+        for (unsigned page = 0; page < 32; ++page) {
+            conflict_table->attributes[page] = Memory::PageType::Memory;
+            conflict_table->pointers[page] = backing + page * 4096;
+        }
+        std::array<u32, 5> pcs{};
+        auto index = [](u32 pc) {
+            u32 hash = pc * 0x9E3779B9u;
+            hash ^= hash >> 16;
+            return (hash >> 4) & 4095u;
+        };
+        unsigned found = 0;
+        for (u32 pc = 0x1000; found < pcs.size(); pc += 4)
+            if (index(pc) == index(0x1000)) pcs[found++] = pc;
+        for (unsigned i = 0; i < pcs.size(); ++i) {
+            (*large_code)[pcs[i] / 4] = 0xE2800001; // ADD r0,r0,#1
+            const s32 delta = s32(pcs[(i + 1) % pcs.size()]) - s32(pcs[i] + 12);
+            (*large_code)[pcs[i] / 4 + 1] = 0xEA000000u | (u32(delta / 4) & 0xffffffu);
+        }
+        memory.SetCurrentPageTable(conflict_table);
+        fast->SetPageTable(conflict_table);
+        fast->SetCPSR(0xA0000010);
+        fast->SetReg(0, 0);
+        fast->SetPC(pcs[0]);
+        u64 total_ticks = 0, trace = 1469598103934665603ull;
+        auto hash = [&](u64 v) { trace = (trace ^ v) * 1099511628211ull; };
+        for (unsigned slice = 0; slice < 512; ++slice) {
+            const std::array<unsigned, 8> budgets{1, 2, 5, 6, 7, 31, 32, 128};
+            timing.GetTimer(0)->Advance(budgets[slice % budgets.size()]);
+            const auto before = timing.GetTimer(0)->GetDowncount();
+            fast->Run();
+            const auto consumed = before - timing.GetTimer(0)->GetDowncount();
+            total_ticks += consumed;
+            const char* budget_flag = std::getenv("CARA_FASTINTERP_CHAIN_BUDGET");
+            const bool bounded = budget_flag && std::strcmp(budget_flag, "1") == 0;
+            const u64 canonical_blocks = (u64(std::max<s64>(before, 0)) + 1) / 2;
+            if (bounded && (u64(consumed) != canonical_blocks * 2)) {
+                std::cerr << "Cache conflict canonical block-budget mismatch\n";
+                return 1;
+            }
+            if (total_ticks != u64(fast->GetReg(0)) * 2 ||
+                fast->GetPC() != pcs[fast->GetReg(0) % pcs.size()] ||
+                fast->GetCPSR() != 0xA0000010) {
+                std::cerr << "Cache conflict instruction/tick oracle mismatch\n";
+                return 1;
+            }
+            hash(fast->GetReg(0)); hash(fast->GetPC()); hash(consumed);
+        }
+        std::cout << "Cache conflict oracle slices=512 instructions=" << fast->GetReg(0)
+                  << " ticks=" << total_ticks << " trace=" << trace << '\n';
+        return 0;
+    }
     if (std::getenv("CARA_CACHE_PROFILE_TEST")) {
         using namespace Core::FastInterp;
+        for (unsigned ways : {4u, 8u})
         for (bool enabled : {false, true}) {
             auto cache = std::make_unique<BlockCache>();
+            cache->SetEightWay(ways == 8);
             cache->SetProfiling(enabled);
-            std::array<u32, 5> colliding{};
+            std::array<u32, 9> colliding{};
             unsigned found = 0;
-            auto set_index = [](u32 pc) {
+            auto set_index = [ways](u32 pc) {
                 u32 value = pc * 0x9E3779B9u;
                 value ^= value >> 16;
-                return (value >> 4) & (CACHE_SETS - 1);
+                return (value >> 4) & ((CACHE_SIZE / ways) - 1);
             };
-            for (u32 pc = 0x1000; found < colliding.size(); pc += 4)
+            for (u32 pc = 0x1000; found < ways + 1; pc += 4)
                 if (set_index(pc) == set_index(0x1000)) colliding[found++] = pc;
-            for (unsigned i = 0; i < 4; ++i) {
+            for (unsigned i = 0; i < ways; ++i) {
                 bool hit;
                 auto* block = cache->LookupOrAllocate(colliding[i], hit);
                 if (hit) return 1;
@@ -53,20 +272,21 @@ int main() {
                 block->end_pc = block->start_pc + 4;
             }
             // Hits must neither allocate nor change diagnostic totals.
-            for (u32 pc : {colliding[0], colliding[1], colliding[2], colliding[3]}) {
+            for (unsigned i = 0; i < ways; ++i) {
+                const u32 pc = colliding[i];
                 bool hit;
                 if (!cache->Lookup(pc) || !cache->LookupOrAllocate(pc, hit) || !hit) return 1;
             }
             bool hit;
-            auto* replaced = cache->LookupOrAllocate(colliding[4], hit);
+            auto* replaced = cache->LookupOrAllocate(colliding[ways], hit);
             if (hit) return 1;
             replaced->inst_count = 1;
             replaced->end_pc = replaced->start_pc + 4;
-            auto* surviving = cache->Lookup(colliding[3]);
+            auto* surviving = cache->Lookup(colliding[ways - 1]);
             if (!surviving || surviving == replaced) return 1;
             surviving->chain_target = replaced;
-            cache->InvalidateRange(colliding[4], 4);
-            if (cache->Lookup(colliding[4]) || replaced->inst_count || replaced->chain_target ||
+            cache->InvalidateRange(colliding[ways], 4);
+            if (cache->Lookup(colliding[ways]) || replaced->inst_count || replaced->chain_target ||
                 !surviving->chain_target || surviving->chain_target->inst_count) return 1;
             cache->InvalidateRange(0, 4); // No match still counts the call.
             const auto before_clear = cache->GetProfile();
@@ -74,8 +294,8 @@ int main() {
             unsigned resident = 0;
             cache->VisitResidentBlocks([&](const auto&) { ++resident; });
             const auto& stats = cache->GetProfile();
-            if (resident || stats.allocation_misses != (enabled ? 5u : 0u) ||
-                stats.empty_allocations != (enabled ? 4u : 0u) ||
+            if (resident || stats.allocation_misses != (enabled ? ways + 1 : 0u) ||
+                stats.empty_allocations != (enabled ? ways : 0u) ||
                 stats.live_replacements != (enabled ? 1u : 0u) ||
                 stats.invalidation_calls != (enabled ? 2u : 0u) ||
                 stats.invalidated_entries != (enabled ? 1u : 0u) ||
@@ -84,6 +304,13 @@ int main() {
                 std::cerr << "Cache profile accounting/coherence mismatch\n";
                 return 1;
             }
+            bool new_hit;
+            auto* again = cache->LookupOrAllocate(colliding[0], new_hit);
+            again->inst_count = 1;
+            again->end_pc = colliding[0] + 4;
+            cache->SetEightWay(ways != 8);
+            if (cache->Lookup(colliding[0]) || again->inst_count || again->chain_target)
+                return 1;
         }
         // Run-level causes: a genuine mode mismatch and distinct page table.
         code = {0xE1A00000, 0xEAFFFFFE};
@@ -110,7 +337,12 @@ int main() {
             if (position == std::string::npos) return ~0ull;
             return std::stoull(profile.str().substr(position + marker.size()));
         };
-        if (field("blocks_decoded") != 2 ||
+        const char* way_flag = std::getenv("CARA_FASTINTERP_CACHE_WAYS");
+        const unsigned expected_ways = way_flag && std::strcmp(way_flag, "8") == 0 ? 8 : 4;
+        if (field("cache_ways") != expected_ways ||
+            field("cache_sets") != CACHE_SIZE / expected_ways ||
+            field("cache_entries") != CACHE_SIZE ||
+            field("blocks_decoded") != 2 ||
             field("cache_allocation_misses") != (enabled ? 1u : 0u) ||
             field("cache_mode_redecodes") != (enabled ? 1u : 0u) ||
             field("cache_page_table_changes") != (enabled ? 2u : 0u) ||
@@ -846,6 +1078,15 @@ int main() {
         fast->SetCPSR(0x10);
         fast->SetReg(0, 0);
         const std::array<unsigned, 5> budgets{1, 7, 31, 128, 1000};
+        const char* chain_flag = std::getenv("CARA_FASTINTERP_CHAIN_BUDGET");
+        const bool bounded_chain = chain_flag && std::strcmp(chain_flag, "1") == 0;
+        const std::array<unsigned, 5> starts{0, 30, 59, 88, 102};
+        std::array<unsigned, 4> model_counts{};
+        std::array<u32, 32> model_fp{};
+        model_fp.fill(0x3f800000);
+        model_fp[16] = 0x40000000;
+        unsigned model_stage = 0;
+        u32 model_r0 = 0;
         u64 trace_hash = 1469598103934665603ull;
         auto record = [&trace_hash](u64 value) {
             trace_hash = (trace_hash ^ value) * 1099511628211ull;
@@ -854,18 +1095,63 @@ int main() {
             timing.GetTimer(0)->Advance(budgets[i % budgets.size()]);
             const auto before = timing.GetTimer(0)->GetDowncount();
             fast->Run();
+            if (bounded_chain) {
+                // Independent block-budget oracle: these finite operations
+                // multiply1*2, or accumulate2; each guest instruction is1tick.
+                // Literal loads write S24=1, ADD increments r0, B closes loop.
+                s64 model_ticks = 0;
+                while (model_ticks < before) {
+                    const unsigned begin = starts[model_stage], end = starts[model_stage + 1];
+                    for (unsigned instruction = begin; instruction < end; ++instruction) {
+                        if (instruction == 100) ++model_r0;
+                        else if (instruction < 100) {
+                            if (instruction == 30 || instruction == 59 ||
+                                instruction == 61 || instruction == 89) model_fp[24] = 0x3f800000;
+                            else {
+                                const unsigned reg = instruction % 4;
+                                const float value = instruction >= 40 && instruction < 80
+                                    ? std::bit_cast<float>(model_fp[reg]) + 2.0f : 2.0f;
+                                model_fp[reg] = std::bit_cast<u32>(value);
+                            }
+                        }
+                    }
+                    model_ticks += end - begin;
+                    ++model_counts[model_stage];
+                    model_stage = (model_stage + 1) % 4;
+                }
+                bool passed = fast->GetPC() == 0x1000 + starts[model_stage] * 4 &&
+                              fast->GetReg(0) == model_r0 &&
+                              before - timing.GetTimer(0)->GetDowncount() == model_ticks;
+                for (unsigned reg = 0; reg < 32; ++reg)
+                    passed &= fast->GetVFPReg(reg) == model_fp[reg];
+                if (!passed) {
+                    std::cerr << "SIMD independent block-budget oracle mismatch slice=" << i << '\n';
+                    return 1;
+                }
+            }
             record(fast->GetPC());
             record(fast->GetReg(0));
             record(before - timing.GetTimer(0)->GetDowncount());
             for (unsigned r = 0; r < 32; ++r)
                 record(fast->GetVFPReg(r));
         }
-        if (trace_hash != 7296223465908193166ull) {
+        if (!bounded_chain && trace_hash != 7296223465908193166ull) {
             std::cerr << "SIMD event-boundary trace mismatch: " << trace_hash << '\n';
             return 1;
         }
         std::ostringstream profile;
         fast->WriteBlockProfile(profile);
+        if (bounded_chain) {
+            for (unsigned stage = 0; stage < 4; ++stage) {
+                const auto expected = "\"pc\":" + std::to_string(0x1000 + starts[stage] * 4) +
+                    ",\"end_pc\":" + std::to_string(0x1000 + starts[stage + 1] * 4) +
+                    ",\"executions\":" + std::to_string(model_counts[stage]);
+                if (profile.str().find(expected) == std::string::npos) {
+                    std::cerr << "SIMD model block count mismatch\n";
+                    return 1;
+                }
+            }
+        } else {
         for (const char* expected : {"\"pc\":4096,\"end_pc\":4216,\"executions\":367",
                                      "\"pc\":4216,\"end_pc\":4332,\"executions\":366",
                                      "\"pc\":4332,\"end_pc\":4448,\"executions\":366",
@@ -875,7 +1161,9 @@ int main() {
                 return 1;
             }
         }
-        std::cout << "64 mixed-budget SIMD trace slices and four block boundaries match baseline\n";
+        }
+        std::cout << "64 mixed-budget SIMD trace slices and four block boundaries match "
+                  << (bounded_chain ? "independent budget oracle" : "baseline") << '\n';
     }
 #ifdef __aarch64__
     if (const char* simd = std::getenv("CARA_FASTINTERP_VFP_SIMD");

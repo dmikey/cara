@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <bitset>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <set>
 #include <cstdlib>
 #include <memory>
@@ -18,6 +21,7 @@
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/frame_timing.h"
+#include "common/cpu_category_timing.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
 #include "common/microprofile.h"
@@ -47,6 +51,125 @@ namespace OpenGL {
 using PixelFormat = SurfaceParams::PixelFormat;
 using SurfaceType = SurfaceParams::SurfaceType;
 
+// Begin draw-cost diagnostic. CPU measurements describe the calling host thread,
+// not hardware GPU execution. No GL queries, allocations, scans, or clocks occur
+// when disabled. Samples are selected independently in each path/size bucket.
+class DrawCostProfile {
+public:
+    enum class Path : std::size_t {
+        AcceleratedArrays, AcceleratedElements, FeedbackArrays, SoftwareArrays, DesktopRange, Count
+    };
+    struct Bucket {
+        std::uint64_t full_calls = 0, full_vertices = 0;
+        std::uint64_t attempted_samples = 0, samples = 0, sampled_vertices = 0;
+        std::uint64_t cpu_ns = 0, wall_ns = 0, clock_failures = 0;
+    };
+    static bool Enabled() {
+        static const bool enabled = [] {
+            const char* value = std::getenv("CARA_DRAW_COST_PROFILE");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        return enabled;
+    }
+    static std::size_t BucketIndex(std::uint64_t vertices) {
+        return vertices <= 64 ? 0 : vertices <= 256 ? 1 : vertices <= 1024 ? 2
+             : vertices <= 4096 ? 3 : 4;
+    }
+    static void Reset() {
+        if (!Enabled()) return;
+        auto& state = State();
+        const auto next_session = state.session + 1;
+        state = {};
+        state.session = next_session;
+        LOG_INFO(Render_OpenGL,
+                 "PICA draw cost options session={} enabled=1 sample_rate=32 log_calls=65536",
+                 state.session);
+    }
+    class Scope {
+    public:
+        Scope(Path path, std::uint64_t vertices) : vertices(vertices) {
+            if (!Enabled()) return;
+            auto& state = State();
+            bucket = &state.buckets[static_cast<std::size_t>(path)][BucketIndex(vertices)];
+            ++bucket->full_calls;
+            bucket->full_vertices += vertices;
+            report = (++state.calls % 65536) == 0;
+            // Avoid repeatedly selecting one fixed draw slot in recurring scenes.
+            const auto mixed = std::uint32_t(bucket->full_calls) * 0x9E3779B9u;
+            if ((mixed >> 27) != 0) return;
+            ++bucket->attempted_samples;
+            if (!Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr, cpu_start)) {
+                ++bucket->clock_failures;
+                return;
+            }
+            // CPU encloses the wall-clock reads. Clock overhead is retained,
+            // so tiny-call CPU samples may exceed wall samples; do not treat
+            // their difference as a precise wait-time measurement.
+            wall_start = std::chrono::steady_clock::now();
+            sampled = true;
+        }
+        ~Scope() {
+            if (!bucket) return;
+            if (sampled) {
+                const auto wall_end = std::chrono::steady_clock::now();
+                std::uint64_t cpu_end;
+                const auto wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    wall_end - wall_start).count();
+                if (!Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr, cpu_end) ||
+                    cpu_end < cpu_start || wall_ns < 0) {
+                    ++bucket->clock_failures;
+                } else {
+                    ++bucket->samples;
+                    bucket->sampled_vertices += vertices;
+                    bucket->cpu_ns += cpu_end - cpu_start;
+                    bucket->wall_ns += static_cast<std::uint64_t>(wall_ns);
+                }
+            }
+            if (report) Report();
+        }
+        Scope(const Scope&) = delete;
+        Scope& operator=(const Scope&) = delete;
+    private:
+        Bucket* bucket = nullptr;
+        std::uint64_t vertices, cpu_start = 0;
+        std::chrono::steady_clock::time_point wall_start;
+        bool sampled = false, report = false;
+    };
+private:
+    struct Stats {
+        std::uint64_t session = 0, calls = 0, snapshots = 0;
+        std::array<std::array<Bucket, 5>, static_cast<std::size_t>(Path::Count)> buckets{};
+    };
+    static Stats& State() {
+        // The rasterizer and its GL context run on one emulation thread. Reset
+        // on context construction; no state is serialized into guest saves.
+        static Stats state;
+        return state;
+    }
+    static void Report() {
+        auto& state = State();
+        ++state.snapshots;
+        constexpr std::array<const char*, 5> paths = {
+            "accelerated_arrays", "accelerated_elements", "feedback_arrays", "software_arrays",
+            "desktop_range"};
+        constexpr std::array<std::uint64_t, 5> limits = {64, 256, 1024, 4096, 0};
+        for (std::size_t path = 0; path < paths.size(); ++path) {
+            for (std::size_t index = 0; index < limits.size(); ++index) {
+                const auto& bucket = state.buckets[path][index];
+                LOG_INFO(Render_OpenGL,
+                         "PICA draw cost session={} snapshot={} total_calls={} path={} "
+                         "bucket_max={} full_calls={} full_vertices={} attempted_samples={} "
+                         "samples={} sampled_vertices={} cpu_ns={} wall_ns={} clock_failures={}",
+                         state.session, state.snapshots, state.calls, paths[path], limits[index],
+                         bucket.full_calls, bucket.full_vertices, bucket.attempted_samples,
+                         bucket.samples, bucket.sampled_vertices, bucket.cpu_ns, bucket.wall_ns,
+                         bucket.clock_failures);
+            }
+        }
+    }
+};
+// End draw-cost diagnostic.
+
 static bool IsVendorMali() {
     std::string gpu_vendor{reinterpret_cast<char const*>(glGetString(GL_VENDOR))};
     return gpu_vendor.find("ARM") != std::string::npos;
@@ -60,6 +183,7 @@ RasterizerOpenGL::RasterizerOpenGL()
       texture_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 11264 : TEXTURE_BUFFER_SIZE),
       texture_lf_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE) {
 
+    DrawCostProfile::Reset();
     OpenGLState::InvalidateRasterState();
 
 #ifdef CARA_IOS_GLES
@@ -1056,7 +1180,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         glUniform4iv(glGetUniformLocation(feedback_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
         glEnable(GL_RASTERIZER_DISCARD);
         glBeginTransformFeedback(GL_POINTS);
-        glDrawArrays(GL_POINTS,0,static_cast<GLsizei>(ios_vertex_input_span));
+        {
+            DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::FeedbackArrays,
+                                            ios_vertex_input_span);
+            glDrawArrays(GL_POINTS,0,static_cast<GLsizei>(ios_vertex_input_span));
+        }
         glEndTransformFeedback();
         glDisable(GL_RASTERIZER_DISCARD);
         glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER,0,0);
@@ -1072,7 +1200,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::DrawSubmit);
         if (ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse) {
-            glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(triangles.size()),GL_UNSIGNED_SHORT,nullptr);
+            {
+                DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedElements,
+                                                triangles.size());
+                glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(triangles.size()),GL_UNSIGNED_SHORT,nullptr);
+            }
             if (ios_lit_pair_vertex_reuse) {
                 ++Common::FrameTiming::counters.gpu_lit_pair_draws;
                 Common::FrameTiming::counters.gpu_lit_pair_vertices+=triangles.size();
@@ -1082,7 +1214,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             Common::FrameTiming::counters.gpu_direct_vertices+=triangles.size();
             Common::FrameTiming::counters.gpu_direct_unique_inputs+=ios_vertex_input_records;
             }
-        } else glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
+        } else {
+            DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedArrays,
+                                            triangles.size());
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
+        }
     }
     if (elements) glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,index_buffer.GetHandle());
     // Prospective lit pair-indexed VS reuse: diagnostic counters only. The
@@ -1181,11 +1317,15 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         std::memcpy(buffer_ptr, index_data, index_buffer_size);
         index_buffer.Unmap(index_buffer_size);
 
+        DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::DesktopRange,
+                                        regs.pipeline.num_vertices);
         glDrawRangeElementsBaseVertex(
             primitive_mode, vs_input_index_min, vs_input_index_max, regs.pipeline.num_vertices,
             index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
             reinterpret_cast<const void*>(buffer_offset), -static_cast<GLint>(vs_input_index_min));
     } else {
+        DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedArrays,
+                                        regs.pipeline.num_vertices);
         glDrawArrays(primitive_mode, 0, regs.pipeline.num_vertices);
     }
 
@@ -1586,6 +1726,7 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
                 vertex_buffer.Map(vertex_size, sizeof(HardwareVertex));
             std::memcpy(vbo, vertex_batch.data() + base_vertex, vertex_size);
             vertex_buffer.Unmap(vertex_size);
+            DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::SoftwareArrays, vertices);
             glDrawArrays(GL_TRIANGLES, static_cast<GLint>(offset / sizeof(HardwareVertex)),
                          static_cast<GLsizei>(vertices));
         }

@@ -494,6 +494,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (!std::getenv("CARA_GPU_SURFACE_REMAP")) setenv("CARA_GPU_SURFACE_REMAP","1",0);
     if (!std::getenv("CARA_VS_UNIFORM_REUSE")) setenv("CARA_VS_UNIFORM_REUSE","1",0);
     if (!std::getenv("CARA_FASTINTERP_ALU_OPERANDS")) setenv("CARA_FASTINTERP_ALU_OPERANDS","1",0);
+    if (!std::getenv("CARA_FASTINTERP_TICK_BUCKETS")) setenv("CARA_FASTINTERP_TICK_BUCKETS","1",0);
+    if (!std::getenv("CARA_FASTINTERP_CHAIN_BUDGET")) setenv("CARA_FASTINTERP_CHAIN_BUDGET","1",0);
     if (!std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)

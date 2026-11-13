@@ -137,6 +137,7 @@ private:
     bool decode_breakpoints_{false};
     bool ram_burst_{false};
     bool contiguous_transfers_{false};
+    bool chain_budget_{false};
     u64 cache_mode_redecodes_{};
     u64 cache_page_table_changes_{};
 
