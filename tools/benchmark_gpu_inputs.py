@@ -248,6 +248,12 @@ def main():
              '--environment-variables', json.dumps(settings), args.bundle, *arguments]).check_returncode()
 
     for config in configs:
+        if config.get('host_pc_profile', False):
+            pending = args.output / (config['name'] + '-host-pc-pending.json')
+            pending.write_text('{}')
+            run(['device', 'copy', 'to', '--device', args.device,
+                 '--source', str(pending), '--destination', 'Documents/cara/host-pc-samples.json',
+                 '--domain-type', 'appDataContainer', '--domain-identifier', args.bundle], True).check_returncode()
         launch(config)
         print('Started', config['name'], flush=True)
         time.sleep(3)
@@ -377,7 +383,12 @@ def main():
             sampler_path = args.output / (config['name'] + '-host-pc-samples.json')
             for attempt in range(5):
                 if copy('host-pc-samples.json', sampler_path):
-                    break
+                    try:
+                        candidate = json.loads(sampler_path.read_text())
+                    except (ValueError, OSError):
+                        candidate = {}
+                    if candidate.get('started') is True and candidate.get('source_fingerprint') == report['engine_build_fingerprint']:
+                        break
                 time.sleep(0.2)
             else:
                 raise RuntimeError('Missing host PC sampler report')
