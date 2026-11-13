@@ -483,6 +483,16 @@ enum class Opcode : u16 {
     MovImm,
     MovLslImm,
 
+    // Static, unconditional ARM pairs; second original record is retained.
+    AddPairImmImm,
+    AddPairImmLsl,
+    AddPairLslImm,
+    AddPairLslLsl,
+    MovPairImmImm,
+    MovPairImmLsl,
+    MovPairLslImm,
+    MovPairLslLsl,
+
     OpcodeCount
 };
 

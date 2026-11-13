@@ -1575,6 +1575,51 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         }
     }
 
+    // Last postpass: retain the first operands and the entire second record.
+    // Check original words as dead-flag elimination and PC folding can otherwise
+    // disguise an S-form or PC source as an eligible no-flags operation.
+    if (AluPairsEnabled() && !is_thumb) {
+        auto kind = [](const DecodedInst& inst, u32 raw) -> int {
+            if (inst.cond != 0xE || inst.inst_size != 4 || inst.rd == 15 ||
+                (raw >> 28) != 0xE || (raw & (1u << 20))) return -1;
+            const unsigned op = (raw >> 21) & 15;
+            const bool add = op == 4;
+            if ((!add && op != 13) || ((raw >> 26) & 3) != 0 ||
+                (add && ((raw >> 16) & 15) == 15)) return -1;
+            if (inst.opcode != (add ? Opcode::Add : Opcode::Mov) &&
+                inst.opcode != (add ? Opcode::AddImm : Opcode::MovImm) &&
+                inst.opcode != (add ? Opcode::AddLslImm : Opcode::MovLslImm)) return -1;
+            if (raw & (1u << 25)) return add ? 0 : 2;
+            if ((raw & 15) == 15 || (raw & 0x70) || inst.dp.rs != 0xFF ||
+                inst.dp.shift_type != ShiftType::LSL || inst.dp.shift_imm >= 32) return -1;
+            return add ? 1 : 3;
+        };
+        u32 pair_pc = pc;
+        for (unsigned slot = 0; slot < block->inst_count;) {
+            auto& first = block->instructions[slot];
+            const unsigned size = first.inst_size;
+            if (slot + 1 < block->inst_count && size == 4) {
+                const auto& second = block->instructions[slot + 1];
+                const int a = kind(first, ReadMemory32(pair_pc));
+                const int b = kind(second, ReadMemory32(pair_pc + 4));
+                if (a >= 0 && b >= 0 && a / 2 == b / 2) {
+                    first.opcode = static_cast<Opcode>(unsigned(Opcode::AddPairImmImm) +
+                        (a / 2) * 4 + (a % 2) * 2 + b % 2);
+                    first.inst_size += second.inst_size;
+                    first.ticks += second.ticks;
+                    pair_pc += first.inst_size;
+                    slot += 2;
+                    continue;
+                }
+            }
+            // Prior VFP group passes also retain consumed source slots.
+            pair_pc += size;
+            slot += (first.opcode == Opcode::Vmul4S || first.opcode == Opcode::Vmul4Gather ||
+                     first.opcode == Opcode::Vmla4S || first.opcode == Opcode::Vmla4Gather) ? 4 :
+                    first.opcode == Opcode::VcmpVmrsS ? 2 : 1;
+        }
+    }
+
     // Append the EndBlock terminator. Every block gets one - conditional
     // block-enders (Bcc, fused not-taken paths, conditional Bx, ...) DISPATCH on
     // their not-taken path, and DISPATCH has no bounds check. The terminator

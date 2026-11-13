@@ -504,6 +504,150 @@ int main() {
                      "stale chains, clears, modes and page tables passed\n";
         return 0;
     }
+    if (std::getenv("CARA_ALU_PAIRS_TEST")) {
+        using namespace Core::FastInterp;
+        const char* flag = std::getenv("CARA_FASTINTERP_ALU_PAIRS");
+        const bool enabled = flag && std::strcmp(flag, "1") == 0;
+        auto paired = [](Opcode op) {
+            return op >= Opcode::AddPairImmImm && op <= Opcode::MovPairLslLsl;
+        };
+        auto block = std::make_unique<BasicBlock>();
+        unsigned cases = 0;
+        u64 trace = 1469598103934665603ull;
+        auto hash = [&](u64 value) { trace = (trace ^ value) * 1099511628211ull; };
+        // Independent DynCom two-instruction state oracle. Every static form,
+        // live NZCV, shift endpoint, destination/source alias and wraparound.
+        for (unsigned op : {4u, 13u})
+            for (unsigned forms = 0; forms < 4; ++forms)
+                for (unsigned alias = 0; alias < 8; ++alias)
+                    for (unsigned shift : {0u, 1u, 31u})
+                        for (unsigned nzcv = 0; nzcv < 16; ++nzcv) {
+                            auto word = [&](bool second) {
+                                const bool reg = (forms >> (second ? 0 : 1)) & 1;
+                                const unsigned rd = second ? ((alias & 1) ? 0 : 3) : 0;
+                                const unsigned rn = second && (alias & 2) ? 0 : 1;
+                                const unsigned rm = second && (alias & 4) ? 0 : 2;
+                                return 0xE0000000u | (op << 21) | (rn << 16) | (rd << 12) |
+                                    (reg ? (shift << 7) | rm : (1u << 25) | 0x4ffu);
+                            };
+                            code.fill(0xEAFFFFFE);
+                            code[0] = word(false); code[1] = word(true);
+                            const u32 cpsr = (nzcv << 28) | 0x10;
+                            old->Cpsr = cpsr; fast->SetCPSR(cpsr);
+                            for (unsigned r = 0; r < 15; ++r) {
+                                old->Reg[r] = r == 1 ? 0xffffffffu : r == 2 ? 0x80000001u :
+                                    0x9e3779b9u * (r + 1);
+                                fast->SetReg(r, old->Reg[r]);
+                            }
+                            old->Reg[15] = 0x1000; fast->SetPC(0x1000);
+                            InvalidateDynComDecodedCache(); old->instruction_cache.clear();
+                            old->NumInstrsToExecute = 2;
+                            InterpreterMainLoop(old.get(), timing.GetTimer(0).get());
+                            *block = {}; block->start_pc = 0x1000;
+                            DecodeRecordSelfTestAccess::Decode(*fast, *block, 0x1000);
+                            const unsigned pair_index = (op == 13 ? 4 : 0) + forms;
+                            if (paired(block->instructions[0].opcode) != enabled ||
+                                (enabled && (block->instructions[0].opcode !=
+                                    static_cast<Opcode>(unsigned(Opcode::AddPairImmImm) + pair_index) ||
+                                    block->instructions[0].inst_size != 8 ||
+                                    block->instructions[1].inst_size != 4))) {
+                                std::cerr << "ALU pair admission/retained slot mismatch\n"; return 1;
+                            }
+                            const auto ticks = DecodeRecordSelfTestAccess::ExecuteOnce(*fast, *block);
+                            const auto expected_ticks = Core::TicksForInstruction(false, code[0]) +
+                                Core::TicksForInstruction(false, code[1]) +
+                                Core::TicksForInstruction(false, code[2]);
+                            if (ticks != expected_ticks || fast->GetCPSR() != cpsr) {
+                                std::cerr << "ALU pair tick/live flags mismatch\n"; return 1;
+                            }
+                            for (unsigned r = 0; r < 16; ++r) {
+                                if (fast->GetReg(r) != old->Reg[r]) {
+                                    std::cerr << "ALU pair DynCom mismatch forms=" << forms
+                                              << " alias=" << alias << " r=" << r << '\n'; return 1;
+                                }
+                                hash(fast->GetReg(r));
+                            }
+                            hash(ticks); hash(fast->GetCPSR()); ++cases;
+                        }
+        // Check both positions: S, conditional, PC source/destination, register
+        // shift, other shift and mixed families never enter a pair. S words are
+        // tested even when the dead-flag pass could erase their flag updates.
+        const std::array<std::array<u32, 7>, 2> rejected_words{{
+            {0xE2900001u, 0x02800001u, 0xE28F0001u, 0xE280F001u,
+             0xE0800312u, 0xE08000A2u, 0xE1A00002u},
+            {0xE3B00001u, 0x03A00001u, 0xE1A0000Fu, 0xE1A0F002u,
+             0xE1A00312u, 0xE1A000A2u, 0xE2800001u}
+        }};
+        for (unsigned family = 0; family < rejected_words.size(); ++family)
+            for (unsigned position : {0u, 1u})
+                for (u32 rejected : rejected_words[family]) {
+                    code.fill(0xEAFFFFFE);
+                    code[0] = code[1] = family ? 0xE3A00001 : 0xE2800001;
+                    code[position] = rejected;
+                    code[2] = 0xE3500000; // later CMP kills flags from raw S words
+                    fast->SetCPSR(0xA0000010); fast->SetPC(0x1000);
+                    *block = {}; block->start_pc = 0x1000;
+                    DecodeRecordSelfTestAccess::Decode(*fast, *block, 0x1000);
+                    for (unsigned i = 0; i < block->inst_count; ++i)
+                        if (paired(block->instructions[i].opcode)) {
+                            std::cerr << "ALU unsafe pair admitted\n"; return 1;
+                        }
+                    ++cases;
+                }
+        code.fill(0xE7FEE7FE); code[0] = 0x20012002;
+        fast->SetCPSR(0x30); fast->SetPC(0x1001);
+        *block = {}; block->start_pc = 0x1000;
+        DecodeRecordSelfTestAccess::Decode(*fast, *block, 0x1000);
+        for (unsigned i = 0; i < block->inst_count; ++i)
+            if (paired(block->instructions[i].opcode)) {
+                std::cerr << "Thumb ALU pair admitted\n"; return 1;
+            }
+        ++cases;
+        // Public cached execution through block boundaries and scheduler slices.
+        for (unsigned prefix : {0u, 27u, 28u, 29u, 30u, 31u}) {
+            code.fill(0xE1A05005);
+            code[prefix] = 0xE2800001; code[prefix+1] = 0xE0800080;
+            code[prefix+2] = 0xE1A02000; code[prefix+3] = 0xE1A01082;
+            code[prefix+4] = 0xE2544001;
+            code[prefix+5] = 0x1A000000u | (u32(-s32(prefix+7)) & 0xffffffu);
+            code[prefix+6] = 0xEAFFFFFE;
+            fast->ClearInstructionCache(); fast->SetCPSR(0xA0000010); fast->SetPC(0x1000);
+            for (unsigned r = 0; r < 15; ++r) fast->SetReg(r, r == 4 ? 1000000u : r+1);
+            for (unsigned slice = 0; slice < 320; ++slice) {
+                const std::array<unsigned,8> budgets{1,2,5,6,7,31,32,128};
+                timing.GetTimer(0)->Advance(budgets[slice % budgets.size()]);
+                const auto before = timing.GetTimer(0)->GetDowncount(); fast->Run();
+                for (unsigned r = 0; r < 16; ++r) hash(fast->GetReg(r));
+                hash(fast->GetCPSR()); hash(before-timing.GetTimer(0)->GetDowncount());
+            }
+        }
+        // Mutation of only the consumed second word must invalidate its block.
+        code.fill(0xEAFFFFFE); code[0] = 0xE2800001; code[1] = 0xE2800002;
+        fast->ClearInstructionCache();
+        for (unsigned mutation = 0; mutation < 2; ++mutation) {
+            if (mutation) { code[1] = 0xE2800007; fast->InvalidateCacheRange(0x1004,4); }
+            fast->SetCPSR(0xA0000010); fast->SetPC(0x1000); fast->SetReg(0,0);
+            timing.GetTimer(0)->Advance(1); fast->Run();
+            if (fast->GetReg(0) != (mutation ? 8u : 3u) || fast->GetPC() != 0x1008) {
+                std::cerr << "ALU pair second-word invalidation mismatch\n"; return 1;
+            }
+            hash(fast->GetReg(0));
+        }
+        // Profile reports the effective decode flag even if process environment
+        // is later edited; it must describe already-cached executable records.
+        setenv("CARA_FASTINTERP_ALU_PAIRS", enabled ? "0" : "1", 1);
+        std::ostringstream profile; fast->WriteBlockProfile(profile);
+        if (flag) setenv("CARA_FASTINTERP_ALU_PAIRS", enabled ? "1" : "0", 1);
+        else unsetenv("CARA_FASTINTERP_ALU_PAIRS");
+        if (profile.str().find(enabled ? "\"alu_pairs_enabled\":true" :
+                                        "\"alu_pairs_enabled\":false") == std::string::npos ||
+            (enabled && (profile.str().find("\"AddPairImmImm\":1") == std::string::npos ||
+                         profile.str().find("\"AddImm\":2") == std::string::npos))) {
+            std::cerr << "ALU pair profile mismatch " << profile.str() << '\n'; return 1;
+        }
+        std::cout << "ALU pair DynCom cases=" << cases << " trace=" << trace << '\n';
+        return 0;
+    }
     if (std::getenv("CARA_ALU_OPERANDS_TEST")) {
         // DynCom executes exactly the instruction; FastInterp decodes a real
         // block ending in a flag-neutral self-branch. Unlike Step(), Run()
@@ -641,7 +785,8 @@ int main() {
             }
             const auto count = std::stoull(profile.str().substr(position + marker.size()));
             if ((count != 0) != enabled) {
-                std::cerr << "ALU operand specialization activation mismatch\n";
+                std::cerr << "ALU operand specialization activation mismatch " << name << " "
+                          << profile.str() << '\n';
                 return 1;
             }
         }

@@ -166,6 +166,14 @@ void ARM_FastInterp::LogUnhandledInstruction(u32 pc) {
     LOG_DEBUG(Core_ARM11, "Breakpoint instruction hit. Immediate: {:#010X}", immediate);
 }
 
+bool ARM_FastInterp::AluPairsEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_ALU_PAIRS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
 void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     // The existing hotness counters have no instrumentation overhead. Their
     // census is incomplete after eviction and counts fused-loop dispatches, not
@@ -183,12 +191,21 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     for (const auto* block : blocks) total += block->exec_count;
     const char* alu_flag = std::getenv("CARA_FASTINTERP_ALU_OPERANDS");
     const bool alu_enabled = alu_flag && std::strcmp(alu_flag, "1") == 0;
+    const bool pairs_enabled = AluPairsEnabled();
+    std::array<u64, 8> pair_weighted{};
     std::array<u64, 4> alu_weighted{};
     for (const auto* block : blocks)
         for (unsigned slot = 0; slot < block->inst_count; ++slot) {
             const auto opcode = block->instructions[slot].opcode;
             if (opcode >= Opcode::AddImm && opcode <= Opcode::MovLslImm)
                 alu_weighted[unsigned(opcode) - unsigned(Opcode::AddImm)] += block->exec_count;
+            if (opcode >= Opcode::AddPairImmImm && opcode <= Opcode::MovPairLslLsl) {
+                const unsigned pair = unsigned(opcode) - unsigned(Opcode::AddPairImmImm);
+                pair_weighted[pair] += block->exec_count;
+                alu_weighted[(pair / 4) * 2 + (pair % 4) / 2] += block->exec_count;
+                alu_weighted[(pair / 4) * 2 + pair % 2] += block->exec_count;
+                ++slot; // counts above include both logical original operations
+            }
         }
     u64 unrolled_blocks = 0, unrolled_dispatches = 0;
     for (const auto* block : blocks)
@@ -219,6 +236,12 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
            << ",\"cache_mode_redecodes\":" << cache_mode_redecodes_
            << ",\"cache_page_table_changes\":" << cache_page_table_changes_
            << ",\"alu_operands_enabled\":" << (alu_enabled ? "true" : "false")
+           << ",\"alu_pairs_enabled\":" << (pairs_enabled ? "true" : "false")
+           << ",\"alu_pair_resident_entry_weighted_dispatches\":{\"AddPairImmImm\":" << pair_weighted[0]
+           << ",\"AddPairImmLsl\":" << pair_weighted[1] << ",\"AddPairLslImm\":" << pair_weighted[2]
+           << ",\"AddPairLslLsl\":" << pair_weighted[3] << ",\"MovPairImmImm\":" << pair_weighted[4]
+           << ",\"MovPairImmLsl\":" << pair_weighted[5] << ",\"MovPairLslImm\":" << pair_weighted[6]
+           << ",\"MovPairLslLsl\":" << pair_weighted[7] << "}"
            << ",\"alu_resident_entry_weighted_slots\":{\"AddImm\":" << alu_weighted[0]
            << ",\"AddLslImm\":" << alu_weighted[1] << ",\"MovImm\":" << alu_weighted[2]
            << ",\"MovLslImm\":" << alu_weighted[3] << "},\"core\":" << GetID() << ",\"resident_entries\":" << blocks.size()
@@ -745,6 +768,15 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         HANDLER(AddLslImm),
         HANDLER(MovImm),
         HANDLER(MovLslImm),
+        HANDLER(AddPairImmImm),
+        HANDLER(AddPairImmLsl),
+        HANDLER(AddPairLslImm),
+        HANDLER(AddPairLslLsl),
+        HANDLER(MovPairImmImm),
+        HANDLER(MovPairImmLsl),
+        HANDLER(MovPairLslImm),
+        HANDLER(MovPairLslLsl),
+
     };
 #undef HANDLER
 

@@ -354,10 +354,18 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     const NSInteger saved=[CaraEmulationValue(@"maximumSpeedPercent") integerValue];
     const unsigned maximum=saved>=50 && saved<=200?unsigned(saved):100;
     const char* override=std::getenv("CARA_ADAPTIVE_GUEST_CPU");
-    return Cara::MakePlayPolicy([CaraEmulationValue(@"playMode") isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,
+    auto policy=Cara::MakePlayPolicy([CaraEmulationValue(@"playMode") isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,
         maximum,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,override?(std::strcmp(override,"1")==0?1:0):-1,
         [CaraEmulationValue(@"fixedGuestClockEnabled") boolValue],unsigned(std::clamp<NSInteger>([CaraEmulationValue(@"fixedGuestClockPercent") integerValue],25,200)),
         [CaraEmulationValue(@"speedLimitEnabled") boolValue]);
+    // Explicit diagnostic only: normal tests retain 100%, independent of saved settings.
+    if (const char* clock=std::getenv("CARA_PROFILE_GUEST_CPU_PERCENT")) {
+        char* end=nullptr;
+        const long value=std::strtol(clock,&end,10);
+        if (end!=clock && *end=='\0' && (value==50 || value==100))
+            policy=Cara::DiagnosticGuestClock(policy,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,unsigned(value));
+    }
+    return policy;
 }
 
 @interface EmulatorController : UIViewController <UIDocumentPickerDelegate>
@@ -499,6 +507,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (!std::getenv("CARA_FASTINTERP_ALU_OPERANDS")) setenv("CARA_FASTINTERP_ALU_OPERANDS","1",0);
     if (!std::getenv("CARA_FASTINTERP_TICK_BUCKETS")) setenv("CARA_FASTINTERP_TICK_BUCKETS","1",0);
     if (!std::getenv("CARA_FASTINTERP_CHAIN_BUDGET")) setenv("CARA_FASTINTERP_CHAIN_BUDGET","1",0);
+    if (!std::getenv("CARA_FASTINTERP_CACHE_WAYS")) setenv("CARA_FASTINTERP_CACHE_WAYS","8",0);
     if (!std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)

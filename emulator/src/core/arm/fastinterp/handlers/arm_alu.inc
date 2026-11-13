@@ -205,3 +205,78 @@ handle_MovLslImm: {
     state_.regs[inst->rd] = state_.regs[inst->dp.rm] << inst->dp.shift_imm;
     ADVANCE_AND_DISPATCH();
 }
+
+// Each static handler writes the first destination before reading any second
+// operands. This preserves all aliasing, including shifted self-dependencies.
+handle_AddPairImmImm: {
+    state_.regs[inst->rd] = state_.regs[inst->dp.rn] + inst->dp.imm;
+    const auto* second = inst + 1;
+    state_.regs[second->rd] = state_.regs[second->dp.rn] + second->dp.imm;
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    ++inst; // retained second slot is consumed by this dispatch
+    DISPATCH();
+}
+handle_AddPairImmLsl: {
+    state_.regs[inst->rd] = state_.regs[inst->dp.rn] + inst->dp.imm;
+    const auto* second = inst + 1;
+    state_.regs[second->rd] = state_.regs[second->dp.rn] + (state_.regs[second->dp.rm] << second->dp.shift_imm);
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    ++inst; // retained second slot is consumed by this dispatch
+    DISPATCH();
+}
+handle_AddPairLslImm: {
+    state_.regs[inst->rd] = state_.regs[inst->dp.rn] + (state_.regs[inst->dp.rm] << inst->dp.shift_imm);
+    const auto* second = inst + 1;
+    state_.regs[second->rd] = state_.regs[second->dp.rn] + second->dp.imm;
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    ++inst; // retained second slot is consumed by this dispatch
+    DISPATCH();
+}
+handle_AddPairLslLsl: {
+    state_.regs[inst->rd] = state_.regs[inst->dp.rn] + (state_.regs[inst->dp.rm] << inst->dp.shift_imm);
+    const auto* second = inst + 1;
+    state_.regs[second->rd] = state_.regs[second->dp.rn] + (state_.regs[second->dp.rm] << second->dp.shift_imm);
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    ++inst; // retained second slot is consumed by this dispatch
+    DISPATCH();
+}
+handle_MovPairImmImm: {
+    state_.regs[inst->rd] = inst->dp.imm;
+    const auto* second = inst + 1;
+    state_.regs[second->rd] = second->dp.imm;
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    ++inst; // retained second slot is consumed by this dispatch
+    DISPATCH();
+}
+handle_MovPairImmLsl: {
+    state_.regs[inst->rd] = inst->dp.imm;
+    const auto* second = inst + 1;
+    state_.regs[second->rd] = (state_.regs[second->dp.rm] << second->dp.shift_imm);
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    ++inst; // retained second slot is consumed by this dispatch
+    DISPATCH();
+}
+handle_MovPairLslImm: {
+    state_.regs[inst->rd] = (state_.regs[inst->dp.rm] << inst->dp.shift_imm);
+    const auto* second = inst + 1;
+    state_.regs[second->rd] = second->dp.imm;
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    ++inst; // retained second slot is consumed by this dispatch
+    DISPATCH();
+}
+handle_MovPairLslLsl: {
+    state_.regs[inst->rd] = (state_.regs[inst->dp.rm] << inst->dp.shift_imm);
+    const auto* second = inst + 1;
+    state_.regs[second->rd] = (state_.regs[second->dp.rm] << second->dp.shift_imm);
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    ++inst; // retained second slot is consumed by this dispatch
+    DISPATCH();
+}

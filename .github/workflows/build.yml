@@ -64,6 +64,17 @@ jobs:
           CARA_ALU_OPERANDS_TEST=1 CARA_FASTINTERP_ALU_OPERANDS=0 work/build-mac/bin/cara-fastinterp-self-test > work/alu-operands-off.txt
           CARA_ALU_OPERANDS_TEST=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test > work/alu-operands-on.txt
           diff -u work/alu-operands-off.txt work/alu-operands-on.txt
+          for cara_pair_cache in 4 8; do
+            for cara_pair_budget in 0 1; do
+              for cara_pair_operands in 0 1; do
+                for cara_pairs in 0 1; do
+                  CARA_ALU_PAIRS_TEST=1 CARA_FASTINTERP_ALU_PAIRS=$cara_pairs CARA_FASTINTERP_ALU_OPERANDS=$cara_pair_operands CARA_FASTINTERP_CHAIN_BUDGET=$cara_pair_budget CARA_FASTINTERP_CACHE_WAYS=$cara_pair_cache work/build-mac/bin/cara-fastinterp-self-test > work/pairs-$cara_pair_cache-$cara_pair_budget-$cara_pair_operands-$cara_pairs.txt
+                done
+                diff -u work/pairs-$cara_pair_cache-$cara_pair_budget-$cara_pair_operands-0.txt work/pairs-$cara_pair_cache-$cara_pair_budget-$cara_pair_operands-1.txt
+              done
+            done
+            CARA_FASTINTERP_ALU_PAIRS=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_pair_cache work/build-mac/bin/cara-fastinterp-self-test
+          done
           CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_CACHE_PROFILE_TEST=1 CARA_FASTINTERP_CACHE_PROFILE=0 work/build-mac/bin/cara-fastinterp-self-test
           CARA_CACHE_PROFILE_TEST=1 CARA_FASTINTERP_CACHE_PROFILE=1 work/build-mac/bin/cara-fastinterp-self-test

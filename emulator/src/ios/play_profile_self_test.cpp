@@ -9,6 +9,12 @@ int main() {
     static_assert(Cara::ShouldPaceFrames(false,false,true,false));
     static_assert(!Cara::ShouldPaceFrames(true,false,true,true));
     static_assert(Cara::ShouldPaceFrames(true,true,false,false));
+    constexpr auto baseline=Cara::MakePlayPolicy(Cara::PlayMode::Performance,100,true,0);
+    static_assert(Cara::DiagnosticGuestClock(baseline,true,50).guest_clock==50);
+    static_assert(Cara::DiagnosticGuestClock(baseline,true,100).guest_clock==100);
+    static_assert(Cara::DiagnosticGuestClock(baseline,false,50).guest_clock==100);
+    static_assert(Cara::DiagnosticGuestClock(baseline,true,49).guest_clock==100);
+    static_assert(Cara::DiagnosticGuestClock(Cara::MakePlayPolicy(Cara::PlayMode::Performance,100,false,1),true,50).guest_clock==100);
     using State=Cara::SessionPresentation;
     static_assert(Cara::ResolveSessionPresentation(false,false,false,true,true,false)==State::Stopped);
     static_assert(Cara::ResolveSessionPresentation(true,true,true,true,true,false)==State::Loading);

@@ -60,7 +60,7 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
@@ -69,6 +69,12 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     if args.resume_best and any(c.get('draw_cost_profile',False) or c.get('cache_profile',False) or c.get('pica_command_profile',False) or c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) for c in configs):
         parser.error('Renderer diagnostics cannot select a performance winner')
+    if any(type(c.get('guest_cpu_percent',100)) is not int or c.get('guest_cpu_percent',100) not in (50,100) for c in configs):
+        parser.error('Diagnostic guest clock must be 50 or 100 percent')
+    if args.resume_best and any(c.get('guest_cpu_percent',100) != 100 for c in configs):
+        parser.error('Underclock diagnostics cannot select a performance winner')
+    if any(c.get('alu_pairs',False) and not c.get('alu_operands',False) for c in configs):
+        parser.error('ALU pairs require operand specialization')
     if any(c.get('cache_ways',4) == 8 and not c.get('chain_budget',False) for c in configs):
         parser.error('Eight-way comparisons require cache-independent chain budget checks')
     if any(c.get('texture_lookup_verify',False) and not c.get('texture_lookup_reuse',False) for c in configs):
@@ -118,6 +124,8 @@ def main():
                     'CARA_DRAW_COST_PROFILE':'1' if config.get('draw_cost_profile',False) else '0',
                     'CARA_FASTINTERP_CACHE_PROFILE':'1' if config.get('cache_profile',False) else '0',
                     'CARA_FASTINTERP_ALU_OPERANDS':'1' if config.get('alu_operands',False) else '0',
+                    'CARA_FASTINTERP_ALU_PAIRS':'1' if config.get('alu_pairs',False) else '0',
+                    'CARA_PROFILE_GUEST_CPU_PERCENT':str(config.get('guest_cpu_percent',100)),
                     'CARA_PICA_REPEAT_STATE':'1' if config.get('pica_repeat_state',False) else '0',
                     'CARA_PICA_COMMAND_PROFILE':'1' if config.get('pica_command_profile',False) else '0',
                     'CARA_FASTINTERP_CONTIGUOUS_TRANSFERS':'1' if config.get('contiguous_transfers',False) else '0',
@@ -192,7 +200,7 @@ def main():
         windows = [w for w in report['windows'] if args.warmup < w['end_frame'] <= args.frames]
         if len(windows) != (args.frames - args.warmup) // 60:
             raise RuntimeError('Incomplete measurement window')
-        if any(w['guest_cpu_percent'] != 100 or w['packed_validation_failures'] != 0
+        if any(w['guest_cpu_percent'] != config.get('guest_cpu_percent',100) or w['packed_validation_failures'] != 0
                or w['packed_verified_draws'] != 0 for w in windows):
             raise RuntimeError('Unexpected clock, validation failure or active shadow decoder')
         fields = ['surface_remap_ms_per_frame','surface_remap_calls','surface_remap_bytes','gpu_feedback_vertex_draws','gpu_feedback_source_vertices','surface_pack_ms_per_frame','surface_download_ms_per_frame','surface_download_calls','surface_download_bytes','shader_compile_ms_per_frame','gpu_wait_ms_per_frame','uniform_upload_ms_per_frame','stream_map_ms_per_frame','stream_unmap_ms_per_frame','stream_map_calls','stream_unmap_calls','stream_mapped_bytes','state_apply_ms_per_frame','gpu_direct_vertex_draws','gpu_direct_vertices','gpu_direct_unique_inputs','gpu_lit_pair_draws','gpu_lit_pair_vertices','gpu_lit_pair_ids','mean_ms', 'vertex_prepare_ms_per_frame', 'vertex_upload_ms_per_frame',
@@ -202,6 +210,7 @@ def main():
                   'vertex_reuse_check_ms_per_frame', 'vertex_index_cache_hits',
                   'vertex_index_cache_misses', 'vertex_index_cache_bytes']
         fields += ['draw_framebuffer_acquire_ms_per_frame', 'draw_framebuffer_acquire_calls', 'draw_texture_acquire_ms_per_frame', 'draw_texture_acquire_calls', 'draw_shader_setup_ms_per_frame', 'draw_shader_setup_calls', 'draw_dirty_invalidate_ms_per_frame', 'draw_dirty_invalidate_calls', 'render_reinterpret_check_ms_per_frame', 'render_reinterpret_check_calls', 'render_reinterpret_invocations', 'render_reinterpret_find_calls', 'render_reinterpret_avoided_calls', 'render_reinterpret_repeat_opportunities', 'contiguous_transfer_loads', 'contiguous_transfer_stores', 'contiguous_transfer_bytes']
+        fields += ['guest_cpu_ms_per_frame','draw_ms_per_frame','cpu_shader_ms_per_frame','shader_calls','cpu_surface_invalidations','vertex_gl_subimage_calls','vertex_gl_image_calls','vertex_index_upload_bytes','gpu_input_records','lit_draws','active_light_sum']
         fields += ['texture_lookup_checks', 'texture_lookup_hits', 'texture_lookup_misses', 'texture_lookup_stores', 'texture_lookup_ambiguous_rejects', 'texture_lookup_epoch_rejects', 'texture_lookup_verified_hits', 'texture_lookup_verify_mismatches']
         if args.phase_cpu_timing:
             fields += [phase+'_'+suffix for phase in ['draw_submit','vertex_orphan','stream_map','stream_unmap','uniform_upload','vertex_subimage']
@@ -237,6 +246,13 @@ def main():
         if alu_enabled and specialized_slots <= 0:
             raise RuntimeError('FastInterp operand specialization did not execute')
         result['alu_resident_entry_weighted_slots'] = specialized_slots
+        pairs_enabled=config.get('alu_pairs',False)
+        if any(core.get('alu_pairs_enabled',False) != pairs_enabled for core in census['cores']):
+            raise RuntimeError('FastInterp pair mode differs from requested configuration')
+        pair_dispatches=sum(sum(core.get('alu_pair_resident_entry_weighted_dispatches',{}).values()) for core in census['cores'])
+        if pairs_enabled and pair_dispatches <= 0:
+            raise RuntimeError('FastInterp pairs did not execute')
+        result['alu_pair_resident_entry_weighted_dispatches']=pair_dispatches
         if any(core.get('cache_profile_enabled') != config.get('cache_profile', False) for core in census['cores']):
             raise RuntimeError('FastInterp cache diagnostic mode differs from requested configuration')
         if any(core.get('chain_budget_enabled') != config.get('chain_budget', False) for core in census['cores']):
@@ -262,8 +278,8 @@ def main():
         if (status['cpu_backend'] != 'fastinterp' or status['jit'] or status['software_renderer'] or
                 status['gpu_backend'] != 'native_gles3' or status['result_code'] != 0 or status['frames'] != args.frames or
                 status['target_frames'] != args.frames or status['title_id'] != report['title_id'] or
-                status['guest_cpu_percent'] != 100 or status['adaptive_guest_cpu']):
-            raise RuntimeError('Benchmark did not complete successfully at fixed 100% clock')
+                status['guest_cpu_percent'] != config.get('guest_cpu_percent',100) or status['adaptive_guest_cpu']):
+            raise RuntimeError('Benchmark did not complete successfully at the requested fixed guest clock')
         for name in ['benchmark-frame.json', 'benchmark-frame.rgba']:
             if not copy(name, args.output / (config['name'] + '-' + name)):
                 raise RuntimeError('Unable to read final renderer pixels: ' + name)
