@@ -40,6 +40,7 @@ typedef NS_ENUM(NSUInteger,CaraStatusLight) {
 
 @interface CaraQuickSettingsController : UIViewController <UIAdaptivePresentationControllerDelegate>
 @property(copy,nonatomic) NSString* playMode;
+@property(copy,nonatomic) NSString* performanceDetail;
 @property(nonatomic) BOOL modeSelectionEnabled;
 @property(nonatomic) BOOL showFPS;
 @property(copy,nonatomic) void(^toggleFPS)(BOOL);

@@ -5,6 +5,7 @@
 #import "ios/shell_controllers.h"
 #import "ios/skin_controls.h"
 #include "ios/session_presentation.h"
+#include "ios/play_profile.h"
 #include <array>
 #include <cstring>
 
@@ -39,12 +40,17 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     CaraSessionIndicator* previewStatus;
     NSArray<UIView*>* previewScreens;
     NSDictionary* previewRepresentation;
+    BOOL fixtureFixed,fixtureLimit;
+    NSUInteger fixtureClock,fixtureMaximum;
 }
 - (BOOL)prefersStatusBarHidden { return [Scenario() containsString:@"skin"]; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return [Scenario() containsString:@"landscape"]?UIInterfaceOrientationMaskLandscape:UIInterfaceOrientationMaskPortrait; }
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor=UIColor.blackColor;
+    fixtureFixed=NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"]!=nil;
+    fixtureClock=fixtureFixed?[NSProcessInfo.processInfo.environment[@"CARA_UI_FIXED_CPU"] integerValue]:100;
+    fixtureLimit=![NSProcessInfo.processInfo.environment[@"CARA_UI_UNCAPPED"] isEqual:@"1"]; fixtureMaximum=105;
     self.overrideUserInterfaceStyle=[NSProcessInfo.processInfo.environment[@"CARA_UI_THEME"] isEqual:@"light"]?UIUserInterfaceStyleLight:UIUserInterfaceStyleDark;
     NSString* folder=[NSTemporaryDirectory() stringByAppendingPathComponent:@"CaraShellFixture"];
     fixture=[NSURL fileURLWithPath:folder isDirectory:YES];
@@ -86,6 +92,18 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     nav.sheetPresentationController.detents=@[UISheetPresentationControllerDetent.largeDetent]; nav.sheetPresentationController.prefersGrabberVisible=YES; nav.sheetPresentationController.preferredCornerRadius=28; nav.presentationController.delegate=settings;
     [self presentViewController:nav animated:YES completion:nil];
 }
+- (NSDictionary*)advancedFixtureSection {
+    __weak PreviewRoot* owner=self;
+    BOOL accuracy=[NSProcessInfo.processInfo.environment[@"CARA_UI_MODE"] isEqual:@"accuracy"];
+    const auto policy=Cara::MakePlayPolicy(accuracy?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,unsigned(fixtureMaximum),false,-1,fixtureFixed,unsigned(fixtureClock),fixtureLimit);
+    return @{@"title":@"Emulation",@"rows":@[
+        @{@"title":@"Use fixed guest clock",@"value":@(accuracy||fixtureFixed),@"enabled":@(!accuracy),@"change":^(BOOL on) { PreviewRoot* root=owner; if (!root) return; root->fixtureFixed=on; [root refreshAdvancedFixture]; }},
+        @{@"title":@"Guest clock",@"subtitle":@"25–200% · Normal guest clock: 100%.",@"enabled":@(!accuracy&&fixtureFixed),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(policy.guest_clock)},@"sliderChange":^(double value) { PreviewRoot* root=owner; if (root) root->fixtureClock=NSUInteger(value); }},
+        @{@"title":@"Limit game speed",@"value":@(policy.limit_speed),@"enabled":@(!accuracy),@"change":^(BOOL on) { PreviewRoot* root=owner; if (!root) return; root->fixtureLimit=on; [root refreshAdvancedFixture]; }},
+        @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 105%.",@"enabled":@(!accuracy&&policy.limit_speed),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(policy.maximum_speed)},@"sliderChange":^(double value) { PreviewRoot* root=owner; if (root) root->fixtureMaximum=NSUInteger(value); }},
+    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 105%.":@"Guest clock and game speed are separate controls."};
+}
+- (void)refreshAdvancedFixture { settings.sections=@[[self advancedFixtureSection]]; [settings refresh]; }
 - (void)showSkin {
     NSURL* url=[NSBundle.mainBundle URLForResource:@"CarbonDuo" withExtension:@"deltaskin"];
     CaraSkin* skin=[CaraSkin loadURL:url error:nil];
@@ -129,6 +147,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     if ([Scenario() isEqual:@"settings"] && !self.presentedViewController) [self showSettings];
+    if ([Scenario() isEqual:@"advanced"] && !self.presentedViewController) { [self showSettings]; settings.title=@"Advanced"; [self refreshAdvancedFixture]; }
     if ([Scenario() isEqual:@"quick-settings"] && !self.presentedViewController) {
         CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=@"performance"; quick.showFPS=YES;
         quick.actions=@[@{@"title":@"Library & iCloud",@"symbol":@"folder",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Controllers",@"symbol":@"gamecontroller.fill",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [self showSettings]; }}];

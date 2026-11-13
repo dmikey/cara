@@ -361,6 +361,34 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
 }
 @end
 
+@interface CaraSliderCell : UITableViewCell
+- (void)configure:(NSDictionary*)row enabled:(BOOL)enabled;
+@end
+@implementation CaraSliderCell
+- (void)configure:(NSDictionary*)row enabled:(BOOL)enabled {
+    NSDictionary* spec=row[@"slider"];
+    UILabel* title=[UILabel new]; title.text=row[@"title"]; title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; title.adjustsFontForContentSizeCategory=YES; title.numberOfLines=0;
+    UILabel* value=[UILabel new]; value.font=[UIFont monospacedDigitSystemFontOfSize:16 weight:UIFontWeightSemibold]; value.textAlignment=NSTextAlignmentRight; value.accessibilityElementsHidden=YES;
+    title.textColor=value.textColor=enabled?UIColor.labelColor:UIColor.tertiaryLabelColor;
+    UISlider* slider=[UISlider new]; slider.minimumValue=[spec[@"min"] floatValue]; slider.maximumValue=[spec[@"max"] floatValue]; slider.value=[spec[@"value"] floatValue]; slider.enabled=enabled; slider.minimumTrackTintColor=CaraOrange(); slider.accessibilityLabel=row[@"title"];
+    const float step=MAX(1,[spec[@"step"] floatValue]);
+    value.text=[NSString stringWithFormat:@"%.0f%%",slider.value]; slider.accessibilityValue=value.text;
+    __weak UISlider* weakSlider=slider; __weak UILabel* weakValue=value;
+    [slider addAction:[UIAction actionWithHandler:^(UIAction* action) {
+        UISlider* control=weakSlider; if (!control) return;
+        const float rounded=MAX(control.minimumValue,MIN(control.maximumValue,std::round(control.value/step)*step)); control.value=rounded;
+        weakValue.text=[NSString stringWithFormat:@"%.0f%%",rounded]; control.accessibilityValue=weakValue.text;
+        void(^change)(double)=row[@"sliderChange"]; if (change) change(rounded);
+    }] forControlEvents:UIControlEventValueChanged];
+    UIStackView* heading=[[UIStackView alloc] initWithArrangedSubviews:@[title,value]]; heading.spacing=12;
+    [value setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal]; [value setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    UILabel* detail=[UILabel new]; detail.text=row[@"subtitle"]; detail.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; detail.adjustsFontForContentSizeCategory=YES; detail.textColor=UIColor.secondaryLabelColor; detail.numberOfLines=0;
+    UIStackView* body=[[UIStackView alloc] initWithArrangedSubviews:@[heading,slider,detail]]; body.axis=UILayoutConstraintAxisVertical; body.spacing=6; body.translatesAutoresizingMaskIntoConstraints=NO;
+    [self.contentView addSubview:body]; [NSLayoutConstraint activateConstraints:@[[body.leadingAnchor constraintEqualToAnchor:self.contentView.layoutMarginsGuide.leadingAnchor],[body.trailingAnchor constraintEqualToAnchor:self.contentView.layoutMarginsGuide.trailingAnchor],[body.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:14],[body.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-14]]];
+    self.selectionStyle=UITableViewCellSelectionStyleNone;
+}
+@end
+
 @implementation CaraSettingsController {
     BOOL completed;
 }
@@ -370,7 +398,12 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     self.tableView.rowHeight=UITableViewAutomaticDimension; self.tableView.estimatedRowHeight=62;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
 }
-- (void)refresh { if (self.isViewLoaded) [self.tableView reloadData]; }
+- (void)refresh {
+    if (!self.isViewLoaded) return;
+    NSMutableArray* views=[NSMutableArray arrayWithArray:self.tableView.visibleCells];
+    while (views.count) { UIView* view=views.lastObject; [views removeLastObject]; if ([view isKindOfClass:UISlider.class] && ((UISlider*)view).tracking) return; [views addObjectsFromArray:view.subviews]; }
+    [self.tableView reloadData];
+}
 - (void)done { completed=YES; [self dismissViewControllerAnimated:YES completion:^{ if (self.finished) self.finished(); }]; }
 - (void)presentationControllerDidDismiss:(UIPresentationController*)controller { if (!completed && self.finished) self.finished(); completed=YES; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView*)table { return self.sections.count; }
@@ -379,6 +412,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
 - (NSString*)tableView:(UITableView*)table titleForFooterInSection:(NSInteger)section { return self.sections[section][@"footer"]; }
 - (UITableViewCell*)tableView:(UITableView*)table cellForRowAtIndexPath:(NSIndexPath*)path {
     NSDictionary* row=self.sections[path.section][@"rows"][path.row];
+    if (row[@"slider"]) { CaraSliderCell* cell=[[CaraSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil]; [cell configure:row enabled:!row[@"enabled"] || [row[@"enabled"] boolValue]]; return cell; }
     UITableViewCell* cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text=row[@"title"]; cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES; cell.textLabel.numberOfLines=0;
     cell.detailTextLabel.text=row[@"subtitle"]; cell.detailTextLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; cell.detailTextLabel.adjustsFontForContentSizeCategory=YES; cell.detailTextLabel.numberOfLines=0;
@@ -486,6 +520,10 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     NSArray<UIButton*>* modeButtons;
     BOOL completed;
 }
+- (void)setPerformanceDetail:(NSString*)value {
+    _performanceDetail=[value copy];
+    if (modeButtons.count>1) { UIButtonConfiguration* config=modeButtons[1].configuration; config.subtitle=_performanceDetail?:@"Adaptive CPU clock"; modeButtons[1].configuration=config; }
+}
 - (instancetype)init { if ((self=[super init])) _modeSelectionEnabled=YES; return self; }
 - (void)viewDidLoad {
     [super viewDidLoad]; if (!self.title.length) self.title=@"Settings"; self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraOrange();
@@ -500,7 +538,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
         UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem];
         UIButtonConfiguration* config=[UIButtonConfiguration borderedButtonConfiguration];
         config.title=accuracy?@"Accuracy Mode":@"Performance Mode";
-        config.subtitle=accuracy?@"105% speed · 100% guest CPU":@"Adaptive CPU clock";
+        config.subtitle=accuracy?@"105% speed · 100% guest CPU":(self.performanceDetail?:@"Adaptive CPU clock");
         config.image=[UIImage systemImageNamed:accuracy?@"scope":@"bolt.fill"];
         config.imagePadding=18; config.titleAlignment=UIButtonConfigurationTitleAlignmentLeading;
         config.contentInsets=NSDirectionalEdgeInsetsMake(25,22,25,22); config.cornerStyle=UIButtonConfigurationCornerStyleLarge;
