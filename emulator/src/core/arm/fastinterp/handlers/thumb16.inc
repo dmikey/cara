@@ -1055,7 +1055,12 @@ handle_ThumbSwi: {
         timer->AddTicks(executed);
         executed = 0;
 
+        if (guest_pc_cpu_.Active()) guest_pc_cpu_.EnterExternal();
         svc_context_->CallSVC(svc_num);
+        if (guest_pc_cpu_.Active()) {
+            profile_thread_id_ = ProfileThreadId();
+            guest_pc_cpu_.LeaveExternal(profile_thread_id_);
+        }
     }
     local_pc = state_.regs[15];
     goto done;

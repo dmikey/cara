@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#include "cara/guest_gpu_trace.h"
 #include <mach/mach.h>
 #include <pthread/qos.h>
 #include <sys/qos.h>
@@ -1528,6 +1529,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             }
             if (result==Core::System::ResultStatus::Success)
                 LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
+            if (result==Core::System::ResultStatus::Success) Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
             gameLoaded=result==Core::System::ResultStatus::Success;
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (self->sessionGeneration!=session) return;
@@ -1735,6 +1737,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         if (state_saved && state_load_frame && !state_loaded && emuWindow->frames>=state_load_frame) {
                             AudioCore::SetIOSAudioPaused(true);
                             system.LoadStateFromPath(user+"device-test.carastate");
+                            Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
                             if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
                             state_loaded=true; state_test_report(""); reset_clock_samples();
                             reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
@@ -1748,7 +1751,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         try {
                             if (command==101) system.SaveStateToPath(user+"profile-comparison.carastate");
                             else if (command>0) { system.SaveState(unsigned(command)); [stateSync captureCommittedSave]; }
-                            else system.LoadState(unsigned(-command));
+                            else { system.LoadState(unsigned(-command)); Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv"); }
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
                         reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
@@ -1815,6 +1818,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
                     emuWindow->presentation_speed=has_speed_override?paced_speed:self->maximumSpeedLimit.load();
                     result = system.RunLoop();
+                    Cara::GuestGPUTrace::Flush();
+                    if (Cara::GuestGPUTrace::TakeExportError())
+                        LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
                     if (profile_memory_frame_300 && !profile_memory_frame_300_done && emuWindow->frames>=300 &&
                         result==Core::System::ResultStatus::Success) {
                         profile_memory_frame_300_done=true;
@@ -1938,6 +1944,50 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"vertex_subimage_sample_cpu_ms\":" + std::to_string((current.vertex_subimage_cpu_samples.cpu_seconds - previous_counters.vertex_subimage_cpu_samples.cpu_seconds)*1000.0) +
                                 ",\"vertex_subimage_samples\":" + std::to_string((current.vertex_subimage_cpu_samples.samples - previous_counters.vertex_subimage_cpu_samples.samples)) +
                                 ",\"vertex_subimage_sample_clock_failures\":" + std::to_string((current.vertex_subimage_cpu_samples.clock_failures - previous_counters.vertex_subimage_cpu_samples.clock_failures)) +
+                                ",\"texture_acquire_calls\":" + std::to_string((current.texture_acquisition_samples[0].calls - previous_counters.texture_acquisition_samples[0].calls)) +
+                                ",\"texture_acquire_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[0].timing.wall_seconds - previous_counters.texture_acquisition_samples[0].timing.wall_seconds)*1000.0) +
+                                ",\"texture_acquire_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[0].timing.cpu_seconds - previous_counters.texture_acquisition_samples[0].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_acquire_samples\":" + std::to_string((current.texture_acquisition_samples[0].timing.samples - previous_counters.texture_acquisition_samples[0].timing.samples)) +
+                                ",\"texture_acquire_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[0].timing.clock_failures - previous_counters.texture_acquisition_samples[0].timing.clock_failures)) +
+                                ",\"texture_selection_calls\":" + std::to_string((current.texture_acquisition_samples[1].calls - previous_counters.texture_acquisition_samples[1].calls)) +
+                                ",\"texture_selection_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[1].timing.wall_seconds - previous_counters.texture_acquisition_samples[1].timing.wall_seconds)*1000.0) +
+                                ",\"texture_selection_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[1].timing.cpu_seconds - previous_counters.texture_acquisition_samples[1].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_selection_samples\":" + std::to_string((current.texture_acquisition_samples[1].timing.samples - previous_counters.texture_acquisition_samples[1].timing.samples)) +
+                                ",\"texture_selection_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[1].timing.clock_failures - previous_counters.texture_acquisition_samples[1].timing.clock_failures)) +
+                                ",\"texture_validation_calls\":" + std::to_string((current.texture_acquisition_samples[2].calls - previous_counters.texture_acquisition_samples[2].calls)) +
+                                ",\"texture_validation_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[2].timing.wall_seconds - previous_counters.texture_acquisition_samples[2].timing.wall_seconds)*1000.0) +
+                                ",\"texture_validation_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[2].timing.cpu_seconds - previous_counters.texture_acquisition_samples[2].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_validation_samples\":" + std::to_string((current.texture_acquisition_samples[2].timing.samples - previous_counters.texture_acquisition_samples[2].timing.samples)) +
+                                ",\"texture_validation_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[2].timing.clock_failures - previous_counters.texture_acquisition_samples[2].timing.clock_failures)) +
+                                ",\"texture_reinterpretation_calls\":" + std::to_string((current.texture_acquisition_samples[3].calls - previous_counters.texture_acquisition_samples[3].calls)) +
+                                ",\"texture_reinterpretation_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[3].timing.wall_seconds - previous_counters.texture_acquisition_samples[3].timing.wall_seconds)*1000.0) +
+                                ",\"texture_reinterpretation_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[3].timing.cpu_seconds - previous_counters.texture_acquisition_samples[3].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_reinterpretation_samples\":" + std::to_string((current.texture_acquisition_samples[3].timing.samples - previous_counters.texture_acquisition_samples[3].timing.samples)) +
+                                ",\"texture_reinterpretation_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[3].timing.clock_failures - previous_counters.texture_acquisition_samples[3].timing.clock_failures)) +
+                                ",\"texture_allocation_calls\":" + std::to_string((current.texture_acquisition_samples[4].calls - previous_counters.texture_acquisition_samples[4].calls)) +
+                                ",\"texture_allocation_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[4].timing.wall_seconds - previous_counters.texture_acquisition_samples[4].timing.wall_seconds)*1000.0) +
+                                ",\"texture_allocation_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[4].timing.cpu_seconds - previous_counters.texture_acquisition_samples[4].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_allocation_samples\":" + std::to_string((current.texture_acquisition_samples[4].timing.samples - previous_counters.texture_acquisition_samples[4].timing.samples)) +
+                                ",\"texture_allocation_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[4].timing.clock_failures - previous_counters.texture_acquisition_samples[4].timing.clock_failures)) +
+                                ",\"texture_load_calls\":" + std::to_string((current.texture_acquisition_samples[5].calls - previous_counters.texture_acquisition_samples[5].calls)) +
+                                ",\"texture_load_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[5].timing.wall_seconds - previous_counters.texture_acquisition_samples[5].timing.wall_seconds)*1000.0) +
+                                ",\"texture_load_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[5].timing.cpu_seconds - previous_counters.texture_acquisition_samples[5].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_load_samples\":" + std::to_string((current.texture_acquisition_samples[5].timing.samples - previous_counters.texture_acquisition_samples[5].timing.samples)) +
+                                ",\"texture_load_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[5].timing.clock_failures - previous_counters.texture_acquisition_samples[5].timing.clock_failures)) +
+                                ",\"texture_upload_calls\":" + std::to_string((current.texture_acquisition_samples[6].calls - previous_counters.texture_acquisition_samples[6].calls)) +
+                                ",\"texture_upload_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[6].timing.wall_seconds - previous_counters.texture_acquisition_samples[6].timing.wall_seconds)*1000.0) +
+                                ",\"texture_upload_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[6].timing.cpu_seconds - previous_counters.texture_acquisition_samples[6].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_upload_samples\":" + std::to_string((current.texture_acquisition_samples[6].timing.samples - previous_counters.texture_acquisition_samples[6].timing.samples)) +
+                                ",\"texture_upload_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[6].timing.clock_failures - previous_counters.texture_acquisition_samples[6].timing.clock_failures)) +
+                                ",\"texture_mipmap_calls\":" + std::to_string((current.texture_acquisition_samples[7].calls - previous_counters.texture_acquisition_samples[7].calls)) +
+                                ",\"texture_mipmap_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[7].timing.wall_seconds - previous_counters.texture_acquisition_samples[7].timing.wall_seconds)*1000.0) +
+                                ",\"texture_mipmap_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[7].timing.cpu_seconds - previous_counters.texture_acquisition_samples[7].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_mipmap_samples\":" + std::to_string((current.texture_acquisition_samples[7].timing.samples - previous_counters.texture_acquisition_samples[7].timing.samples)) +
+                                ",\"texture_mipmap_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[7].timing.clock_failures - previous_counters.texture_acquisition_samples[7].timing.clock_failures)) +
+                                ",\"texture_exact_candidates\":" + std::to_string(current.texture_exact_candidates - previous_counters.texture_exact_candidates) +
+                                ",\"texture_exact_wrong_layout\":" + std::to_string(current.texture_exact_wrong_layout - previous_counters.texture_exact_wrong_layout) +
+                                ",\"texture_exact_early_rejects\":" + std::to_string(current.texture_exact_early_rejects - previous_counters.texture_exact_early_rejects) +
+                                ",\"texture_exact_validity_lookups\":" + std::to_string(current.texture_exact_validity_lookups - previous_counters.texture_exact_validity_lookups) +
                                 ",\"surface_download_sample_wall_ms\":" + std::to_string((current.surface_download_cpu_samples.wall_seconds - previous_counters.surface_download_cpu_samples.wall_seconds)*1000.0) +
                                 ",\"surface_download_sample_cpu_ms\":" + std::to_string((current.surface_download_cpu_samples.cpu_seconds - previous_counters.surface_download_cpu_samples.cpu_seconds)*1000.0) +
                                 ",\"surface_download_samples\":" + std::to_string((current.surface_download_cpu_samples.samples - previous_counters.surface_download_cpu_samples.samples)) +
@@ -1989,6 +2039,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"vertex_reuse_check_ms_per_frame\":" + std::to_string((current.vertex_reuse_check_seconds - previous_counters.vertex_reuse_check_seconds)*1000/count) +
                                 ",\"vertex_index_upload_bytes\":" + std::to_string(current.vertex_index_upload_bytes - previous_counters.vertex_index_upload_bytes) +
                                 ",\"gpu_input_records\":" + std::to_string(current.gpu_input_records - previous_counters.gpu_input_records) +
+                                ",\"vertex_input_stage_draws\":" + std::to_string(current.vertex_input_stage_draws - previous_counters.vertex_input_stage_draws) +
+                                ",\"vertex_configured_input_registers\":" + std::to_string(current.vertex_configured_input_registers - previous_counters.vertex_configured_input_registers) +
+                                ",\"vertex_selected_input_registers\":" + std::to_string(current.vertex_selected_input_registers - previous_counters.vertex_selected_input_registers) +
+                                ",\"vertex_pruned_input_draws\":" + std::to_string(current.vertex_pruned_input_draws - previous_counters.vertex_pruned_input_draws) +
                                 ",\"gpu_indexed_input_draws\":" + std::to_string(current.gpu_indexed_input_draws - previous_counters.gpu_indexed_input_draws) +
                                 ",\"gpu_packed_input_draws\":" + std::to_string(current.gpu_packed_input_draws - previous_counters.gpu_packed_input_draws) +
                                 ",\"packed_validation_failures\":" + std::to_string(current.packed_validation_failures) +
@@ -2046,6 +2100,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                           << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
                                           << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
                                           << ",\"presentation_mode\":\"mono_left_top\""
+                                          << ",\"used_input_attributes_requested\":" << ((std::getenv("CARA_GPU_USED_INPUTS") && std::string_view(std::getenv("CARA_GPU_USED_INPUTS")) == "1")?"true":"false")
                                           << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
                        << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
@@ -2171,6 +2226,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                     }
                     profile << "]}\n";
                 }
+                Cara::GuestGPUTrace::Flush(true);
+                if (Cara::GuestGPUTrace::TakeExportError())
+                    LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
                 system.Shutdown();
                 [saveSync captureCommittedSave];
                 [stateSync captureCommittedSave];

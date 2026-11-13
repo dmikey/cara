@@ -7,6 +7,7 @@
 #include <boost/serialization/array.hpp>
 #include <boost/serialization/shared_ptr.hpp>
 #include <boost/serialization/unique_ptr.hpp>
+#include "cara/guest_gpu_trace.h"
 #include "common/archives.h"
 #include "common/logging/log.h"
 #include "core/3ds.h"
@@ -197,6 +198,17 @@ void Module::UpdatePadCallback(u64 userdata, s64 cycles_late) {
 
     // gamepad input
     UpdatePad();
+
+    // Periodic update observation, not a button-change notification. Bind the
+    // live restored event IDs and sampled pad state to the existing bounded
+    // trace without changing input state, event delivery or scheduling.
+    if (Cara::GuestGPUTrace::Enabled()) {
+        const auto* mem = reinterpret_cast<const SharedMem*>(shared_mem->GetPointer());
+        Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::HIDUpdate,
+            0, event_pad_or_touch_1->GetObjectId(), event_pad_or_touch_2->GetObjectId(),
+            (u64(mem->pad.index) << 32) | state.hex, static_cast<u64>(cycles_late),
+            pad_update_ticks - cycles_late);
+    }
 
     // Signal both handles when there's an update to Pad or touch
     event_pad_or_touch_1->Signal();

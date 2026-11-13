@@ -945,9 +945,17 @@ std::optional<ProgramResult> DecompileProgram(const Pica::Shader::ProgramCode& p
 
     try {
         auto subroutines = ControlFlowAnalyzer(program_code, main_offset).MoveSubroutines();
+        u16 input_mask = 0;
+        bool unknown_input = false;
+        const RegGetter observe_input = [&](u32 index) {
+            if (index < 16) input_mask |= u16(1u << index);
+            else unknown_input = true;
+            return inputreg_getter(index);
+        };
         GLSLGenerator generator(subroutines, program_code, swizzle_data, main_offset,
-                                inputreg_getter, outputreg_getter, sanitize_mul);
-        return {ProgramResult{generator.MoveShaderCode()}};
+                                observe_input, outputreg_getter, sanitize_mul);
+        auto code = generator.MoveShaderCode();
+        return {ProgramResult{std::move(code), unknown_input ? u16{0xffff} : input_mask}};
     } catch (const DecompileFail& exception) {
         LOG_INFO(HW_GPU, "Shader decompilation failed: {}", exception.what());
         return {};

@@ -15,11 +15,15 @@
 #include "common/assert.h"
 #include "common/atomic_ops.h"
 #include "common/logging/log.h"
+#include "common/scope_exit.h"
 #include "core/arm/fastinterp/arm_tick_counts.h"
 #include "core/arm/fastinterp/fastinterp.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/svc.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/thread.h"
+#include "video_core/video_core.h"
 #include "core/memory.h"
 
 class FastInterpThreadContext final : public ARM_Interface::ThreadContext {
@@ -116,8 +120,9 @@ static u8* empty_page_table[1 << (32 - FASTINTERP_PAGE_BITS)];
 
 ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memory, u32 id,
                                std::shared_ptr<Core::Timing::Timer> timer)
-    : ARM_Interface(id, timer), memory_(memory),
+    : ARM_Interface(id, timer), system_(system), guest_pc_cpu_(GuestPCCPU::FromEnvironment()), memory_(memory),
       svc_context_(std::make_unique<Kernel::SVCContext>(system)) {
+    if (guest_pc_cpu_.Enabled()) guest_pc_cpu_.Calibrate();
     LOG_INFO(Core_ARM11, "FastInterp ARM interpreter created for core {}", id);
     state_.regs.fill(0);
     state_.vfp_regs.fill(0);
@@ -132,6 +137,8 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     ram_burst_ = burst && std::strcmp(burst, "1") == 0;
     const char* contiguous = std::getenv("CARA_FASTINTERP_CONTIGUOUS_TRANSFERS");
     contiguous_transfers_ = contiguous && std::strcmp(contiguous, "1") == 0;
+    const char* precise_end = std::getenv("CARA_FASTINTERP_PRECISE_BLOCK_END");
+    precise_block_end_ = !precise_end || std::strcmp(precise_end, "0") != 0;
     const char* chain_budget = std::getenv("CARA_FASTINTERP_CHAIN_BUDGET");
     chain_budget_ = chain_budget && std::strcmp(chain_budget, "1") == 0;
     const char* cache_ways = std::getenv("CARA_FASTINTERP_CACHE_WAYS");
@@ -218,7 +225,13 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
             }
         }
     const auto& cache_profile = cache_.GetProfile();
-    output << "{\"chain_budget_enabled\":" << (chain_budget_ ? "true" : "false")
+    output << "{\"guest_pc_cpu\":";
+    guest_pc_cpu_.Write(output);
+    output << ",\"cache_chain_recency\":" << (cache_.ChainRecencyEnabled() ? "true" : "false")
+           << ",\"cache_replacement_profile\":";
+    cache_.WriteReplacementProfile(output);
+    output << ",\"chain_budget_enabled\":" << (chain_budget_ ? "true" : "false")
+           << ",\"precise_block_end_enabled\":" << (precise_block_end_ ? "true" : "false")
            << ",\"cache_ways\":" << cache_.Ways()
            << ",\"cache_sets\":" << cache_.Sets() << ",\"cache_entries\":" << CACHE_SIZE
            << ",\"cache_object_bytes\":" << sizeof(cache_)
@@ -278,6 +291,11 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
 void ARM_FastInterp::Run() {
     Common::FrameTiming::Scope timing_scope(Common::FrameTiming::Phase::GuestCPU);
     halted_ = false;
+    if (guest_pc_cpu_.Enabled()) {
+        profile_thread_id_ = ProfileThreadId();
+        guest_pc_cpu_.BeginRun(VideoCore::GetCurrentFrame(), profile_thread_id_);
+    }
+    SCOPE_EXIT({ if (guest_pc_cpu_.Enabled()) guest_pc_cpu_.EndRun(); });
 
     // Run until the timer slice is exhausted, flushing ticks to the timer per block so the
     // downcount stays live. This mirrors Dynarmic (which flushes incrementally via its
@@ -287,6 +305,7 @@ void ARM_FastInterp::Run() {
     // being overshot, keeping multi-threaded scheduling aligned with Dynarmic.
     while (!halted_ && timer->GetDowncount() > 0) {
         u32 pc = state_.PC();
+        if (guest_pc_cpu_.Active()) guest_pc_cpu_.PrepareBlock(pc, profile_thread_id_);
 
         // PC in unmapped memory: consume the slice so other threads still run
         if (!state_.page_pointers[pc >> 12]) {
@@ -1029,6 +1048,8 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         WriteCoherent<u32>(memory_, addr, value);
     };
 
+    if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+
     // Entry guard: poisoned blocks (inst_count = 0 from InvalidateRange/Clear)
     // must not execute their stale instructions.
     if (inst >= end)
@@ -1085,6 +1106,7 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
+                if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
                 goto* dispatch_table[static_cast<size_t>(inst->opcode)];
             }
         }
@@ -1098,6 +1120,7 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
+                if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
                 goto* dispatch_table[static_cast<size_t>(inst->opcode)];
             }
         }
@@ -1115,6 +1138,7 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
+                if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
                 goto* dispatch_table[static_cast<size_t>(inst->opcode)];
             }
         }
@@ -1431,6 +1455,10 @@ void ARM_FastInterp::SaveContext(const std::unique_ptr<ThreadContext>& arg) {
 
 void ARM_FastInterp::LoadContext(const std::unique_ptr<ThreadContext>& arg) {
     const auto& ctx = static_cast<const FastInterpThreadContext&>(*arg);
+    if (guest_pc_cpu_.ObservesBlocks()) {
+        profile_thread_id_ = ProfileThreadId();
+        guest_pc_cpu_.SwitchThread(profile_thread_id_);
+    }
     ClearExclusiveState();
     for (int i = 0; i < 16; i++) {
         state_.regs[i] = ctx.cpu_registers[i];
@@ -1441,6 +1469,13 @@ void ARM_FastInterp::LoadContext(const std::unique_ptr<ThreadContext>& arg) {
     }
     state_.fpscr = ctx.fpscr;
     state_.fpexc = ctx.fpexc;
+}
+
+std::uint32_t ARM_FastInterp::ProfileThreadId() const {
+    // Standalone instruction fixtures do not initialize a kernel process.
+    if (!system_.IsPoweredOn()) return 0;
+    const auto* thread = system_.Kernel().GetThreadManager(GetID()).GetCurrentThread();
+    return thread ? thread->GetThreadId() : 0;
 }
 
 void ARM_FastInterp::PrepareReschedule() {

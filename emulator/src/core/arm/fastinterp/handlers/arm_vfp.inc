@@ -511,8 +511,17 @@ handle_VldrD:
     CHECK_COND();
     {
         u32 addr = state_.regs[inst->vfp.rn] + inst->vfp.offset;
-        state_.vfp_regs[inst->vfp.sd * 2] = MemRead32(addr);
-        state_.vfp_regs[inst->vfp.sd * 2 + 1] = MemRead32(addr + 4);
+        // Only ordinary RAM can combine the two ordered word accesses. Null
+        // pointers include tracked/coherent and MMIO pages; crossings (including
+        // 32-bit address wrap) retain the original word-by-word fallback.
+        const u8* page = ram_burst_ ? local_page_ptrs[addr >> FASTINTERP_PAGE_BITS] : nullptr;
+        if (page && (addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 7) {
+            std::memcpy(&state_.vfp_regs[inst->vfp.sd * 2],
+                        page + (addr & FASTINTERP_PAGE_MASK), 8);
+        } else {
+            state_.vfp_regs[inst->vfp.sd * 2] = MemRead32(addr);
+            state_.vfp_regs[inst->vfp.sd * 2 + 1] = MemRead32(addr + 4);
+        }
     }
     ADVANCE_AND_DISPATCH();
 
@@ -520,8 +529,14 @@ handle_VstrD:
     CHECK_COND();
     {
         u32 addr = state_.regs[inst->vfp.rn] + inst->vfp.offset;
-        MemWrite32(addr, state_.vfp_regs[inst->vfp.sd * 2]);
-        MemWrite32(addr + 4, state_.vfp_regs[inst->vfp.sd * 2 + 1]);
+        u8* page = ram_burst_ ? local_page_ptrs[addr >> FASTINTERP_PAGE_BITS] : nullptr;
+        if (page && (addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 7) {
+            std::memcpy(page + (addr & FASTINTERP_PAGE_MASK),
+                        &state_.vfp_regs[inst->vfp.sd * 2], 8);
+        } else {
+            MemWrite32(addr, state_.vfp_regs[inst->vfp.sd * 2]);
+            MemWrite32(addr + 4, state_.vfp_regs[inst->vfp.sd * 2 + 1]);
+        }
     }
     ADVANCE_AND_DISPATCH();
 

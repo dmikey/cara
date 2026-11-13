@@ -9,6 +9,23 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  network-relay:
+    name: Go network relay / race checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/network-relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 'stable'
+          cache: false
+      - name: Vet relay
+        run: go vet ./...
+      - name: Test relay with race detector
+        run: go test -race ./...
   build:
     name: ${{ matrix.platform }} / ${{ matrix.renderer }} / ARM64 / no JIT
     runs-on: macos-15
@@ -43,8 +60,7 @@ jobs:
           python3 tools/compare_guest_clocks.py --self-test
           python3 tools/benchmark_gpu_inputs.py --help > /dev/null
           python3 -m py_compile tools/compare_guest_clocks.py tools/benchmark_gpu_inputs.py tools/capture_profile_checkpoint.py tools/summarize_phase_cpu.py tools/sample_device_stacks.py tools/_sample_device_stacks_lldb.py tools/benchmark_speed_cap.py tools/build_ios_shell_preview.py tools/make_skin.py
-          python3 -m unittest discover -s tests -p test_summarize_surface_flushes.py -v
-          python3 -m unittest discover -s tests -p test_benchmark_gpu_launch.py -v
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Build
         run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
       - name: Audit linked no-JIT binary
@@ -93,16 +109,30 @@ jobs:
           done
           diff -u work/cache-conflict-4.txt work/cache-conflict-8.txt
           diff -u work/hot-loop-4.txt work/hot-loop-8.txt
+          CARA_FASTINTERP_CHAIN_RECENCY=1 CARA_CACHE_CONFLICT_TRACE=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test > work/cache-conflict-recency.txt
+          CARA_FASTINTERP_CHAIN_RECENCY=1 CARA_HOT_LOOP_TRACE=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test > work/hot-loop-recency.txt
+          diff -u work/cache-conflict-8.txt work/cache-conflict-recency.txt
+          diff -u work/hot-loop-8.txt work/hot-loop-recency.txt
           CARA_FASTINTERP_TICK_BUCKETS=0 work/build-mac/bin/cara-arm-tick-self-test
           CARA_FASTINTERP_TICK_BUCKETS=1 work/build-mac/bin/cara-arm-tick-self-test
           work/build-mac/bin/cara-texture-lookup-self-test
+          clang++ -std=c++17 -Wall -Wextra -Werror -UNDEBUG -I emulator/src tests/frame_timing_texture_test.cpp -o work/frame-timing-texture-test
+          work/frame-timing-texture-test
+          CARA_TEXTURE_ACQUISITION_PROFILE=1 work/frame-timing-texture-test enabled
           work/build-mac/bin/cara-render-bookkeeping-self-test
           work/build-mac/bin/cara-vertex-upload-bank-self-test
+          work/build-mac/bin/cara-vertex-input-usage-self-test
+          work/build-mac/bin/cara-fastinterp-chain-recency-self-test
+          work/build-mac/bin/cara-guest-pc-cpu-self-test
+          CARA_GUEST_PC_CPU_EQUIVALENCE_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_SCALAR_DOUBLE_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_LDM_PC_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-ios-pipeline-cache-self-test
           work/build-mac/bin/cara-surface-remap-layout-self-test
           work/build-mac/bin/cara-frame-pacer-self-test
           work/build-mac/bin/cara-pica-submission-probe-self-test
           work/build-mac/bin/cara-p3d-completion-self-test
+          work/build-mac/bin/cara-guest-gpu-trace-self-test
           work/build-mac/bin/cara-interrupt-relay-policy-self-test
           work/build-mac/bin/cara-presentation-guard-self-test
           work/build-mac/bin/cara-fastinterp-self-test

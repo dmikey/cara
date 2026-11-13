@@ -35,6 +35,7 @@ bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
     const auto saved_state=OpenGLState::GetCurState();
     const auto saved_counters=Common::FrameTiming::counters;
     const bool saved_reuse=texture_lookup_reuse,saved_verify=texture_lookup_verify;
+    const bool saved_prefilter=texture_exact_prefilter;
     const bool saved_trace=trace_flushes,saved_retain=retain_small_cpu_writes;
     const bool saved_skip=Settings::values.skip_cpu_write;
     trace_flushes=false; retain_small_cpu_writes=true; Settings::values.skip_cpu_write=false;
@@ -55,6 +56,7 @@ bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
         }
         texture_lookup_entries={};texture_lookup_next=0;
         texture_lookup_reuse=saved_reuse;texture_lookup_verify=saved_verify;
+        texture_exact_prefilter=saved_prefilter;
         trace_flushes=saved_trace;retain_small_cpu_writes=saved_retain;Settings::values.skip_cpu_write=saved_skip;
         std::memcpy(memory,backup.data(),backup.size());
         OpenGLState::InvalidateRasterState();saved_state.Apply();
@@ -75,6 +77,22 @@ bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
     std::vector<u8> expected(memory,memory+params.size);
     auto base=GetTextureSurface(info,0);
     if(!base) return fail("initial texture creation");
+    SurfaceParams wrong_format=params;
+    wrong_format.pixel_format=SurfaceParams::PixelFormat::RGB8;
+    wrong_format.UpdateParams();
+    auto nonexact=CreateSurface(wrong_format);
+    RegisterSurface(nonexact);
+    // Exercise the real exact-selection path in both modes, without allowing
+    // a lookup-cache hit to conceal a wrong prefilter result.
+    texture_lookup_reuse=false;
+    texture_exact_prefilter=false;
+    const auto unfiltered=GetSurface(params,ScaleMatch::Ignore,true);
+    texture_exact_prefilter=true;
+    if(GetSurface(params,ScaleMatch::Ignore,true)!=unfiltered || unfiltered!=base)
+        return fail("exact prefilter initial selection");
+    OpenGLState::ResetTexture(nonexact->texture.handle);
+    UnregisterSurface(nonexact);
+    texture_lookup_reuse=true;
     // Creation deliberately cannot admit an old selection proof. A fresh exact
     // query records the unique winner, then the following query must hit.
     if(GetTextureSurface(info,0)!=base) return fail("initial identity");
@@ -151,6 +169,13 @@ bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
     ValidateSurface(later,scratch,params.size);
     const auto ambiguous_hits=Common::FrameTiming::counters.texture_lookup_hits;
     if(GetSurface(params,ScaleMatch::Exact,true)!=later) return fail("valid later exact alias");
+    texture_lookup_reuse=false;
+    texture_exact_prefilter=false;
+    const auto unfiltered_tie=GetSurface(params,ScaleMatch::Exact,true);
+    texture_exact_prefilter=true;
+    if(GetSurface(params,ScaleMatch::Exact,true)!=unfiltered_tie || unfiltered_tie!=later)
+        return fail("exact prefilter validity tie selection");
+    texture_lookup_reuse=true;
     ValidateSurface(earlier,scratch,params.size);
     texture_lookup_reuse=false;reference=GetSurface(params,ScaleMatch::Exact,true);texture_lookup_reuse=true;
     if(reference!=earlier || GetSurface(params,ScaleMatch::Exact,true)!=reference ||
@@ -193,7 +218,7 @@ bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
 }
 
 bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
-    if (texture_lookup_reuse && !RunTextureLookupSelfTest(error)) return false;
+    if ((texture_lookup_reuse || texture_exact_prefilter) && !RunTextureLookupSelfTest(error)) return false;
     if (const GLenum initial_error = glGetError(); initial_error != GL_NO_ERROR) {
         error = "surface coherence entered with GL error=" + std::to_string(initial_error);
         return false;
@@ -712,7 +737,7 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
                 // Evicting the alias must not consume the live producer. A later
                 // real CPU request must still recover its original GPU bytes.
                 FlushRegion(live.addr, live.size, remap_destination);
-                std::copy(live_bytes.begin(), live_bytes.end(), expected.begin() + live.addr - scratch);
+                std::copy(live_bytes.begin(), live_bytes.end(), expected.begin() + (live.addr - scratch));
                 if (!std::equal(expected.begin(), expected.end(), memory) ||
                     glGetError() != GL_NO_ERROR) {
                     error = "selective cleanup lost later live-owner readback";
@@ -727,6 +752,77 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
               }
             }
         }
+    }
+    // A retired producer may still own bytes beyond the replacement's range.
+    // Pages losing their last cached view must be coherent before direct CPU
+    // access resumes; pages covered by the live alias must stay GPU-resident.
+    for (bool tiled : {false, true}) {
+        SurfaceParams old;
+        old.addr = scratch;
+        old.width = old.stride = 128;
+        old.height = 16;
+        old.pixel_format = SurfaceParams::PixelFormat::RGBA8;
+        old.is_tiled = tiled;
+        old.res_scale = 1;
+        old.UpdateParams();
+        std::vector<u8> original(old.size);
+        for (size_t i = 0; i < original.size(); ++i) original[i] = u8(i * 79 + 23);
+        std::memcpy(memory, original.data(), original.size());
+        test_surface = GetSurface(old, ScaleMatch::Exact, true);
+        InvalidateRegion(old.addr, old.size, test_surface);
+
+        SurfaceParams live = old;
+        live.addr += Memory::PAGE_SIZE + 1024;
+        live.width = live.stride = 32;
+        live.height = 8;
+        live.UpdateParams();
+        std::vector<u8> live_bytes(live.size);
+        for (size_t i = 0; i < live_bytes.size(); ++i) live_bytes[i] = u8(i * 47 + 131);
+        std::memcpy(memory + live.addr - scratch, live_bytes.data(), live_bytes.size());
+        remap_destination = CreateSurface(live);
+        RegisterSurface(remap_destination);
+        remap_destination->LoadGLBuffer(live.addr, live.end);
+        remap_destination->UploadGLTexture(remap_destination->GetRect());
+        std::fill_n(memory, scratch_size, 0x6B);
+        std::fill(test_surface->gl_buffer.begin(), test_surface->gl_buffer.end(), 0x2C);
+        std::fill(remap_destination->gl_buffer.begin(), remap_destination->gl_buffer.end(), 0x2C);
+        remove_surfaces.emplace(test_surface);
+        InvalidateRegion(live.addr, live.size, remap_destination);
+        std::vector<u8> expected(old.size, 0x6B);
+        std::copy_n(original.data(), Memory::PAGE_SIZE, expected.data());
+        if (test_surface->registered || !remap_destination->registered ||
+            !std::equal(expected.begin(), expected.end(), memory) ||
+            !std::all_of(memory + old.size, memory + scratch_size, [](u8 b) { return b == 0x6B; }) ||
+            glGetError() != GL_NO_ERROR) {
+            error = "last-view retirement exposed stale CPU RAM or flushed live pages tiled=" +
+                    std::to_string(tiled);
+            return false;
+        }
+        // This write models the now-direct CPU path: it does not call cache
+        // invalidation. A later orphan drain must not resurrect the old GPU byte.
+        memory[3] = expected[3] = 0xA7;
+        FlushRegion(old.addr, old.size, test_surface);
+        std::copy(original.begin() + Memory::PAGE_SIZE,
+                  original.begin() + (live.addr - scratch),
+                  expected.begin() + Memory::PAGE_SIZE);
+        std::copy(original.begin() + (live.end - scratch), original.end(),
+                  expected.begin() + (live.end - scratch));
+        if (!std::equal(expected.begin(), expected.end(), memory)) {
+            error = "retired producer drain overwrote direct CPU write or live alias";
+            return false;
+        }
+        FlushRegion(live.addr, live.size, remap_destination);
+        std::copy(live_bytes.begin(), live_bytes.end(), expected.begin() + (live.addr - scratch));
+        if (!std::equal(expected.begin(), expected.end(), memory) || glGetError() != GL_NO_ERROR) {
+            error = "last-view retirement lost live GPU-owned bytes";
+            return false;
+        }
+        dirty_regions.erase(old.GetInterval());
+        OpenGLState::ResetTexture(remap_destination->texture.handle);
+        UnregisterSurface(remap_destination);
+        remap_destination.reset();
+        OpenGLState::ResetTexture(test_surface->texture.handle);
+        test_surface.reset();
     }
     return true;
 }

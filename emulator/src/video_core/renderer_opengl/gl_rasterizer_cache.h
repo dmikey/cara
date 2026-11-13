@@ -326,6 +326,7 @@ private:
     u64 texture_lookup_generation = 1;
     bool texture_lookup_reuse = false;
     bool texture_lookup_verify = false;
+    bool texture_exact_prefilter = false;
     void AdvanceTextureLookupGeneration() {
         if (++texture_lookup_generation == 0) {
             texture_lookup_entries = {};

@@ -9,6 +9,7 @@
 #include "core/arm/arm_interface.h"
 #include "core/arm/fastinterp/fastinterp_cache.h"
 #include "core/arm/fastinterp/fastinterp_types.h"
+#include "core/arm/fastinterp/guest_pc_cpu_profile.h"
 
 namespace Memory {
 class MemorySystem;
@@ -37,7 +38,7 @@ public:
     void ClearInstructionCache() override;
     void InvalidateCacheRange(u32 start_address, std::size_t length) override;
     void ClearExclusiveState();
-    void PurgeState() override { ClearExclusiveState(); ClearInstructionCache(); }
+    void PurgeState() override { ClearExclusiveState(); ClearInstructionCache(); if (guest_pc_cpu_.Enabled()) guest_pc_cpu_.Reset(); }
     void SetPageTable(const std::shared_ptr<Memory::PageTable>& page_table) override;
 
     void SetPC(u32 addr) override;
@@ -112,6 +113,10 @@ private:
     /// Reoptimize a hot block (apply additional optimizations after detection)
     void ReoptimizeHotBlock(BasicBlock* block);
 
+    std::uint32_t ProfileThreadId() const;
+    Core::System& system_;
+    GuestPCCPU::Tracker guest_pc_cpu_;
+    std::uint32_t profile_thread_id_ = 0;
     Memory::MemorySystem& memory_;
     InterpreterState state_;
     BlockCache cache_;
@@ -139,6 +144,7 @@ private:
     bool ram_burst_{false};
     bool contiguous_transfers_{false};
     bool chain_budget_{false};
+    bool precise_block_end_{true};
     static bool AluPairsEnabled();
     u64 cache_mode_redecodes_{};
     u64 cache_page_table_changes_{};

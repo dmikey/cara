@@ -288,6 +288,12 @@ public:
 
     s64 GetGlobalTicks() const;
 
+    u32 GetCurrentTimerId() const {
+        for (u32 i = 0; i < timers.size(); ++i)
+            if (timers[i] == current_timer) return i;
+        return UINT32_MAX;
+    }
+
     s64 GetDelayTicks(u32 core_id) const;
 
     s64 GetMaxSliceLength() const;

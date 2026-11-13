@@ -4,6 +4,8 @@
 // Refer to the license.txt file included.
 
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
+#include "video_core/renderer_opengl/gl_vertex_input_usage.h"
+#include "video_core/renderer_opengl/gl_shader_decompiler.h"
 #include <algorithm>
 #include <cstdlib>
 #include <chrono>
@@ -224,13 +226,13 @@ public:
     }
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     unsigned ios_indexed_inputs) {
+                                     unsigned ios_indexed_inputs, u16 selected_input_mask) {
         bool result = false;
         const PicaVSConfig key(regs, setup);
         u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
 #ifdef CARA_IOS_GLES
         const PicaFixedGSConfig ios_output(regs);
-        const u16 ios_input_mask = IOSVertexInputLayout::MaskFromRegs(regs.vs);
+        const u16 ios_input_mask = IOSVertexInputLayout::MaskFromRegs(regs.vs) & selected_input_mask;
         key_hash ^= Common::ComputeHash64(&ios_input_mask, sizeof(ios_input_mask));
         key_hash ^= Common::ComputeHash64(&ios_indexed_inputs, sizeof(ios_indexed_inputs));
         // Output semantics are part of a fused ES vertex program, not a separate GS.
@@ -371,10 +373,32 @@ public:
     }
 
 #ifdef CARA_IOS_GLES
-    GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup) {
+    u16 GetIOSVertexInputReadMask(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup) {
+        // This constructs the SAME cached program/swizzle identities already needed
+        // by UseProgrammableVertexShader. No additional buffer hash is introduced;
+        // the subsequent shader selection reads the now-clean existing hashes.
+        const PicaVSConfig config(regs, setup);
+        const auto& state = config.state;
+        const IOSVertexInputReadKey key{state.program_hash, state.swizzle_hash,
+            state.main_offset, state.num_outputs, state.sanitize_mul, state.output_map};
+        return ios_input_usage.Get(key, [&]() -> std::optional<u16> {
+            const auto input = [](u32 reg) { return "vs_in_reg" + std::to_string(reg); };
+            const auto output = [&](u32 reg) -> std::string {
+                if (reg < state.output_map.size() && state.output_map[reg] < state.num_outputs)
+                    return "vs_out_attr" + std::to_string(state.output_map[reg]);
+                return {};
+            };
+            const auto result = ShaderDecompiler::DecompileProgram(setup.program_code,
+                setup.swizzle_data, state.main_offset, input, output, state.sanitize_mul);
+            return result ? std::optional<u16>(result->input_mask) : std::nullopt;
+        });
+    }
+
+    GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
+                                       u16 selected_input_mask) {
         const PicaVSConfig vertex_config(regs,setup);
         const PicaFixedGSConfig output_config(regs);
-        const u16 input_mask=IOSVertexInputLayout::MaskFromRegs(regs.vs);
+        const u16 input_mask=IOSVertexInputLayout::MaskFromRegs(regs.vs) & selected_input_mask;
         const std::array<u64,3> parts={Common::ComputeHash64(&vertex_config,sizeof(vertex_config)),
             Common::ComputeHash64(&output_config,sizeof(output_config)),input_mask};
         const u64 key=Common::ComputeHash64(parts.data(),sizeof(parts));
@@ -771,6 +795,7 @@ private:
     std::size_t ios_bytes = 8192; // Header/identity/checksum reserve included in the disk budget.
     bool ios_dirty = false;
     std::chrono::steady_clock::time_point ios_last_miss{};
+    IOSVertexInputUsage ios_input_usage;
     std::unordered_map<u64,OGLProgram> feedback_programs;
     OGLShader feedback_fragment;
     std::unordered_set<u64> failed_ios_vertex_shaders;
@@ -788,8 +813,8 @@ ShaderProgramManager::ShaderProgramManager(bool separable)
 ShaderProgramManager::~ShaderProgramManager() = default;
 
 bool ShaderProgramManager::UseProgrammableVertexShader(const Pica::Regs& regs,
-                                                       Pica::Shader::ShaderSetup& setup, unsigned ios_indexed_inputs) {
-    return impl->UseProgrammableVertexShader(regs, setup, ios_indexed_inputs);
+                                                       Pica::Shader::ShaderSetup& setup, unsigned ios_indexed_inputs, u16 ios_input_mask) {
+    return impl->UseProgrammableVertexShader(regs, setup, ios_indexed_inputs, ios_input_mask);
 }
 
 void ShaderProgramManager::UseTrivialVertexShader() {
@@ -809,9 +834,14 @@ void ShaderProgramManager::UseFragmentShader(const Pica::Regs& regs) {
 }
 
 #ifdef CARA_IOS_GLES
+u16 ShaderProgramManager::GetIOSVertexInputReadMask(const Pica::Regs& regs,
+                                                   Pica::Shader::ShaderSetup& setup) {
+    return impl->GetIOSVertexInputReadMask(regs, setup);
+}
 GLuint ShaderProgramManager::GetIOSVertexFeedbackProgram(const Pica::Regs& regs,
-                                                        Pica::Shader::ShaderSetup& setup) {
-    return impl->GetIOSVertexFeedbackProgram(regs,setup);
+                                                        Pica::Shader::ShaderSetup& setup,
+                                                        u16 ios_input_mask) {
+    return impl->GetIOSVertexFeedbackProgram(regs,setup,ios_input_mask);
 }
 #endif
 

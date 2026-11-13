@@ -5,6 +5,7 @@
 
 #include "common/cpu_category_timing.h"
 #include "cara/pica_submission_probe.h"
+#include "cara/guest_gpu_trace.h"
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -18,6 +19,7 @@
 #include "common/logging/log.h"
 #include "common/microprofile.h"
 #include "common/vector_math.h"
+#include "core/core.h"
 #include "core/hle/service/gsp/gsp.h"
 #include "core/hw/gpu.h"
 #include "core/memory.h"
@@ -166,6 +168,8 @@ static bool ShaderConfigNotification(u32 id) {
 
 static void WriteShaderWord(Shader::ShaderSetup& setup, u32 offset, u32 value, bool swizzle) {
     auto& word = swizzle ? setup.swizzle_data[offset] : setup.program_code[offset];
+    if (Cara::GuestGPUTrace::DrawsEnabled() && word != value)
+        Cara::GuestGPUTrace::ShaderWordChanged(&setup == &g_state.gs);
     if (!RepeatStateEnabled() && !CommandProfileEnabled()) {
         word = value;
         if (swizzle) setup.MarkSwizzleDataDirty();
@@ -312,6 +316,8 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     switch (id) {
     // Trigger IRQ
     case PICA_REG_INDEX(trigger_irq):
+        if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
+            Cara::GuestGPUTrace::Kind::PicaIRQ, 0, 0, value, mask);
         Service::GSP::SignalInterrupt(Service::GSP::InterruptId::P3D);
         break;
 
@@ -438,6 +444,40 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     // It seems like these trigger vertex rendering
     case PICA_REG_INDEX(pipeline.trigger_draw):
     case PICA_REG_INDEX(pipeline.trigger_draw_indexed): {
+        if (Cara::GuestGPUTrace::ReserveDrawRecords()) {
+            auto& timing = Core::System::GetInstance().CoreTiming();
+            const auto& fb = regs.framebuffer.framebuffer;
+            const auto& pipe = regs.pipeline;
+            const auto& tex = regs.texturing;
+            const u64 flags = u64(id == PICA_REG_INDEX(pipeline.trigger_draw_indexed)) |
+                (u64(pipe.triangle_topology.Value()) << 1) |
+                (u64(pipe.use_gs.Value()) << 3) | (u64(pipe.variable_primitive.Value()) << 5);
+            Cara::GuestGPUTrace::Emit(timing, Cara::GuestGPUTrace::Kind::Draw, 0, 0,
+                (u64(fb.GetColorBufferPhysicalAddress()) << 32) | fb.GetDepthBufferPhysicalAddress(),
+                u64(pipe.num_vertices) | (flags << 32), Cara::GuestGPUTrace::vs_generation,
+                Cara::GuestGPUTrace::gs_generation);
+            const u64 dimensions = u64(fb.GetWidth()) | (u64(fb.GetHeight()) << 16) |
+                (u64(fb.color_format.Value()) << 32) | (u64(fb.depth_format.Value()) << 36) |
+                (u64(fb.allow_color_write.Value()) << 40) |
+                (u64(fb.allow_depth_stencil_write.Value()) << 44) |
+                (u64(regs.rasterizer.cull_mode.Value()) << 48);
+            Cara::GuestGPUTrace::Emit(timing, Cara::GuestGPUTrace::Kind::DrawState, 0, 0,
+                dimensions,
+                u64(regs.reg_array[PICA_REG_INDEX(framebuffer.output_merger.depth_test_enable)]) |
+                    (u64(regs.framebuffer.output_merger.stencil_test.raw_func) << 32),
+                u64(regs.vs.main_offset) | (u64(regs.gs.main_offset) << 32),
+                u64(regs.reg_array[PICA_REG_INDEX(framebuffer.output_merger.fragment_operation_mode)]) |
+                    (u64(regs.reg_array[PICA_REG_INDEX(framebuffer.output_merger.alpha_blending)]) << 32));
+            const u64 texture_formats = u64(tex.texture0_format.Value()) |
+                (u64(tex.texture1_format.Value()) << 4) | (u64(tex.texture2_format.Value()) << 8) |
+                (u64(tex.texture0.type.Value()) << 12);
+            Cara::GuestGPUTrace::Emit(timing, Cara::GuestGPUTrace::Kind::DrawInput, 0, 0,
+                (u64(pipe.vertex_attributes.GetPhysicalBaseAddress()) << 32) |
+                    regs.reg_array[PICA_REG_INDEX(pipeline.index_array)],
+                u64(pipe.vertex_offset) | (u64(regs.reg_array[PICA_REG_INDEX(texturing.main_config)]) << 32),
+                (u64(tex.texture0.GetPhysicalAddress()) << 32) | tex.texture1.GetPhysicalAddress(),
+                u64(tex.texture2.GetPhysicalAddress()) | (texture_formats << 32));
+        }
         if (Cara::ExperimentalP3DCompletionEnabled())
             g_state.experimental_p3d_work.Draw(regs.pipeline.num_vertices,
                                              static_cast<unsigned>(regs.pipeline.triangle_topology.Value()));

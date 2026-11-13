@@ -35,7 +35,12 @@ handle_Swi: {
         timer->AddTicks(executed);
         executed = 0;
 
+        if (guest_pc_cpu_.Active()) guest_pc_cpu_.EnterExternal();
         svc_context_->CallSVC(svc_num);
+        if (guest_pc_cpu_.Active()) {
+            profile_thread_id_ = ProfileThreadId();
+            guest_pc_cpu_.LeaveExternal(profile_thread_id_);
+        }
     }
     // Kernel may have switched thread context via LoadContext,
     // which changes state_.regs[15]. Reload local_pc and exit the

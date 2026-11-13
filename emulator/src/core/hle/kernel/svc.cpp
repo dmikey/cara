@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "cara/guest_gpu_trace.h"
 #include "common/cpu_category_timing.h"
 #include <algorithm>
 #include <cinttypes>
@@ -483,10 +484,18 @@ ResultCode SVC::WaitSynchronization1(Handle handle, s64 nano_seconds) {
     LOG_TRACE(Kernel_SVC, "called handle=0x{:08X}({}:{}), nanoseconds={}", handle,
               object->GetTypeName(), object->GetName(), nano_seconds);
 
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+        Cara::GuestGPUTrace::Kind::WaitObject, thread->GetThreadId(), object->GetObjectId(),
+        0, 1, static_cast<u64>(nano_seconds));
     if (object->ShouldWait(thread)) {
 
-        if (nano_seconds == 0)
+        if (nano_seconds == 0) {
+            if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+                Cara::GuestGPUTrace::Kind::WaitPoll, thread->GetThreadId(), object->GetObjectId());
             return RESULT_TIMEOUT;
+        }
+        if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+            Cara::GuestGPUTrace::Kind::WaitBlock, thread->GetThreadId(), object->GetObjectId());
 
         thread->wait_objects = {object};
         object->AddWaitingThread(SharedFrom(thread));
@@ -505,6 +514,8 @@ ResultCode SVC::WaitSynchronization1(Handle handle, s64 nano_seconds) {
         return RESULT_TIMEOUT;
     }
 
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+        Cara::GuestGPUTrace::Kind::WaitReady, thread->GetThreadId(), object->GetObjectId());
     object->Acquire(thread);
 
     return RESULT_SUCCESS;
@@ -537,11 +548,19 @@ ResultCode SVC::WaitSynchronizationN(s32* out, VAddr handles_address, s32 handle
         objects[i] = object;
     }
 
+    if (Cara::GuestGPUTrace::Enabled()) {
+        for (std::size_t i = 0; i < objects.size(); ++i)
+            Cara::GuestGPUTrace::Emit(kernel.timing, Cara::GuestGPUTrace::Kind::WaitObject,
+                thread->GetThreadId(), objects[i]->GetObjectId(), i, objects.size(),
+                static_cast<u64>(nano_seconds), wait_all);
+    }
     if (wait_all) {
         bool all_available =
             std::all_of(objects.begin(), objects.end(),
                         [thread](const ObjectPtr& object) { return !object->ShouldWait(thread); });
         if (all_available) {
+            if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+                Cara::GuestGPUTrace::Kind::WaitReady, thread->GetThreadId(), 0, 1);
             // We can acquire all objects right now, do so.
             for (auto& object : objects)
                 object->Acquire(thread);
@@ -554,8 +573,13 @@ ResultCode SVC::WaitSynchronizationN(s32* out, VAddr handles_address, s32 handle
 
         // If a timeout value of 0 was provided, just return the Timeout error code instead of
         // suspending the thread.
-        if (nano_seconds == 0)
+        if (nano_seconds == 0) {
+            if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+                Cara::GuestGPUTrace::Kind::WaitPoll, thread->GetThreadId());
             return RESULT_TIMEOUT;
+        }
+        if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+            Cara::GuestGPUTrace::Kind::WaitBlock, thread->GetThreadId(), 0, wait_all);
 
         // Put the thread to sleep
         thread->status = ThreadStatus::WaitSynchAll;
@@ -588,6 +612,8 @@ ResultCode SVC::WaitSynchronizationN(s32* out, VAddr handles_address, s32 handle
         if (itr != objects.end()) {
             // We found a ready object, acquire it and set the result value
             WaitObject* object = itr->get();
+            if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+                Cara::GuestGPUTrace::Kind::WaitReady, thread->GetThreadId(), object->GetObjectId());
             object->Acquire(thread);
             *out = static_cast<s32>(std::distance(objects.begin(), itr));
             return RESULT_SUCCESS;
@@ -597,8 +623,13 @@ ResultCode SVC::WaitSynchronizationN(s32* out, VAddr handles_address, s32 handle
 
         // If a timeout value of 0 was provided, just return the Timeout error code instead of
         // suspending the thread.
-        if (nano_seconds == 0)
+        if (nano_seconds == 0) {
+            if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+                Cara::GuestGPUTrace::Kind::WaitPoll, thread->GetThreadId());
             return RESULT_TIMEOUT;
+        }
+        if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+            Cara::GuestGPUTrace::Kind::WaitBlock, thread->GetThreadId(), 0, wait_all);
 
         // Put the thread to sleep
         thread->status = ThreadStatus::WaitSynchAny;
@@ -1232,6 +1263,11 @@ ResultCode SVC::CancelTimer(Handle handle) {
 
 /// Sleep the current thread
 void SVC::SleepThread(s64 nanoseconds) {
+    if (Cara::GuestGPUTrace::Enabled()) {
+        auto* current = kernel.GetCurrentThreadManager().GetCurrentThread();
+        Cara::GuestGPUTrace::Emit(kernel.timing, Cara::GuestGPUTrace::Kind::SleepRequest,
+            current ? current->GetThreadId() : 0, 0, static_cast<u64>(nanoseconds));
+    }
     LOG_TRACE(Kernel_SVC, "called nanoseconds={}", nanoseconds);
 
     ThreadManager& thread_manager = kernel.GetCurrentThreadManager();

@@ -100,6 +100,17 @@ def main():
               'engine_fingerprint':timing['engine_build_fingerprint'],
               'sha256':hashlib.sha256(state.read_bytes()).hexdigest(),
               'settings':settings,'save_frame':a.save_frame,'completed_frame':a.frames}
+    if settings.get('CARA_BENCHMARK_CAPTURE') == '1':
+        if not copy('benchmark-frame.json') or not copy('benchmark-frame.rgba'):
+            raise RuntimeError('Missing requested end-frame pixel capture')
+        frame_info=json.loads((a.output/'benchmark-frame.json').read_text())
+        width,height=frame_info.get('width'),frame_info.get('height')
+        pixels=a.output/'benchmark-frame.rgba'
+        if (type(width) is not int or type(height) is not int or not 0<width<=4096 or not 0<height<=4096 or
+                frame_info.get('frame') != a.frames or frame_info.get('gl_error') != 0 or
+                frame_info.get('format') != 'RGBA8' or pixels.stat().st_size != width*height*4):
+            raise RuntimeError('End-frame pixels do not match this completed capture')
+        manifest['end_frame_capture']=dict(frame_info,sha256=hashlib.sha256(pixels.read_bytes()).hexdigest())
     (a.output/'checkpoint.json').write_text(json.dumps(manifest,indent=2)+'\n')
     run(['device','capture','screenshot','--device',a.device,
          '--destination',str(a.output/'final.png')]).check_returncode()

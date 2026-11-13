@@ -39,6 +39,7 @@
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
+#include "video_core/renderer_opengl/gl_vertex_upload_ranges.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -560,7 +561,7 @@ bool RasterizerOpenGL::SetupVertexShader() {
     return shader_program_manager->UseProgrammableVertexShader(Pica::g_state.regs,
                                                                Pica::g_state.vs
 #ifdef CARA_IOS_GLES
-                                                               , ios_lit_pair_vertex_reuse ? 6u : ios_feedback_vertex_reuse ? 5u : ios_direct_vertex_reuse ? 3u : ios_indexed_vertex_inputs
+                                                               , ios_lit_pair_vertex_reuse ? 6u : ios_feedback_vertex_reuse ? 5u : ios_direct_vertex_reuse ? 3u : ios_indexed_vertex_inputs, ios_vertex_input_mask
 #endif
     );
 }
@@ -644,8 +645,7 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
         for (u32 vertex : triangles) ios_vertex_source_map.Resolve(u16(vertex-first));
         unique = ios_vertex_source_map.Size();
     }
-    struct Range { u64 begin, end; size_t destination; };
-    std::vector<Range> ranges;
+    BoundedVertexUploadRanges<16> ranges;
     std::array<u64,16> addresses{};
     std::array<bool,16> loaded{};
     std::array<GLvec4,16> constants{};
@@ -663,7 +663,8 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
             const u64 start=base+desc.offset+u64(first)*desc.stride;
             const u64 end=start+u64(last-first)*desc.stride+bytes*desc.elements;
             if (end>0x100000000ULL || end<=start || end-start>8*1024*1024) return false;
-            ranges.push_back({start,end,0}); addresses[reg]=start; loaded[reg]=true;
+            if (!ranges.Add(start,end)) return false;
+            addresses[reg]=start; loaded[reg]=true;
             ios_packed_layout[reg]={0,GLint(desc.stride),GLint(format),GLint(desc.elements)};
         } else {
             if (desc.is_default) {
@@ -673,15 +674,9 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
             ios_packed_layout[reg]={GLint(reg*sizeof(GLvec4)),0,3,4};
         }
     }
-    std::sort(ranges.begin(),ranges.end(),[](const Range& a,const Range& b){return a.begin<b.begin;});
-    std::vector<Range> merged;
-    for (const auto& range:ranges) {
-        if (!merged.empty() && range.begin<=merged.back().end)
-            merged.back().end=std::max(merged.back().end,range.end);
-        else merged.push_back(range);
-    }
+    ranges.SortAndMerge();
     size_t bytes=sizeof(constants);
-    for (auto& range:merged) {
+    for (auto& range:ranges) {
         bytes=(bytes+3)&~size_t(3); range.destination=bytes; bytes+=range.end-range.begin;
     }
     // Bound sparse ranges and avoid transferring more than decoded unique inputs.
@@ -692,7 +687,7 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
     auto* output=reinterpret_cast<u8*>(ios_vertex_inputs.data());
     std::memset(output,0,ios_vertex_inputs.size()*sizeof(GLvec4));
     std::memcpy(output,constants.data(),sizeof(constants));
-    for (const auto& range:merged) {
+    for (const auto& range:ranges) {
         const auto memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
         if (!memory || memory.GetSize()<range.end-range.begin) return false;
         std::memcpy(output+range.destination,memory.GetPtr(),range.end-range.begin);
@@ -805,7 +800,24 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     const auto& triangles=IOSTriangles();
     if (Common::FrameTiming::counters.enabled)
         Common::FrameTiming::counters.vertex_index_cache_bytes=ios_vertex_index_cache.Bytes();
-    const IOSVertexInputLayout layout(regs.vs);
+    static const bool used_inputs = [] {
+        const char* value = std::getenv("CARA_GPU_USED_INPUTS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    ios_vertex_input_mask = IOSVertexInputLayout::MaskFromRegs(regs.vs);
+    if (used_inputs) ios_vertex_input_mask &=
+        shader_program_manager->GetIOSVertexInputReadMask(regs, Pica::g_state.vs);
+    const IOSVertexInputLayout layout(regs.vs, ios_vertex_input_mask);
+    if (Common::FrameTiming::counters.enabled) {
+        auto& counters = Common::FrameTiming::counters;
+        ++counters.vertex_input_stage_draws;
+        const auto configured = IOSVertexInputLayout::MaskFromRegs(regs.vs);
+        for (unsigned reg = 0; reg < 16; ++reg) {
+            counters.vertex_configured_input_registers += (configured >> reg) & 1u;
+            counters.vertex_selected_input_registers += (ios_vertex_input_mask >> reg) & 1u;
+        }
+        counters.vertex_pruned_input_draws += configured != ios_vertex_input_mask;
+    }
     static const bool indexed_enabled = [] {
         const char* mode = std::getenv("CARA_GPU_INDEXED_INPUTS");
         return !mode || std::strcmp(mode, "0") != 0;
@@ -929,7 +941,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const auto& triangles=IOSTriangles();
     GLuint feedback_program=0;
     if (ios_feedback_vertex_reuse) {
-        feedback_program=shader_program_manager->GetIOSVertexFeedbackProgram(Pica::g_state.regs,Pica::g_state.vs);
+        feedback_program=shader_program_manager->GetIOSVertexFeedbackProgram(Pica::g_state.regs,Pica::g_state.vs,ios_vertex_input_mask);
         if (!feedback_program) {
             ios_feedback_vertex_reuse=false;
             if (!SetupVertexShader()) return false;

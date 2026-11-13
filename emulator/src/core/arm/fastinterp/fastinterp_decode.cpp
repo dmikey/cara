@@ -686,12 +686,17 @@ bool TryDowngrade(DecodedInst& inst) {
     }
 }
 
-u32 EliminateDeadFlags(BasicBlock* block) {
+u32 EliminateDeadFlags(BasicBlock* block, bool precise_block_end) {
     u32 eliminated = 0;
     u8 live = FLAG_NZCV; // Successor block unknown: all flags live at exit
     for (int i = static_cast<int>(block->inst_count) - 1; i >= 0; --i) {
         DecodedInst& inst = block->instructions[i];
         FlagEffects fx = ClassifyFlagEffects(inst);
+        // LDM-PC may return before any decoded tail executes. Keep incoming
+        // flags live across that possible exit, including conditional returns
+        // and compatibility mode where the old decoded span is retained.
+        if (precise_block_end && inst.opcode == Opcode::Ldm && (inst.lsm.reg_list & (1u << 15)))
+            fx.barrier = true;
         if (!fx.barrier && fx.writes != 0 && (live & fx.writes) == 0 && TryDowngrade(inst)) {
             eliminated++;
             fx = ClassifyFlagEffects(inst);
@@ -1395,6 +1400,14 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         // increment above plus the shared increment cover both).
         const DecodedInst& last = block->instructions[block->inst_count - 1];
         switch (last.opcode) {
+        case Opcode::Ldm:
+            // rd is zero for this family, but the handler branches when PC
+            // is loaded. Shorten unconditional returns only in chain-budget
+            // mode; retain conditional fallthrough and legacy chain-quantum
+            // boundaries. Flag analysis separately guards every possible return.
+            end_block = precise_block_end_ && chain_budget_ && last.cond == 0xE &&
+                        (last.lsm.reg_list & (1u << 15));
+            break;
         case Opcode::B:
         case Opcode::Bl:
         case Opcode::Bx:
@@ -1447,7 +1460,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         tick_addr += inst.inst_size;
     }
 
-    fusion_stats_.dead_flags_eliminated += EliminateDeadFlags(block);
+    fusion_stats_.dead_flags_eliminated += EliminateDeadFlags(block, precise_block_end_);
 
     // Default-off experiment: preserve original block ranges, slots and chain
     // quantum. Only combine an ADD and an already fused immediate CMP/Bcc;

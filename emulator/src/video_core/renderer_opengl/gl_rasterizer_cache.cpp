@@ -530,6 +530,8 @@ void RasterizerCacheOpenGL::CopySurface(const Surface& src_surface, const Surfac
 }
 
 void CachedSurface::LoadGLBuffer(PAddr load_start, PAddr load_end) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Load);
     ASSERT(type != SurfaceType::Fill);
 
     const u8* const texture_src_data = VideoCore::Memory()->GetPhysicalPointer(addr);
@@ -653,6 +655,8 @@ const Core::CustomTexInfo* CachedSurface::LoadCustomTexture(u64 tex_hash) {
 }
 
 void CachedSurface::UploadGLTexture(const Common::Rectangle<u32>& rect) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Upload);
     // Required for rect to function properly with custom textures
     Common::Rectangle custom_rect = rect;
     PixelFormat custom_format = pixel_format;
@@ -893,7 +897,10 @@ template <MatchFlags find_flags>
 static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams& params,
                          ScaleMatch match_scale_type,
                          std::optional<SurfaceInterval> validate_interval = std::nullopt,
-                         ExactLookupSelection<const CachedSurface*>* selection = nullptr) {
+                         ExactLookupSelection<const CachedSurface*>* selection = nullptr,
+                         bool exact_prefilter = false) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Selection);
     Surface match_surface = nullptr;
     bool match_valid = false;
     u32 match_scale = 0;
@@ -901,6 +908,21 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
 
     for (const auto& pair : RangeFromInterval(surface_cache, params.GetInterval())) {
         for (const auto& surface : pair.second) {
+            if constexpr (find_flags == (MatchFlags::Exact | MatchFlags::Invalid)) {
+                const bool profile = Common::FrameTiming::TextureAcquisitionTracingActive();
+                if (profile) ++Common::FrameTiming::counters.texture_exact_candidates;
+                if (exact_prefilter || profile) {
+                    const bool exact = surface->ExactMatch(params);
+                    if (!exact) {
+                        if (profile) ++Common::FrameTiming::counters.texture_exact_wrong_layout;
+                        if (exact_prefilter) {
+                            if (profile) ++Common::FrameTiming::counters.texture_exact_early_rejects;
+                            continue;
+                        }
+                    }
+                }
+                if (profile) ++Common::FrameTiming::counters.texture_exact_validity_lookups;
+            }
             const bool res_scale_matched = match_scale_type == ScaleMatch::Exact
                                                ? (params.res_scale == surface->res_scale)
                                                : (params.res_scale <= surface->res_scale);
@@ -990,6 +1012,7 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
     };
     texture_lookup_reuse = enabled("CARA_TEXTURE_LOOKUP_REUSE");
     texture_lookup_verify = enabled("CARA_TEXTURE_LOOKUP_VERIFY");
+    texture_exact_prefilter = enabled("CARA_TEXTURE_EXACT_PREFILTER");
     trace_flushes = enabled("CARA_SURFACE_FLUSH_TRACE");
     retain_small_cpu_writes = enabled("CARA_RETAIN_SMALL_CPU_WRITES");
     gpu_surface_remap = enabled("CARA_GPU_SURFACE_REMAP");
@@ -1162,7 +1185,7 @@ Surface RasterizerCacheOpenGL::GetSurface(const SurfaceParams& params, ScaleMatc
     }
     if (!surface)
         surface = FindMatch<MatchFlags::Exact | MatchFlags::Invalid>(surface_cache, params, match_res_scale,
-            std::nullopt, texture_lookup_reuse ? &selection : nullptr);
+            std::nullopt, texture_lookup_reuse ? &selection : nullptr, texture_exact_prefilter);
 
     if (surface == nullptr) {
         u16 target_res_scale = params.res_scale;
@@ -1315,6 +1338,9 @@ Surface RasterizerCacheOpenGL::GetTextureSurface(
 
 Surface RasterizerCacheOpenGL::GetTextureSurface(const Pica::Texture::TextureInfo& info,
                                                  u32 max_level) {
+    Common::FrameTiming::TextureAcquisitionContext context;
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Acquire);
     if (info.physical_address == 0) {
         return nullptr;
     }
@@ -1349,6 +1375,8 @@ Surface RasterizerCacheOpenGL::GetTextureSurface(const Pica::Texture::TextureInf
 
     // Update mipmap if necessary
     if (max_level != 0) {
+        Common::FrameTiming::TextureAcquisitionScope mip_timing(
+            Common::FrameTiming::TextureAcquisitionPhase::Mipmap);
         if (info.width != (min_width << max_level) || info.height != (min_height << max_level)) {
             for (u32 i = 1; i < max_level; ++i) {
                 if ((info.width >> i) == 8) {
@@ -1818,6 +1846,8 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
 }
 
 void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, u32 size) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Validation);
     if (size == 0)
         return;
 
@@ -1905,6 +1935,8 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
 bool RasterizerCacheOpenGL::NoUnimplementedReinterpretations(const Surface& surface,
                                                              SurfaceParams& params,
                                                              const SurfaceInterval& interval) {
+    Common::FrameTiming::TextureAcquisitionScope texture_timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Reinterpretation);
     const bool profile = Common::FrameTiming::RenderBookkeepingProfileEnabled();
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ReinterpretCheck, profile);
     static const bool reuse = [] {
@@ -1965,6 +1997,8 @@ bool RasterizerCacheOpenGL::IntervalHasInvalidPixelFormat(SurfaceParams& params,
 bool RasterizerCacheOpenGL::ValidateByReinterpretation(const Surface& surface,
                                                        SurfaceParams& params,
                                                        const SurfaceInterval& interval) {
+    Common::FrameTiming::TextureAcquisitionScope texture_timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Reinterpretation);
     for (const auto& entity : format_reinterpreter->GetReinterpreters()) {
         if (entity.dst_format != surface->pixel_format) {
             continue;
@@ -2165,6 +2199,8 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
 }
 
 Surface RasterizerCacheOpenGL::CreateSurface(const SurfaceParams& params) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Allocation);
     Surface surface = std::make_shared<CachedSurface>();
     static_cast<SurfaceParams&>(*surface) = params;
 
@@ -2220,6 +2256,11 @@ void RasterizerCacheOpenGL::UpdatePagesCachedCount(PAddr addr, u32 size, int del
             VideoCore::Memory()->RasterizerMarkRegionCached(interval_start_addr, interval_size,
                                                             true);
         } else if (count == -delta) {
+            // The last registered view is leaving these pages. Orphan GPU
+            // producers can still own newer bytes here; CPU fast pointers must
+            // not become visible until every such byte is coherent in RAM.
+            // Pages covered by another registered alias remain GPU-resident.
+            FlushRegion(interval_start_addr, interval_size);
             VideoCore::Memory()->RasterizerMarkRegionCached(interval_start_addr, interval_size,
                                                             false);
         }

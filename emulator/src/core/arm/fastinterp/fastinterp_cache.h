@@ -4,7 +4,11 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <limits>
+#include <ostream>
 #include <cstring>
 #include "core/arm/fastinterp/fastinterp_types.h"
 
@@ -32,7 +36,13 @@ constexpr u32 INVALID_TAG = 0xFFFFFFFF;
 class BlockCache {
 public:
     BlockCache() {
+        const char* value = std::getenv("CARA_FASTINTERP_CHAIN_RECENCY");
+        chain_recency_ = value && std::strcmp(value, "1") == 0;
         Clear();
+    }
+    bool ChainRecencyEnabled() const { return chain_recency_; }
+    void SetChainRecency(bool enabled) {
+        if (chain_recency_ != enabled) { chain_recency_ = enabled; Clear(); }
     }
 
     struct Profile {
@@ -42,10 +52,12 @@ public:
         u64 clears{};
         u64 invalidation_calls{};
         u64 invalidated_entries{};
+        u64 counter_discontinuities{};
     };
 
     void SetEightWay(bool enabled) {
         if (eight_way_ != enabled) {
+            if (profiling_ && profile_.allocation_misses) ++profile_mapping_changes_;
             eight_way_ = enabled;
             Clear(); // Changing the set mapping always invalidates old entries.
         }
@@ -61,6 +73,8 @@ public:
     void Clear() {
         if (profiling_) ++profile_.clears;
         tags_.fill(INVALID_TAG);
+        observed_executions_.fill(0);
+        observed_modes_.fill(0);
         for (auto& block : blocks_) {
             block.inst_count = 0;
             block.chain_target = nullptr; // Prevent dangling pointers
@@ -83,6 +97,7 @@ public:
             if (blocks_[i].start_pc < end_addr && blocks_[i].end_pc > start_addr) {
                 if (profiling_) ++profile_.invalidated_entries;
                 tags_[i] = INVALID_TAG;
+                observed_executions_[i] = 0; observed_modes_[i] = 0;
                 blocks_[i].inst_count = 0;
                 blocks_[i].chain_target = nullptr;
             }
@@ -103,7 +118,45 @@ public:
             if (tags_[i] != INVALID_TAG && blocks_[i].inst_count) visit(blocks_[i]);
     }
 
+    // Miss-only diagnostic data: fixed per-set totals plus first/last 64 live
+    // replacement samples. No guest-memory reads and no hit/chain hooks.
+    void WriteReplacementProfile(std::ostream& out) const {
+        out << "{\"enabled\":" << (profiling_ ? "true" : "false")
+            << ",\"mapping_changes\":" << profile_mapping_changes_
+            << ",\"counter_discontinuities\":" << profile_.counter_discontinuities
+            << ",\"sets\":[";
+        bool comma = false;
+        for (unsigned i = 0; i < CACHE_SETS; ++i) {
+            if (!set_profile_[i].misses) continue;
+            const auto& item = set_profile_[i];
+            out << (comma ? "," : "") << "{\"set\":" << i << ",\"misses\":" << item.misses
+                << ",\"live_replacements\":" << item.replacements << '}'; comma = true;
+        }
+        out << "],\"samples\":["; comma = false;
+        const auto write = [&](const ReplacementSample& sample, const char* phase) {
+            out << (comma ? "," : "") << "{\"phase\":\"" << phase << "\",\"miss\":" << sample.miss
+                << ",\"set\":" << sample.set << ",\"new_pc\":" << sample.new_pc
+                << ",\"victim_pc\":" << sample.victim_pc << ",\"victim_executions\":" << sample.executions
+                << ",\"activity_observed\":" << (sample.activity_known ? "true" : "false")
+                << ",\"victim_interval_executions\":" << sample.interval
+                << ",\"active_ways\":" << sample.active_ways << '}'; comma = true;
+        };
+        const auto initial = std::min<u64>(profile_.live_replacements, 64);
+        for (unsigned i = 0; i < initial; ++i) write(replacement_samples_[i], "first");
+        const auto tail = profile_.live_replacements > 64 ? profile_.live_replacements - 64 : 0;
+        const auto count = std::min<u64>(tail, 64);
+        const auto begin = tail > 64 ? tail % 64 : 0;
+        for (unsigned i = 0; i < count; ++i) write(replacement_samples_[64 + (begin + i) % 64], "last");
+        out << "]}";
+    }
+
 private:
+    struct SetProfile { u64 misses = 0, replacements = 0; };
+    struct ReplacementSample {
+        u64 miss = 0;
+        u32 set = 0, new_pc = 0, victim_pc = 0, executions = 0, interval = 0, active_ways = 0;
+        bool activity_known = false;
+    };
     /// Look up a block by PC (returns nullptr if not found)
     template <unsigned Ways>
     BasicBlock* LookupImpl(u32 pc) {
@@ -140,10 +193,19 @@ private:
         // or direct block chaining. Clear/invalidation retain lifetime totals.
         if (profiling_) {
             ++profile_.allocation_misses;
+            ++set_profile_[set_idx].misses;
             if (tags_[base + victim_way] == INVALID_TAG) ++profile_.empty_allocations;
-            else ++profile_.live_replacements;
+            else {
+                ++profile_.live_replacements; ++set_profile_[set_idx].replacements;
+                const auto count = profile_.live_replacements;
+                const auto sample = count <= 64 ? count - 1 : 64 + (count - 65) % 64;
+                replacement_samples_[sample] = {profile_.allocation_misses, set_idx, pc,
+                    tags_[base + victim_way], block.exec_count, victim_interval_, active_ways_, chain_recency_};
+            }
         }
 
+        observed_executions_[base + victim_way] = 0;
+        observed_modes_[base + victim_way] = 0;
         tags_[base + victim_way] = pc;
         block.start_pc = pc;
         block.end_pc = pc;
@@ -183,6 +245,42 @@ private:
     template <unsigned Ways>
     u32 GetLRUVictim(u32 set_idx) {
         u8 lru = lru_state_[set_idx];
+        victim_interval_ = active_ways_ = 0;
+        if (chain_recency_) {
+            const auto base = set_idx * Ways;
+            // Always consume an invalid slot before evicting live decoded data.
+            for (u32 way = 0; way < Ways; ++way)
+                if (tags_[base + way] == INVALID_TAG) return way;
+            std::array<u32, Ways> activity{};
+            u32 minimum = std::numeric_limits<u32>::max();
+            for (u32 way = 0; way < Ways; ++way) {
+                const auto index = base + way;
+                const auto now = blocks_[index].exec_count;
+                const auto before = observed_executions_[index];
+                const auto mode = u8(blocks_[index].IsThumb());
+                // A decrease can be counter wrap or a decode/reset. Do not turn
+                // it into a huge unsigned frequency or retain cumulative heat.
+                if (now < before || (before && mode != observed_modes_[index])) {
+                    activity[way] = 1;
+                    if (profiling_) ++profile_.counter_discontinuities;
+                } else activity[way] = now - before;
+                observed_executions_[index] = now; observed_modes_[index] = mode;
+                active_ways_ += activity[way] != 0;
+                minimum = std::min(minimum, activity[way]);
+            }
+            // Prefer inactive ways. If all executed, choose the smallest interval
+            // delta. Existing NRU bits break ties, then stable way order.
+            u32 victim = 0;
+            bool found = false;
+            for (u32 way = 0; way < Ways; ++way) {
+                if (activity[way] != minimum) continue;
+                if (!found || ((lru & (1u << victim)) && !(lru & (1u << way)))) {
+                    victim = way; found = true;
+                }
+            }
+            victim_interval_ = activity[victim];
+            return victim;
+        }
         // Find first way that wasn't recently used
         for (u32 way = 0; way < Ways; ++way) {
             if (!(lru & (1 << way))) {
@@ -196,9 +294,16 @@ private:
     // Tags hold the full PC, so a match needs no start_pc re-check. Split from
     // the blocks (structure-of-arrays): a 4-way set probe touches one cache
     // line of tags instead of four/eight far-apart block headers.
+    bool chain_recency_{false};
     bool eight_way_{false};
     bool profiling_{false};
     Profile profile_{};
+    std::array<SetProfile, CACHE_SETS> set_profile_{};
+    std::array<ReplacementSample, 128> replacement_samples_{};
+    u64 profile_mapping_changes_ = 0;
+    u32 victim_interval_ = 0, active_ways_ = 0;
+    std::array<u32, CACHE_SIZE> observed_executions_{};
+    std::array<u8, CACHE_SIZE> observed_modes_{};
     std::array<u32, CACHE_SIZE> tags_;
     std::array<BasicBlock, CACHE_SIZE> blocks_;
     std::array<u8, CACHE_SETS> lru_state_;

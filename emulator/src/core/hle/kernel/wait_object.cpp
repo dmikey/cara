@@ -2,6 +2,8 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "cara/guest_gpu_trace.h"
+#include "core/core.h"
 #include <algorithm>
 #include <utility>
 #include "common/archives.h"
@@ -87,6 +89,9 @@ void WaitObject::WakeupAllWaitingThreads() {
                 object->Acquire(thread.get());
             }
         }
+
+        if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
+            Cara::GuestGPUTrace::Kind::Wake, thread->GetThreadId(), GetObjectId(), 0);
 
         // Invoke the wakeup callback before clearing the wait objects
         if (thread->wakeup_callback)

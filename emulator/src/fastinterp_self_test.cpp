@@ -19,9 +19,17 @@
 #include "core/core.h"
 #include "fastinterp_vfp_self_test.h"
 #include "test_memory.h"
+#include "fastinterp_scalar_double_self_test.h"
 
 namespace Core::FastInterp {
 struct DecodeRecordSelfTestAccess {
+    static void ConfigurePCProfile(ARM_FastInterp& cpu, bool enabled, bool episode = false) {
+        auto config = GuestPCCPU::Parse(enabled ? "fixture=0x1000:0x2000" : "");
+        config.start_frame = 0; config.window_frames = 1; config.period_frames = 1; config.windows = 1;
+        config.episode_mode = enabled && episode; config.episode_start = 0x1000; config.episode_end = 0x1100;
+        cpu.guest_pc_cpu_ = GuestPCCPU::Tracker(config);
+    }
+    static std::uint64_t PCProfileReads(const ARM_FastInterp& cpu) { return cpu.guest_pc_cpu_.ClockReads(); }
     static void Decode(ARM_FastInterp& cpu, BasicBlock& block, u32 pc) {
         cpu.DecodeBlockInto(&block, pc);
     }
@@ -35,10 +43,16 @@ struct DecodeRecordSelfTestAccess {
 };
 } // namespace Core::FastInterp
 
+#include "fastinterp_ldm_pc_self_test.h"
+
 int main() {
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
+    if (std::getenv("CARA_FASTINTERP_LDM_PC_TEST"))
+        return VerifyFastInterpLdmPc(system, timing);
+    if (std::getenv("CARA_FASTINTERP_SCALAR_DOUBLE_TEST"))
+        return VerifyFastInterpScalarDouble(system, timing);
     auto old = std::make_unique<ARMul_State>(system, memory, USER32MODE);
     auto fast =
         std::make_unique<Core::FastInterp::ARM_FastInterp>(system, memory, 0, timing.GetTimer(0));
@@ -48,6 +62,66 @@ int main() {
     table->pointers[1] = TestMemory(code);
     memory.SetCurrentPageTable(table);
     fast->SetPageTable(table);
+    if (std::getenv("CARA_GUEST_PC_CPU_EQUIVALENCE_TEST")) {
+#ifndef NDEBUG
+        std::cerr << "PC CPU equivalence fixture requires Release unknown-SVC context\n";
+        return 1;
+#else
+        unsigned cases = 0;
+        for (bool thumb : {false, true}) for (bool episode : {false, true}) {
+            struct Result {
+                std::array<u32, 16> regs{};
+                u32 cpsr = 0;
+                std::vector<s64> consumed;
+                std::vector<s64> events;
+                std::uint64_t reads = 0;
+            };
+            auto execute = [&](bool enabled) {
+                Result result;
+                Core::FastInterp::DecodeRecordSelfTestAccess::ConfigurePCProfile(*fast, enabled, episode);
+                fast->ClearInstructionCache();
+                code.fill(0);
+                if (thumb) {
+                    const std::array<u16, 6> program{0x3001, 0xE000, 0x46c0, 0xDFFF, 0x3001, 0xE7F9};
+                    std::memcpy(code.data(), program.data(), sizeof(program));
+                } else {
+                    code = {0xE2800001, 0xEA000000, 0xE1A00000, 0xEF0000FF, 0xE2800001, 0xEAFFFFF9};
+                }
+                fast->SetCPSR(0xA0000010u | (thumb ? 0x20u : 0u));
+                for (unsigned reg = 0; reg < 15; ++reg) fast->SetReg(reg, reg * 13);
+                fast->SetPC(0x1000 | unsigned(thumb));
+                const auto event_name = std::string("pc_cpu_equivalence_") + (thumb ? "thumb_" : "arm_") + (enabled ? "on" : "off");
+                const auto* event = timing.RegisterEvent(event_name, [&](u64 value, int late) {
+                    result.events.push_back(static_cast<s64>(value)); result.events.push_back(late);
+                });
+                for (unsigned slice = 0; slice < 32; ++slice) {
+                    const unsigned budget = std::array<unsigned,8>{1,2,7,8,9,11,31,128}[slice % 8];
+                    timing.ScheduleEvent(budget, event, slice, 0);
+                    timing.GetTimer(0)->Advance(budget);
+                    const auto before = timing.GetTimer(0)->GetDowncount();
+                    fast->Run();
+                    result.consumed.push_back(before - timing.GetTimer(0)->GetDowncount());
+                }
+                // Deliver the final scheduled callback outside guest execution.
+                timing.GetTimer(0)->Advance(1);
+                timing.RemoveEvent(event);
+                for (unsigned reg = 0; reg < 16; ++reg) result.regs[reg] = fast->GetReg(reg);
+                result.cpsr = fast->GetCPSR();
+                result.reads = Core::FastInterp::DecodeRecordSelfTestAccess::PCProfileReads(*fast);
+                return result;
+            };
+            const auto off = execute(false), on = execute(true);
+            if (off.regs != on.regs || off.cpsr != on.cpsr || off.consumed != on.consumed ||
+                off.events != on.events || off.reads != 0 || on.reads == 0) {
+                std::cerr << "PC CPU profiler altered guest register/tick/event trace thumb=" << thumb << '\n';
+                return 1;
+            }
+            ++cases;
+        }
+        std::cout << "PC CPU profiler ARM/Thumb register/tick/event equivalence cases=" << cases << '\n';
+        return 0;
+#endif
+    }
     if (std::getenv("CARA_DECODE_REUSE_TEST")) {
         using namespace Core::FastInterp;
         struct Fixture {

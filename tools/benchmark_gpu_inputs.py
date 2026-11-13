@@ -23,6 +23,13 @@ def main():
                         help='JSON object: name, packed (boolean), bank_mib (16..128), optional reuse and index_cache (booleans)')
     parser.add_argument('--resume-best', action='store_true')
     parser.add_argument('--paced', action='store_true', help='Cap emulated time at 100%%; wall timings include pacing sleep')
+    parser.add_argument('--guest-pc-ranges', default='', help='Diagnostic disjoint label=start:end ranges separated by semicolons')
+    parser.add_argument('--guest-pc-episode-start', type=lambda value: int(value, 0))
+    parser.add_argument('--guest-pc-episode-end', type=lambda value: int(value, 0))
+    parser.add_argument('--guest-pc-start-frame', type=int, default=300)
+    parser.add_argument('--guest-pc-window-frames', type=int, default=4)
+    parser.add_argument('--guest-pc-period-frames', type=int, default=120)
+    parser.add_argument('--guest-pc-windows', type=int, default=4)
     parser.add_argument('--memory-probes', help='Read-only diagnostic JSON probes: address and optional pointer_offset (at most eight)')
     parser.add_argument('--screenshots', action='store_true')
     parser.add_argument('--press-a-frames', default='0',
@@ -78,16 +85,32 @@ def main():
         parser.error('circle-segments require ordered begin:end:x:y values within the run and [-1,1]')
     configs = [json.loads(value) for value in args.config]
     for config in configs:
-        if (any(not isinstance(config.get(key, False), bool) for key in ['state_reuse','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
+        if (any(not isinstance(config.get(key, False), bool) for key in ['precise_block_end','state_reuse','chain_recency','guest_pc_profile','used_input_attributes','vertex_reuse','quaternion_slice','implicit_flush','uniform_reuse','retain_small_writes','decode_bkpt','ram_burst','lit_vertex_reuse','surface_remap','byte_surface_remap','selective_surface_cleanup','retain_input_bindings','packed_fetch_reuse','add_cmp_imm','vcmp_vmrs','lit_pair_reuse','lit_pair_probe','interactive_qos','contiguous_transfers','render_bookkeeping_reuse','render_bookkeeping_profile','texture_lookup_reuse','texture_lookup_verify','texture_exact_prefilter','texture_acquisition_profile','alu_operands','alu_pairs','tick_buckets','chain_budget','cache_profile','draw_cost_profile','pica_repeat_state','pica_command_profile','pica_post_irq_profile','experimental_p3d_completion','experimental_ppf_dependency','ios_pipeline_cache','bounded_pacing']) or type(config.get('cache_ways', 4)) is not int or config.get('cache_ways', 4) not in (4, 8) or type(config.get('vfp_simd', 0)) not in (bool, int) or config.get('vfp_simd', 0) not in (0, 1, 2, 3) or not isinstance(config.get('index_cache', False), bool) or not isinstance(config.get('reuse', False), bool) or not isinstance(config['packed'], bool) or not isinstance(config['bank_mib'], int)
                 or not 16 <= config['bank_mib'] <= 128
                 or not config['name'].replace('_', '').replace('-', '').isalnum()):
             parser.error('invalid configuration')
+    if (args.guest_pc_episode_start is None) != (args.guest_pc_episode_end is None):
+        parser.error('Guest PC episode start and end must be supplied together')
+    if args.guest_pc_episode_start is not None and not (
+            0 <= args.guest_pc_episode_start <= 0xffffffff and
+            0 <= args.guest_pc_episode_end <= 0xffffffff and
+            args.guest_pc_episode_start != args.guest_pc_episode_end):
+        parser.error('Guest PC episode requires distinct 32-bit start/end addresses')
+    if any(c.get('guest_pc_profile', False) for c in configs):
+        if not args.guest_pc_ranges:
+            parser.error('guest_pc_profile requires --guest-pc-ranges')
+        if not (0 <= args.guest_pc_start_frame < args.frames and
+                1 <= args.guest_pc_window_frames <= 64 and
+                args.guest_pc_window_frames <= args.guest_pc_period_frames <= 18000 and
+                1 <= args.guest_pc_windows <= 64 and
+                args.guest_pc_window_frames * args.guest_pc_windows <= 1024):
+            parser.error('Invalid bounded guest PC profile window')
     if any(c.get('experimental_ppf_dependency', False) and not c.get('experimental_p3d_completion', False) for c in configs):
         parser.error('PPF dependency requires experimental P3D completion')
     if len({config['name'] for config in configs}) != len(configs):
         parser.error('configuration names must be unique')
     args.output.mkdir(parents=True, exist_ok=True)
-    if args.resume_best and any(c.get('draw_cost_profile',False) or c.get('cache_profile',False) or c.get('pica_command_profile',False) or c.get('pica_post_irq_profile',False) or c.get('experimental_p3d_completion',False) or c.get('experimental_ppf_dependency',False) or c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) for c in configs):
+    if args.resume_best and any(c.get('guest_pc_profile',False) or c.get('draw_cost_profile',False) or c.get('cache_profile',False) or c.get('pica_command_profile',False) or c.get('pica_post_irq_profile',False) or c.get('experimental_p3d_completion',False) or c.get('experimental_ppf_dependency',False) or c.get('render_bookkeeping_profile',False) or c.get('texture_lookup_verify',False) or c.get('texture_acquisition_profile',False) for c in configs):
         parser.error('Renderer diagnostics cannot select a performance winner')
     if any(type(c.get('guest_cpu_percent',100)) is not int or c.get('guest_cpu_percent',100) not in (50,100) for c in configs):
         parser.error('Diagnostic guest clock must be 50 or 100 percent')
@@ -95,6 +118,8 @@ def main():
         parser.error('Underclock diagnostics cannot select a performance winner')
     if any(c.get('alu_pairs',False) and not c.get('alu_operands',False) for c in configs):
         parser.error('ALU pairs require operand specialization')
+    if any(c.get('chain_recency', False) and not c.get('chain_budget', False) for c in configs):
+        parser.error('Chain-aware replacement requires cache-independent chain budget checks')
     if any(c.get('cache_ways',4) == 8 and not c.get('chain_budget',False) for c in configs):
         parser.error('Eight-way comparisons require cache-independent chain budget checks')
     if any(c.get('texture_lookup_verify',False) and not c.get('texture_lookup_reuse',False) for c in configs):
@@ -133,6 +158,7 @@ def main():
                     'CARA_GPU_BYTE_SURFACE_REMAP':'1' if config.get('byte_surface_remap',False) else '0',
                     'CARA_SELECTIVE_SURFACE_CLEANUP':'1' if config.get('selective_surface_cleanup',False) else '0',
                     'CARA_GPU_RETAIN_INPUT_BINDINGS':'1' if config.get('retain_input_bindings',False) else '0',
+                    'CARA_GPU_USED_INPUTS':'1' if config.get('used_input_attributes',False) else '0',
                     'CARA_GPU_PACKED_FETCH_REUSE':'1' if config.get('packed_fetch_reuse',False) else '0',
                     'CARA_FASTINTERP_VFP_SIMD':str(int(config.get('vfp_simd',0))),
                     'CARA_WORKER_INTERACTIVE_QOS':'1' if config.get('interactive_qos',False) else '0',
@@ -142,6 +168,8 @@ def main():
                     'CARA_FASTINTERP_RAM_BURST':'1' if config.get('ram_burst',False) else '0',
                     'CARA_FASTINTERP_TICK_BUCKETS':'1' if config.get('tick_buckets',False) else '0',
                     'CARA_FASTINTERP_CHAIN_BUDGET':'1' if config.get('chain_budget',False) else '0',
+                    'CARA_FASTINTERP_PRECISE_BLOCK_END':'1' if config.get('precise_block_end',False) else '0',
+                    'CARA_FASTINTERP_CHAIN_RECENCY':'1' if config.get('chain_recency',False) else '0',
                     'CARA_FASTINTERP_CACHE_WAYS':str(config.get('cache_ways',4)),
                     'CARA_DRAW_COST_PROFILE':'1' if config.get('draw_cost_profile',False) else '0',
                     'CARA_FASTINTERP_CACHE_PROFILE':'1' if config.get('cache_profile',False) else '0',
@@ -158,6 +186,8 @@ def main():
                     'CARA_RENDER_BOOKKEEPING_PROFILE':'1' if config.get('render_bookkeeping_profile',False) else '0',
                     'CARA_TEXTURE_LOOKUP_REUSE':'1' if config.get('texture_lookup_reuse',False) else '0',
                     'CARA_TEXTURE_LOOKUP_VERIFY':'1' if config.get('texture_lookup_verify',False) else '0',
+                    'CARA_TEXTURE_EXACT_PREFILTER':'1' if config.get('texture_exact_prefilter',False) else '0',
+                    'CARA_TEXTURE_ACQUISITION_PROFILE':'1' if config.get('texture_acquisition_profile',False) else '0',
                     'CARA_FASTINTERP_DECODE_BKPT':'1' if config.get('decode_bkpt',False) else '0',
                     'CARA_SURFACE_FLUSH_TRACE':'1',
                     'CARA_RETAIN_SMALL_CPU_WRITES':'1' if config.get('retain_small_writes',False) else '0',
@@ -180,6 +210,16 @@ def main():
                     'CARA_VERTEX_INDEX_CACHE': '1' if config.get('index_cache', False) else '0',
                     'CARA_VERTEX_UPLOAD_BANK_MIB': str(config['bank_mib']),
                     'CARA_ADAPTIVE_GUEST_CPU': '0' if benchmark else '1'}
+        settings['CARA_GUEST_PC_PROFILE_RANGES'] = args.guest_pc_ranges if config.get('guest_pc_profile', False) else ''
+        if config.get('guest_pc_profile', False):
+            settings.update({
+                'CARA_GUEST_PC_PROFILE_START_FRAME': str(args.guest_pc_start_frame),
+                'CARA_GUEST_PC_PROFILE_WINDOW_FRAMES': str(args.guest_pc_window_frames),
+                'CARA_GUEST_PC_PROFILE_PERIOD_FRAMES': str(args.guest_pc_period_frames),
+                'CARA_GUEST_PC_PROFILE_WINDOWS': str(args.guest_pc_windows)})
+        if config.get('guest_pc_profile', False) and args.guest_pc_episode_start is not None:
+            settings['CARA_GUEST_PC_PROFILE_EPISODE_START'] = str(args.guest_pc_episode_start)
+            settings['CARA_GUEST_PC_PROFILE_EPISODE_END'] = str(args.guest_pc_episode_end)
         if config.get('ios_pipeline_cache', False):
             settings['CARA_IOS_PIPELINE_CACHE']='1'
         settings['CARA_BOUNDED_FRAME_PACING']='1' if config.get('bounded_pacing',False) else '0'
@@ -232,6 +272,8 @@ def main():
         else:
             copy('emulator.log', args.output / (config['name'] + '-failure.log'))
             raise RuntimeError('Run did not complete: ' + config['name'])
+        if report.get('used_input_attributes_requested', False) != config.get('used_input_attributes', False):
+            raise RuntimeError('Vertex input staging mode differs from requested configuration')
         windows = [w for w in report['windows'] if args.warmup < w['end_frame'] <= args.frames]
         if len(windows) != (args.frames - args.warmup) // 60:
             raise RuntimeError('Incomplete measurement window')
@@ -251,6 +293,11 @@ def main():
         if args.phase_cpu_timing:
             fields += [phase+'_'+suffix for phase in ['draw_submit','vertex_orphan','stream_map','stream_unmap','uniform_upload','vertex_subimage','surface_download','surface_read_pixels']
                        for suffix in ['sample_wall_ms','sample_cpu_ms','samples','sample_clock_failures']]
+        if config.get('texture_acquisition_profile',False):
+            fields += ['texture_'+phase+'_'+suffix
+                       for phase in ['acquire','selection','validation','reinterpretation','allocation','load','upload','mipmap']
+                       for suffix in ['calls','sample_wall_ms','sample_cpu_ms','samples','sample_clock_failures']]
+            fields += ['texture_exact_candidates','texture_exact_wrong_layout','texture_exact_early_rejects','texture_exact_validity_lookups']
         if args.host_cpu_timing:
             fields += ['emulation_thread_cpu_ms_per_frame', 'process_cpu_ms_per_frame']
         if any(w['texture_lookup_verify_mismatches'] for w in windows):
@@ -260,6 +307,9 @@ def main():
                 raise RuntimeError('Texture lookup verification did not exercise any hits')
         elif any(w['texture_lookup_verified_hits'] for w in windows):
             raise RuntimeError('Unexpected texture shadow verification in speed comparison')
+        fields += [key for key in ('vertex_input_stage_draws', 'vertex_configured_input_registers',
+                                   'vertex_selected_input_registers', 'vertex_pruned_input_draws')
+                   if all(key in w for w in windows)]
         means = {key: sum(w[key] for w in windows) / len(windows) for key in fields}
         result = dict(config, fingerprint=report['engine_build_fingerprint'], means=means)
         for name in ['runtime-status.json', 'audio-status.json', 'benchmark-status.json', 'fastinterp-blocks.json','surface-flushes.json','emulator.log']:
@@ -285,6 +335,14 @@ def main():
             if not copy('gpu-vertex-self-test.json', check_path) or json.loads(check_path.read_text()).get('passed') is not True:
                 raise RuntimeError('GPU fixture did not pass')
         census = json.loads((args.output / (config['name'] + '-fastinterp-blocks.json')).read_text())
+        pc_profiles = [core.get('guest_pc_cpu', {}) for core in census['cores']]
+        pc_enabled = config.get('guest_pc_profile', False)
+        if any(p.get('enabled', False) != pc_enabled or p.get('config_error') for p in pc_profiles):
+            raise RuntimeError('Guest PC profile mode differs or configuration was rejected')
+        if pc_enabled:
+            if not any(p.get('sampled_refreshes', 0) > 0 for p in pc_profiles):
+                raise RuntimeError('Guest PC profiler did not sample any refreshes')
+            result['guest_pc_cpu'] = pc_profiles
         alu_enabled = config.get('alu_operands', False)
         if any(core.get('alu_operands_enabled') != alu_enabled for core in census['cores']):
             raise RuntimeError('FastInterp operand specialization mode differs from requested configuration')
@@ -304,6 +362,10 @@ def main():
             raise RuntimeError('FastInterp cache diagnostic mode differs from requested configuration')
         if any(core.get('chain_budget_enabled') != config.get('chain_budget', False) for core in census['cores']):
             raise RuntimeError('FastInterp chain budget mode differs from requested configuration')
+        if any(core.get('precise_block_end_enabled') != config.get('precise_block_end', False) for core in census['cores']):
+            raise RuntimeError('Precise block termination mode differs from requested configuration')
+        if any(core.get('cache_chain_recency') != config.get('chain_recency', False) for core in census['cores']):
+            raise RuntimeError('Chain-aware replacement mode differs from requested configuration')
         if any(core.get('cache_ways') != config.get('cache_ways', 4) for core in census['cores']):
             raise RuntimeError('FastInterp cache associativity differs from requested configuration')
         result['fastinterp_cache'] = [

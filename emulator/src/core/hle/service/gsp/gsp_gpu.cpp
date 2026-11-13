@@ -3,6 +3,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "cara/guest_gpu_trace.h"
 #include <vector>
 #include "common/archives.h"
 #include "common/bit_field.h"
@@ -15,6 +16,7 @@
 #include "core/hle/ipc.h"
 #include "core/hle/ipc_helpers.h"
 #include "core/hle/kernel/handle_table.h"
+#include "core/hle/kernel/thread.h"
 #include "core/hle/kernel/shared_memory.h"
 #include "core/hle/kernel/shared_page.h"
 #include "core/hle/result.h"
@@ -286,6 +288,8 @@ void GSP_GPU::ReadHWRegs(Kernel::HLERequestContext& ctx) {
 }
 
 ResultCode SetBufferSwap(u32 screen_id, const FrameBufferInfo& info) {
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
+        Cara::GuestGPUTrace::Kind::Swap, 0, 0, screen_id, info.address_left, info.address_right, info.active_fb);
     u32 base_address = 0x400000;
     PAddr phys_address_left = VirtualToPhysicalAddress(info.address_left);
     PAddr phys_address_right = VirtualToPhysicalAddress(info.address_right);
@@ -436,8 +440,21 @@ void GSP_GPU::SignalInterruptForThread(InterruptId interrupt_id, u32 thread_id) 
         return;
     }
     InterruptRelayQueue* interrupt_relay_queue = GetInterruptRelayQueue(shared_memory, thread_id);
+    if (Cara::GuestGPUTrace::Enabled()) {
+        Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::Binding,
+            thread_id, interrupt_event->GetObjectId());
+        Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::IRQRequest,
+            thread_id, interrupt_event->GetObjectId(), static_cast<u32>(interrupt_id),
+            interrupt_relay_queue->index, interrupt_relay_queue->number_interrupts,
+            interrupt_relay_queue->padding1);
+    }
     const auto decision = RelayQueuePolicy::Enqueue(*interrupt_relay_queue, interrupt_id,
                                                    interrupt_relay_queue->padding1);
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(system.CoreTiming(),
+        Cara::GuestGPUTrace::Kind::Relay, thread_id, interrupt_event->GetObjectId(),
+        static_cast<u32>(interrupt_id), static_cast<u32>(decision.outcome),
+        (u64(interrupt_relay_queue->index) << 32) | interrupt_relay_queue->number_interrupts,
+        (u64(interrupt_relay_queue->error_code) << 32) | (decision.signal_event ? 1 : 0));
     if (decision.outcome == RelayQueuePolicy::Outcome::InvalidHeader ||
         decision.outcome == RelayQueuePolicy::Outcome::InvalidInterrupt) {
         LOG_CRITICAL(Service_GSP, "Invalid GSP interrupt relay header/interrupt");
@@ -672,7 +689,27 @@ void GSP_GPU::TriggerCmdReqQueue(Kernel::HLERequestContext& ctx) {
         // Iterate through each command...
         for (u32 i = 0; i < command_buffer.number_commands; ++i) {
             // Decode and execute command
+            const bool trace = Cara::GuestGPUTrace::Enabled();
+            u64 before_draws = 0, before_vertices = 0;
+            u32 caller = 0;
+            if (trace) {
+                ++Cara::GuestGPUTrace::submission;
+                auto* current = system.Kernel().GetCurrentThreadManager().GetCurrentThread();
+                caller = current ? current->GetThreadId() : 0;
+                before_draws = Common::FrameTiming::counters.gpu_vertex_draws + Common::FrameTiming::counters.cpu_vertex_draws;
+                before_vertices = Common::FrameTiming::counters.gpu_vertices;
+                const auto& cmd = command_buffer.commands[i];
+                Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::GXBegin,
+                    caller, thread_id, static_cast<u32>(cmd.id.Value()), command_buffer.hex,
+                    (u64(i) << 32) | u32(active_thread_id),
+                    (u64(cmd.submit_gpu_cmdlist.address) << 32) | cmd.submit_gpu_cmdlist.size);
+            }
             ExecuteCommand(command_buffer.commands[i]);
+            if (trace) Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::GXEnd,
+                caller, thread_id, Common::FrameTiming::counters.gpu_vertex_draws +
+                    Common::FrameTiming::counters.cpu_vertex_draws - before_draws,
+                Common::FrameTiming::counters.gpu_vertices - before_vertices,
+                Common::FrameTiming::counters.enabled, command_buffer.hex);
         }
         // Indicates that command has completed
         command_buffer.number_commands.Assign(0);

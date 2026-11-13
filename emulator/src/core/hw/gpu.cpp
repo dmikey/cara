@@ -1,3 +1,4 @@
+#include "cara/guest_gpu_trace.h"
 #include "cara/p3d_completion.h"
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
@@ -496,6 +497,7 @@ template void Write<u8>(u32 addr, const u8 data);
 
 /// Update hardware
 static void VBlankCallback(u64 userdata, s64 cycles_late) {
+    Cara::GuestGPUTrace::VBlank(Core::System::GetInstance().CoreTiming());
     VideoCore::Renderer()->SwapBuffers();
 
     // Signal to GSP that GPU interrupt has occurred

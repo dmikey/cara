@@ -7,7 +7,9 @@ from pathlib import Path
 
 
 PHASES = ('draw_submit', 'vertex_orphan', 'stream_map', 'stream_unmap',
-          'uniform_upload', 'vertex_subimage', 'surface_download', 'surface_read_pixels')
+          'uniform_upload', 'vertex_subimage', 'surface_download', 'surface_read_pixels',
+          'texture_acquire', 'texture_selection', 'texture_validation', 'texture_reinterpretation',
+          'texture_allocation', 'texture_load', 'texture_upload', 'texture_mipmap')
 SUFFIXES = ('samples', 'sample_clock_failures', 'sample_wall_ms', 'sample_cpu_ms')
 
 
