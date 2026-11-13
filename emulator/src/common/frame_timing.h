@@ -20,6 +20,13 @@ struct PhaseCPUSamples {
 // Opt-in diagnostics on the emulation thread. No clocks are read during normal play.
 struct Counters {
     bool enabled = false;
+    // Requests, not unique frames: repeated command lists/draws/swaps count again.
+    std::uint64_t pica_command_lists = 0;
+    std::uint64_t pica_draw_requests = 0;
+    std::uint64_t top_buffer_swaps = 0;
+    // Top swaps with nonzero, distinct physical left/right addresses. This does
+    // not establish that both views were rendered or presented.
+    std::uint64_t stereo_top_buffer_swaps = 0;
     std::uint64_t texture_lookup_checks = 0;
     std::uint64_t texture_lookup_hits = 0;
     std::uint64_t texture_lookup_misses = 0;

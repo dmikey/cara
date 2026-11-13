@@ -1198,6 +1198,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             if (timing.enabled) {
                 std::ofstream report(user + "runtime-status.json");
                 report << "{\"title_id\":" << title << ",\"frame\":" << frame << ",\"display_fps\":" << fps
+                       << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
+                       << ",\"presentation_mode\":\"mono_left_top\""
                        << ",\"guest_cpu_percent\":" << controller->guestClock.load()
                        << ",\"maximum_speed_percent\":" << controller->maximumSpeedLimit.load()
                        << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
@@ -1677,6 +1679,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                             }
                             timing_windows.push_back("{\"end_frame\":" + std::to_string(timed_frame) +
                                 ",\"frames\":" + std::to_string(frame_times.size()) +
+                                ",\"factor_3d_percent\":" + std::to_string(unsigned(Settings::values.factor_3d.load())) +
+                                ",\"presentation_mode\":\"mono_left_top\"" +
                                 ",\"guest_cpu_percent\":" + std::to_string(policy_clock()) +
                                 ",\"mean_ms\":" + std::to_string(total_ms / count) +
                                 ",\"host_cpu_timing\":" + std::string(host_cpu_valid?"true":"false") +
@@ -1808,6 +1812,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"readback_ms_per_frame\":" + std::to_string((current.readback_seconds - previous_counters.readback_seconds) * 1000 / count) +
                                 ",\"present_ms_per_frame\":" + std::to_string((current.present_seconds - previous_counters.present_seconds) * 1000 / count) +
                                 ",\"shader_calls\":" + std::to_string(current.shader_calls - previous_counters.shader_calls) +
+                                ",\"pica_command_lists\":" + std::to_string(current.pica_command_lists - previous_counters.pica_command_lists) +
+                                ",\"pica_draw_requests\":" + std::to_string(current.pica_draw_requests - previous_counters.pica_draw_requests) +
+                                ",\"top_buffer_swaps\":" + std::to_string(current.top_buffer_swaps - previous_counters.top_buffer_swaps) +
+                                ",\"stereo_top_buffer_swaps\":" + std::to_string(current.stereo_top_buffer_swaps - previous_counters.stereo_top_buffer_swaps) +
                                 ",\"gpu_vertex_draws\":" + std::to_string(current.gpu_vertex_draws - previous_counters.gpu_vertex_draws) +
                                 ",\"gpu_lit_pair_draws\":" + std::to_string(current.gpu_lit_pair_draws - previous_counters.gpu_lit_pair_draws) +
                                 ",\"gpu_lit_pair_vertices\":" + std::to_string(current.gpu_lit_pair_vertices - previous_counters.gpu_lit_pair_vertices) +
@@ -1826,6 +1834,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                             timing_report << "{\"title_id\":" << system.GetTitleID()
                                           << ",\"rom_filename\":" << std::quoted(std::string(FileUtil::GetFilename(rom)))
                                           << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
+                                          << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
+                                          << ",\"presentation_mode\":\"mono_left_top\""
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
                                           << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
                                           << ",\"cpu_category_timing\":" << (category_timing?"true":"false")
@@ -1891,6 +1901,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                            << ",\"adaptive_guest_cpu\":" << (clock_control.Enabled()?"true":"false")
                            << ",\"guest_cpu_percent\":" << policy_clock()
                            << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
+                           << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
+                           << ",\"presentation_mode\":\"mono_left_top\""
 #ifdef CARA_IOS_GLES
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
                            << ",\"gpu_vertices\":" << Common::FrameTiming::counters.gpu_vertices

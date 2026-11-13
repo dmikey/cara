@@ -6,6 +6,7 @@
 #include <vector>
 #include "common/archives.h"
 #include "common/bit_field.h"
+#include "common/frame_timing.h"
 #include "common/microprofile.h"
 #include "common/swap.h"
 #include "core/core.h"
@@ -283,6 +284,12 @@ ResultCode SetBufferSwap(u32 screen_id, const FrameBufferInfo& info) {
     u32 base_address = 0x400000;
     PAddr phys_address_left = VirtualToPhysicalAddress(info.address_left);
     PAddr phys_address_right = VirtualToPhysicalAddress(info.address_right);
+    if (screen_id == 0 && Common::FrameTiming::counters.enabled) {
+        ++Common::FrameTiming::counters.top_buffer_swaps;
+        if (phys_address_left != 0 && phys_address_right != 0 &&
+            phys_address_left != phys_address_right)
+            ++Common::FrameTiming::counters.stereo_top_buffer_swaps;
+    }
     if (info.active_fb == 0) {
         WriteSingleHWReg(base_address + 4 * static_cast<u32>(GPU_REG_INDEX(
                                                 framebuffer_config[screen_id].address_left1)),

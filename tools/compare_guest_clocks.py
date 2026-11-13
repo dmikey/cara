@@ -9,6 +9,7 @@ import struct
 import tempfile
 
 COUNTS = ('gpu_vertex_draws', 'cpu_vertex_draws', 'gpu_vertices', 'gpu_input_records',
+          'pica_command_lists', 'pica_draw_requests', 'top_buffer_swaps', 'stereo_top_buffer_swaps',
           'vertex_gl_subimage_calls', 'vertex_gl_image_calls', 'vertex_upload_bytes',
           'vertex_index_upload_bytes', 'vertex_upload_reused_bytes',
           'draw_texture_acquire_calls', 'draw_framebuffer_acquire_calls',
@@ -51,6 +52,15 @@ def finite_tree(value, context):
 
 def read(path):
     return json.loads(path.read_text())
+
+
+def presentation_metadata(value):
+    factor = value.get('factor_3d_percent')
+    if factor is not None:
+        require(number(factor, 'factor_3d_percent', True) <= 100, 'Invalid 3D slider percentage')
+    mode = value.get('presentation_mode')
+    require(mode is None or isinstance(mode, str), 'Invalid presentation mode')
+    return {'factor_3d_percent': factor, 'presentation_mode': mode}
 
 
 def compare(directory, warmup=300, end_frame=None):
@@ -148,6 +158,10 @@ def compare(directory, warmup=300, end_frame=None):
         configs.append({k: v for k, v in config.items() if k not in DERIVED})
         runs.append({'name': name, 'guest_cpu_percent': clock, 'refreshes': frames,
                      'window_intervals': interval, 'category_names': category_names,
+                     'presentation_metadata': {'report': presentation_metadata(report),
+                         'status': presentation_metadata(status),
+                         'selected_windows': [dict(presentation_metadata(w), end_frame=w['end_frame'])
+                                              for w in selected]},
                      'final_pixel_sha256': config.get('renderer_rgba_sha256'), 'metrics_per_refresh': metrics})
     require(runs and {r['guest_cpu_percent'] for r in runs} == {50, 100}, 'Need both 50% and 100% groups')
     require(all(v == intervals[0] for v in intervals), 'Different selected frame intervals')
@@ -177,6 +191,9 @@ def compare(directory, warmup=300, end_frame=None):
                       'guest_cpu/draw/phase wall scopes overlap and must not be added; exclusive_cpu categories are thread CPU.',
                       'Unavailable or disabled diagnostics are null; zero does not establish absence of uninstrumented calls.',
                       'Underclocking changes graphics commands/writes and guest progress as well as instruction rate.',
+                      'PICA command lists/draw triggers and top swaps count requests, not unique frames.',
+                      'Stereo top swaps require nonzero distinct physical eye addresses; this does not prove both views rendered.',
+                      'presentation_mode describes host output; factor_3d_percent is the guest slider setting.',
                       'Different final pixels/work counts are reported, not rejected; intermediate pixels are not compared.']}
 
 
@@ -191,6 +208,10 @@ def table(result):
         lines.append('| ' + key + ' | ' + ' | '.join('n/a' if values[key] is None else f'{values[key]:.6f}' for _, values in columns) + ' |')
     lines += ['Final pixel hashes identical: ' + str(result['final_pixels_identical']),
               'Available raw workload counters identical: ' + str(result['workload_identical'])]
+    for run in result['runs']:
+        observed = {json.dumps({k: v for k, v in w.items() if k != 'end_frame'}, sort_keys=True)
+                    for w in run['presentation_metadata']['selected_windows']}
+        lines.append(run['name'] + ' observed presentation metadata: ' + '; '.join(sorted(observed)))
     lines += result['notes']
     return '\n'.join(lines)
 
@@ -209,9 +230,15 @@ def self_test():
             manifest['runs'].append({'name': name, 'guest_cpu_percent': clock, 'fingerprint': 'a' * 64,
                                      'renderer_rgba_sha256': name, 'packed': True})
             windows = [{'end_frame': 10, 'frames': 10, 'guest_cpu_percent': clock, 'mean_ms': 2,
+                        'pica_command_lists': 3, 'pica_draw_requests': 100,
+                        'top_buffer_swaps': 5, 'stereo_top_buffer_swaps': 2,
+                        'factor_3d_percent': 0, 'presentation_mode': 'mono_left_top',
                         'gpu_vertex_draws': clock, 'cpu_category_ns': [10000000],
                         'cpu_category_entries': [10], 'cpu_category_clock_failures': 0, 'cpu_category_overflows': 0},
                        {'end_frame': 40, 'frames': 30, 'guest_cpu_percent': clock, 'mean_ms': 6,
+                        'pica_command_lists': 9, 'pica_draw_requests': 300,
+                        'top_buffer_swaps': 15, 'stereo_top_buffer_swaps': 6,
+                        'factor_3d_percent': 0, 'presentation_mode': 'mono_left_top',
                         'gpu_vertex_draws': clock * 3, 'cpu_category_ns': [90000000],
                         'cpu_category_entries': [30], 'cpu_category_clock_failures': 0, 'cpu_category_overflows': 0}]
             report = {'engine_build_fingerprint': 'a' * 64, 'title_id': 42, 'cpu_backend': 'fastinterp',
@@ -235,6 +262,9 @@ def self_test():
         result = compare(directory, 0)
         values = result['runs'][0]['metrics_per_refresh']
         assert values['mean_ms'] == 5 and values['gpu_vertex_draws'] == 10
+        assert values['pica_command_lists'] == .3 and values['pica_draw_requests'] == 10
+        assert values['top_buffer_swaps'] == .5 and values['stereo_top_buffer_swaps'] == .2
+        assert result['runs'][0]['presentation_metadata']['selected_windows'][0]['factor_3d_percent'] == 0
         assert values['exclusive_cpu_ms/cpu'] == 2.5 and values['exclusive_entries/cpu'] == 1
         assert result['groups'][0]['run_count'] == 2
         assert result['groups'][0]['mean_metrics_per_refresh']['mean_ms'] == 7.5
@@ -253,6 +283,14 @@ def self_test():
                 pass
             else:
                 raise AssertionError('accepted bad ' + field)
+        path.write_text(json.dumps(original))
+        legacy = json.loads(json.dumps(original))
+        for w in legacy['windows']:
+            for key in ('pica_command_lists', 'pica_draw_requests', 'top_buffer_swaps',
+                        'stereo_top_buffer_swaps', 'factor_3d_percent', 'presentation_mode'):
+                del w[key]
+        path.write_text(json.dumps(legacy))
+        assert compare(directory, 0)['runs'][1]['metrics_per_refresh']['top_buffer_swaps'] is None
         path.write_text(json.dumps(original))
         try:
             compare(directory, 5)

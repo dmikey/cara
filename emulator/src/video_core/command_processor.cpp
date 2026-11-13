@@ -413,6 +413,8 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     // It seems like these trigger vertex rendering
     case PICA_REG_INDEX(pipeline.trigger_draw):
     case PICA_REG_INDEX(pipeline.trigger_draw_indexed): {
+        if (Common::FrameTiming::counters.enabled)
+            ++Common::FrameTiming::counters.pica_draw_requests;
         MICROPROFILE_SCOPE(GPU_Drawing);
         CommandCPUProfileScope command_draw_profile(true);
 
@@ -765,6 +767,8 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
 }
 
 void ProcessCommandList(PAddr list, u32 size) {
+    if (Common::FrameTiming::counters.enabled)
+        ++Common::FrameTiming::counters.pica_command_lists;
     static const bool reported_options = [] {
         LOG_INFO(HW_GPU, "PICA command options repeat_state={} command_profile={}",
                  RepeatStateEnabled(), CommandProfileEnabled());
