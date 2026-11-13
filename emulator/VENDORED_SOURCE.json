@@ -99,6 +99,12 @@
       "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
       "bundled": true,
       "tag": "v1.5.7"
+    },
+    {
+      "path": "externals/cubeb/cmake/sanitizers-cmake",
+      "source": "https://github.com/arsenm/sanitizers-cmake.git",
+      "revision": "f09151bc87ba210f955d58dffc07b0ee1e755234",
+      "bundled": true
     }
   ],
   "excluded_non_source": [

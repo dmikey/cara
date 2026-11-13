@@ -53,3 +53,7 @@ The optional experimental Android JIT build uses Dynarmic by MerryMage and
 contributors (0BSD), pinned to 2d3c8c5724800534f68e801e3f18b13a4d400e22
 from https://github.com/azahar-emu/dynarmic. Its dependency notices remain in
 the fetched source. Apple builds do not fetch or link this optional dependency.
+
+cubeb Android audio build tooling includes sanitizers-cmake by its contributors.
+Its original license is retained in emulator/externals/cubeb/cmake/sanitizers-cmake/.
+The exact revision is recorded in emulator/VENDORED_SOURCE.json.
