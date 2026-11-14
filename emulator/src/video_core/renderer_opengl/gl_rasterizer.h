@@ -36,6 +36,7 @@
 namespace OpenGL {
 
 class RasterizerOpenGL : public VideoCore::RasterizerInterface {
+    friend struct LUTResidencyTestAccess;
 public:
     RasterizerOpenGL();
     ~RasterizerOpenGL() override;

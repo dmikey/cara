@@ -204,6 +204,9 @@ if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CARA_SOFTWARE_PRESENT
     add_executable(cara-mac-depth-self-test EXCLUDE_FROM_ALL mac_depth_self_test.cpp)
     target_link_libraries(cara-mac-depth-self-test PRIVATE core common glad
         ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
+    add_executable(cara-mac-lut-self-test EXCLUDE_FROM_ALL mac_lut_self_test.cpp)
+    target_link_libraries(cara-mac-lut-self-test PRIVATE core common glad
+        ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
 endif()
 
 if(CARA_INTERNAL_HOST_PC_SAMPLER)

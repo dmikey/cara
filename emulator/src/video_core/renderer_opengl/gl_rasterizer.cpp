@@ -233,6 +233,17 @@ RasterizerOpenGL::RasterizerOpenGL()
 
     uniform_block_data.dirty = true;
 
+    // Equal CPU shadow values do not imply that a GPU range exists. In
+    // particular, a newly created all-zero LUT must not alias another LUT's
+    // first upload at offset zero. Valid uploaded offsets are nonnegative.
+    for (auto& offsets : uniform_block_data.light_data.lighting_lut_offset)
+        offsets = {-1, -1, -1, -1};
+    uniform_block_data.data.fog_lut_offset = -1;
+    uniform_block_data.data.proctex_noise_lut_offset = -1;
+    uniform_block_data.data.proctex_color_map_offset = -1;
+    uniform_block_data.data.proctex_alpha_map_offset = -1;
+    uniform_block_data.data.proctex_lut_offset = -1;
+    uniform_block_data.data.proctex_diff_lut_offset = -1;
     uniform_block_data.lighting_lut_dirty.fill(true);
     uniform_block_data.lighting_lut_dirty_any = true;
     uniform_block_data.light_dirty = true;
@@ -2920,11 +2931,12 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                         is_changed = true;
                     }
                 }
-                if (is_changed || invalidate) {
+                auto& lut_offset =
+                    uniform_block_data.light_data.lighting_lut_offset[index / 4][index % 4];
+                if (is_changed || invalidate || lut_offset < 0) {
                     std::memcpy(buffer + bytes_used, lighting_lut_data[index].data(),
                                 lighting_lut_data[index].size() * sizeof(GLvec2));
-                    uniform_block_data.light_data.lighting_lut_offset[index / 4][index % 4] =
-                        (offset + bytes_used) / sizeof(GLvec2);
+                    lut_offset = (offset + bytes_used) / sizeof(GLvec2);
                     uniform_block_data.light_dirty = true;
                     bytes_used += lighting_lut_data[index].size() * sizeof(GLvec2);
                 }
@@ -2946,7 +2958,7 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                 is_changed = true;
             }
         }
-        if (is_changed || invalidate) {
+        if (is_changed || invalidate || uniform_block_data.data.fog_lut_offset < 0) {
             std::memcpy(buffer + bytes_used, fog_lut_data.data(),
                         fog_lut_data.size() * sizeof(GLvec2));
             uniform_block_data.data.fog_lut_offset = (offset + bytes_used) / sizeof(GLvec2);
@@ -3005,7 +3017,7 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
                 is_changed = true;
             }
         }
-        if (is_changed || invalidate) {
+        if (is_changed || invalidate || lut_offset < 0) {
             std::memcpy(buffer + bytes_used, lut_data.data(), lut_data.size() * sizeof(GLvec2));
             lut_offset = (offset + bytes_used) / sizeof(GLvec2);
             uniform_block_data.dirty = true;
@@ -3047,7 +3059,7 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
                 is_changed = true;
             }
         }
-        if (is_changed || invalidate) {
+        if (is_changed || invalidate || uniform_block_data.data.proctex_lut_offset < 0) {
             std::memcpy(buffer + bytes_used, proctex_lut_data.data(),
                         proctex_lut_data.size() * sizeof(GLvec4));
             uniform_block_data.data.proctex_lut_offset = (offset + bytes_used) / sizeof(GLvec4);
@@ -3070,7 +3082,7 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
                 is_changed = true;
             }
         }
-        if (is_changed || invalidate) {
+        if (is_changed || invalidate || uniform_block_data.data.proctex_diff_lut_offset < 0) {
             std::memcpy(buffer + bytes_used, proctex_diff_lut_data.data(),
                         proctex_diff_lut_data.size() * sizeof(GLvec4));
             uniform_block_data.data.proctex_diff_lut_offset =
