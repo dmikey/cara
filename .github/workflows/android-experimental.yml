@@ -1,6 +1,13 @@
 name: Experimental Android GLES + Dynarmic
 on:
   workflow_dispatch:
+    inputs:
+      renderer:
+        description: Android renderer comparison
+        type: choice
+        required: true
+        default: atlas
+        options: [atlas, gles32]
   push:
     branches: [feature/android-gles-dynarmic]
 permissions:
@@ -46,7 +53,9 @@ jobs:
           CCACHE_MAXSIZE: 1G
           CCACHE_COMPILERCHECK: content
         working-directory: emulator/src/android
-        run: gradle --no-daemon --continue --max-workers=3 :app:assembleDebug
+        run: |
+          gradle --no-daemon --continue --max-workers=3 -PcaraGlesAtlas=${{ github.event.inputs.renderer == 'gles32' && 'OFF' || 'ON' }} :app:assembleDebug
+          echo "renderer=${{ github.event.inputs.renderer || 'atlas' }}" > "$GITHUB_WORKSPACE/android-renderer.txt"
       - name: Compiler cache statistics
         if: always()
         run: CCACHE_DIR="${{ runner.temp }}/cara-ccache" ccache --show-stats || true
@@ -63,11 +72,12 @@ jobs:
           sha256sum "$apk" > android-apk.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-android-arm64-gles-dynarmic-experimental
+          name: cara-android-arm64-${{ github.event.inputs.renderer == 'gles32' && 'gles32-control' || 'gles' }}-dynarmic-experimental
           if-no-files-found: error
           path: |
             emulator/src/android/app/build/outputs/apk/debug/*.apk
             android-apk.sha256
+            android-renderer.txt
       - uses: actions/upload-artifact@v4
         with:
           name: cara-android-arm64-native-symbols

@@ -43,3 +43,14 @@ The backend also has an opt-in ARM64 host smoke test covering arithmetic,
 context restoration, instruction-cache invalidation, and successful/failed
 exclusive stores. This is synthetic CPU validation, not an Android device or
 GLES correctness test.
+
+## Renderer control build
+
+The manual Android workflow accepts `renderer=gles32` to build the native GLES
+3.2 renderer without the Apple GLES 3.0 atlas compatibility path. It keeps the
+same Dynarmic backend, resolution and guest timing. The APK artifact is named
+`cara-android-arm64-gles32-control-dynarmic-experimental`. This is a controlled
+Mali comparison, not a claimed performance improvement. Both variants use the
+same debug application ID, so preserve saves before replacing an installation.
+The default renderer remains `atlas` until physical-device testing supports a
+change. Matching unstripped native symbols are uploaded separately for profiling.
