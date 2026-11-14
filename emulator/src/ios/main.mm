@@ -23,6 +23,7 @@ extern "C" int __llvm_profile_write_file(void);
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
 #import "ios/network_controller.h"
+#include "ios/session_overlay.h"
 #include "network/relay_client.h"
 #import "ios/state_catalog.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -550,6 +551,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     NSURL* gameURL;
     BOOL gameScoped;
     BOOL modalPaused;
+    BOOL menuVisible;
     uint32_t uiButtonMask;
     CGSize lastSkinSize;
     std::unique_ptr<IOSWindow> emuWindow;
@@ -845,7 +847,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 }
 - (void)updateSessionPresentation {
     const auto state=[self sessionPresentation];
-    BOOL acceptsInput=state==Cara::SessionPresentation::Running;
+    const auto overlay=Cara::OverlayPolicy(state==Cara::SessionPresentation::Running,libraryVisible,menuVisible,backgroundAt>0,[self relayKeepsRunning]);
+    BOOL acceptsInput=overlay.accept_game_input;
     BOOL wasAcceptingInput=inputHub.active; inputHub.active=acceptsInput;
     if (wasAcceptingInput && !acceptsInput) [self resetSkinInput];
     actionControls.userInteractionEnabled=acceptsInput;
@@ -871,10 +874,21 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     const auto state=relayClient->GetStatus().state;
     return state==Network::RelayClient::State::Connecting || state==Network::RelayClient::State::Connected;
 }
-- (void)resumeFromMenu {
-    modalPaused=libraryVisible && ![self relayKeepsRunning]; paused=modalPaused;
+- (void)applyInterfacePausePolicy {
+    const auto policy=Cara::OverlayPolicy(running,libraryVisible,menuVisible,backgroundAt>0,[self relayKeepsRunning]);
+    modalPaused=policy.pause_guest; paused=modalPaused;
     AudioCore::SetIOSAudioPaused(modalPaused || stop || !running);
     [self updateSessionPresentation];
+}
+- (void)resumeFromMenu {
+    menuVisible=NO;
+    [self applyInterfacePausePolicy];
+}
+- (void)presentViewController:(UIViewController*)controller animated:(BOOL)animated completion:(void (^)(void))completion {
+    menuVisible=YES;
+    [self applyInterfacePausePolicy];
+    [self resetSkinInput];
+    [super presentViewController:controller animated:animated completion:completion];
 }
 - (void)ensureLibrary {
     if (libraryStore) return;
@@ -902,7 +916,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         libraryNavigation.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
         [self.view addSubview:libraryNavigation.view]; [libraryNavigation didMoveToParentViewController:self];
     }
-    libraryVisible=YES; modalPaused=![self relayKeepsRunning]; paused=modalPaused; AudioCore::SetIOSAudioPaused(modalPaused || stop || !running); [self resetSkinInput];
+    libraryVisible=YES; [self applyInterfacePausePolicy]; [self resetSkinInput];
     [self updateSessionPresentation];
     libraryNavigation.view.hidden=NO; [self.view bringSubviewToFront:libraryNavigation.view]; libraryController.canResume=running && !stop; libraryController.activeGameURL=gameURL;
     [libraryController reloadLibrary]; [self updateSyncFeedback];
@@ -1046,15 +1060,13 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         if(c->relayClient->Connect(std::move(config))) {
             // Local wireless must keep normal guest execution alive under menus.
             // Only the emulator worker drains incoming traffic and runs guest time.
-            c->modalPaused=NO; paused=false;
-            AudioCore::SetIOSAudioPaused(c->stop || !c->running);
+            [c applyInterfacePausePolicy];
         }
     };
     controller.leaveRoom=^{
         EmulatorController* c=owner;
         if(c && c->relayClient) {
-            c->relayClient->Disconnect(); c->modalPaused=YES; paused=true;
-            AudioCore::SetIOSAudioPaused(true); [c updateSessionPresentation];
+            c->relayClient->Disconnect(); [c applyInterfacePausePolicy];
         }
     };
     UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
@@ -1132,7 +1144,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 }
 - (void)showMenu {
     if (openingGame || self.presentedViewController) return;
-    [self ensureLibrary]; modalPaused=![self relayKeepsRunning]; paused=modalPaused; AudioCore::SetIOSAudioPaused(modalPaused || stop || !running); [self resetSkinInput];
+    [self ensureLibrary]; menuVisible=YES; [self applyInterfacePausePolicy]; [self resetSkinInput];
     [self updateSessionPresentation];
     CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"]?:@"performance";
     quick.modeSelectionEnabled=CaraCanTuneEmulation(); quick.performanceDetail=[self performanceModeDetail];
@@ -1181,8 +1193,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         startedAt += duration;
         lastHUDTime += duration;
     }
-    backgroundAt = 0; paused = modalPaused; AudioCore::SetIOSAudioPaused(paused || stop || !running);
-    [self updateSessionPresentation];
+    backgroundAt = 0;
+    menuVisible=self.presentedViewController && !self.presentedViewController.isBeingDismissed;
+    [self applyInterfacePausePolicy];
     [saveSync refreshCloudStatus]; [stateSync refreshCloudStatus];
     if (libraryVisible) [libraryController reloadLibrary];
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import "ios/input_hub.h"
+#include "ios/session_overlay.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -61,5 +62,22 @@ int main() { @autoreleasepool {
     [hub updateSurface:@"actions" buttons:[NSSet setWithObject:@"b"] circle:CGPointMake(.8,0) cstick:CGPointZero touch:CGPointMake(-1,-1)];
     hub.active=NO; Check(buttons.count==0 && CGPointEqualToPoint(circle,CGPointZero),@"pause clears surfaces");
     hub.active=YES; Check(buttons.count==0,@"resume cannot revive surfaces");
+    // A room keeps the guest running under overlays, never the game controls.
+    const auto onlineMenu=Cara::OverlayPolicy(true,false,true,false,true);
+    Check(!onlineMenu.pause_guest && !onlineMenu.accept_game_input,@"online menu runs guest but owns input");
+    [hub handleKeyboardCode:GCKeyCodeKeyJ pressed:YES];
+    Check([buttons containsObject:@"a"],@"keyboard held before online menu");
+    hub.active=onlineMenu.accept_game_input; [hub clearSurfaces];
+    Check(buttons.count==0,@"online menu cannot restore hardware holds through surface reset");
+    const auto onlineLibrary=Cara::OverlayPolicy(true,true,false,false,true);
+    Check(!onlineLibrary.pause_guest && !onlineLibrary.accept_game_input,@"online library owns input without stopping guest");
+    const auto background=Cara::OverlayPolicy(true,false,true,true,true);
+    Check(background.pause_guest && !background.accept_game_input,@"background always stops guest and input");
+    const auto offlineReturn=Cara::OverlayPolicy(true,false,true,false,false);
+    Check(offlineReturn.pause_guest && !offlineReturn.accept_game_input,@"disconnected foreground remains paused under menu");
+    const auto libraryReturn=Cara::OverlayPolicy(true,true,false,false,false);
+    Check(libraryReturn.pause_guest && !libraryReturn.accept_game_input,@"disconnected foreground remains paused under library");
+    const auto closed=Cara::OverlayPolicy(true,false,false,false,false);
+    Check(!closed.pause_guest && closed.accept_game_input,@"closing overlay resumes normal game controls");
     puts("PASS: keyboard/controller input, analog deadzone, mappings, capture quarantine, held commands, lifecycle reset, merged touch surfaces and reentrant menu (native synthetic GameController; no physical controller claim)");
 } }
