@@ -68,6 +68,8 @@ void BootGame(const std::string& path) {
 
     const Config::ConfigInfo<bool> phase_timing{{"Debug", "trace_renderer_timing"}, false};
     const Config::ConfigInfo<bool> guest_trace{{"Debug", "trace_guest_threads"}, false};
+    const Config::ConfigInfo<bool> bookkeeping{{"Debug", "trace_renderer_bookkeeping"}, false};
+    setenv("CARA_RENDER_BOOKKEEPING_PROFILE", Config::Get(bookkeeping) ? "1" : "0", 1);
     Common::FrameTiming::counters = {};
     Common::FrameTiming::counters.enabled = Config::Get(phase_timing);
     const bool trace_guest_threads = Config::Get(guest_trace);
@@ -169,6 +171,19 @@ void BootGame(const std::string& path) {
                     phases.shader_compile_seconds*1000, phases.shader_compile_calls,
                     phases.surface_download_calls, phases.surface_remap_calls,
                     phases.gpu_vertex_draws, phases.cpu_vertex_draws);
+                LOG_INFO(Frontend,
+                    "Android draw window: framebuffer_ms={:.3f} textures_ms={:.3f} shader_setup_ms={:.3f} invalidation_ms={:.3f} state_ms={:.3f} uniform_ms={:.3f} reuse_check_ms={:.3f} stream_map_ms={:.3f} stream_unmap_ms={:.3f} command_lists={} draw_requests={} top_swaps={} vertices={} fb_calls={} texture_calls={} invalidation_calls={} upload_bytes={} reused_bytes={}",
+                    phases.draw_framebuffer_acquire_seconds*1000,
+                    phases.draw_texture_acquire_seconds*1000,
+                    phases.draw_shader_setup_seconds*1000,
+                    phases.draw_dirty_invalidate_seconds*1000,
+                    phases.state_apply_seconds*1000, phases.uniform_upload_seconds*1000,
+                    phases.vertex_reuse_check_seconds*1000, phases.stream_map_seconds*1000,
+                    phases.stream_unmap_seconds*1000, phases.pica_command_lists,
+                    phases.pica_draw_requests, phases.top_buffer_swaps, phases.gpu_vertices,
+                    phases.draw_framebuffer_acquire_calls, phases.draw_texture_acquire_calls,
+                    phases.draw_dirty_invalidate_calls, phases.vertex_upload_bytes,
+                    phases.vertex_upload_reused_bytes);
                 phases = {};
                 phases.enabled = true;
                 next_phase_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
