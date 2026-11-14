@@ -63,6 +63,7 @@ passes. The test is excluded from ordinary builds and does not affect shipping
 runtime. The fix is in the shared desktop/GLES upload logic, but this evidence is
 native M1 correctness proof, not a physical-iPad result or a performance gain.
 Unchanged-write notification elision is outside this change.
+
 ## GLES client-memory upload correction
 
 The GLES path previously passed a `glMapBufferRange` result to

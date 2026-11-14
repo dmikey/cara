@@ -167,6 +167,9 @@ jobs:
           python3 -m unittest discover -s tools -p test_profile_cpu_stacks.py -v
       - name: Build
         run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
+      - name: Compile isolated GLES LUT GPU oracle without launching a device
+        if: matrix.platform == 'ios' && matrix.renderer == 'gles3'
+        run: cmake --build work/build-ios-gles3 --target cara-gles-lut-self-test -j2
       - name: Audit linked no-JIT binary
         run: python3 tools/audit_no_jit.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}'
       - name: Native file I/O regression check (no ROM required)
