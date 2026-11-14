@@ -202,3 +202,59 @@ dispatch-table loads before indirect branches and only two were actual prologue
 instructions. Function/source-line labels alone therefore cannot justify
 assigning samples to entry overhead. Block lookup, operand/page access and
 Morton conversion remain concrete targets; these are wall-residency clues.
+
+## Native M1 Time Profiler verification (2026-11-13)
+
+A separate 20-second Time Profiler attachment completed on native M1 macOS,
+using the Stories Secret Path checkpoint after the uninstrumented comparisons
+finished. Guest clock and speed cap were 100%, sound was enabled, and the VLDR
+pair, Mac GPU depth reinterpretation, and GL state-reuse experiments were off.
+This was desktop OpenGL, not an iPad or Metal-backend measurement.
+
+The capture tool archived the executable with SHA-256
+`805638fc154044d4fb5539049734175dabc7de40aea2acaee5edbc0238f54d04`, verified its
+`arm64` UUID `6E7CB762-9C85-3623-8D90-DB5330F3E9F6` against the target process's
+exported image, and confirmed unchanged PID executable/start identity before
+and after recording. Its caller-declared engine fingerprint was
+`1414da400d4eba11aabfe7dad3dcfc3dfd9545b26faa1d16c5005366fc3434ae`.
+The raw trace, XML, executable and receipt are retained privately; no game data
+is required by the profiler or its parser tests.
+
+The export contains 17,507 sampled stacks, including 14,755 on the main thread.
+Each row has a 1,000,000 ns exported weight. These weights are not measured
+instruction durations or a speed comparison. All main-thread rows are labeled
+`Running`, including 3,323 `mach_msg2_trap` samples (22.52% of main-thread weight).
+That label does not establish how much of the syscall attribution is blocking;
+these records remain included rather than being discarded to inflate CPU shares.
+`ExecuteBlock` has 4,355 self samples (29.52% of main-thread weight).
+
+Individual leaf locations now remain distinct even when their function names
+are identical. The leading interpreter locations were checked against this
+exact executable's disassembly and 598-entry dispatch table:
+
+| Containing host instruction | Samples | Main-thread weight |
+| --- | ---: | ---: |
+| `LdrImm_al`: load decoded base-register operand | 272 | 1.843% |
+| Shared dispatch-table pointer load before indirect branch | 238 | 1.613% |
+| `AddImm_al`: load decoded source-register operand | 145 | 0.983% |
+| `MovLslImm_al`: load decoded source-register operand | 125 | 0.847% |
+| `MovImm_al`: load decoded immediate | 96 | 0.651% |
+| `VldrS_al`: load decoded base-register operand | 86 | 0.583% |
+
+The exported addresses lie one byte into their containing four-byte ARM64
+instructions; raw exported values are preserved. Dispatch-table entries use
+Mach-O `DYLD_CHAINED_PTR_64_OFFSET` fixups and were decoded accordingly. No usable
+optimized DWARF line information was found in this archived executable, so these
+labels come from symbols, exact dispatch targets and assembly, not source-line
+attribution. Samples at handler entry do not by themselves prove operand-load
+latency or cache misses; indirect-branch behavior and sampling skid remain
+possible explanations. Hardware counters would be a separate measurement.
+
+Named lookup-table work was small in this capture: `SyncAndUploadLUTsLF` had
+11 inclusive and seven self samples (0.075% and 0.047% of main-thread weight),
+while `SyncAndUploadLUTs` had two inclusive/self samples (0.014%).
+`UploadIOSLUT` does not appear in this native desktop capture. Inlining limits
+negative conclusions, and these results do not establish iPad or Android LUT
+costs. `WritePicaReg` had 9,321 inclusive samples but only 151 self samples;
+nested rendering must not be counted again as independent command-processing
+CPU work.
