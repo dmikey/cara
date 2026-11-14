@@ -16,9 +16,43 @@ namespace OpenGL {
 
 using PixelFormat = SurfaceParams::PixelFormat;
 
+#if defined(CARA_IOS_GLES) || defined(__APPLE__)
 #ifdef CARA_IOS_GLES
+static constexpr const char* depth_shader_precision=fragment_shader_precision_OES;
+#else
+// GLSL330 accepts highp qualifiers but has no uimage2D type in the ES preamble.
+static constexpr const char* depth_shader_precision="";
+#endif
 // GLES 3.0 samples the depth component of D24S8 but cannot sample stencil.
 // Recover stencil using read-only fixed-function tests, never a feedback loop.
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+static bool MacGPUReinterpretEnabled() {
+    static const bool enabled=[] {
+        const char* value=std::getenv("CARA_MAC_GPU_DEPTH_REINTERPRET");
+        return value && std::strcmp(value,"1")==0;
+    }();
+    return enabled;
+}
+// These desktop-only states can be changed by a raw caller independently of
+// the cache. Keep the converter deterministic without changing that caller.
+class DesktopDepthRasterState {
+public:
+    DesktopDepthRasterState() {
+        glGetIntegerv(GL_LOGIC_OP_MODE,&logic);
+        for(unsigned i=0;i<3;++i){enabled[i]=glIsEnabled(caps[i]);glDisable(caps[i]);}
+        glLogicOp(GL_COPY);
+    }
+    ~DesktopDepthRasterState() {
+        glLogicOp(logic);
+        for(unsigned i=0;i<3;++i)if(enabled[i])glEnable(caps[i]);else glDisable(caps[i]);
+    }
+private:
+    static constexpr GLenum caps[]={GL_COLOR_LOGIC_OP,GL_CLIP_DISTANCE0,GL_CLIP_DISTANCE1};
+    GLint logic=GL_COPY;GLboolean enabled[3]{};
+};
+static bool CompareNativeDepthUploadWithPBO(std::string& error);
+#endif
+
 class GLESDepthStencilToRGBA8 final : public FormatReinterpreterBase {
 public:
     GLESDepthStencilToRGBA8() {
@@ -26,7 +60,7 @@ public:
 const vec2 p[4]=vec2[4](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
 void main(){gl_Position=vec4(p[gl_VertexID],0,1);}
 )";
-        const std::string depth_fs = std::string(fragment_shader_precision_OES) + R"(
+        const std::string depth_fs = std::string(depth_shader_precision) + R"(
 uniform highp sampler2D source;
 uniform highp uint maximum_depth;
 out highp vec4 color;
@@ -47,12 +81,12 @@ void main(){
     color=vec4(0.0,float((bits>>16u)&255u),float((bits>>8u)&255u),float(bits&255u))/255.0;
 }
 )";
-        const std::string stencil_fs = std::string(fragment_shader_precision_OES) + R"(
+        const std::string stencil_fs = std::string(depth_shader_precision) + R"(
 uniform highp float bit_value;
 out highp vec4 color;
 void main(){color=vec4(bit_value,0,0,0);}
 )";
-        const std::string upload_depth_fs=std::string(fragment_shader_precision_OES)+R"(
+        const std::string upload_depth_fs=std::string(depth_shader_precision)+R"(
 uniform highp usampler2D source;
 uniform highp ivec2 origin;
 uniform highp uint depth_bits;
@@ -67,7 +101,7 @@ void main(){
     gl_FragDepth=uintBitsToFloat(((p+102u)<<23u)+(k<<(23u-p))+1u);
 }
 )";
-        const std::string upload_stencil_fs=std::string(fragment_shader_precision_OES)+R"(
+        const std::string upload_stencil_fs=std::string(depth_shader_precision)+R"(
 uniform highp usampler2D source;
 uniform highp ivec2 origin;
 uniform highp uint bit_mask;
@@ -118,6 +152,9 @@ void main(){
         if(!linked)return false;
         glGetProgramiv(stencil_program.handle,GL_LINK_STATUS,&linked);if(!linked)return false;
         const auto previous=OpenGLState::GetCurState();
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+        DesktopDepthRasterState desktop_raster;
+#endif
         GLint active=0,unpack=0,read_framebuffer=0,draw_framebuffer=0;
         glGetIntegerv(GL_ACTIVE_TEXTURE,&active);
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read_framebuffer);
@@ -230,6 +267,9 @@ void main(){
         GLint linked=0;glGetProgramiv(upload_depth_program.handle,GL_LINK_STATUS,&linked);if(!linked)return false;
         glGetProgramiv(upload_stencil_program.handle,GL_LINK_STATUS,&linked);if(!linked)return false;
         const auto previous=OpenGLState::GetCurState();
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+        DesktopDepthRasterState desktop_raster;
+#endif
         GLint active=0,unpack=0,read_fb=0,draw_fb=0;
         glGetIntegerv(GL_ACTIVE_TEXTURE,&active);glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack);
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read_fb);glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw_fb);
@@ -315,8 +355,14 @@ private:
     GLint bit_location=-1,maximum_depth_location=-1;u32 scratch_width=0,scratch_height=0;
 };
 bool RunDepthReinterpretSelfTest(std::string& error) {
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+    if(!MacGPUReinterpretEnabled()){error="Mac depth oracle requires CARA_MAC_GPU_DEPTH_REINTERPRET=1";return false;}
+#endif
     if(glGetError()!=GL_NO_ERROR){error="depth oracle preexisting GL error";return false;}
     const auto previous=OpenGLState::GetCurState();
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+    DesktopDepthRasterState desktop_raster;
+#endif
     GLint active=0,pack=0,unpack=0,entry_read_framebuffer=0,entry_draw_framebuffer=0;
     glGetIntegerv(GL_ACTIVE_TEXTURE,&active);
     glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&pack);
@@ -348,7 +394,7 @@ bool RunDepthReinterpretSelfTest(std::string& error) {
 const vec2 p[4]=vec2[4](vec2(-1,-1),vec2(1,-1),vec2(-1,1),vec2(1,1));
 void main(){gl_Position=vec4(p[gl_VertexID],0,1);}
 )";
-        const std::string fs=std::string(fragment_shader_precision_OES)+R"(
+        const std::string fs=std::string(depth_shader_precision)+R"(
 uniform highp sampler2D source;
 uniform highp ivec2 coordinate;
 uniform highp uint maximum_depth;
@@ -357,7 +403,7 @@ void main(){highp float z=texelFetch(source,coordinate,0).r;
 value=uvec4(floatBitsToUint(z),floatBitsToUint(z*float(maximum_depth)),
 uint(roundEven(z*float(maximum_depth))),maximum_depth);}
 )";
-        const std::string write_fs=std::string(fragment_shader_precision_OES)+R"(
+        const std::string write_fs=std::string(depth_shader_precision)+R"(
 uniform highp float wanted;
 out highp vec4 color;
 void main(){gl_FragDepth=wanted;color=vec4(0);}
@@ -467,6 +513,12 @@ void main(){gl_FragDepth=wanted;color=vec4(0);}
         constexpr const char* cap_labels[]={"BLEND","DEPTH_TEST","STENCIL_TEST","SCISSOR_TEST","CULL_FACE",
             "DITHER","RASTERIZER_DISCARD","SAMPLE_ALPHA_TO_COVERAGE","SAMPLE_COVERAGE","POLYGON_OFFSET_FILL"};
         for(unsigned i=0;i<std::size(caps);++i)result.emplace_back(cap_labels[i],glIsEnabled(caps[i]));
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+        GLint logic=0;glGetIntegerv(GL_LOGIC_OP_MODE,&logic);result.emplace_back("LOGIC_OP_MODE",logic);
+        result.emplace_back("COLOR_LOGIC_OP",glIsEnabled(GL_COLOR_LOGIC_OP));
+        result.emplace_back("CLIP_DISTANCE0",glIsEnabled(GL_CLIP_DISTANCE0));
+        result.emplace_back("CLIP_DISTANCE1",glIsEnabled(GL_CLIP_DISTANCE1));
+#endif
         return result;
     };
     const auto verify=[&](u32 width,u32 height,u32 destination_width,u32 destination_height,
@@ -521,6 +573,10 @@ void main(){gl_FragDepth=wanted;color=vec4(0);}
         // Real startup context can have a raw read binding different from the
         // cached value. The checked API must restore both actual binding/cache.
         glBindFramebuffer(GL_READ_FRAMEBUFFER,readback.handle);
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+        glEnable(GL_COLOR_LOGIC_OP);glLogicOp(GL_XOR);
+        glEnable(GL_CLIP_DISTANCE0);glEnable(GL_CLIP_DISTANCE1);
+#endif
         const auto before=snapshot();
         if(!converter.EncodeDepthChecked(source.handle,format,sr,destination.handle,dr,width,height))
             return fail("checked conversion format="+std::to_string(unsigned(format))+" GL="+std::to_string(glGetError()));
@@ -601,6 +657,9 @@ void main(){gl_FragDepth=wanted;color=vec4(0);}
     std::vector<u32> d16(256*256);
     for(u32 i=0;i<d16.size();++i)d16[i]=i<<8;
     if(!verify(256,256,260,260,d16,{0,256,256,0},{2,258,258,2},true,PixelFormat::D16))return false;
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+    if(!CompareNativeDepthUploadWithPBO(error))return false;
+#endif
     return true;
 }
 #else
@@ -938,6 +997,75 @@ private:
     GLint d24s8_abgr_viewport_u_id;
 };
 
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+// Compare the actual desktop upload/legacy-PBO route with the candidate. The
+// exhaustive oracle above uses fragment-written depth to guarantee exact seeds;
+// this independent check also covers the driver's native integer upload path.
+static bool CompareNativeDepthUploadWithPBO(std::string& error) {
+    const auto previous=OpenGLState::GetCurState();
+    DesktopDepthRasterState raster;
+    SCOPE_EXIT({previous.Apply();});
+    OGLTexture source,old_output,new_output;
+    OGLFramebuffer read_fb,write_fb,readback;
+    source.Create();old_output.Create();new_output.Create();
+    read_fb.Create();write_fb.Create();readback.Create();
+    PixelBufferD24S8toABGR legacy;
+    GLESDepthStencilToRGBA8 candidate;
+    constexpr u32 width=256,height=256;
+    std::vector<u32> packed(width*height);
+    constexpr u32 edges[]={0,1,2,255,256,65535,65536,0x7ffffe,0x7fffff,
+                           0x800000,0x800001,0xfffffd,0xfffffe,0xffffff};
+    u32 random=0x71539u;
+    for(u32 i=0;i<packed.size();++i) {
+        random=random*1664525u+1013904223u;
+        const u32 z=i/256<std::size(edges)?edges[i/256]:(random&0xffffffu);
+        packed[i]=(z<<8)|(i&255);
+    }
+    OpenGLState::BindTexture2D(0,source.handle);glActiveTexture(GL_TEXTURE0);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_DEPTH24_STENCIL8,width,height,0,
+                 GL_DEPTH_STENCIL,GL_UNSIGNED_INT_24_8,packed.data());
+    if(glGetError()!=GL_NO_ERROR){error="native depth seed upload failed";return false;}
+    const auto read=[&](GLuint texture,std::vector<u8>& bytes) {
+        OpenGLState::BindReadFramebuffer(readback.handle);
+        glFramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,texture,0);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);glBindBuffer(GL_PIXEL_PACK_BUFFER,0);
+        if(glCheckFramebufferStatus(GL_READ_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)return false;
+        std::fill(bytes.begin(),bytes.end(),0xa7);
+        glReadPixels(0,0,width,height,GL_RGBA,GL_UNSIGNED_BYTE,bytes.data());
+        return glGetError()==GL_NO_ERROR;
+    };
+    const auto verify=[&](const Common::Rectangle<u32>& sr,const Common::Rectangle<u32>& dr) {
+        std::vector<u8> initial(width*height*4,0x5b),a(initial.size()),b(initial.size());
+        for(GLuint texture:{old_output.handle,new_output.handle}) {
+            OpenGLState::BindTexture2D(0,texture);glActiveTexture(GL_TEXTURE0);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+            glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,width,height,0,GL_RGBA,GL_UNSIGNED_BYTE,initial.data());
+        }
+        legacy.Reinterpret(source.handle,sr,read_fb.handle,old_output.handle,dr,write_fb.handle);
+        if(glGetError()!=GL_NO_ERROR || !read(old_output.handle,a)) {
+            error="legacy PBO native-upload oracle failed";return false;
+        }
+        if(!candidate.ReinterpretChecked(source.handle,sr,read_fb.handle,new_output.handle,dr,
+                                         write_fb.handle,width,height) || !read(new_output.handle,b)) {
+            error="candidate native-upload oracle failed";return false;
+        }
+        if(a!=b) {
+            const auto index=std::mismatch(a.begin(),a.end(),b.begin()).first-a.begin();
+            error="native-upload PBO/GPU byte mismatch at="+std::to_string(index)+
+                  " PBO="+std::to_string(a[index])+" GPU="+std::to_string(b[index]);return false;
+        }
+        // A second conversion without re-upload catches writes to source depth/stencil.
+        return true;
+    };
+    return verify({0,height,width,0},{0,height,width,0}) &&
+           verify({7,71,39,7},{11,109,75,45}) &&
+           verify({0,height,width,0},{0,height,width,0});
+}
+#endif
+
 // Danball Senki W
 class ShaderD24S8toRGBA8 final : public FormatReinterpreterBase {
 public:
@@ -1081,6 +1209,13 @@ FormatReinterpreterOpenGL::FormatReinterpreterOpenGL() {
     return;
 #endif
     std::string_view vendor{reinterpret_cast<const char*>(glGetString(GL_VENDOR))};
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+    if (MacGPUReinterpretEnabled()) {
+        reinterpreters.emplace_back(PixelFormat::RGBA8,PixelFormat::D24S8,
+                                    std::make_unique<GLESDepthStencilToRGBA8>());
+        LOG_INFO(Render_OpenGL,"Using opt-in exact GPU D24S8 reinterpretation on desktop GL");
+    } else
+#endif
     if (vendor.find("NVIDIA") != vendor.npos) {
         reinterpreters.emplace_back(PixelFormat::RGBA8, PixelFormat::D24S8,
                                     std::make_unique<CopyImageSubData>());
@@ -1108,7 +1243,10 @@ FormatReinterpreterOpenGL::~FormatReinterpreterOpenGL() = default;
 
 bool FormatReinterpreterOpenGL::EncodeDepthChecked(GLuint src,PixelFormat format,
     const Common::Rectangle<u32>& sr,GLuint dst,const Common::Rectangle<u32>& dr,u32 width,u32 height) {
-#ifdef CARA_IOS_GLES
+#if defined(CARA_IOS_GLES) || defined(__APPLE__)
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+    if(!MacGPUReinterpretEnabled())return false;
+#endif
     if(!depth_encoder)depth_encoder=std::make_unique<GLESDepthStencilToRGBA8>();
     return depth_encoder->EncodeDepthChecked(src,format,sr,dst,dr,width,height);
 #else
@@ -1118,7 +1256,10 @@ bool FormatReinterpreterOpenGL::EncodeDepthChecked(GLuint src,PixelFormat format
 
 bool FormatReinterpreterOpenGL::UploadDepthChecked(GLuint target,PixelFormat format,
     const Common::Rectangle<u32>& rect,const u8* canonical,size_t bytes,u32 stride,u32 width,u32 height) {
-#ifdef CARA_IOS_GLES
+#if defined(CARA_IOS_GLES) || defined(__APPLE__)
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+    if(!MacGPUReinterpretEnabled())return false;
+#endif
     if(!depth_encoder)depth_encoder=std::make_unique<GLESDepthStencilToRGBA8>();
     return depth_encoder->UploadDepthChecked(target,format,rect,canonical,bytes,stride,width,height);
 #else

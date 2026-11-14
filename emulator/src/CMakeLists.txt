@@ -199,6 +199,13 @@ if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(cara-no-jit-probe PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
 endif()
 
+if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # Explicit GPU correctness test: unavailable contexts must fail, not skip.
+    add_executable(cara-mac-depth-self-test EXCLUDE_FROM_ALL mac_depth_self_test.cpp)
+    target_link_libraries(cara-mac-depth-self-test PRIVATE core common glad
+        ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
+endif()
+
 if(CARA_INTERNAL_HOST_PC_SAMPLER)
     add_library(cara-host-pc-sampler STATIC cara/host_pc_sampler.cpp)
     target_link_libraries(cara-host-pc-sampler PUBLIC Threads::Threads)
