@@ -102,3 +102,17 @@ checked replay and uninstrumented timing are required to determine whether the
 native scan improvement affects gameplay. A scan microbenchmark cannot answer
 that question. Input timing, 100% guest CPU, sound and no-JIT settings must stay
 fixed during those later comparisons.
+
+## Main-based review
+
+This review branch carries only the index-bound helper, its production call,
+maintained regression target and this report. GitHub explicitly builds and runs
+the 77,926-case native target. Existing save-relocation tests remain enabled.
+The separate M1 research engine also built and passed the no-JIT audit, then
+fresh-booted Stories to Secret Path with 100% guest CPU and sound. Its five
+scripted captures matched an earlier independent boot byte-for-byte, with equal
+program counters, ticks, LCD metadata and persistent game files. Two guarded
+restores with tracing off/on matched checked endpoint RGBA, execution state,
+HID, timers and persistent files. These checks validate preservation in that
+integrated research engine; they do not establish a gameplay gain or physical
+iPad result for this review branch.

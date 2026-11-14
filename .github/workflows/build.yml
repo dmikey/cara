@@ -40,6 +40,10 @@ jobs:
         run: |
           work/build-mac-sdl/bin/cara-fastinterp-decoded-record-self-test | tee work/build-mac-sdl/decoded-record.log
           python3 -c "from pathlib import Path; assert 'record=20 block=672' in Path('work/build-mac-sdl/decoded-record.log').read_text()"
+      - name: Check native index bounds without a ROM or GUI
+        run: |
+          cmake --build work/build-mac-sdl --target cara-vertex-index-range-self-test -j1
+          work/build-mac-sdl/bin/cara-vertex-index-range-self-test
       - name: Check restored save archive relocation without a ROM or GUI
         run: |
           cmake --build work/build-mac-sdl --target cara-save-archive-relocation-self-test -j1
