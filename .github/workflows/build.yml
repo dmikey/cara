@@ -68,7 +68,7 @@ jobs:
         run: |
           work/build-mac-compact/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_CACHE_ENTRIES=32768 CARA_FASTINTERP_CACHE_WAYS=8 CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_TICK_BUCKETS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 work/build-mac-compact/bin/cara-fastinterp-self-test
-          CARA_FASTINTERP_DECODED_METADATA_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_DECODED_METADATA_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test > work/build-mac-compact/compact-metadata.txt
           CARA_FASTINTERP_AL_DISPATCH_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_BLX_LINK_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_PC_BOUNDARY_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
@@ -83,6 +83,20 @@ jobs:
           for cara_vfp_simd in 0 1 2 3; do
             CARA_FASTINTERP_SHORT_VECTOR_TEST=1 CARA_FASTINTERP_VFP_SIMD=$cara_vfp_simd work/build-mac-compact/bin/cara-fastinterp-self-test
           done
+      - name: Compare metadata with the reference layout in the same build
+        run: |
+          cp work/build-mac-compact/src/fastinterp_decoded_layout_config.h work/build-mac-compact/compact-layout-selected.h
+          cmake -S emulator -B work/build-mac-compact -DCARA_FASTINTERP_COMPACT_DECODED=OFF
+          cmake --build work/build-mac-compact --target cara-fastinterp-self-test cara-fastinterp-decoded-record-self-test -j2
+          work/build-mac-compact/bin/cara-fastinterp-decoded-record-self-test | tee work/build-mac-compact/reference-record.log
+          python3 -c "from pathlib import Path; assert 'record=20 block=672' in Path('work/build-mac-compact/reference-record.log').read_text()"
+          CARA_FASTINTERP_DECODED_METADATA_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test > work/build-mac-compact/reference-metadata.txt
+          diff -u work/build-mac-compact/reference-metadata.txt work/build-mac-compact/compact-metadata.txt
+          cmake -S emulator -B work/build-mac-compact -DCARA_FASTINTERP_COMPACT_DECODED=ON
+          cmake --build work/build-mac-compact --target cara-no-jit-probe cara-fastinterp-self-test cara-fastinterp-decoded-record-self-test -j2
+          work/build-mac-compact/bin/cara-fastinterp-decoded-record-self-test | tee work/build-mac-compact/decoded-record.log
+          python3 -c "from pathlib import Path; assert 'record=16 block=544' in Path('work/build-mac-compact/decoded-record.log').read_text()"
+          python3 tools/audit_no_jit.py mac --build-dir work/build-mac-compact
       - name: Retain compact-layout configuration and audit receipts
         if: always()
         uses: actions/upload-artifact@v4
@@ -90,6 +104,9 @@ jobs:
           name: macos-compact-interpreter-audit
           path: |
             work/build-mac-compact/decoded-record.log
+            work/build-mac-compact/reference-record.log
+            work/build-mac-compact/*-metadata.txt
+            work/build-mac-compact/compact-layout-selected.h
             work/build-mac-compact/no-jit-audit.json
             work/build-mac-compact/src/fastinterp_decoded_layout_config.h
   network-relay:
