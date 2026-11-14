@@ -1,6 +1,6 @@
 # Optional compact interpreter records
 
-`CARA_FASTINTERP_COMPACT_DECODED` is a **default-off** compile option. It reduces host decoded-instruction storage from 20 to 16 bytes. It changes no guest instruction, tick, event, memory operation, block boundary, or serialized guest field. A game performance gain remains unestablished; the smaller record also has code-generation costs.
+`CARA_FASTINTERP_COMPACT_DECODED` is a **default-off** compile option. It reduces host decoded-instruction storage from 20 to 16 bytes. It changes no guest instruction, tick, event, memory operation, block boundary, or serialized guest field. A small native M1 Stories improvement is documented below; iPad performance remains unverified. The smaller record also has code-generation costs.
 
 ## Representation and invariants
 
