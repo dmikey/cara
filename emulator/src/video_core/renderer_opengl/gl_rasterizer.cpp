@@ -1784,21 +1784,30 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
 
     vertex_batch.clear();
 
-    // Reset textures in rasterizer state context because the rasterizer cache might delete them
-    for (auto& texture_unit : state.texture_units) {
-        texture_unit.texture_2d = 0;
+    // Normal draws fully select all texture units before submitting the next
+    // batch. Keeping those bindings avoids an unbind/rebind round trip and a
+    // second Apply for each draw. Shadow/image cleanup retains its old path.
+    // This experiment is opt-in while driver and alias behavior are validated.
+    static const bool retain_draw_bindings = [] {
+        const char* value = std::getenv("CARA_RETAIN_DRAW_BINDINGS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (!retain_draw_bindings || AllowShadow) {
+        for (auto& texture_unit : state.texture_units) {
+            texture_unit.texture_2d = 0;
+        }
+        state.texture_cube_unit.texture_cube = 0;
+        if (AllowShadow) {
+            state.image_shadow_texture_px = 0;
+            state.image_shadow_texture_nx = 0;
+            state.image_shadow_texture_py = 0;
+            state.image_shadow_texture_ny = 0;
+            state.image_shadow_texture_pz = 0;
+            state.image_shadow_texture_nz = 0;
+            state.image_shadow_buffer = 0;
+        }
+        state.Apply();
     }
-    state.texture_cube_unit.texture_cube = 0;
-    if (AllowShadow) {
-        state.image_shadow_texture_px = 0;
-        state.image_shadow_texture_nx = 0;
-        state.image_shadow_texture_py = 0;
-        state.image_shadow_texture_ny = 0;
-        state.image_shadow_texture_pz = 0;
-        state.image_shadow_texture_nz = 0;
-        state.image_shadow_buffer = 0;
-    }
-    state.Apply();
 
     if (shadow_rendering) {
         glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
