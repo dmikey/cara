@@ -914,14 +914,18 @@ void ProcessCommandList(PAddr list, u32 size) {
         // never read ahead, move the cursor, or reject legacy truncated packets.
         if (collect_shader_packets) {
             const auto kind = Cara::PicaShaderPackets::PortKind(cmd_id);
-            const u32 offset = kind == Cara::PicaShaderPackets::Kind::Program
-                ? g_state.regs.vs.program.offset
-                : kind == Cara::PicaShaderPackets::Kind::Swizzle
-                    ? g_state.regs.vs.swizzle_patterns.offset : 0;
-            shader_packet_profile.Observe({cmd_id, bool(group_factor), header.extra_data_length,
-                offset, g_state.cmd_list.length,
-                g_state.cmd_list.current_ptr - g_state.cmd_list.head_ptr,
-                header.parameter_mask, !g_state.regs.pipeline.gs_unit_exclusive_configuration});
+            if (kind == Cara::PicaShaderPackets::Kind::Other) {
+                // An ordinary header may have redirected the command list. Its
+                // cursor is irrelevant here; do not inspect it for this census.
+                ++shader_packet_profile.all_packets;
+            } else {
+                const u32 offset = kind == Cara::PicaShaderPackets::Kind::Program
+                    ? g_state.regs.vs.program.offset : g_state.regs.vs.swizzle_patterns.offset;
+                shader_packet_profile.Observe({cmd_id, bool(group_factor), header.extra_data_length,
+                    offset, g_state.cmd_list.length,
+                    g_state.cmd_list.current_ptr - g_state.cmd_list.head_ptr,
+                    header.parameter_mask, !g_state.regs.pipeline.gs_unit_exclusive_configuration});
+            }
         }
         for (u32 i = 0; i < header.extra_data_length; ++i) {
             cmd_id += group_factor;
