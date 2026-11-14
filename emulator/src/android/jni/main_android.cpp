@@ -73,6 +73,10 @@ static std::map<std::string, GameInfo> s_app_dict;
 void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
+    const Config::ConfigInfo<bool> invalidate_stream_wrap{{"Debug", "invalidate_stream_wrap"}, false};
+    Settings::values.stream_buffer_hack = !Config::Get(invalidate_stream_wrap) &&
+                                         !Settings::values.use_present_thread;
+    LOG_INFO(Frontend, "Android stream wrap: legacy_no_invalidate={}", Settings::values.stream_buffer_hack);
     const Config::ConfigInfo<bool> phase_timing{{"Debug", "trace_renderer_timing"}, false};
     const Config::ConfigInfo<bool> guest_trace{{"Debug", "trace_guest_threads"}, false};
     const Config::ConfigInfo<bool> bookkeeping{{"Debug", "trace_renderer_bookkeeping"}, false};

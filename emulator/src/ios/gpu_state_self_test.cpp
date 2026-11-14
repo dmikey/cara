@@ -37,16 +37,24 @@ bool CheckStreamBuffers(GLenum target, std::string& error) {
         if (!data) { error = "stream map failed"; return false; }
         std::fill_n(data, size, value);
         buffer.Unmap(used_size);
-        bool good = offset == wanted_offset && invalidated == wanted_invalidate && binding_matches();
+        const bool bound = binding_matches();
+        bool visible = true;
+        bool good = offset == wanted_offset && invalidated == wanted_invalidate && bound;
         if (used_size > 0) {
             const auto* read = static_cast<const u8*>(glMapBufferRange(target, offset, used_size, GL_MAP_READ_BIT));
             if (read) {
-                good &= std::all_of(read, read + used_size, [&](u8 byte) { return byte == value; });
-                good &= glUnmapBuffer(target) == GL_TRUE;
-            } else good = false;
+                visible = std::all_of(read, read + used_size, [&](u8 byte) { return byte == value; });
+                visible &= glUnmapBuffer(target) == GL_TRUE;
+            } else visible = false;
         }
-        good &= glGetError() == GL_NO_ERROR;
-        if (!good) error = "stream flush, wrap, binding or range visibility mismatch";
+        const GLenum gl_error = glGetError();
+        good &= visible && gl_error == GL_NO_ERROR;
+        if (!good) error = "stream visibility target=" + std::to_string(target) +
+            " reserved=" + std::to_string(size) + " used=" + std::to_string(used_size) +
+            " offset=" + std::to_string(offset) + " expected_offset=" + std::to_string(wanted_offset) +
+            " invalidated=" + std::to_string(invalidated) + " expected_invalidate=" +
+            std::to_string(wanted_invalidate) + " bound=" + std::to_string(bound) +
+            " visible=" + std::to_string(visible) + " GL=" + std::to_string(gl_error);
         return good;
     };
     bool passed = check(64, 64, 0, false, 0x35);
