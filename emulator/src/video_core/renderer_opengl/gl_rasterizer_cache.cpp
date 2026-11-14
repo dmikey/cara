@@ -1014,13 +1014,17 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
                          ScaleMatch match_scale_type,
                          std::optional<SurfaceInterval> validate_interval = std::nullopt,
                          ExactLookupSelection<const CachedSurface*>* selection = nullptr,
-                         bool exact_prefilter = false) {
+                         bool exact_prefilter = false,
+                         SurfaceInterval* selected_copy_interval = nullptr) {
     Common::FrameTiming::TextureAcquisitionScope timing(
         Common::FrameTiming::TextureAcquisitionPhase::Selection);
     Surface match_surface = nullptr;
     bool match_valid = false;
     u32 match_scale = 0;
     SurfaceInterval match_interval{};
+    if constexpr (find_flags & MatchFlags::Copy) {
+        if (selected_copy_interval) *selected_copy_interval = {};
+    }
 
     for (const auto& pair : RangeFromInterval(surface_cache, params.GetInterval())) {
         for (const auto& surface : pair.second) {
@@ -1117,6 +1121,9 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
                 return std::make_pair(surface->CanTexCopy(params), surface->GetInterval());
             });
         }
+    }
+    if constexpr (find_flags & MatchFlags::Copy) {
+        if (selected_copy_interval && match_surface) *selected_copy_interval = match_interval;
     }
     return match_surface;
 }
@@ -2546,10 +2553,12 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
         // Look for a valid surface to copy from
         SurfaceParams params = surface->FromInterval(interval);
 
-        Surface copy_surface =
-            FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore, interval);
+        SurfaceInterval copy_interval;
+        Surface copy_surface = FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore,
+                                                         interval, nullptr, false, &copy_interval);
         if (copy_surface != nullptr) {
-            SurfaceInterval copy_interval = params.GetCopyableInterval(copy_surface);
+            // params was normalized with FromInterval(interval); reuse the exact
+            // winning interval without recomputing its valid-region intersection.
             if (validation_copy_trace && validation_copy_trace->InWindow()) {
                 ValidationCopyTrace::Entry event;
                 event.invocation = copy_invocation; event.fragment = copy_fragment;
