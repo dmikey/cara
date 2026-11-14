@@ -40,6 +40,7 @@
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_vertex_upload_ranges.h"
+#include "video_core/renderer_opengl/gl_vertex_index_range.h"
 #include "video_core/renderer_opengl/gl_vertex_upload_order_reuse.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_vars.h"
@@ -456,27 +457,11 @@ RasterizerOpenGL::VertexArrayInfo RasterizerOpenGL::AnalyzeVertexArray(bool is_i
         const u16* index_address_16 = reinterpret_cast<const u16*>(index_address_8);
         const bool index_u16 = index_info.format != 0;
 
-        vertex_min = 0xFFFF;
-        vertex_max = 0;
-        // u32 size = regs.pipeline.num_vertices * (index_u16 ? 2 : 1);
-        // res_cache.FlushRegion(address, size, nullptr);
-        if (index_u16) {
-            for (u32 i = 0; i < regs.pipeline.num_vertices; ++i) {
-                u32 vertex = index_address_16[i];
-                if (vertex < vertex_min)
-                    vertex_min = vertex;
-                if (vertex > vertex_max)
-                    vertex_max = vertex;
-            }
-        } else {
-            for (u32 i = 0; i < regs.pipeline.num_vertices; ++i) {
-                u32 vertex = index_address_8[i];
-                if (vertex < vertex_min)
-                    vertex_min = vertex;
-                if (vertex > vertex_max)
-                    vertex_max = vertex;
-            }
-        }
+        const auto range = index_u16
+            ? AnalyzeVertexIndexRange(index_address_16, u32(regs.pipeline.num_vertices))
+            : AnalyzeVertexIndexRange(index_address_8, u32(regs.pipeline.num_vertices));
+        vertex_min = range.minimum;
+        vertex_max = range.maximum;
     } else {
         vertex_min = regs.pipeline.vertex_offset;
         vertex_max = regs.pipeline.vertex_offset + regs.pipeline.num_vertices - 1;

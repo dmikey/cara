@@ -144,6 +144,8 @@ if ((CARA_SOFTWARE_PRESENTATION OR CARA_MAC_SDL_DEV_HOST) AND NOT CMAKE_SYSTEM_N
                 $<TARGET_FILE:cara-save-archive-relocation-self-test>
                 "${CMAKE_CURRENT_BINARY_DIR}/save-archive-relocation-fixtures")
     endif()
+    add_executable(cara-vertex-index-range-self-test ../../tests/vertex_index_range_test.cpp)
+    target_include_directories(cara-vertex-index-range-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
