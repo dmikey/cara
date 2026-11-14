@@ -6,7 +6,9 @@
 #include "common/cpu_category_timing.h"
 #include "cara/pica_submission_probe.h"
 #include "cara/guest_gpu_trace.h"
+#include "video_core/pica_shader_packet_profile.h"
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -70,6 +72,46 @@ struct CommandProfile {
     std::array<std::uint64_t, Regs::NUM_REGS> registers{};
 };
 static CommandProfile command_profile;
+static Cara::PicaShaderPackets::Counters shader_packet_profile;
+static_assert(PICA_REG_INDEX(vs.program.set_word[0]) == Cara::PicaShaderPackets::VSProgramFirst);
+static_assert(PICA_REG_INDEX(vs.swizzle_patterns.set_word[0]) == Cara::PicaShaderPackets::VSSwizzleFirst);
+
+static void LogShaderPacketProfile() {
+    static const auto session = static_cast<std::uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto snapshot = command_profile.lists;
+    LOG_INFO(HW_GPU, "PICA VS packet begin schema=1 session={} snapshot={} all_packets={}",
+             session, snapshot, shader_packet_profile.all_packets);
+    for (std::size_t kind = 0; kind < 2; ++kind) {
+        for (std::size_t grouped = 0; grouped < 2; ++grouped) {
+            const auto& group = shader_packet_profile.groups[kind][grouped];
+            const auto& t = group.total;
+            const char* name = kind == 0 ? "program" : "swizzle";
+            LOG_INFO(HW_GPU, "PICA VS packet total session={} snapshot={} kind={} grouped={} "
+                     "packets={} extra_words={} complete_packets={} repeated_capacity_packets={} "
+                     "eligible_packets={} eligible_extra_words={}",
+                     session, snapshot, name, grouped, t.packets, t.extra_words, t.complete_packets,
+                     t.capacity_packets, t.eligible_packets, t.eligible_extra_words);
+            for (std::size_t bucket = 0; bucket < group.lengths.size(); ++bucket) {
+                const auto& b = group.lengths[bucket];
+                LOG_INFO(HW_GPU, "PICA VS packet length session={} snapshot={} kind={} grouped={} "
+                         "bucket={} packets={} extra_words={} complete_packets={} repeated_capacity_packets={} "
+                         "eligible_packets={} eligible_extra_words={}",
+                         session, snapshot, name, grouped, bucket, b.packets, b.extra_words,
+                         b.complete_packets, b.capacity_packets, b.eligible_packets, b.eligible_extra_words);
+            }
+            const auto& m = group.masks;
+            LOG_INFO(HW_GPU, "PICA VS packet masks session={} snapshot={} kind={} grouped={} "
+                     "exclusive_packets={} mirrored_packets={} m0={} m1={} m2={} m3={} "
+                     "m4={} m5={} m6={} m7={} m8={} m9={} m10={} m11={} m12={} m13={} m14={} m15={}",
+                     session, snapshot, name, grouped, group.mirror_packets[0], group.mirror_packets[1],
+                     m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
+                     m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+        }
+    }
+    LOG_INFO(HW_GPU, "PICA VS packet end session={} snapshot={} all_packets={}",
+             session, snapshot, shader_packet_profile.all_packets);
+}
 
 class CommandCPUProfileScope {
 public:
@@ -111,6 +153,7 @@ public:
                      command_profile.code_words, command_profile.repeated_code_words,
                      command_profile.swizzle_words, command_profile.repeated_swizzle_words,
                      command_profile.clock_failures);
+            LogShaderPacketProfile();
         }
     }
 private:
@@ -855,6 +898,7 @@ void ProcessCommandList(PAddr list, u32 size) {
     g_state.cmd_list.head_ptr = g_state.cmd_list.current_ptr = buffer;
     g_state.cmd_list.length = size / sizeof(u32);
 
+    const bool collect_shader_packets = CommandProfileEnabled();
     while (g_state.cmd_list.current_ptr < g_state.cmd_list.head_ptr + g_state.cmd_list.length) {
         // Align read pointer to 8 bytes
         g_state.cmd_list.current_ptr +=
@@ -866,6 +910,19 @@ void ProcessCommandList(PAddr list, u32 size) {
         u32 cmd_id = header.cmd_id;
 
         WritePicaReg(cmd_id, value, header.parameter_mask);
+        // Observe only metadata AFTER the original scalar header. In particular,
+        // never read ahead, move the cursor, or reject legacy truncated packets.
+        if (collect_shader_packets) {
+            const auto kind = Cara::PicaShaderPackets::PortKind(cmd_id);
+            const u32 offset = kind == Cara::PicaShaderPackets::Kind::Program
+                ? g_state.regs.vs.program.offset
+                : kind == Cara::PicaShaderPackets::Kind::Swizzle
+                    ? g_state.regs.vs.swizzle_patterns.offset : 0;
+            shader_packet_profile.Observe({cmd_id, bool(group_factor), header.extra_data_length,
+                offset, g_state.cmd_list.length,
+                g_state.cmd_list.current_ptr - g_state.cmd_list.head_ptr,
+                header.parameter_mask, !g_state.regs.pipeline.gs_unit_exclusive_configuration});
+        }
         for (u32 i = 0; i < header.extra_data_length; ++i) {
             cmd_id += group_factor;
             WritePicaReg(cmd_id, *g_state.cmd_list.current_ptr++, header.parameter_mask);
