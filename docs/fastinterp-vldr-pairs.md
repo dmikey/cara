@@ -42,3 +42,29 @@ gameplay demonstrates improvement with unchanged work, images and progression.
 
 For the optional synthetic measurement, set
 `CARA_FASTINTERP_VLDR_PAIR_TEST=1 CARA_FASTINTERP_VLDR_PAIRS=1 CARA_FASTINTERP_VLDR_PAIR_MICROBENCH=1`.
+
+
+## Matched native gameplay measurement (2026-11-13)
+
+The [eight-run native M1 comparison](mac-gpu-depth-reinterpret.md#matched-native-gameplay-measurement-2026-11-13)
+used one private executable, a same-build Secret Path checkpoint and identical
+movement. It measured 900 refreshes after 300 warmup refreshes at 100% guest
+clock and cap, with sound opened and CPU/shader JIT disabled. That private
+`2565b2b` plus reviewed-patches basis was not latest main. The linked report
+records the executable hash, fingerprint, actual timer/core settings, all eight
+means and the limitations of the private snapshot controls.
+
+VLDR alone measured 73.4705 ms wall / 50.1621 ms emulation-thread CPU per refresh,
+versus the initial baseline's 74.0785 / 50.6052. The CPU difference was 0.4431 ms
+(0.88%), while the three baseline CPU means ranged from 50.4979 to 51.4077 ms.
+There was no repeated VLDR-only run. This does **not establish a gameplay gain**;
+the synthetic result above remains a narrower load-dispatch result. The stacked
+run (69.5162 / 50.1984) does not isolate an incremental VLDR benefit.
+
+All eight final full RGBA images, captured ARM/VFP/CPSR/FPSCR state across four
+cores, timer settings and actual final guest tick 48934882999 matched. This is
+not full-memory or all architectural-state equivalence. Draw counters were
+disabled, audio underruns were not exported, and physical audio smoothness was
+not assessed. Read-only boundary snapshots and scripted inputs remained active;
+per-instruction guest-PC profiling and timing scopes were off. These native M1
+results do not establish an iPad speed gain. The candidate remains default-off.
