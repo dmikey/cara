@@ -232,6 +232,15 @@ if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CARA_SOFTWARE_PRESENT
     add_executable(cara-mac-lut-self-test EXCLUDE_FROM_ALL mac_lut_self_test.cpp)
     target_link_libraries(cara-mac-lut-self-test PRIVATE core common glad nihstro-headers
         ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
+    # Metadata-only: includes the actual private FindMatch implementation and
+    # tests its selected interval without allocating any GL resource/context.
+    add_executable(cara-surface-copy-interval-self-test EXCLUDE_FROM_ALL
+        ../../tests/surface_copy_interval_property_test.cpp
+        video_core/renderer_opengl/gl_surface_params.cpp)
+    target_link_libraries(cara-surface-copy-interval-self-test PRIVATE core common glad nihstro-headers
+        ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
+    target_compile_options(cara-surface-copy-interval-self-test PRIVATE -ffunction-sections -fdata-sections)
+    target_link_options(cara-surface-copy-interval-self-test PRIVATE -Wl,-dead_strip -Wl,-dead_strip_dylibs)
 endif()
 
 if(CARA_INTERNAL_HOST_PC_SAMPLER)
