@@ -26,6 +26,8 @@ jobs:
         run: python3 tools/prepare.py
       - name: Compile SDL frontend and audit linked no-JIT binary
         run: python3 tools/build_mac_sdl.py --build-dir work/build-mac-sdl --jobs 2
+      - name: Compile native GPU correctness harness without running a GUI
+        run: cmake --build work/build-mac-sdl --target cara-mac-depth-self-test -j2
       - name: Retain native audit and configure command
         uses: actions/upload-artifact@v4
         with:

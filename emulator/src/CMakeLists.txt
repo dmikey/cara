@@ -199,7 +199,7 @@ if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(cara-no-jit-probe PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
 endif()
 
-if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CARA_SOFTWARE_PRESENTATION)
     # Explicit GPU correctness test: unavailable contexts must fail, not skip.
     add_executable(cara-mac-depth-self-test EXCLUDE_FROM_ALL mac_depth_self_test.cpp)
     target_link_libraries(cara-mac-depth-self-test PRIVATE core common glad
