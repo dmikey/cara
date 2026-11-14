@@ -705,17 +705,35 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
     if (bytes>8*1024*1024 || bytes>sizeof(constants)+unique*layout.stride*sizeof(GLvec4)) return false;
     const size_t rows=(bytes+IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4)-1)/(IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4));
     if (rows>unsigned(ios_vertex_max_texture_size)) return false;
-    ios_vertex_inputs.resize(rows*IOS_VERTEX_INPUT_WIDTH);
-    auto* output=reinterpret_cast<u8*>(ios_vertex_inputs.data());
+    const size_t staging_elements = rows * IOS_VERTEX_INPUT_WIDTH;
+    GLvec4* staging = nullptr;
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+    static const bool no_init = [] {
+        const char* value = std::getenv("CARA_ANDROID_VERTEX_NO_INIT");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (no_init) {
+        // Every byte is written below: constants, payloads, gaps and row tail.
+        // Avoid value-initializing a grown vector before overwriting it again.
+        android_vertex_staging.resize(staging_elements, boost::container::default_init);
+        staging = android_vertex_staging.data();
+        android_vertex_staging_active = true;
+    } else
+#endif
+    {
+        ios_vertex_inputs.resize(staging_elements);
+        staging = ios_vertex_inputs.data();
+    }
+    auto* output = reinterpret_cast<u8*>(staging);
     static const bool clear_padding_only = [] {
         const char* value = std::getenv("CARA_VERTEX_CLEAR_PADDING");
         return value && std::strcmp(value, "1") == 0;
     }();
     if (clear_padding_only) {
-        if (!ranges.ClearPadding(output, ios_vertex_inputs.size()*sizeof(GLvec4), sizeof(constants)))
+        if (!ranges.ClearPadding(output, staging_elements*sizeof(GLvec4), sizeof(constants)))
             return false;
     } else {
-        std::memset(output,0,ios_vertex_inputs.size()*sizeof(GLvec4));
+        std::memset(output,0,staging_elements*sizeof(GLvec4));
     }
     std::memcpy(output,constants.data(),sizeof(constants));
     for (const auto& range:ranges) {
@@ -771,6 +789,9 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
 }
 
 bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+    android_vertex_staging_active = false;
+#endif
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexPrepare);
     constexpr u32 MAX_VERTICES = IOS_MAX_EXPANDED_VERTICES;
     const auto& regs = Pica::g_state.regs;
@@ -1002,7 +1023,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         } else glUniform4iv(glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
     }
     glActiveTexture(GL_TEXTURE7);
-    const unsigned upload_rows = static_cast<unsigned>(ios_vertex_inputs.size() / IOS_VERTEX_INPUT_WIDTH);
+    const unsigned upload_rows = static_cast<unsigned>(IOSVertexInputSize() / IOS_VERTEX_INPUT_WIDTH);
     OGLTexture* selected_texture = &ios_vertex_fallback_texture;
     OGLTexture* selected_indices = &ios_vertex_index_fallback_texture;
     IOSVertexUpload* selected_upload = nullptr;
@@ -1079,8 +1100,8 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                     return value && std::strcmp(value, "1") == 0;
                 }();
                 const auto match = IOSVertexUploadOrderReuse::Find(
-                    pool, ordinal, 32, ios_vertex_inputs.data(),
-                    ios_vertex_inputs.size() * sizeof(GLvec4), input_indices.data(),
+                    pool, ordinal, 32, IOSVertexInputData(),
+                    IOSVertexInputSize() * sizeof(GLvec4), input_indices.data(),
                     input_indices.size() * sizeof(u16), [rows](const IOSVertexUpload& entry) {
                         return entry.rows == rows && entry.texture.handle && entry.indices.handle;
                     }, filter_middle);
@@ -1111,11 +1132,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         auto& counters = Common::FrameTiming::counters;
         counters.vertex_upload_bank_budget_bytes = max_bank_bytes;
         const size_t index_bytes = input_indices.size() * sizeof(u16) + (ios_lit_pair_vertex_reuse ? element_bytes : 0);
-        counters.vertex_upload_bytes += ios_vertex_inputs.size() * sizeof(GLvec4) + index_bytes;
+        counters.vertex_upload_bytes += IOSVertexInputSize() * sizeof(GLvec4) + index_bytes;
         counters.vertex_index_upload_bytes += index_bytes;
         if (orphan_upload) {
             ++counters.vertex_upload_fallbacks;
-            counters.vertex_orphan_upload_bytes += ios_vertex_inputs.size() * sizeof(GLvec4) + index_bytes;
+            counters.vertex_orphan_upload_bytes += IOSVertexInputSize() * sizeof(GLvec4) + index_bytes;
         }
         if (orphan_upload || resize_storage) counters.vertex_storage_allocations += ios_lit_pair_vertex_reuse ? 3 : ios_indexed_vertex_inputs ? 2 : 1;
         size_t bytes = 0;
@@ -1150,7 +1171,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         glActiveTexture(GL_TEXTURE7);
     }
     const bool cache_inputs=raw_inputs && upload_reuse_enabled && selected_upload;
-    const size_t input_bytes=ios_vertex_inputs.size()*sizeof(GLvec4);
+    const size_t input_bytes=IOSVertexInputSize()*sizeof(GLvec4);
     const size_t index_bytes=input_indices.size()*sizeof(u16);
     bool reuse_input=false,reuse_index=false,reuse_elements=false;
     if (cache_inputs && !resize_storage) {
@@ -1159,7 +1180,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             return shadow.size()==bytes && bytes && std::memcmp(shadow.data(),data,bytes)==0;
         };
         reuse_input=order_reuse_checked ? order_reuse_input :
-            matches(selected_upload->input_shadow,ios_vertex_inputs.data(),input_bytes);
+            matches(selected_upload->input_shadow,IOSVertexInputData(),input_bytes);
         reuse_index=order_reuse_checked ? order_reuse_index :
             matches(selected_upload->index_shadow,input_indices.data(),index_bytes);
         if (ios_lit_pair_vertex_reuse) reuse_elements=matches(selected_upload->elements_shadow,element_indices.data(),element_bytes);
@@ -1179,7 +1200,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
             glTexImage2D(GL_TEXTURE_2D, 0, input_internal, IOS_VERTEX_INPUT_WIDTH, upload_rows, 0,
-                         input_format, input_type, ios_vertex_inputs.data());
+                         input_format, input_type, IOSVertexInputData());
         } else {
             if (resize_storage) {
                 Common::FrameTiming::Scope storage_timing(Common::FrameTiming::Phase::VertexStorageAllocate);
@@ -1190,7 +1211,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             Common::FrameTiming::Scope update_timing(Common::FrameTiming::Phase::VertexSubImageUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_subimage_calls;
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
-                            input_format, input_type, ios_vertex_inputs.data());
+                            input_format, input_type, IOSVertexInputData());
         }
     }
     if (ios_indexed_vertex_inputs && !ios_direct_vertex_reuse && !reuse_index) {
@@ -1228,7 +1249,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     if (cache_inputs) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
         if (!reuse_input) {
-            const auto* data=reinterpret_cast<const u8*>(ios_vertex_inputs.data());
+            const auto* data=reinterpret_cast<const u8*>(IOSVertexInputData());
             selected_upload->input_shadow.assign(data,data+input_bytes);
         }
         if (!reuse_index) {

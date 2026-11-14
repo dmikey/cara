@@ -9,6 +9,9 @@
 #include <cstring>
 #include <memory>
 #include <vector>
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+#include <boost/container/vector.hpp>
+#endif
 #include <glad/glad.h>
 #include "common/bit_field.h"
 #include "common/common_types.h"
@@ -326,6 +329,25 @@ private:
             ios_cached_index_data->packed : ios_vertex_input_indices;
     }
     std::vector<GLvec4> ios_vertex_inputs;
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+    boost::container::vector<GLvec4> android_vertex_staging;
+    bool android_vertex_staging_active = false;
+#endif
+    const GLvec4* IOSVertexInputData() const {
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+        if (android_vertex_staging_active && ios_indexed_vertex_inputs == 2)
+            return android_vertex_staging.data();
+#endif
+        return ios_vertex_inputs.data();
+    }
+    size_t IOSVertexInputSize() const {
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+        if (android_vertex_staging_active && ios_indexed_vertex_inputs == 2)
+            return android_vertex_staging.size();
+#endif
+        return ios_vertex_inputs.size();
+    }
+
 #endif
 
     OpenGLState state;

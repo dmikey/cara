@@ -83,6 +83,13 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
     setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> clear_padding{{"Debug", "vertex_clear_padding"}, false};
+    const Config::ConfigInfo<bool> no_init{{"Debug", "vertex_no_init"}, false};
+    const Config::ConfigInfo<bool> verify_packed{{"Debug", "verify_packed_vertices"}, false};
+    setenv("CARA_ANDROID_VERTEX_NO_INIT", Config::Get(no_init) ? "1" : "0", 1);
+    if (Config::Get(verify_packed)) setenv("CARA_PACKED_VERIFY", "1", 1);
+    else unsetenv("CARA_PACKED_VERIFY");
+    LOG_INFO(Frontend, "Android staging options: no_init={} padding_only={} verify={}",
+             Config::Get(no_init), Config::Get(clear_padding), Config::Get(verify_packed));
     const Config::ConfigInfo<bool> middle_filter{{"Debug", "vertex_reuse_middle_filter"}, false};
     setenv("CARA_VERTEX_CLEAR_PADDING", Config::Get(clear_padding) ? "1" : "0", 1);
     setenv("CARA_VERTEX_REUSE_MIDDLE_FILTER", Config::Get(middle_filter) ? "1" : "0", 1);
@@ -264,6 +271,8 @@ void BootGame(const std::string& path) {
                     phases.gpu_lit_pair_vertices, phases.gpu_lit_pair_ids,
                     phases.lit_pair_probe_draws, phases.lit_pair_probe_baseline_vs_runs,
                     phases.lit_pair_probe_lru32_vs_runs);
+                LOG_INFO(Frontend, "Android packed verification: draws={} failures={}",
+                         phases.packed_verified_draws, phases.packed_validation_failures);
                 const auto report_cpu = [](const char* name, const Common::FrameTiming::PhaseCPUSamples& sample) {
                     LOG_INFO(Frontend, "Android phase CPU: phase={} samples={} wall_ms={:.3f} cpu_ms={:.3f} failures={}",
                         name, sample.samples, sample.wall_seconds*1000, sample.cpu_seconds*1000, sample.clock_failures);

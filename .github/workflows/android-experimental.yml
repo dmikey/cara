@@ -116,5 +116,7 @@ jobs:
         run: |
           c++ -std=c++17 -O2 tests/vertex_upload_padding_test.cpp -o work/vertex-padding-test
           work/vertex-padding-test
+          c++ -std=c++17 -O2 -Iemulator/externals/boost tests/vertex_upload_uninitialized_test.cpp -o work/vertex-uninitialized-test
+          work/vertex-uninitialized-test
           c++ -std=c++17 -O2 tests/vertex_upload_order_reuse_test.cpp -o work/vertex-reuse-test
           work/vertex-reuse-test
