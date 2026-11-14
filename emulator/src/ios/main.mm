@@ -1276,7 +1276,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (openingGame) return;
     if (![@[@"3ds",@"cci",@"cxi",@"3dsx",@"elf"] containsObject:url.pathExtension.lowercaseString]) { status.text=@"Choose an extracted .3ds, .cci, .cxi, .3dsx or .elf game."; [self resumeFromMenu]; return; }
     [self ensureLibrary];
-    if(relayClient) relayClient->Disconnect();
+    if(relayClient && (gameURL || worker.joinable())) relayClient->Disconnect();
     openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];
     if (worker.joinable()) worker.join();
     if (gameScoped) [gameURL stopAccessingSecurityScopedResource];
