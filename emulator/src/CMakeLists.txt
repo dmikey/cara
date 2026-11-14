@@ -135,6 +135,15 @@ endif()
 if ((CARA_SOFTWARE_PRESENTATION OR CARA_MAC_SDL_DEV_HOST) AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(cara-fastinterp-decoded-record-self-test ../../tests/fastinterp_decoded_record_test.cpp)
     target_include_directories(cara-fastinterp-decoded-record-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(cara-save-archive-relocation-self-test save_archive_relocation_self_test.cpp)
+    target_link_libraries(cara-save-archive-relocation-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if (Python3_Interpreter_FOUND)
+        add_test(NAME cara-save-archive-relocation
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/save_archive_relocation_test.py"
+                $<TARGET_FILE:cara-save-archive-relocation-self-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/save-archive-relocation-fixtures")
+    endif()
 endif()
 
 if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")

@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-14; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -9,6 +10,7 @@
 #include <boost/serialization/export.hpp>
 #include <boost/serialization/string.hpp>
 #include "common/common_types.h"
+#include "common/file_util.h"
 #include "core/file_sys/archive_backend.h"
 #include "core/hle/result.h"
 
@@ -62,7 +64,7 @@ private:
     void serialize(Archive& ar, const unsigned int) {
         ar& boost::serialization::base_object<ArchiveFactory>(*this);
         ar& shared;
-        ar& mount_point;
+        ar& FileUtil::Path::make(mount_point);
     }
     friend class boost::serialization::access;
 };
