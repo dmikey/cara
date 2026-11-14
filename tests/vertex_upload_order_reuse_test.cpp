@@ -140,6 +140,10 @@ int main() {
         const auto actual=Search(pool,first,target,limit), expected=Reference(pool,first,target,limit);
         REQUIRE(actual.selected==expected.selected && actual.candidates==expected.candidates &&
                 actual.input_equal==expected.input_equal && actual.index_equal==expected.index_equal);
+        const auto filtered=Find(pool,first,limit,target.input_shadow.data(),target.input_shadow.size(),
+                                 target.index_shadow.data(),target.index_shadow.size(),eligible,true);
+        REQUIRE(filtered.selected==expected.selected && filtered.candidates==expected.candidates &&
+                filtered.input_equal==expected.input_equal && filtered.index_equal==expected.index_equal);
         REQUIRE(pool==before);++cases;
     }
     std::cout << "vertex order reuse: " << cases << " cases passed\n";

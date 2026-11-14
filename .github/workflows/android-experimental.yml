@@ -112,3 +112,9 @@ jobs:
           cmake --build work/jit-smoke --target cara-dynarmic-self-test -j 3
       - name: Check arithmetic, context, invalidation and exclusives
         run: work/jit-smoke/bin/cara-dynarmic-self-test
+      - name: Verify exact vertex staging and reuse selection
+        run: |
+          c++ -std=c++17 -O2 tests/vertex_upload_padding_test.cpp -o work/vertex-padding-test
+          work/vertex-padding-test
+          c++ -std=c++17 -O2 tests/vertex_upload_order_reuse_test.cpp -o work/vertex-reuse-test
+          work/vertex-reuse-test

@@ -69,6 +69,10 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> phase_timing{{"Debug", "trace_renderer_timing"}, false};
     const Config::ConfigInfo<bool> guest_trace{{"Debug", "trace_guest_threads"}, false};
     const Config::ConfigInfo<bool> bookkeeping{{"Debug", "trace_renderer_bookkeeping"}, false};
+    const Config::ConfigInfo<bool> clear_padding{{"Debug", "vertex_clear_padding"}, false};
+    const Config::ConfigInfo<bool> middle_filter{{"Debug", "vertex_reuse_middle_filter"}, false};
+    setenv("CARA_VERTEX_CLEAR_PADDING", Config::Get(clear_padding) ? "1" : "0", 1);
+    setenv("CARA_VERTEX_REUSE_MIDDLE_FILTER", Config::Get(middle_filter) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> cpu_timing{{"Debug", "trace_renderer_cpu"}, false};
     setenv("CARA_PHASE_CPU_TIMING", Config::Get(cpu_timing) ? "1" : "0", 1);
     setenv("CARA_DRAW_COST_PROFILE", Config::Get(cpu_timing) ? "1" : "0", 1);

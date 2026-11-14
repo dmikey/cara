@@ -707,7 +707,16 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
     if (rows>unsigned(ios_vertex_max_texture_size)) return false;
     ios_vertex_inputs.resize(rows*IOS_VERTEX_INPUT_WIDTH);
     auto* output=reinterpret_cast<u8*>(ios_vertex_inputs.data());
-    std::memset(output,0,ios_vertex_inputs.size()*sizeof(GLvec4));
+    static const bool clear_padding_only = [] {
+        const char* value = std::getenv("CARA_VERTEX_CLEAR_PADDING");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (clear_padding_only) {
+        if (!ranges.ClearPadding(output, ios_vertex_inputs.size()*sizeof(GLvec4), sizeof(constants)))
+            return false;
+    } else {
+        std::memset(output,0,ios_vertex_inputs.size()*sizeof(GLvec4));
+    }
     std::memcpy(output,constants.data(),sizeof(constants));
     for (const auto& range:ranges) {
         const auto memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
@@ -1065,12 +1074,16 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                 !ios_direct_vertex_reuse && !ios_lit_pair_vertex_reuse &&
                 !ios_feedback_vertex_reuse && !resize_storage) {
                 Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
+                static const bool filter_middle = [] {
+                    const char* value = std::getenv("CARA_VERTEX_REUSE_MIDDLE_FILTER");
+                    return value && std::strcmp(value, "1") == 0;
+                }();
                 const auto match = IOSVertexUploadOrderReuse::Find(
                     pool, ordinal, 32, ios_vertex_inputs.data(),
                     ios_vertex_inputs.size() * sizeof(GLvec4), input_indices.data(),
                     input_indices.size() * sizeof(u16), [rows](const IOSVertexUpload& entry) {
                         return entry.rows == rows && entry.texture.handle && entry.indices.handle;
-                    });
+                    }, filter_middle);
                 order_reuse_checked = true;
                 order_reuse_input = match.input_equal;
                 order_reuse_index = match.index_equal;
