@@ -5,6 +5,9 @@
 #pragma once
 
 #include <tuple>
+#ifdef CARA_IOS_GLES
+#include <vector>
+#endif
 #include <glad/glad.h>
 #include "common/common_types.h"
 #include "video_core/renderer_opengl/gl_resource_manager.h"
@@ -31,6 +34,14 @@ public:
 
     void Unmap(GLsizeiptr size);
 
+#ifdef CARA_IOS_GLES
+    // CPU-owned source for GLES 2D LUT uploads. These methods reserve the same
+    // logical ring offsets without mapping GL storage; the returned pointer may
+    // therefore be supplied as client texture data with PIXEL_UNPACK_BUFFER=0.
+    std::tuple<u8*, GLintptr, bool> MapStaging(GLsizeiptr size, GLintptr alignment);
+    void FinishStaging(GLsizeiptr size);
+#endif
+
 private:
     OGLBuffer gl_buffer;
     GLenum gl_target;
@@ -39,6 +50,10 @@ private:
     bool explicit_flush = true;
     GLintptr buffer_pos = 0;
     GLsizeiptr buffer_size = 0;
+#ifdef CARA_IOS_GLES
+    std::vector<u8> staging;
+    GLsizeiptr staging_reserved = 0;
+#endif
 };
 
 } // namespace OpenGL

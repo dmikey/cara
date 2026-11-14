@@ -20,6 +20,7 @@ inline GLenum StreamBufferTarget(GLenum target) {
 }
 #ifdef CARA_IOS_GLES
 void AllocateIOSLUT(GLenum internal_format, std::size_t bytes);
+// Source must be ordinary CPU-owned memory, never a mapped GL buffer pointer.
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes);
 #endif

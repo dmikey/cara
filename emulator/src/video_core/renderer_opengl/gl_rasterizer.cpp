@@ -2910,8 +2910,7 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     bool invalidate;
     std::size_t bytes_used = 0;
 #ifdef CARA_IOS_GLES
-    const GLuint previous_vertex_buffer = OpenGLState::BindVertexBuffer(texture_lf_buffer.GetHandle());
-    std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
+    std::tie(buffer, offset, invalidate) = texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
 #else
     glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_lf_buffer.GetHandle());
     std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
@@ -2969,11 +2968,9 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     }
 
 #ifdef CARA_IOS_GLES
-    UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG, offset, buffer, bytes_used);
-#endif
-#ifdef CARA_IOS_GLES
-    texture_lf_buffer.Unmap(bytes_used);
-    OpenGLState::BindVertexBuffer(previous_vertex_buffer);
+    UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
+                 offset, buffer, bytes_used);
+    texture_lf_buffer.FinishStaging(bytes_used);
 #else
     texture_lf_buffer.Unmap(bytes_used);
 #endif
@@ -2996,8 +2993,7 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
     bool invalidate;
     std::size_t bytes_used = 0;
 #ifdef CARA_IOS_GLES
-    const GLuint previous_vertex_buffer = OpenGLState::BindVertexBuffer(texture_buffer.GetHandle());
-    std::tie(buffer, offset, invalidate) = texture_buffer.Map(max_size, sizeof(GLvec4));
+    std::tie(buffer, offset, invalidate) = texture_buffer.MapStaging(max_size, sizeof(GLvec4));
 #else
     glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_buffer.GetHandle());
     std::tie(buffer, offset, invalidate) = texture_buffer.Map(max_size, sizeof(GLvec4));
@@ -3094,12 +3090,11 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
     }
 
 #ifdef CARA_IOS_GLES
-    UploadIOSLUT(texture_buffer_lut_rg.handle, TextureUnits::TextureBufferLUT_RG.id, GL_RG, offset, buffer, bytes_used);
-    UploadIOSLUT(texture_buffer_lut_rgba.handle, TextureUnits::TextureBufferLUT_RGBA.id, GL_RGBA, offset, buffer, bytes_used);
-#endif
-#ifdef CARA_IOS_GLES
-    texture_buffer.Unmap(bytes_used);
-    OpenGLState::BindVertexBuffer(previous_vertex_buffer);
+    UploadIOSLUT(texture_buffer_lut_rg.handle, TextureUnits::TextureBufferLUT_RG.id, GL_RG,
+                 offset, buffer, bytes_used);
+    UploadIOSLUT(texture_buffer_lut_rgba.handle, TextureUnits::TextureBufferLUT_RGBA.id, GL_RGBA,
+                 offset, buffer, bytes_used);
+    texture_buffer.FinishStaging(bytes_used);
 #else
     texture_buffer.Unmap(bytes_used);
 #endif

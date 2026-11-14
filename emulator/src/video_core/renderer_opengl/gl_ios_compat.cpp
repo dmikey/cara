@@ -2,6 +2,7 @@
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #ifdef CARA_IOS_GLES
 #include <algorithm>
+#include <stdexcept>
 
 namespace OpenGL {
 constexpr unsigned LUT_WIDTH = 1024;
@@ -9,7 +10,11 @@ void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
     const GLenum format = internal_format == GL_RG32F ? GL_RG : GL_RGBA;
     const unsigned stride = format == GL_RG ? 8 : 16;
     const unsigned height = static_cast<unsigned>((bytes / stride + LUT_WIDTH - 1) / LUT_WIDTH);
+    GLint unpack_buffer;
+    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     glTexImage2D(GL_TEXTURE_2D, 0, internal_format, LUT_WIDTH, height, 0, format, GL_FLOAT, nullptr);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpack_buffer));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -19,16 +24,26 @@ void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes) {
     if (!bytes) return;
-    GLint active, binding, row_length, alignment;
+    const unsigned stride = format == GL_RG ? 8 : 16;
+    if ((format != GL_RG && format != GL_RGBA) || !data || offset % stride || bytes % stride) {
+        throw std::invalid_argument("Invalid CPU LUT upload span");
+    }
+    GLint active, binding, row_length, alignment, skip_rows, skip_pixels, unpack_buffer;
     glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
     glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);
     glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+    glGetIntegerv(GL_UNPACK_SKIP_ROWS, &skip_rows);
+    glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &skip_pixels);
+    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
     glActiveTexture(GL_TEXTURE0 + unit);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
     glBindTexture(GL_TEXTURE_2D, texture);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    const unsigned stride = format == GL_RG ? 8 : 16;
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    // data is ordinary owned CPU memory, never a GL mapping or a buffer offset.
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     std::size_t first = offset / stride, count = bytes / stride;
     while (count) {
         const unsigned x = first % LUT_WIDTH, y = first / LUT_WIDTH;
@@ -43,6 +58,9 @@ void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offs
     glActiveTexture(active);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
     glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, skip_rows);
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, skip_pixels);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpack_buffer));
 }
 }
 #endif
