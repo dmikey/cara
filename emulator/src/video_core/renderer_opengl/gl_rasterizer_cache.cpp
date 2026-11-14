@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <chrono>
+#include <ctime>
 #include <fstream>
 #include <iomanip>
 #if defined(__APPLE__)
@@ -30,6 +31,7 @@
 #include "common/hash.h"
 #include "common/frame_timing.h"
 #include "video_core/renderer_opengl/gl_texture_lookup_key.h"
+#include "video_core/renderer_opengl/gl_validation_copy_profile.h"
 #include "video_core/renderer_opengl/gl_reinterpret_lookup_cache.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
@@ -1416,6 +1418,233 @@ struct RasterizerCacheOpenGL::SurfaceUploadTrace {
     }
 };
 
+
+// Separate from RAM fallback tracing: only CopySurface calls that returned to
+// ValidateSurface. Host enqueue/wait cost, never GPU completion time.
+struct RasterizerCacheOpenGL::ValidationCopyTrace {
+    using Totals = ValidationCopyProfile::Totals;
+    static constexpr size_t DetailCapacity = 512, IdentityCapacity = 256, BucketCapacity = 64;
+    struct Identity {
+        std::weak_ptr<CachedSurface> surface;
+        u64 allocation = 0, invalidation = 0;
+        u32 created_frame = 0, invalidated_frame = 0;
+        PAddr invalid_start = 0, invalid_end = 0;
+        // 0 unknown/never observed; 1 CPU, 2 GPU. Observation, not proven cause.
+        u32 reason = 0;
+    };
+    struct Layout {
+        SurfaceParams params{};
+        u32 handle = 0;
+        bool registered = false, custom = false;
+        Identity identity{};
+    };
+    struct Entry {
+        Layout src{}, dst{};
+        u64 invocation = 0, fragment = 0, bytes = 0;
+        u32 frame = 0;
+        PAddr requested_start = 0, requested_end = 0;
+        PAddr invalid_start = 0, invalid_end = 0, actual_start = 0, actual_end = 0;
+        Common::Rectangle<u32> src_rect{}, dst_rect{};
+        bool fill = false, source_valid = false;
+        ValidationCopyProfile::Elapsed wall{}, cpu{};
+    };
+    struct Bucket { Layout src{}, dst{}; bool fill = false; Totals totals{}; };
+    std::array<Identity, IdentityCapacity> identities{};
+    std::array<Entry, DetailCapacity> details{};
+    std::array<Bucket, BucketCapacity> buckets{};
+    ValidationCopyProfile::SlotBudget<DetailCapacity> detail_slots;
+    size_t bucket_count = 0;
+    u64 allocations = 0, untracked_allocations = 0, unknown_identity_uses = 0;
+    u64 post_window_allocations = 0;
+    u64 invocations = 0, invalidations = 0;
+    u32 start = 300, end = 1200, min_frame = 0, max_frame = 0;
+    Totals totals{}, detail_overflow{}, bucket_overflow{};
+    static u32 FrameOption(const char* name, u32 fallback) {
+        const char* text = std::getenv(name);
+        if (!text || !*text || *text == '-') return fallback;
+        char* tail = nullptr;
+        const auto value = std::strtoull(text, &tail, 10);
+        return tail && !*tail && value <= std::numeric_limits<u32>::max()
+                   ? static_cast<u32>(value) : fallback;
+    }
+    ValidationCopyTrace() {
+        start = FrameOption("CARA_SURFACE_VALIDATION_COPY_TRACE_START_FRAME", 300);
+        end = FrameOption("CARA_SURFACE_VALIDATION_COPY_TRACE_END_FRAME", 1200);
+    }
+    bool InWindow() const {
+        return ValidationCopyProfile::InWindow(VideoCore::GetCurrentFrame(), start, end);
+    }
+    Identity* Find(const Surface& surface) {
+        for (auto& value : identities) {
+            if (value.allocation && !value.surface.owner_before(surface) &&
+                !surface.owner_before(value.surface)) return &value;
+        }
+        return nullptr;
+    }
+    void Created(const Surface& surface) {
+        ++allocations;
+        if (VideoCore::GetCurrentFrame() >= end) {
+            ++post_window_allocations;
+            return;
+        }
+        for (auto& value : identities) {
+            if (!value.surface.expired()) continue;
+            value = {};
+            value.surface = surface;
+            value.allocation = allocations;
+            value.created_frame = VideoCore::GetCurrentFrame();
+            return;
+        }
+        ++untracked_allocations;
+    }
+    void Invalidated(const Surface& surface, PAddr first, PAddr last, bool gpu) {
+        if (VideoCore::GetCurrentFrame() >= end) return;
+        if (auto* value = Find(surface)) {
+            value->invalidation = invalidations;
+            value->invalidated_frame = VideoCore::GetCurrentFrame();
+            value->invalid_start = first;
+            value->invalid_end = last;
+            value->reason = gpu ? 2 : 1;
+        }
+    }
+    Layout Snapshot(const Surface& surface) {
+        Layout value;
+        value.params = *surface;
+        value.handle = surface->texture.handle;
+        value.registered = surface->registered;
+        value.custom = surface->custom_tex_info != nullptr;
+        if (auto* identity = Find(surface)) value.identity = *identity;
+        else ++unknown_identity_uses;
+        // Records do not even retain a weak control block beyond the identity table.
+        value.identity.surface.reset();
+        return value;
+    }
+    static bool CPUTime(u64& ns) {
+#if defined(CLOCK_THREAD_CPUTIME_ID)
+        timespec value{};
+        if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) != 0 || value.tv_sec < 0 ||
+            value.tv_nsec < 0 || value.tv_nsec >= 1000000000L) return false;
+        const auto seconds = static_cast<u64>(value.tv_sec);
+        if (seconds > (std::numeric_limits<u64>::max() - value.tv_nsec) / 1000000000ULL)
+            return false;
+        ns = seconds * 1000000000ULL + value.tv_nsec;
+        return true;
+#else
+        return false;
+#endif
+    }
+    static bool SameLayout(const Layout& a, const Layout& b) {
+        const auto& x = a.params; const auto& y = b.params;
+        return x.pixel_format == y.pixel_format && x.type == y.type &&
+               x.is_tiled == y.is_tiled && x.stride == y.stride &&
+               x.width == y.width && x.height == y.height && x.res_scale == y.res_scale &&
+               a.custom == b.custom;
+    }
+    void Record(Entry event) {
+        // No payload reads, ownership changes, or lifetime extension.
+        if (!totals.calls) min_frame = max_frame = event.frame;
+        min_frame = std::min(min_frame, event.frame);
+        max_frame = std::max(max_frame, event.frame);
+        totals.Add(event.bytes, event.wall, event.cpu);
+        if (detail_slots.Take()) details[detail_slots.used - 1] = event;
+        else detail_overflow.Add(event.bytes, event.wall, event.cpu);
+        for (size_t i = 0; i < bucket_count; ++i) {
+            auto& bucket = buckets[i];
+            if (bucket.fill == event.fill && SameLayout(bucket.src, event.src) &&
+                SameLayout(bucket.dst, event.dst)) {
+                bucket.totals.Add(event.bytes, event.wall, event.cpu);
+                return;
+            }
+        }
+        if (bucket_count == buckets.size()) {
+            bucket_overflow.Add(event.bytes, event.wall, event.cpu);
+            return;
+        }
+        auto& bucket = buckets[bucket_count++];
+        bucket.src = event.src; bucket.dst = event.dst; bucket.fill = event.fill;
+        bucket.totals.Add(event.bytes, event.wall, event.cpu);
+    }
+    void Write() const {
+        std::ofstream out(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
+                          "surface-validation-copies.json");
+        const auto write_totals = [&](const Totals& value) {
+            out << "{\"calls\":" << value.calls << ",\"guest_bytes\":" << value.guest_bytes
+                << ",\"wall_ns\":" << value.wall_ns << ",\"thread_cpu_ns\":" << value.thread_cpu_ns
+                << ",\"wall_samples\":" << value.wall_samples << ",\"cpu_samples\":" << value.cpu_samples
+                << ",\"wall_failures\":" << value.wall_failures << ",\"cpu_failures\":" << value.cpu_failures
+                << ",\"integer_saturations\":" << value.saturations << '}';
+        };
+        const auto layout = [&](const Layout& value, bool identity) {
+            const auto& p = value.params;
+            out << "{\"format\":" << static_cast<u32>(p.pixel_format)
+                << ",\"type\":" << static_cast<u32>(p.type) << ",\"tiled\":" << (p.is_tiled ? "true" : "false")
+                << ",\"width\":" << p.width << ",\"height\":" << p.height << ",\"stride\":" << p.stride
+                << ",\"scale\":" << p.res_scale << ",\"custom\":" << (value.custom ? "true" : "false");
+            if (identity) {
+                const auto& i = value.identity;
+                out << ",\"address\":" << p.addr << ",\"end\":" << p.end << ",\"handle\":" << value.handle
+                    << ",\"registered\":" << (value.registered ? "true" : "false")
+                    << ",\"allocation_id\":";
+                if (i.allocation) out << i.allocation; else out << "null";
+                out << ",\"created_frame\":";
+                if (i.allocation) out << i.created_frame; else out << "null";
+                out << ",\"last_observed_invalidation_serial\":";
+                if (i.invalidation) out << i.invalidation; else out << "null";
+                out << ",\"invalidation_reason\":" << i.reason
+                    << ",\"invalidation_frame\":" << i.invalidated_frame
+                    << ",\"invalidation_start\":" << i.invalid_start << ",\"invalidation_end\":" << i.invalid_end;
+            }
+            out << '}';
+        };
+        const auto rect = [&](const Common::Rectangle<u32>& r) {
+            out << '[' << r.left << ',' << r.top << ',' << r.right << ',' << r.bottom << ']';
+        };
+        out << "{\"kind\":\"returned_validate_surface_copies\",\"enabled\":true,\"schema_version\":1"
+            << ",\"timing_scope\":\"host_CopySurface_return_enqueue_or_wait_not_GPU_completion\""
+            << ",\"invalidation_reasons\":{\"0\":\"unknown_or_none_observed\",\"1\":\"CPU_observed\",\"2\":\"GPU_observed\"}"
+            << ",\"common_counters_required\":false,\"written_frame\":" << VideoCore::GetCurrentFrame()
+            << ",\"window_start_inclusive\":" << start << ",\"window_end_exclusive\":" << end
+            << ",\"frame_clock\":\"VideoCore::GetCurrentFrame\",\"actual_min_frame\":";
+        if (totals.calls) out << min_frame; else out << "null";
+        out << ",\"actual_max_frame\":";
+        if (totals.calls) out << max_frame; else out << "null";
+        out << ",\"detail_capacity\":" << DetailCapacity << ",\"identity_capacity\":" << IdentityCapacity
+            << ",\"bucket_capacity\":" << BucketCapacity << ",\"allocation_events\":" << allocations
+            << ",\"post_window_allocation_events\":" << post_window_allocations
+            << ",\"untracked_allocations\":" << untracked_allocations
+            << ",\"unknown_identity_uses\":" << unknown_identity_uses
+            << ",\"validation_invocations_all_frames\":" << invocations
+            << ",\"invalidation_calls_all_frames\":" << invalidations << ",\"totals\":";
+        write_totals(totals); out << ",\"detail_overflow\":"; write_totals(detail_overflow);
+        out << ",\"bucket_overflow\":"; write_totals(bucket_overflow);
+        out << ",\"buckets\":[";
+        for (size_t n = 0; n < bucket_count; ++n) {
+            const auto& b = buckets[n];
+            out << (n ? "," : "") << "{\"fill\":" << (b.fill ? "true" : "false") << ",\"src\":";
+            layout(b.src, false); out << ",\"dst\":"; layout(b.dst, false);
+            out << ",\"totals\":"; write_totals(b.totals); out << '}';
+        }
+        out << "],\"details\":[";
+        for (size_t n = 0; n < detail_slots.used; ++n) {
+            const auto& e = details[n];
+            out << (n ? "," : "") << "{\"invocation\":" << e.invocation << ",\"fragment\":" << e.fragment
+                << ",\"frame\":" << e.frame << ",\"requested\":[" << e.requested_start << ',' << e.requested_end
+                << "],\"invalid\":[" << e.invalid_start << ',' << e.invalid_end << "],\"actual\":["
+                << e.actual_start << ',' << e.actual_end << "],\"guest_bytes\":" << e.bytes
+                << ",\"fill\":" << (e.fill ? "true" : "false")
+                << ",\"source_valid_before_copy\":" << (e.source_valid ? "true" : "false") << ",\"src\":";
+            layout(e.src, true); out << ",\"dst\":"; layout(e.dst, true);
+            out << ",\"src_scaled_rect\":";
+            if (e.fill) out << "null"; else rect(e.src_rect);
+            out << ",\"dst_scaled_rect\":"; rect(e.dst_rect);
+            out << ",\"wall_ns\":"; if (e.wall.valid) out << e.wall.ns; else out << "null";
+            out << ",\"thread_cpu_ns\":"; if (e.cpu.valid) out << e.cpu.ns; else out << "null";
+            out << '}';
+        }
+        out << "]}\n";
+    }
+};
+
 RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
     const auto enabled = [](const char* name) {
         const char* value = std::getenv(name);
@@ -1427,6 +1656,8 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
     trace_flushes = enabled("CARA_SURFACE_FLUSH_TRACE");
     if (enabled("CARA_SURFACE_UPLOAD_TRACE"))
         surface_upload_trace = std::make_unique<SurfaceUploadTrace>();
+    if (enabled("CARA_SURFACE_VALIDATION_COPY_TRACE"))
+        validation_copy_trace = std::make_unique<ValidationCopyTrace>();
     retain_small_cpu_writes = enabled("CARA_RETAIN_SMALL_CPU_WRITES");
     gpu_surface_remap = enabled("CARA_GPU_SURFACE_REMAP");
     resolution_scale_factor = VideoCore::GetResolutionScaleFactor();
@@ -1439,6 +1670,7 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
 RasterizerCacheOpenGL::~RasterizerCacheOpenGL() {
     if (trace_flushes) WriteFlushTrace();
     if (surface_upload_trace) surface_upload_trace->Write();
+    if (validation_copy_trace) validation_copy_trace->Write();
     g_read_framebuffer.Release();
     g_draw_framebuffer.Release();
 }
@@ -2119,6 +2351,7 @@ Surface RasterizerCacheOpenGL::GetFillSurface(const GPU::Regs::MemoryFillConfig&
         new_surface->fill_size = 2;
     }
 
+    if (validation_copy_trace) validation_copy_trace->Created(new_surface);
     RegisterSurface(new_surface);
     new_surface->last_used_frame = VideoCore::GetCurrentFrame();
     return new_surface;
@@ -2264,6 +2497,8 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
 void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, u32 size) {
     Common::FrameTiming::TextureAcquisitionScope timing(
         Common::FrameTiming::TextureAcquisitionPhase::Validation);
+    const u64 copy_invocation = validation_copy_trace ? ++validation_copy_trace->invocations : 0;
+    u64 copy_fragment = 0;
     if (size == 0)
         return;
 
@@ -2296,6 +2531,7 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
         if (it == validate_regions.end())
             break;
 
+        if (validation_copy_trace) ++copy_fragment;
         const auto interval = *it & validate_interval;
         // Look for a valid surface to copy from
         SurfaceParams params = surface->FromInterval(interval);
@@ -2304,7 +2540,38 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
             FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore, interval);
         if (copy_surface != nullptr) {
             SurfaceInterval copy_interval = params.GetCopyableInterval(copy_surface);
-            CopySurface(copy_surface, surface, copy_interval);
+            if (validation_copy_trace && validation_copy_trace->InWindow()) {
+                ValidationCopyTrace::Entry event;
+                event.invocation = copy_invocation; event.fragment = copy_fragment;
+                event.frame = VideoCore::GetCurrentFrame();
+                event.requested_start = addr; event.requested_end = addr + size;
+                event.invalid_start = boost::icl::first(interval);
+                event.invalid_end = boost::icl::last_next(interval);
+                event.actual_start = boost::icl::first(copy_interval);
+                event.actual_end = boost::icl::last_next(copy_interval);
+                event.bytes = u64(event.actual_end) - event.actual_start;
+                event.src = validation_copy_trace->Snapshot(copy_surface);
+                event.dst = validation_copy_trace->Snapshot(surface);
+                event.fill = copy_surface->type == SurfaceType::Fill;
+                event.source_valid = copy_surface->IsRegionValid(copy_interval);
+                const auto rect_params = surface->FromInterval(copy_interval);
+                if (!event.fill) event.src_rect = copy_surface->GetScaledSubRect(rect_params);
+                event.dst_rect = surface->GetScaledSubRect(rect_params);
+                u64 cpu_start = 0, cpu_end = 0;
+                const bool before_ok = ValidationCopyTrace::CPUTime(cpu_start);
+                const auto wall_start = std::chrono::steady_clock::now();
+                CopySurface(copy_surface, surface, copy_interval);
+                const auto wall_end = std::chrono::steady_clock::now();
+                const bool after_ok = ValidationCopyTrace::CPUTime(cpu_end);
+                event.wall.valid = wall_end >= wall_start;
+                if (event.wall.valid)
+                    event.wall.ns = static_cast<u64>(std::chrono::duration_cast<
+                        std::chrono::nanoseconds>(wall_end - wall_start).count());
+                event.cpu = ValidationCopyProfile::Delta(before_ok, cpu_start, after_ok, cpu_end);
+                validation_copy_trace->Record(event);
+            } else {
+                CopySurface(copy_surface, surface, copy_interval);
+            }
             notify_validated(copy_interval);
             continue;
         }
@@ -2676,6 +2943,7 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
         return;
     }
 
+    if (validation_copy_trace) ++validation_copy_trace->invalidations;
     const SurfaceInterval invalid_interval(addr, addr + size);
 
     if (region_owner != nullptr) {
@@ -2716,6 +2984,9 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
             // discard only overwritten GPU bytes and preserve every other dirty byte.
             const auto interval = cached_surface->GetInterval() & invalid_interval;
             cached_surface->invalid_regions.insert(interval);
+            if (validation_copy_trace)
+                validation_copy_trace->Invalidated(cached_surface, boost::icl::first(interval),
+                    boost::icl::last_next(interval), region_owner != nullptr);
             if (surface_upload_trace)
                 surface_upload_trace->Invalidated(cached_surface, boost::icl::first(interval),
                     boost::icl::last_next(interval), region_owner != nullptr);
@@ -2762,6 +3033,7 @@ Surface RasterizerCacheOpenGL::CreateSurface(const SurfaceParams& params) {
     AllocateSurfaceTexture(surface->texture.handle, GetFormatTuple(surface->pixel_format),
                            surface->GetScaledWidth(), surface->GetScaledHeight());
     if (surface_upload_trace) surface_upload_trace->Created(surface);
+    if (validation_copy_trace) validation_copy_trace->Created(surface);
 
     return surface;
 }

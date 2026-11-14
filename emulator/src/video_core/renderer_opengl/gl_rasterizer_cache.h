@@ -302,6 +302,8 @@ private:
     /// Increase/decrease the number of surface in pages touching the specified region
     void UpdatePagesCachedCount(PAddr addr, u32 size, int delta);
 
+    struct ValidationCopyTrace;
+    std::unique_ptr<ValidationCopyTrace> validation_copy_trace;
     struct SurfaceUploadTrace;
     std::unique_ptr<SurfaceUploadTrace> surface_upload_trace;
 
