@@ -252,6 +252,32 @@ def main():
         if benchmark:
             settings['CARA_BENCHMARK_FRAMES'] = str(args.frames)
             settings['CARA_BENCHMARK_AUDIO'] = '1'
+        if not benchmark:
+            # Interactive resume keeps the selected optimizations and the guarded
+            # checkpoint restore, but no observers or scripted input. Omit flags:
+            # several frontend diagnostics are enabled by presence, even for '0'.
+            for key in (
+                    'CARA_FRAME_TIMING', 'CARA_AUDIO_DIAGNOSTICS',
+                    'CARA_FASTINTERP_PROFILE', 'CARA_TEST_KEEP_AWAKE',
+                    'CARA_CPU_CATEGORY_TIMING', 'CARA_PHASE_CPU_TIMING',
+                    'CARA_HOST_CPU_TIMING', 'CARA_HOST_PC_SAMPLER',
+                    'CARA_BENCHMARK_CAPTURE', 'CARA_TIMING_WINDOW_FRAMES',
+                    'CARA_DRAW_COST_PROFILE', 'CARA_FASTINTERP_CACHE_PROFILE',
+                    'CARA_PICA_COMMAND_PROFILE', 'CARA_PICA_POST_IRQ_PROFILE',
+                    'CARA_RENDER_BOOKKEEPING_PROFILE', 'CARA_TEXTURE_LOOKUP_VERIFY',
+                    'CARA_TEXTURE_ACQUISITION_PROFILE', 'CARA_GPU_LIT_PAIR_PROBE',
+                    'CARA_SURFACE_FLUSH_TRACE', 'CARA_SURFACE_UPLOAD_TRACE',
+                    'CARA_SURFACE_UPLOAD_TRACE_START_FRAME',
+                    'CARA_SURFACE_UPLOAD_TRACE_END_FRAME',
+                    'CARA_GUEST_PC_PROFILE_RANGES', 'CARA_GUEST_PC_PROFILE_START_FRAME',
+                    'CARA_GUEST_PC_PROFILE_WINDOW_FRAMES',
+                    'CARA_GUEST_PC_PROFILE_PERIOD_FRAMES', 'CARA_GUEST_PC_PROFILE_WINDOWS',
+                    'CARA_GUEST_PC_PROFILE_EPISODE_START', 'CARA_GUEST_PC_PROFILE_EPISODE_END',
+                    'CARA_SURFACE_SELF_TEST', 'CARA_GPU_DEPTH_SELF_TEST', 'CARA_VERTEX_SELF_TEST',
+                    'CARA_TEST_PRESS_A_FRAMES', 'CARA_BENCHMARK_INPUT_LOCK',
+                    'CARA_TEST_CIRCLE_SEGMENTS', 'CARA_TEST_HOLD_START_FRAME',
+                    'CARA_PROFILE_SAVE_FRAME'):
+                settings.pop(key, None)
         arguments = []
         if args.rom:
             settings.pop('CARA_OPEN_RECENT')

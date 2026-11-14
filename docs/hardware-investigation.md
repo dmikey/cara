@@ -361,6 +361,14 @@ engine compatibility checks are retained. The benchmark engine fingerprint is
 Frontend default changes do not change that engine fingerprint or invalidate this
 checkpoint. Engine changes may still require recreating it; do not override checks.
 
+`--resume-best` starts adaptive interactive play with the selected optimization
+settings and the normally guarded comparison-checkpoint restore. Its new process
+omits benchmark timing, profiling, tracing, capture, self-test and scripted-input
+flags entirely; assigning `0` would still enable presence-based diagnostics.
+Benchmark launches retain their diagnostic settings. Launch environment flags
+last for that process, including menu/background resume; they are not saved play
+preferences. This launcher change does not alter an already running process.
+
 #### Audible replay and scripted progression
 
 The final audible-output checkpoint pair measured **49.61 ms indexed float versus
