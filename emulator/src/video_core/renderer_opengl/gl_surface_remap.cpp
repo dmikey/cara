@@ -20,6 +20,10 @@ void main() {
 }
 )";
     constexpr const char* fragment = R"(
+#ifdef GL_ES
+precision highp float;
+precision highp int;
+#endif
 uniform highp sampler2D source_texture;
 // Width, height, stride, tiled flag. Coordinates in textures are GL coordinates.
 uniform highp ivec4 source_layout;

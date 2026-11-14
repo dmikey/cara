@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #pragma once
+#include <string>
 
 #include <atomic>
 #include <functional>
@@ -46,6 +47,8 @@ ResultStatus Init(Frontend::EmuWindow& window, Memory::MemorySystem& memory);
 RendererBase* Renderer();
 Memory::MemorySystem* Memory();
 RasterizerInterface* Rasterizer();
+// Opt-in production surface-coherence oracle; not normal gameplay work.
+bool RunSurfaceCoherenceSelfTest(std::string& error);
 u16 GetResolutionScaleFactor();
 u32 GetCurrentFrame();
 void SetBackgroundImage(u32* pixels, u32 width, u32 height);

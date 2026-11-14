@@ -69,6 +69,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> phase_timing{{"Debug", "trace_renderer_timing"}, false};
     const Config::ConfigInfo<bool> guest_trace{{"Debug", "trace_guest_threads"}, false};
     const Config::ConfigInfo<bool> bookkeeping{{"Debug", "trace_renderer_bookkeeping"}, false};
+    const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
+    setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> clear_padding{{"Debug", "vertex_clear_padding"}, false};
     const Config::ConfigInfo<bool> middle_filter{{"Debug", "vertex_reuse_middle_filter"}, false};
     setenv("CARA_VERTEX_CLEAR_PADDING", Config::Get(clear_padding) ? "1" : "0", 1);
@@ -158,6 +160,16 @@ void BootGame(const std::string& path) {
         return;
     }
 
+    const Config::ConfigInfo<bool> verify_surfaces{{"Debug", "verify_surface_coherence"}, false};
+    if (Config::Get(verify_surfaces)) {
+        std::string error;
+        if (!VideoCore::RunSurfaceCoherenceSelfTest(error)) {
+            LOG_ERROR(Frontend, "Android surface coherence self-test failed: {}", error);
+            NativeLibrary::ShowMessageDialog(0, "Surface coherence self-test failed: " + error);
+            system.Shutdown(); s_render_window.reset(); return;
+        }
+        LOG_INFO(Frontend, "Android surface coherence self-test passed");
+    }
     LOG_INFO(Frontend, "Android boot: guest loaded, entering emulation");
     auto hid = system.ServiceManager()
                    .GetService<Service::HID::Module::Interface>("hid:USER")
