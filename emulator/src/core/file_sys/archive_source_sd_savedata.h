@@ -1,3 +1,4 @@
+// Modified for Cara on 2026-11-14; see NOTICE for attribution.
 // Copyright 2016 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -8,6 +9,7 @@
 #include <string>
 #include <boost/serialization/export.hpp>
 #include <boost/serialization/string.hpp>
+#include "common/file_util.h"
 #include "core/file_sys/archive_backend.h"
 #include "core/hle/result.h"
 
@@ -33,7 +35,7 @@ private:
     ArchiveSource_SDSaveData() = default;
     template <class Archive>
     void serialize(Archive& ar, const unsigned int) {
-        ar& mount_point;
+        ar& FileUtil::Path::make(mount_point);
     }
     friend class boost::serialization::access;
 };

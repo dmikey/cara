@@ -25,6 +25,8 @@ Save-state serialization derives from the Citra Emulator Project and contributor
 including the original save-state work by Hamish Milne. Restored from Citra MMJ
 revision 11b01c0a28e4441dc8902ea2ea88d9bcaf1efbc4 and adapted for Cara.
 The original GPL-2.0-or-later notices remain in the source files.
+Cara also rebases serialized save archive and factory host paths through the existing
+user-directory placeholders so restored sessions use the current data directory.
 
 Zstandard: Copyright Meta Platforms, Inc. and affiliates. Bundled source and BSD
 license are in emulator/externals/zstd/; its revision is recorded in emulator/VENDORED_SOURCE.json.

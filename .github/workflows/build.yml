@@ -40,6 +40,10 @@ jobs:
         run: |
           work/build-mac-sdl/bin/cara-fastinterp-decoded-record-self-test | tee work/build-mac-sdl/decoded-record.log
           python3 -c "from pathlib import Path; assert 'record=20 block=672' in Path('work/build-mac-sdl/decoded-record.log').read_text()"
+      - name: Check restored save archive relocation without a ROM or GUI
+        run: |
+          cmake --build work/build-mac-sdl --target cara-save-archive-relocation-self-test -j1
+          python3 tests/save_archive_relocation_test.py work/build-mac-sdl/bin/cara-save-archive-relocation-self-test work/build-mac-sdl/save-archive-relocation-fixtures
       - name: Retain native audit and configure command
         uses: actions/upload-artifact@v4
         with:
@@ -48,6 +52,7 @@ jobs:
             work/build-mac-sdl/native-no-jit-audit.json
             work/build-mac-sdl/configure-command.json
             work/build-mac-sdl/decoded-record.log
+            work/build-mac-sdl/save-archive-relocation-fixtures/**/results.json
   compact-interpreter:
     name: macOS compact decoded records / software / no JIT
     runs-on: macos-15
