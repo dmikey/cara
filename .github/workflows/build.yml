@@ -247,6 +247,8 @@ jobs:
           work/frame-timing-texture-test
           clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -I emulator/src tests/pica_shader_packet_profile_test.cpp -o work/pica-shader-packet-profile-test
           work/pica-shader-packet-profile-test
+          clang++ -std=c++17 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -I emulator/src tests/native_cpu_category_profile_test.cpp -o work/native-cpu-category-profile-test
+          work/native-cpu-category-profile-test
           CARA_TEXTURE_ACQUISITION_PROFILE=1 work/frame-timing-texture-test enabled
           work/build-mac/bin/cara-render-bookkeeping-self-test
           work/build-mac/bin/cara-vertex-upload-bank-self-test
