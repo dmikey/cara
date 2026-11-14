@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / 'emulator/externals/dynarmic'
-REVISION = '2d3c8c5724800534f68e801e3f18b13a4d400e22'
+REVISION = 'b3a92ab54dadd26a0c2a87d2677b80249d2e1a5a'
 URL = 'https://github.com/azahar-emu/dynarmic.git'
 def main():
     if not DEST.exists():

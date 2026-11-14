@@ -129,7 +129,7 @@
     {
       "path": "externals/dynarmic",
       "source": "https://github.com/azahar-emu/dynarmic.git",
-      "revision": "2d3c8c5724800534f68e801e3f18b13a4d400e22",
+      "revision": "b3a92ab54dadd26a0c2a87d2677b80249d2e1a5a",
       "bundled": false,
       "license": "0BSD; bundled dependencies retain individual notices",
       "prepare": "tools/prepare_android_dynarmic.py",

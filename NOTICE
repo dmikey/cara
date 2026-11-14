@@ -50,7 +50,7 @@ https://github.com/fearkov/3dsrecomp
 https://github.com/fearkov/zakuro
 
 The optional experimental Android JIT build uses Dynarmic by MerryMage and
-contributors (0BSD), pinned to 2d3c8c5724800534f68e801e3f18b13a4d400e22
+contributors (0BSD), pinned to b3a92ab54dadd26a0c2a87d2677b80249d2e1a5a
 from https://github.com/azahar-emu/dynarmic. Its dependency notices remain in
 the fetched source. Apple builds do not fetch or link this optional dependency.
 

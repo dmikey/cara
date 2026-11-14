@@ -15,7 +15,9 @@ between builds; reinstalling may require uninstalling the previous test APK.
 
 The dependency fetch is explicit and pinned: `python3 tools/prepare_android_dynarmic.py`.
 The inherited MMJ Dynarmic URL is unavailable, so this experiment uses the
-ARM64-capable upstream revision recorded in NOTICE. Its adapter retains shared
+ARM64-capable upstream revision recorded in NOTICE (the last revision before
+the A32 Context API was removed). This replaces the earlier May 2022 backend
+for the Android startup investigation. Its adapter retains shared
 page-table ownership and uses coherent atomic exclusive-write callbacks. A checked,
 idempotent patch adapts formatter constness to Cara’s bundled fmt version; it
 does not modify guest instruction handling.
