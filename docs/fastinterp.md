@@ -180,3 +180,27 @@ decode reuse, cache diagnostics and both 4,224-case scalar-double runs. These
 checks provide bounded semantic and timing coverage. Device speed and memory
 must be measured separately, including a current-build control against the new
 heap-backed 16k default before attributing any 32k result to capacity.
+
+## Plain register-copy specialization (private, not integrated)
+
+A November 14, 2026 native M1 experiment selected original ARM `MOV` instructions
+with S=0, LSL #0 and no PC operands. It retained conditions, original decoded
+slots, tick charges, single-step behavior and existing ALU-pair priority. The
+compiled handler removed a shift-byte load and variable shift: two host
+instructions, with the same register loads and shared writeback.
+
+The private prototype passed 324,430 register/condition/flag/budget cases per
+configuration across both record layouts and operand/pair settings. Existing
+instruction regressions and 328,448 metadata walks also passed. Four ABBA
+microbenchmark brackets used the same executable off/on, 310 million original
+guest instructions per interval, matching ticks and final-state digests, with
+operand specialization enabled and ALU pairs disabled.
+
+For the default 20-byte records, MOV-only median wall time changed from
+0.496786 to 0.497676 seconds; a MOV/ADD/LDR mixture changed from 0.747127 to
+0.742456 seconds. These results do not establish a useful default-layout gain.
+The compact 16-byte layout showed a small synthetic signal (roughly 1–1.5%
+lower median time). This is not game throughput, iOS or physical-device proof,
+and no confidence interval was calculated. The opcode and runtime flag remain
+only in the private prototype; this experiment does not change the default
+engine. Revisit only with a stronger measured workload or dispatch-level reason.
