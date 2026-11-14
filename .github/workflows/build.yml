@@ -208,6 +208,7 @@ jobs:
           CARA_FASTINTERP_ADD_CMP_IMM=1 CARA_FASTINTERP_VCMP_VMRS=1 CARA_FASTINTERP_VFP_SIMD=3 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-core-cache-self-test
           work/build-mac/bin/cara-audio-buffer-self-test
+          work/build-mac/bin/cara-dsp-status-self-test
           work/build-mac/bin/cara-apple-aac-test
           CARA_DISABLE_FAST_DECODE_LOOKUP=1 work/build-mac/bin/cara-core-cache-self-test
           work/build-mac/bin/cara-interval-cache-self-test
