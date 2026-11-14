@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include "cara/lodepng_image_interface.h"
 #include "common/color.h"
@@ -182,9 +183,12 @@ EmuWindow_SDL2::EmuWindow_SDL2(bool fullscreen) {
         LOG_CRITICAL(Frontend, "Failed to create SDL2 GL context: {}", SDL_GetError());
         exit(1);
     }
-    // A current context is required before configuring its swap interval.
-    if (SDL_GL_SetSwapInterval(1) != 0) {
-        LOG_WARNING(Frontend, "Failed to enable native vsync: {}", SDL_GetError());
+    // The independent core frame limiter remains at 100%. Display vsync is opt-in
+    // because Cocoa/SDL can block the first VBlank when no display ticks arrive.
+    const int swap_interval = Settings::values.vsync_enabled ? 1 : 0;
+    if (SDL_GL_SetSwapInterval(swap_interval) != 0) {
+        throw std::runtime_error(fmt::format("Failed to set native swap interval {}: {}",
+                                             swap_interval, SDL_GetError()));
     }
     auto gl_load_func = Settings::values.use_gles ? gladLoadGLES2Loader : gladLoadGLLoader;
 

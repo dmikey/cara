@@ -12,6 +12,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <SDL_video.h>
 #include <glad/glad.h>
 #include <unistd.h>
 #include "cara/config.h"
@@ -61,6 +62,7 @@ static void WriteNativeManifest(const std::string& directory) {
     out << ",\"use_linear_filter\":" << v.use_linear_filter;
     out << ",\"use_frame_limit\":" << v.use_frame_limit;
     out << ",\"vsync_enabled\":" << v.vsync_enabled;
+    out << ",\"actual_swap_interval\":" << SDL_GL_GetSwapInterval();
     out << ",\"use_present_thread\":" << v.use_present_thread;
     out << ",\"use_shader_cache\":" << v.use_shader_cache;
     out << ",\"custom_textures\":" << v.custom_textures;

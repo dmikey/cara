@@ -50,6 +50,13 @@ CARA_CPU_BACKEND=fastinterp \
 /Volumes/Fast/CaraBuild/mac-sdl-dev/bin/cara '/path/to/game.3ds'
 ```
 
+Native Mac presentation defaults to swap interval 0. The independent core frame
+limiter still enforces 100% speed; disabling display synchronization does not
+change guest CPU clocks or hardware timing. This avoids an observed SDL/Cocoa
+first-swap wait when display ticks are unavailable. Set `CARA_MAC_VSYNC=1` to opt
+into display synchronization. `native-settings.json` records both the setting
+and actual SDL swap interval.
+
 CPU and host shader JIT are disabled at build and runtime. The developer host
 keeps guest clock and maximum speed at 100%, with SDL audio enabled and audio
 stretching disabled. Hardware renderer/shader choices come from the fresh INI;
