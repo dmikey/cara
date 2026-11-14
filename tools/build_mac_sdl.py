@@ -44,6 +44,7 @@ def main():
     parser.add_argument('--prefix-path', type=Path, help='Additional CMake dependency prefix, e.g. Homebrew')
     parser.add_argument('--jobs', type=int, choices=(1, 2), default=2)
     parser.add_argument('--lto', action='store_true')
+    parser.add_argument('--compact-decoded', action='store_true', help='Opt in to experimental 16-byte interpreter records')
     args = parser.parse_args()
     if platform.system() != 'Darwin':
         parser.error('This helper targets native macOS; use the existing build helpers elsewhere')
@@ -79,6 +80,7 @@ def main():
                '-DCMAKE_PREFIX_PATH=' + ';'.join(prefixes),
                '-DCARA_ENABLE_JIT=OFF', '-DCARA_CPU_TARGET=generic',
                '-DCARA_ENABLE_LTO=' + ('ON' if args.lto else 'OFF'),
+               '-DCARA_FASTINTERP_COMPACT_DECODED=' + ('ON' if args.compact_decoded else 'OFF'),
                '-DCARA_SOFTWARE_PRESENTATION=OFF', '-DCARA_INTERPRETER_GUEST_DEBUG=OFF',
                '-DCARA_PGO_GENERATE=OFF', '-DCARA_PGO_USE=',
                '-DCARA_MAC_SDL_DEV_HOST=ON', '-DENABLE_SDL2=ON', '-DENABLE_QT=OFF', '-DENABLE_CUBEB=OFF',

@@ -23,7 +23,7 @@ On the verified 64-bit ABIs, `BasicBlock` shrinks from 672 to 544 bytes. The 128
 
 ## Build and ongoing checks
 
-Use separate build directories. `tools/build.py mac` explicitly selects the ordinary 20-byte format; add `--compact-decoded` for 16 bytes. Direct CMake users can set `-DCARA_FASTINTERP_COMPACT_DECODED=OFF` or `ON`. A generated `build/src/fastinterp_decoded_layout_config.h` consistently selects the format for actual consumers, rejects a conflicting explicit compiler definition, and avoids changing every vendor compilation command when toggled.
+Use separate build directories. `tools/build.py mac` explicitly selects the ordinary 20-byte format; add `--compact-decoded` for 16 bytes. The native SDL helper also accepts `--compact-decoded` and explicitly resets the option to off when omitted. Direct CMake users can set `-DCARA_FASTINTERP_COMPACT_DECODED=OFF` or `ON`. A generated `build/src/fastinterp_decoded_layout_config.h` consistently selects the format for actual consumers, rejects a conflicting explicit compiler definition, and avoids changing every vendor compilation command when toggled.
 
 `cara-fastinterp-decoded-record-self-test` checks field boundaries, semantic setters, dispatch banks, copies, union preservation and sentinel records. `CARA_FASTINTERP_DECODED_METADATA_TEST=1 cara-fastinterp-self-test` walks every Thumb16 encoding, 131,072 deterministic ARM words, 131,072 deterministic Thumb32 words and 768 VFP boundary words: 328,448 records with a layout-independent semantic/operand trace.
 
