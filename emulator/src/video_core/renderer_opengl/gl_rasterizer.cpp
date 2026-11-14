@@ -360,6 +360,7 @@ RasterizerOpenGL::RasterizerOpenGL()
 RasterizerOpenGL::~RasterizerOpenGL() = default;
 
 void RasterizerOpenGL::SyncEntireState() {
+    ClearDrawFramebuffers();
     // Sync fixed function OpenGL state
     SyncClipEnabled();
     SyncCullMode();
@@ -935,11 +936,13 @@ void RasterizerOpenGL::CheckForConfigChanges() {
     u16 scale_factor = VideoCore::GetResolutionScaleFactor();
     if (res_cache.GetScaleFactor() != scale_factor) {
         framebuffer_info = {};
+        ClearDrawFramebuffers();
         res_cache.SetScaleFactor(scale_factor);
     }
 }
 
 void RasterizerOpenGL::OnFrameUpdate() {
+    ClearExpiredDrawFramebuffers();
     const u32 current_frame = VideoCore::GetCurrentFrame();
     if (current_frame >= last_clean_frame + CLEAN_FRAME_INTERVAL) {
         res_cache.CleanUp(last_clean_frame);
@@ -1469,6 +1472,139 @@ void RasterizerOpenGL::BindFramebufferDepth(OpenGLState& state, const Surface& s
     }
 }
 
+void RasterizerOpenGL::ClearDrawFramebuffers() {
+    for (auto& entry : draw_framebuffers) {
+        entry.fbo.Release();
+        entry.color.reset(); entry.depth.reset();
+        entry.last_used = 0;
+    }
+    state.draw.draw_framebuffer = framebuffer.handle;
+}
+
+void RasterizerOpenGL::ClearExpiredDrawFramebuffers() {
+    for (auto& entry : draw_framebuffers) {
+        if (entry.fbo.handle && (entry.color.expired() || entry.depth.expired())) {
+            if (state.draw.draw_framebuffer == entry.fbo.handle)
+                state.draw.draw_framebuffer = framebuffer.handle;
+            entry.fbo.Release();
+            entry.color.reset(); entry.depth.reset(); entry.last_used = 0;
+        }
+    }
+}
+
+GLuint RasterizerOpenGL::GetDrawFramebuffer(const Surface& color, const Surface& depth,
+                                           bool stencil) {
+    // Weak identities guard GL-name reuse without keeping guest surfaces alive.
+    // CachedSurface owns its main texture for its lifetime; content changes do
+    // not alter the attachment identity. All selection/validation stays outside.
+    const auto sequence = ++draw_framebuffer_sequence;
+    auto* oldest = &draw_framebuffers.front();
+    for (auto& entry : draw_framebuffers) {
+        if (entry.fbo.handle && entry.color_name == color->texture.handle &&
+            entry.depth_name == depth->texture.handle && entry.stencil == stencil &&
+            entry.color.lock() == color && entry.depth.lock() == depth) {
+            entry.last_used = sequence;
+            if (Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.draw_framebuffer_cache_hits;
+            return entry.fbo.handle;
+        }
+        if (entry.last_used < oldest->last_used) oldest = &entry;
+    }
+    if (Common::FrameTiming::counters.enabled)
+        ++Common::FrameTiming::counters.draw_framebuffer_cache_misses;
+    oldest->fbo.Release(); oldest->fbo.Create();
+    OpenGLState::BindDrawFramebuffer(oldest->fbo.handle);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           color->texture.handle, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
+                           stencil ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT,
+                           GL_TEXTURE_2D, depth->texture.handle, 0);
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        oldest->fbo.Release(); oldest->last_used = 0;
+        return 0; // Original attachment path remains the fallback.
+    }
+    oldest->color = color; oldest->depth = depth;
+    oldest->color_name = color->texture.handle;
+    oldest->depth_name = depth->texture.handle;
+    oldest->stencil = stencil; oldest->last_used = sequence;
+    return oldest->fbo.handle;
+}
+
+bool RasterizerOpenGL::RunDrawFramebufferCacheSelfTest(std::string& error) {
+    const auto prior = OpenGLState::GetCurState();
+    GLint pack_buffer = 0, pack_row = 0, pack_skip_rows = 0, pack_skip_pixels = 0;
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row);
+    glGetIntegerv(GL_PACK_SKIP_ROWS, &pack_skip_rows);
+    glGetIntegerv(GL_PACK_SKIP_PIXELS, &pack_skip_pixels);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+    SCOPE_EXIT({
+        ClearDrawFramebuffers();
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer);
+        glPixelStorei(GL_PACK_ROW_LENGTH, pack_row);
+        glPixelStorei(GL_PACK_SKIP_ROWS, pack_skip_rows);
+        glPixelStorei(GL_PACK_SKIP_PIXELS, pack_skip_pixels);
+        prior.Apply();
+    });
+    if (glGetError() != GL_NO_ERROR) { error = "preexisting GL error"; return false; }
+    OpenGLState test = prior;
+    test.scissor.enabled = false;
+    test.color_mask = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    test.Apply();
+    const auto surface = [](bool depth) {
+        auto value = std::make_shared<CachedSurface>();
+        value->texture.Create();
+        OpenGLState::BindTexture2D(0, value->texture.handle);
+        glTexImage2D(GL_TEXTURE_2D, 0, depth ? GL_DEPTH24_STENCIL8 : GL_RGBA8,
+                     8, 8, 0, depth ? GL_DEPTH_STENCIL : GL_RGBA,
+                     depth ? GL_UNSIGNED_INT_24_8 : GL_UNSIGNED_BYTE, nullptr);
+        return value;
+    };
+    auto a = surface(false), b = surface(false), depth = surface(true);
+    const auto read = [&](GLuint fbo, const std::array<u8,4>& expected) {
+        OpenGLState::BindReadFramebuffer(fbo);
+        std::array<u8,4> pixel{};
+        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+        return pixel == expected && glGetError() == GL_NO_ERROR;
+    };
+    const GLuint first = GetDrawFramebuffer(a, depth, true);
+    if (!first) { error = "initial attachment"; return false; }
+    const GLfloat red[]{1,0,0,1}, green[]{0,1,0,1};
+    glClearBufferfv(GL_COLOR, 0, red);
+    const GLuint second = GetDrawFramebuffer(b, depth, false);
+    if (!second || second == first) { error = "distinct attachment pair"; return false; }
+    glClearBufferfv(GL_COLOR, 0, green);
+    const GLuint hit = GetDrawFramebuffer(a, depth, true);
+    OpenGLState::BindDrawFramebuffer(hit);
+    GLint stencil = 0;
+    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
+                                          GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &stencil);
+    if (hit != first || GLuint(stencil) != depth->texture.handle ||
+        !read(hit, {255,0,0,255}) || !read(second, {0,255,0,255})) {
+        error = "pair reuse or attachment pixels"; return false;
+    }
+    // Evict well past capacity, then revisit a live surface and verify its pixels.
+    std::vector<Surface> live;
+    for (unsigned i = 0; i < draw_framebuffers.size()+8; ++i) {
+        live.push_back(surface(false));
+        const GLuint fbo = GetDrawFramebuffer(live.back(), depth, (i & 1) != 0);
+        if (!fbo) { error = "bounded eviction"; return false; }
+        glClearBufferfv(GL_COLOR, 0, green);
+    }
+    const GLuint revisited = GetDrawFramebuffer(a, depth, true);
+    if (!revisited || !read(revisited, {255,0,0,255})) {
+        error = "eviction preserved surface content"; return false;
+    }
+    a.reset(); b.reset(); live.clear();
+    ClearExpiredDrawFramebuffers();
+    for (const auto& entry : draw_framebuffers)
+        if (entry.fbo.handle) { error = "expired surface cleanup"; return false; }
+    return glGetError() == GL_NO_ERROR;
+}
+
 bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::Draw);
     const auto& regs = Pica::g_state.regs;
@@ -1506,13 +1642,22 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             res_cache.GetFramebufferSurfaces(using_color_fb, using_depth_fb, viewport_rect_unscaled);
     }
 
+    static const bool cache_draw_framebuffers = [] {
+        const char* value = std::getenv("CARA_DRAW_FRAMEBUFFER_CACHE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    // Preserve the original retained-depth behavior for color-only / shadow draws.
+    const bool cache_framebuffer = cache_draw_framebuffers && !shadow_rendering &&
+                                   color_surface && depth_surface;
     u32 res_scale = 1;
     GLuint color_attachment = 0;
     if (color_surface) {
         res_scale = color_surface->res_scale;
         color_attachment = color_surface->texture.handle;
-        framebuffer_info.color_width = color_surface->width;
-        framebuffer_info.color_height = color_surface->height;
+        if (!cache_framebuffer) {
+            framebuffer_info.color_width = color_surface->width;
+            framebuffer_info.color_height = color_surface->height;
+        }
     } else if (depth_surface) {
         res_scale = depth_surface->res_scale;
     }
@@ -1663,6 +1808,17 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     {
     Common::FrameTiming::Scope setup(Common::FrameTiming::Phase::DrawFramebufferSetup,
                                      Common::FrameTiming::RenderBookkeepingProfileEnabled());
+    const GLuint selected_fbo = cache_framebuffer ?
+        GetDrawFramebuffer(color_surface, depth_surface, has_stencil) : 0;
+    if (selected_fbo) {
+        state.draw.draw_framebuffer = selected_fbo;
+        OpenGLState::BindDrawFramebuffer(selected_fbo);
+    } else {
+    if (color_surface) {
+        framebuffer_info.color_width = color_surface->width;
+        framebuffer_info.color_height = color_surface->height;
+    }
+    state.draw.draw_framebuffer = framebuffer.handle;
     OpenGLState::BindDrawFramebuffer(framebuffer.handle);
 
     if (shadow_rendering) {
@@ -1718,6 +1874,7 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
                 state.depth.write_mask = GL_FALSE;
             }
         }
+    }
     }
 
     }

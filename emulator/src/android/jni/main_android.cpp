@@ -28,6 +28,7 @@
 #include "core/loader/smdh.h"
 #include "core/settings.h"
 #include "video_core/video_core.h"
+#include "video_core/renderer_opengl/gl_rasterizer.h"
 
 #include "camera/ndk_camera.h"
 #include "camera/still_image_camera.h"
@@ -73,6 +74,8 @@ void BootGame(const std::string& path) {
     setenv("CARA_PHASE_CPU_TIMING", Config::Get(cpu_timing) ? "1" : "0", 1);
     setenv("CARA_DRAW_COST_PROFILE", Config::Get(cpu_timing) ? "1" : "0", 1);
     setenv("CARA_RENDER_BOOKKEEPING_PROFILE", Config::Get(bookkeeping) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> framebuffer_cache{{"Debug", "draw_framebuffer_cache"}, false};
+    setenv("CARA_DRAW_FRAMEBUFFER_CACHE", Config::Get(framebuffer_cache) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> native_luts{{"Debug", "native_lut_buffers"}, false};
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> retain_draw{{"Debug", "retain_draw_bindings"}, false};
@@ -154,6 +157,17 @@ void BootGame(const std::string& path) {
         return;
     }
 
+    const Config::ConfigInfo<bool> verify_framebuffers{{"Debug", "verify_draw_framebuffer_cache"}, false};
+    if (Config::Get(verify_framebuffers)) {
+        std::string error;
+        auto* rasterizer = static_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
+        if (!rasterizer || !rasterizer->RunDrawFramebufferCacheSelfTest(error)) {
+            LOG_ERROR(Frontend, "Android framebuffer cache self-test failed: {}", error);
+            NativeLibrary::ShowMessageDialog(0, "Framebuffer cache self-test failed: " + error);
+            system.Shutdown(); s_render_window.reset(); return;
+        }
+        LOG_INFO(Frontend, "Android framebuffer cache self-test passed");
+    }
     LOG_INFO(Frontend, "Android boot: guest loaded, entering emulation");
     auto hid = system.ServiceManager()
                    .GetService<Service::HID::Module::Interface>("hid:USER")
@@ -211,6 +225,7 @@ void BootGame(const std::string& path) {
                 report_cpu("present", phases.present_cpu_samples);
                 report_cpu("fence_wait", phases.gpu_wait_cpu_samples);
                 LOG_INFO(Frontend, "Android waits: fence_wait_ms={:.3f} present_ms={:.3f}", phases.gpu_wait_seconds*1000, phases.present_seconds*1000);
+                LOG_INFO(Frontend, "Android framebuffer cache: hits={} misses={}", phases.draw_framebuffer_cache_hits, phases.draw_framebuffer_cache_misses);
                 phases = {};
                 phases.enabled = true;
                 next_phase_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
