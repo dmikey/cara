@@ -61,7 +61,15 @@ void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
     s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
-    s_render_window->Initialize(s_surface);
+    LOG_INFO(Frontend, "Android boot: CPU JIT={}, present thread={}",
+             Settings::values.use_cpu_jit, Settings::values.use_present_thread);
+    if (!s_render_window->Initialize(s_surface)) {
+        LOG_ERROR(Frontend, "Android EGL initialization failed");
+        NativeLibrary::ShowMessageDialog(0, "Cara could not initialize the GLES display. See Android logcat for details.");
+        s_render_window.reset();
+        return;
+    }
+    LOG_INFO(Frontend, "Android boot: EGL ready");
 
     Core::System& system{Core::System::GetInstance()};
 
@@ -119,6 +127,7 @@ void BootGame(const std::string& path) {
         return;
     }
 
+    LOG_INFO(Frontend, "Android boot: guest loaded, entering emulation");
     auto hid = system.ServiceManager()
                    .GetService<Service::HID::Module::Interface>("hid:USER")
                    ->GetModule();

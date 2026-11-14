@@ -127,6 +127,12 @@ public:
     }
 
     void CallSVC(std::uint32_t swi) override {
+#ifdef ANDROID
+        if (startup_svc_count++ < 48) {
+            LOG_INFO(Core_ARM11, "Dynarmic startup SVC core={} svc={:02X} pc={:08X} r0={:08X} r1={:08X}",
+                     parent.GetID(), swi, parent.GetPC(), parent.GetReg(0), parent.GetReg(1));
+        }
+#endif
         svc_context.CallSVC(swi);
     }
 
@@ -166,6 +172,9 @@ public:
         return static_cast<u64>(ticks <= 0 ? 0 : ticks);
     }
 
+#ifdef ANDROID
+    unsigned startup_svc_count = 0;
+#endif
     ARM_Dynarmic& parent;
     Kernel::SVCContext svc_context;
     Memory::MemorySystem& memory;

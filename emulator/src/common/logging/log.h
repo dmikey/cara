@@ -161,17 +161,8 @@ int64_t GetTimeNsec();
 
 
 #ifdef ANDROID
-#undef LOG_GENERIC
+// Keep startup and failure diagnostics available in logcat. Suppress the very
+// frequent debug messages in Android release builds.
 #undef LOG_DEBUG
-#undef LOG_INFO
-#undef LOG_WARNING
-#undef LOG_ERROR
-#undef LOG_CRITICAL
-
-#define LOG_GENERIC(...) (void(0))
 #define LOG_DEBUG(...) (void(0))
-#define LOG_INFO(...) (void(0))
-#define LOG_WARNING(...) (void(0))
-#define LOG_ERROR(...) (void(0))
-#define LOG_CRITICAL(...) (void(0))
 #endif
