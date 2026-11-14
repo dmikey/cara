@@ -112,13 +112,37 @@ launch requests, not an existing process. Normal iOS startup does not enable
 these diagnostics automatically; archived launch requests do not prove the
 physical iPad's current state.
 
+## Native state-reuse control
+
+A separate quiet same-binary off/on/on/off replay held the same guarded Slot 1,
+filesystem basis, 120-refresh warmup and 600-refresh interval. Master counters,
+category/PICA/sampled phase timing and scripted input were off. Only
+`CARA_GL_STATE_REUSE` changed. All four runs matched captured ARM/VFP, ticks,
+timers, HID and the full final refresh-721 RGBA. This is not whole-memory or
+intermediate-frame equivalence.
+
+| Run | Wall ms/refresh | Thread CPU ms/refresh |
+| --- | ---: | ---: |
+| A1 off | 119.771190 | 74.478535 |
+| B1 on | 119.761068 | 73.450575 |
+| B2 on | 119.710814 | 73.657506 |
+| A2 off | 119.688606 | 74.198644 |
+
+The enabled mean saves 0.784550 ms of thread CPU per refresh (1.055%), while
+mean wall time increases by 0.006043 ms: no frame-throughput gain is established.
+Both enabled CPU samples are below both disabled samples, but two repetitions
+per mode do not establish a confidence interval. This is the native M1 desktop
+GL path; the iPad already enables this option. No default was promoted.
+Private receipts are under `profiles/native-state-reuse-lilia-20261114`.
+
 ## Next test and evidence limits
 
-Successful `ValidateSurface → CopySurface/BlitTextures` operations lack the
-source/destination and invalidation-cause records provided for RAM fallbacks.
-A bounded metadata trace should distinguish new invalidation, allocation churn,
-different fragments and alternating aliases before proposing reuse. A source
-must remain valid over the entire copied range, with ownership preserved.
+The new default-off [successful-copy trace](surface-validation-copy-tracing.md)
+covers `ValidateSurface → CopySurface` returns separately from RAM fallbacks.
+Its bounded metadata can distinguish new invalidation, allocation churn,
+different fragments and alternating aliases before proposing reuse. Its current
+proof is ROM-free collector/schema testing; actual workload attribution remains
+pending. A source must remain valid over the entire copied range, with ownership preserved.
 Address equality alone is not evidence that copying is redundant. Existing
 exact-lookup caching should not be duplicated.
 

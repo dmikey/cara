@@ -153,6 +153,16 @@ int main(int argc, char** argv) {
             self.assertIsNone(failed['details'][0]['thread_cpu_ns'])
             self.assertEqual(failed['totals']['wall_failures'], 1)
             self.assertEqual(failed['totals']['cpu_failures'], 1)
+            # Cross-check real emitted reports with the offline schema validator,
+            # including bounded overflow and failed clocks (not only a model).
+            import importlib.util
+            spec = importlib.util.spec_from_file_location('validation_copy_summary',
+                ROOT / 'tools/summarize_validation_copies.py')
+            summary = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(summary)
+            for name in ('overflow.json', 'empty.json', 'surface-validation-copies.json'):
+                parsed = summary.summarize(json.loads((directory / name).read_text()))
+                self.assertNotIn('per_frame', parsed)
             if os.environ.get('CARA_VALIDATION_COPY_FIXTURE_OUTPUT'):
                 shutil.copytree(directory, os.environ['CARA_VALIDATION_COPY_FIXTURE_OUTPUT'],
                                 dirs_exist_ok=True)

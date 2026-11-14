@@ -82,3 +82,18 @@ The maintained `tests/test_validation_copy_trace.py` fixture also compiles the
 actual collector body with synthetic surface dependencies under ASan/UBSan,
 checking weak lifetimes, identity/detail/bucket caps, clock failures and JSON
 reconciliation. It needs `clang++` and uses the normal temporary-directory setting.
+
+The offline validator ranks complete-window layout aggregates and rejects totals
+that do not reconcile, saturated counters, duplicate aggregate keys, malformed
+intervals and unsupported schemas:
+
+```sh
+python3 tools/summarize_validation_copies.py /absolute/path/to/surface-validation-copies.json \
+  --rank time --limit 10
+```
+
+`--rank cpu`, `--rank calls` and `--rank bytes` select alternative orderings.
+Overflow remains explicit and chronological detail reasons are labelled as a
+biased prefix. The tool does not infer FPS, normalize by observed frame bounds,
+or equate logical copied bytes with memory-bus traffic. The caller must still
+verify a fresh file from the intended process/cache lifetime and endpoint.
