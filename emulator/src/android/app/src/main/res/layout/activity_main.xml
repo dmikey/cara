@@ -16,7 +16,6 @@
             android:layout_height="?attr/actionBarSize"
             app:layout_scrollFlags="scroll|enterAlways"
             app:title="@string/app_name"
-            app:subtitle="@string/cara_library_subtitle"
             app:logo="@drawable/cara_toolbar_logo"
             app:menu="@menu/menu_main" />
 

@@ -173,14 +173,14 @@ public final class SettingsFile {
             // ignore
         }
 
-        switch (value) {
-        case "True":
+        // Native INI readers accept boolean words regardless of casing.
+        if ("true".equalsIgnoreCase(value)) {
             return new BooleanSetting(key, current.getName(), true);
-        case "False":
-            return new BooleanSetting(key, current.getName(), false);
-        default:
-            return new StringSetting(key, current.getName(), value);
         }
+        if ("false".equalsIgnoreCase(value)) {
+            return new BooleanSetting(key, current.getName(), false);
+        }
+        return new StringSetting(key, current.getName(), value);
     }
 
     /**
