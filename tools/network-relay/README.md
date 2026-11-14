@@ -2,7 +2,7 @@
 
 A standalone Go room relay for Cara-controlled local-wireless adapters. It uses binary packet frames after a JSON join, bounded queues, a total connection cap, and TLS 1.3 for remote listeners. No BIOS, firmware, console keys, Nintendo client certificates, account tokens are used. The WebSocket deployment transport uses the pinned `github.com/coder/websocket` dependency; its license is retained in `THIRD_PARTY_NOTICES.txt`.
 
-**Status: transport prototype; deployment packaging is available in `deploy/`.** Cara's current ENet `RoomMember` cannot connect to this protocol. The iOS adapter and StreetPass mailbox exchange are not implemented. Running this process does not enable Pokémon Internet play, trading, battling, or physical-console wireless interoperability.
+**Status: private relay transport deployed and remotely verified at `wss://carap2p.therad.ninja/relay`; deployment/rollback evidence is in `DEPLOYMENT.md`.** Cara's current ENet `RoomMember` cannot connect to this protocol. The iOS adapter and StreetPass mailbox exchange are not implemented. Running this process does not enable Pokémon Internet play, trading, battling, or physical-console wireless interoperability.
 
 ## Local development
 
@@ -39,7 +39,7 @@ The first adapter must define a stable serialization for `Network::WifiPacket` (
 
 ## Limits of this prototype
 
-TCP/TLS keeps the first protocol small and testable and provides ordered delivery, but packet loss can cause head-of-line blocking. Benchmark the actual two-device game path before selecting TCP, QUIC, or UDP for release. This relay has no reconnect/resume, protocol negotiation beyond v1, metrics, per-room bandwidth quotas, room-owner revocation API, or production abuse controls. It is not a public hosting package.
+TCP/TLS keeps the first protocol small and testable and provides ordered delivery, but packet loss can cause head-of-line blocking. Benchmark the actual two-device game path before selecting TCP, QUIC, or UDP for release. This relay has no reconnect/resume, protocol negotiation beyond v1, metrics, per-room bandwidth quotas, room-owner revocation API, or production abuse controls. This deployment serves configured private rooms; it does not provide public hosting/account management.
 
 ## Local validation record — 2026-11-13
 
