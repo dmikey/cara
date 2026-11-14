@@ -97,3 +97,20 @@ Overflow remains explicit and chronological detail reasons are labelled as a
 biased prefix. The tool does not infer FPS, normalize by observed frame bounds,
 or equate logical copied bytes with memory-bus traffic. The caller must still
 verify a fresh file from the intended process/cache lifetime and endpoint.
+
+## Direct validation interval reuse
+
+Direct validation now takes the winning interval already computed by
+`FindMatch<Copy>` instead of allocating and recomputing its source-valid-region
+intersection a second time. The caller has already normalized its parameters
+with `FromInterval(interval)`. Candidate ranking, copied ranges, validation
+updates and GPU commands stay unchanged. Reinterpretation keeps its separate
+broad-parameter calculation and nonprogress checks.
+
+`cara-surface-copy-interval-self-test` includes the actual private matching
+implementation and real surface-parameter methods. Its cases compare the old
+selection/recomputation with the returned interval across formats, tiling,
+strides, scales, fragmented validity, fills and misses, including narrow/broad
+counterexamples. The standalone ASan/UBSan run passed 1,655,336 checks before
+integration; the maintained native target is also built and run in CI. This
+removes duplicate host computation; no gameplay speed gain is established.
