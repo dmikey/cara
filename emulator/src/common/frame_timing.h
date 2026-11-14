@@ -80,6 +80,14 @@ struct Counters {
     std::uint64_t contiguous_transfer_bytes = 0;
 
     PhaseCPUSamples draw_submit_cpu_samples;
+    PhaseCPUSamples vertex_prepare_cpu_samples;
+    PhaseCPUSamples vertex_reuse_cpu_samples;
+    PhaseCPUSamples state_apply_cpu_samples;
+    PhaseCPUSamples vertex_execution_cpu_samples;
+    PhaseCPUSamples framebuffer_setup_cpu_samples;
+    PhaseCPUSamples present_cpu_samples;
+    PhaseCPUSamples gpu_wait_cpu_samples;
+
     PhaseCPUSamples vertex_orphan_cpu_samples;
     PhaseCPUSamples stream_map_cpu_samples;
     PhaseCPUSamples stream_unmap_cpu_samples;
@@ -225,7 +233,7 @@ public:
         static thread_local std::array<std::uint64_t,
             static_cast<std::size_t>(TextureAcquisitionPhase::Count)> sequence{};
         const auto mixed = std::uint32_t(++sequence[index]) * 0x9E3779B9u;
-        if ((mixed >> 26) != 0) return;
+        if (sample_phase < 13 && (mixed >> 26) != 0) return;
         sample = &value.timing;
         started = std::chrono::steady_clock::now();
         cpu_started = ReadCPU();
@@ -283,20 +291,36 @@ public:
         else if (phase == Phase::VertexSubImageUpload) sample_phase = 5;
         else if (phase == Phase::SurfaceDownload) sample_phase = 6;
         else if (phase == Phase::SurfaceReadPixels) sample_phase = 7;
+        else if (phase == Phase::VertexPrepare) sample_phase = 8;
+        else if (phase == Phase::VertexReuseCheck) sample_phase = 9;
+        else if (phase == Phase::StateApply) sample_phase = 10;
+        else if (phase == Phase::DrawVertexExecution) sample_phase = 11;
+        else if (phase == Phase::DrawFramebufferSetup) sample_phase = 12;
+        else if (phase == Phase::Present) sample_phase = 13;
+        else if (phase == Phase::GPUWait) sample_phase = 14;
         if (sample_phase < 0 || !CPUSamplingEnabled()) return;
-        static thread_local std::array<std::uint64_t, 8> sample_sequence{};
+        static thread_local std::array<std::uint64_t, 15> sample_sequence{};
         // Use high bits of a multiplicative hash, avoiding a fixed draw-slot
         // pattern when a frame repeatedly submits a multiple of 64 draws.
         const auto mixed = std::uint32_t(++sample_sequence[sample_phase]) * 0x9E3779B9u;
-        if ((mixed >> 26) != 0) return;
-        cpu_sample = sample_phase == 0 ? &counters.draw_submit_cpu_samples
-                   : sample_phase == 1 ? &counters.vertex_orphan_cpu_samples
-                                       : sample_phase == 2 ? &counters.stream_map_cpu_samples
-                   : sample_phase == 3 ? &counters.stream_unmap_cpu_samples
-                   : sample_phase == 4 ? &counters.uniform_upload_cpu_samples
-                                       : sample_phase == 5 ? &counters.vertex_subimage_cpu_samples
-                   : sample_phase == 6 ? &counters.surface_download_cpu_samples
-                                       : &counters.surface_read_pixels_cpu_samples;
+        if (sample_phase < 13 && (mixed >> 26) != 0) return;
+        const std::array<PhaseCPUSamples*, 15> samples{{
+            &counters.draw_submit_cpu_samples,
+            &counters.vertex_orphan_cpu_samples,
+            &counters.stream_map_cpu_samples,
+            &counters.stream_unmap_cpu_samples,
+            &counters.uniform_upload_cpu_samples,
+            &counters.vertex_subimage_cpu_samples,
+            &counters.surface_download_cpu_samples,
+            &counters.surface_read_pixels_cpu_samples,
+            &counters.vertex_prepare_cpu_samples,
+            &counters.vertex_reuse_cpu_samples,
+            &counters.state_apply_cpu_samples,
+            &counters.vertex_execution_cpu_samples,
+            &counters.framebuffer_setup_cpu_samples,
+            &counters.present_cpu_samples,
+            &counters.gpu_wait_cpu_samples}};
+        cpu_sample = samples[sample_phase];
         cpu_started = ReadThreadCPUTime();
         if (cpu_started < 0) {
             ++cpu_sample->clock_failures;

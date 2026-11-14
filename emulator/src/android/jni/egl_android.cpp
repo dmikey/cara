@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include "common/frame_timing.h"
 #include "egl_android.h"
 
 #include <android/native_window_jni.h>
@@ -201,6 +202,7 @@ void EGLAndroid::TryPresenting() {
         }
     }
     if (VideoCore::Renderer()->TryPresent()) {
+        Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::Present);
         eglSwapBuffers(egl_display, egl_surface);
     }
 }
@@ -213,6 +215,7 @@ void EGLAndroid::StopPresenting() {
 }
 
 void EGLAndroid::SwapBuffers() {
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::Present);
     eglSwapBuffers(egl_display, egl_surface);
 }
 

@@ -69,6 +69,9 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> phase_timing{{"Debug", "trace_renderer_timing"}, false};
     const Config::ConfigInfo<bool> guest_trace{{"Debug", "trace_guest_threads"}, false};
     const Config::ConfigInfo<bool> bookkeeping{{"Debug", "trace_renderer_bookkeeping"}, false};
+    const Config::ConfigInfo<bool> cpu_timing{{"Debug", "trace_renderer_cpu"}, false};
+    setenv("CARA_PHASE_CPU_TIMING", Config::Get(cpu_timing) ? "1" : "0", 1);
+    setenv("CARA_DRAW_COST_PROFILE", Config::Get(cpu_timing) ? "1" : "0", 1);
     setenv("CARA_RENDER_BOOKKEEPING_PROFILE", Config::Get(bookkeeping) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> native_luts{{"Debug", "native_lut_buffers"}, false};
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
@@ -195,6 +198,19 @@ void BootGame(const std::string& path) {
                     phases.draw_framebuffer_setup_seconds*1000,
                     phases.draw_lut_upload_seconds*1000,
                     phases.draw_vertex_execution_seconds*1000);
+                const auto report_cpu = [](const char* name, const Common::FrameTiming::PhaseCPUSamples& sample) {
+                    LOG_INFO(Frontend, "Android phase CPU: phase={} samples={} wall_ms={:.3f} cpu_ms={:.3f} failures={}",
+                        name, sample.samples, sample.wall_seconds*1000, sample.cpu_seconds*1000, sample.clock_failures);
+                };
+                report_cpu("vertex_prepare", phases.vertex_prepare_cpu_samples);
+                report_cpu("vertex_reuse", phases.vertex_reuse_cpu_samples);
+                report_cpu("state_apply", phases.state_apply_cpu_samples);
+                report_cpu("vertex_execution", phases.vertex_execution_cpu_samples);
+                report_cpu("framebuffer_setup", phases.framebuffer_setup_cpu_samples);
+                report_cpu("submit", phases.draw_submit_cpu_samples);
+                report_cpu("present", phases.present_cpu_samples);
+                report_cpu("fence_wait", phases.gpu_wait_cpu_samples);
+                LOG_INFO(Frontend, "Android waits: fence_wait_ms={:.3f} present_ms={:.3f}", phases.gpu_wait_seconds*1000, phases.present_seconds*1000);
                 phases = {};
                 phases.enabled = true;
                 next_phase_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
