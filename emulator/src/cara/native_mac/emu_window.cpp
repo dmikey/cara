@@ -4,6 +4,7 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -24,6 +25,8 @@
 #include <fmt/format.h>
 #include <glad/glad.h>
 #include "cara/native_mac/emu_window.h"
+#include "cara/native_mac/profile_snapshot.h"
+#include "cara/native_mac/benchmark_controls.h"
 #include "common/logging/log.h"
 #include "common/scm_rev.h"
 #include "core/3ds.h"
@@ -232,6 +235,54 @@ static std::vector<u32> NativeFrameList(const char* name) {
     }
     return result;
 }
+namespace {
+EmuWindow_SDL2::StateCommand pending_state_command = EmuWindow_SDL2::StateCommand::None;
+bool benchmark_active = false;
+bool benchmark_stop = false;
+bool benchmark_capture_pending = false;
+bool benchmark_capture_done = false;
+u32 benchmark_base_frame = 0;
+u32 benchmark_warmup = 300;
+u32 benchmark_end = 1200;
+std::vector<NativeMac::CircleSegment> benchmark_route;
+} // namespace
+static u32 NativeFrameOption(const char* name, u32 fallback);
+
+EmuWindow_SDL2::StateCommand EmuWindow_SDL2::TakeStateCommand() {
+    const auto command = pending_state_command;
+    pending_state_command = StateCommand::None;
+    return command;
+}
+bool EmuWindow_SDL2::TakeBenchmarkStop() {
+    const bool stop = benchmark_stop;
+    benchmark_stop = false;
+    return stop;
+}
+void EmuWindow_SDL2::BeginBenchmark() {
+    benchmark_warmup = NativeFrameOption("CARA_NATIVE_BENCHMARK_WARMUP", 300);
+    benchmark_end = NativeFrameOption("CARA_NATIVE_BENCHMARK_FRAMES", 1200);
+    if (benchmark_warmup >= benchmark_end)
+        throw std::runtime_error("Native benchmark requires warmup < end frame");
+    const auto* route = std::getenv("CARA_NATIVE_CIRCLE_SEGMENTS");
+    benchmark_route = NativeMac::ParseCircleSegments(route ? route : "");
+    benchmark_base_frame = VideoCore::GetCurrentFrame();
+    benchmark_active = true;
+    WriteNativeProfileSnapshot(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
+                                   "native-benchmark-origin",
+                               benchmark_base_frame);
+}
+
+static u32 NativeFrameOption(const char* name, u32 fallback = 0) {
+    const char* value = std::getenv(name);
+    if (!value)
+        return fallback;
+    char* end = nullptr;
+    const auto parsed = std::strtoul(value, &end, 10);
+    if (end == value || *end || parsed > 100000)
+        throw std::runtime_error("Invalid native frame control");
+    return static_cast<u32>(parsed);
+}
+
 static void NativeFrameDiagnostics() {
     static const bool enabled = [] {
         const auto* p = std::getenv("CARA_NATIVE_DIAGNOSTICS");
@@ -243,6 +294,39 @@ static void NativeFrameDiagnostics() {
     static const auto starts = NativeFrameList("CARA_NATIVE_PRESS_START_FRAMES");
     static const auto captures = NativeFrameList("CARA_NATIVE_CAPTURE_FRAMES");
     const u32 completed = VideoCore::GetCurrentFrame() + 1;
+    if (benchmark_active) {
+        const u32 relative =
+            completed >= benchmark_base_frame ? completed - benchmark_base_frame : 0;
+        const auto desired = NativeMac::CircleKeys(benchmark_route, relative);
+        static std::array<bool, 4> previous_keys{};
+        constexpr std::array<int, 4> keys{
+            {SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN}};
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            if (desired[i] != previous_keys[i]) {
+                if (desired[i])
+                    InputCommon::GetKeyboard()->PressKey(keys[i]);
+                else
+                    InputCommon::GetKeyboard()->ReleaseKey(keys[i]);
+                previous_keys[i] = desired[i];
+            }
+        }
+        static bool wrote_begin = false, wrote_end = false;
+        if (!wrote_begin && relative >= benchmark_warmup) {
+            wrote_begin = true;
+            WriteNativeProfileSnapshot(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
+                                           "native-benchmark-before",
+                                       completed);
+        }
+        if (!wrote_end && relative >= benchmark_end) {
+            wrote_end = true;
+            WriteNativeProfileSnapshot(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
+                                           "native-benchmark-after",
+                                       completed);
+            benchmark_capture_pending = true;
+        }
+    }
+    if (benchmark_active && benchmark_capture_done)
+        benchmark_stop = true;
     const bool down = std::any_of(presses.begin(), presses.end(),
                                   [&](u32 at) { return completed >= at && completed < at + 6; });
     static bool previous = false;
@@ -270,7 +354,9 @@ static void NativeFrameDiagnostics() {
         InputCommon::GetKeyboard()->ReleaseKey(command_key);
         command_key = 0;
     }
-    bool requested_capture = false;
+    const bool final_benchmark_capture = benchmark_capture_pending;
+    bool requested_capture = final_benchmark_capture;
+    benchmark_capture_pending = false;
     if (completed % 30 == 0) {
         const auto request =
             FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "native-command.txt";
@@ -285,7 +371,15 @@ static void NativeFrameDiagnostics() {
             unsigned duration = 6;
             command >> name >> duration;
             duration = std::clamp(duration, 1u, 600u);
-            if (name == "capture")
+            if (name == "save") {
+                pending_state_command = EmuWindow_SDL2::StateCommand::Save;
+            } else if (name == "load") {
+                pending_state_command = EmuWindow_SDL2::StateCommand::Load;
+            } else if (name == "profile") {
+                WriteNativeProfileSnapshot(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
+                                               "native-frame-" + std::to_string(completed),
+                                           completed);
+            } else if (name == "capture")
                 requested_capture = true;
             else {
                 int key = name == "a"       ? SDL_SCANCODE_A
@@ -309,8 +403,9 @@ static void NativeFrameDiagnostics() {
     const u32 target = completed + 1;
     if (!requested_capture && std::find(captures.begin(), captures.end(), target) == captures.end())
         return;
-    VideoCore::g_screenshot_complete_callback = [target](u32 width, u32 height,
-                                                         const std::vector<u32>& pixels) {
+    VideoCore::g_screenshot_complete_callback = [target, final_benchmark_capture](
+                                                    u32 width, u32 height,
+                                                    const std::vector<u32>& pixels) {
         const auto stem = FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "native-frame-" +
                           std::to_string(target);
         const auto* data = reinterpret_cast<const u8*>(pixels.data());
@@ -395,10 +490,14 @@ static void NativeFrameDiagnostics() {
             << (Settings::values.init_clock == Settings::InitClock::FixedTime ? "true" : "false")
             << ",\"rtc_init_epoch\":" << Settings::values.init_time
             << ",\"nonblack_pixels\":" << colored << ",\"png_written\":" << (png ? "true" : "false")
-            << ",\"guest_cpu_percent\":100,\"audio\":\"sdl2\",\"instrumented\":true,\"pcs\":[";
+            << ",\"guest_cpu_percent\":100,\"audio\":\"sdl2\",\"instrumented\":true"
+            << ",\"timing_counters_enabled\":" << (counters.enabled ? "true" : "false")
+            << ",\"capture_readback\":true,\"pcs\":[";
         for (unsigned i = 0; i < 4; ++i)
             out << (i ? "," : "") << system.GetCore(i).GetPC();
         out << "],\"lcd\":" << lcd.str() << "}\n";
+        if (final_benchmark_capture)
+            benchmark_capture_done = true;
         std::cout << "Native capture refresh=" << target << " nonblack=" << colored
                   << " draws=" << counters.pica_draw_requests << std::endl;
     };

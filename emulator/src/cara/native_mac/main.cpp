@@ -18,6 +18,7 @@
 #include "cara/config.h"
 #include "cara/lodepng_image_interface.h"
 #include "cara/native_mac/emu_window.h"
+#include "cara/native_mac/profile_snapshot.h"
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
@@ -27,8 +28,10 @@
 #include "core/arm/fastinterp/fastinterp.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
+#include "core/savestate.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_vars.h"
+#include "video_core/video_core.h"
 static void NativeCPUDefaults() {
     for (const auto& item : {std::pair{"CARA_CPU_BACKEND", "fastinterp"},
                              {"CARA_FASTINTERP_ALU_OPERANDS", "1"},
@@ -152,12 +155,32 @@ int main(int argc, char** argv) {
         std::cout << "Native load result: " << static_cast<unsigned>(loaded) << std::endl;
         if (loaded != Core::System::ResultStatus::Success)
             return 3;
-        WriteNativeManifest(directory);
-        std::signal(SIGTERM, StopNative);
-        std::signal(SIGINT, StopNative);
+        const bool diagnostics = std::getenv("CARA_NATIVE_DIAGNOSTICS") &&
+                                 std::string(std::getenv("CARA_NATIVE_DIAGNOSTICS")) == "1";
+        const auto record_state = [&](const char* operation) {
+            std::ofstream state(directory + "native-state-status.json");
+            state << "{\"operation\":\"" << operation
+                  << "\",\"slot\":1,\"frame\":" << VideoCore::GetCurrentFrame()
+                  << ",\"fingerprint\":\"" << Core::GetSaveStateBuildFingerprint()
+                  << "\",\"ticks\":" << system.CoreTiming().GetTicks() << "}\n";
+        };
+        if (const char* load = std::getenv("CARA_NATIVE_LOAD_SLOT");
+            diagnostics && load && std::string(load) == "1") {
+            system.LoadState(1);
+            record_state("load");
+        }
         if (const char* diagnostic = std::getenv("CARA_NATIVE_DIAGNOSTICS");
             diagnostic && std::string(diagnostic) == "1")
-            Common::FrameTiming::counters.enabled = true;
+            Common::FrameTiming::counters.enabled =
+                !std::getenv("CARA_NATIVE_TIMING_COUNTERS") ||
+                std::string(std::getenv("CARA_NATIVE_TIMING_COUNTERS")) != "0";
+        WriteNativeManifest(directory);
+        WriteNativeProfileSnapshot(directory + "native-startup", VideoCore::GetCurrentFrame());
+        std::signal(SIGTERM, StopNative);
+        std::signal(SIGINT, StopNative);
+        if (const char* benchmark = std::getenv("CARA_NATIVE_BENCHMARK");
+            diagnostics && benchmark && std::string(benchmark) == "1")
+            window.BeginBenchmark();
         while (window.IsOpen() && !stop_requested) {
             const auto result = system.RunLoop();
             if (result == Core::System::ResultStatus::ShutdownRequested)
@@ -166,6 +189,22 @@ int main(int argc, char** argv) {
                 std::cerr << "Run failure: " << static_cast<unsigned>(result) << std::endl;
                 return 4;
             }
+            // PollEvents only queues requests. Serialize here, after RunLoop and
+            // its timing callbacks return/requeue, with the GL context still live.
+            switch (window.TakeStateCommand()) {
+            case EmuWindow_SDL2::StateCommand::Save:
+                system.SaveState(1);
+                record_state("save");
+                break;
+            case EmuWindow_SDL2::StateCommand::Load:
+                system.LoadState(1);
+                record_state("load");
+                break;
+            case EmuWindow_SDL2::StateCommand::None:
+                break;
+            }
+            if (window.TakeBenchmarkStop())
+                break;
         }
         return 0;
     } catch (const std::exception& error) {

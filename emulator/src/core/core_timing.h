@@ -196,6 +196,14 @@ public:
 
         void MoveEvents();
 
+        // Read-only developer receipts; these accessors do not alter guest timing.
+        double GetClockScaleForDiagnostics() const {
+            return cpu_clock_scale;
+        }
+        u32 GetDowncountHackForDiagnostics() const {
+            return downcount_hack;
+        }
+
         void SetDowncountHack(u32 hack) {
             downcount_hack = hack;
         }

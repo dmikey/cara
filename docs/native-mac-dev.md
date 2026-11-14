@@ -143,3 +143,85 @@ as unverified. Profiling perturbs execution: keep these captures separate from
 matched performance comparisons. Parser and capture-command tests pass. A live 20-second M1 capture also passed
 process and executable identity checks; see [the verified capture](host-pc-sampling.md#native-m1-time-profiler-verification-2026-11-13)
 for results and interpretation limits.
+
+## Opt-in checkpoint and measurement controls
+
+`CARA_NATIVE_DIAGNOSTICS=1` enables developer commands in the private user
+folder's `native-command.txt`. Write one command per request; the host consumes
+and removes the file at its next 30-refresh polling point. Existing `a`, `b`,
+`start`, `left`, `right`, `up`, `down` commands take a refresh duration (1–600).
+`capture` requests a renderer screenshot and may add GPU readback cost.
+
+Additional commands are `save`, `load` and `profile`. Save/load use slot 1 in the
+selected user directory and can replace that slot: use a dedicated development
+user directory and preserve any desired earlier state. Requests are **queued**
+by event polling and consumed only after `System::RunLoop` returns, while the
+GL context remains alive. This avoids serializing inside an active VBlank
+callback. `native-state-status.json` records completed operation, slot, actual
+VideoCore frame, build fingerprint and current timer ticks. Normal state title,
+platform and fingerprint checks remain active. `CARA_NATIVE_LOAD_SLOT=1` loads
+slot 1 once after the ROM loads; it also requires diagnostic mode. Create a new
+checkpoint under the executable being compared; never bypass a fingerprint
+rejection. These controls change no guest clock or scheduling policy.
+
+`CARA_NATIVE_PROFILE_SNAPSHOT=1` additionally writes read-only JSON snapshots
+after startup, on the `profile` command, and at benchmark boundaries. It requires
+`CARA_NATIVE_DIAGNOSTICS=1`. Snapshots include effective Legacy/New 3DS mode,
+per-core clock scale/divisor, captured ARM/VFP registers, cumulative block census,
+actual `current_timer_ticks`, thread CPU and monotonic wall clocks, and selected
+existing counters. Legacy-mode `global_ticks` can be zero; use
+`current_timer_ticks` for progression. Census execution counts cover retained
+blocks and can reset on eviction; they are not interval CPU time.
+
+Set `CARA_NATIVE_TIMING_COUNTERS=0` to disable existing timed scopes/counters
+while keeping diagnostic input and snapshots. Disabled counter values do not
+measure work; in particular zero draw counters are not proof of zero draws.
+Snapshots explicitly report counter and requested script modes, and do not
+perform a GPU readback. A screenshot receipt reports `capture_readback:true`.
+No output-underrun counter or physical sound-smoothness proof is supplied.
+
+For a bounded comparison, `CARA_NATIVE_BENCHMARK=1` starts a refresh-relative
+window after startup/state load. `CARA_NATIVE_BENCHMARK_WARMUP` defaults to 300;
+`CARA_NATIVE_BENCHMARK_FRAMES` is the exclusive measurement end (default 1200),
+not an additional frame count. Both are bounded to 100000, with warmup strictly
+below end. The host records before/after snapshots and captures the next refresh
+outside the measured interval, then requests exit after the capture completes.
+Use an external timeout as well in case the game or driver stops progressing.
+
+There is **no built-in movement route**. Optionally set
+`CARA_NATIVE_CIRCLE_SEGMENTS='360:480:-1:0;600:720:1:0;840:960:0:1'`.
+Each segment is `start:end:x:y`, inclusive start/exclusive end, with digital axes
+-1/0/1 (positive y is up). Up to 16 ordered, nonoverlapping segments are accepted;
+invalid input fails before running. Normal keyboard diagonal normalization is
+retained. A/Start/capture frame lists remain absolute VideoCore frame controls;
+the circle route alone is relative to benchmark startup. Do not mix manual
+state loads or unrelated inputs into a matched benchmark.
+
+For example, with a same-build slot-1 checkpoint already in a dedicated folder:
+
+```sh
+CARA_USER_DIR=/absolute/path/to/development-user \
+CARA_NATIVE_DIAGNOSTICS=1 CARA_NATIVE_PROFILE_SNAPSHOT=1 \
+CARA_NATIVE_TIMING_COUNTERS=0 CARA_NATIVE_LOAD_SLOT=1 \
+CARA_NATIVE_BENCHMARK=1 CARA_NATIVE_BENCHMARK_WARMUP=300 \
+CARA_NATIVE_BENCHMARK_FRAMES=1200 \
+CARA_NATIVE_CIRCLE_SEGMENTS='360:480:-1:0;600:720:1:0;840:960:0:1' \
+/path/to/native-build/bin/cara /absolute/path/to/owned-game.3ds
+```
+
+For each compared mode preserve the executable hash, fingerprint, checkpoint
+hash, complete launch environment, boundary profiles and final image. Derive
+clock deltas from the before snapshot's `snapshot_complete_*` clocks to the
+after snapshot's initial clocks to exclude the bulk of the before snapshot's
+formatting/output. The final completion-record write and stream close remain
+observer overhead.
+The interval includes normal driver waits in wall time; thread CPU excludes
+other threads and GPU time. Final image readback is outside it. Report warmup,
+measured refreshes and remaining observer activity explicitly. Pixel/register
+parity does not substitute for full guest-memory, hardware or audio validation.
+
+The bounded route parser has a ROM-free compiler test:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_native_mac_controls.py
+```

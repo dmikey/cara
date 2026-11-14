@@ -18,6 +18,15 @@ public:
 
     void SwapBuffers() override;
 
+    enum class StateCommand {
+        None,
+        Save,
+        Load,
+    };
+    StateCommand TakeStateCommand();
+    bool TakeBenchmarkStop();
+    void BeginBenchmark();
+
     /// Polls window events
     void PollEvents() override;
 
