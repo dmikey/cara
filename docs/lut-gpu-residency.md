@@ -63,3 +63,49 @@ passes. The test is excluded from ordinary builds and does not affect shipping
 runtime. The fix is in the shared desktop/GLES upload logic, but this evidence is
 native M1 correctness proof, not a physical-iPad result or a performance gain.
 Unchanged-write notification elision is outside this change.
+## GLES client-memory upload correction
+
+The GLES path previously passed a `glMapBufferRange` result to
+`glTexSubImage2D` as client-memory texture data before unmapping the stream.
+This is not a supported use of a mapping: OpenGL ES 3.0.6 §2.10.3, pages 37–40,
+prohibits supplying mapped pointers as GL command arguments, including texture
+image data. It also makes reads through a write-only mapping undefined. Newly
+written bytes and an explicit flush do not remove those restrictions. Unmapping
+invalidates the CPU pointer, so merely moving the same pointer upload after
+unmapping would not fix it. See the
+[official GLES 3.0.6 specification](https://registry.khronos.org/OpenGL/specs/es/3.0/es_spec_3.0.pdf).
+
+GLES now reserves ordinary CPU-owned staging through `MapStaging`, not GL mapped
+storage. Existing converted CPU shadows are copied directly into this reusable
+staging allocation. The two-dimensional LUT upload consumes that memory with
+`GL_PIXEL_UNPACK_BUFFER` explicitly unbound. It saves and restores the actual
+unpack-buffer binding, row length, alignment, skipped rows and pixels, active
+texture unit, and destination-unit texture binding. Texture allocation likewise
+unbinds and restores the unpack buffer so a null allocation pointer cannot be
+interpreted as a buffer offset. Both procedural-texture views restart at the
+same staging pointer and logical byte offset; each converts that offset to its
+own RG or RGBA texel units.
+
+`FinishStaging` advances only by the bytes actually published, then releases the
+reservation. An unchanged resident table can finish with zero bytes without
+advancing the ring. Reservation wrap always invalidates the logical LUT ranges,
+including when `stream_buffer_hack` is enabled, and the existing synchronization
+loops republish every table. This is necessary because wrapped 2D texture
+uploads overwrite texels belonging to earlier ranges. Staging capacity is one
+maximum upload batch, not the entire logical ring. A fresh renderer starts with
+empty staging, ring position zero, negative residency offsets and all tables
+dirty; state-load renderer reconstruction follows that same path.
+
+Desktop texture-buffer mapping and sampling are unchanged. The GLES stream
+objects still allocate their original GL buffers; removing those unused backing
+allocations is a separate potential cleanup. This correction does not implement
+a PBO upload mode and does not read or transfer from mapped GL memory. A future
+PBO experiment would require successful flushing/unmapping, buffer-offset
+transfers, and safe reuse of in-flight source ranges.
+
+The native `samplerBuffer` oracle above does **not** validate this GLES 2D path.
+Its separate regression must exercise real `sampler2D` uploads, both format
+views, initial-zero residency, partial changes, row boundaries, forced ring
+wrap with the stream hack on and off, renderer reconstruction, and poisoned
+unpack/PBO state. Syntax checks are not GPU correctness proof. No timing,
+performance improvement, or physical-device gain is established by this fix.
