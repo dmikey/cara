@@ -35,6 +35,58 @@ jobs:
           path: |
             work/build-mac-sdl/native-no-jit-audit.json
             work/build-mac-sdl/configure-command.json
+  compact-interpreter:
+    name: macOS compact decoded records / software / no JIT
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned build tools
+        run: |
+          python3 -m venv work/tools
+          work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+          xcodebuild -version
+          uname -m
+      - name: Validate bundled source without fetching
+        run: python3 tools/prepare.py
+      - name: Build opt-in compact records with ordinary no-JIT defaults
+        run: python3 tools/build.py mac --compact-decoded --build-dir work/build-mac-compact --jobs 2
+      - name: Audit linked no-JIT binary
+        run: python3 tools/audit_no_jit.py mac --build-dir work/build-mac-compact
+      - name: Verify actual compiled record layout
+        run: |
+          work/build-mac-compact/bin/cara-fastinterp-decoded-record-self-test | tee work/build-mac-compact/decoded-record.log
+          python3 -c "from pathlib import Path; assert 'record=16 block=544' in Path('work/build-mac-compact/decoded-record.log').read_text()"
+      - name: Check compact interpreter semantics and architectural boundaries
+        run: |
+          work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_CACHE_ENTRIES=32768 CARA_FASTINTERP_CACHE_WAYS=8 CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_TICK_BUCKETS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_DECODED_METADATA_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_AL_DISPATCH_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_BLX_LINK_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_PC_BOUNDARY_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_LDM_PC_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_DECODE_REUSE_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_UNROLL_BUDGET_TEST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_CHAIN_SVC_TEST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_CAPACITY_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_SECONDARY_LINK_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_SCALAR_DOUBLE_TEST=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_VLDR_PAIR_TEST=1 CARA_FASTINTERP_VLDR_PAIRS=1 work/build-mac-compact/bin/cara-fastinterp-self-test
+          for cara_vfp_simd in 0 1 2 3; do
+            CARA_FASTINTERP_SHORT_VECTOR_TEST=1 CARA_FASTINTERP_VFP_SIMD=$cara_vfp_simd work/build-mac-compact/bin/cara-fastinterp-self-test
+          done
+      - name: Retain compact-layout configuration and audit receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-compact-interpreter-audit
+          path: |
+            work/build-mac-compact/decoded-record.log
+            work/build-mac-compact/no-jit-audit.json
+            work/build-mac-compact/src/fastinterp_decoded_layout_config.h
   network-relay:
     name: Go network relay / race checks
     runs-on: ubuntu-latest
