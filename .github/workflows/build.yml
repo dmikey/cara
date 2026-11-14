@@ -52,7 +52,7 @@ jobs:
         run: go vet ./...
       - name: Test relay with race detector
         run: go test -race ./...
-      - name: Check unwired client codec with sanitizers
+      - name: Check portable relay client contracts with sanitizers
         run: client-prototype/check.sh
   build:
     name: ${{ matrix.platform }} / ${{ matrix.renderer }} / ARM64 / no JIT
@@ -115,7 +115,7 @@ jobs:
           clang++ -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -Iemulator/src tests/lcd_upload_self_test.cpp -o work/lcd-upload-self-test
           work/lcd-upload-self-test
           clang++ -std=c++17 -O2 -gline-tables-only -DCARA_INTERNAL_HOST_PC_SAMPLER=1 emulator/src/cara/host_pc_sampler.cpp emulator/src/cara/host_pc_sampler_self_test.cpp -o work/host-pc-sampler-smoke
-          work/host-pc-sampler-smoke
+          work/host-pc-sampler-smoke work/cara-host-pc-smoke
           work/build-mac/bin/cara-no-jit-probe --self-test work/io-self-test
           work/build-mac/bin/cara-extdata-state-self-test work/extdata-state-regression
           python3 tools/make_test_elf.py work/state-counter.elf
@@ -220,6 +220,13 @@ jobs:
           work/build-mac/bin/cara-skin-self-test
           CARA_RASTER_THREADS=1 work/build-mac/bin/cara-raster-self-test
           CARA_RASTER_THREADS=4 work/build-mac/bin/cara-raster-self-test
+      - name: Retain native sampler diagnostics
+        if: always() && matrix.platform == 'mac'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-host-pc-sampler-diagnostics
+          if-no-files-found: ignore
+          path: work/cara-host-pc-smoke-*.json
       - name: Package unsigned iOS app
         if: matrix.platform == 'ios'
         run: ditto -c -k --norsrc --noextattr --keepParent 'work/build-ios${{ matrix.suffix }}/bin/cara-ios.app' 'work/Cara-iOS-${{ matrix.renderer }}-unsigned.zip'
