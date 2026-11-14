@@ -69,6 +69,12 @@ jobs:
             emulator/src/android/app/build/outputs/apk/debug/*.apk
             android-apk.sha256
       - uses: actions/upload-artifact@v4
+        with:
+          name: cara-android-arm64-native-symbols
+          if-no-files-found: error
+          compression-level: 6
+          path: emulator/src/android/app/build/intermediates/cxx/**/obj/arm64-v8a/libmain.so
+      - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: android-build-diagnostics
