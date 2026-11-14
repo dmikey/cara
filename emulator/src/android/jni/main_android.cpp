@@ -28,7 +28,6 @@
 #include "core/loader/smdh.h"
 #include "core/settings.h"
 #include "video_core/video_core.h"
-#include "video_core/renderer_opengl/gl_rasterizer.h"
 
 #include "camera/ndk_camera.h"
 #include "camera/still_image_camera.h"
@@ -160,8 +159,7 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> verify_framebuffers{{"Debug", "verify_draw_framebuffer_cache"}, false};
     if (Config::Get(verify_framebuffers)) {
         std::string error;
-        auto* rasterizer = static_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
-        if (!rasterizer || !rasterizer->RunDrawFramebufferCacheSelfTest(error)) {
+        if (!VideoCore::RunDrawFramebufferCacheSelfTest(error)) {
             LOG_ERROR(Frontend, "Android framebuffer cache self-test failed: {}", error);
             NativeLibrary::ShowMessageDialog(0, "Framebuffer cache self-test failed: " + error);
             system.Shutdown(); s_render_window.reset(); return;

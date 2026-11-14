@@ -1,3 +1,4 @@
+#include <string>
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -46,6 +47,8 @@ ResultStatus Init(Frontend::EmuWindow& window, Memory::MemorySystem& memory);
 RendererBase* Renderer();
 Memory::MemorySystem* Memory();
 RasterizerInterface* Rasterizer();
+// Opt-in GPU diagnostics; never runs during normal gameplay.
+bool RunDrawFramebufferCacheSelfTest(std::string& error);
 u16 GetResolutionScaleFactor();
 u32 GetCurrentFrame();
 void SetBackgroundImage(u32* pixels, u32 width, u32 height);
