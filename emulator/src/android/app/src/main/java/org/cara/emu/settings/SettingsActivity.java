@@ -48,6 +48,7 @@ public final class SettingsActivity extends AppCompatActivity {
 
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
+        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
 
         if (savedInstanceState == null) {
             Intent intent = getIntent();
@@ -65,7 +66,14 @@ public final class SettingsActivity extends AppCompatActivity {
 
         if (!mGameName.isEmpty()) {
             setTitle(mGameName);
+            toolbar.setSubtitle(R.string.cara_game_settings);
         }
+    }
+
+    @Override
+    public boolean onSupportNavigateUp() {
+        onBackPressed();
+        return true;
     }
 
     @Override

@@ -16,6 +16,8 @@
             android:layout_height="?attr/actionBarSize"
             app:layout_scrollFlags="scroll|enterAlways"
             app:title="@string/app_name"
+            app:subtitle="@string/cara_library_subtitle"
+            app:logo="@drawable/cara_toolbar_logo"
             app:menu="@menu/menu_main" />
 
         <com.google.android.material.tabs.TabLayout
@@ -23,6 +25,11 @@
             android:background="?attr/colorPrimary"
             app:tabBackground="?attr/colorPrimary"
             app:tabMaxWidth="0dp"
+            app:tabTextColor="@color/cara_accent_white"
+            app:tabSelectedTextColor="@color/cara_accent_white"
+            app:tabIndicatorColor="@color/cara_brand"
+            app:tabIndicatorHeight="4dp"
+            app:tabInlineLabel="true"
             app:tabGravity="fill"
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />

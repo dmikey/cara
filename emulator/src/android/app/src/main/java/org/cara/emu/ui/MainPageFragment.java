@@ -5,11 +5,9 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.graphics.Color;
-import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 
-import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.GridLayoutManager;
@@ -22,10 +20,11 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import com.nononsenseapps.filepicker.DividerItemDecoration;
 
 import org.cara.emu.R;
 import org.cara.emu.model.GameFile;
+import org.cara.emu.settings.MenuTag;
+import org.cara.emu.settings.SettingsActivity;
 import org.cara.emu.utils.CaraDirectory;
 import org.cara.emu.utils.FileBrowserHelper;
 
@@ -40,6 +39,7 @@ public class MainPageFragment extends Fragment {
 
     private int mPosition;
     private GameListAdapter mAdapter;
+    private View mEmptyState;
     private TextView mPageInfo;
     private Button mBtnAction;
     private RecyclerView mRecyclerView;
@@ -65,6 +65,7 @@ public class MainPageFragment extends Fragment {
                              Bundle savedInstanceState) {
         View root = inflater.inflate(R.layout.fragment_main_page, container, false);
 
+        mEmptyState = root.findViewById(R.id.page_empty);
         mPageInfo = root.findViewById(R.id.page_info);
         mBtnAction = root.findViewById(R.id.page_action);
         mRecyclerView = root.findViewById(R.id.page_grid);
@@ -72,16 +73,19 @@ public class MainPageFragment extends Fragment {
         mAdapter = new GameListAdapter();
         mRecyclerView.setAdapter(mAdapter);
         Context context = requireContext();
-        int columns = context.getResources().getInteger(R.integer.game_grid_columns);
+        Configuration configuration = context.getResources().getConfiguration();
+        int columns = Math.max(1, (int) (configuration.screenWidthDp /
+                (180 * Math.max(1f, configuration.fontScale))));
         RecyclerView.LayoutManager layoutManager = new GridLayoutManager(context, columns);
         mRecyclerView.setLayoutManager(layoutManager);
 
         if (mPosition == 0) {
-            mPageInfo.setText(R.string.game_emulation_info);
+            mPageInfo.setText(R.string.cara_collection_empty);
             mBtnAction.setText(R.string.add_directory_title);
             mBtnAction.setOnClickListener(view -> FileBrowserHelper.openDirectoryPicker((Activity) view.getContext()));
         } else {
-            mPageInfo.setText(R.string.application_emulation_info);
+            mPageInfo.setText(mPosition == MainActivity.PAGE_FRAGMENT_INSTALLED
+                    ? R.string.cara_installed_empty : R.string.cara_addons_empty);
             mBtnAction.setText(R.string.grid_menu_install_cia);
             mBtnAction.setOnClickListener(view -> FileBrowserHelper.openFilePicker((Activity) view.getContext()));
         }
@@ -90,6 +94,7 @@ public class MainPageFragment extends Fragment {
     }
 
     public void setGames(List<GameFile> games) {
+        mEmptyState.setVisibility(games.isEmpty() ? View.VISIBLE : View.INVISIBLE);
         if (games.size() == 0) {
             mPageInfo.setVisibility(View.VISIBLE);
             mBtnAction.setVisibility(View.VISIBLE);
@@ -118,6 +123,7 @@ public class MainPageFragment extends Fragment {
             mTextRegion = itemView.findViewById(R.id.text_region);
             mTextCompany = itemView.findViewById(R.id.text_company);
             mFormat = new DecimalFormat("#.##");
+            itemView.findViewById(R.id.game_more).setOnClickListener(view -> showDetails());
         }
 
         public void bind(GameFile model) {
@@ -133,6 +139,41 @@ public class MainPageFragment extends Fragment {
             mTextCompany.setText(model.getInfo());
             mTextRegion.setText(getAppDesc(model));
             mImageIcon.setImageBitmap(model.getIcon());
+            View more = itemView.findViewById(R.id.game_more);
+            more.setContentDescription(itemView.getContext().getString(
+                    R.string.cara_details_for, model.getName()));
+        }
+
+        public void showDetails() {
+            if (mModel == null) return;
+            Context context = itemView.getContext();
+            GameFile game = mModel;
+            String[] actions = new String[] { context.getString(R.string.cara_play),
+                            context.getString(R.string.cara_game_settings),
+                            context.getString(R.string.cara_cheats_shortcuts) };
+            // A custom header preserves metadata alongside AlertDialog's native action list.
+            TextView header = new TextView(context);
+            int padding = (int) (24 * context.getResources().getDisplayMetrics().density);
+            header.setPadding(padding, padding, padding, padding / 2);
+            header.setText(game.getName() + "\n\n" + context.getString(
+                    R.string.cara_game_metadata, game.getInfo(), getAppDesc(game), game.getId()));
+            header.setTextSize(16);
+            header.setTextColor(context.getResources().getColor(R.color.foreground_color, null));
+            AlertDialog.Builder builder = new AlertDialog.Builder(context)
+                    .setCustomTitle(header)
+                    .setNegativeButton(android.R.string.cancel, null);
+            if (!game.isInstalledDLC()) {
+                builder.setItems(actions, (dialog, which) -> {
+                        if (which == 1) {
+                            SettingsActivity.launch(context, MenuTag.CONFIG, game.getId(), game.getName());
+                        } else if (which == 0 && CaraDirectory.isInitialized()) {
+                            EmulationActivity.launch(context, game);
+                        } else if (which == 2) {
+                            EditorActivity.launch(context, game);
+                        }
+                    });
+            }
+            builder.show();
         }
 
         public String getAppDesc(GameFile model) {
@@ -234,7 +275,7 @@ public class MainPageFragment extends Fragment {
         @Override
         public boolean onLongClick(View view) {
             GameViewHolder holder = (GameViewHolder)view.getTag();
-            EditorActivity.launch(view.getContext(), holder.getModel());
+            holder.showDetails();
             return true;
         }
 

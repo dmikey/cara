@@ -2,20 +2,20 @@
 <!-- Modified for Cara on 2026-11-12; see NOTICE for attribution. -->
 <resources>
 
-    <color name="cara_orange">#FEC303</color>
-    <color name="cara_orange_dark">#FE8A03</color>
-    <color name="cara_accent">#008577</color>
+    <color name="cara_orange">#006B70</color>
+    <color name="cara_orange_dark">#005459</color>
+    <color name="cara_accent">#006B70</color>
     <color name="cara_accent_red">#F05053</color>
     <color name="cara_accent_white">#FFFFFF</color>
-    <color name="cara_highlight">#00DDAA</color>
+    <color name="cara_highlight">#33006B70</color>
 
-    <color name="foreground_color">#000000</color>
-    <color name="background_color">#FFFFFF</color>
+    <color name="foreground_color">#242C2D</color>
+    <color name="background_color">#FAF7F5</color>
 
-    <color name="ic_launcher_background">#FEC303</color>
+    <color name="ic_launcher_background">#00666A</color>
 
     <color name="circle_grey">#BDBDBD</color>
-    <color name="light_grey">#E6E6E6</color>
+    <color name="light_grey">#E2E6E3</color>
 
     <!-- 12% black in LIGHT THEME -->
     <color name="nnf_light_separator_color">#1E000000</color>
@@ -23,4 +23,8 @@
     <color name="nnf_dark_separator_color">#1EFFFFFF</color>
     <color name="nnf_icon_tint_color">#f8be00</color>
 
+    <color name="cara_surface">#FFFFFF</color>
+    <color name="cara_tile">#D8F2EE</color>
+    <color name="cara_secondary">#526466</color>
+    <color name="cara_brand">#FF7A3D</color>
 </resources>

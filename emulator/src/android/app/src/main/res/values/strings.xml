@@ -299,4 +299,18 @@
     <string name="nnf_new_folder_ok">@android:string/ok</string>
     <string name="nnf_new_folder_cancel">@android:string/cancel</string>
 
+
+    <string name="cara_library_subtitle">Your games, your way</string>
+    <string name="cara_collection">Collection</string>
+    <string name="cara_installed">Installed</string>
+    <string name="cara_addons">Add-ons</string>
+    <string name="cara_collection_empty">Your collection starts here.\nChoose a folder of your Nintendo 3DS games to get playing.</string>
+    <string name="cara_installed_empty">Your installed games live here.\nInstall a CIA file to add a game or application.</string>
+    <string name="cara_addons_empty">Keep your games up to date.\nInstalled updates and downloadable content appear here.</string>
+    <string name="cara_game_details">Game details</string>
+    <string name="cara_details_for">Details for %1$s</string>
+    <string name="cara_play">Play game</string>
+    <string name="cara_game_settings">Game settings</string>
+    <string name="cara_cheats_shortcuts">Cheats and shortcuts</string>
+    <string name="cara_game_metadata">%1$s\n%2$s\nTitle ID: %3$s</string>
 </resources>

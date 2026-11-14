@@ -16,10 +16,8 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
-import android.view.LayoutInflater;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -421,6 +419,10 @@ public final class MainActivity extends AppCompatActivity {
                     dialog.show(getSupportFragmentManager(), "RunningSettingDialog");
                     return true;
 
+                case R.id.menu_about:
+                    startActivity(new Intent(this, AboutActivity.class));
+                    return true;
+
                 case R.id.menu_refresh:
                     refreshLibrary();
                     return true;
@@ -454,13 +456,13 @@ public final class MainActivity extends AppCompatActivity {
         mMediator = new TabLayoutMediator(mTabLayout, mViewPager, (tab, position) -> {
             switch (position) {
                 case PAGE_FRAGMENT_EXTERNAL:
-                    tab.setCustomView(getCustomTabView(R.drawable.ic_folder));
+                    tab.setText(R.string.cara_collection);
                     break;
                 case PAGE_FRAGMENT_INSTALLED:
-                    tab.setCustomView(getCustomTabView(R.drawable.ic_shop));
+                    tab.setText(R.string.cara_installed);
                     break;
                 case PAGE_FRAGMENT_CONTENT:
-                    tab.setCustomView(getCustomTabView(R.drawable.ic_extension));
+                    tab.setText(R.string.cara_addons);
                     break;
             }
         });
@@ -577,13 +579,6 @@ public final class MainActivity extends AppCompatActivity {
             super.onRequestPermissionsResult(requestCode, permissions, grantResults);
             break;
         }
-    }
-
-    private View getCustomTabView(int icon) {
-        View view = LayoutInflater.from(this).inflate(R.layout.main_tab_item, null);
-        ImageView image = view.findViewById(R.id.tab_icon);
-        image.setImageResource(icon);
-        return view;
     }
 
     public void showGameList() {

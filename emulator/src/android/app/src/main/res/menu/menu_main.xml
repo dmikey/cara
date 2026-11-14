@@ -11,7 +11,7 @@
     <item
         android:id="@+id/menu_settings_core"
         android:title="@string/preferences_settings"
-        android:icon="@drawable/ic_memory"
+        android:icon="@drawable/ic_cara_settings"
         app:showAsAction="ifRoom"/>
 
     <item
