@@ -132,7 +132,6 @@ def main():
                    '--cpus', '0.25', '--pids-limit', '48', '--ulimit', 'nofile=256:256',
                    '--log-driver', 'json-file', '--log-opt', 'max-size=2m', '--log-opt', 'max-file=2',
                    '--mount', 'type=bind,src=' + str(rooms) + ',dst=/rooms.json,readonly',
-                   '--health-cmd', '/cara-relay -healthcheck http://127.0.0.1:24874/healthz -public-host ' + DOMAIN,
                    '--health-interval', '15s', '--health-timeout', '5s', '--health-retries', '3',
                    '--health-start-period', '5s', image_id,
                    '-listen', '127.0.0.1:24874', '-public-host', DOMAIN,

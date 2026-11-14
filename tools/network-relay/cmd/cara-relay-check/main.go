@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,6 +29,7 @@ func main() {
 }
 func run() error {
 	endpoint := flag.String("endpoint", "", "trusted wss:// endpoint")
+	roomsStdin := flag.Bool("rooms-stdin", false, "read private test credentials from stdin without a local file")
 	roomsFile := flag.String("rooms-file", "", "private local JSON credentials, never printed")
 	roomA := flag.String("room-a", "deploy-probe-a", "first configured test room")
 	roomB := flag.String("room-b", "deploy-probe-b", "isolated configured test room")
@@ -36,17 +38,23 @@ func run() error {
 	if err != nil || u.Scheme != "wss" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("endpoint must be wss with no credentials, query or fragment")
 	}
-	file, err := os.Open(*roomsFile)
-	if err != nil {
-		return fmt.Errorf("private credentials unavailable")
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 65536 {
-		return fmt.Errorf("credential file must be private and bounded")
+	var credentialReader io.Reader = os.Stdin
+	if !*roomsStdin {
+		file, err := os.Open(*roomsFile)
+		if err != nil {
+			return fmt.Errorf("private credentials unavailable")
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 65536 {
+			return fmt.Errorf("credential file must be private and bounded")
+		}
+		credentialReader = file
+	} else if *roomsFile != "" {
+		return fmt.Errorf("choose stdin or a file, not both")
 	}
 	var rooms map[string]string
-	if json.NewDecoder(file).Decode(&rooms) != nil || len(rooms[*roomA]) < 16 || len(rooms[*roomB]) < 16 {
+	if json.NewDecoder(io.LimitReader(credentialReader, 65537)).Decode(&rooms) != nil || len(rooms[*roomA]) < 16 || len(rooms[*roomB]) < 16 {
 		return fmt.Errorf("two private test rooms required")
 	}
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, Timeout: 10 * time.Second}
