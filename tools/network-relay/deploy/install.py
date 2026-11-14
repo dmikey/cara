@@ -171,7 +171,7 @@ def main():
             challenge.unlink(missing_ok=True)
         print('Public hostname reaches the verified origin; requesting its scoped certificate', flush=True)
         result = subprocess.run(['certbot', 'certonly', '--non-interactive', '--agree-tos',
-                                 '--webroot', '-w', '/var/www/letsencrypt', '--cert-name', DOMAIN, '-d', DOMAIN],
+                                 '--keep-until-expiring', '--webroot', '-w', '/var/www/letsencrypt', '--cert-name', DOMAIN, '-d', DOMAIN],
                                 capture_output=True, text=True, timeout=180)
         (release / 'certificate-issuance.log').write_text(result.stdout + result.stderr)
         if result.returncode:
@@ -183,9 +183,18 @@ def main():
         HOOK.chmod(0o755)
         run(['nginx', '-t'])
         run(['systemctl', 'reload', 'nginx'])
-        public_health = json.loads(public_get('https://' + DOMAIN + '/healthz'))
-        if public_health.get('status') != 'ok' or public_health.get('service') != 'cara-relay':
-            raise RuntimeError('trusted public health response mismatch')
+        # Reload is asynchronous; old keepalive workers may briefly return the
+        # previous default vhost. Require exact readiness after a bounded poll.
+        for attempt in range(30):
+            try:
+                public_health = json.loads(public_get('https://' + DOMAIN + '/healthz'))
+                if public_health.get('status') == 'ok' and public_health.get('service') == 'cara-relay':
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        else:
+            raise RuntimeError('trusted public health response mismatch after bounded readiness poll')
         after_hashes = nginx_hashes()
         if any(after_hashes.get(name) != digest for name, digest in before_hashes.items()):
             raise RuntimeError('an unrelated nginx file changed')

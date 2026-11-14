@@ -6,7 +6,7 @@ A standalone Go room relay for Cara-controlled local-wireless adapters. It uses 
 
 ## Local development
 
-Use a currently supported Go release. The WebSocket module requires Go 1.26 or later; the deployment is built and tested with Go 1.27.4. The older Go 1.20.3 results below are historical TCP-only validation.
+Use a currently supported Go release. The module language minimum is Go 1.23; production should use a currently supported toolchain. This deployment is built and tested with Go 1.27.4. The older Go 1.20.3 results below are historical TCP-only validation.
 
 ```sh
 cd tools/network-relay
