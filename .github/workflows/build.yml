@@ -186,6 +186,7 @@ jobs:
           work/build-mac/bin/cara-interrupt-relay-policy-self-test
           work/build-mac/bin/cara-presentation-guard-self-test
           work/build-mac/bin/cara-fastinterp-self-test
+          python3 tools/check_fastinterp_vldr_pairs.py work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=2 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=3 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test

@@ -872,6 +872,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         HANDLER(MovPairImmLsl),
         HANDLER(MovPairLslImm),
         HANDLER(MovPairLslLsl),
+        HANDLER(VldrPairS),
 
 
         // AL entries share each checked handler body after its predicate gate.
@@ -1173,6 +1174,7 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         &&handle_MovPairImmLsl,
         &&handle_MovPairLslImm,
         &&handle_MovPairLslLsl,
+        &&handle_VldrPairS,
     };
 #undef HANDLER
 

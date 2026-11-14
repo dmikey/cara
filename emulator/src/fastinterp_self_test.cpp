@@ -23,6 +23,7 @@
 
 namespace Core::FastInterp {
 struct DecodeRecordSelfTestAccess {
+    static MemoryRef VfpBacking(ARM_FastInterp& cpu) { return TestMemory(cpu.state_.vfp_regs); }
     static unsigned CacheCapacity(const ARM_FastInterp& cpu) {return cpu.cache_.Capacity();}
     static void ConfigureSecondary(ARM_FastInterp& cpu,bool enabled) {cpu.secondary_link_=enabled;cpu.cache_.SetProfiling(true);cpu.ClearInstructionCache();}
     static void ConfigureAlDispatch(ARM_FastInterp& cpu, bool enabled) {
@@ -75,11 +76,14 @@ struct DecodeRecordSelfTestAccess {
 #include "fastinterp_blx_link_self_test.h"
 #include "fastinterp_pc_boundary_self_test.h"
 #include "fastinterp_short_vector_self_test.h"
+#include "fastinterp_vldr_pair_self_test.h"
 
 int main() {
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
+    if (std::getenv("CARA_FASTINTERP_VLDR_PAIR_TEST"))
+        return VerifyFastInterpVldrPairs(system);
     if (std::getenv("CARA_FASTINTERP_SHORT_VECTOR_TEST"))
         return VerifyFastInterpShortVectors(system);
     if (std::getenv("CARA_FASTINTERP_PC_BOUNDARY_TEST"))

@@ -494,6 +494,8 @@ enum class Opcode : u16 {
     MovPairLslImm,
     MovPairLslLsl,
 
+    VldrPairS, // AL single loads; original second slot and per-instruction ticks retained.
+
     OpcodeCount
 };
 

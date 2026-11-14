@@ -1634,6 +1634,28 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         }
     }
 
+    // Run last, after every other fusion: each original slot, size, tick cost
+    // and block boundary stays intact. Runtime pairing is restricted to direct
+    // RAM; any slow access executes the unchanged first handler and then the
+    // retained second slot. Step decodes only one instruction, so cannot pair.
+    static const bool vldr_pairs = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_VLDR_PAIRS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (vldr_pairs && !is_thumb) {
+        for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
+            auto& first = block->instructions[slot];
+            const auto& second = block->instructions[slot + 1];
+            if (first.opcode == Opcode::VldrS && second.opcode == Opcode::VldrS &&
+                first.cond == 0xE && second.cond == 0xE && first.inst_size == 4 &&
+                second.inst_size == 4 && first.vfp.rn != 15 &&
+                first.vfp.rn == second.vfp.rn) {
+                first.opcode = Opcode::VldrPairS;
+                ++slot;
+            }
+        }
+    }
+
     // Append the EndBlock terminator. Every block gets one - conditional
     // block-enders (Bcc, fused not-taken paths, conditional Bx, ...) DISPATCH on
     // their not-taken path, and DISPATCH has no bounds check. The terminator

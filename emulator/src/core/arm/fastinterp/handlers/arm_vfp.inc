@@ -554,6 +554,44 @@ handle_VcvtIntToD:
     }
     ADVANCE_AND_DISPATCH();
 
+// Only decode-proven AL pairs reach this entry. Preserve two ordered loads,
+// including repeated destination registers. No assumptions about offset stride
+// or floating-point values are made; these are bitwise memory transfers.
+handle_VldrPairS: {
+    const auto& second = inst[1];
+    const u32 base = state_.regs[inst->vfp.rn];
+    const u32 first_addr = base + inst->vfp.offset;
+    const u32 second_addr = base + second.vfp.offset;
+    const u32 first_page = first_addr >> FASTINTERP_PAGE_BITS;
+    const u8* page = local_page_ptrs[first_page];
+    const bool same_page = first_page == (second_addr >> FASTINTERP_PAGE_BITS);
+    const bool in_bounds = (first_addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 3 &&
+                           (second_addr & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 3;
+    if (page && same_page && in_bounds) {
+        const u8* first_source = page + (first_addr & FASTINTERP_PAGE_MASK);
+        const u8* second_source = page + (second_addr & FASTINTERP_PAGE_MASK);
+        const auto begin = reinterpret_cast<std::uintptr_t>(state_.vfp_regs.data());
+        const auto end = begin + sizeof(state_.vfp_regs);
+        const auto a = reinterpret_cast<std::uintptr_t>(first_source);
+        const auto b = reinterpret_cast<std::uintptr_t>(second_source);
+        // Artificial register-backed mappings must retain scalar sequencing.
+        if ((a + 4 <= begin || a >= end) && (b + 4 <= begin || b >= end)) {
+            u32 value;
+            std::memcpy(&value, first_source, 4);
+            state_.vfp_regs[inst->vfp.sd] = value;
+            std::memcpy(&value, second_source, 4);
+            state_.vfp_regs[second.vfp.sd] = value;
+            executed += inst->ticks + second.ticks;
+            SET_PC(GET_PC() + inst->inst_size + second.inst_size);
+            ++inst;
+            DISPATCH();
+        }
+    }
+    // Tracked graphics/code pages, MMIO, crossings and register aliases must
+    // retain the original per-instruction access and any resulting callbacks.
+    goto handle_VldrS_al;
+}
+
 handle_VldrS:
     CHECK_COND(VldrS);
     {
