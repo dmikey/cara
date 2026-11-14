@@ -61,3 +61,8 @@ rounding difference with the experiment disabled; this fixture does not claim
 to validate all depth-format conversions. The separate depth oracle covers that
 work. There is no gameplay, GLES, physical-iPad or speed claim from this test.
 A guarded, matched gameplay comparison remains necessary before promotion.
+
+A later fresh full-engine build passed the same four native oracle configurations.
+The subsequent [quiet Stories Secret Path comparison](stories-surface-copies-20261114.md)
+found no speedup; the option remains off. Its measured outcome must not be
+replaced by the smaller API-call count from the correctness fixture.

@@ -140,9 +140,9 @@ Private receipts are under `profiles/native-state-reuse-lilia-20261114`.
 The new default-off [successful-copy trace](surface-validation-copy-tracing.md)
 covers `ValidateSurface → CopySurface` returns separately from RAM fallbacks.
 Its bounded metadata can distinguish new invalidation, allocation churn,
-different fragments and alternating aliases before proposing reuse. Its current
-proof is ROM-free collector/schema testing; actual workload attribution remains
-pending. A source must remain valid over the entire copied range, with ownership preserved.
+different fragments and alternating aliases before proposing reuse. Its ROM-free collector/schema tests are followed by a
+[separate fresh Secret Path trace](stories-surface-copies-20261114.md). That scene
+is not this earlier Lilia replay. A source must remain valid over the entire copied range, with ownership preserved.
 Address equality alone is not evidence that copying is redundant. Existing
 exact-lookup caching should not be duplicated.
 
