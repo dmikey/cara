@@ -105,8 +105,9 @@ PBO experiment would require successful flushing/unmapping, buffer-offset
 transfers, and safe reuse of in-flight source ranges.
 
 The native `samplerBuffer` oracle above does **not** validate this GLES 2D path.
-Its separate regression must exercise real `sampler2D` uploads, both format
-views, initial-zero residency, partial changes, row boundaries, forced ring
-wrap with the stream hack on and off, renderer reconstruction, and poisoned
-unpack/PBO state. Syntax checks are not GPU correctness proof. No timing,
-performance improvement, or physical-device gain is established by this fix.
+The separate [GLES upload oracle](gles-lut-oracle.md) exercises real `sampler2D`
+uploads, both format views, initial-zero residency, partial changes, row
+boundaries, forced ring wrap with the stream hack on and off, renderer
+reconstruction, and poisoned unpack/PBO state. It passed 73,246 texel checks on
+Apple Software Renderer. No timing, performance improvement, or physical-device
+gain is established by this fix.
