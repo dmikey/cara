@@ -62,3 +62,34 @@ Public clients must validate the system trust chain and hostname and require TLS
 `cmd/cara-relay-check` performs a bounded remote transport check using a private credentials file: three authenticated peers, exact maximum-size binary forwarding/source tag, no self echo, room isolation, wrong-password rejection, hostname/CA rejection and HTTPS health. It requires verified TLS1.3. It does not create rooms, invoke game services or prove emulator integration.
 
 See `DEPLOYMENT.md` for the deployment receipt, scoped operations and rollback.
+
+### Opt-in authenticated membership
+
+A protocol-v1 Join may request `peer_events:true` and carry an optional `instance`
+containing a random128-bit token encoded as32 hexadecimal characters. This is a
+memory-only host-session reconnect token, not a console/account identity; never
+log it, persist it, broadcast it, or put it in a URL. A peer that requests this
+extension receives Welcome as before, then `Capabilities(8)` with payload byte1,
+then `PeerJoined(7)` records for existing room peers. A new adapter must fail
+closed until this capability acknowledgment arrives.
+
+PeerJoined and `PeerLeft(6)` payloads contain only the relay-assigned8-byte source
+ID. They are emitted only by the server, on the same bounded FIFO and under the
+same room lock as forwarded packets. Legacy clients receive none of these frames.
+Client-supplied membership frames close that client's connection. Clients may
+retire a MAC binding only on a trusted PeerLeft; an active duplicate MAC remains
+invalid. Leave controls and packets must reach UDS on the same ordered CPU drain.
+
+A same-room rejoin with the same instance token retires the prior source under
+the lock, queues PeerLeft before replacement PeerJoined/packets, and closes the
+prior socket outside the room lock. Retired sources cannot forward, and late
+cleanup cannot remove the replacement. Other tokens and other rooms cannot
+retire that source. The global connection cap still includes handshakes and
+retiring sockets: a full service may reject even a legitimate reconnect, requiring
+an explicit retry after the old connection closes. No cap is relaxed.
+
+The membership race suite checks legacy stream compatibility, initial membership,
+packet/leave/rejoin ordering, stale-source rejection,48 sequential reconnects,
+eight concurrent rejoin attempts, token/room isolation, forged membership rejection,
+and insufficient handshake-queue space. This extends the adapter transport;
+it does not establish UDS or named-game compatibility.

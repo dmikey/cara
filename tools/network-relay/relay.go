@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,12 +17,15 @@ import (
 // Protocol v1: a one-byte type and four-byte big-endian payload length.
 // This transports adapter-owned opaque packets, not Nintendo Internet services.
 const (
-	Join       byte = 1
-	Welcome    byte = 2
-	Packet     byte = 3
-	Leave      byte = 4
-	Failure    byte = 5
-	MaxPayload      = 4096
+	Join         byte = 1
+	Welcome      byte = 2
+	Packet       byte = 3
+	Leave        byte = 4
+	Failure      byte = 5
+	PeerLeft     byte = 6
+	PeerJoined   byte = 7
+	Capabilities byte = 8
+	MaxPayload        = 4096
 )
 
 type Frame struct {
@@ -66,9 +70,11 @@ func WriteFrame(w io.Writer, f Frame) error {
 }
 
 type JoinRequest struct {
-	Version  int    `json:"version"`
-	Room     string `json:"room"`
-	Password string `json:"password"`
+	Version    int    `json:"version"`
+	Room       string `json:"room"`
+	Password   string `json:"password"`
+	PeerEvents bool   `json:"peer_events,omitempty"`
+	Instance   string `json:"instance,omitempty"`
 }
 
 type Config struct {
@@ -78,11 +84,13 @@ type Config struct {
 }
 
 type peer struct {
-	id   uint64
-	room string
-	conn net.Conn
-	out  chan Frame
-	done chan struct{}
+	id       uint64
+	events   bool
+	instance string
+	room     string
+	conn     net.Conn
+	out      chan Frame
+	done     chan struct{}
 }
 
 type Server struct {
@@ -138,6 +146,13 @@ func (s *Server) ServeConn(conn net.Conn) {
 	if json.Unmarshal(first.Payload, &request) != nil || request.Version != 1 {
 		return
 	}
+	if request.Instance != "" {
+		token, err := hex.DecodeString(request.Instance)
+		if !request.PeerEvents || err != nil || len(token) != 16 {
+			return
+		}
+		request.Instance = hex.EncodeToString(token)
+	}
 	provided := sha256.Sum256([]byte(request.Password))
 	wanted, exists := s.rooms[request.Room]
 	if !exists || subtle.ConstantTimeCompare(provided[:], wanted[:]) != 1 {
@@ -149,16 +164,67 @@ func (s *Server) ServeConn(conn net.Conn) {
 		s.mu.Unlock()
 		return
 	}
+	var retired []*peer
+	var existing []uint64
+	for id, member := range s.peers {
+		if member.room != request.Room {
+			continue
+		}
+		if request.PeerEvents && request.Instance != "" && member.events && member.instance == request.Instance {
+			retired = append(retired, member)
+		} else if request.PeerEvents {
+			existing = append(existing, id)
+		}
+	}
+	if request.PeerEvents && len(existing)+2 > s.queueDepth {
+		s.mu.Unlock()
+		WriteFrame(conn, Frame{Type: Failure, Payload: []byte("membership queue unavailable")})
+		return
+	}
+	var stalled []net.Conn
+	for _, old := range retired {
+		delete(s.peers, old.id)
+		stalled = append(stalled, s.membershipLocked(old, PeerLeft)...)
+	}
 	s.nextID++
-	p := &peer{id: s.nextID, room: request.Room, conn: conn, out: make(chan Frame, s.queueDepth), done: make(chan struct{})}
+	p := &peer{id: s.nextID, events: request.PeerEvents, instance: request.Instance, room: request.Room, conn: conn, out: make(chan Frame, s.queueDepth), done: make(chan struct{})}
 	var id [8]byte
 	binary.BigEndian.PutUint64(id[:], p.id)
 	p.out <- Frame{Type: Welcome, Payload: id[:]}
+	if p.events {
+		p.out <- Frame{Type: Capabilities, Payload: []byte{1}}
+		for _, other := range existing {
+			var tag [8]byte
+			binary.BigEndian.PutUint64(tag[:], other)
+			p.out <- Frame{Type: PeerJoined, Payload: tag[:]}
+		}
+	}
 	s.peers[p.id] = p
+	// PeerLeft, PeerJoined and packets use this lock and the same bounded FIFO.
+	stalled = append(stalled, s.membershipLocked(p, PeerJoined)...)
 	s.mu.Unlock()
 	conn.SetDeadline(time.Time{})
-	defer func() { s.mu.Lock(); delete(s.peers, p.id); close(p.done); s.mu.Unlock() }()
+	defer func() {
+		s.mu.Lock()
+		var stalled []net.Conn
+		// A reconnect may already have retired this exact source. Never repeat its leave.
+		if s.peers[p.id] == p {
+			delete(s.peers, p.id)
+			stalled = s.membershipLocked(p, PeerLeft)
+		}
+		close(p.done)
+		s.mu.Unlock()
+		for _, other := range stalled {
+			other.Close()
+		}
+	}()
 	go writePeer(p)
+	for _, old := range retired {
+		old.conn.Close()
+	}
+	for _, other := range stalled {
+		other.Close()
+	}
 	for {
 		frame, err := ReadFrame(conn)
 		if err != nil {
@@ -197,8 +263,30 @@ func writePeer(p *peer) {
 	}
 }
 
+// Called under the room lock. Legacy clients receive exactly their original stream.
+func (s *Server) membershipLocked(source *peer, kind byte) []net.Conn {
+	var id [8]byte
+	binary.BigEndian.PutUint64(id[:], source.id)
+	var stalled []net.Conn
+	for _, target := range s.peers {
+		if !target.events || target.id == source.id || target.room != source.room {
+			continue
+		}
+		select {
+		case target.out <- Frame{Type: kind, Payload: id[:]}:
+		default:
+			stalled = append(stalled, target.conn)
+		}
+	}
+	return stalled
+}
+
 func (s *Server) forward(source *peer, frame Frame) {
 	s.mu.Lock()
+	if s.peers[source.id] != source {
+		s.mu.Unlock()
+		return
+	}
 	var stalled []net.Conn
 	for _, target := range s.peers {
 		if target.id == source.id || target.room != source.room {

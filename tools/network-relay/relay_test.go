@@ -196,6 +196,7 @@ func TestBoundedQueueDisconnectsSlowPeer(t *testing.T) {
 	defer serverSide.Close()
 	defer clientSide.Close()
 	source := &peer{id: 1, room: "alpha"}
+	s.peers[1] = source
 	target := &peer{id: 2, room: "alpha", conn: serverSide, out: make(chan Frame, 1)}
 	s.peers[2] = target
 	s.forward(source, Frame{Packet, []byte("first")})
@@ -233,13 +234,17 @@ func TestConnectionCloseNeverHoldsRoomLock(t *testing.T) {
 			slow.out <- Frame{Type: Packet}
 			s.peers[2] = slow
 			s.connections[blocked] = struct{}{}
+			sourceA := &peer{id: 1, room: "alpha"}
+			sourceB := &peer{id: 3, room: "beta"}
+			s.peers[1] = sourceA
+			s.peers[3] = sourceB
 			other := &peer{id: 4, room: "beta", out: make(chan Frame, 1)}
 			s.peers[4] = other
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
 				if operation == "overflow" {
-					s.forward(&peer{id: 1, room: "alpha"}, Frame{Type: Packet})
+					s.forward(sourceA, Frame{Type: Packet})
 				} else {
 					s.Close()
 				}
@@ -251,7 +256,7 @@ func TestConnectionCloseNeverHoldsRoomLock(t *testing.T) {
 				t.Fatal("close did not start")
 			}
 			progress := make(chan struct{})
-			go func() { s.forward(&peer{id: 3, room: "beta"}, Frame{Packet, []byte("other room")}); close(progress) }()
+			go func() { s.forward(sourceB, Frame{Packet, []byte("other room")}); close(progress) }()
 			select {
 			case <-progress:
 			case <-time.After(time.Second):
