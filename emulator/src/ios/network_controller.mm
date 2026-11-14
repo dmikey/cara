@@ -83,7 +83,7 @@
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
     if(section==0) return @"Use an existing room and its password on both devices. Passwords are kept only for this connection.";
-    if(section==2) return @"Choose local wireless inside the game after joining. Both players need compatible games. StreetPass and Nintendo online services are not available.";
+    if(section==2) return @"Choose local wireless inside the game after joining. Games keep running while connected, including under menus. Leaving Cara or loading a state disconnects the room. StreetPass and Nintendo online services are not available.";
     return nil;
 }
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)indexPath {
