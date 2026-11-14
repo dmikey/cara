@@ -233,7 +233,7 @@ public:
         static thread_local std::array<std::uint64_t,
             static_cast<std::size_t>(TextureAcquisitionPhase::Count)> sequence{};
         const auto mixed = std::uint32_t(++sequence[index]) * 0x9E3779B9u;
-        if (sample_phase < 13 && (mixed >> 26) != 0) return;
+        if ((mixed >> 26) != 0) return;
         sample = &value.timing;
         started = std::chrono::steady_clock::now();
         cpu_started = ReadCPU();
