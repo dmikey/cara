@@ -171,6 +171,9 @@ jobs:
           work/build-mac/bin/cara-vertex-upload-bank-self-test
           work/build-mac/bin/cara-vertex-input-usage-self-test
           work/build-mac/bin/cara-shader-flow-self-test
+          python3 tools/make_uds_test_elf.py work/uds-counter.elf
+          work/build-mac/bin/cara-nwm-relay-hle-live-test work/uds-counter.elf work/uds-offline --offline
+          work/build-mac/bin/cara-relay-client-configuration-self-test
           work/build-mac/bin/cara-fastinterp-chain-recency-self-test
           work/build-mac/bin/cara-guest-pc-cpu-self-test
           CARA_GUEST_PC_CPU_EQUIVALENCE_TEST=1 work/build-mac/bin/cara-fastinterp-self-test

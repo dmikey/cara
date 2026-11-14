@@ -1,6 +1,6 @@
 # Relay client and UDS integration
 
-The optional Apple relay transport and NWM service bridge are implemented. They use the deployed TLS WebSocket relay at `wss://carap 2p.therad.ninja/relay`. Native transport and two-process service-HLE witnesses pass. These establish packet delivery and emulator service behavior, **not Pokémon trades/battles, guest-issued UDS IPC, Nintendo online services, or StreetPass exchange**. The companion iOS room controls and lifecycle hooks are reviewed separately.
+The optional Apple relay transport and NWM service bridge are implemented. They use the deployed TLS WebSocket relay at `wss://carap2p.therad.ninja/relay`. Native transport and two-process service-HLE witnesses pass. These establish packet delivery and emulator service behavior, **not Pokémon trades/battles, guest-issued UDS IPC, Nintendo online services, or StreetPass exchange**. The companion iOS room controls and lifecycle hooks are reviewed separately.
 
 ## Frontend contract and lifecycle
 
@@ -14,7 +14,7 @@ The Foundation session is ephemeral, uses system hostname trust with TLS minimum
 
 ## Wire and membership
 
-The shared `network/wifi_envelope.h` codec has version 1, kind 0..5, radio channel, zero reserved byte, transmitter/destination MAC 6 each, payload length u 16 BE and exact payload. Its 18B header fits within the relay's 4,088B opaque limit. NodeMap uses fixed u 16 BE counts and IDs with at most 16 entries; checked bridge helpers translate to/from the existing internal native NodeMap representation. Existing ENet serialization remains unchanged.
+The shared `network/wifi_envelope.h` codec has version 1, kind 0..5, radio channel, zero reserved byte, transmitter/destination MAC 6 each, payload length u16 BE and exact payload. Its 18B header fits within the relay's 4,088B opaque limit. NodeMap uses fixed u16 BE counts and IDs with at most 16 entries; checked bridge helpers translate to/from the existing internal native NodeMap representation. Existing ENet serialization remains unchanged.
 
 The client requires the relay's opt-in membership capability before becoming Connected. Server-assigned PeerJoined/PeerLeft IDs are authenticated by the same TLS room connection. Source→MAC bindings exist only for current admitted IDs. An active duplicate MAC or a peer changing its MAC fails closed. A server PeerLeft retires that binding and queues a control event on the same FIFO as packets, before any replacement can reach NWM. Unknown, never-bound departures do not fabricate a MAC.
 
@@ -26,7 +26,7 @@ The pure state policy in `network/uds_relay_admission.h` runs again against the 
 
 Connected peer departure uses the host's deauth cleanup; pending-auth departure simply releases its pending entry. A client disconnects only when its selected host leaves. Host deauth broadcasts the existing authoritative NodeMap, allowing a later-joined client to prune a departed peer it knew only through that map. Removed assignments also purge their queued data before node reuse. Active host NodeInfo entries stay compact while retaining node IDs; received Logoff records rebuild status arrays by actual node ID, including sparse/reused order `[1,3,2]`.
 
-RX and TX each have 64-packet/256KiB caps; stream reassembly is bounded to 8,202B. Sends are serialized with only one Foundation send in flight. Slow/overflowing transport sessions disconnect and clear their generation. UDS separately caps each data channel to 64 packets and all channel backlog to 256KiB. Beacons remain capped at 15; mapped beacon replies count only complete entries that fit the actual guest output, including short-header rejection. All NWM outbound packets, including ordinary guest sends, beacons and callback replies, require the service's exact generation. The Apple transport checks it and enqueues under the same wire mutex; expected generation0 is never a wildcard. No guest clock, instruction charge, timer visibility, event deadline or idle-loop policy changes.
+RX and TX each have 64-packet/256KiB caps; stream reassembly is bounded to 8,202B. Sends are serialized with only one Foundation send in flight. Slow/overflowing transport sessions disconnect and clear their generation. UDS separately caps each data channel to 64 packets and all channel backlog to 256KiB. Beacons remain capped at 15; mapped beacon replies count only complete entries that fit the actual guest output, including short-header rejection. All NWM outbound packets, including ordinary guest sends, beacons and callback replies, require the service's exact generation. The Apple transport checks it and enqueues under the same wire mutex; expected generation 0 is never a wildcard. No guest clock, instruction charge, timer visibility, event deadline or idle-loop policy changes.
 
 ## Reproducible evidence
 
@@ -41,6 +41,6 @@ Apple CMake provides these explicit standalone targets:
 
 The live NWM witness loads an original generated busy-counter ELF, initializes real UDS shared memory/events, discovers an actual beacon, and invokes actual Initialize/BeginHosting/Connect/Bind/SendTo/PullPacket helpers. It verifies 512-byte payloads both ways, assigned node 2, source spoof rejection, departure/status events and disconnected restore handling. It enters the generated guest before Connect so the requesting thread is Running. Host pacing retains 100% guest ticks through ordinary RunLoop. The test-only friend driver invokes services; the generated guest itself does not issue UDS IPC. No firmware or proprietary assets are needed. The standalone fixture has no production UI entry point.
 
-The first private harness attempt incorrectly invoked Connect on a Ready thread and hit the scheduler assertion. The corrected busy-counter witness and running-thread check pass. Native syntax/compile and these receipts do not certify arbitrary game behavior. Next release proof is two real isolated game instances performing a named local-wireless action and preserving their saves; StreetPass and Internet-service integration remain separate work.
+Native syntax/compile and these receipts do not certify arbitrary game behavior. Next release proof is two real isolated game instances performing a named local-wireless action and preserving their saves; StreetPass and Internet-service integration remain separate work.
 
 Primary API references: [Apple URLSessionWebSocketTask](https://developer.apple.com/documentation/foundation/urlsessionwebsockettask), [TLS minimum](https://developer.apple.com/documentation/foundation/urlsessionconfiguration/tlsminimumsupportedprotocolversion). Local SDK declarations were also checked.

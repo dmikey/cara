@@ -12,7 +12,7 @@ Private host state: `/var/snap/docker/common/cara-relay/`. Room configuration is
 
 The current update adds opt-in server membership notifications and authenticated reconnect epochs while preserving the legacy protocol stream. The membership tests passed three runs under Go's race detector, including sequential and concurrent replacement. The actual Foundation client then passed public-WSS maximum-packet/reply, no-echo, private-room and wrong-password checks, followed by forty same-MAC reconnects with forty distinct server source IDs. The observer verified a trusted departure before each rebinding. These are transport proofs, not UDS or Pokémon gameplay. The update receipt confirms the private room file, nginx and unrelated container IDs remained unchanged; the service is healthy. Local non-secret receipts are `membership-deployment.log`, `foundation-process-proof.log` and `foundation-reconnect-proof.log` in the artifact directory above.
 
-The transport is protocol v1 inside binary WebSocket messages. Cara's ENet adapter, iOS UI/lifecycle, StreetPass exchange and named game actions remain unimplemented/unverified. Deployment alone enables none of them.
+The transport is protocol v1 inside binary WebSocket messages. The Apple adapter, CPU-thread UDS bridge and native iOS room controls are now implemented in source. Public two-process service-HLE tests verify the real UDS handshake, bidirectional payloads and departure, separately from transport-only tests and ROM-free UIKit tests. Physical-iPad installation/testing, StreetPass exchange and named game actions remain outstanding; deployment alone does not prove them.
 
 ## Isolation and operation
 
