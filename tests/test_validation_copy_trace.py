@@ -109,7 +109,11 @@ int main(int argc, char** argv) {
  std::rename((FileUtil::directory+"surface-validation-copies.json").c_str(),
              (FileUtil::directory+"empty.json").c_str());
  auto failed=std::make_unique<Trace>(); Trace::Entry e;
- e.frame=300; e.bytes=1; e.wall={false,0}; e.cpu={false,0}; failed->Record(e); failed->Write();
+ e.invocation=1; e.fragment=1; e.frame=300; e.bytes=1;
+ e.requested_start=e.invalid_start=e.actual_start=4096;
+ e.requested_end=e.invalid_end=e.actual_end=4097;
+ e.src=trace->Snapshot(b); e.dst=trace->Snapshot(c); e.source_valid=true;
+ e.wall={false,0}; e.cpu={false,0}; failed->Record(e); failed->Write();
  return 0;
 }
 '''
