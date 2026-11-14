@@ -241,6 +241,19 @@ endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJCXX)
+    if(CARA_IOS_HARDWARE_RENDERER)
+        # Explicit ROM-free GLES production-path oracle; never opens Cara's container.
+        add_executable(cara-gles-lut-self-test MACOSX_BUNDLE EXCLUDE_FROM_ALL
+            ios/gles_lut_self_test.mm)
+        target_compile_options(cara-gles-lut-self-test PRIVATE -fobjc-arc -Wno-deprecated-declarations)
+        target_link_libraries(cara-gles-lut-self-test PRIVATE core common glad nihstro-headers
+            Threads::Threads ${PLATFORM_LIBRARIES} "-framework UIKit" "-framework Foundation"
+            "-framework OpenGLES" "-framework QuartzCore")
+        set_target_properties(cara-gles-lut-self-test PROPERTIES
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/gles_lut_self_test.plist"
+            XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
+    endif()
     add_executable(cara-ios MACOSX_BUNDLE ios/main.mm ios/action_layout.mm ios/library_store.mm ios/artwork_store.mm ios/shell_controllers.mm ios/network_controller.mm ios/input_hub.mm ios/state_catalog.mm ios/feature_controllers.mm ios/configuration_store.mm ios/save_sync.mm ios/skin_layout.mm ios/skin_controls.mm ios/skins/CarbonDuo.deltaskin)
     set_source_files_properties(ios/skins/CarbonDuo.deltaskin PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     file(GLOB CARA_MENU_SOUNDS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ios/MenuSounds/*.caf")
