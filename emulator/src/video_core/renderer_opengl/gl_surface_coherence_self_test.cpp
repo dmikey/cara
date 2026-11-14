@@ -407,8 +407,19 @@ bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
                 remap_destination->FlushGLBuffer(destination_params.addr, destination_params.end);
                 std::copy_n(original.data() + 16384, destination_params.size, expected.data());
                 std::fill_n(expected.data() + write_address - destination_params.addr, 16, 0xA7);
-                if (!std::equal(expected.begin(), expected.end(), memory + 16384) || glGetError() != GL_NO_ERROR) {
-                    error = "RGBA8 alias CPU-write fallback coherence mismatch";
+                const auto fallback_mismatch = std::mismatch(expected.begin(), expected.end(), memory + 16384);
+                const GLenum fallback_error = glGetError();
+                if (fallback_mismatch.first != expected.end() || fallback_error != GL_NO_ERROR) {
+                    const auto offset = fallback_mismatch.first - expected.begin();
+                    error = "alias CPU-write fallback coherence mismatch source_format=" +
+                            std::to_string(unsigned(source_format)) + " destination_format=" +
+                            std::to_string(unsigned(destination_format)) + " source_tiled=" +
+                            std::to_string(source_tiled) + " destination_tiled=" +
+                            std::to_string(destination_tiled) + " partial=" +
+                            std::to_string(partial) + " offset=" + std::to_string(offset) +
+                            " expected=" + std::to_string(offset < expected.size() ? expected[offset] : 0) +
+                            " actual=" + std::to_string(offset < expected.size() ? memory[16384 + offset] : 0) +
+                            " GL error=" + std::to_string(fallback_error);
                     return false;
                 }
                 if (!remap_destination->IsRegionValid(destination_params.GetInterval())) {
