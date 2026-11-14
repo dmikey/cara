@@ -11,5 +11,13 @@
 <key>LSRequiresIPhoneOS</key><true/>
 <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
 <key>UILaunchScreen</key><dict/>
+<key>UIApplicationSceneManifest</key><dict>
+<key>UIApplicationSupportsMultipleScenes</key><false/>
+<key>UISceneConfigurations</key><dict>
+<key>UIWindowSceneSessionRoleApplication</key><array><dict>
+<key>UISceneConfigurationName</key><string>LUT Oracle</string>
+<key>UISceneClassName</key><string>UIWindowScene</string>
+<key>UISceneDelegateClassName</key><string>LUTOracleSceneDelegate</string>
+</dict></array></dict></dict>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 </dict></plist>

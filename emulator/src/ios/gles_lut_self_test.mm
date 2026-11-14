@@ -116,6 +116,15 @@ uint b=floatBitsToUint(v[component]);uvec4 bytes=(uvec4(b)>>uvec4(0,8,16,24))&uv
     }
     void Check(const char* stage,GLuint texture,GLint offset,const std::vector<Pixel>& expected){Require(Matches(texture,offset,expected),std::string(stage)+": GPU float bits differ");}
 };
+void CleanUnpackForConstruction() {
+    // Transfer deliberately restores hostile state. Constructor-owned tiny CPU
+    // uploads are setup, not the upload helper under test; give them a baseline.
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT,4);glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS,0);glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
+    glPixelStorei(GL_UNPACK_IMAGE_HEIGHT,0);glPixelStorei(GL_UNPACK_SKIP_IMAGES,0);
+    Clean("clean constructor unpack baseline");
+}
 std::vector<Pixel> Solid(unsigned n,Pixel pixel){return std::vector<Pixel>(n,pixel);}
 void DirectSpans(Reader& reader) {
     for(GLenum format:{GL_RG,GL_RGBA}) {
@@ -140,6 +149,7 @@ void DirectSpans(Reader& reader) {
 namespace OpenGL {
 struct LUTResidencyTestAccess {
     static void Run(Reader& reader) {
+        CleanUnpackForConstruction();
         RasterizerOpenGL r;
         constexpr std::size_t lf_size=8*256*24+8*128,proc_size=8*128*3+16*256*2;
         auto prime=[](OGLStreamBuffer& stream,std::size_t size){auto [data,offset,invalid]=stream.MapStaging(size,16);stream.FinishStaging(0);return data;};
@@ -180,12 +190,13 @@ struct LUTResidencyTestAccess {
 };
 } // namespace OpenGL
 
-@interface LUTOracleDelegate : UIResponder <UIApplicationDelegate>
+@interface LUTOracleSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic,strong) UIWindow* window;
 @end
-@implementation LUTOracleDelegate
-- (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)options {
-    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];UIViewController* controller=[UIViewController new];controller.view.backgroundColor=UIColor.systemBackgroundColor;UILabel* label=[[UILabel alloc] initWithFrame:CGRectMake(30,80,700,160)];label.numberOfLines=0;label.text=@"Running ROM-free GLES LUT oracle…";[controller.view addSubview:label];self.window.rootViewController=controller;[self.window makeKeyAndVisible];
+@implementation LUTOracleSceneDelegate
+- (void)scene:(UIScene*)scene willConnectToSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options {
+    if (![scene isKindOfClass:UIWindowScene.class]) return;
+    self.window=[[UIWindow alloc] initWithWindowScene:(UIWindowScene*)scene];UIViewController* controller=[UIViewController new];controller.view.backgroundColor=UIColor.systemBackgroundColor;UILabel* label=[[UILabel alloc] initWithFrame:CGRectMake(30,80,700,160)];label.numberOfLines=0;label.text=@"Running ROM-free GLES LUT oracle…";[controller.view addSubview:label];self.window.rootViewController=controller;[self.window makeKeyAndVisible];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{
         NSMutableDictionary* report=[NSMutableDictionary dictionaryWithDictionary:@{@"passed":@NO,@"rom_inputs":@NO,@"performance_claim":@NO,@"upload_mode":@"owned CPU staging; no optional PBO path",@"old_UB_negative_control":@NO,@"source_contract":@"live owned CPU span checked at every transfer; no GL maps during default uploads"}];
         EAGLContext* context=[[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
@@ -205,7 +216,12 @@ struct LUTResidencyTestAccess {
         report[@"checked_texels"]=@(counts.texels);report[@"checked_components"]=@(counts.components);report[@"transfer_calls"]=@(counts.transfers);report[@"multirow_calls"]=@(counts.multirow);report[@"nonzero_x_calls"]=@(counts.nonzero_x);report[@"GL_maps_during_default_upload"]=@(counts.maps);report[@"negative_controls_detected"]=@(counts.negative_controls);report[@"poisoned_state_checks"]=@(counts.state_checks);
         NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;NSData* data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];[data writeToFile:[documents stringByAppendingPathComponent:@"gles-lut-oracle.json"] options:NSDataWritingAtomic error:nil];[EAGLContext setCurrentContext:nil];
         dispatch_async(dispatch_get_main_queue(),^{label.text=[report[@"passed"] boolValue]?@"PASS — GLES LUT oracle completed": [@"FAIL — " stringByAppendingString:report[@"error"]?:@"unknown error"];});
-    }});return YES;
+    }});
 }
+@end
+@interface LUTOracleDelegate : UIResponder <UIApplicationDelegate>
+@end
+@implementation LUTOracleDelegate
+- (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)options { return YES; }
 @end
 int main(int argc,char** argv){@autoreleasepool{return UIApplicationMain(argc,argv,nil,NSStringFromClass(LUTOracleDelegate.class));}}
