@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Cara · Local multiplayer</title>
+<style>
+:root{font:17px/1.6 system-ui,sans-serif;color:#edf4ff;background:#0b1020}body{margin:0}main{max-width:760px;margin:auto;padding:54px 24px 72px}small{color:#9cb2d1;letter-spacing:.12em}h1{font-size:clamp(36px,7vw,58px);line-height:1.08;letter-spacing:-.04em;margin:18px 0}h2{font-size:23px;margin:30px 0 10px}p,li{color:#c3cfe1}li{padding:5px 0}strong{color:#edf4ff}a{color:#91c4ff}code{overflow-wrap:anywhere;font-size:.9em}section{background:#121c30;border:1px solid #2b3b54;border-radius:18px;padding:20px 24px;margin:28px 0}.status{font-weight:650;color:#b8d7fa}.status[data-ok=true]{color:#8be1b3}.note{font-size:15px;color:#a8b9d0}ol{padding-left:24px}button{font:inherit;color:#edf4ff;background:#294366;border:1px solid #6388b7;border-radius:8px;padding:8px 15px;cursor:pointer}button:focus-visible,a:focus-visible{outline:3px solid #91c4ff;outline-offset:4px}footer{margin-top:40px;font-size:14px;color:#9cb2d1}
+</style>
+<main>
+<small>CARA / PRIVATE ROOMS</small>
+<h1>Play locally.<br>Connect from anywhere.</h1>
+<p>Cara’s relay carries local wireless between players in the same private room. Connect in Cara, then use the game’s local multiplayer controls.</p>
+<section aria-labelledby="service-title">
+<h2 id="service-title" style="margin-top:0">Relay status</h2>
+<p id="status" class="status" role="status">Checking the relay…</p>
+<p id="checked" class="note">This checks service health. It does not test a game connection.</p>
+<button id="refresh" type="button">Check again</button> · <a href="/healthz">Raw service health</a>
+</section>
+<h2>Connect two players</h2>
+<ol>
+<li>Use two separate Cara installations with the relay feature and separate game saves. Each player needs a compatible game and local multiplayer unlocked.</li>
+<li>Open <strong>Settings → Local multiplayer → Private room</strong> from the library, or <strong>Local multiplayer</strong> from the running game’s menu. If this option is missing, that installation needs an updated Cara build.</li>
+<li>Keep the server address <code>wss://carap2p.therad.ninja/relay</code>. Both players enter the <strong>same existing room name and password</strong>, then tap <strong>Join room</strong>. Get these privately from the relay administrator. This page does not create rooms.</li>
+<li>Wait until both players show <strong>Connected</strong>, return to the game, then select its <strong>local wireless</strong> mode. Keep Cara in the foreground.</li>
+</ol>
+<h2>Testing Pokémon</h2>
+<p><strong>Pokémon trading and battles have not yet been verified in Cara.</strong> The relay, native transport and emulator wireless-service tests have passed separately. A connected room is the starting point for a game test.</p>
+<p>Start with matching game versions and updates, separate trainer saves and a small local action: discover the other player, request a local battle or trade, and accept on the other device. Record the exact game, versions and the first step that fails. Back up both in-game saves before attempting a trade.</p>
+<p class="note">Use the game’s local wireless option. This relay does not restore Nintendo Internet services or StreetPass. Leaving Cara or loading a save state disconnects the room; reconnect both players before trying again.</p>
+<footer>No credentials are collected on this page. Room passwords belong only in Cara.</footer>
+</main>
+<script>
+const status=document.getElementById('status'),checked=document.getElementById('checked'),refresh=document.getElementById('refresh');
+async function check(){refresh.disabled=true;status.textContent='Checking the relay…';delete status.dataset.ok;try{const r=await fetch('/healthz',{cache:'no-store',signal:AbortSignal.timeout(7000)});const data=await r.json();if(!r.ok||data.service!=='cara-relay'||data.status!=='ok')throw Error('unavailable');status.textContent='Relay is responding';status.dataset.ok='true';checked.textContent='Checked '+new Date().toLocaleTimeString()+'. Service health only; game connection and room admission are separate.';}catch{status.textContent='Could not confirm relay health';checked.textContent='Try again or open raw service health. This check does not diagnose your game or room password.';}finally{refresh.disabled=false;}}
+refresh.addEventListener('click',check);check();
+</script>
+</html>

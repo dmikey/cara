@@ -35,3 +35,9 @@ Acquire `/run/lock/radops-production-backup.lock` before host configuration chan
 A future update should create an immutable release, test it before activation, retain the prior image/release for rollback and restart only this service. No paid resource or DNS mutation is required by this design.
 
 `deploy/install.py` performs guarded initial deployment; `deploy/update.py` performs a guarded replacement of only the existing Cara service with a pinned release. Both default to read-only preflight; `--apply` is explicit. Updates retain the prior Cara container stopped until deliberate rollback/cleanup, verify the private room file is unchanged, and validate the new exec-form image health check before activation. Do not run initial install over existing state.
+
+## Public status page — 2026-11-14
+
+The public root now serves a credential-free connection guide and a read-only live `/healthz` check, replacing the intentional 404. `deploy/status.html` is served only at the exact root; unknown paths still return 404. `deploy/publish-status.py` defaults to read-only preflight and publishes only that asset and Cara's root vhost location under the production lock, with encrypted nginx backup restoration/hash verification, `nginx -t`, graceful reload and comparison of unrelated nginx hashes and all container IDs. No room file or relay process is changed.
+
+Live root HTTP200 was verified at15:37UTC; `/healthz` remains200 and a non-upgraded `/relay` request remains426. Final server receipt: `/var/snap/docker/common/cara-relay/status-receipt-20261114T153724Z.json`. Page SHA256: `3401f75b6489a54e6d221c10fd7d5f4c16b0720ba7ab5014227fc4d893dfff64`. Browser rendering could not be verified because the connected browser inventory was empty. Initial exact-root alias returned500; the final `root` plus `try_files` route resolved it before the HTTP200 receipt. This page does not imply positive app admission or Pokémon gameplay verification.

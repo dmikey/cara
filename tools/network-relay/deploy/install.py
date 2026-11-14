@@ -175,6 +175,11 @@ def main():
         (release / 'certificate-issuance.log').write_text(result.stdout + result.stderr)
         if result.returncode:
             raise RuntimeError('certificate issuance failed; see private release log')
+        public = Path('/var/www/cara-relay-status')
+        public.mkdir(mode=0o755, parents=True, exist_ok=True)
+        public.chmod(0o755)
+        shutil.copy2(release / 'status.html', public / 'index.html')
+        (public / 'index.html').chmod(0o644)
         SITE.write_text(marker + (release / 'nginx-http.conf').read_text() + '\n' +
                         (release / 'nginx-https.conf').read_text())
         SITE.chmod(0o644)
