@@ -66,7 +66,9 @@ public:
             return CategoryBoundary::Before;
         }
         if (relative < end_) return CategoryBoundary::None;
-        if (frame <= *before_frame_ || ticks <= before_ticks_ || global_ticks <= before_global_ticks_)
+        // Single-core RunLoop advances the current timer without advancing
+        // global_timer. A constant global scheduler counter is valid.
+        if (frame <= *before_frame_ || ticks <= before_ticks_ || global_ticks < before_global_ticks_)
             throw std::runtime_error("Native category interval has no positive frame/tick advance");
         finished_ = true;
         return CategoryBoundary::After;
@@ -87,7 +89,7 @@ struct CategoryEndpoint {
 inline Common::CPUCategoryTiming::Counters CategoryDelta(const CategoryEndpoint& before,
                                                         const CategoryEndpoint& after) {
     if (after.frame <= before.frame || after.ticks <= before.ticks ||
-        after.global_ticks <= before.global_ticks || after.wall_ns <= before.wall_ns ||
+        after.global_ticks < before.global_ticks || after.wall_ns <= before.wall_ns ||
         (before.thread_cpu_valid && after.thread_cpu_valid &&
          after.thread_cpu_ns < before.thread_cpu_ns))
         throw std::runtime_error("Native category endpoints are not a positive monotonic interval");
@@ -217,6 +219,7 @@ private:
             << ",\"actual_measured_refreshes\":" << b.frame - a.frame
             << ",\"current_timer_tick_delta\":" << b.ticks - a.ticks
             << ",\"global_tick_delta\":" << b.global_ticks - a.global_ticks
+            << ",\"global_tick_role\":\"scheduler global_timer; may remain constant in single-core RunLoop; not an elapsed-time denominator\""
             << ",\"wall_ns\":" << b.wall_ns - a.wall_ns << ",\"thread_cpu_ns\":";
         if (a.thread_cpu_valid && b.thread_cpu_valid) out << b.thread_cpu_ns - a.thread_cpu_ns;
         else out << "null";
