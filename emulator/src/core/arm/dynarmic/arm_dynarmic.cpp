@@ -129,7 +129,12 @@ public:
 
     void CallSVC(std::uint32_t swi) override {
 #ifdef ANDROID
-        if (startup_svc_count++ < 128) {
+        static const bool trace = [] {
+            const char* value = std::getenv("CARA_JIT_STARTUP_TRACE");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        if (trace && startup_svc_count < 128) {
+            ++startup_svc_count;
             LOG_INFO(Core_ARM11, "Dynarmic startup SVC core={} svc={:02X} pc={:08X} r0={:08X} r1={:08X}",
                      parent.GetID(), swi, parent.GetPC(), parent.GetReg(0), parent.GetReg(1));
         }

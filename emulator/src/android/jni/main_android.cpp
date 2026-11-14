@@ -12,6 +12,7 @@
 
 #include "common/common_paths.h"
 #include "common/file_util.h"
+#include "common/frame_timing.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/arm/arm_interface.h"
@@ -65,6 +66,12 @@ static std::map<std::string, GameInfo> s_app_dict;
 void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
+    const Config::ConfigInfo<bool> phase_timing{{"Debug", "trace_renderer_timing"}, false};
+    const Config::ConfigInfo<bool> guest_trace{{"Debug", "trace_guest_threads"}, false};
+    Common::FrameTiming::counters = {};
+    Common::FrameTiming::counters.enabled = Config::Get(phase_timing);
+    const bool trace_guest_threads = Config::Get(guest_trace);
+    setenv("CARA_JIT_STARTUP_TRACE", trace_guest_threads ? "1" : "0", 1);
     const Config::ConfigInfo<bool> callback_memory{{"Debug", "jit_callback_memory"}, false};
     const Config::ConfigInfo<bool> no_optimizations{{"Debug", "jit_no_optimizations"}, false};
     setenv("CARA_JIT_CALLBACK_MEMORY", Config::Get(callback_memory) ? "1" : "0", 1);
@@ -147,10 +154,26 @@ void BootGame(const std::string& path) {
     s_is_running = true;
     auto next_thread_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     unsigned thread_reports = 0;
+    auto next_phase_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (!s_stop_running) {
         if (s_is_running) {
             result = system.RunLoop();
-            if (thread_reports < 8 && std::chrono::steady_clock::now() >= next_thread_report) {
+            auto& phases = Common::FrameTiming::counters;
+            if (phases.enabled && std::chrono::steady_clock::now() >= next_phase_report) {
+                LOG_INFO(Frontend,
+                    "Android renderer window: guest_ms={:.3f} draw_ms={:.3f} submit_ms={:.3f} prepare_ms={:.3f} upload_ms={:.3f} readback_ms={:.3f} download_ms={:.3f} remap_ms={:.3f} compile_ms={:.3f} compile_calls={} downloads={} remaps={} gpu_draws={} cpu_draws={}",
+                    phases.guest_cpu_seconds*1000, phases.draw_seconds*1000,
+                    phases.draw_submit_seconds*1000, phases.vertex_prepare_seconds*1000,
+                    phases.vertex_upload_seconds*1000, phases.readback_seconds*1000,
+                    phases.surface_download_seconds*1000, phases.surface_remap_seconds*1000,
+                    phases.shader_compile_seconds*1000, phases.shader_compile_calls,
+                    phases.surface_download_calls, phases.surface_remap_calls,
+                    phases.gpu_vertex_draws, phases.cpu_vertex_draws);
+                phases = {};
+                phases.enabled = true;
+                next_phase_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            }
+            if (trace_guest_threads && thread_reports < 8 && std::chrono::steady_clock::now() >= next_thread_report) {
                 ++thread_reports;
                 next_thread_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
                 auto& manager = system.Kernel().GetCurrentThreadManager();
