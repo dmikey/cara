@@ -26,6 +26,8 @@ jobs:
         run: go vet ./...
       - name: Test relay with race detector
         run: go test -race ./...
+      - name: Check unwired client codec with sanitizers
+        run: client-prototype/check.sh
   build:
     name: ${{ matrix.platform }} / ${{ matrix.renderer }} / ARM64 / no JIT
     runs-on: macos-15
