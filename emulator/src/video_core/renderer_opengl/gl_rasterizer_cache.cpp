@@ -322,7 +322,11 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
                          const Common::Rectangle<u32>& dst_rect, SurfaceType type,
                          bool checked_copy = false) {
     OpenGLState prev_state = OpenGLState::GetCurState();
-    SCOPE_EXIT({ prev_state.SubApply(); });
+    bool narrow_state = false;
+    SCOPE_EXIT({
+        if (!narrow_state || !prev_state.TryApplyBlitState())
+            prev_state.SubApply();
+    });
     if (checked_copy && glGetError() != GL_NO_ERROR)
         throw std::runtime_error("Native texture copy rejected preexisting GL error");
     // A framebuffer copy requires a known attachment category. The surface overload
@@ -333,7 +337,13 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
     OpenGLState state;
     state.draw.read_framebuffer = g_read_framebuffer.handle;
     state.draw.draw_framebuffer = g_draw_framebuffer.handle;
-    state.SubApply();
+    static const bool blit_state_scope = [] {
+        const char* value = std::getenv("CARA_BLIT_STATE_SCOPE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    narrow_state = blit_state_scope && state.TryApplyBlitState();
+    if (!narrow_state)
+        state.SubApply();
 
     u32 buffers = 0;
 

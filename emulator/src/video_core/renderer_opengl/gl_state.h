@@ -166,6 +166,10 @@ public:
 
     void SubApply() const;
 
+    /// Apply only framebuffer bindings and scissor enable for a blit. Returns false
+    /// without changing GL when the full raster snapshot is invalid.
+    bool TryApplyBlitState() const;
+
     /// apply directly
     static GLuint BindVertexArray(GLuint array);
     static GLuint BindVertexBuffer(GLuint buffer);

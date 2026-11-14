@@ -425,6 +425,28 @@ void OpenGLState::SubApply() const {
     // Do not turn an invalid full-state snapshot valid after only a partial apply.
 }
 
+bool OpenGLState::TryApplyBlitState() const {
+    if (!raster_state_valid)
+        return false;
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::StateApply);
+    if (draw.read_framebuffer != cur_state.draw.read_framebuffer)
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, draw.read_framebuffer);
+    if (draw.draw_framebuffer != cur_state.draw.draw_framebuffer)
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw.draw_framebuffer);
+    if (scissor.enabled != cur_state.scissor.enabled) {
+        if (scissor.enabled)
+            glEnable(GL_SCISSOR_TEST);
+        else
+            glDisable(GL_SCISSOR_TEST);
+    }
+    cur_state.draw.read_framebuffer = draw.read_framebuffer;
+    cur_state.draw.draw_framebuffer = draw.draw_framebuffer;
+    cur_state.scissor.enabled = scissor.enabled;
+    // A blit ignores write masks and viewport; leave those and the scissor box
+    // untouched. This partial operation never establishes full-state validity.
+    return true;
+}
+
 GLuint OpenGLState::BindVertexArray(GLuint array) {
     GLuint previous = cur_state.draw.vertex_array;
     glBindVertexArray(array);
