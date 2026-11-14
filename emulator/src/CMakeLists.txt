@@ -4,7 +4,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 # Enable modules to include each other's files
-include_directories(.)
+include_directories(. "${CMAKE_CURRENT_BINARY_DIR}")
+if(CARA_FASTINTERP_COMPACT_DECODED)
+    set(CARA_FASTINTERP_COMPACT_DECODED_VALUE 1)
+else()
+    set(CARA_FASTINTERP_COMPACT_DECODED_VALUE 0)
+endif()
+configure_file(core/arm/fastinterp/fastinterp_decoded_layout_config.h.in
+    "${CMAKE_CURRENT_BINARY_DIR}/fastinterp_decoded_layout_config.h" @ONLY)
 
 # CMake seems to only define _DEBUG on Windows
 set_property(DIRECTORY APPEND PROPERTY
@@ -173,6 +180,8 @@ if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(cara-extdata-state-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-save-state-self-test save_state_self_test.cpp)
     target_link_libraries(cara-save-state-self-test PRIVATE core common nihstro-headers cryptopp libzstd_static ${PLATFORM_LIBRARIES} Threads::Threads)
+    add_executable(cara-fastinterp-decoded-record-self-test ../../tests/fastinterp_decoded_record_test.cpp)
+    target_include_directories(cara-fastinterp-decoded-record-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(cara-fastinterp-self-test fastinterp_self_test.cpp)
     target_link_libraries(cara-fastinterp-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-core-cache-self-test core_cache_self_test.cpp)

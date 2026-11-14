@@ -250,7 +250,7 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     std::array<u64, 4> alu_weighted{};
     for (const auto* block : blocks)
         for (unsigned slot = 0; slot < block->inst_count; ++slot) {
-            const auto opcode = block->instructions[slot].opcode;
+            const auto opcode = block->instructions[slot].GetOpcode();
             if (opcode >= Opcode::AddImm && opcode <= Opcode::MovLslImm)
                 alu_weighted[unsigned(opcode) - unsigned(Opcode::AddImm)] += block->exec_count;
             if (opcode >= Opcode::AddPairImmImm && opcode <= Opcode::MovPairLslLsl) {
@@ -264,7 +264,7 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     u64 unrolled_blocks = 0, unrolled_dispatches = 0;
     for (const auto* block : blocks)
         for (unsigned slot = 0; slot < block->inst_count; ++slot) {
-            const auto opcode = block->instructions[slot].opcode;
+            const auto opcode = block->instructions[slot].GetOpcode();
             if (opcode == Opcode::ArmUnrolledSubsLoop ||
                 opcode == Opcode::ThumbUnrolledSubsLoop || opcode == Opcode::ThumbUnrolledCmpLoop) {
                 ++unrolled_blocks;
@@ -295,6 +295,8 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
            << ",\"al_dispatch_enabled\":" << (al_dispatch_ ? "true" : "false")
            << ",\"secondary_link_enabled\":" << (secondary_link_ ? "true" : "false")
            << ",\"absolute_pc_enabled\":" << (CARA_FASTINTERP_ABSOLUTE_PC ? "true" : "false")
+           << ",\"compact_decoded_enabled\":" << (CARA_FASTINTERP_COMPACT_DECODED ? "true" : "false")
+           << ",\"decoded_inst_bytes\":" << sizeof(DecodedInst)
            << ",\"cache_ways\":" << cache_.Ways()
            << ",\"cache_sets\":" << cache_.Sets() << ",\"cache_entries\":" << cache_.Capacity()
            << ",\"cache_object_bytes\":" << sizeof(cache_)
@@ -331,7 +333,7 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
                << ",\"end_pc\":" << block.end_pc << ",\"executions\":" << block.exec_count
                << ",\"thumb\":" << (block.IsThumb() ? "true" : "false") << ",\"opcodes\":[";
         for (unsigned j = 0; j < block.inst_count; ++j) {
-            const auto opcode = block.instructions[j].opcode;
+            const auto opcode = block.instructions[j].GetOpcode();
             output << (j ? "," : "") << unsigned(opcode);
             if (opcode == Opcode::Vmul4S || opcode == Opcode::Vmul4Gather ||
                 opcode == Opcode::Vmla4S || opcode == Opcode::Vmla4Gather)
@@ -407,7 +409,7 @@ void ARM_FastInterp::Run() {
         u64 executed = ExecuteBlock(block);
 
         if (executed == 0 && !halted_ && state_.PC() == pc &&
-            block->instructions[0].opcode == Opcode::Invalid) {
+            block->instructions[0].GetOpcode() == Opcode::Invalid) {
             // The block truly failed to execute: it decoded to an invalid
             // instruction, which exits without adding ticks.
             // Every other executed==0 return is the SVC handlers' deliberate
@@ -468,7 +470,7 @@ void ARM_FastInterp::Step() {
         if (ReadsPcAsSource(decoded)) {
             block->instructions[1] = decoded;
             std::memset(&decoded, 0, sizeof(decoded));
-            decoded.opcode = Opcode::PcSetup;
+            decoded.SetOpcode(Opcode::PcSetup);
             decoded.cond = 0xE;
             decoded.imm32 = pipeline_pc;
             slot = 1;
@@ -477,7 +479,7 @@ void ARM_FastInterp::Step() {
     block->instructions[slot].ticks = static_cast<u8>(Core::TicksForInstruction(state_.thumb_mode, raw));
     DecodedInst& term = block->instructions[slot + 1];
     std::memset(&term, 0, sizeof(term));
-    term.opcode = Opcode::EndBlock;
+    term.SetOpcode(Opcode::EndBlock);
     term.cond = 0xE;
     block->inst_count = slot + 1;
     block->end_pc = pc + size;

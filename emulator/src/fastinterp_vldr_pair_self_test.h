@@ -68,13 +68,13 @@ static int VerifyFastInterpVldrPairs(Core::System& system) {
         DecodeRecordSelfTestAccess::Decode(*cpu,candidate,0x1000);
         BasicBlock baseline=candidate;
         for(unsigned i=0;i<baseline.inst_count;++i) {
-            if(baseline.instructions[i].opcode!=Opcode::VldrPairS)continue;
+            if(baseline.instructions[i].GetOpcode()!=Opcode::VldrPairS)continue;
             ++selected;
             if(i+1>=baseline.inst_count || baseline.instructions[i].inst_size!=4 ||
                baseline.instructions[i+1].inst_size!=4 || conditions!=0xee) {
                 std::cerr<<"VLDR pair altered original decode boundary\n";return 1;
             }
-            baseline.instructions[i].opcode=Opcode::VldrS;
+            baseline.instructions[i].SetOpcode(Opcode::VldrS);
             baseline.instructions[i].dispatch_index=unsigned(Opcode::VldrS)+(al?unsigned(Opcode::OpcodeCount):0);
         }
         const auto expected=snapshot(DecodeRecordSelfTestAccess::ExecuteOnce(*cpu,baseline));
@@ -102,7 +102,7 @@ static int VerifyFastInterpVldrPairs(Core::System& system) {
     code.fill(0xf0000000u);code[0]=word(0,15,0,14);code[1]=word(1,15,0,14);
     initialize(0x3020,0);BasicBlock pc_block{};pc_block.start_pc=0x1000;
     DecodeRecordSelfTestAccess::Decode(*cpu,pc_block,0x1000);
-    for(unsigned i=0;i<pc_block.inst_count;++i)if(pc_block.instructions[i].opcode==Opcode::VldrPairS){std::cerr<<"PC source paired\n";return 1;}
+    for(unsigned i=0;i<pc_block.inst_count;++i)if(pc_block.instructions[i].GetOpcode()==Opcode::VldrPairS){std::cerr<<"PC source paired\n";return 1;}
     // Public Step must stop after the first instruction, even with pairing enabled.
     code[0]=word(0,1,0,14);code[1]=word(1,1,16,14);cpu->ClearInstructionCache();initialize(0x3020,0);
     const auto before=timing.GetTimer(0)->GetDowncount();cpu->Step();
@@ -206,8 +206,8 @@ static int VerifyFastInterpVldrPairs(Core::System& system) {
         initialize(0x3020,0);BasicBlock paired{};paired.start_pc=0x1000;
         DecodeRecordSelfTestAccess::Decode(*cpu,paired,0x1000);
         BasicBlock scalar=paired;
-        for(unsigned i=0;i<scalar.inst_count;++i)if(scalar.instructions[i].opcode==Opcode::VldrPairS) {
-            scalar.instructions[i].opcode=Opcode::VldrS;
+        for(unsigned i=0;i<scalar.inst_count;++i)if(scalar.instructions[i].GetOpcode()==Opcode::VldrPairS) {
+            scalar.instructions[i].SetOpcode(Opcode::VldrS);
             scalar.instructions[i].dispatch_index=unsigned(Opcode::VldrS)+unsigned(Opcode::OpcodeCount);
         }
         constexpr unsigned iterations=1000000;

@@ -100,7 +100,7 @@ private:
     bool CheckCondition(u8 cond);
 
     void PrepareDispatch(DecodedInst& inst) const {
-        inst.dispatch_index = static_cast<u16>(inst.opcode) +
+        inst.dispatch_index = static_cast<u16>(inst.GetOpcode()) +
             ((al_dispatch_ && inst.cond == 0xE) ? static_cast<u16>(Opcode::OpcodeCount) : 0);
     }
 

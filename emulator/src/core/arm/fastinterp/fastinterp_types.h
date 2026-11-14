@@ -11,6 +11,18 @@
 #include "common/common_types.h"
 #include "core/arm/fastinterp/fastinterp_flags.h"
 
+// CMake shares this configuration with all engine/test consumers. A standalone
+// field witness can instead pass an explicit compiler definition.
+#if __has_include("fastinterp_decoded_layout_config.h")
+#include "fastinterp_decoded_layout_config.h"
+#endif
+
+// Isolated storage-density experiment. Both modes retain the same guest state/timing.
+#ifndef CARA_FASTINTERP_COMPACT_DECODED
+#define CARA_FASTINTERP_COMPACT_DECODED 0
+#endif
+static_assert(CARA_FASTINTERP_COMPACT_DECODED == 0 || CARA_FASTINTERP_COMPACT_DECODED == 1);
+
 namespace Core::FastInterp {
 
 // Only compare integer host ranges here; never dereference artificial test addresses.
@@ -521,12 +533,41 @@ enum class AddrMode : u8 {
 
 /// Pre-decoded instruction
 struct DecodedInst {
-    Opcode opcode; // 2 bytes
-    u8 cond;       // 1 byte: Condition code (0-14, 15=unconditional)
-    u8 rd;         // 1 byte: Destination register
+#if CARA_FASTINTERP_COMPACT_DECODED
+    // 31 meaningful bits: preserve raw sizes through 16 and ALL eight tick bits.
+    u32 dispatch_index : 10;
+    u32 inst_size : 5;
+    u32 reserved : 1;
+    u32 cond : 4;
+    u32 rd : 4;
+    u32 ticks : 8;
+#else
+    Opcode opcode;
+    u8 cond;
+    u8 rd;
+#endif
+
+    Opcode GetOpcode() const {
+#if CARA_FASTINTERP_COMPACT_DECODED
+        const unsigned count = static_cast<unsigned>(Opcode::OpcodeCount);
+        const unsigned index = dispatch_index;
+        return static_cast<Opcode>(index >= count ? index - count : index);
+#else
+        return opcode;
+#endif
+    }
+    void SetOpcode(Opcode value) {
+#if CARA_FASTINTERP_COMPACT_DECODED
+        // Every rewrite is finalized by PrepareDispatch before execution. Reset
+        // to the semantic bank immediately; do not read an uninitialized record.
+        dispatch_index = static_cast<unsigned>(value);
+#else
+        opcode = value;
+#endif
+    }
 
     union {
-        // Four scalar operations packed into one dispatch; keeps DecodedInst at 20 bytes.
+        // Four scalar operations packed into one dispatch; largest operand payload is 12 bytes.
         struct {
             u8 sd[4];
             u8 sn[4];
@@ -619,6 +660,7 @@ struct DecodedInst {
         u32 imm32;
     };
 
+#if !CARA_FASTINTERP_COMPACT_DECODED
     // Size in bytes of original instruction (4 for ARM, 2 or 4 for Thumb)
     u8 inst_size;
 
@@ -627,11 +669,16 @@ struct DecodedInst {
 
     // Uses former tail padding; semantic opcode/condition stay intact.
     u16 dispatch_index;
+#endif
 };
 
-static_assert(sizeof(DecodedInst) == 20, "DecodedInst should be 20 bytes");
-static_assert(offsetof(DecodedInst, dispatch_index) == 18, "Dispatch index must use tail padding");
-static_assert(2u * static_cast<unsigned>(Opcode::OpcodeCount) <= 65536u);
+static_assert(sizeof(DecodedInst) == (CARA_FASTINTERP_COMPACT_DECODED ? 16 : 20));
+static_assert(alignof(DecodedInst) == alignof(u32));
+static_assert(offsetof(DecodedInst, dp) == 4);
+#if !CARA_FASTINTERP_COMPACT_DECODED
+static_assert(offsetof(DecodedInst, dispatch_index) == 18);
+#endif
+static_assert(2u * static_cast<unsigned>(Opcode::OpcodeCount) <= 1024u);
 
 // ============================================================================
 // Basic Block Structure

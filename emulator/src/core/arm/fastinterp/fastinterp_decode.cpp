@@ -44,7 +44,7 @@ static u8 ComputeTicks(const DecodedInst& inst, bool is_thumb) {
     // Fused/unrolled Thumb opcodes stand in for multiple Thumb instructions, so they must be
     // handled before the generic "Thumb = 1 tick" early-return below (otherwise they are
     // silently undercounted).
-    switch (inst.opcode) {
+    switch (inst.GetOpcode()) {
     case Opcode::ThumbFusedSubsBcc:
     case Opcode::ThumbFusedCmpBcc:
     case Opcode::ThumbFusedCmpRegBcc:
@@ -58,7 +58,7 @@ static u8 ComputeTicks(const DecodedInst& inst, bool is_thumb) {
     if (is_thumb)
         return 1;
 
-    switch (inst.opcode) {
+    switch (inst.GetOpcode()) {
     // Branches
     case Opcode::B:
     case Opcode::Bl:
@@ -283,7 +283,7 @@ bool OperandMayPassCarry(const DecodedInst& inst) {
 }
 
 FlagEffects ClassifyFlagEffects(const DecodedInst& inst) {
-    switch (inst.opcode) {
+    switch (inst.GetOpcode()) {
     // ARM data processing, no flag writes
     case Opcode::And:
     case Opcode::Eor:
@@ -484,96 +484,96 @@ FlagEffects ClassifyFlagEffects(const DecodedInst& inst) {
 // Thumb ops are retargeted to ARM handlers; the fixups write every dp field
 // the ARM handlers read (Thumb decode leaves unused fields stale).
 bool TryDowngrade(DecodedInst& inst) {
-    switch (inst.opcode) {
+    switch (inst.GetOpcode()) {
     // ARM S -> non-S: identical operand layout, opcode swap only
     case Opcode::AndS:
-        inst.opcode = Opcode::And;
+        inst.SetOpcode(Opcode::And);
         return true;
     case Opcode::EorS:
-        inst.opcode = Opcode::Eor;
+        inst.SetOpcode(Opcode::Eor);
         return true;
     case Opcode::SubS:
-        inst.opcode = Opcode::Sub;
+        inst.SetOpcode(Opcode::Sub);
         return true;
     case Opcode::RsbS:
-        inst.opcode = Opcode::Rsb;
+        inst.SetOpcode(Opcode::Rsb);
         return true;
     case Opcode::AddS:
-        inst.opcode = Opcode::Add;
+        inst.SetOpcode(Opcode::Add);
         return true;
     case Opcode::AdcS:
-        inst.opcode = Opcode::Adc;
+        inst.SetOpcode(Opcode::Adc);
         return true;
     case Opcode::SbcS:
-        inst.opcode = Opcode::Sbc;
+        inst.SetOpcode(Opcode::Sbc);
         return true;
     case Opcode::RscS:
-        inst.opcode = Opcode::Rsc;
+        inst.SetOpcode(Opcode::Rsc);
         return true;
     case Opcode::OrrS:
-        inst.opcode = Opcode::Orr;
+        inst.SetOpcode(Opcode::Orr);
         return true;
     case Opcode::MovS:
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         return true;
     case Opcode::BicS:
-        inst.opcode = Opcode::Bic;
+        inst.SetOpcode(Opcode::Bic);
         return true;
     case Opcode::MvnS:
-        inst.opcode = Opcode::Mvn;
+        inst.SetOpcode(Opcode::Mvn);
         return true;
     case Opcode::MulS:
-        inst.opcode = Opcode::Mul;
+        inst.SetOpcode(Opcode::Mul);
         return true;
     case Opcode::MlaS:
-        inst.opcode = Opcode::Mla;
+        inst.SetOpcode(Opcode::Mla);
         return true;
     case Opcode::UmullS:
-        inst.opcode = Opcode::Umull;
+        inst.SetOpcode(Opcode::Umull);
         return true;
     case Opcode::UmlalS:
-        inst.opcode = Opcode::Umlal;
+        inst.SetOpcode(Opcode::Umlal);
         return true;
     case Opcode::SmullS:
-        inst.opcode = Opcode::Smull;
+        inst.SetOpcode(Opcode::Smull);
         return true;
     case Opcode::SmlalS:
-        inst.opcode = Opcode::Smlal;
+        inst.SetOpcode(Opcode::Smlal);
         return true;
 
     // Thumb immediate forms
     case Opcode::ThumbMovImm8: // Rd = imm8
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rm = 0xFF;
         return true;
     case Opcode::ThumbAddImm8: // Rd = Rd + imm8
-        inst.opcode = Opcode::Add;
+        inst.SetOpcode(Opcode::Add);
         inst.dp.rn = inst.rd;
         inst.dp.rm = 0xFF;
         return true;
     case Opcode::ThumbSubImm8: // Rd = Rd - imm8
-        inst.opcode = Opcode::Sub;
+        inst.SetOpcode(Opcode::Sub);
         inst.dp.rn = inst.rd;
         inst.dp.rm = 0xFF;
         return true;
     case Opcode::ThumbAddImm3: // Rd = Rn + imm3
-        inst.opcode = Opcode::Add;
+        inst.SetOpcode(Opcode::Add);
         inst.dp.rm = 0xFF;
         return true;
     case Opcode::ThumbSubImm3: // Rd = Rn - imm3
-        inst.opcode = Opcode::Sub;
+        inst.SetOpcode(Opcode::Sub);
         inst.dp.rm = 0xFF;
         return true;
 
     // Thumb three-register forms
     case Opcode::ThumbAddReg3: // Rd = Rn + Rm
-        inst.opcode = Opcode::Add;
+        inst.SetOpcode(Opcode::Add);
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
         return true;
     case Opcode::ThumbSubReg3: // Rd = Rn - Rm
-        inst.opcode = Opcode::Sub;
+        inst.SetOpcode(Opcode::Sub);
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
@@ -581,55 +581,55 @@ bool TryDowngrade(DecodedInst& inst) {
 
     // Thumb two-register forms (Rd is both source and destination)
     case Opcode::ThumbAnd:
-        inst.opcode = Opcode::And;
+        inst.SetOpcode(Opcode::And);
         inst.dp.rn = inst.rd;
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
         return true;
     case Opcode::ThumbEor:
-        inst.opcode = Opcode::Eor;
+        inst.SetOpcode(Opcode::Eor);
         inst.dp.rn = inst.rd;
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
         return true;
     case Opcode::ThumbOrr:
-        inst.opcode = Opcode::Orr;
+        inst.SetOpcode(Opcode::Orr);
         inst.dp.rn = inst.rd;
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
         return true;
     case Opcode::ThumbBic:
-        inst.opcode = Opcode::Bic;
+        inst.SetOpcode(Opcode::Bic);
         inst.dp.rn = inst.rd;
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
         return true;
     case Opcode::ThumbAdc:
-        inst.opcode = Opcode::Adc;
+        inst.SetOpcode(Opcode::Adc);
         inst.dp.rn = inst.rd;
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
         return true;
     case Opcode::ThumbSbc:
-        inst.opcode = Opcode::Sbc;
+        inst.SetOpcode(Opcode::Sbc);
         inst.dp.rn = inst.rd;
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
         return true;
     case Opcode::ThumbMvn: // Rd = ~Rm
-        inst.opcode = Opcode::Mvn;
+        inst.SetOpcode(Opcode::Mvn);
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         inst.dp.shift_imm = 0;
         return true;
     case Opcode::ThumbNeg: // Rd = 0 - Rm
-        inst.opcode = Opcode::Rsb;
+        inst.SetOpcode(Opcode::Rsb);
         inst.dp.rn = inst.dp.rm;
         inst.dp.rm = 0xFF;
         inst.dp.imm = 0;
@@ -637,47 +637,47 @@ bool TryDowngrade(DecodedInst& inst) {
 
     // Thumb shifts -> MOV with shifted operand
     case Opcode::ThumbLslImm: // Rd = Rm LSL #imm5
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSL;
         return true;
     case Opcode::ThumbLsrImm: // Rd = Rm LSR #imm5 (#0 = 32, same as ARM)
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::LSR;
         return true;
     case Opcode::ThumbAsrImm: // Rd = Rm ASR #imm5 (#0 = 32, same as ARM)
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rs = 0xFF;
         inst.dp.shift_type = ShiftType::ASR;
         return true;
     case Opcode::ThumbLslReg: // Rd = Rd LSL Rs (Rs decoded into dp.rm)
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rs = inst.dp.rm;
         inst.dp.rm = inst.rd;
         inst.dp.shift_type = ShiftType::LSL;
         return true;
     case Opcode::ThumbLsrReg:
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rs = inst.dp.rm;
         inst.dp.rm = inst.rd;
         inst.dp.shift_type = ShiftType::LSR;
         return true;
     case Opcode::ThumbAsrReg:
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rs = inst.dp.rm;
         inst.dp.rm = inst.rd;
         inst.dp.shift_type = ShiftType::ASR;
         return true;
     case Opcode::ThumbRor:
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rs = inst.dp.rm;
         inst.dp.rm = inst.rd;
         inst.dp.shift_type = ShiftType::ROR;
         return true;
 
     case Opcode::ThumbMul: // Rd = Rm * Rd (dp.rm and mul.rm share the same byte)
-        inst.opcode = Opcode::Mul;
+        inst.SetOpcode(Opcode::Mul);
         inst.mul.rs = inst.rd;
         return true;
 
@@ -695,7 +695,7 @@ u32 EliminateDeadFlags(BasicBlock* block, bool precise_block_end) {
         // LDM-PC may return before any decoded tail executes. Keep incoming
         // flags live across that possible exit, including conditional returns
         // and compatibility mode where the old decoded span is retained.
-        if (precise_block_end && inst.opcode == Opcode::Ldm && (inst.lsm.reg_list & (1u << 15)))
+        if (precise_block_end && inst.GetOpcode() == Opcode::Ldm && (inst.lsm.reg_list & (1u << 15)))
             fx.barrier = true;
         if (!fx.barrier && fx.writes != 0 && (live & fx.writes) == 0 && TryDowngrade(inst)) {
             eliminated++;
@@ -839,7 +839,7 @@ u32 DecodeShiftImm(u32 value, ShiftType type, u8 amount, bool& carry_out) {
 } // namespace
 
 bool ARM_FastInterp::ReadsPcAsSource(const DecodedInst& inst) {
-    switch (inst.opcode) {
+    switch (inst.GetOpcode()) {
     // --- ARM data processing: rn (except MOV/MVN), op2 register, shift reg ---
     case Opcode::And:
     case Opcode::Eor:
@@ -875,7 +875,7 @@ bool ARM_FastInterp::ReadsPcAsSource(const DecodedInst& inst) {
             if (inst.dp.rs != 0xFF && inst.dp.rs == 15)
                 return true;
         }
-        return DpReadsRn(inst.opcode) && inst.dp.rn == 15;
+        return DpReadsRn(inst.GetOpcode()) && inst.dp.rn == 15;
 
     // --- MSR register form reads dp.rm ---
     case Opcode::Msr:
@@ -1057,14 +1057,14 @@ bool ARM_FastInterp::ReadsPcAsSource(const DecodedInst& inst) {
 
 void ARM_FastInterp::FoldPcSources(DecodedInst& inst, u32 pipeline_pc) {
     // LDR literal (imm offset, no writeback): absolute address is a constant
-    if (inst.opcode == Opcode::Ldr && inst.ls.rn == 15 && inst.ls.rm == 0xFF &&
+    if (inst.GetOpcode() == Opcode::Ldr && inst.ls.rn == 15 && inst.ls.rm == 0xFF &&
         inst.ls.mode == AddrMode::Offset) {
-        inst.opcode = Opcode::LdrLit;
+        inst.SetOpcode(Opcode::LdrLit);
         inst.ls.offset = static_cast<s32>(pipeline_pc + static_cast<u32>(inst.ls.offset));
         return;
     }
 
-    if (!IsDpAluOpcode(inst.opcode))
+    if (!IsDpAluOpcode(inst.GetOpcode()))
         return;
 
     // Op2 = PC shifted by an immediate amount: fold the shifted value into an
@@ -1077,7 +1077,7 @@ void ARM_FastInterp::FoldPcSources(DecodedInst& inst, u32 pipeline_pc) {
         const u32 val =
             lsl0 ? pipeline_pc
                  : DecodeShiftImm(pipeline_pc, inst.dp.shift_type, inst.dp.shift_imm, carry);
-        if (!DpUsesShifterCarry(inst.opcode)) {
+        if (!DpUsesShifterCarry(inst.GetOpcode())) {
             // Arithmetic / non-S ops ignore the shifter carry entirely
             inst.dp.rm = 0xFF;
             inst.dp.imm = val;
@@ -1100,9 +1100,9 @@ void ARM_FastInterp::FoldPcSources(DecodedInst& inst, u32 pipeline_pc) {
 
     // Rn = PC with an immediate op2 and a pure operation (no flags, no
     // carry-in): the whole result is a decode-time constant -> MOV #imm
-    if (inst.dp.rn == 15 && inst.dp.rm == 0xFF && DpReadsRn(inst.opcode)) {
+    if (inst.dp.rn == 15 && inst.dp.rm == 0xFF && DpReadsRn(inst.GetOpcode())) {
         u32 val;
-        switch (inst.opcode) {
+        switch (inst.GetOpcode()) {
         case Opcode::And:
             val = pipeline_pc & inst.dp.imm;
             break;
@@ -1127,7 +1127,7 @@ void ARM_FastInterp::FoldPcSources(DecodedInst& inst, u32 pipeline_pc) {
         default:
             return; // S-forms, compares, ADC/SBC/RSC: PcSetup prefix
         }
-        inst.opcode = Opcode::Mov;
+        inst.SetOpcode(Opcode::Mov);
         inst.dp.rn = 0;
         inst.dp.rm = 0xFF;
         inst.dp.imm = val;
@@ -1180,7 +1180,7 @@ constexpr ThumbFusePattern thumb_fuse_patterns[] = {
 bool ARM_FastInterp::TryFuseArm(DecodedInst& inst, u32 pc) {
     // Compare/test + Bcc
     for (const ArmFusePattern& p : arm_fuse_patterns) {
-        if (inst.opcode != p.src || inst.cond != 0xE) {
+        if (inst.GetOpcode() != p.src || inst.cond != 0xE) {
             continue;
         }
         if (p.src == Opcode::SubS && inst.rd == 15) {
@@ -1214,7 +1214,7 @@ bool ARM_FastInterp::TryFuseArm(DecodedInst& inst, u32 pc) {
         }
         const u8 rn = inst.dp.rn;
         const s32 offset = static_cast<s32>((next_inst & 0x00FFFFFF) << 8) >> 6;
-        inst.opcode = fused_op;
+        inst.SetOpcode(fused_op);
         inst.fused.rn = rn;
         inst.fused.rm = fused_rm;
         inst.fused.branch_cond = branch_cond;
@@ -1228,7 +1228,7 @@ bool ARM_FastInterp::TryFuseArm(DecodedInst& inst, u32 pc) {
     }
 
     // ADD Rd, Rn, #imm; CMP Rd, Rm; B<cond> - three-instruction iterator loop
-    if (inst.opcode == Opcode::Add && inst.cond == 0xE && inst.rd != 15 && inst.dp.rm == 0xFF) {
+    if (inst.GetOpcode() == Opcode::Add && inst.cond == 0xE && inst.rd != 15 && inst.dp.rm == 0xFF) {
         fusion_stats_.fusions_attempted++;
         const u32 next_inst = ReadMemory32(pc + 4);
         // Next must be CMP Rd, Rm (unconditional) comparing the ADD result:
@@ -1255,7 +1255,7 @@ bool ARM_FastInterp::TryFuseArm(DecodedInst& inst, u32 pc) {
         const u8 rn = inst.dp.rn;
         const u32 add_imm = inst.dp.imm;
         const s32 offset = static_cast<s32>((third_inst & 0x00FFFFFF) << 8) >> 6;
-        inst.opcode = Opcode::FusedAddCmpBcc;
+        inst.SetOpcode(Opcode::FusedAddCmpBcc);
         inst.fused.rn = rn;
         inst.fused.rm = cmp_rm;
         inst.fused.branch_cond = branch_cond;
@@ -1273,7 +1273,7 @@ bool ARM_FastInterp::TryFuseArm(DecodedInst& inst, u32 pc) {
 
 bool ARM_FastInterp::TryFuseThumb(DecodedInst& inst, u32 pc) {
     for (const ThumbFusePattern& p : thumb_fuse_patterns) {
-        if (inst.opcode != p.src) {
+        if (inst.GetOpcode() != p.src) {
             continue;
         }
         fusion_stats_.fusions_attempted++;
@@ -1288,7 +1288,7 @@ bool ARM_FastInterp::TryFuseThumb(DecodedInst& inst, u32 pc) {
         const u8 rm = p.imm_form ? u8{0xFF} : inst.dp.rm;
         const u32 imm = p.imm_form ? (inst.dp.imm & 0xFF) : 0;
         const s32 offset = static_cast<s8>(next_inst & 0xFF) << 1;
-        inst.opcode = p.fused;
+        inst.SetOpcode(p.fused);
         inst.fused.rn = rn;
         inst.fused.rm = rm;
         inst.fused.branch_cond = branch_cond;
@@ -1333,7 +1333,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
             return false;
         block->instructions[block->inst_count + 1] = inst;
         std::memset(&inst, 0, sizeof(inst));
-        inst.opcode = Opcode::PcSetup;
+        inst.SetOpcode(Opcode::PcSetup);
         inst.cond = 0xE;
         inst.imm32 = pipeline_pc;
         block->inst_count++; // prefix slot; the shared increment below counts the real one
@@ -1400,7 +1400,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         // inserted, the real instruction is the last counted slot (the prefix
         // increment above plus the shared increment cover both).
         const DecodedInst& last = block->instructions[block->inst_count - 1];
-        switch (last.opcode) {
+        switch (last.GetOpcode()) {
         case Opcode::Ldm:
             // rd is zero for this family, but the handler branches when PC
             // is loaded. Shorten unconditional returns only in chain-budget
@@ -1448,10 +1448,10 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     u32 tick_addr = pc;
     for (u16 i = 0; i < block->inst_count; i++) {
         DecodedInst& inst = block->instructions[i];
-        if (inst.opcode == Opcode::PcSetup) {
+        if (inst.GetOpcode() == Opcode::PcSetup) {
             inst.ticks = 0; // PcSetup prefix: zero guest instructions (the real
                             // instruction in the next slot carries the cost)
-        } else if (IsFusedOrUnrolled(inst.opcode)) {
+        } else if (IsFusedOrUnrolled(inst.GetOpcode())) {
             inst.ticks = ComputeTicks(inst, is_thumb);
         } else if (is_thumb) {
             inst.ticks = 1; // canonical: every Thumb instruction is 1 tick
@@ -1475,13 +1475,13 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
             auto& add = block->instructions[slot];
             const auto& cmp = block->instructions[slot + 1];
-            if (add.opcode == Opcode::Add && add.cond == 0xE && add.rd != 15 && add.dp.rn != 15 &&
-                add.dp.rm == 0xFF && add.inst_size == 4 && cmp.opcode == Opcode::FusedCmpBcc &&
+            if (add.GetOpcode() == Opcode::Add && add.cond == 0xE && add.rd != 15 && add.dp.rn != 15 &&
+                add.dp.rm == 0xFF && add.inst_size == 4 && cmp.GetOpcode() == Opcode::FusedCmpBcc &&
                 cmp.fused.rn == add.rd && cmp.inst_size == 8) {
                 // Keep both predecoded operand layouts intact. Dead-flag
                 // elimination may have produced this ADD from an ADD.S; its
                 // flags are unobservable because the unconditional CMP replaces them.
-                add.opcode = Opcode::AddCmpImmBcc;
+                add.SetOpcode(Opcode::AddCmpImmBcc);
                 add.ticks += cmp.ticks;
                 ++slot;
             }
@@ -1498,10 +1498,10 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
             auto& compare = block->instructions[slot];
             const auto& transfer = block->instructions[slot + 1];
-            if (compare.opcode == Opcode::VcmpS && compare.cond == 0xE && compare.inst_size == 4 &&
-                transfer.opcode == Opcode::Vmrs && transfer.cond == 0xE && transfer.vfp.rt == 15 &&
+            if (compare.GetOpcode() == Opcode::VcmpS && compare.cond == 0xE && compare.inst_size == 4 &&
+                transfer.GetOpcode() == Opcode::Vmrs && transfer.cond == 0xE && transfer.vfp.rt == 15 &&
                 transfer.inst_size == 4) {
-                compare.opcode = Opcode::VcmpVmrsS;
+                compare.SetOpcode(Opcode::VcmpVmrsS);
                 compare.ticks += transfer.ticks;
                 ++slot; // The pair handler skips this retained VMRS slot.
             }
@@ -1524,7 +1524,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
 #ifdef __aarch64__
             // ARM64 scalar VMLA currently contracts to FMADD. Its packed form
             // preserves that behavior; other host FP contraction policies vary.
-            const bool accumulate = vector_mul == 3 && inst.opcode == Opcode::VmlaS;
+            const bool accumulate = vector_mul == 3 && inst.GetOpcode() == Opcode::VmlaS;
 #else
             constexpr bool accumulate = false;
 #endif
@@ -1533,7 +1533,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
             bool valid = (group_pc & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 15;
             bool consecutive_dest = true, scalar_left = true, scalar_right = true;
             for (unsigned i = 0; i < 4; ++i) {
-                valid &= group[i].opcode == (accumulate ? Opcode::VmlaS : Opcode::VmulS) && group[i].cond == 0xE && group[i].inst_size == 4;
+                valid &= group[i].GetOpcode() == (accumulate ? Opcode::VmlaS : Opcode::VmulS) && group[i].cond == 0xE && group[i].inst_size == 4;
                 consecutive_dest &= group[i].vfp.sd == group[0].vfp.sd + i;
                 scalar_left &= group[i].vfp.sn == group[0].vfp.sn && group[i].vfp.sm == group[0].vfp.sm + i;
                 scalar_right &= group[i].vfp.sm == group[0].vfp.sm && group[i].vfp.sn == group[0].vfp.sn + i;
@@ -1548,10 +1548,10 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
             if (consecutive_dest && (scalar_left || scalar_right)) {
                 const u8 vector_start = scalar_left ? inst.vfp.sm : inst.vfp.sn;
                 const u8 scalar = scalar_left ? inst.vfp.sn : inst.vfp.sm;
-                inst.opcode = accumulate ? Opcode::Vmla4S : Opcode::Vmul4S;
+                inst.SetOpcode(accumulate ? Opcode::Vmla4S : Opcode::Vmul4S);
                 inst.vfp.sn = vector_start; inst.vfp.sm = scalar; inst.vfp.flags = scalar_left;
             } else {
-                inst.opcode = accumulate ? Opcode::Vmla4Gather : Opcode::Vmul4Gather;
+                inst.SetOpcode(accumulate ? Opcode::Vmla4Gather : Opcode::Vmul4Gather);
                 for (unsigned i = 0; i < 4; ++i) {
                     inst.vfp4.sd[i] = group[i].vfp.sd;
                     inst.vfp4.sn[i] = group[i].vfp.sn;
@@ -1576,15 +1576,15 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     if (alu_operands && !is_thumb) {
         for (unsigned slot = 0; slot < block->inst_count; ++slot) {
             auto& inst = block->instructions[slot];
-            const bool add = inst.opcode == Opcode::Add;
-            if ((!add && inst.opcode != Opcode::Mov) || inst.rd == 15 ||
+            const bool add = inst.GetOpcode() == Opcode::Add;
+            if ((!add && inst.GetOpcode() != Opcode::Mov) || inst.rd == 15 ||
                 (add && inst.dp.rn == 15))
                 continue;
             if (inst.dp.rm == 0xFF) {
-                inst.opcode = add ? Opcode::AddImm : Opcode::MovImm;
+                inst.SetOpcode(add ? Opcode::AddImm : Opcode::MovImm);
             } else if (inst.dp.rm != 15 && inst.dp.rs == 0xFF &&
                        inst.dp.shift_type == ShiftType::LSL && inst.dp.shift_imm < 32) {
-                inst.opcode = add ? Opcode::AddLslImm : Opcode::MovLslImm;
+                inst.SetOpcode(add ? Opcode::AddLslImm : Opcode::MovLslImm);
             }
         }
     }
@@ -1600,9 +1600,9 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
             const bool add = op == 4;
             if ((!add && op != 13) || ((raw >> 26) & 3) != 0 ||
                 (add && ((raw >> 16) & 15) == 15)) return -1;
-            if (inst.opcode != (add ? Opcode::Add : Opcode::Mov) &&
-                inst.opcode != (add ? Opcode::AddImm : Opcode::MovImm) &&
-                inst.opcode != (add ? Opcode::AddLslImm : Opcode::MovLslImm)) return -1;
+            if (inst.GetOpcode() != (add ? Opcode::Add : Opcode::Mov) &&
+                inst.GetOpcode() != (add ? Opcode::AddImm : Opcode::MovImm) &&
+                inst.GetOpcode() != (add ? Opcode::AddLslImm : Opcode::MovLslImm)) return -1;
             if (raw & (1u << 25)) return add ? 0 : 2;
             if ((raw & 15) == 15 || (raw & 0x70) || inst.dp.rs != 0xFF ||
                 inst.dp.shift_type != ShiftType::LSL || inst.dp.shift_imm >= 32) return -1;
@@ -1617,8 +1617,8 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
                 const int a = kind(first, ReadMemory32(pair_pc));
                 const int b = kind(second, ReadMemory32(pair_pc + 4));
                 if (a >= 0 && b >= 0 && a / 2 == b / 2) {
-                    first.opcode = static_cast<Opcode>(unsigned(Opcode::AddPairImmImm) +
-                        (a / 2) * 4 + (a % 2) * 2 + b % 2);
+                    first.SetOpcode(static_cast<Opcode>(unsigned(Opcode::AddPairImmImm) +
+                        (a / 2) * 4 + (a % 2) * 2 + b % 2));
                     first.inst_size += second.inst_size;
                     first.ticks += second.ticks;
                     pair_pc += first.inst_size;
@@ -1628,9 +1628,9 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
             }
             // Prior VFP group passes also retain consumed source slots.
             pair_pc += size;
-            slot += (first.opcode == Opcode::Vmul4S || first.opcode == Opcode::Vmul4Gather ||
-                     first.opcode == Opcode::Vmla4S || first.opcode == Opcode::Vmla4Gather) ? 4 :
-                    first.opcode == Opcode::VcmpVmrsS ? 2 : 1;
+            slot += (first.GetOpcode() == Opcode::Vmul4S || first.GetOpcode() == Opcode::Vmul4Gather ||
+                     first.GetOpcode() == Opcode::Vmla4S || first.GetOpcode() == Opcode::Vmla4Gather) ? 4 :
+                    first.GetOpcode() == Opcode::VcmpVmrsS ? 2 : 1;
         }
     }
 
@@ -1646,11 +1646,11 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
             auto& first = block->instructions[slot];
             const auto& second = block->instructions[slot + 1];
-            if (first.opcode == Opcode::VldrS && second.opcode == Opcode::VldrS &&
+            if (first.GetOpcode() == Opcode::VldrS && second.GetOpcode() == Opcode::VldrS &&
                 first.cond == 0xE && second.cond == 0xE && first.inst_size == 4 &&
                 second.inst_size == 4 && first.vfp.rn != 15 &&
                 first.vfp.rn == second.vfp.rn) {
-                first.opcode = Opcode::VldrPairS;
+                first.SetOpcode(Opcode::VldrPairS);
                 ++slot;
             }
         }
@@ -1665,7 +1665,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     // slot always exists.
     DecodedInst& term = block->instructions[block->inst_count];
     std::memset(&term, 0, sizeof(term));
-    term.opcode = Opcode::EndBlock;
+    term.SetOpcode(Opcode::EndBlock);
     term.cond = 0xE;
     for (u16 i = 0; i <= block->inst_count; ++i) PrepareDispatch(block->instructions[i]);
 }
@@ -1698,27 +1698,27 @@ void ARM_FastInterp::ReoptimizeHotBlock(BasicBlock* block) {
     // is a tight self-loop: swap in the unrolled handler.
 
     // Thumb: SUBS Rd, #imm8; BNE self
-    if (inst.opcode == Opcode::ThumbFusedSubsBcc && inst.fused.branch_cond == 1 && // BNE
+    if (inst.GetOpcode() == Opcode::ThumbFusedSubsBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
-        inst.opcode = Opcode::ThumbUnrolledSubsLoop;
+        inst.SetOpcode(Opcode::ThumbUnrolledSubsLoop);
         PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
     }
 
     // Thumb: CMP Rn, Rm; BNE self (spin/wait loop)
-    if (inst.opcode == Opcode::ThumbFusedCmpRegBcc && inst.fused.branch_cond == 1 && // BNE
+    if (inst.GetOpcode() == Opcode::ThumbFusedCmpRegBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
-        inst.opcode = Opcode::ThumbUnrolledCmpLoop;
+        inst.SetOpcode(Opcode::ThumbUnrolledCmpLoop);
         PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
     }
 
     // ARM: SUBS Rd, Rn, #imm; BNE self
-    if (inst.opcode == Opcode::FusedSubsBcc && inst.fused.branch_cond == 1 && // BNE
+    if (inst.GetOpcode() == Opcode::FusedSubsBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
-        inst.opcode = Opcode::ArmUnrolledSubsLoop;
+        inst.SetOpcode(Opcode::ArmUnrolledSubsLoop);
         PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
@@ -1747,7 +1747,7 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         out.branch.rm = inst & 0xF;
         out.branch.target = 0;
         out.rd = 0;
-        out.opcode = Opcode::Bx;
+        out.SetOpcode(Opcode::Bx);
         return;
     }
     // BLX register: 0x012FFF30
@@ -1755,20 +1755,20 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         out.branch.rm = inst & 0xF;
         out.branch.target = 0;
         out.rd = 0;
-        out.opcode = Opcode::Blx;
+        out.SetOpcode(Opcode::Blx);
         return;
     }
     // CLZ: 0x016F0F10
     if ((inst & 0x0FFF0FF0) == 0x016F0F10) {
         out.rd = (inst >> 12) & 0xF;
         out.dp.rm = inst & 0xF;
-        out.opcode = Opcode::Clz;
+        out.SetOpcode(Opcode::Clz);
         return;
     }
     // MRS: 0x010F0000
     if ((inst & 0x0FBF0FFF) == 0x010F0000) {
         out.rd = (inst >> 12) & 0xF;
-        out.opcode = Opcode::Mrs;
+        out.SetOpcode(Opcode::Mrs);
         return;
     }
     // MSR register: 0x0120F000
@@ -1776,7 +1776,7 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         out.dp.rm = inst & 0xF;
         out.dp.flags = (inst >> 16) & 0xF;
         out.rd = 0;
-        out.opcode = Opcode::Msr;
+        out.SetOpcode(Opcode::Msr);
         return;
     }
     // QADD/QSUB/QDADD/QDSUB: 0x01000050
@@ -1787,16 +1787,16 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         out.dp.rm = inst & 0xF;
         switch (op) {
         case 0:
-            out.opcode = Opcode::Qadd;
+            out.SetOpcode(Opcode::Qadd);
             break;
         case 1:
-            out.opcode = Opcode::Qsub;
+            out.SetOpcode(Opcode::Qsub);
             break;
         case 2:
-            out.opcode = Opcode::Qdadd;
+            out.SetOpcode(Opcode::Qdadd);
             break;
         case 3:
-            out.opcode = Opcode::Qdsub;
+            out.SetOpcode(Opcode::Qdsub);
             break;
         }
         return;
@@ -1818,18 +1818,18 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         out.mul.flags = (x ? 1 : 0) | (y ? 2 : 0);
         switch (op) {
         case 0:
-            out.opcode = Opcode::Smlaxy;
+            out.SetOpcode(Opcode::Smlaxy);
             break;
         case 1:
-            out.opcode = x ? Opcode::Smulwy : Opcode::Smlawy;
+            out.SetOpcode(x ? Opcode::Smulwy : Opcode::Smlawy);
             break;
         case 2:
             // SMLAL<x><y>: RdLo = bits[15:12] (RdHi already = bits[19:16] above)
             out.rd = (inst >> 12) & 0xF;
-            out.opcode = Opcode::Smlalxy;
+            out.SetOpcode(Opcode::Smlalxy);
             break;
         case 3:
-            out.opcode = Opcode::Smulxy;
+            out.SetOpcode(Opcode::Smulxy);
             break;
         }
         return;
@@ -1847,40 +1847,40 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         if (load) {
             switch (variant) {
             case 0:
-                out.opcode = Opcode::Ldrex;
+                out.SetOpcode(Opcode::Ldrex);
                 break;
             case 1:
-                out.opcode = Opcode::Ldrexd;
+                out.SetOpcode(Opcode::Ldrexd);
                 break;
             case 2:
-                out.opcode = Opcode::Ldrexb;
+                out.SetOpcode(Opcode::Ldrexb);
                 break;
             case 3:
-                out.opcode = Opcode::Ldrexh;
+                out.SetOpcode(Opcode::Ldrexh);
                 break;
             }
         } else {
             switch (variant) {
             case 0:
-                out.opcode = Opcode::Strex;
+                out.SetOpcode(Opcode::Strex);
                 break;
             case 1:
-                out.opcode = Opcode::Strexd;
+                out.SetOpcode(Opcode::Strexd);
                 break;
             case 2:
-                out.opcode = Opcode::Strexb;
+                out.SetOpcode(Opcode::Strexb);
                 break;
             case 3:
-                out.opcode = Opcode::Strexh;
+                out.SetOpcode(Opcode::Strexh);
                 break;
             }
         }
         // ARMv6K LDREXD/STREXD transfer the pair Rt/Rt+1: Rt odd or
         // Rt==14 is UNPREDICTABLE - and the handlers would index regs[16]
         // for Rt==15. Reject at decode.
-        if ((out.opcode == Opcode::Ldrexd && ((out.rd & 1) || out.rd >= 14)) ||
-            (out.opcode == Opcode::Strexd && ((out.dp.rm & 1) || out.dp.rm >= 14))) {
-            out.opcode = Opcode::Invalid;
+        if ((out.GetOpcode() == Opcode::Ldrexd && ((out.rd & 1) || out.rd >= 14)) ||
+            (out.GetOpcode() == Opcode::Strexd && ((out.dp.rm & 1) || out.dp.rm >= 14))) {
+            out.SetOpcode(Opcode::Invalid);
         }
         return;
     }
@@ -1897,33 +1897,33 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
 
         switch (mul_op) {
         case 0x0:
-            out.opcode = s_flag ? Opcode::MulS : Opcode::Mul;
+            out.SetOpcode(s_flag ? Opcode::MulS : Opcode::Mul);
             break;
         case 0x1:
-            out.opcode = s_flag ? Opcode::MlaS : Opcode::Mla;
+            out.SetOpcode(s_flag ? Opcode::MlaS : Opcode::Mla);
             break;
         case 0x4:
-            out.opcode = s_flag ? Opcode::UmullS : Opcode::Umull;
+            out.SetOpcode(s_flag ? Opcode::UmullS : Opcode::Umull);
             out.mul.rdhi = (inst >> 16) & 0xF;
             out.rd = (inst >> 12) & 0xF;
             break;
         case 0x5:
-            out.opcode = s_flag ? Opcode::UmlalS : Opcode::Umlal;
+            out.SetOpcode(s_flag ? Opcode::UmlalS : Opcode::Umlal);
             out.mul.rdhi = (inst >> 16) & 0xF;
             out.rd = (inst >> 12) & 0xF;
             break;
         case 0x6:
-            out.opcode = s_flag ? Opcode::SmullS : Opcode::Smull;
+            out.SetOpcode(s_flag ? Opcode::SmullS : Opcode::Smull);
             out.mul.rdhi = (inst >> 16) & 0xF;
             out.rd = (inst >> 12) & 0xF;
             break;
         case 0x7:
-            out.opcode = s_flag ? Opcode::SmlalS : Opcode::Smlal;
+            out.SetOpcode(s_flag ? Opcode::SmlalS : Opcode::Smlal);
             out.mul.rdhi = (inst >> 16) & 0xF;
             out.rd = (inst >> 12) & 0xF;
             break;
         default:
-            out.opcode = Opcode::Invalid;
+            out.SetOpcode(Opcode::Invalid);
             break;
         }
         return;
@@ -1969,40 +1969,40 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         if (load) {
             switch (sh) {
             case 1:
-                out.opcode = Opcode::LdrH;
+                out.SetOpcode(Opcode::LdrH);
                 break;
             case 2:
-                out.opcode = Opcode::LdrSB;
+                out.SetOpcode(Opcode::LdrSB);
                 break;
             case 3:
-                out.opcode = Opcode::LdrSH;
+                out.SetOpcode(Opcode::LdrSH);
                 break;
             default:
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
                 break;
             }
         } else {
             switch (sh) {
             case 1:
-                out.opcode = Opcode::StrH;
+                out.SetOpcode(Opcode::StrH);
                 break;
             case 2:
-                out.opcode = Opcode::Ldrd;
+                out.SetOpcode(Opcode::Ldrd);
                 break;
             case 3:
-                out.opcode = Opcode::Strd;
+                out.SetOpcode(Opcode::Strd);
                 break;
             default:
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
                 break;
             }
         }
         // ARM LDRD/STRD transfer the pair Rt/Rt+1: Rt odd is UNDEFINED and
         // Rt==14 is UNPREDICTABLE (Rt2 would be PC) - and the handlers
         // would index regs[16] for Rt==15. Reject at decode.
-        if (out.opcode == Opcode::Ldrd || out.opcode == Opcode::Strd) {
+        if (out.GetOpcode() == Opcode::Ldrd || out.GetOpcode() == Opcode::Strd) {
             if ((out.rd & 1) || out.rd >= 14) {
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
                 return;
             }
             out.ls.rt2 = out.rd + 1;
@@ -2011,10 +2011,10 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         // Decode-time specialization: plain imm-offset halfword with
         // rd/rn != 15 (signed loads stay generic)
         if (imm && out.ls.mode == AddrMode::Offset && out.rd != 15 && out.ls.rn != 15) {
-            if (out.opcode == Opcode::LdrH) {
-                out.opcode = Opcode::LdrHImm;
-            } else if (out.opcode == Opcode::StrH) {
-                out.opcode = Opcode::StrHImm;
+            if (out.GetOpcode() == Opcode::LdrH) {
+                out.SetOpcode(Opcode::LdrHImm);
+            } else if (out.GetOpcode() == Opcode::StrH) {
+                out.SetOpcode(Opcode::StrHImm);
             }
         }
         return;
@@ -2030,7 +2030,7 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
         // Everything legitimate was matched above; decoding the rest as TST/TEQ/CMP/CMN
         // would silently corrupt flags, so reject it.
         if (!s_flag && (opcode_field & 0xC) == 0x8) {
-            out.opcode = Opcode::Invalid;
+            out.SetOpcode(Opcode::Invalid);
             return;
         }
 
@@ -2050,58 +2050,58 @@ static void DecodeArmDataProcRegOrMisc(u32 inst, DecodedInst& out) {
 
         switch (opcode_field) {
         case 0x0:
-            out.opcode = s_flag ? Opcode::AndS : Opcode::And;
+            out.SetOpcode(s_flag ? Opcode::AndS : Opcode::And);
             break;
         case 0x1:
-            out.opcode = s_flag ? Opcode::EorS : Opcode::Eor;
+            out.SetOpcode(s_flag ? Opcode::EorS : Opcode::Eor);
             break;
         case 0x2:
-            out.opcode = s_flag ? Opcode::SubS : Opcode::Sub;
+            out.SetOpcode(s_flag ? Opcode::SubS : Opcode::Sub);
             break;
         case 0x3:
-            out.opcode = s_flag ? Opcode::RsbS : Opcode::Rsb;
+            out.SetOpcode(s_flag ? Opcode::RsbS : Opcode::Rsb);
             break;
         case 0x4:
-            out.opcode = s_flag ? Opcode::AddS : Opcode::Add;
+            out.SetOpcode(s_flag ? Opcode::AddS : Opcode::Add);
             break;
         case 0x5:
-            out.opcode = s_flag ? Opcode::AdcS : Opcode::Adc;
+            out.SetOpcode(s_flag ? Opcode::AdcS : Opcode::Adc);
             break;
         case 0x6:
-            out.opcode = s_flag ? Opcode::SbcS : Opcode::Sbc;
+            out.SetOpcode(s_flag ? Opcode::SbcS : Opcode::Sbc);
             break;
         case 0x7:
-            out.opcode = s_flag ? Opcode::RscS : Opcode::Rsc;
+            out.SetOpcode(s_flag ? Opcode::RscS : Opcode::Rsc);
             break;
         case 0x8:
-            out.opcode = Opcode::Tst;
+            out.SetOpcode(Opcode::Tst);
             break;
         case 0x9:
-            out.opcode = Opcode::Teq;
+            out.SetOpcode(Opcode::Teq);
             break;
         case 0xA:
-            out.opcode = Opcode::Cmp;
+            out.SetOpcode(Opcode::Cmp);
             break;
         case 0xB:
-            out.opcode = Opcode::Cmn;
+            out.SetOpcode(Opcode::Cmn);
             break;
         case 0xC:
-            out.opcode = s_flag ? Opcode::OrrS : Opcode::Orr;
+            out.SetOpcode(s_flag ? Opcode::OrrS : Opcode::Orr);
             break;
         case 0xD:
-            out.opcode = s_flag ? Opcode::MovS : Opcode::Mov;
+            out.SetOpcode(s_flag ? Opcode::MovS : Opcode::Mov);
             break;
         case 0xE:
-            out.opcode = s_flag ? Opcode::BicS : Opcode::Bic;
+            out.SetOpcode(s_flag ? Opcode::BicS : Opcode::Bic);
             break;
         case 0xF:
-            out.opcode = s_flag ? Opcode::MvnS : Opcode::Mvn;
+            out.SetOpcode(s_flag ? Opcode::MvnS : Opcode::Mvn);
             break;
         }
         return;
     }
 
-    out.opcode = Opcode::Invalid;
+    out.SetOpcode(Opcode::Invalid);
     return;
 }
 
@@ -2120,7 +2120,7 @@ static void DecodeArmDataProcImm(u32 inst, DecodedInst& out) {
         out.dp.rm = 0xFF;
         out.dp.flags = (inst >> 16) & 0xF;
         out.rd = 0;
-        out.opcode = Opcode::Msr;
+        out.SetOpcode(Opcode::Msr);
         return;
     }
 
@@ -2142,11 +2142,11 @@ static void DecodeArmDataProcImm(u32 inst, DecodedInst& out) {
         out.dp.shift_imm = 0;
         if (opcode_field == 0x8) {
             // MOVW Rd, #imm16
-            out.opcode = Opcode::Mov;
+            out.SetOpcode(Opcode::Mov);
             out.dp.flags = 2; // Flag 2 = MOVW (16-bit immediate)
         } else {
             // MOVT Rd, #imm16
-            out.opcode = Opcode::Movt;
+            out.SetOpcode(Opcode::Movt);
             out.dp.flags = 0;
         }
         return;
@@ -2155,7 +2155,7 @@ static void DecodeArmDataProcImm(u32 inst, DecodedInst& out) {
     // TEQ/CMN immediate without S is the unmatched MSR-immediate space (e.g. MSR
     // SPSR_x, #imm) - decoding it as a compare would silently corrupt flags.
     if (!s_flag && (opcode_field == 0x9 || opcode_field == 0xB)) {
-        out.opcode = Opcode::Invalid;
+        out.SetOpcode(Opcode::Invalid);
         return;
     }
 
@@ -2173,52 +2173,52 @@ static void DecodeArmDataProcImm(u32 inst, DecodedInst& out) {
 
     switch (opcode_field) {
     case 0x0:
-        out.opcode = s_flag ? Opcode::AndS : Opcode::And;
+        out.SetOpcode(s_flag ? Opcode::AndS : Opcode::And);
         break;
     case 0x1:
-        out.opcode = s_flag ? Opcode::EorS : Opcode::Eor;
+        out.SetOpcode(s_flag ? Opcode::EorS : Opcode::Eor);
         break;
     case 0x2:
-        out.opcode = s_flag ? Opcode::SubS : Opcode::Sub;
+        out.SetOpcode(s_flag ? Opcode::SubS : Opcode::Sub);
         break;
     case 0x3:
-        out.opcode = s_flag ? Opcode::RsbS : Opcode::Rsb;
+        out.SetOpcode(s_flag ? Opcode::RsbS : Opcode::Rsb);
         break;
     case 0x4:
-        out.opcode = s_flag ? Opcode::AddS : Opcode::Add;
+        out.SetOpcode(s_flag ? Opcode::AddS : Opcode::Add);
         break;
     case 0x5:
-        out.opcode = s_flag ? Opcode::AdcS : Opcode::Adc;
+        out.SetOpcode(s_flag ? Opcode::AdcS : Opcode::Adc);
         break;
     case 0x6:
-        out.opcode = s_flag ? Opcode::SbcS : Opcode::Sbc;
+        out.SetOpcode(s_flag ? Opcode::SbcS : Opcode::Sbc);
         break;
     case 0x7:
-        out.opcode = s_flag ? Opcode::RscS : Opcode::Rsc;
+        out.SetOpcode(s_flag ? Opcode::RscS : Opcode::Rsc);
         break;
     case 0x8:
-        out.opcode = Opcode::Tst;
+        out.SetOpcode(Opcode::Tst);
         break;
     case 0x9:
-        out.opcode = Opcode::Teq;
+        out.SetOpcode(Opcode::Teq);
         break;
     case 0xA:
-        out.opcode = Opcode::Cmp;
+        out.SetOpcode(Opcode::Cmp);
         break;
     case 0xB:
-        out.opcode = Opcode::Cmn;
+        out.SetOpcode(Opcode::Cmn);
         break;
     case 0xC:
-        out.opcode = s_flag ? Opcode::OrrS : Opcode::Orr;
+        out.SetOpcode(s_flag ? Opcode::OrrS : Opcode::Orr);
         break;
     case 0xD:
-        out.opcode = s_flag ? Opcode::MovS : Opcode::Mov;
+        out.SetOpcode(s_flag ? Opcode::MovS : Opcode::Mov);
         break;
     case 0xE:
-        out.opcode = s_flag ? Opcode::BicS : Opcode::Bic;
+        out.SetOpcode(s_flag ? Opcode::BicS : Opcode::Bic);
         break;
     case 0xF:
-        out.opcode = s_flag ? Opcode::MvnS : Opcode::Mvn;
+        out.SetOpcode(s_flag ? Opcode::MvnS : Opcode::Mvn);
         break;
     }
     return;
@@ -2234,28 +2234,28 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
     if ((inst & 0x0FFF0FF0) == 0x06BF0F30) {
         out.rd = (inst >> 12) & 0xF;
         out.dp.rm = inst & 0xF;
-        out.opcode = Opcode::Rev;
+        out.SetOpcode(Opcode::Rev);
         return;
     }
     // REV16: 0x06BF0FB0
     if ((inst & 0x0FFF0FF0) == 0x06BF0FB0) {
         out.rd = (inst >> 12) & 0xF;
         out.dp.rm = inst & 0xF;
-        out.opcode = Opcode::Rev16;
+        out.SetOpcode(Opcode::Rev16);
         return;
     }
     // REVSH: 0x06FF0FB0
     if ((inst & 0x0FFF0FF0) == 0x06FF0FB0) {
         out.rd = (inst >> 12) & 0xF;
         out.dp.rm = inst & 0xF;
-        out.opcode = Opcode::Revsh;
+        out.SetOpcode(Opcode::Revsh);
         return;
     }
     // RBIT: cond 0110 1111 1111 Rd 1111 0011 Rm
     if ((inst & 0x0FFF0FF0) == 0x06FF0F30) {
         out.rd = (inst >> 12) & 0xF;
         out.dp.rm = inst & 0xF;
-        out.opcode = Opcode::Rbit;
+        out.SetOpcode(Opcode::Rbit);
         return;
     }
 
@@ -2267,10 +2267,10 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.shift_imm = ((inst >> 10) & 0x3) * 8;
         u32 rn = (inst >> 16) & 0xF;
         if (rn == 0xF) {
-            out.opcode = Opcode::Sxtb;
+            out.SetOpcode(Opcode::Sxtb);
         } else {
             out.dp.rn = rn;
-            out.opcode = Opcode::Sxtab;
+            out.SetOpcode(Opcode::Sxtab);
         }
         return;
     }
@@ -2281,10 +2281,10 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.shift_imm = ((inst >> 10) & 0x3) * 8;
         u32 rn = (inst >> 16) & 0xF;
         if (rn == 0xF) {
-            out.opcode = Opcode::Sxth;
+            out.SetOpcode(Opcode::Sxth);
         } else {
             out.dp.rn = rn;
-            out.opcode = Opcode::Sxtah;
+            out.SetOpcode(Opcode::Sxtah);
         }
         return;
     }
@@ -2295,10 +2295,10 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.shift_imm = ((inst >> 10) & 0x3) * 8;
         u32 rn = (inst >> 16) & 0xF;
         if (rn == 0xF) {
-            out.opcode = Opcode::Uxtb;
+            out.SetOpcode(Opcode::Uxtb);
         } else {
             out.dp.rn = rn;
-            out.opcode = Opcode::Uxtab;
+            out.SetOpcode(Opcode::Uxtab);
         }
         return;
     }
@@ -2309,10 +2309,10 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.shift_imm = ((inst >> 10) & 0x3) * 8;
         u32 rn = (inst >> 16) & 0xF;
         if (rn == 0xF) {
-            out.opcode = Opcode::Uxth;
+            out.SetOpcode(Opcode::Uxth);
         } else {
             out.dp.rn = rn;
-            out.opcode = Opcode::Uxtah;
+            out.SetOpcode(Opcode::Uxtah);
         }
         return;
     }
@@ -2321,7 +2321,7 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.rd = (inst >> 12) & 0xF;
         out.dp.rn = (inst >> 16) & 0xF;
         out.dp.rm = inst & 0xF;
-        out.opcode = Opcode::Sel;
+        out.SetOpcode(Opcode::Sel);
         return;
     }
     // SXTB16/SXTAB16: bits[27:20]=0x68, bits[9:4]=000111
@@ -2333,10 +2333,10 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         if (rn == 0xF) {
             // SXTB16 - treat as SXTAB16 with Rn=0 (effectively same)
             out.dp.rn = 0xF;
-            out.opcode = Opcode::Sxtab16;
+            out.SetOpcode(Opcode::Sxtab16);
         } else {
             out.dp.rn = rn;
-            out.opcode = Opcode::Sxtab16;
+            out.SetOpcode(Opcode::Sxtab16);
         }
         return;
     }
@@ -2349,10 +2349,10 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         if (rn == 0xF) {
             // UXTB16 - treat as UXTAB16 with Rn=0 (effectively same)
             out.dp.rn = 0xF;
-            out.opcode = Opcode::Uxtab16;
+            out.SetOpcode(Opcode::Uxtab16);
         } else {
             out.dp.rn = rn;
-            out.opcode = Opcode::Uxtab16;
+            out.SetOpcode(Opcode::Uxtab16);
         }
         return;
     }
@@ -2364,7 +2364,7 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.imm = ((inst >> 16) & 0x1F) + 1;
         out.dp.shift_imm = (inst >> 7) & 0x1F;
         out.dp.shift_type = ((inst >> 6) & 1) ? ShiftType::ASR : ShiftType::LSL;
-        out.opcode = Opcode::Ssat;
+        out.SetOpcode(Opcode::Ssat);
         return;
     }
     // USAT: 0x06E00010
@@ -2374,7 +2374,7 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.imm = (inst >> 16) & 0x1F;
         out.dp.shift_imm = (inst >> 7) & 0x1F;
         out.dp.shift_type = ((inst >> 6) & 1) ? ShiftType::ASR : ShiftType::LSL;
-        out.opcode = Opcode::Usat;
+        out.SetOpcode(Opcode::Usat);
         return;
     }
     // PKHBT: 0x06800010
@@ -2383,7 +2383,7 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.rn = (inst >> 16) & 0xF;
         out.dp.rm = inst & 0xF;
         out.dp.shift_imm = (inst >> 7) & 0x1F;
-        out.opcode = Opcode::Pkhbt;
+        out.SetOpcode(Opcode::Pkhbt);
         return;
     }
     // PKHTB: 0x06800050
@@ -2392,7 +2392,7 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.rn = (inst >> 16) & 0xF;
         out.dp.rm = inst & 0xF;
         out.dp.shift_imm = (inst >> 7) & 0x1F;
-        out.opcode = Opcode::Pkhtb;
+        out.SetOpcode(Opcode::Pkhtb);
         return;
     }
 
@@ -2408,96 +2408,96 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         case 1: // Signed normal
             switch (op) {
             case 0:
-                out.opcode = Opcode::Sadd16;
+                out.SetOpcode(Opcode::Sadd16);
                 return;
             case 3:
-                out.opcode = Opcode::Ssub16;
+                out.SetOpcode(Opcode::Ssub16);
                 return;
             case 4:
-                out.opcode = Opcode::Sadd8;
+                out.SetOpcode(Opcode::Sadd8);
                 return;
             case 7:
-                out.opcode = Opcode::Ssub8;
+                out.SetOpcode(Opcode::Ssub8);
                 return;
             }
             break;
         case 2: // Signed saturating (Q)
             switch (op) {
             case 0:
-                out.opcode = Opcode::Qadd16;
+                out.SetOpcode(Opcode::Qadd16);
                 return;
             case 3:
-                out.opcode = Opcode::Qsub16;
+                out.SetOpcode(Opcode::Qsub16);
                 return;
             case 4:
-                out.opcode = Opcode::Qadd8;
+                out.SetOpcode(Opcode::Qadd8);
                 return;
             case 7:
-                out.opcode = Opcode::Qsub8;
+                out.SetOpcode(Opcode::Qsub8);
                 return;
             }
             break;
         case 3: // Signed halving (SH)
             switch (op) {
             case 0:
-                out.opcode = Opcode::Shadd16;
+                out.SetOpcode(Opcode::Shadd16);
                 return;
             case 3:
-                out.opcode = Opcode::Shsub16;
+                out.SetOpcode(Opcode::Shsub16);
                 return;
             case 4:
-                out.opcode = Opcode::Shadd8;
+                out.SetOpcode(Opcode::Shadd8);
                 return;
             case 7:
-                out.opcode = Opcode::Shsub8;
+                out.SetOpcode(Opcode::Shsub8);
                 return;
             }
             break;
         case 5: // Unsigned normal
             switch (op) {
             case 0:
-                out.opcode = Opcode::Uadd16;
+                out.SetOpcode(Opcode::Uadd16);
                 return;
             case 3:
-                out.opcode = Opcode::Usub16;
+                out.SetOpcode(Opcode::Usub16);
                 return;
             case 4:
-                out.opcode = Opcode::Uadd8;
+                out.SetOpcode(Opcode::Uadd8);
                 return;
             case 7:
-                out.opcode = Opcode::Usub8;
+                out.SetOpcode(Opcode::Usub8);
                 return;
             }
             break;
         case 6: // Unsigned saturating (UQ)
             switch (op) {
             case 0:
-                out.opcode = Opcode::Uqadd16;
+                out.SetOpcode(Opcode::Uqadd16);
                 return;
             case 3:
-                out.opcode = Opcode::Uqsub16;
+                out.SetOpcode(Opcode::Uqsub16);
                 return;
             case 4:
-                out.opcode = Opcode::Uqadd8;
+                out.SetOpcode(Opcode::Uqadd8);
                 return;
             case 7:
-                out.opcode = Opcode::Uqsub8;
+                out.SetOpcode(Opcode::Uqsub8);
                 return;
             }
             break;
         case 7: // Unsigned halving (UH)
             switch (op) {
             case 0:
-                out.opcode = Opcode::Uhadd16;
+                out.SetOpcode(Opcode::Uhadd16);
                 return;
             case 3:
-                out.opcode = Opcode::Uhsub16;
+                out.SetOpcode(Opcode::Uhsub16);
                 return;
             case 4:
-                out.opcode = Opcode::Uhadd8;
+                out.SetOpcode(Opcode::Uhadd8);
                 return;
             case 7:
-                out.opcode = Opcode::Uhsub8;
+                out.SetOpcode(Opcode::Uhsub8);
                 return;
             }
             break;
@@ -2515,10 +2515,10 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.shift_imm = msb - lsb + 1;
         u32 rn = inst & 0xF;
         if (rn == 0xF) {
-            out.opcode = Opcode::Bfc;
+            out.SetOpcode(Opcode::Bfc);
         } else {
             out.dp.rn = rn;
-            out.opcode = Opcode::Bfi;
+            out.SetOpcode(Opcode::Bfi);
         }
         return;
     }
@@ -2528,7 +2528,7 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.rn = inst & 0xF;
         out.dp.imm = (inst >> 7) & 0x1F;              // lsb
         out.dp.shift_imm = ((inst >> 16) & 0x1F) + 1; // width
-        out.opcode = Opcode::Sbfx;
+        out.SetOpcode(Opcode::Sbfx);
         return;
     }
     // UBFX: cond 0111 111 width-1 Rd lsb 101 Rn
@@ -2537,7 +2537,7 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.rn = inst & 0xF;
         out.dp.imm = (inst >> 7) & 0x1F;              // lsb
         out.dp.shift_imm = ((inst >> 16) & 0x1F) + 1; // width
-        out.opcode = Opcode::Ubfx;
+        out.SetOpcode(Opcode::Ubfx);
         return;
     }
     // USAD8/USADA8: cond 0111 1000 dddd aaaa mmmm 0001 nnnn
@@ -2548,10 +2548,10 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
         out.dp.rm = (inst >> 8) & 0xF; // Rm (source 2)
         u32 ra = (inst >> 12) & 0xF;
         if (ra == 0xF) {
-            out.opcode = Opcode::Usad8;
+            out.SetOpcode(Opcode::Usad8);
         } else {
             out.dp.imm = ra; // Ra (accumulate register)
-            out.opcode = Opcode::Usada8;
+            out.SetOpcode(Opcode::Usada8);
         }
         return;
     }
@@ -2582,14 +2582,14 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
             out.ls.mode = AddrMode::PostIndex;
 
         if (load) {
-            out.opcode = byte ? Opcode::LdrB : Opcode::Ldr;
+            out.SetOpcode(byte ? Opcode::LdrB : Opcode::Ldr);
         } else {
-            out.opcode = byte ? Opcode::StrB : Opcode::Str;
+            out.SetOpcode(byte ? Opcode::StrB : Opcode::Str);
         }
         return;
     }
 
-    out.opcode = Opcode::Invalid;
+    out.SetOpcode(Opcode::Invalid);
     return;
 }
 
@@ -2607,7 +2607,7 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
             out.vfp.rt = (inst >> 12) & 0xF;
             out.vfp.rt2 = (inst >> 16) & 0xF;
             out.vfp.sd = (((inst >> 5) & 1) << 4) | (inst & 0xF); // Dm = M:Vm
-            out.opcode = from_coproc ? Opcode::VmovDToArm : Opcode::VmovArmToD;
+            out.SetOpcode(from_coproc ? Opcode::VmovDToArm : Opcode::VmovArmToD);
             return;
         }
         // cp10 (two single-precision registers) is rare on 3DS; fall through unchanged.
@@ -2637,9 +2637,9 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
             out.vfp.offset = static_cast<s16>(U ? (imm8 * 4) : -(imm8 * 4));
 
             if (is_double) {
-                out.opcode = load ? Opcode::VldrD : Opcode::VstrD;
+                out.SetOpcode(load ? Opcode::VldrD : Opcode::VstrD);
             } else {
-                out.opcode = load ? Opcode::VldrS : Opcode::VstrS;
+                out.SetOpcode(load ? Opcode::VldrS : Opcode::VstrS);
             }
             return;
         }
@@ -2666,9 +2666,9 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
             out.vfp.flags = (W ? 1 : 0) | ((!U) ? 2 : 0);
 
             if (is_double) {
-                out.opcode = load ? Opcode::VldmD : Opcode::VstmD;
+                out.SetOpcode(load ? Opcode::VldmD : Opcode::VstmD);
             } else {
-                out.opcode = load ? Opcode::VldmS : Opcode::VstmS;
+                out.SetOpcode(load ? Opcode::VldmS : Opcode::VstmS);
             }
             return;
         }
@@ -2683,20 +2683,20 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
             bool bit4 = (inst >> 4) & 1;
             if (bit4) {
                 bool L = (inst >> 20) & 1;
-                out.opcode = L ? Opcode::Mrc : Opcode::Mcr;
+                out.SetOpcode(L ? Opcode::Mrc : Opcode::Mcr);
                 out.rd = (inst >> 12) & 0xF;         // Rt
                 out.dp.rn = (inst >> 16) & 0xF;      // CRn
                 out.dp.rm = inst & 0xF;              // CRm
                 out.dp.shift_imm = (inst >> 21) & 7; // opc1
                 out.dp.imm = (inst >> 5) & 7;        // opc2
             } else {
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
             }
             return;
         }
         if (cp_num != 0xA && cp_num != 0xB) {
             // Unknown coprocessor
-            out.opcode = Opcode::Invalid;
+            out.SetOpcode(Opcode::Invalid);
             return;
         }
 
@@ -2711,14 +2711,14 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
             // VMRS: cond 1110 1111 0001 Rt 1010 0001 0000 (L=1, opc1=7)
             if (opc1 == 0x7 && L == 1) {
                 out.vfp.rt = (inst >> 12) & 0xF;
-                out.opcode = Opcode::Vmrs;
+                out.SetOpcode(Opcode::Vmrs);
                 return;
             }
 
             // VMSR: cond 1110 1110 0001 Rt 1010 0001 0000 (L=0, opc1=7)
             if (opc1 == 0x7 && L == 0) {
                 out.vfp.rt = (inst >> 12) & 0xF;
-                out.opcode = Opcode::Vmsr;
+                out.SetOpcode(Opcode::Vmsr);
                 return;
             }
 
@@ -2730,9 +2730,9 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
                 out.vfp.rt = (inst >> 12) & 0xF;
 
                 if (L) {
-                    out.opcode = Opcode::VmovSToArm;
+                    out.SetOpcode(Opcode::VmovSToArm);
                 } else {
-                    out.opcode = Opcode::VmovArmToS;
+                    out.SetOpcode(Opcode::VmovArmToS);
                 }
                 return;
             }
@@ -2765,37 +2765,37 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
         switch (opc1 & 0xB) { // Mask out bit 2 (the 'N' bit position sometimes)
         case 0x0:             // VMLA, VMLS
             if (is_double) {
-                out.opcode = (opc2 & 1) ? Opcode::VmlsD : Opcode::VmlaD;
+                out.SetOpcode((opc2 & 1) ? Opcode::VmlsD : Opcode::VmlaD);
             } else {
-                out.opcode = (opc2 & 1) ? Opcode::VmlsS : Opcode::VmlaS;
+                out.SetOpcode((opc2 & 1) ? Opcode::VmlsS : Opcode::VmlaS);
             }
             return;
         case 0x1: // VNMLA, VNMLS
             if (is_double) {
-                out.opcode = (opc2 & 1) ? Opcode::VnmlaD : Opcode::VnmlsD;
+                out.SetOpcode((opc2 & 1) ? Opcode::VnmlaD : Opcode::VnmlsD);
             } else {
-                out.opcode = (opc2 & 1) ? Opcode::VnmlaS : Opcode::VnmlsS;
+                out.SetOpcode((opc2 & 1) ? Opcode::VnmlaS : Opcode::VnmlsS);
             }
             return;
         case 0x2: // VMUL, VNMUL
             if (is_double) {
-                out.opcode = (opc2 & 1) ? Opcode::VnmulD : Opcode::VmulD;
+                out.SetOpcode((opc2 & 1) ? Opcode::VnmulD : Opcode::VmulD);
             } else {
-                out.opcode = (opc2 & 1) ? Opcode::VnmulS : Opcode::VmulS;
+                out.SetOpcode((opc2 & 1) ? Opcode::VnmulS : Opcode::VmulS);
             }
             return;
         case 0x3: // VADD, VSUB
             if (is_double) {
-                out.opcode = (opc2 & 1) ? Opcode::VsubD : Opcode::VaddD;
+                out.SetOpcode((opc2 & 1) ? Opcode::VsubD : Opcode::VaddD);
             } else {
-                out.opcode = (opc2 & 1) ? Opcode::VsubS : Opcode::VaddS;
+                out.SetOpcode((opc2 & 1) ? Opcode::VsubS : Opcode::VaddS);
             }
             return;
         case 0x8: // VDIV
             if (is_double) {
-                out.opcode = Opcode::VdivD;
+                out.SetOpcode(Opcode::VdivD);
             } else {
-                out.opcode = Opcode::VdivS;
+                out.SetOpcode(Opcode::VdivS);
             }
             return;
         case 0xB: // VMOV, VABS, VNEG, VSQRT, VCMP, VCVT and other extension ops
@@ -2817,66 +2817,66 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
                         (static_cast<u64>(b ? 0xFFu : 0u) << 54) | (static_cast<u64>(cdefgh) << 48);
                     out.vimm.lo = static_cast<u32>(bits);
                     out.vimm.hi = static_cast<u32>(bits >> 32);
-                    out.opcode = Opcode::VmovImmD;
+                    out.SetOpcode(Opcode::VmovImmD);
                 } else {
                     out.vimm.lo = (a << 31) | ((b ? 0u : 1u) << 30) | ((b ? 0x1Fu : 0u) << 25) |
                                   (cdefgh << 19);
                     out.vimm.hi = 0;
-                    out.opcode = Opcode::VmovImmS;
+                    out.SetOpcode(Opcode::VmovImmS);
                 }
                 return;
             }
             if (opc3 == 0x0 && opc2 == 0x1) {
                 // VMOV register
                 if (is_double) {
-                    out.opcode = Opcode::VmovD;
+                    out.SetOpcode(Opcode::VmovD);
                 } else {
-                    out.opcode = Opcode::VmovS;
+                    out.SetOpcode(Opcode::VmovS);
                 }
                 return;
             }
             if (opc3 == 0x0 && opc2 == 0x3) {
                 // VABS
                 if (is_double) {
-                    out.opcode = Opcode::VabsD;
+                    out.SetOpcode(Opcode::VabsD);
                 } else {
-                    out.opcode = Opcode::VabsS;
+                    out.SetOpcode(Opcode::VabsS);
                 }
                 return;
             }
             if (opc3 == 0x1 && opc2 == 0x1) {
                 // VNEG
                 if (is_double) {
-                    out.opcode = Opcode::VnegD;
+                    out.SetOpcode(Opcode::VnegD);
                 } else {
-                    out.opcode = Opcode::VnegS;
+                    out.SetOpcode(Opcode::VnegS);
                 }
                 return;
             }
             if (opc3 == 0x1 && opc2 == 0x3) {
                 // VSQRT
                 if (is_double) {
-                    out.opcode = Opcode::VsqrtD;
+                    out.SetOpcode(Opcode::VsqrtD);
                 } else {
-                    out.opcode = Opcode::VsqrtS;
+                    out.SetOpcode(Opcode::VsqrtS);
                 }
                 return;
             }
             if (opc3 == 0x4 && (opc2 & 1)) {
                 // VCMP
                 if (is_double) {
-                    out.opcode = Opcode::VcmpD;
+                    out.SetOpcode(Opcode::VcmpD);
                 } else {
-                    out.opcode = Opcode::VcmpS;
+                    out.SetOpcode(Opcode::VcmpS);
                 }
                 return;
             }
             if (opc3 == 0x5 && (opc2 & 1)) {
                 // VCMPZ (compare with zero)
                 if (is_double) {
-                    out.opcode = Opcode::VcmpzD;
+                    out.SetOpcode(Opcode::VcmpzD);
                 } else {
-                    out.opcode = Opcode::VcmpzS;
+                    out.SetOpcode(Opcode::VcmpzS);
                 }
                 return;
             }
@@ -2890,9 +2890,9 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
                 out.vfp.sm = (Vm << 1) | M;         // Sm (int, always single)
                 if (is_double) {
                     out.vfp.sd = (D << 4) | Vd; // Dd (double)
-                    out.opcode = Opcode::VcvtIntToD;
+                    out.SetOpcode(Opcode::VcvtIntToD);
                 } else {
-                    out.opcode = Opcode::VcvtIntToS; // both single (generic decode ok)
+                    out.SetOpcode(Opcode::VcvtIntToS); // both single (generic decode ok)
                 }
                 return;
             }
@@ -2906,9 +2906,9 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
                 out.vfp.sd = (Vd << 1) | D;               // Sd (int, always single)
                 if (is_double) {
                     out.vfp.sm = (M << 4) | Vm; // Dm (double)
-                    out.opcode = Opcode::VcvtDToInt;
+                    out.SetOpcode(Opcode::VcvtDToInt);
                 } else {
-                    out.opcode = Opcode::VcvtSToInt; // both single (generic decode ok)
+                    out.SetOpcode(Opcode::VcvtSToInt); // both single (generic decode ok)
                 }
                 return;
             }
@@ -2922,12 +2922,12 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
                     // VCVT.F32.F64 Sd, Dm: dest single, source double
                     out.vfp.sd = (Vd << 1) | D;
                     out.vfp.sm = (M << 4) | Vm;
-                    out.opcode = Opcode::VcvtDToS;
+                    out.SetOpcode(Opcode::VcvtDToS);
                 } else {
                     // VCVT.F64.F32 Dd, Sm: dest double, source single
                     out.vfp.sd = (D << 4) | Vd;
                     out.vfp.sm = (Vm << 1) | M;
-                    out.opcode = Opcode::VcvtSToD;
+                    out.SetOpcode(Opcode::VcvtSToD);
                 }
                 return;
             }
@@ -2936,7 +2936,7 @@ static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
     }
 
     // Default: unrecognized instruction
-    out.opcode = Opcode::Invalid;
+    out.SetOpcode(Opcode::Invalid);
 }
 
 void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
@@ -2953,14 +2953,14 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
         if ((inst & 0x0FFFFF00) == 0x057FF000) {
             // CLREX (0xF57FF01F) clears the monitor; DSB/DMB/ISB
             // (0xF57FF04x/5x/6x) have nothing to barrier here
-            out.opcode = (((inst >> 4) & 0xF) == 1) ? Opcode::Clrex : Opcode::Nop;
+            out.SetOpcode((((inst >> 4) & 0xF) == 1) ? Opcode::Clrex : Opcode::Nop);
             return;
         }
         if ((inst & 0x0D70F000) == 0x0550F000) {
-            out.opcode = Opcode::Nop; // PLD (immediate or register): a hint
+            out.SetOpcode(Opcode::Nop); // PLD (immediate or register): a hint
             return;
         }
-        out.opcode = Opcode::Invalid;
+        out.SetOpcode(Opcode::Invalid);
         return;
     }
 
@@ -2968,7 +2968,7 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
     // Keep it distinct from Invalid so a failed predicate stays in the threaded
     // dispatch path instead of leaving to invalid-instruction recovery.
     if (decode_breakpoints_ && (inst & 0x0FF000F0) == 0x01200070) {
-        out.opcode = Opcode::Bkpt;
+        out.SetOpcode(Opcode::Bkpt);
         out.imm32 = ((inst >> 8) & 0xFFF) << 4 | (inst & 0xF);
         return;
     }
@@ -3015,17 +3015,17 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
         // rd/rn != 15 takes dedicated handlers with no runtime mode checks
         if (out.ls.mode == AddrMode::Offset && out.rd != 15 && out.ls.rn != 15) {
             if (load) {
-                out.opcode = byte ? Opcode::LdrBImm : Opcode::LdrImm;
+                out.SetOpcode(byte ? Opcode::LdrBImm : Opcode::LdrImm);
             } else {
-                out.opcode = byte ? Opcode::StrBImm : Opcode::StrImm;
+                out.SetOpcode(byte ? Opcode::StrBImm : Opcode::StrImm);
             }
             return;
         }
 
         if (load) {
-            out.opcode = byte ? Opcode::LdrB : Opcode::Ldr;
+            out.SetOpcode(byte ? Opcode::LdrB : Opcode::Ldr);
         } else {
-            out.opcode = byte ? Opcode::StrB : Opcode::Str;
+            out.SetOpcode(byte ? Opcode::StrB : Opcode::Str);
         }
         return;
     }
@@ -3064,7 +3064,7 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
                                                           : -static_cast<s32>(count * 4));
         }
         out.rd = 0;
-        out.opcode = load ? Opcode::Ldm : Opcode::Stm;
+        out.SetOpcode(load ? Opcode::Ldm : Opcode::Stm);
         return;
     }
 
@@ -3082,7 +3082,7 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
             out.branch.lr = pc + 4;
             out.branch.rm = 1; // Destination mode: Thumb
             out.rd = 0;
-            out.opcode = Opcode::BlxImm;
+            out.SetOpcode(Opcode::BlxImm);
             out.cond = 0xE; // Make unconditional (AL) for CHECK_COND
             return;
         }
@@ -3092,7 +3092,7 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
         out.branch.lr = pc + 4;
         out.branch.rm = 0xFF;
         out.rd = 0;
-        out.opcode = link ? Opcode::Bl : Opcode::B;
+        out.SetOpcode(link ? Opcode::Bl : Opcode::B);
         return;
     }
 
@@ -3103,7 +3103,7 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
     case 7:
         // SWI/SVC (bits[27:24] = 0b1111), otherwise coprocessor
         if ((inst >> 24) & 1) {
-            out.opcode = Opcode::Swi;
+            out.SetOpcode(Opcode::Swi);
             out.imm32 = inst & 0x00FFFFFF;
             return;
         }
@@ -3123,42 +3123,42 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
     // ========================================================================
     if ((inst & 0xE000) == 0x0000) {
         if ((inst & 0x1800) == 0x0000) {
-            out.opcode = Opcode::ThumbLslImm;
+            out.SetOpcode(Opcode::ThumbLslImm);
             out.rd = inst & 7;
             out.dp.rm = (inst >> 3) & 7;
             out.dp.shift_imm = (inst >> 6) & 0x1F;
         } else if ((inst & 0x1800) == 0x0800) {
-            out.opcode = Opcode::ThumbLsrImm;
+            out.SetOpcode(Opcode::ThumbLsrImm);
             out.rd = inst & 7;
             out.dp.rm = (inst >> 3) & 7;
             out.dp.shift_imm = (inst >> 6) & 0x1F;
         } else if ((inst & 0x1800) == 0x1000) {
-            out.opcode = Opcode::ThumbAsrImm;
+            out.SetOpcode(Opcode::ThumbAsrImm);
             out.rd = inst & 7;
             out.dp.rm = (inst >> 3) & 7;
             out.dp.shift_imm = (inst >> 6) & 0x1F;
         } else if ((inst & 0x1E00) == 0x1800) {
-            out.opcode = Opcode::ThumbAddReg3;
+            out.SetOpcode(Opcode::ThumbAddReg3);
             out.rd = inst & 7;
             out.dp.rn = (inst >> 3) & 7;
             out.dp.rm = (inst >> 6) & 7;
         } else if ((inst & 0x1E00) == 0x1A00) {
-            out.opcode = Opcode::ThumbSubReg3;
+            out.SetOpcode(Opcode::ThumbSubReg3);
             out.rd = inst & 7;
             out.dp.rn = (inst >> 3) & 7;
             out.dp.rm = (inst >> 6) & 7;
         } else if ((inst & 0x1E00) == 0x1C00) {
-            out.opcode = Opcode::ThumbAddImm3;
+            out.SetOpcode(Opcode::ThumbAddImm3);
             out.rd = inst & 7;
             out.dp.rn = (inst >> 3) & 7;
             out.dp.imm = (inst >> 6) & 7;
         } else if ((inst & 0x1E00) == 0x1E00) {
-            out.opcode = Opcode::ThumbSubImm3;
+            out.SetOpcode(Opcode::ThumbSubImm3);
             out.rd = inst & 7;
             out.dp.rn = (inst >> 3) & 7;
             out.dp.imm = (inst >> 6) & 7;
         } else {
-            out.opcode = Opcode::Invalid;
+            out.SetOpcode(Opcode::Invalid);
         }
         return;
     }
@@ -3172,16 +3172,16 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
         const u8 op = (inst >> 11) & 3;
         switch (op) {
         case 0:
-            out.opcode = Opcode::ThumbMovImm8;
+            out.SetOpcode(Opcode::ThumbMovImm8);
             break;
         case 1:
-            out.opcode = Opcode::ThumbCmpImm8;
+            out.SetOpcode(Opcode::ThumbCmpImm8);
             break;
         case 2:
-            out.opcode = Opcode::ThumbAddImm8;
+            out.SetOpcode(Opcode::ThumbAddImm8);
             break;
         case 3:
-            out.opcode = Opcode::ThumbSubImm8;
+            out.SetOpcode(Opcode::ThumbSubImm8);
             break;
         }
         return;
@@ -3200,7 +3200,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
             Opcode::ThumbTst,    Opcode::ThumbNeg, Opcode::ThumbCmpReg, Opcode::ThumbCmn,
             Opcode::ThumbOrr,    Opcode::ThumbMul, Opcode::ThumbBic,    Opcode::ThumbMvn,
         };
-        out.opcode = dp_table[op];
+        out.SetOpcode(dp_table[op]);
         return;
     }
 
@@ -3213,11 +3213,11 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
         const u8 op = (inst >> 8) & 3;
         switch (op) {
         case 0:
-            out.opcode = Opcode::ThumbAddHi;
+            out.SetOpcode(Opcode::ThumbAddHi);
             // ADD Rd, PC (rd != 15): the PC value (PC+4) is a constant - fold
             // to the ARM Add handler as Rd = Rd + #imm
             if (out.dp.rm == 15 && out.rd != 15) {
-                out.opcode = Opcode::Add;
+                out.SetOpcode(Opcode::Add);
                 out.dp.rn = out.rd;
                 out.dp.rm = 0xFF;
                 out.dp.rs = 0xFF;
@@ -3226,10 +3226,10 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
             }
             break;
         case 1:
-            out.opcode = Opcode::ThumbCmpHi;
+            out.SetOpcode(Opcode::ThumbCmpHi);
             // CMP Rn, PC: fold to the ARM Cmp handler as CMP Rn, #(PC+4)
             if (out.dp.rm == 15 && out.rd != 15) {
-                out.opcode = Opcode::Cmp;
+                out.SetOpcode(Opcode::Cmp);
                 out.dp.rn = out.rd;
                 out.dp.rm = 0xFF;
                 out.dp.rs = 0xFF;
@@ -3238,12 +3238,12 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
             }
             break;
         case 2:
-            out.opcode = Opcode::ThumbMovHi;
+            out.SetOpcode(Opcode::ThumbMovHi);
             // MOV Rd, PC (rd != 15): fold to the ARM Mov handler, #(PC+4)
             // (rd==15 must stay ThumbMovHi: the ARM rd==15 path would switch
             // to ARM mode, but Thumb MOV PC, Rm stays in Thumb)
             if (out.dp.rm == 15 && out.rd != 15) {
-                out.opcode = Opcode::Mov;
+                out.SetOpcode(Opcode::Mov);
                 out.dp.rn = 0;
                 out.dp.rm = 0xFF;
                 out.dp.rs = 0xFF;
@@ -3252,7 +3252,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
             }
             break;
         case 3:
-            out.opcode = (inst & 0x80) ? Opcode::ThumbBlxReg : Opcode::ThumbBx;
+            out.SetOpcode((inst & 0x80) ? Opcode::ThumbBlxReg : Opcode::ThumbBx);
             break;
         }
         return;
@@ -3262,7 +3262,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
     // Load from literal pool (LDR Rd, [PC, #imm8*4])
     // ========================================================================
     if ((inst & 0xF800) == 0x4800) {
-        out.opcode = Opcode::ThumbLdrPc;
+        out.SetOpcode(Opcode::ThumbLdrPc);
         out.rd = (inst >> 8) & 7;
         // Absolute literal-pool address: Align(PC+4, 4) + imm8*4 (constant)
         out.dp.imm = ((pc + 4) & ~3u) + (inst & 0xFF) * 4;
@@ -3281,7 +3281,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
             Opcode::ThumbStrReg, Opcode::ThumbStrhReg, Opcode::ThumbStrbReg, Opcode::ThumbLdrsb,
             Opcode::ThumbLdrReg, Opcode::ThumbLdrhReg, Opcode::ThumbLdrbReg, Opcode::ThumbLdrsh,
         };
-        out.opcode = ls_reg_table[opc];
+        out.SetOpcode(ls_reg_table[opc]);
         return;
     }
 
@@ -3296,9 +3296,9 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
         // Word offset is imm5*4, byte offset is imm5
         out.dp.imm = is_byte ? ((inst >> 6) & 0x1F) : (((inst >> 6) & 0x1F) * 4);
         if (is_load) {
-            out.opcode = is_byte ? Opcode::ThumbLdrbImm5 : Opcode::ThumbLdrImm5;
+            out.SetOpcode(is_byte ? Opcode::ThumbLdrbImm5 : Opcode::ThumbLdrImm5);
         } else {
-            out.opcode = is_byte ? Opcode::ThumbStrbImm5 : Opcode::ThumbStrImm5;
+            out.SetOpcode(is_byte ? Opcode::ThumbStrbImm5 : Opcode::ThumbStrImm5);
         }
         return;
     }
@@ -3310,7 +3310,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
         out.rd = inst & 7;
         out.dp.rn = (inst >> 3) & 7;
         out.dp.imm = ((inst >> 6) & 0x1F) * 2;
-        out.opcode = (inst & 0x0800) ? Opcode::ThumbLdrhImm5 : Opcode::ThumbStrhImm5;
+        out.SetOpcode((inst & 0x0800) ? Opcode::ThumbLdrhImm5 : Opcode::ThumbStrhImm5);
         return;
     }
 
@@ -3320,7 +3320,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
     if ((inst & 0xF000) == 0x9000) {
         out.rd = (inst >> 8) & 7;
         out.dp.imm = (inst & 0xFF) * 4;
-        out.opcode = (inst & 0x0800) ? Opcode::ThumbLdrSp : Opcode::ThumbStrSp;
+        out.SetOpcode((inst & 0x0800) ? Opcode::ThumbLdrSp : Opcode::ThumbStrSp);
         return;
     }
 
@@ -3331,11 +3331,11 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
         out.rd = (inst >> 8) & 7;
         if (inst & 0x0800) {
             out.dp.imm = (inst & 0xFF) * 4;
-            out.opcode = Opcode::ThumbAddSpImm;
+            out.SetOpcode(Opcode::ThumbAddSpImm);
         } else {
             // ADR: the value Align(PC+4, 4) + imm8*4 is a constant
             out.dp.imm = ((pc + 4) & ~3u) + (inst & 0xFF) * 4;
-            out.opcode = Opcode::ThumbAddPcImm;
+            out.SetOpcode(Opcode::ThumbAddPcImm);
         }
         return;
     }
@@ -3345,17 +3345,17 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
     // ========================================================================
     if ((inst & 0xF000) == 0xB000) {
         if ((inst & 0xFF80) == 0xB000) {
-            out.opcode = Opcode::ThumbAddSpImm7;
+            out.SetOpcode(Opcode::ThumbAddSpImm7);
             out.dp.imm = (inst & 0x7F) * 4;
             return;
         }
         if ((inst & 0xFF80) == 0xB080) {
-            out.opcode = Opcode::ThumbSubSpImm7;
+            out.SetOpcode(Opcode::ThumbSubSpImm7);
             out.dp.imm = (inst & 0x7F) * 4;
             return;
         }
         if ((inst & 0xFE00) == 0xB400) {
-            out.opcode = Opcode::ThumbPush;
+            out.SetOpcode(Opcode::ThumbPush);
             out.lsm.reg_list = (inst & 0xFF) | ((inst & 0x100) ? (1 << 14) : 0);
             const u32 count = static_cast<u32>(std::popcount(out.lsm.reg_list));
             out.lsm.count = static_cast<u8>(count);
@@ -3364,7 +3364,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
             return;
         }
         if ((inst & 0xFE00) == 0xBC00) {
-            out.opcode = Opcode::ThumbPop;
+            out.SetOpcode(Opcode::ThumbPop);
             out.lsm.reg_list = (inst & 0xFF) | ((inst & 0x100) ? (1 << 15) : 0);
             const u32 count = static_cast<u32>(std::popcount(out.lsm.reg_list));
             out.lsm.count = static_cast<u8>(count);
@@ -3383,7 +3383,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
                 Opcode::ThumbUxth,
                 Opcode::ThumbUxtb,
             };
-            out.opcode = ext_table[op];
+            out.SetOpcode(ext_table[op]);
             return;
         }
         // Byte reversal
@@ -3392,16 +3392,16 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
             out.dp.rm = (inst >> 3) & 7;
             const u8 op = (inst >> 6) & 3;
             if (op == 0)
-                out.opcode = Opcode::ThumbRev;
+                out.SetOpcode(Opcode::ThumbRev);
             else if (op == 1)
-                out.opcode = Opcode::ThumbRev16;
+                out.SetOpcode(Opcode::ThumbRev16);
             else if (op == 3)
-                out.opcode = Opcode::ThumbRevsh;
+                out.SetOpcode(Opcode::ThumbRevsh);
             else
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
             return;
         }
-        out.opcode = Opcode::Invalid;
+        out.SetOpcode(Opcode::Invalid);
         return;
     }
 
@@ -3415,7 +3415,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
         out.lsm.count = static_cast<u8>(count);
         out.lsm.base_off = 0;
         out.lsm.wb_delta = static_cast<s16>(count * 4);
-        out.opcode = (inst & 0x0800) ? Opcode::ThumbLdmia : Opcode::ThumbStmia;
+        out.SetOpcode((inst & 0x0800) ? Opcode::ThumbLdmia : Opcode::ThumbStmia);
         return;
     }
 
@@ -3425,15 +3425,15 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
     if ((inst & 0xF000) == 0xD000) {
         const u8 cond = (inst >> 8) & 0xF;
         if (cond == 0xE) {
-            out.opcode = Opcode::Invalid; // UDF
+            out.SetOpcode(Opcode::Invalid); // UDF
             return;
         }
         if (cond == 0xF) {
-            out.opcode = Opcode::ThumbSwi;
+            out.SetOpcode(Opcode::ThumbSwi);
             out.imm32 = inst & 0xFF;
             return;
         }
-        out.opcode = Opcode::ThumbBCond;
+        out.SetOpcode(Opcode::ThumbBCond);
         out.cond = cond;
         s8 imm8 = static_cast<s8>(inst & 0xFF);
         out.branch.target = pc + 4 + imm8 * 2; // Absolute target (constant)
@@ -3444,7 +3444,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
     // Unconditional branch (format: 11100 imm11)
     // ========================================================================
     if ((inst & 0xF800) == 0xE000) {
-        out.opcode = Opcode::ThumbB;
+        out.SetOpcode(Opcode::ThumbB);
         s32 imm11 = inst & 0x7FF;
         if (imm11 & 0x400)
             imm11 |= 0xFFFFF800;                // Sign extend
@@ -3452,7 +3452,7 @@ void ARM_FastInterp::DecodeThumb16(u16 inst, u32 pc, DecodedInst& out) {
         return;
     }
 
-    out.opcode = Opcode::Invalid;
+    out.SetOpcode(Opcode::Invalid);
 }
 
 // Thumb32 data processing, modified immediate (hw1 = 11110 i 0 oooo S Rn,
@@ -3546,7 +3546,7 @@ static bool TryDecodeThumb32DataProcModImm(u16 hw1, u16 hw2, DecodedInst& out) {
 
     // Now use our existing DP decoder directly instead of building ARM instruction
     // (since ThumbExpandImm doesn't map cleanly to ARM rotate_imm:imm8)
-    out.opcode = Opcode::Invalid; // Will be set by logic below
+    out.SetOpcode(Opcode::Invalid); // Will be set by logic below
     out.rd = Rd;
     out.cond = 0xE;
     out.dp.rn = Rn;
@@ -3561,49 +3561,49 @@ static bool TryDecodeThumb32DataProcModImm(u16 hw1, u16 hw2, DecodedInst& out) {
     // Map to opcode
     switch (arm_op) {
     case 0x0:
-        out.opcode = S ? Opcode::AndS : Opcode::And;
+        out.SetOpcode(S ? Opcode::AndS : Opcode::And);
         break;
     case 0x1:
-        out.opcode = S ? Opcode::EorS : Opcode::Eor;
+        out.SetOpcode(S ? Opcode::EorS : Opcode::Eor);
         break;
     case 0x2:
-        out.opcode = S ? Opcode::SubS : Opcode::Sub;
+        out.SetOpcode(S ? Opcode::SubS : Opcode::Sub);
         break;
     case 0x3:
-        out.opcode = S ? Opcode::RsbS : Opcode::Rsb;
+        out.SetOpcode(S ? Opcode::RsbS : Opcode::Rsb);
         break;
     case 0x4:
-        out.opcode = S ? Opcode::AddS : Opcode::Add;
+        out.SetOpcode(S ? Opcode::AddS : Opcode::Add);
         break;
     case 0x5:
-        out.opcode = S ? Opcode::AdcS : Opcode::Adc;
+        out.SetOpcode(S ? Opcode::AdcS : Opcode::Adc);
         break;
     case 0x6:
-        out.opcode = S ? Opcode::SbcS : Opcode::Sbc;
+        out.SetOpcode(S ? Opcode::SbcS : Opcode::Sbc);
         break;
     case 0x8:
-        out.opcode = Opcode::Tst;
+        out.SetOpcode(Opcode::Tst);
         break; // TST = ANDS with Rd=0xF
     case 0x9:
-        out.opcode = Opcode::Teq;
+        out.SetOpcode(Opcode::Teq);
         break;
     case 0xA:
-        out.opcode = Opcode::Cmp;
+        out.SetOpcode(Opcode::Cmp);
         break;
     case 0xB:
-        out.opcode = Opcode::Cmn;
+        out.SetOpcode(Opcode::Cmn);
         break;
     case 0xC:
-        out.opcode = S ? Opcode::OrrS : Opcode::Orr;
+        out.SetOpcode(S ? Opcode::OrrS : Opcode::Orr);
         break;
     case 0xD:
-        out.opcode = S ? Opcode::MovS : Opcode::Mov;
+        out.SetOpcode(S ? Opcode::MovS : Opcode::Mov);
         break;
     case 0xE:
-        out.opcode = S ? Opcode::BicS : Opcode::Bic;
+        out.SetOpcode(S ? Opcode::BicS : Opcode::Bic);
         break;
     case 0xF:
-        out.opcode = S ? Opcode::MvnS : Opcode::Mvn;
+        out.SetOpcode(S ? Opcode::MvnS : Opcode::Mvn);
         break;
     }
 
@@ -3611,16 +3611,16 @@ static bool TryDecodeThumb32DataProcModImm(u16 hw1, u16 hw2, DecodedInst& out) {
     if (S && Rd == 0xF) {
         switch (arm_op) {
         case 0x0:
-            out.opcode = Opcode::Tst;
+            out.SetOpcode(Opcode::Tst);
             break;
         case 0x1:
-            out.opcode = Opcode::Teq;
+            out.SetOpcode(Opcode::Teq);
             break;
         case 0x2:
-            out.opcode = Opcode::Cmp;
+            out.SetOpcode(Opcode::Cmp);
             break;
         case 0x4:
-            out.opcode = Opcode::Cmn;
+            out.SetOpcode(Opcode::Cmn);
             break;
         }
     }
@@ -3643,7 +3643,7 @@ static bool TryDecodeThumb32PlainBinaryImm(u16 hw1, u16 hw2, DecodedInst& out) {
     if ((hw1 & 0xFBF0) == 0xF200) {
         // ADDW Rd, Rn, #imm12
         u32 imm12 = (i << 11) | (imm3 << 8) | imm8;
-        out.opcode = Opcode::Add;
+        out.SetOpcode(Opcode::Add);
         out.rd = Rd;
         out.cond = 0xE;
         out.dp.rn = Rn;
@@ -3658,7 +3658,7 @@ static bool TryDecodeThumb32PlainBinaryImm(u16 hw1, u16 hw2, DecodedInst& out) {
     if ((hw1 & 0xFBF0) == 0xF2A0) {
         // SUBW Rd, Rn, #imm12
         u32 imm12 = (i << 11) | (imm3 << 8) | imm8;
-        out.opcode = Opcode::Sub;
+        out.SetOpcode(Opcode::Sub);
         out.rd = Rd;
         out.cond = 0xE;
         out.dp.rn = Rn;
@@ -3674,7 +3674,7 @@ static bool TryDecodeThumb32PlainBinaryImm(u16 hw1, u16 hw2, DecodedInst& out) {
         // MOVW Rd, #imm16
         u32 imm4 = hw1 & 0xF;
         u32 imm16 = (imm4 << 12) | (i << 11) | (imm3 << 8) | imm8;
-        out.opcode = Opcode::Mov;
+        out.SetOpcode(Opcode::Mov);
         out.rd = Rd;
         out.cond = 0xE;
         out.dp.rn = 0;
@@ -3690,7 +3690,7 @@ static bool TryDecodeThumb32PlainBinaryImm(u16 hw1, u16 hw2, DecodedInst& out) {
         // MOVT Rd, #imm16 - set upper 16 bits, preserve lower 16
         u32 imm4 = hw1 & 0xF;
         u32 imm16 = (imm4 << 12) | (i << 11) | (imm3 << 8) | imm8;
-        out.opcode = Opcode::Movt;
+        out.SetOpcode(Opcode::Movt);
         out.rd = Rd;
         out.cond = 0xE;
         out.dp.rn = 0;
@@ -3722,21 +3722,21 @@ static bool TryDecodeThumb32SingleTransfer(u16 hw1, u16 hw2, u32 pc, DecodedInst
     // Helper lambda to select opcode
     auto select_opcode = [&]() {
         if (size == 4) {
-            out.opcode = is_load ? Opcode::Ldr : Opcode::Str;
+            out.SetOpcode(is_load ? Opcode::Ldr : Opcode::Str);
         } else if (size == 2) {
             if (is_load && is_signed)
-                out.opcode = Opcode::LdrSH;
+                out.SetOpcode(Opcode::LdrSH);
             else if (is_load)
-                out.opcode = Opcode::LdrH;
+                out.SetOpcode(Opcode::LdrH);
             else
-                out.opcode = Opcode::StrH;
+                out.SetOpcode(Opcode::StrH);
         } else {
             if (is_load && is_signed)
-                out.opcode = Opcode::LdrSB;
+                out.SetOpcode(Opcode::LdrSB);
             else if (is_load)
-                out.opcode = Opcode::LdrB;
+                out.SetOpcode(Opcode::LdrB);
             else
-                out.opcode = Opcode::StrB;
+                out.SetOpcode(Opcode::StrB);
         }
     };
 
@@ -3751,9 +3751,9 @@ static bool TryDecodeThumb32SingleTransfer(u16 hw1, u16 hw2, u32 pc, DecodedInst
         // decode-time constant
         u32 base = (pc + 4) & ~3u;
         u32 target = U ? (base + offset) : (base - offset);
-        if (out.opcode == Opcode::Ldr) {
+        if (out.GetOpcode() == Opcode::Ldr) {
             // Word literal: absolute-address opcode
-            out.opcode = Opcode::LdrLit;
+            out.SetOpcode(Opcode::LdrLit);
             out.ls.rn = 0xFF;
             out.ls.rm = 0xFF;
             out.ls.offset = static_cast<s32>(target);
@@ -3870,10 +3870,10 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
 
         // Target and LR are decode-time constants
         if (is_blx) {
-            out.opcode = Opcode::ThumbBlxImm;
+            out.SetOpcode(Opcode::ThumbBlxImm);
             out.branch.target = (pc + 4 + offset) & ~3u; // BLX target is word-aligned
         } else {
-            out.opcode = Opcode::ThumbBl;
+            out.SetOpcode(Opcode::ThumbBl);
             out.branch.target = pc + 4 + offset;
         }
         out.branch.lr = (pc + 4) | 1;
@@ -3905,7 +3905,7 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
             s32 offset =
                 (S ? 0xFF000000 : 0) | (I1 << 23) | (I2 << 22) | (imm10 << 12) | (imm11 << 1);
 
-            out.opcode = Opcode::B;
+            out.SetOpcode(Opcode::B);
             out.cond = 0xE; // AL
             // True Thumb32 target: PC+4+offset (stored absolute)
             out.branch.target = pc + 4 + offset;
@@ -3922,7 +3922,7 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
             s32 offset =
                 (S ? 0xFFF00000 : 0) | (J2 << 19) | (J1 << 18) | (imm6 << 12) | (imm11 << 1);
 
-            out.opcode = Opcode::B;
+            out.SetOpcode(Opcode::B);
             out.cond = cond;
             // True Thumb32 target: PC+4+offset (stored absolute)
             out.branch.target = pc + 4 + offset;
@@ -3956,10 +3956,10 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
             arm_inst |= 0x0E000000 | ((hw1 & 0x00FF) << 16) | hw2;
         } else if (op_hi4 == 0xE && op_next4 == 0xF) {
             // Advanced SIMD - not supported yet
-            out.opcode = Opcode::Invalid;
+            out.SetOpcode(Opcode::Invalid);
             return;
         } else {
-            out.opcode = Opcode::Invalid;
+            out.SetOpcode(Opcode::Invalid);
             return;
         }
 
@@ -3970,7 +3970,7 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
         // base, but regs[15] arrives via a PcSetup prefix holding PC+4 (which
         // may be 2 mod 4 in Thumb) - bake the alignment into the offset.
         // Every other VFP load/store with Rn==PC is UNPREDICTABLE in Thumb.
-        switch (out.opcode) {
+        switch (out.GetOpcode()) {
         case Opcode::VldrS:
         case Opcode::VldrD:
             if (out.vfp.rn == 15) {
@@ -3984,7 +3984,7 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
         case Opcode::VstmS:
         case Opcode::VstmD:
             if (out.vfp.rn == 15) {
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
             }
             break;
         default:
@@ -4041,19 +4041,19 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
             // exclusive / table branch space (LDREX, STREXD, TBB, ...), which
             // has no handlers here - reject instead of misdecoding as LDRD.
             if (!P && !W) {
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
                 return;
             }
             // Rt/Rt2 == 15 is UNPREDICTABLE (and the handlers would index
             // regs[16]); so is LDRD with Rt == Rt2.
             if (Rt == 15 || Rt2 == 15 || (is_load && Rt == Rt2)) {
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
                 return;
             }
             // Only LDRD (literal) is valid with Rn==PC: STRD to a PC-relative
             // address and LDRD (literal) with writeback are UNPREDICTABLE.
             if (Rn == 15 && (!is_load || W)) {
-                out.opcode = Opcode::Invalid;
+                out.SetOpcode(Opcode::Invalid);
                 return;
             }
 
@@ -4061,7 +4061,7 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
             // reusing DecodeARM (as the other Thumb32 paths do): the Thumb offset
             // (imm8<<2, range 0-1020) has no equivalent in ARM's LDRD immediate
             // encoding (imm4H:imm4L, range 0-255).
-            out.opcode = is_load ? Opcode::Ldrd : Opcode::Strd;
+            out.SetOpcode(is_load ? Opcode::Ldrd : Opcode::Strd);
             out.ls.rn = Rn;
             out.ls.rm = 0xFF; // immediate offset
             out.rd = Rt;
@@ -4277,7 +4277,7 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
     if ((hw1 & 0xFFF0) == 0xF3B0) {
         // CLREX (hw2 op=0010) clears the monitor; DSB/DMB/ISB have nothing to
         // barrier here (the interpreter performs guest accesses in order)
-        out.opcode = (((hw2 >> 4) & 0xF) == 2) ? Opcode::Clrex : Opcode::Nop;
+        out.SetOpcode((((hw2 >> 4) & 0xF) == 2) ? Opcode::Clrex : Opcode::Nop);
         return;
     }
     if ((hw1 & 0xFFF0) == 0xF3E0) {
@@ -4310,12 +4310,12 @@ void ARM_FastInterp::DecodeThumb32(u32 inst, u32 pc, DecodedInst& out) {
         // Table branch: PC = PC + [Rn + Rm * (H ? 2 : 1)] * 2
         // This doesn't have a direct ARM equivalent - needs custom handler
         // For now, mark as invalid (uncommon instruction)
-        out.opcode = Opcode::Invalid;
+        out.SetOpcode(Opcode::Invalid);
         return;
     }
 
     // Unrecognized Thumb32 instruction
-    out.opcode = Opcode::Invalid;
+    out.SetOpcode(Opcode::Invalid);
 }
 
 } // namespace Core::FastInterp

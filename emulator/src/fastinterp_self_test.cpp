@@ -23,6 +23,15 @@
 
 namespace Core::FastInterp {
 struct DecodeRecordSelfTestAccess {
+    static DecodedInst Single(ARM_FastInterp& cpu, unsigned mode, u32 raw) {
+        DecodedInst result{};
+        if(mode==0) cpu.DecodeARM(raw,0x1000,result);
+        else if(mode==1) cpu.DecodeThumb16(static_cast<u16>(raw),0x1000,result);
+        else cpu.DecodeThumb32(raw,0x1000,result);
+        result.ticks=static_cast<u8>(Core::TicksForInstruction(mode!=0,raw));
+        cpu.PrepareDispatch(result);
+        return result;
+    }
     static MemoryRef VfpBacking(ARM_FastInterp& cpu) { return TestMemory(cpu.state_.vfp_regs); }
     static unsigned CacheCapacity(const ARM_FastInterp& cpu) {return cpu.cache_.Capacity();}
     static void ConfigureSecondary(ARM_FastInterp& cpu,bool enabled) {cpu.secondary_link_=enabled;cpu.cache_.SetProfiling(true);cpu.ClearInstructionCache();}
@@ -78,10 +87,42 @@ struct DecodeRecordSelfTestAccess {
 #include "fastinterp_short_vector_self_test.h"
 #include "fastinterp_vldr_pair_self_test.h"
 
+static int VerifyDecodedMetadata(Core::System& system) {
+    using namespace Core::FastInterp;
+    Memory::MemorySystem memory;Core::Timing timing;
+    auto cpu=std::make_unique<ARM_FastInterp>(system,memory,0,timing.GetTimer(0));
+    u64 hash=1469598103934665603ull;unsigned cases=0,max_ticks=0,max_size=0;
+    auto add=[&](u64 value){hash=(hash^value)*1099511628211ull;};
+    auto verify=[&](unsigned mode,u32 raw) {
+        const auto inst=DecodeRecordSelfTestAccess::Single(*cpu,mode,raw);
+        const auto ticks=Core::TicksForInstruction(mode!=0,raw);
+        if(inst.ticks!=ticks||static_cast<unsigned>(inst.GetOpcode())>=static_cast<unsigned>(Opcode::OpcodeCount)) {
+            std::cerr<<"decoded metadata loss\n";return false;
+        }
+        add(static_cast<unsigned>(inst.GetOpcode()));add(inst.cond);add(inst.rd);add(inst.inst_size);add(inst.ticks);add(inst.dispatch_index);
+        const auto* bytes=reinterpret_cast<const unsigned char*>(&inst.vfp4);
+        for(unsigned i=0;i<12;++i)add(bytes[i]);
+        max_ticks=std::max(max_ticks,unsigned(inst.ticks));max_size=std::max(max_size,unsigned(inst.inst_size));++cases;return true;
+    };
+    for(unsigned raw=0;raw<65536;++raw)if(!verify(1,raw))return 1;
+    u32 random=0x8794bc15;
+    for(unsigned i=0;i<131072;++i) {
+        random=random*1664525u+1013904223u;
+        if(!verify(0,random)||!verify(2,random))return 1;
+    }
+    // Include all VFP load/store imm8 tick costs and destination/base field edges.
+    for(unsigned imm=0;imm<256;++imm)for(unsigned mode:{0xecb00a00u,0xedb00b00u,0xeeb00b00u})
+        if(!verify(0,mode|imm))return 1;
+    if(max_ticks!=128||max_size!=4){std::cerr<<"metadata boundary corpus incomplete\n";return 1;}
+    std::cout<<cases<<" ARM/Thumb metadata walks; ticks="<<max_ticks<<" size="<<max_size<<" trace="<<hash<<"\n";return 0;
+}
+
 int main() {
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
+    if (std::getenv("CARA_FASTINTERP_DECODED_METADATA_TEST"))
+        return VerifyDecodedMetadata(system);
     if (std::getenv("CARA_FASTINTERP_VLDR_PAIR_TEST"))
         return VerifyFastInterpVldrPairs(system);
     if (std::getenv("CARA_FASTINTERP_SHORT_VECTOR_TEST"))
@@ -249,9 +290,9 @@ int main() {
                                          sizeof(DecodedInst))==0;
                     bool prefix=false;
                     for(unsigned slot=0;slot<fresh->inst_count;++slot)
-                        prefix|=fresh->instructions[slot].opcode==Opcode::PcSetup;
+                        prefix|=fresh->instructions[slot].GetOpcode()==Opcode::PcSetup;
                     if(!same||(fixture.prefix&&!prefix)||
-                       (fixture.invalid_size&&(fresh->instructions[0].opcode!=Opcode::Invalid||
+                       (fixture.invalid_size&&(fresh->instructions[0].GetOpcode()!=Opcode::Invalid||
                          fresh->instructions[0].inst_size!=fixture.invalid_size||
                          fresh->end_pc!=0x1000+fixture.invalid_size))) {
                         std::cerr<<"Fresh/reused decode record mismatch "<<fixture.name
@@ -670,8 +711,8 @@ int main() {
                             *block = {}; block->start_pc = 0x1000;
                             DecodeRecordSelfTestAccess::Decode(*fast, *block, 0x1000);
                             const unsigned pair_index = (op == 13 ? 4 : 0) + forms;
-                            if (paired(block->instructions[0].opcode) != enabled ||
-                                (enabled && (block->instructions[0].opcode !=
+                            if (paired(block->instructions[0].GetOpcode()) != enabled ||
+                                (enabled && (block->instructions[0].GetOpcode() !=
                                     static_cast<Opcode>(unsigned(Opcode::AddPairImmImm) + pair_index) ||
                                     block->instructions[0].inst_size != 8 ||
                                     block->instructions[1].inst_size != 4))) {
@@ -713,7 +754,7 @@ int main() {
                     *block = {}; block->start_pc = 0x1000;
                     DecodeRecordSelfTestAccess::Decode(*fast, *block, 0x1000);
                     for (unsigned i = 0; i < block->inst_count; ++i)
-                        if (paired(block->instructions[i].opcode)) {
+                        if (paired(block->instructions[i].GetOpcode())) {
                             std::cerr << "ALU unsafe pair admitted\n"; return 1;
                         }
                     ++cases;
@@ -723,7 +764,7 @@ int main() {
         *block = {}; block->start_pc = 0x1000;
         DecodeRecordSelfTestAccess::Decode(*fast, *block, 0x1000);
         for (unsigned i = 0; i < block->inst_count; ++i)
-            if (paired(block->instructions[i].opcode)) {
+            if (paired(block->instructions[i].GetOpcode())) {
                 std::cerr << "Thumb ALU pair admitted\n"; return 1;
             }
         ++cases;
@@ -1096,7 +1137,7 @@ int main() {
         return 0;
     }
     if (std::getenv("CARA_ADD_CMP_TEST")) {
-        static_assert(sizeof(Core::FastInterp::DecodedInst) == 20);
+        static_assert(sizeof(Core::FastInterp::DecodedInst) == (CARA_FASTINTERP_COMPACT_DECODED ? 16 : 20));
         auto rotate = [](u32 encoding) {
             return std::rotr(encoding & 255u, int((encoding >> 8) * 2));
         };
@@ -1239,7 +1280,7 @@ int main() {
         return 0;
     }
     if (std::getenv("CARA_VCMP_VMRS_TEST")) {
-        static_assert(sizeof(Core::FastInterp::DecodedInst) == 20);
+        static_assert(sizeof(Core::FastInterp::DecodedInst) == (CARA_FASTINTERP_COMPACT_DECODED ? 16 : 20));
         auto expected_flags = [](u32 a, u32 b) {
             const bool nan_a = (a & 0x7fffffff) > 0x7f800000;
             const bool nan_b = (b & 0x7fffffff) > 0x7f800000;

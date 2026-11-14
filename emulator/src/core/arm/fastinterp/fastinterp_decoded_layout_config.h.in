@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+#ifdef CARA_FASTINTERP_COMPACT_DECODED
+#if CARA_FASTINTERP_COMPACT_DECODED != @CARA_FASTINTERP_COMPACT_DECODED_VALUE@
+#error Conflicting decoded-record layout and generated build configuration
+#endif
+#else
+#define CARA_FASTINTERP_COMPACT_DECODED @CARA_FASTINTERP_COMPACT_DECODED_VALUE@
+#endif

@@ -56,7 +56,7 @@ static int VerifyFastInterpPCBoundary(Core::System& system) {
                         DecodeRecordSelfTestAccess::Decode(*cpu, *block, 0x1000);
                         const unsigned invalid_size = thumb && !wide_invalid ? 2 : 4;
                         if (!block->inst_count || block->end_pc != 0x1000 + offset + invalid_size ||
-                            block->instructions[block->inst_count - 1].opcode != Opcode::Invalid ||
+                            block->instructions[block->inst_count - 1].GetOpcode() != Opcode::Invalid ||
                             block->instructions[block->inst_count - 1].inst_size != invalid_size) {
                             std::cerr << "PC boundary fixture invalid-tail decode mismatch\n";
                             return 1;

@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--guest-debugger', action='store_true', help='Include per-instruction guest GDB checks')
     parser.add_argument('--cpu', choices=['generic', 'apple-m4'], default='generic')
     parser.add_argument('--lto', action='store_true')
+    parser.add_argument('--compact-decoded', action='store_true', help='Prototype 16-byte interpreter records (default off)')
     pgo = parser.add_mutually_exclusive_group()
     pgo.add_argument('--pgo-generate', action='store_true')
     pgo.add_argument('--pgo-use', type=Path)
@@ -52,6 +53,7 @@ def main():
                '-DCMAKE_MAKE_PROGRAM=' + ninja, '-DCMAKE_BUILD_TYPE=Release',
                '-DCARA_CPU_TARGET=' + args.cpu,
                '-DCARA_ENABLE_LTO=' + ('ON' if args.lto else 'OFF'),
+               '-DCARA_FASTINTERP_COMPACT_DECODED=' + ('ON' if args.compact_decoded else 'OFF'),
                '-DCARA_PGO_GENERATE=' + ('ON' if args.pgo_generate else 'OFF'),
                '-DCARA_PGO_USE=' + (str(args.pgo_use.resolve()) if args.pgo_use else ''),
                '-DCARA_INTERPRETER_GUEST_DEBUG=' + ('ON' if args.guest_debugger else 'OFF'),
@@ -59,7 +61,7 @@ def main():
                '-DENABLE_QT=OFF', '-DENABLE_SDL2=OFF', '-DENABLE_WEB_SERVICE=OFF',
                '-DENABLE_CUBEB=OFF', '-DBOOST_ROOT=' + str(source / 'externals/boost'),
                '-DBoost_NO_SYSTEM_PATHS=ON', '-DBoost_NO_BOOST_CMAKE=ON']
-    targets = ['cara-fastinterp-capacity-self-test', 'cara-fastinterp-secondary-link-self-test', 'cara-fastinterp-simd-tags-self-test', 'cara-vertex-upload-order-self-test', 'cara-fastinterp-chain-recency-self-test', 'cara-guest-pc-cpu-self-test', 'cara-vertex-input-usage-self-test', 'cara-shader-flow-self-test', 'cara-pica-submission-probe-self-test', 'cara-p3d-completion-self-test', 'cara-guest-gpu-trace-self-test', 'cara-interrupt-relay-policy-self-test', 'cara-arm-tick-self-test', 'cara-texture-lookup-self-test', 'cara-render-bookkeeping-self-test', 'cara-cpu-category-self-test', 'cara-vertex-upload-bank-self-test', 'cara-ios-pipeline-cache-self-test', 'cara-surface-remap-layout-self-test', 'cara-frame-pacer-self-test', 'cara-presentation-guard-self-test', 'cara-clock-self-test', 'cara-fastinterp-self-test', 'cara-audio-buffer-self-test', 'cara-dsp-status-self-test', 'cara-no-jit-probe', 'cara-raster-self-test', 'cara-core-cache-self-test', 'cara-interval-cache-self-test', 'cara-input-self-test']
+    targets = ['cara-fastinterp-decoded-record-self-test', 'cara-fastinterp-capacity-self-test', 'cara-fastinterp-secondary-link-self-test', 'cara-fastinterp-simd-tags-self-test', 'cara-vertex-upload-order-self-test', 'cara-fastinterp-chain-recency-self-test', 'cara-guest-pc-cpu-self-test', 'cara-vertex-input-usage-self-test', 'cara-shader-flow-self-test', 'cara-pica-submission-probe-self-test', 'cara-p3d-completion-self-test', 'cara-guest-gpu-trace-self-test', 'cara-interrupt-relay-policy-self-test', 'cara-arm-tick-self-test', 'cara-texture-lookup-self-test', 'cara-render-bookkeeping-self-test', 'cara-cpu-category-self-test', 'cara-vertex-upload-bank-self-test', 'cara-ios-pipeline-cache-self-test', 'cara-surface-remap-layout-self-test', 'cara-frame-pacer-self-test', 'cara-presentation-guard-self-test', 'cara-clock-self-test', 'cara-fastinterp-self-test', 'cara-audio-buffer-self-test', 'cara-dsp-status-self-test', 'cara-no-jit-probe', 'cara-raster-self-test', 'cara-core-cache-self-test', 'cara-interval-cache-self-test', 'cara-input-self-test']
     if args.platform == 'mac':
         targets.extend(['cara-nwm-relay-hle-live-test', 'cara-relay-client-configuration-self-test', 'cara-relay-client-live-test', 'cara-relay-client-reconnect-test'])
         targets.append('cara-apple-aac-test')

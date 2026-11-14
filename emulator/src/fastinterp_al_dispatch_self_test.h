@@ -69,7 +69,7 @@ static int VerifyFastInterpAlDispatch(Core::System& system) {
                 DecodeRecordSelfTestAccess::Decode(cpu,block,0x1000);
                 for(unsigned i=0;i<=block.inst_count;++i) {
                     const auto& inst=block.instructions[i];
-                    const u16 expected=static_cast<u16>(inst.opcode)+
+                    const u16 expected=static_cast<u16>(inst.GetOpcode())+
                         ((mode&&inst.cond==14)?static_cast<u16>(Opcode::OpcodeCount):0);
                     if(inst.dispatch_index!=expected) {std::cerr<<"AL dispatch index mismatch\n";return 1;}
                 }
@@ -108,10 +108,10 @@ static int VerifyFastInterpAlDispatch(Core::System& system) {
     for(unsigned mode=0;mode<2;++mode) for(Opcode opcode:{Opcode::ThumbFusedSubsBcc,
             Opcode::ThumbFusedCmpRegBcc,Opcode::FusedSubsBcc}) {
         BasicBlock block{};block.start_pc=0x1000;block.inst_count=1;
-        auto& inst=block.instructions[0];inst.opcode=opcode;inst.cond=14;
+        auto& inst=block.instructions[0];inst.SetOpcode(opcode);inst.cond=14;
         inst.fused.branch_cond=1;inst.fused.branch_target=0x1000;
         DecodeRecordSelfTestAccess::Reoptimize(*fixtures[mode]->cpu,block);
-        if(inst.opcode==opcode || inst.dispatch_index!=static_cast<u16>(inst.opcode)+
+        if(inst.GetOpcode()==opcode || inst.dispatch_index!=static_cast<u16>(inst.GetOpcode())+
             (mode?static_cast<u16>(Opcode::OpcodeCount):0)) {
             std::cerr<<"AL hot rewrite index mismatch\n";return 1;
         }

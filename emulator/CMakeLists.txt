@@ -81,6 +81,9 @@ if (CARA_SOFTWARE_PRESENTATION)
     add_definitions(-DCARA_SOFTWARE_PRESENTATION=1)
 endif()
 
+# Private storage-density prototype; src configures a shared layout header.
+option(CARA_FASTINTERP_COMPACT_DECODED "Prototype 16-byte interpreter decoded records" OFF)
+
 option(CARA_ENABLE_JIT "Build CPU and host shader JIT backends" OFF)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(CARA_ENABLE_JIT OFF CACHE BOOL "Build CPU and host shader JIT backends" FORCE)

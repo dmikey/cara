@@ -201,7 +201,7 @@ static int VerifyFastInterpShortVectors(Core::System& system) {
 #endif
         unsigned fused=0;
         for(unsigned i=0;i<block.inst_count;++i) {
-            const auto op=block.instructions[i].opcode;
+            const auto op=block.instructions[i].GetOpcode();
             fused+=op==Opcode::Vmul4S||op==Opcode::Vmul4Gather||op==Opcode::Vmla4S||op==Opcode::Vmla4Gather;
         }
         const unsigned expected_fused=expect_fusion?2u:
