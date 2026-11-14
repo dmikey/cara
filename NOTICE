@@ -48,3 +48,9 @@ Copyright (c) 2026 fearkov. Reviewed revisions and usage are recorded in
 docs/inspection-tool-attributions.md and docs/zakuro-recomp-prior-art.md.
 https://github.com/fearkov/3dsrecomp
 https://github.com/fearkov/zakuro
+
+Cara relay WebSocket transport
+
+github.com/coder/websocket v1.8.15: Copyright (c) 2025 Coder, ISC license.
+The full dependency notice is retained in tools/network-relay/THIRD_PARTY_NOTICES.txt.
+https://github.com/coder/websocket
