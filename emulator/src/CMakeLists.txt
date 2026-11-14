@@ -216,7 +216,7 @@ endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJCXX)
-    add_executable(cara-ios MACOSX_BUNDLE ios/main.mm ios/action_layout.mm ios/library_store.mm ios/artwork_store.mm ios/shell_controllers.mm ios/input_hub.mm ios/state_catalog.mm ios/feature_controllers.mm ios/configuration_store.mm ios/save_sync.mm ios/skin_layout.mm ios/skin_controls.mm ios/skins/CarbonDuo.deltaskin)
+    add_executable(cara-ios MACOSX_BUNDLE ios/main.mm ios/action_layout.mm ios/library_store.mm ios/artwork_store.mm ios/shell_controllers.mm ios/network_controller.mm ios/input_hub.mm ios/state_catalog.mm ios/feature_controllers.mm ios/configuration_store.mm ios/save_sync.mm ios/skin_layout.mm ios/skin_controls.mm ios/skins/CarbonDuo.deltaskin)
     set_source_files_properties(ios/skins/CarbonDuo.deltaskin PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     file(GLOB CARA_MENU_SOUNDS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ios/MenuSounds/*.caf")
     target_sources(cara-ios PRIVATE ${CARA_MENU_SOUNDS} ios/MenuSounds/NOTICE)

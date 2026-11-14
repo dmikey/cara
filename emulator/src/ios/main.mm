@@ -22,6 +22,8 @@ extern "C" int __llvm_profile_write_file(void);
 #include "cara/p3d_completion.h"
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
+#import "ios/network_controller.h"
+#include "network/relay_client.h"
 #import "ios/state_catalog.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #ifdef CARA_IOS_GLES
@@ -552,6 +554,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     CGSize lastSkinSize;
     std::unique_ptr<IOSWindow> emuWindow;
     std::thread worker;
+    std::shared_ptr<Network::RelayClient> relayClient;
     CADisplayLink* presentationLink;
     std::atomic<bool> stop;
     std::atomic<bool> running;
@@ -651,6 +654,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 }
 - (void)viewDidLoad {
     [super viewDidLoad]; self.view.backgroundColor=UIColor.blackColor;
+    relayClient=Network::RelayClient::Create();
+    Network::InstallRelaySession(relayClient);
 #ifdef CARA_IOS_GLES
     // Explicit launch overrides retain reproducible renderer comparisons.
     if (!std::getenv("CARA_GPU_PACKED_INPUTS")) setenv("CARA_GPU_PACKED_INPUTS","1",0);
@@ -861,8 +866,13 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     presentationLink.paused=state!=Cara::SessionPresentation::Running;
 #endif
 }
+- (BOOL)relayKeepsRunning {
+    if(!relayClient) return NO;
+    const auto state=relayClient->GetStatus().state;
+    return state==Network::RelayClient::State::Connecting || state==Network::RelayClient::State::Connected;
+}
 - (void)resumeFromMenu {
-    modalPaused=libraryVisible; paused=modalPaused;
+    modalPaused=libraryVisible && ![self relayKeepsRunning]; paused=modalPaused;
     AudioCore::SetIOSAudioPaused(modalPaused || stop || !running);
     [self updateSessionPresentation];
 }
@@ -892,7 +902,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         libraryNavigation.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
         [self.view addSubview:libraryNavigation.view]; [libraryNavigation didMoveToParentViewController:self];
     }
-    libraryVisible=YES; modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
+    libraryVisible=YES; modalPaused=![self relayKeepsRunning]; paused=modalPaused; AudioCore::SetIOSAudioPaused(modalPaused || stop || !running); [self resetSkinInput];
     [self updateSessionPresentation];
     libraryNavigation.view.hidden=NO; [self.view bringSubviewToFront:libraryNavigation.view]; libraryController.canResume=running && !stop; libraryController.activeGameURL=gameURL;
     [libraryController reloadLibrary]; [self updateSyncFeedback];
@@ -955,6 +965,11 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         NSMutableDictionary* stopRow=[action(@"Stop game",@"stop.circle",YES,^{ [owner stopGame]; [owner showLibrary]; }) mutableCopy]; stopRow[@"destructive"]=@YES; [game addObject:stopRow];
         [sections addObject:@{@"title":@"Current game",@"rows":game,@"footer":@"Keep using in-game saves. Save states require a matching Cara engine build, game revision, and system mode."}];
     }
+    [sections addObject:@{@"title":@"Local multiplayer",@"rows":@[@{
+        @"title":@"Private room",@"subtitle":@"Connect both players, then use local wireless in the game.",
+        @"symbol":@"antenna.radiowaves.left.and.right",@"keepOpen":@YES,
+        @"action":^{ [owner showNetworkSettings]; }
+    }]}];
     NSMutableArray* locations=[NSMutableArray arrayWithObject:@{@"title":@"ROMs folder",@"subtitle":libraryStore.folderName?:@"Roms",@"symbol":@"folder",@"enabled":@(available),@"action":^{ [owner chooseROMsFolder]; }}];
     [locations addObject:action(@"Open game from Files…",@"doc.badge.plus",!openingGame,^{ EmulatorController* c=owner; if (c) { c->pickingSkin=NO; [c openROM]; } })];
     if (libraryStore.hasCustomFolder) [locations addObject:action(@"Use Cara’s Roms folder",@"folder.fill",available,^{ EmulatorController* c=owner; if (c) { [c->libraryStore useDefaultFolder]; [c->libraryController reloadLibrary]; [c resumeFromMenu]; } })];
@@ -1012,6 +1027,38 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     __weak EmulatorController* owner=self; settings.finished=^{ [owner resumeFromMenu]; };
     UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
     if ([navigation isKindOfClass:UINavigationController.class]) [navigation pushViewController:settings animated:YES];
+}
+- (void)showNetworkSettings {
+    CaraNetworkController* controller=[CaraNetworkController new];
+    __weak EmulatorController* owner=self;
+    controller.connectionStatus=^NSDictionary* {
+        EmulatorController* c=owner;
+        if(!c || !c->relayClient) return @{@"detail":@"Not connected",@"active":@NO};
+        const auto state=c->relayClient->GetStatus();
+        const BOOL active=state.state==Network::RelayClient::State::Connecting || state.state==Network::RelayClient::State::Connected;
+        return @{@"detail":[NSString stringWithUTF8String:Network::RelayClient::StatusText(state)],@"active":@(active)};
+    };
+    controller.joinRoom=^(NSString* endpoint,NSString* room,NSString* password) {
+        EmulatorController* c=owner;
+        if(!c || !c->relayClient) return;
+        Network::RelayClient::Config config;
+        config.endpoint=endpoint.UTF8String; config.room=room.UTF8String; config.password=password.UTF8String;
+        if(c->relayClient->Connect(std::move(config))) {
+            // Local wireless must keep normal guest execution alive under menus.
+            // Only the emulator worker drains incoming traffic and runs guest time.
+            c->modalPaused=NO; paused=false;
+            AudioCore::SetIOSAudioPaused(c->stop || !c->running);
+        }
+    };
+    controller.leaveRoom=^{
+        EmulatorController* c=owner;
+        if(c && c->relayClient) {
+            c->relayClient->Disconnect(); c->modalPaused=YES; paused=true;
+            AudioCore::SetIOSAudioPaused(true); [c updateSessionPresentation];
+        }
+    };
+    UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
+    if([navigation isKindOfClass:UINavigationController.class]) [navigation pushViewController:controller animated:YES];
 }
 - (void)setPlayMode:(NSString*)mode {
     if (!CaraCanTuneEmulation()) return;
@@ -1085,7 +1132,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 }
 - (void)showMenu {
     if (openingGame || self.presentedViewController) return;
-    [self ensureLibrary]; modalPaused=YES; paused=true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput];
+    [self ensureLibrary]; modalPaused=![self relayKeepsRunning]; paused=modalPaused; AudioCore::SetIOSAudioPaused(modalPaused || stop || !running); [self resetSkinInput];
     [self updateSessionPresentation];
     CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"]?:@"performance";
     quick.modeSelectionEnabled=CaraCanTuneEmulation(); quick.performanceDetail=[self performanceModeDetail];
@@ -1096,13 +1143,14 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     quick.showFPS=![NSUserDefaults.standardUserDefaults objectForKey:meterKey] || [NSUserDefaults.standardUserDefaults boolForKey:meterKey];
     quick.toggleFPS=^(BOOL visible) { [NSUserDefaults.standardUserDefaults setBool:visible forKey:meterKey]; [owner.view setNeedsLayout]; };
     NSMutableArray* actions=[NSMutableArray new];
-    if (gameURL && [self sessionPresentation]==Cara::SessionPresentation::Paused) {
+    if (gameURL && ([self sessionPresentation]==Cara::SessionPresentation::Paused || [self sessionPresentation]==Cara::SessionPresentation::Running)) {
         NSURL* currentGame=gameURL;
         [actions addObject:@{@"title":@"Game settings",@"subtitle":@"Controller Demapping and per-game preferences",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ EmulatorController* c=owner; if (c) [c showGameSettings:currentGame navigation:(UINavigationController*)c.presentedViewController]; }}];
         [actions addObject:@{@"title":@"Save state",@"symbol":@"square.and.arrow.down",@"action":^{ [owner showStateSlots:YES]; }}];
         [actions addObject:@{@"title":@"Load state",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner showStateSlots:NO]; }}];
     }
     [actions addObject:@{@"title":@"Library & iCloud",@"symbol":@"folder",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Library & iCloud"]; }}];
+    [actions addObject:@{@"title":@"Local multiplayer",@"symbol":@"antenna.radiowaves.left.and.right",@"keepOpen":@YES,@"action":^{ [owner showNetworkSettings]; }}];
     [actions addObject:@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Skins"]; }}];
     if (running) [actions addObject:@{@"title":@"Game library",@"symbol":@"square.grid.2x2",@"action":^{ [owner showLibrary]; }}];
     [actions addObject:@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Advanced"]; }}];
@@ -1125,8 +1173,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     [slots addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* action) { [self resumeFromMenu]; }]];
     [self presentViewController:slots animated:YES completion:nil];
 }
-- (void)stopGame { stop=true; sessionNotice=nil; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
-- (void)background { backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
+- (void)stopGame { if(relayClient) relayClient->Disconnect(); stop=true; sessionNotice=nil; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
+- (void)background { if(relayClient) relayClient->Disconnect(); backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
 - (void)foreground {
     if (backgroundAt > 0 && running) {
         const double duration = CFAbsoluteTimeGetCurrent() - backgroundAt;
@@ -1228,6 +1276,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (openingGame) return;
     if (![@[@"3ds",@"cci",@"cxi",@"3dsx",@"elf"] containsObject:url.pathExtension.lowercaseString]) { status.text=@"Choose an extracted .3ds, .cci, .cxi, .3dsx or .elf game."; [self resumeFromMenu]; return; }
     [self ensureLibrary];
+    if(relayClient) relayClient->Disconnect();
     openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];
     if (worker.joinable()) worker.join();
     if (gameScoped) [gameURL stopAccessingSecurityScopedResource];
@@ -1561,7 +1610,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 if(requestedState.length) {
                     try {
                         if(![requestedState.lastPathComponent isEqual:requestedState] || ![requestedState hasPrefix:[stateID stringByAppendingString:@"."]] || ![requestedState hasSuffix:@".carastate"]) throw std::runtime_error("Invalid state location");
-                        system.LoadStateFromPath(FileUtil::GetUserPath(FileUtil::UserPath::StatesDir)+requestedState.UTF8String);
+                        if(relayClient) relayClient->Disconnect(); system.LoadStateFromPath(FileUtil::GetUserPath(FileUtil::UserPath::StatesDir)+requestedState.UTF8String);
                     } catch(const std::exception& error) {
                         NSString* message=[NSString stringWithUTF8String:error.what()];
                         dispatch_async(dispatch_get_main_queue(),^{ [self shellError:@"State couldn’t load" message:message]; });
@@ -1600,7 +1649,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             }
 #endif
             if (result==Core::System::ResultStatus::Success && std::getenv("CARA_PROFILE_LOAD")) {
-                try { system.LoadStateFromPath(user+"profile-comparison.carastate"); }
+                try { if(relayClient) relayClient->Disconnect(); system.LoadStateFromPath(user+"profile-comparison.carastate"); }
                 catch (const std::exception& error) {
                     LOG_ERROR(Frontend,"Comparison checkpoint: {}",error.what());
                     result=Core::System::ResultStatus::ErrorUnknown;
@@ -1848,7 +1897,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         }
                         if (state_saved && state_load_frame && !state_loaded && emuWindow->frames>=state_load_frame) {
                             AudioCore::SetIOSAudioPaused(true);
-                            system.LoadStateFromPath(user+"device-test.carastate");
+                            if(relayClient) relayClient->Disconnect(); system.LoadStateFromPath(user+"device-test.carastate");
                             Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
                             if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
                             state_loaded=true; state_test_report(""); reset_clock_samples();
@@ -1863,7 +1912,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         try {
                             if (command==101) system.SaveStateToPath(user+"profile-comparison.carastate");
                             else if (command>0) { system.SaveState(unsigned(command)); [stateSync captureCommittedSave]; }
-                            else { system.LoadState(unsigned(-command)); Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv"); }
+                            else { if(relayClient) relayClient->Disconnect(); system.LoadState(unsigned(-command)); Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv"); }
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
                         reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
@@ -1939,6 +1988,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                     emuWindow->presentation_paced=Cara::ShouldPaceFrames(target_frames!=0,
                         benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
                     emuWindow->presentation_speed=has_speed_override?paced_speed:self->maximumSpeedLimit.load();
+                    Network::DrainRelayPackets(system);
                     result = system.RunLoop();
                     Cara::GuestGPUTrace::Flush();
                     if (Cara::GuestGPUTrace::TakeExportError())
@@ -2356,6 +2406,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 Cara::GuestGPUTrace::Flush(true);
                 if (Cara::GuestGPUTrace::TakeExportError())
                     LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
+                if(relayClient) relayClient->Disconnect();
                 system.Shutdown();
                 [saveSync captureCommittedSave];
                 [stateSync captureCommittedSave];
@@ -2367,6 +2418,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 #endif
             AudioCore::SetIOSAudioPaused(true);
             // Raw benchmark capture above must retain the final game pixels.
+            if(relayClient) relayClient->Disconnect();
             emuWindow->ClearDisplay();
             emuWindow->DoneCurrent();
             running = false; gameLoaded=false;
@@ -2393,6 +2445,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     });
 }
 - (void)dealloc {
+    if(relayClient) relayClient->Disconnect();
     stop = true;
     if (worker.joinable()) worker.join();
     [presentationLink invalidate];
