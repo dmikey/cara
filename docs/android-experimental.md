@@ -54,3 +54,45 @@ Mali comparison, not a claimed performance improvement. Both variants use the
 same debug application ID, so preserve saves before replacing an installation.
 The default renderer remains `atlas` until physical-device testing supports a
 change. Matching unstripped native symbols are uploaded separately for profiling.
+
+## RG Slide draw-cost investigation
+
+The November 13 device investigation uses Dark Moon's warmed title screen,
+native resolution, sound enabled and 100% guest clock. It does not establish
+whole-game compatibility or a matched save-state benchmark. First-use shader
+links are excluded from steady windows; they can take tens of seconds on this
+Mali driver. The same-build native pipeline cache restores 54 programs without
+source linking on a subsequent launch.
+
+Detailed two-second windows isolated about 879 ms in lighting/fog/procedural
+LUT synchronization out of 1,438 ms in Draw. Framebuffer attachment setup was
+about 73 ms, framebuffer selection 42 ms, texture acquisition 42 ms, raster
+state application 71 ms and dirty invalidation 29 ms. Timings are nested wall
+phases, not exclusive CPU totals or GPU execution timestamps. The guest
+submitted roughly 840 draws per top-buffer swap; this count alone does not
+establish redundant guest work.
+
+Retaining game-texture bindings, alone or with vertex-input bindings, reduced
+some state calls but produced no useful title-speed improvement in a bracketed
+same-APK comparison. Those experiments remain off by default.
+
+An Android-only native-LUT experiment keeps Cara's packed atlas vertex path but
+samples the existing streaming buffers through GLES 3.2 buffer textures. It
+removes the additional buffer-to-2D-texture LUT upload. Buffer mapping, explicit
+flushes, unmapping and wrap invalidation remain intact; guest commands, clock
+and hardware event timing are unchanged. A bounded RG32F ring stays within the
+GLES 3.2 minimum addressable buffer-texture size. Shader binaries use a separate
+cache filename. The non-Android GLES path retains 2D LUT textures.
+
+On this RG Slide the first warmed native-LUT title capture reduced LUT time to
+about 6 ms per two-second window and raised the overlay from about 10 FPS / 18%
+speed to 13 FPS / 22%. The title appeared intact; exact checkpoint pixel equality,
+save-state restoration and broad gameplay validation are outstanding. This is
+a measured title-screen gain, not a claim of full-speed gameplay. The feature
+is default-off, additionally gated on GLES 3.2 capability and a loaded TexBuffer
+entry point. Developers can select it at process startup through the Android
+configuration's Debug/native_lut_buffers setting. The trace_renderer_timing and
+trace_renderer_bookkeeping debug settings expose the phase reports.
+
+Buffer-texture addressing and capacity rules follow the
+[Khronos GLES 3.2 specification, section 8.9](https://registry.khronos.org/OpenGL/specs/es/3.2/es_spec_3.2.pdf).
