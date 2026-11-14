@@ -23,6 +23,7 @@
 #include "core/tracer/recorder.h"
 #include "video_core/debug_utils/debug_utils.h"
 #include "video_core/rasterizer_interface.h"
+#include "video_core/renderer_opengl/gl_lcd_upload.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -603,10 +604,6 @@ void RendererOpenGL::LoadFBToScreenInfo(const GPU::Regs::FramebufferConfig& fram
     // OpenGL only supports specifying a stride in units of pixels, not bytes, unfortunately
     ASSERT(pixel_stride * bpp == framebuffer.stride);
 
-    // Ensure no bad interactions with GL_UNPACK_ALIGNMENT, which by default
-    // only allows rows to have a memory alignement of 4.
-    ASSERT(pixel_stride % 4 == 0);
-
     if (!VideoCore::Rasterizer()->AccelerateDisplay(framebuffer, framebuffer_addr,
                                                     static_cast<u32>(pixel_stride), screen_info)) {
         // Reset the screen info's display texture to its own permanent texture
@@ -619,33 +616,53 @@ void RendererOpenGL::LoadFBToScreenInfo(const GPU::Regs::FramebufferConfig& fram
 
         GLuint old_tex = OpenGLState::BindTexture2D(0, screen_info.texture.resource.handle);
 
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)pixel_stride);
+        GLint unpack_alignment{}, unpack_row_length{}, unpack_skip_rows{}, unpack_skip_pixels{};
+        GLint unpack_buffer{};
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
+        glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpack_alignment);
+        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpack_row_length);
+        glGetIntegerv(GL_UNPACK_SKIP_ROWS, &unpack_skip_rows);
+        glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &unpack_skip_pixels);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
 
-        // Update existing texture
-        // TODO: Test what happens on hardware when you change the framebuffer dimensions so that
-        //       they differ from the LCD resolution.
-        // TODO: Applications could theoretically crash Cara here by specifying too large
-        //       framebuffer sizes. We should make sure that this cannot happen.
+        // Update existing texture. The LCD buffers remain sideways; DrawScreens
+        // performs the same rotation for both accelerated and fallback textures.
+        // TODO: Applications could specify oversized framebuffer dimensions; mapped
+        // source bounds and texture dimensions remain the producer's contract.
         if (GLES) {
-            u32 bytes_per_pixel = screen_info.texture.gl_format == GL_RGB ? 3 : 4;
-            std::vector<u8> pixels(framebuffer.width * framebuffer.height * 4);
-            u32 offsets[] = {2, 1, 0, 3};
-            for (u32 i = 0; i < framebuffer.width * framebuffer.height * bytes_per_pixel;
-                 i += bytes_per_pixel) {
-                for (u32 j = 0; j < bytes_per_pixel; ++j) {
-                    pixels[i + j] = framebuffer_data[i + offsets[j]];
-                }
+            static_assert(static_cast<unsigned>(GPU::Regs::PixelFormat::RGBA8) == 0 &&
+                          static_cast<unsigned>(GPU::Regs::PixelFormat::RGB8) == 1 &&
+                          static_cast<unsigned>(GPU::Regs::PixelFormat::RGB565) == 2 &&
+                          static_cast<unsigned>(GPU::Regs::PixelFormat::RGB5A1) == 3 &&
+                          static_cast<unsigned>(GPU::Regs::PixelFormat::RGBA4) == 4);
+            std::vector<u8> pixels;
+            const bool staged = LcdUpload::Stage(
+                framebuffer_data, std::size_t(framebuffer.stride) * framebuffer.height,
+                static_cast<unsigned>(framebuffer.color_format.Value()), framebuffer.width,
+                framebuffer.height, framebuffer.stride, pixels);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            if (staged) {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, framebuffer.width, framebuffer.height,
+                               screen_info.texture.gl_format, screen_info.texture.gl_type,
+                               pixels.data());
+            } else {
+                LOG_ERROR(Render_OpenGL, "Invalid LCD framebuffer upload layout");
             }
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, framebuffer.width, framebuffer.height,
-                            screen_info.texture.gl_format, screen_info.texture.gl_type,
-                            pixels.data());
         } else {
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(pixel_stride));
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, framebuffer.width, framebuffer.height,
-                            screen_info.texture.gl_format, screen_info.texture.gl_type,
-                            framebuffer_data);
+                           screen_info.texture.gl_format, screen_info.texture.gl_type,
+                           framebuffer_data);
         }
 
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpack_buffer);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_alignment);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, unpack_skip_rows);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, unpack_skip_pixels);
 
         OpenGLState::BindTexture2D(0, old_tex);
     }
