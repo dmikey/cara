@@ -317,8 +317,17 @@ static void AllocateTextureCube(GLuint texture, const FormatTuple& format_tuple,
 }
 
 static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect, GLuint dst_tex,
-                         const Common::Rectangle<u32>& dst_rect, SurfaceType type) {
+                         const Common::Rectangle<u32>& dst_rect, SurfaceType type,
+                         bool checked_copy = false) {
     OpenGLState prev_state = OpenGLState::GetCurState();
+    SCOPE_EXIT({ prev_state.SubApply(); });
+    if (checked_copy && glGetError() != GL_NO_ERROR)
+        throw std::runtime_error("Native texture copy rejected preexisting GL error");
+    // A framebuffer copy requires a known attachment category. The surface overload
+    // additionally rejects incompatible attachment formats before this checked fallback.
+    if (checked_copy && type != SurfaceType::Color && type != SurfaceType::Texture &&
+        type != SurfaceType::Depth && type != SurfaceType::DepthStencil)
+        throw std::runtime_error("Native texture copy requires a supported attachment type");
     OpenGLState state;
     state.draw.read_framebuffer = g_read_framebuffer.handle;
     state.draw.draw_framebuffer = g_draw_framebuffer.handle;
@@ -360,6 +369,10 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
         buffers = GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
     }
 
+    if (checked_copy && (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ||
+                         glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE))
+        throw std::runtime_error("Native texture copy framebuffer is incomplete");
+
     // TODO (wwylele): use GL_NEAREST for shadow map texture
     // Note: shadow map is treated as RGBA8 format in PICA, as well as in the rasterizer cache, but
     // doing linear intepolation componentwise would cause incorrect value. However, for a
@@ -368,13 +381,14 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
     glBlitFramebuffer(src_rect.left, src_rect.bottom, src_rect.right, src_rect.top, dst_rect.left,
                       dst_rect.bottom, dst_rect.right, dst_rect.top, buffers,
                       buffers == GL_COLOR_BUFFER_BIT ? GL_LINEAR : GL_NEAREST);
-    prev_state.SubApply();
+    if (checked_copy && glGetError() != GL_NO_ERROR)
+        throw std::runtime_error("Native framebuffer texture copy failed");
 }
 
 static void BlitTextures(const Surface& src, const Common::Rectangle<u32>& src_rect,
                          const Surface& dst, const Common::Rectangle<u32>& dst_rect) {
 #ifndef CARA_IOS_GLES
-    if (src->pixel_format == dst->pixel_format &&
+    if (GLAD_GL_ARB_copy_image && glCopyImageSubData && src->pixel_format == dst->pixel_format &&
         src->pixel_format < SurfaceParams::PixelFormat::IA8 && src_rect.bottom < src_rect.top) {
         // same color format, same size, don't flip vertically
         u32 src_width = src_rect.GetWidth();
@@ -392,7 +406,15 @@ static void BlitTextures(const Surface& src, const Common::Rectangle<u32>& src_r
     }
 
 #endif
-    BlitTextures(src->texture.handle, src_rect, dst->texture.handle, dst_rect, src->type);
+    // Preserve legal color conversions, but reject attachment-category changes and
+    // depth format conversions before callers can validate a stale destination.
+    const bool depth_copy =
+        src->type == SurfaceType::Depth || src->type == SurfaceType::DepthStencil;
+    if (!GLES && (!SurfaceParams::CheckFormatsBlittable(src->pixel_format, dst->pixel_format) ||
+                  (depth_copy && src->pixel_format != dst->pixel_format))) {
+        throw std::runtime_error("Native framebuffer copy has unsupported attachment formats");
+    }
+    BlitTextures(src->texture.handle, src_rect, dst->texture.handle, dst_rect, src->type, !GLES);
 }
 
 static bool FillSurface(const Surface& surface, const u8* fill_data,
@@ -950,7 +972,12 @@ GLuint CachedSurface::GetTextureCopyHandle() {
     const Common::Rectangle<u32> rect{0, GetScaledHeight(), GetScaledWidth(), 0};
     BlitTextures(texture.handle, rect, texture_copy.handle, rect, type);
 #else
-    glCopyImageSubData(texture.handle, GL_TEXTURE_2D, 0, 0, 0, 0, texture_copy.handle, GL_TEXTURE_2D, 0, 0, 0, 0, GetScaledWidth(), GetScaledHeight(), 1);
+    if (GLAD_GL_ARB_copy_image && glCopyImageSubData) {
+        glCopyImageSubData(texture.handle, GL_TEXTURE_2D, 0, 0, 0, 0, texture_copy.handle, GL_TEXTURE_2D, 0, 0, 0, 0, GetScaledWidth(), GetScaledHeight(), 1);
+    } else {
+        const Common::Rectangle<u32> rect{0, GetScaledHeight(), GetScaledWidth(), 0};
+        BlitTextures(texture.handle, rect, texture_copy.handle, rect, type, true);
+    }
 #endif
     return texture_copy.handle;
 }

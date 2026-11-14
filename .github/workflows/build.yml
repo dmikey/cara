@@ -9,6 +9,30 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  native-sdl:
+    name: macOS SDL developer host / compile only / no JIT
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native frontend dependencies and pinned build tools
+        run: |
+          brew install sdl2 libpng
+          python3 -m venv work/tools
+          work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+      - name: Validate bundled source without fetching
+        run: python3 tools/prepare.py
+      - name: Compile SDL frontend and audit linked no-JIT binary
+        run: python3 tools/build_mac_sdl.py --build-dir work/build-mac-sdl --jobs 2
+      - name: Retain native audit and configure command
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-mac-sdl-compile-audit
+          path: |
+            work/build-mac-sdl/native-no-jit-audit.json
+            work/build-mac-sdl/configure-command.json
   network-relay:
     name: Go network relay / race checks
     runs-on: ubuntu-latest
@@ -86,6 +110,8 @@ jobs:
           CARA_FASTINTERP_SECONDARY_LINK=1 CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-fastinterp-simd-tags-self-test --test-only
           work/build-mac/bin/cara-vertex-upload-order-self-test
+          clang++ -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -Iemulator/src tests/lcd_upload_self_test.cpp -o work/lcd-upload-self-test
+          work/lcd-upload-self-test
           clang++ -std=c++17 -O2 -gline-tables-only -DCARA_INTERNAL_HOST_PC_SAMPLER=1 emulator/src/cara/host_pc_sampler.cpp emulator/src/cara/host_pc_sampler_self_test.cpp -o work/host-pc-sampler-smoke
           work/host-pc-sampler-smoke
           work/build-mac/bin/cara-no-jit-probe --self-test work/io-self-test
