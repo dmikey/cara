@@ -34,9 +34,9 @@ def arguments(**changes):
 
 
 class BenchmarkLaunchTests(unittest.TestCase):
-    def capture(self, config, benchmark=True, **arg_changes):
+    def capture(self, config, benchmark=True, memory_probes=None, **arg_changes):
         runner = Mock()
-        actual_launch(arguments(**arg_changes), runner)(config, benchmark=benchmark)
+        actual_launch(arguments(**arg_changes), runner, memory_probes)(config, benchmark=benchmark)
         runner.assert_called_once()
         runner.return_value.check_returncode.assert_called_once_with()
         command = runner.call_args.args[0]
@@ -314,6 +314,119 @@ class BenchmarkLaunchTests(unittest.TestCase):
         self.assertEqual(settings['CARA_PROFILE_GUEST_CPU_PERCENT'], '100')
         self.assertEqual(settings['CARA_BENCHMARK_AUDIO'], '1')
 
+
+    def test_resume_omits_all_observers_even_when_requested(self):
+        config = dict(packed=True, bank_mib=80, guest_pc_profile=True,
+                      host_pc_profile=True, lit_pair_probe=True, draw_cost_profile=True,
+                      cache_profile=True, pica_command_profile=True, pica_post_irq_profile=True,
+                      render_bookkeeping_profile=True, texture_lookup_verify=True,
+                      texture_acquisition_profile=True, surface_upload_trace=True,
+                      depth_self_test=True)
+        requests = dict(cpu_category_timing=True, phase_cpu_timing=True,
+                        gpu_self_test=True, host_cpu_timing=True,
+                        guest_pc_ranges='fixture=0x1000:0x1100',
+                        guest_pc_episode_start=0x1000, guest_pc_episode_end=0x1100,
+                        press_a_frames='10,20', circle_segments='0:10:1:0')
+        probes = [{'address': 4096, 'name': 'synthetic'}]
+        settings, _ = self.capture(config, benchmark=False, memory_probes=probes, **requests)
+        # Some app switches test getenv presence: a value of "0" is not inert.
+        absent = (
+            'CARA_FRAME_TIMING', 'CARA_AUDIO_DIAGNOSTICS', 'CARA_FASTINTERP_PROFILE',
+            'CARA_CPU_CATEGORY_TIMING', 'CARA_PHASE_CPU_TIMING', 'CARA_BENCHMARK_CAPTURE',
+            'CARA_HOST_PC_SAMPLER', 'CARA_HOST_CPU_TIMING', 'CARA_GPU_LIT_PAIR_PROBE',
+            'CARA_DRAW_COST_PROFILE', 'CARA_FASTINTERP_CACHE_PROFILE',
+            'CARA_PICA_COMMAND_PROFILE', 'CARA_PICA_POST_IRQ_PROFILE',
+            'CARA_RENDER_BOOKKEEPING_PROFILE', 'CARA_TEXTURE_LOOKUP_VERIFY',
+            'CARA_TEXTURE_ACQUISITION_PROFILE', 'CARA_SURFACE_FLUSH_TRACE',
+            'CARA_SURFACE_UPLOAD_TRACE', 'CARA_SURFACE_UPLOAD_TRACE_START_FRAME',
+            'CARA_SURFACE_UPLOAD_TRACE_END_FRAME', 'CARA_TIMING_WINDOW_FRAMES',
+            'CARA_TEST_KEEP_AWAKE', 'CARA_TEST_PRESS_A_FRAMES', 'CARA_TEST_CIRCLE_SEGMENTS',
+            'CARA_TEST_HOLD_START_FRAME', 'CARA_PROFILE_SAVE_FRAME',
+            'CARA_PROFILE_MEMORY_U32', 'CARA_PROFILE_MEMORY_U32_FRAME_300',
+            'CARA_BENCHMARK_INPUT_LOCK', 'CARA_SURFACE_SELF_TEST', 'CARA_GPU_DEPTH_SELF_TEST',
+            'CARA_VERTEX_SELF_TEST', 'CARA_BENCHMARK_FRAMES', 'CARA_BENCHMARK_AUDIO',
+            'CARA_PACED_BENCHMARK', 'CARA_MAX_SPEED_PERCENT',
+        )
+        for key in absent:
+            with self.subTest(key=key):
+                self.assertNotIn(key, settings)
+        self.assertFalse(any(key.startswith('CARA_GUEST_PC_PROFILE_') for key in settings))
+        self.assertEqual(settings['CARA_PROFILE_LOAD'], '1')
+        self.assertEqual(settings['CARA_OPEN_RECENT'], '1')
+        self.assertNotIn('CARA_BENCHMARK_INPUT_LOCK', settings)
+        self.assertEqual(settings['CARA_ADAPTIVE_GUEST_CPU'], '1')
+        self.assertEqual(settings['CARA_AUDIO_NO_STRETCH'], '1')
+        # The same requested diagnostics remain available in actual benchmark mode.
+        measured, _ = self.capture(config, memory_probes=probes, **requests)
+        self.assert_benchmark_contract(measured)
+        for key in ('CARA_FRAME_TIMING', 'CARA_AUDIO_DIAGNOSTICS', 'CARA_FASTINTERP_PROFILE',
+                    'CARA_CPU_CATEGORY_TIMING', 'CARA_PHASE_CPU_TIMING', 'CARA_HOST_PC_SAMPLER',
+                    'CARA_HOST_CPU_TIMING', 'CARA_DRAW_COST_PROFILE', 'CARA_FASTINTERP_CACHE_PROFILE',
+                    'CARA_PICA_COMMAND_PROFILE', 'CARA_PICA_POST_IRQ_PROFILE',
+                    'CARA_RENDER_BOOKKEEPING_PROFILE', 'CARA_TEXTURE_LOOKUP_VERIFY',
+                    'CARA_TEXTURE_ACQUISITION_PROFILE', 'CARA_SURFACE_UPLOAD_TRACE',
+                    'CARA_SURFACE_SELF_TEST', 'CARA_GPU_DEPTH_SELF_TEST', 'CARA_VERTEX_SELF_TEST'):
+            with self.subTest(benchmark_key=key):
+                self.assertEqual(measured[key], '1')
+        self.assertEqual(json.loads(measured['CARA_PROFILE_MEMORY_U32']), probes)
+        self.assertEqual(measured['CARA_GUEST_PC_PROFILE_EPISODE_START'], '4096')
+        self.assertEqual(measured['CARA_GUEST_PC_PROFILE_EPISODE_END'], '4352')
+        self.assertEqual(measured['CARA_TEST_PRESS_A_FRAMES'], '10,20')
+        self.assertEqual(measured['CARA_TEST_CIRCLE_SEGMENTS'], '0:10:1:0')
+
+    def test_resume_preserves_optimizer_configuration_and_normal_interaction(self):
+        values = dict(surface_remap=True, byte_surface_remap=True,
+                      selective_surface_cleanup=True, retain_input_bindings=True,
+                      used_input_attributes=True, packed_fetch_reuse=True, vfp_simd=1,
+                      interactive_qos=True, lit_pair_reuse=True, lit_vertex_reuse=True,
+                      ram_burst=True, tick_buckets=True, chain_budget=True, eagl_threaded=True,
+                      simd_tags=True, al_dispatch=True, secondary_link=True, upload_order_reuse=True,
+                      precise_block_end=True, chain_recency=True, cache_ways=8, cache_entries=32768,
+                      depth_reinterpret=True, alu_operands=True, alu_pairs=True, guest_cpu_percent=100,
+                      pica_repeat_state=True, contiguous_transfers=True, render_bookkeeping_reuse=True,
+                      texture_lookup_reuse=True, texture_exact_prefilter=True, decode_bkpt=True,
+                      retain_small_writes=True, quaternion_slice=True, implicit_flush=True,
+                      vcmp_vmrs=True, add_cmp_imm=True, uniform_reuse=True, state_reuse=True,
+                      vertex_reuse=True, reuse=True, index_cache=True, ios_pipeline_cache=True,
+                      bounded_pacing=True, validate_empty_fastpath=True)
+        for enabled in (False, True):
+            config = {key: (enabled if type(value) is bool else value) for key, value in values.items()}
+            config.update(packed=enabled, bank_mib=80)
+            measured, _ = self.capture(config)
+            interactive, _ = self.capture(config, benchmark=False)
+            # Compare actual launcher values for every non-observer configuration,
+            # including explicit false settings, rather than a second env builder.
+            retained = (
+                'CARA_GPU_SURFACE_REMAP', 'CARA_GPU_BYTE_SURFACE_REMAP',
+                'CARA_SELECTIVE_SURFACE_CLEANUP', 'CARA_GPU_RETAIN_INPUT_BINDINGS',
+                'CARA_GPU_USED_INPUTS', 'CARA_GPU_PACKED_FETCH_REUSE', 'CARA_FASTINTERP_VFP_SIMD',
+                'CARA_WORKER_INTERACTIVE_QOS', 'CARA_GPU_LIT_PAIR_REUSE', 'CARA_GPU_LIT_VERTEX_REUSE',
+                'CARA_FASTINTERP_RAM_BURST', 'CARA_FASTINTERP_TICK_BUCKETS', 'CARA_FASTINTERP_CHAIN_BUDGET',
+                'CARA_EAGL_THREADED', 'CARA_FASTINTERP_SIMD_TAGS', 'CARA_FASTINTERP_AL_DISPATCH',
+                'CARA_FASTINTERP_SECONDARY_LINK', 'CARA_VERTEX_UPLOAD_ORDER_REUSE',
+                'CARA_FASTINTERP_PRECISE_BLOCK_END', 'CARA_FASTINTERP_CHAIN_RECENCY',
+                'CARA_FASTINTERP_CACHE_WAYS', 'CARA_FASTINTERP_CACHE_ENTRIES',
+                'CARA_GPU_DEPTH_REINTERPRET', 'CARA_FASTINTERP_ALU_OPERANDS', 'CARA_FASTINTERP_ALU_PAIRS',
+                'CARA_PROFILE_GUEST_CPU_PERCENT', 'CARA_PICA_REPEAT_STATE',
+                'CARA_FASTINTERP_CONTIGUOUS_TRANSFERS', 'CARA_RENDER_BOOKKEEPING_REUSE',
+                'CARA_TEXTURE_LOOKUP_REUSE', 'CARA_TEXTURE_EXACT_PREFILTER', 'CARA_FASTINTERP_DECODE_BKPT',
+                'CARA_RETAIN_SMALL_CPU_WRITES', 'CARA_GPU_QUATERNION_SLICE', 'CARA_GL_IMPLICIT_FLUSH',
+                'CARA_FASTINTERP_VCMP_VMRS', 'CARA_FASTINTERP_ADD_CMP_IMM', 'CARA_VS_UNIFORM_REUSE',
+                'CARA_GL_STATE_REUSE', 'CARA_GPU_VERTEX_REUSE', 'CARA_GPU_PACKED_INPUTS',
+                'CARA_VERTEX_UPLOAD_REUSE', 'CARA_VERTEX_INDEX_CACHE', 'CARA_VERTEX_UPLOAD_BANK_MIB',
+                'CARA_BOUNDED_FRAME_PACING', 'CARA_VALIDATE_EMPTY_FASTPATH', 'CARA_OPEN_RECENT',
+                'CARA_CPU_BACKEND', 'CARA_PROFILE_LOAD', 'CARA_AUDIO_NO_STRETCH')
+            self.assertEqual('CARA_IOS_PIPELINE_CACHE' in interactive, enabled)
+            for key in retained:
+                with self.subTest(enabled=enabled, optimizer=key):
+                    self.assertEqual(interactive[key], measured[key])
+            self.assertEqual(interactive['CARA_GPU_PACKED_INPUTS'], str(int(enabled)))
+            self.assertEqual(interactive['CARA_FASTINTERP_CACHE_ENTRIES'], '32768')
+            self.assertEqual(interactive['CARA_FASTINTERP_CACHE_WAYS'], '8')
+            self.assertEqual(interactive['CARA_PROFILE_LOAD'], '1')
+            self.assertNotIn('CARA_BENCHMARK_INPUT_LOCK', interactive)
+            self.assertEqual(interactive['CARA_ADAPTIVE_GUEST_CPU'], '1')
+
     def test_resume_and_rom_argument_preserve_independent_switches(self):
         config = dict(packed=True, bank_mib=80, byte_surface_remap=True,
                       selective_surface_cleanup=False)
@@ -325,7 +438,7 @@ class BenchmarkLaunchTests(unittest.TestCase):
         self.assertNotIn('CARA_BENCHMARK_FRAMES', settings)
         self.assertNotIn('CARA_BENCHMARK_AUDIO', settings)
         self.assertNotIn('CARA_PACED_BENCHMARK', settings)
-        self.assertEqual(settings['CARA_BENCHMARK_INPUT_LOCK'], '0')
+        self.assertNotIn('CARA_BENCHMARK_INPUT_LOCK', settings)
 
 
 if __name__ == '__main__':
