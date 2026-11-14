@@ -47,5 +47,8 @@ int main() {
     {RelaySession s(local);s.Begin();Check(s.Feed(RelaySession::Frame(2,ID(1))));Check(s.status.state==RelayClient::State::Connecting);Check(!s.Send(Packet()));Check(!s.Feed(packet));}
     {RelaySession s(local);s.Begin();Check(s.Feed(RelaySession::Frame(2,ID(1))));Check(s.Feed(RelaySession::Frame(8,Bytes{1})));
         for(unsigned id=2;id<82;++id){Check(s.Feed(RelaySession::Frame(7,ID(id))));Check(s.Feed(Incoming(id,2)));Check(s.Drain().size()==1);Check(s.Feed(RelaySession::Frame(6,ID(id))));auto q=s.Drain();Check(q.size()==1&&q[0].peer_left);Check(s.sources.empty()&&s.admitted.empty());}}
+    {RelaySession s(local);s.status.state=RelayClient::State::Connected;s.status.generation=0;
+        Check(!s.SendForGeneration(Packet(),1));Check(s.outgoing.empty());Check(s.SendForGeneration(Packet(),0));
+        s.Clear();s.status.generation=1;Check(!s.SendForGeneration(Packet(),0));Check(s.outgoing.empty());Check(s.SendForGeneration(Packet(),1));}
     std::cout<<"PASS "<<checks<<" relay stream/bounds/identity/generation assertions\n";
 }

@@ -111,6 +111,10 @@ struct RelaySession {
         }
         tx_bytes+=frame.size();outgoing.push_back(std::move(frame));status.tx_queued=outgoing.size();return true;
     }
+    bool SendForGeneration(const RelayClient::Packet& packet, std::uint64_t expected_generation) {
+        if (status.generation != expected_generation) return false;
+        return Send(packet);
+    }
     std::vector<RelayClient::ReceivedPacket> Drain(std::size_t count = RelayClient::MaxDrainPackets) {
         std::vector<RelayClient::ReceivedPacket> result;
         count=std::min({count,RelayClient::MaxDrainPackets,incoming.size()});result.reserve(count);

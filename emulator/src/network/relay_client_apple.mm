@@ -195,12 +195,14 @@ public:
     }
     Status GetStatus() const override {std::lock_guard lock(state->mutex);return state->wire.status;}
     Mac GetLocalMac() const override {std::lock_guard lock(state->mutex);return state->wire.local;}
-    bool TrySend(const Packet& packet) override {
+    bool SendImpl(const Packet& packet, std::optional<std::uint64_t> expected_generation) {
         bool accepted;std::uint64_t generation;bool failed;
-        {std::lock_guard lock(state->mutex);accepted=state->wire.Send(packet);generation=state->wire.status.generation;failed=state->wire.status.state==State::Failed;}
+        {std::lock_guard lock(state->mutex);accepted=expected_generation ? state->wire.SendForGeneration(packet,*expected_generation) : state->wire.Send(packet);generation=state->wire.status.generation;failed=state->wire.status.state==State::Failed;}
         if(failed) {Detail::NotifyRelayWork();Detail::Stop(state,generation);}else if(accepted) Detail::Pump(state);
         return accepted;
     }
+    bool TrySend(const Packet& packet) override {return SendImpl(packet,std::nullopt);}
+    bool TrySendForGeneration(const Packet& packet,std::uint64_t expected_generation) override {return SendImpl(packet,expected_generation);}
     std::vector<ReceivedPacket> Drain(std::size_t limit) override {std::lock_guard lock(state->mutex);return state->wire.Drain(limit);}
 };
 std::shared_ptr<RelayClient> RelayClient::Create() {return std::make_shared<AppleRelayClient>();}

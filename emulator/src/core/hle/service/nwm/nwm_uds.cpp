@@ -78,8 +78,8 @@ std::list<Network::WifiPacket> NWM_UDS::GetReceivedBeacons(const MacAddress& sen
 }
 
 /// Sends a WifiPacket to the room we're currently connected to.
-void SendPacket(Network::WifiPacket& packet) {
-    if (auto relay = Network::GetRelaySession()) {
+void NWM_UDS::SendPacket(Network::WifiPacket& packet) {
+    if (relay_session) {
         Network::RelayClient::Packet outgoing;
         outgoing.kind = static_cast<Cara::Relay::Kind>(packet.type);
         outgoing.channel = packet.channel;
@@ -90,7 +90,7 @@ void SendPacket(Network::WifiPacket& packet) {
             if (!canonical) return;
             outgoing.payload = std::move(*canonical);
         }
-        relay->TrySend(outgoing);
+        relay_session->TrySendForGeneration(outgoing, relay_generation);
         return;
     }
     if (auto room_member = Network::GetRoomMember().lock()) {

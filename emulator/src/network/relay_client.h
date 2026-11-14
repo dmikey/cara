@@ -48,6 +48,8 @@ public:
     virtual Mac GetLocalMac() const = 0;
     // Nonblocking. Outgoing transmitter is always the session's local virtual MAC.
     virtual bool TrySend(const Packet& packet) = 0;
+    // Exact expected generation, including 0. Check and enqueue are one operation.
+    virtual bool TrySendForGeneration(const Packet& packet, std::uint64_t expected_generation) = 0;
     // Foreground emulation worker ONLY for UDS delivery; no stored emulator callbacks.
     // Main/UI may query status but must not drain game traffic.
     virtual std::vector<ReceivedPacket> Drain(std::size_t limit = MaxDrainPackets) = 0;

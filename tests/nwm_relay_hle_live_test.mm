@@ -34,7 +34,7 @@ namespace {
 void Check(bool okay,const char* reason){if(!okay)throw std::runtime_error(reason);}
 class FixtureRelay final:public Network::RelayClient {
 public:
- bool flip_on_drain{}, flip_on_send{};
+ bool flip_on_drain{}, flip_on_send{}, flip_before_send{};
  Mac local{2,0,0,0,0,1};Status status;std::deque<ReceivedPacket> rx;std::vector<Packet> sent;
  FixtureRelay(){status.state=State::Connected;status.generation=1;}
  bool Connect(Config)override{return false;}
@@ -42,6 +42,11 @@ public:
  Status GetStatus()const override{auto result=status;result.rx_queued=rx.size();return result;}
  Mac GetLocalMac()const override{return local;}
  bool TrySend(const Packet& packet)override{auto copy=packet;copy.transmitter=local;if(status.state!=State::Connected||!Cara::Relay::Valid(copy))return false;sent.push_back(std::move(copy));if(flip_on_send){flip_on_send=false;++status.generation;local[5]=91;Network::Detail::NotifyRelayWork();}return true;}
+ bool TrySendForGeneration(const Packet& packet,std::uint64_t expected)override {
+  if(flip_before_send){flip_before_send=false;++status.generation;Network::Detail::NotifyRelayWork();}
+  if(status.generation!=expected)return false;
+  return TrySend(packet);
+ }
  std::vector<ReceivedPacket> Drain(std::size_t limit=MaxDrainPackets)override{std::vector<ReceivedPacket> result;while(!rx.empty()&&result.size()<std::min(limit,MaxDrainPackets)){result.push_back(std::move(rx.front()));rx.pop_front();}if(flip_on_drain){flip_on_drain=false;++status.generation;local[5]=92;Network::Detail::NotifyRelayWork();}return result;}
  void Emit(Packet p,bool departed=false){rx.push_back({2,std::move(p),departed});Network::Detail::NotifyRelayWork();}
 };
@@ -143,6 +148,16 @@ struct RelayHLETestDriver {
    Check(uds.relay_generation==relay.status.generation&&uds.relay_connected&&Network::Detail::TakeRelayWork(),"Room transition was not reconciled/rearmed");
   }
   std::cout<<"PASS generation changes during Drain/first TrySend clear old guest batch and rearm\n";
+  // The room can change before a callback's first reply acquires the wire lock.
+  reset_host();relay.flip_before_send=true;relay.Emit(packet(Cara::Relay::Kind::Authentication,{0,0,1,0,0,0},2));Network::DrainRelayPackets(uds.system);
+  Check(relay.sent.empty()&&Status(uds)==static_cast<unsigned>(NetworkStatus::NotConnected),"Old callback reply entered replacement room");
+  // A UI change during ordinary guest execution must also block stale SendTo.
+  reset_host();uds.connection_status.total_nodes=2;uds.network_info.total_nodes=2;uds.connection_status.node_bitmask=3;uds.node_info[1].network_node_id=2;uds.node_map[M(2)]={true,2};
+  ++relay.status.generation;Network::Detail::NotifyRelayWork();Send(uds,2,Payload(false));Check(relay.sent.empty(),"Old guest SendTo entered replacement room");Network::DrainRelayPackets(uds.system);
+  reset_host();uds.connection_status.total_nodes=2;uds.network_info.total_nodes=2;uds.connection_status.node_bitmask=3;uds.node_info[1].network_node_id=2;uds.node_map[M(2)]={true,2};
+  Send(uds,2,Payload(false));Check(relay.sent.size()==1,"Strict guard skipped legitimate current-generation guest send");
+  std::cout<<"PASS strict outbound generation rejects stale callback/guest sends and accepts current generation\n";
+
   // Real mapped IPC output: short/exact/partial beacon entries preserve poison beyond bounds.
   for(unsigned size:{0u,11u,12u,51u,52u,64u,128u}){
    std::vector<u8> poison(256,0xa5);uds.system.Memory().WriteBlock(*uds.system.Kernel().GetCurrentProcess(),0x101000,poison.data(),poison.size());uds.received_beacons.clear();

@@ -148,6 +148,7 @@ private:
     std::uint64_t relay_generation{};
     bool relay_connected{};
     bool relay_needs_initial_sync = true;
+    void SendPacket(Network::WifiPacket& packet);
     void RelayDisconnected();
     void SyncRelayNodeMap();
     void RelayPeerLeft(const Network::RelayClient::Mac& mac);
