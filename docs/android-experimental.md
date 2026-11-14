@@ -150,6 +150,11 @@ can move between phases. These nested wall timings must not be summed as
 exclusive CPU time or interpreted as GPU execution timestamps. Android's audio
 service reported an active output track; listening quality was not verified.
 
+The atlas APK from [Actions run 43619824373](https://github.com/dmikey/cara/actions/runs/43619824373)
+also passed the full on-device coherence oracle with this repair. Its warmed
+Luigi title displayed about 13 FPS / 21% speed, with zero surface downloads.
+This is not a measured atlas throughput gain from the exact-copy repair.
+
 The atlas renderer remains the default and was faster in the earlier warmed
 native-LUT title test. Native GLES residency is a validated comparison mechanism,
 not justification to switch the default renderer or replace the public APK.
