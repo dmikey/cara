@@ -177,14 +177,26 @@ static bool IsVendorMali() {
     return gpu_vendor.find("ARM") != std::string::npos;
 }
 
+static GLsizeiptr LightingLUTBufferSize(bool mali) {
+#ifdef CARA_IOS_GLES
+    // GLES 3.2 guarantees at least 65,536 buffer texels. Keep the entire
+    // streaming ring addressable through its RG32F view on minimum-capability GPUs.
+    if (UseNativeLUTBuffers()) return 65536 * sizeof(GLvec2);
+#endif
+    return mali ? 525312 : TEXTURE_BUFFER_SIZE;
+}
+
 RasterizerOpenGL::RasterizerOpenGL()
     : is_mali_gpu(IsVendorMali()), shader_dirty(true),
       vertex_buffer(GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE),
       uniform_buffer(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE),
       index_buffer(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE),
       texture_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 11264 : TEXTURE_BUFFER_SIZE),
-      texture_lf_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE) {
+      texture_lf_buffer(GL_TEXTURE_BUFFER, LightingLUTBufferSize(is_mali_gpu)) {
 
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+    LOG_INFO(Render_OpenGL, "Android native LUT buffers={}", UseNativeLUTBuffers());
+#endif
     DrawCostProfile::Reset();
     OpenGLState::InvalidateRasterState();
 
@@ -297,19 +309,28 @@ RasterizerOpenGL::RasterizerOpenGL()
 
     glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
 #ifdef CARA_IOS_GLES
-    AllocateIOSLUT(GL_RG32F, texture_lf_buffer.GetSize());
+    if (UseNativeLUTBuffers())
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_lf_buffer.GetHandle());
+    else
+        AllocateIOSLUT(GL_RG32F, texture_lf_buffer.GetSize());
 #else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_lf_buffer.GetHandle());
 #endif
     glActiveTexture(TextureUnits::TextureBufferLUT_RG.Enum());
 #ifdef CARA_IOS_GLES
-    AllocateIOSLUT(GL_RG32F, texture_buffer.GetSize());
+    if (UseNativeLUTBuffers())
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_buffer.GetHandle());
+    else
+        AllocateIOSLUT(GL_RG32F, texture_buffer.GetSize());
 #else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_buffer.GetHandle());
 #endif
     glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
 #ifdef CARA_IOS_GLES
-    AllocateIOSLUT(GL_RGBA32F, texture_buffer.GetSize());
+    if (UseNativeLUTBuffers())
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, texture_buffer.GetHandle());
+    else
+        AllocateIOSLUT(GL_RGBA32F, texture_buffer.GetSize());
 #else
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, texture_buffer.GetHandle());
 #endif

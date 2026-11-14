@@ -15,6 +15,7 @@
 #include "common/logging/log.h"
 #include "video_core/renderer_opengl/gl_shader_util.h"
 #include "video_core/renderer_opengl/gl_vars.h"
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 
 namespace OpenGL {
 
@@ -51,10 +52,14 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
             compatible_source.replace(pos, from.size(), to); pos += to.size();
         }
     };
-    ReplaceAll("samplerBuffer", "sampler2D");
+    if (UseNativeLUTBuffers()) {
+        version = "#version 320 es\n#define CARA_GLES\nprecision highp int;\nprecision highp float;\nprecision highp sampler2D;\nprecision highp samplerBuffer;\n";
+    } else {
+        ReplaceAll("samplerBuffer", "sampler2D");
+        ReplaceAll("texelFetch(texture_buffer_lut_", "CaraLUTFetch(texture_buffer_lut_");
+    }
     ReplaceAll("precision highp uimage2D;", "");
     ReplaceAll("#define fma_safe(x, y, z) fma(x, y, z)", "#define fma_safe(x, y, z) ((x) * (y) + (z))");
-    ReplaceAll("texelFetch(texture_buffer_lut_", "CaraLUTFetch(texture_buffer_lut_");
 #endif
     const char* debug_type;
     switch (type) {

@@ -2,8 +2,22 @@
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #ifdef CARA_IOS_GLES
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 
 namespace OpenGL {
+bool UseNativeLUTBuffers() {
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_ANDROID_NATIVE_LUTS");
+        return value && std::strcmp(value, "1") == 0 &&
+               GLAD_GL_ES_VERSION_3_2 && glTexBuffer;
+    }();
+    return enabled;
+#else
+    return false;
+#endif
+}
 constexpr unsigned LUT_WIDTH = 1024;
 void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
     const GLenum format = internal_format == GL_RG32F ? GL_RG : GL_RGBA;
@@ -18,7 +32,7 @@ void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
 }
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes) {
-    if (!bytes) return;
+    if (!bytes || UseNativeLUTBuffers()) return;
     GLint active, binding, row_length, alignment;
     glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
     glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);

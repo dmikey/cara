@@ -5,9 +5,13 @@
 #include "common/common_types.h"
 
 namespace OpenGL {
+// Android may use its GLES 3.2 buffer textures while retaining atlas vertices.
+#ifdef CARA_IOS_GLES
+bool UseNativeLUTBuffers();
+#endif
 inline GLenum LUTTextureTarget() {
 #ifdef CARA_IOS_GLES
-    return GL_TEXTURE_2D;
+    return UseNativeLUTBuffers() ? GL_TEXTURE_BUFFER : GL_TEXTURE_2D;
 #else
     return GL_TEXTURE_BUFFER;
 #endif

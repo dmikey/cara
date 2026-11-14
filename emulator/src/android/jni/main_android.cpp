@@ -70,6 +70,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> guest_trace{{"Debug", "trace_guest_threads"}, false};
     const Config::ConfigInfo<bool> bookkeeping{{"Debug", "trace_renderer_bookkeeping"}, false};
     setenv("CARA_RENDER_BOOKKEEPING_PROFILE", Config::Get(bookkeeping) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> native_luts{{"Debug", "native_lut_buffers"}, false};
+    setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> retain_draw{{"Debug", "retain_draw_bindings"}, false};
     const Config::ConfigInfo<bool> retain_input{{"Debug", "retain_input_bindings"}, false};
     setenv("CARA_RETAIN_DRAW_BINDINGS", Config::Get(retain_draw) ? "1" : "0", 1);
