@@ -1701,6 +1701,23 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         }
                     }
                 }
+                // Diagnostic touch input uses emulated refresh counts, like the A/circle scripts.
+                // It is unavailable during normal play and follows the same packed HID touch path.
+                struct TestTouchSegment { unsigned begin,end,x,y; };
+                std::vector<TestTouchSegment> test_touch_segments;
+                if (target_frames) {
+                    if (const char* touches=std::getenv("CARA_TEST_TOUCH_SEGMENTS")) {
+                        std::istringstream stream(touches); std::string item;
+                        while (std::getline(stream,item,',')) {
+                            TestTouchSegment segment{}; char trailing{};
+                            if (std::sscanf(item.c_str(),"%u:%u:%u:%u%c",&segment.begin,&segment.end,&segment.x,&segment.y,&trailing)==4 &&
+                                segment.begin<segment.end && segment.end<=target_frames &&
+                                segment.x<320 && segment.y<240)
+                                test_touch_segments.push_back(segment);
+                        }
+                    }
+                }
+                unsigned test_touch_frame=~0u;
                 unsigned test_circle_frame=~0u;
                 size_t next_test_press = 0;
                 unsigned active_test_press = 0;
@@ -1902,6 +1919,16 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                             }
                         }
                         circleX=x; circleY=y;
+                    }
+                    if (!test_touch_segments.empty() && test_touch_frame!=emuWindow->frames) {
+                        test_touch_frame=emuWindow->frames;
+                        int touch=-1;
+                        for (const auto& segment:test_touch_segments) {
+                            if (test_touch_frame>=segment.begin && test_touch_frame<segment.end) {
+                                touch=int(segment.x | (segment.y<<16)); break;
+                            }
+                        }
+                        emuWindow->touch=touch;
                     }
                     static uint64_t observedSave=0;
                     static unsigned saveFrame=0;
@@ -2350,13 +2377,16 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 if (keepAwake) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 900 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                     if (!self->running) UIApplication.sharedApplication.idleTimerDisabled = NO;
                 });
-                if (result != Core::System::ResultStatus::Success && !self->sessionFailure)
+                // Homebrew utilities and system apps can close through the emulated OS.
+                const bool failed=result!=Core::System::ResultStatus::Success &&
+                                  result!=Core::System::ResultStatus::ShutdownRequested;
+                if (failed && !self->sessionFailure)
                     self->sessionFailure = [NSString stringWithFormat:@"Stopped · Error %u",unsigned(result)];
                 [self updateSessionPresentation];
                 self->libraryController.canResume=NO;
                 if (!target_frames && !self->openingGame) {
                     [self showLibrary];
-                    if (result != Core::System::ResultStatus::Success && !self.presentedViewController) [self shellError:@"Game stopped" message:self->status.text];
+                    if (failed && !self.presentedViewController) [self shellError:@"Game stopped" message:self->status.text];
                 }
             });
         }
