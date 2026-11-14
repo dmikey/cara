@@ -1,5 +1,6 @@
 // Cara upload bank bounds/accounting oracle; SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_opengl/gl_vertex_upload_bank.h"
+#include "video_core/renderer_opengl/gl_vertex_upload_ranges.h"
 #include <stdexcept>
 #define REQUIRE(value) do { if (!(value)) throw std::runtime_error(#value); } while (false)
 #include <array>
@@ -13,7 +14,50 @@ static void Add(Bank<Entry>& bank,std::size_t index) {
     bank.sizes[index].emplace_back();
     bank.bytes+=AllocationBytes(index,128); ++bank.textures;
 }
+static void CheckPackedRanges() {
+    // Independent byte-coverage oracle: merging must preserve exactly the
+    // touched bytes and yield one range for each connected coverage component.
+    for (unsigned seed=0; seed<256; ++seed) {
+        OpenGL::BoundedVertexUploadRanges<16> ranges;
+        std::array<bool,256> expected{}, actual{};
+        for (unsigned i=0; i<seed%17; ++i) {
+            const unsigned begin=(seed*29+i*37)%240;
+            const unsigned end=begin+(seed*13+i*11)%16+1;
+            REQUIRE(ranges.Add(begin,end));
+            for (unsigned byte=begin; byte<end; ++byte) expected[byte]=true;
+        }
+        ranges.SortAndMerge();
+        std::size_t components=0;
+        for (std::size_t byte=0; byte<expected.size(); ++byte)
+            if (expected[byte] && (!byte || !expected[byte-1])) ++components;
+        REQUIRE(ranges.Size()==components);
+        std::uint64_t previous_end=0;
+        bool first=true;
+        for (const auto& range:ranges) {
+            REQUIRE(range.begin<range.end && range.end<=actual.size());
+            REQUIRE(first || range.begin>previous_end);
+            REQUIRE(range.destination==0);
+            for (auto byte=range.begin; byte<range.end; ++byte) {
+                REQUIRE(!actual[byte]); actual[byte]=true;
+            }
+            previous_end=range.end; first=false;
+        }
+        REQUIRE(actual==expected);
+    }
+    OpenGL::BoundedVertexUploadRanges<16> full;
+    for (unsigned i=0; i<16; ++i) REQUIRE(full.Add(i*2,i*2+1));
+    REQUIRE(!full.Add(40,41) && full.Size()==16);
+    full.SortAndMerge(); REQUIRE(full.Size()==16);
+    OpenGL::BoundedVertexUploadRanges<16> edges;
+    REQUIRE(!edges.Add(5,5) && !edges.Add(6,5) && edges.Size()==0);
+    const auto high=std::numeric_limits<std::uint64_t>::max();
+    REQUIRE(edges.Add(high-6,high-3) && edges.Add(high-3,high));
+    edges.SortAndMerge();
+    REQUIRE(edges.Size()==1 && edges.begin()->begin==high-6 && edges.begin()->end==high);
+    std::cout<<"Packed ranges: 256 byte-coverage cases, capacity fallback and address edges passed.\n";
+}
 int main() {
+    CheckPackedRanges();
     static_assert(FormatCount==5 && HeightClasses==14 && ClassCount==70);
     static_assert(ClassIndex(4,13)==69 && ClassIndex(4,0)==56);
     static_assert(AllocationBytes(69,128)==8192*128*22);

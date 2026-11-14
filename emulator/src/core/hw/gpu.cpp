@@ -1,3 +1,5 @@
+#include "cara/guest_gpu_trace.h"
+#include "cara/p3d_completion.h"
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -447,7 +449,18 @@ inline void Write(u32 addr, const T data) {
             }
 
             g_regs.display_transfer_config.trigger = 0;
-            Service::GSP::SignalInterrupt(Service::GSP::InterruptId::PPF);
+            u64 transfer_ns = 0;
+            if (Cara::ExperimentalPPFDependencyEnabled()) {
+                const auto is_vram = [](PAddr address) {
+                    return address >= Memory::VRAM_PADDR && address < Memory::VRAM_PADDR_END;
+                };
+                const u64 bytes = config.is_texture_copy ? u64(config.texture_copy.size)
+                    : u64(config.input_width.Value()) * config.input_height.Value() *
+                      Regs::BytesPerPixel(config.input_format.Value());
+                transfer_ns = Cara::PPFTransferNanoseconds(bytes,
+                    is_vram(config.GetPhysicalInputAddress()), is_vram(config.GetPhysicalOutputAddress()));
+            }
+            Service::GSP::SignalInterrupt(Service::GSP::InterruptId::PPF, transfer_ns);
         }
         break;
     }
@@ -484,6 +497,7 @@ template void Write<u8>(u32 addr, const u8 data);
 
 /// Update hardware
 static void VBlankCallback(u64 userdata, s64 cycles_late) {
+    Cara::GuestGPUTrace::VBlank(Core::System::GetInstance().CoreTiming());
     VideoCore::Renderer()->SwapBuffers();
 
     // Signal to GSP that GPU interrupt has occurred

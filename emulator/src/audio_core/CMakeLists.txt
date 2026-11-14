@@ -62,6 +62,11 @@ elseif(ENABLE_FFMPEG_AUDIO_DECODER)
         target_include_directories(audio_core PRIVATE ${FFMPEG_DIR}/include)
     endif()
     target_compile_definitions(audio_core PUBLIC HAVE_FFMPEG)
+elseif(APPLE)
+    target_sources(audio_core PRIVATE hle/apple_aac_codec.cpp hle/apple_aac_codec.h
+        hle/apple_aac_decoder.cpp hle/apple_aac_decoder.h)
+    target_link_libraries(audio_core PRIVATE "-framework AudioToolbox")
+    target_compile_definitions(audio_core PUBLIC HAVE_APPLE_AAC)
 endif()
 
 if(ANDROID)

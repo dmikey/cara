@@ -1721,7 +1721,24 @@ do {
 #ifdef CARA_IOS_GLES
         if (!std::getenv("CARA_RAW_DEPTH")) {
             const u32 levels = (1u << state.depth_bits) - 1;
-            out += fmt::format("gl_FragDepth = floor(clamp(depth, 0.0, 1.0) * {0}.0) / {0}.0;\n", levels);
+            if (state.depth_bits == 24) {
+                // Preserve PICA's existing floor quantization, then construct
+                // binary32(k / (2^24-1)) exactly, without relying on compiler
+                // reciprocal/division rounding at 24-bit depth boundaries.
+                out += R"(
+highp uint cara_depth_code = uint(floor(clamp(depth, 0.0, 1.0) * 16777215.0));
+highp uint cara_depth_float_bits = 0u;
+if (cara_depth_code != 0u) {
+    highp float cara_depth_code_float = float(cara_depth_code);
+    highp uint cara_depth_exponent = (floatBitsToUint(cara_depth_code_float) >> 23u) - 127u;
+    cara_depth_float_bits = ((cara_depth_exponent + 102u) << 23u) +
+                            (cara_depth_code << (23u - cara_depth_exponent)) + 1u;
+}
+gl_FragDepth = uintBitsToFloat(cara_depth_float_bits);
+)";
+            } else {
+                out += fmt::format("gl_FragDepth = floor(clamp(depth, 0.0, 1.0) * {0}.0) / {0}.0;\n", levels);
+            }
         } else
 #endif
             out += "gl_FragDepth = depth;\n";

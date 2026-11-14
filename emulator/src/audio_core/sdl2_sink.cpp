@@ -55,6 +55,9 @@ SDL2Sink::SDL2Sink(std::string device_name) : impl(std::make_unique<Impl>()) {
     }
 
     impl->sample_rate = obtained_audiospec.freq;
+    LOG_INFO(Audio_Sink, "Opened SDL audio device {}: {} Hz, {} channels, driver {}",
+             impl->audio_device_id, obtained_audiospec.freq, obtained_audiospec.channels,
+             SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "unknown");
 
     // SDL2 audio devices start out paused, unpause it:
     SDL_PauseAudioDevice(impl->audio_device_id, 0);

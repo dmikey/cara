@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include "cara/p3d_completion.h"
 #include <boost/serialization/array.hpp>
 #include <boost/serialization/split_member.hpp>
 #include "common/bit_field.h"
@@ -206,6 +207,8 @@ struct State {
     int default_attr_counter = 0;
     u32 default_attr_write_buffer[3]{};
 
+    Cara::P3DWorkEstimate experimental_p3d_work;
+
 private:
     friend class boost::serialization::access;
     template <class Archive>
@@ -229,6 +232,7 @@ private:
         ar& gs_uniform_write_buffer;
         ar& default_attr_counter;
         ar& default_attr_write_buffer;
+        ar& experimental_p3d_work;
         boost::serialization::split_member(ar, *this, file_version);
     }
 

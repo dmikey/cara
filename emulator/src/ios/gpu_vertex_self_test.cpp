@@ -16,6 +16,7 @@
 #include "video_core/regs.h"
 #include "video_core/renderer_opengl/gl_resource_manager.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
+#include "video_core/renderer_opengl/gl_shader_decompiler.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_vertex_index_cache.h"
@@ -74,7 +75,7 @@ static bool RunFeedbackCaptureFixture(std::string& error) {
     return passed;
 }
 
-static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99, unsigned indexed_inputs=0, size_t source_count=257, bool source_optimizations=true) {
+static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t vertex_count=99, unsigned indexed_inputs=0, size_t source_count=257, bool source_optimizations=true, bool select_used_inputs=false) {
     using namespace OpenGL;
     GLint saved_active=GL_TEXTURE0,saved_texture10=0,saved_sampler10=0;
     if (indexed_inputs==6) {
@@ -159,6 +160,17 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
         attribute.map_x.Assign(semantics[i][0]); attribute.map_y.Assign(semantics[i][1]);
         attribute.map_z.Assign(semantics[i][2]); attribute.map_w.Assign(semantics[i][3]);
     }
+    const u16 interpreter_input_mask = input_mask;
+    if (select_used_inputs) {
+        const auto analysis = ShaderDecompiler::DecompileProgram(setup.program_code,
+            setup.swizzle_data, regs.vs.main_offset,
+            [](u32 reg) { return "vs_in_reg" + std::to_string(reg); },
+            [](u32 reg) { return "vs_out_attr" + std::to_string(reg); }, 0);
+        if (!analysis || !(input_mask & ~analysis->input_mask)) {
+            error = "masked-layout fixture did not prune a configured input"; return false;
+        }
+        input_mask &= analysis->input_mask;
+    }
     const PicaVSConfig config(regs, setup);
     const PicaFixedGSConfig output(regs);
     OGLShader vertex, fragment;
@@ -170,7 +182,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
         // fixture, emulate the element fetch here; the raster check below uses
         // the unmodified production shader and a real element buffer.
         const std::string replacement=indexed_inputs==6 ?
-            "int(texelFetch(cara_fixture_elements, ivec2((gl_VertexID + capture_base) % 128, (gl_VertexID + capture_base) / 128), 0).r)" : indexed_inputs==3 ?
+            "int(texelFetch(cara_fixture_elements, ivec2((gl_VertexID + capture_base) % 128, (gl_VertexID + capture_base) / 128), 0).r)" : (indexed_inputs==3 || indexed_inputs==4) ?
             "int(texelFetch(cara_vertex_indices, ivec2((gl_VertexID + capture_base) % 128, (gl_VertexID + capture_base) / 128), 0).r)" :
             "(gl_VertexID + capture_base)";
         vertex_source.replace(pos,11,replacement); pos+=replacement.size();
@@ -192,6 +204,14 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     inputs[0] = {-0.5f, -0.5f, -0.5f, 1}; inputs[16] = {0.5f, -0.5f, -0.5f, 1}; inputs[32] = {0, 0.5f, -0.5f, 1};
     inputs[1] = {1, 0, 0, 0}; inputs[17] = {-1, 0, 0, 0}; inputs[33] = {0, 1, 0, 0};
     inputs[7] = {-0.25f, 0.125f, 0.5f, 1}; inputs[23] = {0.125f, -0.5f, 1.5f, 1}; inputs[39] = {0.25f, 0.5f, -0.125f, 1};
+    if (select_used_inputs) {
+        // The interpreter retains all configured registers. Only the GPU payload
+        // drops these nonzero, unreferenced values; outputs must still agree.
+        for (unsigned v = 0; v < 3; ++v)
+            for (unsigned reg = 0; reg < 16; ++reg)
+                if (!(input_mask & (1u << reg))) inputs[v * 16 + reg] =
+                    {float(17 + reg), -float(31 + reg), 0.5f, 1.0f};
+    }
     std::array<std::array<GLvec4,16>,3> seeds;
     for (unsigned v=0;v<3;++v) std::copy_n(inputs.begin()+v*16,16,seeds[v].begin());
     const IOSVertexInputLayout layout(input_mask);
@@ -308,7 +328,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
                 Pica::Shader::UnitState state;
                 for (size_t reg = 0; reg < 16; ++reg)
                     for (size_t c = 0; c < 4; ++c)
-                        state.registers.input[reg][c] = Pica::float24::FromFloat32((input_mask & (1u << reg)) ? inputs[v * 16 + reg][c] : 0.0f);
+                        state.registers.input[reg][c] = Pica::float24::FromFloat32((interpreter_input_mask & (1u << reg)) ? inputs[v * 16 + reg][c] : 0.0f);
                 Pica::Shader::InterpreterEngine interpreter;
                 interpreter.SetupBatch(setup, 0); interpreter.Run(setup, state);
                 float quaternion_dot=0;
@@ -326,7 +346,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
                     if (c == 2)
                         position = 2.0f * position + state.registers.output[0][3].ToFloat32();
                     const float expected[] = {position,
-                        state.registers.output[1][c].ToFloat32() * (indexed_inputs!=3 && quaternion_dot < 0 ? -1 : 1),
+                        state.registers.output[1][c].ToFloat32() * (indexed_inputs!=3 && indexed_inputs!=4 && quaternion_dot < 0 ? -1 : 1),
                         std::min(1.0f, std::abs(state.registers.output[2][c].ToFloat32()))};
                     for (size_t field = 0; field < 3; ++field)
                         if (!std::isfinite(actual[local * 12 + field * 4 + c]) ||
@@ -1018,6 +1038,13 @@ bool RunGPUVertexSelfTest(std::string& error) {
             return false;
         }
     }
+    // Actual pruned payload versus a full-input interpreter, both bool branch
+    // outcomes and the counted-loop path. Cover packed, dense and reuse interfaces.
+    for (unsigned mode : {0u, 1u, 2u, 3u, 4u}) {
+        if (!RunVertexLayoutFixture(0xffff, error, 99, mode, 99, true, true)) {
+            error += " pruned input layout mode=" + std::to_string(mode); return false;
+        }
+    }
     GLint max_texture_size=0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE,&max_texture_size);
     const u16 large_mask=max_texture_size>=8192?u16(0xffff):u16(0x0083);
@@ -1035,6 +1062,9 @@ bool RunGPUVertexSelfTest(std::string& error) {
     }
     const char* lit_pairs=std::getenv("CARA_GPU_LIT_PAIR_REUSE");
     if (lit_pairs && std::strcmp(lit_pairs,"1")==0) {
+        if (!RunVertexLayoutFixture(0xffff, error, 99, 6, 99, true, true)) {
+            error += " pruned lit-pair input layout"; return false;
+        }
         for (const auto& fixture : {std::pair<size_t,size_t>{99,17}, {41967,257}, {65535,65535}})
             if (!RunVertexLayoutFixture(large_mask,error,fixture.first,6,fixture.second)) {
                 error+=" lit-pair vertex count="+std::to_string(fixture.first); return false;

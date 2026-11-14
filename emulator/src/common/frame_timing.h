@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -17,15 +18,78 @@ struct PhaseCPUSamples {
     std::uint64_t clock_failures = 0;
 };
 
+enum class TextureAcquisitionPhase { Acquire, Selection, Validation, Reinterpretation, Allocation,
+                                     Load, Upload, Mipmap, Count };
+struct TextureAcquisitionSamples {
+    std::uint64_t calls = 0;
+    PhaseCPUSamples timing;
+};
+
 // Opt-in diagnostics on the emulation thread. No clocks are read during normal play.
 struct Counters {
     bool enabled = false;
+    // Requests, not unique frames: repeated command lists/draws/swaps count again.
+    std::uint64_t pica_command_lists = 0;
+    std::uint64_t pica_draw_requests = 0;
+    std::uint64_t pica_post_irq_submissions = 0;
+    std::uint64_t pica_post_irq_writes = 0;
+    std::uint64_t pica_post_irq_draw_requests = 0;
+    std::uint64_t pica_post_irq_jumps = 0;
+    std::uint64_t pica_first_irq_remaining_words = 0;
+    std::uint64_t experimental_ppf_scheduled = 0;
+    std::uint64_t experimental_ppf_delivered = 0;
+    std::uint64_t experimental_ppf_modeled_ns = 0;
+    std::uint64_t experimental_ppf_queued_ticks = 0;
+    std::uint64_t experimental_p3d_scheduled = 0;
+    std::uint64_t experimental_p3d_delivered = 0;
+    std::uint64_t experimental_p3d_retired = 0;
+    std::uint64_t experimental_p3d_modeled_ns = 0;
+    std::uint64_t experimental_p3d_queued_ticks = 0;
+    std::uint64_t top_buffer_swaps = 0;
+    // Top swaps with nonzero, distinct physical left/right addresses. This does
+    // not establish that both views were rendered or presented.
+    std::uint64_t stereo_top_buffer_swaps = 0;
+    std::uint64_t texture_lookup_checks = 0;
+    std::uint64_t texture_lookup_hits = 0;
+    std::uint64_t texture_lookup_misses = 0;
+    std::uint64_t texture_lookup_stores = 0;
+    std::uint64_t texture_lookup_ambiguous_rejects = 0;
+    std::uint64_t texture_lookup_epoch_rejects = 0;
+    std::uint64_t texture_lookup_verified_hits = 0;
+    std::uint64_t texture_lookup_verify_mismatches = 0;
+
+    double draw_framebuffer_acquire_seconds = 0;
+    std::uint64_t draw_framebuffer_acquire_calls = 0;
+    double draw_texture_acquire_seconds = 0;
+    std::uint64_t draw_texture_acquire_calls = 0;
+    double draw_shader_setup_seconds = 0;
+    std::uint64_t draw_shader_setup_calls = 0;
+    double draw_dirty_invalidate_seconds = 0;
+    std::uint64_t draw_dirty_invalidate_calls = 0;
+    double render_reinterpret_check_seconds = 0;
+    std::uint64_t render_reinterpret_check_calls = 0;
+    std::uint64_t render_reinterpret_invocations = 0;
+    std::uint64_t render_reinterpret_find_calls = 0;
+    std::uint64_t render_reinterpret_avoided_calls = 0;
+    std::uint64_t render_reinterpret_repeat_opportunities = 0;
+    std::uint64_t contiguous_transfer_loads = 0;
+    std::uint64_t contiguous_transfer_stores = 0;
+    std::uint64_t contiguous_transfer_bytes = 0;
+
     PhaseCPUSamples draw_submit_cpu_samples;
     PhaseCPUSamples vertex_orphan_cpu_samples;
     PhaseCPUSamples stream_map_cpu_samples;
     PhaseCPUSamples stream_unmap_cpu_samples;
     PhaseCPUSamples uniform_upload_cpu_samples;
     PhaseCPUSamples vertex_subimage_cpu_samples;
+    PhaseCPUSamples surface_download_cpu_samples;
+    PhaseCPUSamples surface_read_pixels_cpu_samples;
+    std::array<TextureAcquisitionSamples, static_cast<std::size_t>(TextureAcquisitionPhase::Count)>
+        texture_acquisition_samples{};
+    std::uint64_t texture_exact_candidates = 0;
+    std::uint64_t texture_exact_wrong_layout = 0;
+    std::uint64_t texture_exact_early_rejects = 0;
+    std::uint64_t texture_exact_validity_lookups = 0;
     double shader_seconds = 0;
     double guest_cpu_seconds = 0;
     double draw_seconds = 0;
@@ -83,6 +147,8 @@ struct Counters {
     std::uint64_t surface_remap_bytes = 0;
     double surface_pack_seconds = 0;
     double surface_download_seconds = 0;
+    double surface_read_pixels_seconds = 0;
+    std::uint64_t surface_read_pixels_calls = 0;
     double shader_compile_seconds = 0;
     double gpu_wait_seconds = 0;
     std::uint64_t surface_download_calls = 0;
@@ -108,16 +174,101 @@ struct Counters {
     std::uint64_t gpu_direct_vertex_draws = 0;
     std::uint64_t gpu_direct_vertices = 0;
     std::uint64_t gpu_direct_unique_inputs = 0;
+    // GPU input staging attempts after topology validation; a later shader
+    // rejection may still send the draw through the existing CPU fallback.
+    std::uint64_t vertex_input_stage_draws = 0;
+    std::uint64_t vertex_configured_input_registers = 0;
+    std::uint64_t vertex_selected_input_registers = 0;
+    std::uint64_t vertex_pruned_input_draws = 0;
     std::uint64_t gpu_vertex_draws = 0;
     std::uint64_t gpu_vertices = 0;
     std::uint64_t cpu_vertex_draws = 0;
 };
 inline thread_local Counters counters;
 
-enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, ShaderCompile, GPUWait };
+inline bool TextureAcquisitionProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_TEXTURE_ACQUISITION_PROFILE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+inline thread_local unsigned texture_acquisition_depth = 0;
+inline bool TextureAcquisitionTracingActive() {
+    return counters.enabled && texture_acquisition_depth != 0;
+}
+class TextureAcquisitionContext {
+public:
+    TextureAcquisitionContext() : active(counters.enabled && TextureAcquisitionProfileEnabled()) {
+        if (active) ++texture_acquisition_depth;
+    }
+    ~TextureAcquisitionContext() { if (active) --texture_acquisition_depth; }
+    TextureAcquisitionContext(const TextureAcquisitionContext&) = delete;
+    TextureAcquisitionContext& operator=(const TextureAcquisitionContext&) = delete;
+private:
+    bool active;
+};
+
+// Calls are exact; wall/thread CPU totals contain only selected calls. Nested
+// phases overlap, and must not be summed or extrapolated to whole-run totals.
+// Unlike Scope, unsampled calls do not read either clock.
+class TextureAcquisitionScope {
+public:
+    explicit TextureAcquisitionScope(TextureAcquisitionPhase phase) {
+        if (!TextureAcquisitionTracingActive()) return;
+        const auto index = static_cast<std::size_t>(phase);
+        auto& value = counters.texture_acquisition_samples[index];
+        ++value.calls;
+        static thread_local std::array<std::uint64_t,
+            static_cast<std::size_t>(TextureAcquisitionPhase::Count)> sequence{};
+        const auto mixed = std::uint32_t(++sequence[index]) * 0x9E3779B9u;
+        if ((mixed >> 26) != 0) return;
+        sample = &value.timing;
+        started = std::chrono::steady_clock::now();
+        cpu_started = ReadCPU();
+        if (cpu_started < 0) {
+            ++sample->clock_failures;
+            sample = nullptr;
+        }
+    }
+    ~TextureAcquisitionScope() {
+        if (!sample) return;
+        const double ended = ReadCPU();
+        const double wall = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - started).count();
+        if (ended < cpu_started) { ++sample->clock_failures; return; }
+        sample->wall_seconds += wall;
+        sample->cpu_seconds += ended - cpu_started;
+        ++sample->samples;
+    }
+    TextureAcquisitionScope(const TextureAcquisitionScope&) = delete;
+    TextureAcquisitionScope& operator=(const TextureAcquisitionScope&) = delete;
+private:
+    static double ReadCPU() {
+#if defined(CLOCK_THREAD_CPUTIME_ID)
+        timespec value{};
+        if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0)
+            return double(value.tv_sec) + double(value.tv_nsec) * 1e-9;
+#endif
+        return -1;
+    }
+    PhaseCPUSamples* sample = nullptr;
+    double cpu_started = 0;
+    std::chrono::steady_clock::time_point started;
+};
+
+inline bool RenderBookkeepingProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_RENDER_BOOKKEEPING_PROFILE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
 class Scope {
 public:
-    explicit Scope(Phase phase_) : phase(phase_), active(counters.enabled) {
+    explicit Scope(Phase phase_, bool enabled = true) : phase(phase_), active(counters.enabled && enabled) {
         if (!active) return;
         started = std::chrono::steady_clock::now();
         int sample_phase = -1;
@@ -127,8 +278,10 @@ public:
         else if (phase == Phase::StreamUnmap) sample_phase = 3;
         else if (phase == Phase::UniformUpload) sample_phase = 4;
         else if (phase == Phase::VertexSubImageUpload) sample_phase = 5;
+        else if (phase == Phase::SurfaceDownload) sample_phase = 6;
+        else if (phase == Phase::SurfaceReadPixels) sample_phase = 7;
         if (sample_phase < 0 || !CPUSamplingEnabled()) return;
-        static thread_local std::array<std::uint64_t, 6> sample_sequence{};
+        static thread_local std::array<std::uint64_t, 8> sample_sequence{};
         // Use high bits of a multiplicative hash, avoiding a fixed draw-slot
         // pattern when a frame repeatedly submits a multiple of 64 draws.
         const auto mixed = std::uint32_t(++sample_sequence[sample_phase]) * 0x9E3779B9u;
@@ -138,7 +291,9 @@ public:
                                        : sample_phase == 2 ? &counters.stream_map_cpu_samples
                    : sample_phase == 3 ? &counters.stream_unmap_cpu_samples
                    : sample_phase == 4 ? &counters.uniform_upload_cpu_samples
-                                       : &counters.vertex_subimage_cpu_samples;
+                                       : sample_phase == 5 ? &counters.vertex_subimage_cpu_samples
+                   : sample_phase == 6 ? &counters.surface_download_cpu_samples
+                                       : &counters.surface_read_pixels_cpu_samples;
         cpu_started = ReadThreadCPUTime();
         if (cpu_started < 0) {
             ++cpu_sample->clock_failures;
@@ -195,9 +350,27 @@ public:
             counters.draw_submit_seconds += seconds;
         } else if (phase == Phase::SurfaceDownload) {
             counters.surface_download_seconds += seconds;
+        } else if (phase == Phase::SurfaceReadPixels) {
+            counters.surface_read_pixels_seconds += seconds;
+            ++counters.surface_read_pixels_calls;
         } else if (phase == Phase::ShaderCompile) {
             counters.shader_compile_seconds += seconds;
             ++counters.shader_compile_calls;
+        } else if (phase == Phase::DrawFramebufferAcquire) {
+            counters.draw_framebuffer_acquire_seconds += seconds;
+            ++counters.draw_framebuffer_acquire_calls;
+        } else if (phase == Phase::DrawTextureAcquire) {
+            counters.draw_texture_acquire_seconds += seconds;
+            ++counters.draw_texture_acquire_calls;
+        } else if (phase == Phase::DrawShaderSetup) {
+            counters.draw_shader_setup_seconds += seconds;
+            ++counters.draw_shader_setup_calls;
+        } else if (phase == Phase::DrawDirtyInvalidate) {
+            counters.draw_dirty_invalidate_seconds += seconds;
+            ++counters.draw_dirty_invalidate_calls;
+        } else if (phase == Phase::ReinterpretCheck) {
+            counters.render_reinterpret_check_seconds += seconds;
+            ++counters.render_reinterpret_check_calls;
         } else if (phase == Phase::GPUWait) {
             counters.gpu_wait_seconds += seconds;
         } else {

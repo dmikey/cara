@@ -146,6 +146,12 @@ drawing, so those fields must not be added together. `CARA_TIMING_WINDOW_FRAMES`
 selects windows from 60 to 600 frames (default 600).
 `CARA_TEST_PRESS_A_FRAMES` provides comma-separated A-press frames only during an
 explicit frame-count benchmark; ordinary play never injects input.
+`CARA_TEST_TOUCH_SEGMENTS` similarly accepts comma-separated
+`begin:end:x:y` ranges in emulated refreshes, with an exclusive end and 320×240
+guest touchscreen coordinates. For example `240:246:160:180` holds a touch for
+six refreshes, then releases it. Invalid ranges and out-of-screen coordinates
+are ignored. This uses the same packed touchscreen/HID path as real touch;
+it is disabled unless a frame-count benchmark was explicitly requested.
 
 These are bounded opening-cutscene measurements with audio off, not a guarantee
 of locked 60 FPS throughout the game. Shader first-use, CPU interpretation and

@@ -12,14 +12,28 @@
 #endif
 #include <cstring>
 
+#include "common/assert.h"
 #include "common/atomic_ops.h"
 #include "common/logging/log.h"
+#include "common/scope_exit.h"
 #include "core/arm/fastinterp/arm_tick_counts.h"
 #include "core/arm/fastinterp/fastinterp.h"
+#include "core/arm/skyeye_common/armstate.h"
+#include "core/arm/skyeye_common/vfp/vfp.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/svc.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/thread.h"
+#include "video_core/video_core.h"
 #include "core/memory.h"
+
+// Compile-time experiment: preserve the default interpreter's PC shadow behavior.
+// Both builds share guest timing and state formats; census reports the actual mode.
+#ifndef CARA_FASTINTERP_ABSOLUTE_PC
+#define CARA_FASTINTERP_ABSOLUTE_PC 0
+#endif
+static_assert(CARA_FASTINTERP_ABSOLUTE_PC == 0 || CARA_FASTINTERP_ABSOLUTE_PC == 1);
 
 class FastInterpThreadContext final : public ARM_Interface::ThreadContext {
 public:
@@ -80,6 +94,39 @@ private:
 
 namespace Core::FastInterp {
 
+// ARM DDI0274G, VFP11 short-vector register banks. Reuse the same software
+// arithmetic as DynCom so vector mode observes guest rounding, DN/FZ and sticky
+// exceptions, rather than inheriting the host's FP environment. This does not
+// change the existing LEN=0 handlers' floating-point accuracy limitations.
+void ARM_FastInterp::ExecuteVFPShortVector(u32 encoding, unsigned sd, unsigned sn,
+                                         unsigned sm, bool is_double) {
+    // One scratch per host thread, never guest CPU state. The VFP routines only
+    // access ExtReg, VFP and Reg[15]; they never use its memory/system references.
+    // Copy every input on each call so contexts and cores cannot leak state.
+    static thread_local auto scratch =
+        std::make_unique<ARMul_State>(system_, memory_, USER32MODE);
+    auto& soft = *scratch;
+    std::copy(state_.vfp_regs.begin(), state_.vfp_regs.end(), soft.ExtReg.begin());
+    soft.VFP[VFP_FPSCR] = state_.fpscr;
+    soft.Reg[15] = state_.regs[15]; // Diagnostics only; no guest execution here.
+    // Unary extension instructions already encode their operation in Vn/N.
+    const bool unary = (encoding & 0x00b00000u) == 0x00b00000u;
+    if (is_double) {
+        encoding |= 0x100u | ((sd & 15u) << 12) | ((sd & 16u) << 18) |
+                    (sm & 15u) | ((sm & 16u) << 1);
+        if (!unary) encoding |= ((sn & 15u) << 16) | ((sn & 16u) << 3);
+    } else {
+        encoding |= ((sd >> 1) << 12) | ((sd & 1u) << 22) |
+                    (sm >> 1) | ((sm & 1u) << 5);
+        if (!unary) encoding |= ((sn >> 1) << 16) | ((sn & 1u) << 7);
+    }
+    const u32 exceptions = is_double ? vfp_double_cpdo(&soft, encoding, state_.fpscr)
+                                     : vfp_single_cpdo(&soft, encoding, state_.fpscr);
+    vfp_raise_exceptions(&soft, exceptions, encoding, state_.fpscr);
+    std::copy(soft.ExtReg.begin(), soft.ExtReg.end(), state_.vfp_regs.begin());
+    state_.fpscr = soft.VFP[VFP_FPSCR];
+}
+
 // MMJ's scalar memory API assumes an access fits within one host page.
 // Keep the common path direct; split uncommon unaligned page crossings explicitly.
 template <typename T>
@@ -115,8 +162,9 @@ static u8* empty_page_table[1 << (32 - FASTINTERP_PAGE_BITS)];
 
 ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memory, u32 id,
                                std::shared_ptr<Core::Timing::Timer> timer)
-    : ARM_Interface(id, timer), memory_(memory),
+    : ARM_Interface(id, timer), system_(system), guest_pc_cpu_(GuestPCCPU::FromEnvironment()), memory_(memory),
       svc_context_(std::make_unique<Kernel::SVCContext>(system)) {
+    if (guest_pc_cpu_.Enabled()) guest_pc_cpu_.Calibrate();
     LOG_INFO(Core_ARM11, "FastInterp ARM interpreter created for core {}", id);
     state_.regs.fill(0);
     state_.vfp_regs.fill(0);
@@ -127,8 +175,23 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     state_.page_pointers = empty_page_table; // Never null
     const char* bkpt = std::getenv("CARA_FASTINTERP_DECODE_BKPT");
     decode_breakpoints_ = bkpt && std::strcmp(bkpt, "1") == 0;
+    const char* al_dispatch = std::getenv("CARA_FASTINTERP_AL_DISPATCH");
+    al_dispatch_ = al_dispatch && std::strcmp(al_dispatch, "1") == 0;
+    const char* secondary_link = std::getenv("CARA_FASTINTERP_SECONDARY_LINK");
+    secondary_link_ = secondary_link && std::strcmp(secondary_link, "1") == 0;
     const char* burst = std::getenv("CARA_FASTINTERP_RAM_BURST");
     ram_burst_ = burst && std::strcmp(burst, "1") == 0;
+    const char* contiguous = std::getenv("CARA_FASTINTERP_CONTIGUOUS_TRANSFERS");
+    contiguous_transfers_ = contiguous && std::strcmp(contiguous, "1") == 0;
+    const char* precise_end = std::getenv("CARA_FASTINTERP_PRECISE_BLOCK_END");
+    precise_block_end_ = !precise_end || std::strcmp(precise_end, "0") != 0;
+    const char* chain_budget = std::getenv("CARA_FASTINTERP_CHAIN_BUDGET");
+    chain_budget_ = chain_budget && std::strcmp(chain_budget, "1") == 0;
+    const char* cache_ways = std::getenv("CARA_FASTINTERP_CACHE_WAYS");
+    cache_.SetEightWay(cache_ways && std::strcmp(cache_ways, "8") == 0);
+    const char* cache_profile = std::getenv("CARA_FASTINTERP_CACHE_PROFILE");
+    cache_.SetProfiling(cache_profile && std::strcmp(cache_profile, "1") == 0);
+    decode_cost_.SetEnabled(cache_.ProfilingEnabled());
 }
 
 ARM_FastInterp::~ARM_FastInterp() = default;
@@ -157,6 +220,14 @@ void ARM_FastInterp::LogUnhandledInstruction(u32 pc) {
     LOG_DEBUG(Core_ARM11, "Breakpoint instruction hit. Immediate: {:#010X}", immediate);
 }
 
+bool ARM_FastInterp::AluPairsEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_ALU_PAIRS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
 void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     // The existing hotness counters have no instrumentation overhead. Their
     // census is incomplete after eviction and counts fused-loop dispatches, not
@@ -172,7 +243,87 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     });
     u64 total = 0;
     for (const auto* block : blocks) total += block->exec_count;
-    output << "{\"core\":" << GetID() << ",\"resident_entries\":" << blocks.size()
+    const char* alu_flag = std::getenv("CARA_FASTINTERP_ALU_OPERANDS");
+    const bool alu_enabled = alu_flag && std::strcmp(alu_flag, "1") == 0;
+    const bool pairs_enabled = AluPairsEnabled();
+    std::array<u64, 8> pair_weighted{};
+    std::array<u64, 4> alu_weighted{};
+    for (const auto* block : blocks)
+        for (unsigned slot = 0; slot < block->inst_count; ++slot) {
+            const auto opcode = block->instructions[slot].opcode;
+            if (opcode >= Opcode::AddImm && opcode <= Opcode::MovLslImm)
+                alu_weighted[unsigned(opcode) - unsigned(Opcode::AddImm)] += block->exec_count;
+            if (opcode >= Opcode::AddPairImmImm && opcode <= Opcode::MovPairLslLsl) {
+                const unsigned pair = unsigned(opcode) - unsigned(Opcode::AddPairImmImm);
+                pair_weighted[pair] += block->exec_count;
+                alu_weighted[(pair / 4) * 2 + (pair % 4) / 2] += block->exec_count;
+                alu_weighted[(pair / 4) * 2 + pair % 2] += block->exec_count;
+                ++slot; // counts above include both logical original operations
+            }
+        }
+    u64 unrolled_blocks = 0, unrolled_dispatches = 0;
+    for (const auto* block : blocks)
+        for (unsigned slot = 0; slot < block->inst_count; ++slot) {
+            const auto opcode = block->instructions[slot].opcode;
+            if (opcode == Opcode::ArmUnrolledSubsLoop ||
+                opcode == Opcode::ThumbUnrolledSubsLoop || opcode == Opcode::ThumbUnrolledCmpLoop) {
+                ++unrolled_blocks;
+                unrolled_dispatches += block->exec_count;
+            }
+        }
+    const auto& cache_profile = cache_.GetProfile();
+    output << "{\"guest_pc_cpu\":";
+    guest_pc_cpu_.Write(output);
+    output << ",\"simd_tags_enabled\":" << (cache_.SimdTagsEnabled() ? "true" : "false")
+           << ",\"simd_tags_supported\":" << (BlockCache::SimdTagsSupported() ? "true" : "false")
+           << ",\"tag_comparison_semantics\":\"logical_scalar_equivalent_prefix_probes\"";
+    output << ",\"cache_chain_recency\":" << (cache_.ChainRecencyEnabled() ? "true" : "false")
+           << ",\"cache_replacement_profile\":";
+    cache_.WriteReplacementProfile(output);
+    output << ",\"decode_cost_profile\":";
+    decode_cost_.Write(output);
+    output << ",\"cache_secondary_probes\":" << cache_profile.secondary_probes
+           << ",\"cache_secondary_hits\":" << cache_profile.secondary_hits
+           << ",\"cache_lookup_calls\":" << cache_profile.lookup_calls
+           << ",\"cache_lookup_hits\":" << cache_profile.lookup_hits
+           << ",\"cache_lookup_tag_comparisons\":" << cache_profile.lookup_tag_comparisons
+           << ",\"cache_lookup_or_allocate_calls\":" << cache_profile.lookup_or_allocate_calls
+           << ",\"cache_lookup_or_allocate_hits\":" << cache_profile.lookup_or_allocate_hits
+           << ",\"cache_lookup_or_allocate_tag_comparisons\":" << cache_profile.lookup_or_allocate_tag_comparisons;
+    output << ",\"chain_budget_enabled\":" << (chain_budget_ ? "true" : "false")
+           << ",\"precise_block_end_enabled\":" << (precise_block_end_ ? "true" : "false")
+           << ",\"al_dispatch_enabled\":" << (al_dispatch_ ? "true" : "false")
+           << ",\"secondary_link_enabled\":" << (secondary_link_ ? "true" : "false")
+           << ",\"absolute_pc_enabled\":" << (CARA_FASTINTERP_ABSOLUTE_PC ? "true" : "false")
+           << ",\"cache_ways\":" << cache_.Ways()
+           << ",\"cache_sets\":" << cache_.Sets() << ",\"cache_entries\":" << cache_.Capacity()
+           << ",\"cache_object_bytes\":" << sizeof(cache_)
+           << ",\"cache_metadata_bytes\":" << sizeof(cache_)
+           << ",\"cache_block_storage_bytes\":" << cache_.BlockStorageBytes()
+           << ",\"cache_owned_bytes\":" << cache_.OwnedBytes()
+           << ",\"hot_blocks_reoptimized\":" << fusion_stats_.hot_blocks_reoptimized
+           << ",\"unrolled_resident_blocks\":" << unrolled_blocks
+           << ",\"unrolled_resident_entry_weighted_dispatches\":" << unrolled_dispatches
+           << ",\"blocks_decoded\":" << fusion_stats_.blocks_decoded
+           << ",\"cache_profile_enabled\":" << (cache_.ProfilingEnabled() ? "true" : "false")
+           << ",\"cache_allocation_misses\":" << cache_profile.allocation_misses
+           << ",\"cache_empty_allocations\":" << cache_profile.empty_allocations
+           << ",\"cache_live_replacements\":" << cache_profile.live_replacements
+           << ",\"cache_clears\":" << cache_profile.clears
+           << ",\"cache_invalidation_calls\":" << cache_profile.invalidation_calls
+           << ",\"cache_invalidated_entries\":" << cache_profile.invalidated_entries
+           << ",\"cache_mode_redecodes\":" << cache_mode_redecodes_
+           << ",\"cache_page_table_changes\":" << cache_page_table_changes_
+           << ",\"alu_operands_enabled\":" << (alu_enabled ? "true" : "false")
+           << ",\"alu_pairs_enabled\":" << (pairs_enabled ? "true" : "false")
+           << ",\"alu_pair_resident_entry_weighted_dispatches\":{\"AddPairImmImm\":" << pair_weighted[0]
+           << ",\"AddPairImmLsl\":" << pair_weighted[1] << ",\"AddPairLslImm\":" << pair_weighted[2]
+           << ",\"AddPairLslLsl\":" << pair_weighted[3] << ",\"MovPairImmImm\":" << pair_weighted[4]
+           << ",\"MovPairImmLsl\":" << pair_weighted[5] << ",\"MovPairLslImm\":" << pair_weighted[6]
+           << ",\"MovPairLslLsl\":" << pair_weighted[7] << "}"
+           << ",\"alu_resident_entry_weighted_slots\":{\"AddImm\":" << alu_weighted[0]
+           << ",\"AddLslImm\":" << alu_weighted[1] << ",\"MovImm\":" << alu_weighted[2]
+           << ",\"MovLslImm\":" << alu_weighted[3] << "},\"core\":" << GetID() << ",\"resident_entries\":" << blocks.size()
            << ",\"resident_executions\":" << total << ",\"blocks\":[";
     for (size_t i = 0; i < std::min<size_t>(blocks.size(), 128); ++i) {
         const auto& block = *blocks[i];
@@ -206,6 +357,12 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
 void ARM_FastInterp::Run() {
     Common::FrameTiming::Scope timing_scope(Common::FrameTiming::Phase::GuestCPU);
     halted_ = false;
+    if (decode_cost_.Enabled()) decode_cost_.ObserveRunFrame(VideoCore::GetCurrentFrame());
+    if (guest_pc_cpu_.Enabled()) {
+        profile_thread_id_ = ProfileThreadId();
+        guest_pc_cpu_.BeginRun(VideoCore::GetCurrentFrame(), profile_thread_id_);
+    }
+    SCOPE_EXIT({ if (guest_pc_cpu_.Enabled()) guest_pc_cpu_.EndRun(); });
 
     // Run until the timer slice is exhausted, flushing ticks to the timer per block so the
     // downcount stays live. This mirrors Dynarmic (which flushes incrementally via its
@@ -215,6 +372,7 @@ void ARM_FastInterp::Run() {
     // being overshot, keeping multi-threaded scheduling aligned with Dynarmic.
     while (!halted_ && timer->GetDowncount() > 0) {
         u32 pc = state_.PC();
+        if (guest_pc_cpu_.Active()) guest_pc_cpu_.PrepareBlock(pc, profile_thread_id_);
 
         // PC in unmapped memory: consume the slice so other threads still run
         if (!state_.page_pointers[pc >> 12]) {
@@ -229,11 +387,21 @@ void ARM_FastInterp::Run() {
 
         bool cache_hit;
         BasicBlock* block = cache_.LookupOrAllocate(pc, cache_hit);
+        const bool allocation_miss = !cache_hit;
         if (cache_hit && block->IsThumb() != state_.thumb_mode) {
+            if (cache_.ProfilingEnabled()) ++cache_mode_redecodes_;
             cache_hit = false; // Cached block is for wrong mode, re-decode
         }
         if (!cache_hit) {
-            DecodeBlockInto(block, pc);
+            if (decode_cost_.Enabled()) {
+                // Sample only allocation misses; mode-only redecodes retain a
+                // matching cache tag and are counted separately without clocks.
+                const auto sample = decode_cost_.BeforeDecode(allocation_miss);
+                DecodeBlockInto(block, pc);
+                decode_cost_.AfterDecode(sample);
+            } else {
+                DecodeBlockInto(block, pc);
+            }
         }
 
         u64 executed = ExecuteBlock(block);
@@ -313,6 +481,7 @@ void ARM_FastInterp::Step() {
     term.cond = 0xE;
     block->inst_count = slot + 1;
     block->end_pc = pc + size;
+    for (u16 i = 0; i <= block->inst_count; ++i) PrepareDispatch(block->instructions[i]);
     stepping_ = true;
 
     u64 executed = ExecuteBlock(block);
@@ -691,11 +860,324 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         HANDLER(Vmla4Gather),
         HANDLER(AddCmpImmBcc),
         HANDLER(VcmpVmrsS),
+        HANDLER(AddImm),
+        HANDLER(AddLslImm),
+        HANDLER(MovImm),
+        HANDLER(MovLslImm),
+        HANDLER(AddPairImmImm),
+        HANDLER(AddPairImmLsl),
+        HANDLER(AddPairLslImm),
+        HANDLER(AddPairLslLsl),
+        HANDLER(MovPairImmImm),
+        HANDLER(MovPairImmLsl),
+        HANDLER(MovPairLslImm),
+        HANDLER(MovPairLslLsl),
+
+
+        // AL entries share each checked handler body after its predicate gate.
+        &&handle_Invalid,
+        &&handle_Nop,
+        &&handle_EndBlock,
+        &&handle_And_al,
+        &&handle_Eor_al,
+        &&handle_Sub_al,
+        &&handle_Rsb_al,
+        &&handle_Add_al,
+        &&handle_Adc_al,
+        &&handle_Sbc_al,
+        &&handle_Rsc_al,
+        &&handle_Tst_al,
+        &&handle_Teq_al,
+        &&handle_Cmp_al,
+        &&handle_Cmn_al,
+        &&handle_Orr_al,
+        &&handle_Mov_al,
+        &&handle_Bic_al,
+        &&handle_Mvn_al,
+        &&handle_AndS_al,
+        &&handle_EorS_al,
+        &&handle_SubS_al,
+        &&handle_RsbS_al,
+        &&handle_AddS_al,
+        &&handle_AdcS_al,
+        &&handle_SbcS_al,
+        &&handle_RscS_al,
+        &&handle_OrrS_al,
+        &&handle_MovS_al,
+        &&handle_BicS_al,
+        &&handle_MvnS_al,
+        &&handle_Mul_al,
+        &&handle_MulS_al,
+        &&handle_Mla_al,
+        &&handle_MlaS_al,
+        &&handle_Umull_al,
+        &&handle_UmullS_al,
+        &&handle_Umlal_al,
+        &&handle_UmlalS_al,
+        &&handle_Smull_al,
+        &&handle_SmullS_al,
+        &&handle_Smlal_al,
+        &&handle_SmlalS_al,
+        &&handle_Ldr_al,
+        &&handle_LdrB_al,
+        &&handle_LdrH_al,
+        &&handle_LdrSB_al,
+        &&handle_LdrSH_al,
+        &&handle_Str_al,
+        &&handle_StrB_al,
+        &&handle_StrH_al,
+        &&handle_Ldm_al,
+        &&handle_Stm_al,
+        &&handle_B_al,
+        &&handle_Bl_al,
+        &&handle_Bx_al,
+        &&handle_Blx_al,
+        &&handle_Clz_al,
+        &&handle_Swi_al,
+        &&handle_Mrs_al,
+        &&handle_Msr_al,
+        &&handle_Sxtb_al,
+        &&handle_Sxth_al,
+        &&handle_Uxtb_al,
+        &&handle_Uxth_al,
+        &&handle_Rev_al,
+        &&handle_Rev16_al,
+        &&handle_Revsh_al,
+        &&handle_Qadd_al,
+        &&handle_Qsub_al,
+        &&handle_Qdadd_al,
+        &&handle_Qdsub_al,
+        &&handle_Ssat_al,
+        &&handle_Usat_al,
+        &&handle_Sadd16_al,
+        &&handle_Ssub16_al,
+        &&handle_Sadd8_al,
+        &&handle_Ssub8_al,
+        &&handle_Uadd16_al,
+        &&handle_Usub16_al,
+        &&handle_Uadd8_al,
+        &&handle_Usub8_al,
+        &&handle_Uqadd16_al,
+        &&handle_Uqsub16_al,
+        &&handle_Uqadd8_al,
+        &&handle_Uqsub8_al,
+        &&handle_Qadd16_al,
+        &&handle_Qsub16_al,
+        &&handle_Qadd8_al,
+        &&handle_Qsub8_al,
+        &&handle_Shadd16_al,
+        &&handle_Shsub16_al,
+        &&handle_Shadd8_al,
+        &&handle_Shsub8_al,
+        &&handle_Uhadd16_al,
+        &&handle_Uhsub16_al,
+        &&handle_Uhadd8_al,
+        &&handle_Uhsub8_al,
+        &&handle_Sxtab_al,
+        &&handle_Sxtab16_al,
+        &&handle_Sxtah_al,
+        &&handle_Uxtab_al,
+        &&handle_Uxtab16_al,
+        &&handle_Uxtah_al,
+        &&handle_Bfc_al,
+        &&handle_Bfi_al,
+        &&handle_Sbfx_al,
+        &&handle_Ubfx_al,
+        &&handle_Rbit_al,
+        &&handle_Movt_al,
+        &&handle_Pkhbt_al,
+        &&handle_Pkhtb_al,
+        &&handle_Sel_al,
+        &&handle_Usad8_al,
+        &&handle_Usada8_al,
+        &&handle_VmovArmToS_al,
+        &&handle_VmovSToArm_al,
+        &&handle_VmovArmToD_al,
+        &&handle_VmovDToArm_al,
+        &&handle_Vmrs_al,
+        &&handle_Vmsr_al,
+        &&handle_VaddS_al,
+        &&handle_VsubS_al,
+        &&handle_VmulS_al,
+        &&handle_VdivS_al,
+        &&handle_VmlaS_al,
+        &&handle_VmlsS_al,
+        &&handle_VnmlaS_al,
+        &&handle_VnmlsS_al,
+        &&handle_VnmulS_al,
+        &&handle_VabsS_al,
+        &&handle_VnegS_al,
+        &&handle_VsqrtS_al,
+        &&handle_VmovS_al,
+        &&handle_VmovImmS_al,
+        &&handle_VaddD_al,
+        &&handle_VsubD_al,
+        &&handle_VmulD_al,
+        &&handle_VdivD_al,
+        &&handle_VmlaD_al,
+        &&handle_VmlsD_al,
+        &&handle_VnmlaD_al,
+        &&handle_VnmlsD_al,
+        &&handle_VnmulD_al,
+        &&handle_VabsD_al,
+        &&handle_VnegD_al,
+        &&handle_VsqrtD_al,
+        &&handle_VmovD_al,
+        &&handle_VmovImmD_al,
+        &&handle_VcmpS_al,
+        &&handle_VcmpD_al,
+        &&handle_VcmpzS_al,
+        &&handle_VcmpzD_al,
+        &&handle_VcvtSToInt_al,
+        &&handle_VcvtIntToS_al,
+        &&handle_VcvtDToS_al,
+        &&handle_VcvtSToD_al,
+        &&handle_VcvtDToInt_al,
+        &&handle_VcvtIntToD_al,
+        &&handle_VldrS_al,
+        &&handle_VstrS_al,
+        &&handle_VldrD_al,
+        &&handle_VstrD_al,
+        &&handle_VldmS_al,
+        &&handle_VstmS_al,
+        &&handle_VldmD_al,
+        &&handle_VstmD_al,
+        &&handle_ThumbLslImm,
+        &&handle_ThumbLsrImm,
+        &&handle_ThumbAsrImm,
+        &&handle_ThumbAddReg3,
+        &&handle_ThumbSubReg3,
+        &&handle_ThumbAddImm3,
+        &&handle_ThumbSubImm3,
+        &&handle_ThumbMovImm8,
+        &&handle_ThumbCmpImm8,
+        &&handle_ThumbAddImm8,
+        &&handle_ThumbSubImm8,
+        &&handle_ThumbAnd,
+        &&handle_ThumbEor,
+        &&handle_ThumbLslReg,
+        &&handle_ThumbLsrReg,
+        &&handle_ThumbAsrReg,
+        &&handle_ThumbAdc,
+        &&handle_ThumbSbc,
+        &&handle_ThumbRor,
+        &&handle_ThumbTst,
+        &&handle_ThumbNeg,
+        &&handle_ThumbCmpReg,
+        &&handle_ThumbCmn,
+        &&handle_ThumbOrr,
+        &&handle_ThumbMul,
+        &&handle_ThumbBic,
+        &&handle_ThumbMvn,
+        &&handle_ThumbAddHi,
+        &&handle_ThumbCmpHi,
+        &&handle_ThumbMovHi,
+        &&handle_ThumbBx,
+        &&handle_ThumbBlxReg,
+        &&handle_ThumbLdrReg,
+        &&handle_ThumbStrReg,
+        &&handle_ThumbLdrImm5,
+        &&handle_ThumbStrImm5,
+        &&handle_ThumbLdrbReg,
+        &&handle_ThumbStrbReg,
+        &&handle_ThumbLdrbImm5,
+        &&handle_ThumbStrbImm5,
+        &&handle_ThumbLdrhReg,
+        &&handle_ThumbStrhReg,
+        &&handle_ThumbLdrhImm5,
+        &&handle_ThumbStrhImm5,
+        &&handle_ThumbLdrsb,
+        &&handle_ThumbLdrsh,
+        &&handle_ThumbLdrSp,
+        &&handle_ThumbStrSp,
+        &&handle_ThumbLdrPc,
+        &&handle_ThumbAddPcImm,
+        &&handle_ThumbAddSpImm,
+        &&handle_ThumbAddSpImm7,
+        &&handle_ThumbSubSpImm7,
+        &&handle_ThumbPush,
+        &&handle_ThumbPop,
+        &&handle_ThumbLdmia,
+        &&handle_ThumbStmia,
+        &&handle_ThumbBCond,
+        &&handle_ThumbB,
+        &&handle_ThumbSwi,
+        &&handle_ThumbSxth,
+        &&handle_ThumbSxtb,
+        &&handle_ThumbUxth,
+        &&handle_ThumbUxtb,
+        &&handle_ThumbRev,
+        &&handle_ThumbRev16,
+        &&handle_ThumbRevsh,
+        &&handle_ThumbBl,
+        &&handle_ThumbBlxImm,
+        &&handle_FusedSubsBcc,
+        &&handle_FusedSubsRegBcc,
+        &&handle_FusedCmpBcc,
+        &&handle_FusedCmpRegBcc,
+        &&handle_FusedTstBcc,
+        &&handle_FusedTstRegBcc,
+        &&handle_FusedTeqBcc,
+        &&handle_FusedTeqRegBcc,
+        &&handle_ThumbFusedSubsBcc,
+        &&handle_ThumbFusedCmpBcc,
+        &&handle_ThumbFusedCmpRegBcc,
+        &&handle_ThumbFusedTstBcc,
+        &&handle_FusedAddCmpBcc,
+        &&handle_ThumbUnrolledSubsLoop,
+        &&handle_ArmUnrolledSubsLoop,
+        &&handle_ThumbUnrolledCmpLoop,
+        &&handle_Mrc_al,
+        &&handle_Mcr_al,
+        &&handle_Ldrex,
+        &&handle_Strex,
+        &&handle_Ldrexb,
+        &&handle_Strexb,
+        &&handle_Ldrexh,
+        &&handle_Strexh,
+        &&handle_Ldrexd,
+        &&handle_Strexd,
+        &&handle_Clrex,
+        &&handle_Ldrd_al,
+        &&handle_Strd_al,
+        &&handle_Smulxy_al,
+        &&handle_Smlaxy_al,
+        &&handle_Smulwy_al,
+        &&handle_Smlawy_al,
+        &&handle_Smlalxy_al,
+        &&handle_LdrImm_al,
+        &&handle_StrImm_al,
+        &&handle_LdrBImm_al,
+        &&handle_StrBImm_al,
+        &&handle_LdrHImm_al,
+        &&handle_StrHImm_al,
+        &&handle_BlxImm_al,
+        &&handle_LdrLit_al,
+        &&handle_PcSetup,
+        &&handle_Bkpt_al,
+        &&handle_Vmul4S,
+        &&handle_Vmul4Gather,
+        &&handle_Vmla4S,
+        &&handle_Vmla4Gather,
+        &&handle_AddCmpImmBcc,
+        &&handle_VcmpVmrsS,
+        &&handle_AddImm_al,
+        &&handle_AddLslImm_al,
+        &&handle_MovImm_al,
+        &&handle_MovLslImm_al,
+        &&handle_AddPairImmImm,
+        &&handle_AddPairImmLsl,
+        &&handle_AddPairLslImm,
+        &&handle_AddPairLslLsl,
+        &&handle_MovPairImmImm,
+        &&handle_MovPairImmLsl,
+        &&handle_MovPairLslImm,
+        &&handle_MovPairLslLsl,
     };
 #undef HANDLER
 
     static_assert(sizeof(dispatch_table) / sizeof(dispatch_table[0]) ==
-                      static_cast<size_t>(Opcode::OpcodeCount),
+                      2 * static_cast<size_t>(Opcode::OpcodeCount),
                   "Dispatch table size mismatch");
 
     const DecodedInst* inst = block->instructions.data();
@@ -713,6 +1195,17 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
     // local_pc syncs back to regs[15] at chain/done (SYNC_PC) and before SVC.
     u32 local_pc = state_.regs[15];
 
+    // A hot singleton represents repeated executions of its original block.
+    // Its batch must obey the same budget boundary as cold fused dispatches.
+    auto UnrollLimit = [this, &executed](u8 ticks) -> int {
+        if (!chain_budget_) return 16;
+        DEBUG_ASSERT(ticks != 0);
+        const s64 budget = timer->GetDowncount();
+        const u64 remaining = budget > 0 && static_cast<u64>(budget) > executed
+            ? static_cast<u64>(budget) - executed : 0;
+        return remaining ? static_cast<int>(std::min<u64>(16, (remaining - 1) / ticks + 1)) : 1;
+    };
+
 #if defined(__aarch64__) && defined(CARA_FASTINTERP_PIN_PAGE_TABLE) && CARA_FASTINTERP_PIN_PAGE_TABLE
 // Private compiler experiment: keep the page-table base in a callee-saved
 // register across dispatch. No guards, memory ordering or slow paths change.
@@ -726,15 +1219,23 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
 #define SET_PC(val) (local_pc = (val))
 #define SYNC_PC() (state_.regs[15] = local_pc)
 
+// Absolute expressions require decoder-proven block boundaries. Keep ordinary
+// advances below: LLVM removes them when all PC observers are absolute.
+#if CARA_FASTINTERP_ABSOLUTE_PC
+#define BOUNDARY_PC(absolute, legacy) (absolute)
+#else
+#define BOUNDARY_PC(absolute, legacy) (legacy)
+#endif
+
 // No bounds check: every block ends with an EndBlock terminator.
 #define DISPATCH()                                                                                 \
     do {                                                                                           \
         KEEP_PAGE_TABLE_REGISTER();                                                               \
         ++inst;                                                                                    \
-        goto* dispatch_table[static_cast<size_t>(inst->opcode)];                                   \
+        goto* dispatch_table[inst->dispatch_index];                                                 \
     } while (0)
 
-#define CHECK_COND()                                                                               \
+#define CHECK_COND_GATE()                                                                          \
     do {                                                                                           \
         if (inst->cond != 0xE && !CheckCondition(inst->cond)) {                                    \
             executed += inst->ticks;                                                               \
@@ -742,6 +1243,10 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
             DISPATCH();                                                                            \
         }                                                                                          \
     } while (0)
+
+// AL labels must precede all handler-local initialization and side effects.
+// Helpers that initialize locals before their gate use CHECK_COND_GATE instead.
+#define CHECK_COND(name) CHECK_COND_GATE(); handle_##name##_al:
 
 #define ADVANCE_AND_DISPATCH()                                                                     \
     do {                                                                                           \
@@ -932,11 +1437,13 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         WriteCoherent<u32>(memory_, addr, value);
     };
 
+    if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+
     // Entry guard: poisoned blocks (inst_count = 0 from InvalidateRange/Clear)
     // must not execute their stale instructions.
     if (inst >= end)
         goto done;
-    goto* dispatch_table[static_cast<size_t>(inst->opcode)];
+    goto* dispatch_table[inst->dispatch_index];
 
     // ========================================================================
     // Instruction Handlers
@@ -966,6 +1473,17 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
 chain:
     SYNC_PC();
 
+    // Default-off accuracy experiment: a warm chain must stop at the same
+    // decoded-block boundary as Run() after a cache miss. GetDowncount returns
+    // remaining guest cycles (including configured clock scaling); negative
+    // budgets must not become huge unsigned values. SVC already flushes and
+    // exits via done. This check does not flush pending ticks per block, so
+    // MMIO inside a block still sees the existing batched timer visibility.
+    if (chain_budget_ &&
+        (halted_ || executed >= static_cast<u64>(std::max<s64>(timer->GetDowncount(), 0)))) {
+        goto done;
+    }
+
     // Try to chain to the next block instead of returning to Run()
     if (!stepping_ && chain_count < MAX_CHAINS) {
         u32 next_pc = local_pc;
@@ -977,7 +1495,9 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
-                goto* dispatch_table[static_cast<size_t>(inst->opcode)];
+                decode_cost_.ChainSelf();
+                if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+                goto* dispatch_table[inst->dispatch_index];
             }
         }
 
@@ -990,16 +1510,28 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
-                goto* dispatch_table[static_cast<size_t>(inst->opcode)];
+                decode_cost_.ChainPrimary();
+                if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+                goto* dispatch_table[inst->dispatch_index];
             }
         }
 
         // Slow path: look up next block
         // Only cache if we don't already have a chain_target (don't thrash on alternating branches)
-        next = cache_.Lookup(next_pc);
+        decode_cost_.ChainLookup();
+        u16 next_slot = INVALID_BLOCK_SLOT;
+        if (secondary_link_) {
+            next_slot = block->secondary_slot;
+            next = cache_.LookupSecondary(next_pc, next_slot);
+            if (!next) next = cache_.Lookup(next_pc, &next_slot);
+        } else {
+            next = cache_.Lookup(next_pc);
+        }
         if (next && next->IsThumb() == state_.thumb_mode) {
             if (!block->chain_target) {
                 block->chain_target = next; // Cache for next time
+            } else if (secondary_link_) {
+                block->secondary_slot = next_slot;
             }
             chain_count++;
             block->exec_count++;
@@ -1007,7 +1539,9 @@ chain:
             inst = block->instructions.data();
             end = inst + block->inst_count;
             if (inst < end) {
-                goto* dispatch_table[static_cast<size_t>(inst->opcode)];
+                decode_cost_.ChainFallback();
+                if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+                goto* dispatch_table[inst->dispatch_index];
             }
         }
     }
@@ -1029,10 +1563,12 @@ done:
 
 #undef GET_PC
 #undef SET_PC
+#undef BOUNDARY_PC
 #undef SYNC_PC
 #undef DISPATCH
 #undef KEEP_PAGE_TABLE_REGISTER
 #undef CHECK_COND
+#undef CHECK_COND_GATE
 #undef ADVANCE_AND_DISPATCH
 #undef MEM_READ8
 #undef MEM_READ16
@@ -1203,6 +1739,7 @@ void ARM_FastInterp::SetPageTable(const std::shared_ptr<Memory::PageTable>& page
     if (page_table_ == page_table) {
         return;
     }
+    if (cache_.ProfilingEnabled()) ++cache_page_table_changes_;
     page_table_ = page_table;
     if (page_table) {
         state_.page_pointers = page_table->GetPointerArray().data();
@@ -1322,6 +1859,10 @@ void ARM_FastInterp::SaveContext(const std::unique_ptr<ThreadContext>& arg) {
 
 void ARM_FastInterp::LoadContext(const std::unique_ptr<ThreadContext>& arg) {
     const auto& ctx = static_cast<const FastInterpThreadContext&>(*arg);
+    if (guest_pc_cpu_.ObservesBlocks()) {
+        profile_thread_id_ = ProfileThreadId();
+        guest_pc_cpu_.SwitchThread(profile_thread_id_);
+    }
     ClearExclusiveState();
     for (int i = 0; i < 16; i++) {
         state_.regs[i] = ctx.cpu_registers[i];
@@ -1332,6 +1873,13 @@ void ARM_FastInterp::LoadContext(const std::unique_ptr<ThreadContext>& arg) {
     }
     state_.fpscr = ctx.fpscr;
     state_.fpexc = ctx.fpexc;
+}
+
+std::uint32_t ARM_FastInterp::ProfileThreadId() const {
+    // Standalone instruction fixtures do not initialize a kernel process.
+    if (!system_.IsPoweredOn()) return 0;
+    const auto* thread = system_.Kernel().GetThreadManager(GetID()).GetCurrentThread();
+    return thread ? thread->GetThreadId() : 0;
 }
 
 void ARM_FastInterp::PrepareReschedule() {

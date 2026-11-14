@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "cara/guest_gpu_trace.h"
 #include <algorithm>
 #include <list>
 #include <unordered_map>
@@ -107,6 +108,9 @@ void Thread::Stop() {
 
 void ThreadManager::SwitchContext(Thread* new_thread) {
     Thread* previous_thread = GetCurrentThread();
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+        Cara::GuestGPUTrace::Kind::Run, new_thread ? new_thread->GetThreadId() : 0, 0,
+        previous_thread ? previous_thread->GetThreadId() : 0, cpu->GetID());
     std::shared_ptr<Process> previous_process = nullptr;
 
     Core::Timing& timing = kernel.timing;
@@ -204,6 +208,8 @@ void ThreadManager::ThreadWakeupCallback(u64 thread_id, s64 cycles_late) {
         thread->wait_objects.clear();
     }
 
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(kernel.timing,
+        Cara::GuestGPUTrace::Kind::Wake, thread->GetThreadId(), 0, 1);
     thread->ResumeFromWait();
 }
 

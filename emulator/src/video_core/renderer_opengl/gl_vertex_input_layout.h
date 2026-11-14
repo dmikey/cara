@@ -23,11 +23,13 @@ struct IOSVertexInputLayout {
             }
         if (!stride) stride = 1;
     }
-    explicit IOSVertexInputLayout(const Pica::ShaderRegs& regs)
-        : IOSVertexInputLayout(MaskFromRegs(regs)) {
+    explicit IOSVertexInputLayout(const Pica::ShaderRegs& regs, u16 read_mask = 0xffff)
+        : IOSVertexInputLayout(u16(MaskFromRegs(regs) & read_mask)) {
         // Match UnitState::LoadInput: the last attribute mapped to a register wins.
-        for (unsigned attr = 0; attr <= regs.max_input_attribute_index; ++attr)
-            source_attributes[offsets[regs.GetRegisterForAttribute(attr)]] = attr;
+        for (unsigned attr = 0; attr <= regs.max_input_attribute_index; ++attr) {
+            const auto offset = offsets[regs.GetRegisterForAttribute(attr)];
+            if (offset >= 0) source_attributes[offset] = attr;
+        }
     }
     template <typename AttributeBuffer, typename PackedVertex>
     void PackAttributes(const AttributeBuffer& input, PackedVertex& packed) const {

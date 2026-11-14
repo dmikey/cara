@@ -108,3 +108,24 @@ target_link_libraries(video_core PRIVATE glad nihstro-headers)
 if (CARA_ENABLE_JIT AND ARCHITECTURE_x86_64)
     target_link_libraries(video_core PUBLIC xbyak)
 endif()
+
+# Cache ABI covers shader generation, binding/layout and GL source preparation. Reconfigure
+# on edits so an iOS cache can never silently outlive a changed packed vertex layout.
+file(GLOB CARA_SHADER_CACHE_INPUTS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_shader*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_packed_vertex.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_rasterizer.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_vars.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/regs*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_vertex_input_layout.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_resource_manager*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/ios_pipeline_cache.h")
+set(CARA_SHADER_CACHE_SIGNATURE "cara-ios-pipeline-v1")
+foreach(INPUT IN LISTS CARA_SHADER_CACHE_INPUTS)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${INPUT}")
+    file(SHA256 "${INPUT}" INPUT_HASH)
+    string(APPEND CARA_SHADER_CACHE_SIGNATURE "${INPUT_HASH}")
+endforeach()
+string(SHA256 CARA_SHADER_CACHE_SIGNATURE "${CARA_SHADER_CACHE_SIGNATURE}")
+target_compile_definitions(video_core PRIVATE
+    CARA_SHADER_CACHE_SIGNATURE="${CARA_SHADER_CACHE_SIGNATURE}")

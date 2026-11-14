@@ -10,6 +10,49 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  native-sdl:
+    name: macOS SDL developer host / compile only / no JIT
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native frontend dependencies and pinned build tools
+        run: |
+          brew install sdl2 libpng
+          python3 -m venv work/tools
+          work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+      - name: Validate bundled source without fetching
+        run: python3 tools/prepare.py
+      - name: Compile SDL frontend and audit linked no-JIT binary
+        run: python3 tools/build_mac_sdl.py --build-dir work/build-mac-sdl --jobs 2
+      - name: Retain native audit and configure command
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-mac-sdl-compile-audit
+          path: |
+            work/build-mac-sdl/native-no-jit-audit.json
+            work/build-mac-sdl/configure-command.json
+  network-relay:
+    name: Go network relay / race checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/network-relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: 'stable'
+          cache: false
+      - name: Vet relay
+        run: go vet ./...
+      - name: Test relay with race detector
+        run: go test -race ./...
+      - name: Check unwired client codec with sanitizers
+        run: client-prototype/check.sh
   build:
     name: ${{ matrix.platform }} / ${{ matrix.renderer }} / ARM64 / no JIT
     runs-on: macos-15
@@ -41,7 +84,11 @@ jobs:
         run: |
           python3 tools/prepare.py
           python3 tools/audit_branding.py
-          python3 -m py_compile tools/benchmark_gpu_inputs.py tools/capture_profile_checkpoint.py tools/summarize_phase_cpu.py tools/sample_device_stacks.py tools/_sample_device_stacks_lldb.py tools/benchmark_speed_cap.py tools/build_ios_shell_preview.py tools/make_skin.py
+          python3 tools/compare_guest_clocks.py --self-test
+          python3 tools/benchmark_gpu_inputs.py --help > /dev/null
+          python3 -m py_compile tools/compare_guest_clocks.py tools/benchmark_gpu_inputs.py tools/capture_profile_checkpoint.py tools/summarize_phase_cpu.py tools/sample_device_stacks.py tools/_sample_device_stacks_lldb.py tools/benchmark_speed_cap.py tools/build_ios_shell_preview.py tools/make_skin.py
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+          python3 tools/test_symbolize_host_pc.py
       - name: Build
         run: python3 tools/build.py '${{ matrix.platform }}' --renderer '${{ matrix.renderer }}' --jobs 3
       - name: Audit linked no-JIT binary
@@ -49,6 +96,25 @@ jobs:
       - name: Native file I/O regression check (no ROM required)
         if: matrix.platform == 'mac'
         run: |
+          work/build-mac/bin/cara-fastinterp-capacity-self-test
+          CARA_FASTINTERP_CAPACITY_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_CACHE_ENTRIES=32768 CARA_FASTINTERP_SECONDARY_LINK=1 CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
+          work/build-mac/bin/cara-fastinterp-secondary-link-self-test
+          CARA_FASTINTERP_SECONDARY_LINK_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_AL_DISPATCH_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_BLX_LINK_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_PC_BOUNDARY_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          for cara_vfp_simd in 0 1 2 3; do
+            CARA_FASTINTERP_SHORT_VECTOR_TEST=1 CARA_FASTINTERP_VFP_SIMD=$cara_vfp_simd work/build-mac/bin/cara-fastinterp-self-test
+          done
+          CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_SECONDARY_LINK=1 CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
+          work/build-mac/bin/cara-fastinterp-simd-tags-self-test --test-only
+          work/build-mac/bin/cara-vertex-upload-order-self-test
+          clang++ -std=c++17 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -Iemulator/src tests/lcd_upload_self_test.cpp -o work/lcd-upload-self-test
+          work/lcd-upload-self-test
+          clang++ -std=c++17 -O2 -gline-tables-only -DCARA_INTERNAL_HOST_PC_SAMPLER=1 emulator/src/cara/host_pc_sampler.cpp emulator/src/cara/host_pc_sampler_self_test.cpp -o work/host-pc-sampler-smoke
+          work/host-pc-sampler-smoke
           work/build-mac/bin/cara-no-jit-probe --self-test work/io-self-test
           work/build-mac/bin/cara-extdata-state-self-test work/extdata-state-regression
           python3 tools/make_test_elf.py work/state-counter.elf
@@ -57,8 +123,69 @@ jobs:
           CARA_TEST_NEW_3DS=1 CARA_TEST_CPU_PERCENT=70 work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-underclock
           CARA_CPU_BACKEND=dyncom work/build-mac/bin/cara-save-state-self-test work/state-counter.elf work/state-regression-dyncom
           work/build-mac/bin/cara-clock-self-test
+          work/build-mac/bin/cara-cpu-category-self-test
+          CARA_CPU_CATEGORY_TIMING=0 work/build-mac/bin/cara-cpu-category-self-test --disabled
+          CARA_CPU_CATEGORY_TIMING=1 work/build-mac/bin/cara-cpu-category-self-test --wrapper
+          CARA_CONTIGUOUS_TRANSFERS_TEST=1 CARA_FASTINTERP_CONTIGUOUS_TRANSFERS=0 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_CONTIGUOUS_TRANSFERS_TEST=1 CARA_FASTINTERP_CONTIGUOUS_TRANSFERS=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_ALU_OPERANDS_TEST=1 CARA_FASTINTERP_ALU_OPERANDS=0 work/build-mac/bin/cara-fastinterp-self-test > work/alu-operands-off.txt
+          CARA_ALU_OPERANDS_TEST=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test > work/alu-operands-on.txt
+          diff -u work/alu-operands-off.txt work/alu-operands-on.txt
+          for cara_pair_cache in 4 8; do
+            for cara_pair_budget in 0 1; do
+              for cara_pair_operands in 0 1; do
+                for cara_pairs in 0 1; do
+                  CARA_ALU_PAIRS_TEST=1 CARA_FASTINTERP_ALU_PAIRS=$cara_pairs CARA_FASTINTERP_ALU_OPERANDS=$cara_pair_operands CARA_FASTINTERP_CHAIN_BUDGET=$cara_pair_budget CARA_FASTINTERP_CACHE_WAYS=$cara_pair_cache work/build-mac/bin/cara-fastinterp-self-test > work/pairs-$cara_pair_cache-$cara_pair_budget-$cara_pair_operands-$cara_pairs.txt
+                done
+                diff -u work/pairs-$cara_pair_cache-$cara_pair_budget-$cara_pair_operands-0.txt work/pairs-$cara_pair_cache-$cara_pair_budget-$cara_pair_operands-1.txt
+              done
+            done
+            CARA_FASTINTERP_ALU_PAIRS=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_pair_cache work/build-mac/bin/cara-fastinterp-self-test
+          done
+          CARA_ADD_CMP_TEST=1 CARA_FASTINTERP_ADD_CMP_IMM=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_CACHE_PROFILE_TEST=1 CARA_FASTINTERP_CACHE_PROFILE=0 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_CACHE_PROFILE_TEST=1 CARA_FASTINTERP_CACHE_PROFILE=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_TICK_BUCKETS=1 CARA_FASTINTERP_ALU_OPERANDS=1 work/build-mac/bin/cara-fastinterp-self-test
+          for cara_cache_ways in 4 8; do
+            CARA_DECODE_REUSE_TEST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test
+            CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test
+            CARA_UNROLL_BUDGET_TEST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test
+            CARA_CHAIN_SVC_TEST=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test
+            CARA_CACHE_CONFLICT_TRACE=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test > work/cache-conflict-$cara_cache_ways.txt
+            CARA_HOT_LOOP_TRACE=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=$cara_cache_ways work/build-mac/bin/cara-fastinterp-self-test > work/hot-loop-$cara_cache_ways.txt
+          done
+          diff -u work/cache-conflict-4.txt work/cache-conflict-8.txt
+          diff -u work/hot-loop-4.txt work/hot-loop-8.txt
+          CARA_FASTINTERP_CHAIN_RECENCY=1 CARA_CACHE_CONFLICT_TRACE=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test > work/cache-conflict-recency.txt
+          CARA_FASTINTERP_CHAIN_RECENCY=1 CARA_HOT_LOOP_TRACE=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test > work/hot-loop-recency.txt
+          diff -u work/cache-conflict-8.txt work/cache-conflict-recency.txt
+          diff -u work/hot-loop-8.txt work/hot-loop-recency.txt
+          CARA_FASTINTERP_TICK_BUCKETS=0 work/build-mac/bin/cara-arm-tick-self-test
+          CARA_FASTINTERP_TICK_BUCKETS=1 work/build-mac/bin/cara-arm-tick-self-test
+          work/build-mac/bin/cara-texture-lookup-self-test
+          clang++ -std=c++17 -Wall -Wextra -Werror -UNDEBUG -I emulator/src tests/frame_timing_texture_test.cpp -o work/frame-timing-texture-test
+          work/frame-timing-texture-test
+          CARA_TEXTURE_ACQUISITION_PROFILE=1 work/frame-timing-texture-test enabled
+          work/build-mac/bin/cara-render-bookkeeping-self-test
           work/build-mac/bin/cara-vertex-upload-bank-self-test
+          work/build-mac/bin/cara-vertex-input-usage-self-test
+          work/build-mac/bin/cara-shader-flow-self-test
+          work/build-mac/bin/cara-fastinterp-chain-recency-self-test
+          work/build-mac/bin/cara-guest-pc-cpu-self-test
+          CARA_GUEST_PC_CPU_EQUIVALENCE_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_SCALAR_DOUBLE_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_LDM_PC_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          CARA_FASTINTERP_DECODE_COST_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          clang++ -std=c++20 -Wall -Wextra -Werror -I emulator/src tests/fastinterp_decode_cost_test.cpp -o work/decode-cost-contract-test
+          work/decode-cost-contract-test
+          work/build-mac/bin/cara-ios-pipeline-cache-self-test
+          work/build-mac/bin/cara-surface-remap-layout-self-test
           work/build-mac/bin/cara-frame-pacer-self-test
+          work/build-mac/bin/cara-pica-submission-probe-self-test
+          work/build-mac/bin/cara-p3d-completion-self-test
+          work/build-mac/bin/cara-guest-gpu-trace-self-test
+          work/build-mac/bin/cara-interrupt-relay-policy-self-test
+          work/build-mac/bin/cara-presentation-guard-self-test
           work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=1 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_VFP_SIMD=2 CARA_FASTINTERP_RAM_BURST=1 CARA_FASTINTERP_DECODE_BKPT=1 work/build-mac/bin/cara-fastinterp-self-test
@@ -75,6 +202,7 @@ jobs:
           CARA_FASTINTERP_ADD_CMP_IMM=1 CARA_FASTINTERP_VCMP_VMRS=1 CARA_FASTINTERP_VFP_SIMD=3 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-core-cache-self-test
           work/build-mac/bin/cara-audio-buffer-self-test
+          work/build-mac/bin/cara-apple-aac-test
           CARA_DISABLE_FAST_DECODE_LOOKUP=1 work/build-mac/bin/cara-core-cache-self-test
           work/build-mac/bin/cara-interval-cache-self-test
           work/build-mac/bin/cara-input-self-test

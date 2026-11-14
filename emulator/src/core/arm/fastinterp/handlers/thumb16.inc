@@ -653,7 +653,8 @@ handle_ThumbBx: {
 handle_ThumbBlxReg: {
     const u8 rm = inst->dp.rm;
     u32 addr = state_.regs[rm];
-    state_.regs[14] = (GET_PC() + 2) | 1;
+    // Register BLX terminates decode, including a single-step block.
+    state_.regs[14] = BOUNDARY_PC(block->end_pc | 1, (GET_PC() + 2) | 1);
     state_.thumb_mode = addr & 1;
     SET_PC(addr & ~1u);
     executed += inst->ticks;
@@ -1041,15 +1042,26 @@ handle_ThumbB: {
 
 handle_ThumbSwi: {
     // Same tick-flush and context-reload dance as handle_Swi (arm_misc.inc)
-    SET_PC(GET_PC() + inst->inst_size);
+    SET_PC(BOUNDARY_PC(block->end_pc, GET_PC() + inst->inst_size));
     SYNC_PC();
     {
         u32 svc_num = inst->imm32 & 0xFF;
         executed += inst->ticks;
+        if (Common::FrameTiming::counters.enabled) {
+            auto& counters = Common::FrameTiming::counters;
+            counters.guest_ticks += executed;
+            counters.guest_core_ticks[GetID()] += executed;
+            counters.last_guest_pc[GetID()] = state_.PC();
+        }
         timer->AddTicks(executed);
         executed = 0;
 
+        if (guest_pc_cpu_.Active()) guest_pc_cpu_.EnterExternal();
         svc_context_->CallSVC(svc_num);
+        if (guest_pc_cpu_.Active()) {
+            profile_thread_id_ = ProfileThreadId();
+            guest_pc_cpu_.LeaveExternal(profile_thread_id_);
+        }
     }
     local_pc = state_.regs[15];
     goto done;

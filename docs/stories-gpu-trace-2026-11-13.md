@@ -267,3 +267,21 @@ should attribute tick calls by thread/caller and measure CPU cost while
 preserving Cara's existing tick charge, scheduling and observable effects. See
 [offline mapping and measurement limitations](guest-hot-range-mapping.md).
 Guest images and disassembly remain private and outside this repository.
+
+## Static filter profiling leads
+
+The [MH4U screen-filter research](https://github.com/CompaLarios18/MH4UltimateDC/blob/main/docs/research/screen-filters.md)
+suggested a DTI/class-vtable discovery method. Applying that method independently
+to the verified Stories image links its own Bloom, depth-of-field, and multi-blur
+classes to bounded render-method bodies, plus shared filter setup and cDraw state
+helpers. A private metadata-only map records eight disjoint candidate PC ranges
+and their return/tail-call bounds; guest bytes and disassembly remain outside the
+repository. No guest code was executed or modified for this analysis.
+
+This establishes profiling targets, not active passes or their cost in the
+checkpoint. Stories has different object sizes and target offsets; its sScene
+slot 12 is an empty return, so the other game's scene-dispatch interpretation
+does not transfer. Body-only CPU samples exclude guest callees and HLE/GPU work;
+shared-helper samples also include other callers. Dynamic entry counts, caller
+context, and GPU-list ownership are still required to connect filters to the
+observed draw increase. No pass skipping or timing change follows from the map.

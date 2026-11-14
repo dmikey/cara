@@ -1,10 +1,16 @@
 // Copyright 2014 Citra Emulator Project
+// Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/cpu_category_timing.h"
+#include "cara/pica_submission_probe.h"
+#include "cara/guest_gpu_trace.h"
 #include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
+#include <cstdint>
 #include <unordered_set>
 #include <memory>
 #include <utility>
@@ -13,6 +19,7 @@
 #include "common/logging/log.h"
 #include "common/microprofile.h"
 #include "common/vector_math.h"
+#include "core/core.h"
 #include "core/hle/service/gsp/gsp.h"
 #include "core/hw/gpu.h"
 #include "core/memory.h"
@@ -35,6 +42,156 @@
 namespace Pica::CommandProcessor {
 
 MICROPROFILE_DEFINE(GPU_Drawing, "GPU", "Drawing", MP_RGB(50, 50, 240));
+
+// Experiments are deliberately independent of frame-timing diagnostics. Neither
+// mode changes serialized PICA state or the command stream / trigger ordering.
+static bool RepeatStateEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_PICA_REPEAT_STATE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+static bool CommandProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_PICA_COMMAND_PROFILE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+struct CommandProfile {
+    std::uint64_t lists = 0, writes = 0, draws = 0;
+    std::uint64_t list_cpu_ns = 0, draw_cpu_ns = 0, clock_failures = 0;
+    std::uint64_t notifications = 0, repeated_shader_notifications = 0;
+    std::uint64_t code_words = 0, repeated_code_words = 0;
+    std::uint64_t swizzle_words = 0, repeated_swizzle_words = 0;
+    std::array<std::uint64_t, Regs::NUM_REGS> registers{};
+};
+static CommandProfile command_profile;
+
+class CommandCPUProfileScope {
+public:
+    explicit CommandCPUProfileScope(bool draw) : draw(draw) {
+        if (!CommandProfileEnabled()) return;
+        active = Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr, start);
+        if (!active) ++command_profile.clock_failures;
+        if (draw) ++command_profile.draws;
+    }
+    ~CommandCPUProfileScope() {
+        if (!active) return;
+        std::uint64_t end;
+        if (!Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr, end) || end < start) {
+            ++command_profile.clock_failures;
+            return;
+        }
+        (draw ? command_profile.draw_cpu_ns : command_profile.list_cpu_ns) += end - start;
+        if (!draw && ++command_profile.lists % 256 == 0) {
+            // Cumulative values. Difference two complete records to exclude boot
+            // and checkpoint loading. Draw CPU is nested in list CPU, not additive.
+            std::array<std::pair<std::uint64_t, u32>, 4> hottest{};
+            for (u32 id = 0; id < command_profile.registers.size(); ++id) {
+                std::pair<std::uint64_t, u32> entry{command_profile.registers[id], id};
+                for (auto& slot : hottest) {
+                    if (entry.first > slot.first) std::swap(entry, slot);
+                }
+            }
+            LOG_INFO(HW_GPU, "PICA command hottest r{}={} r{}={} r{}={} r{}={}",
+                     hottest[0].second, hottest[0].first, hottest[1].second, hottest[1].first,
+                     hottest[2].second, hottest[2].first, hottest[3].second, hottest[3].first);
+            LOG_INFO(HW_GPU,
+                     "PICA command profile lists={} writes={} draws={} list_cpu_ns={} "
+                     "draw_cpu_ns={} notifications={} repeat_shader_notifications={} "
+                     "code_words={} repeat_code_words={} swizzle_words={} "
+                     "repeat_swizzle_words={} clock_failures={}",
+                     command_profile.lists, command_profile.writes, command_profile.draws,
+                     command_profile.list_cpu_ns, command_profile.draw_cpu_ns,
+                     command_profile.notifications, command_profile.repeated_shader_notifications,
+                     command_profile.code_words, command_profile.repeated_code_words,
+                     command_profile.swizzle_words, command_profile.repeated_swizzle_words,
+                     command_profile.clock_failures);
+        }
+    }
+private:
+    bool draw, active = false;
+    std::uint64_t start = 0;
+};
+
+// Only notifications that exclusively dirty the shader configuration are eligible.
+// In particular, do not skip fixed-function Sync calls: some derive their result
+// from other registers (e.g. logic op / color masks), even on an unchanged write.
+static bool ShaderConfigNotification(u32 id) {
+    switch (id) {
+    case PICA_REG_INDEX(rasterizer.depthmap_enable):
+    case PICA_REG_INDEX(rasterizer.scissor_test.mode):
+    case PICA_REG_INDEX(texturing.main_config):
+    case PICA_REG_INDEX(texturing.texture0.type):
+    case PICA_REG_INDEX(texturing.tev_stage0.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage0.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage0.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage0.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage1.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage1.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage1.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage1.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage2.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage2.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage2.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage2.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage3.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage3.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage3.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage3.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage4.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage4.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage4.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage4.color_scale):
+    case PICA_REG_INDEX(texturing.tev_stage5.color_source1):
+    case PICA_REG_INDEX(texturing.tev_stage5.color_modifier1):
+    case PICA_REG_INDEX(texturing.tev_stage5.color_op):
+    case PICA_REG_INDEX(texturing.tev_stage5.color_scale):
+    case PICA_REG_INDEX(texturing.tev_combiner_buffer_input):
+    case PICA_REG_INDEX(lighting.light[0].config):
+    case PICA_REG_INDEX(lighting.light[1].config):
+    case PICA_REG_INDEX(lighting.light[2].config):
+    case PICA_REG_INDEX(lighting.light[3].config):
+    case PICA_REG_INDEX(lighting.light[4].config):
+    case PICA_REG_INDEX(lighting.light[5].config):
+    case PICA_REG_INDEX(lighting.light[6].config):
+    case PICA_REG_INDEX(lighting.light[7].config):
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void WriteShaderWord(Shader::ShaderSetup& setup, u32 offset, u32 value, bool swizzle) {
+    auto& word = swizzle ? setup.swizzle_data[offset] : setup.program_code[offset];
+    if (Cara::GuestGPUTrace::DrawsEnabled() && word != value)
+        Cara::GuestGPUTrace::ShaderWordChanged(&setup == &g_state.gs);
+    if (!RepeatStateEnabled() && !CommandProfileEnabled()) {
+        word = value;
+        if (swizzle) setup.MarkSwizzleDataDirty();
+        else setup.MarkProgramCodeDirty();
+        return;
+    }
+    const bool repeated = word == value;
+    if (CommandProfileEnabled()) {
+        if (swizzle) {
+            ++command_profile.swizzle_words;
+            command_profile.repeated_swizzle_words += repeated;
+        } else {
+            ++command_profile.code_words;
+            command_profile.repeated_code_words += repeated;
+        }
+    }
+    word = value;
+    if (!RepeatStateEnabled() || !repeated) {
+        if (swizzle) setup.MarkSwizzleDataDirty();
+        else setup.MarkProgramCodeDirty();
+    }
+}
 
 static const char* GetShaderSetupTypeName(Shader::ShaderSetup& setup) {
     if (&setup == &g_state.vs) {
@@ -106,6 +263,15 @@ static void WriteUniformFloatReg(ShaderRegs& config, Shader::ShaderSetup& setup,
     }
 }
 
+static bool PostIRQProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_PICA_POST_IRQ_PROFILE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled && Common::FrameTiming::counters.enabled;
+}
+static Cara::PicaSubmissionProbe post_irq_submission;
+
 static void WritePicaReg(u32 id, u32 value, u32 mask) {
     auto& regs = g_state.regs;
 
@@ -117,6 +283,8 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         return;
     }
 
+    if (Cara::ExperimentalP3DCompletionEnabled()) g_state.experimental_p3d_work.Command();
+
     // Expand a 4-bit mask to 4-byte mask, e.g. 0b0101 -> 0x00FF00FF
     static const u32 expand_bits_to_bytes[] = {
         0x00000000, 0x000000ff, 0x0000ff00, 0x0000ffff, 0x00ff0000, 0x00ff00ff,
@@ -124,13 +292,32 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         0xffff0000, 0xffff00ff, 0xffffff00, 0xffffffff,
     };
     // TODO: Figure out how register masking acts on e.g. vs.uniform_setup.set_value
+    if (CommandProfileEnabled()) {
+        ++command_profile.writes;
+        ++command_profile.registers[id];
+    }
     const u32 old_value = regs.reg_array[id];
     const u32 write_mask = expand_bits_to_bytes[mask];
     regs.reg_array[id] = (old_value & ~write_mask) | (value & write_mask);
+    if (PostIRQProfileEnabled()) {
+        const bool irq = id == PICA_REG_INDEX(trigger_irq);
+        std::uint64_t remaining_words = 0;
+        if (irq && !post_irq_submission.saw_irq) {
+            const auto used = g_state.cmd_list.current_ptr - g_state.cmd_list.head_ptr;
+            if (used >= 0 && std::uint64_t(used) <= g_state.cmd_list.length)
+                remaining_words = g_state.cmd_list.length - used;
+        }
+        post_irq_submission.Write(irq,
+            id == PICA_REG_INDEX(pipeline.trigger_draw) || id == PICA_REG_INDEX(pipeline.trigger_draw_indexed),
+            id == PICA_REG_INDEX(pipeline.command_buffer.trigger[0]) ||
+                id == PICA_REG_INDEX(pipeline.command_buffer.trigger[1]), remaining_words);
+    }
 
     switch (id) {
     // Trigger IRQ
     case PICA_REG_INDEX(trigger_irq):
+        if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
+            Cara::GuestGPUTrace::Kind::PicaIRQ, 0, 0, value, mask);
         Service::GSP::SignalInterrupt(Service::GSP::InterruptId::P3D);
         break;
 
@@ -257,7 +444,47 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     // It seems like these trigger vertex rendering
     case PICA_REG_INDEX(pipeline.trigger_draw):
     case PICA_REG_INDEX(pipeline.trigger_draw_indexed): {
+        if (Cara::GuestGPUTrace::ReserveDrawRecords()) {
+            auto& timing = Core::System::GetInstance().CoreTiming();
+            const auto& fb = regs.framebuffer.framebuffer;
+            const auto& pipe = regs.pipeline;
+            const auto& tex = regs.texturing;
+            const u64 flags = u64(id == PICA_REG_INDEX(pipeline.trigger_draw_indexed)) |
+                (u64(pipe.triangle_topology.Value()) << 1) |
+                (u64(pipe.use_gs.Value()) << 3) | (u64(pipe.variable_primitive.Value()) << 5);
+            Cara::GuestGPUTrace::Emit(timing, Cara::GuestGPUTrace::Kind::Draw, 0, 0,
+                (u64(fb.GetColorBufferPhysicalAddress()) << 32) | fb.GetDepthBufferPhysicalAddress(),
+                u64(pipe.num_vertices) | (flags << 32), Cara::GuestGPUTrace::vs_generation,
+                Cara::GuestGPUTrace::gs_generation);
+            const u64 dimensions = u64(fb.GetWidth()) | (u64(fb.GetHeight()) << 16) |
+                (u64(fb.color_format.Value()) << 32) | (u64(fb.depth_format.Value()) << 36) |
+                (u64(fb.allow_color_write.Value()) << 40) |
+                (u64(fb.allow_depth_stencil_write.Value()) << 44) |
+                (u64(regs.rasterizer.cull_mode.Value()) << 48);
+            Cara::GuestGPUTrace::Emit(timing, Cara::GuestGPUTrace::Kind::DrawState, 0, 0,
+                dimensions,
+                u64(regs.reg_array[PICA_REG_INDEX(framebuffer.output_merger.depth_test_enable)]) |
+                    (u64(regs.framebuffer.output_merger.stencil_test.raw_func) << 32),
+                u64(regs.vs.main_offset) | (u64(regs.gs.main_offset) << 32),
+                u64(regs.reg_array[PICA_REG_INDEX(framebuffer.output_merger.fragment_operation_mode)]) |
+                    (u64(regs.reg_array[PICA_REG_INDEX(framebuffer.output_merger.alpha_blending)]) << 32));
+            const u64 texture_formats = u64(tex.texture0_format.Value()) |
+                (u64(tex.texture1_format.Value()) << 4) | (u64(tex.texture2_format.Value()) << 8) |
+                (u64(tex.texture0.type.Value()) << 12);
+            Cara::GuestGPUTrace::Emit(timing, Cara::GuestGPUTrace::Kind::DrawInput, 0, 0,
+                (u64(pipe.vertex_attributes.GetPhysicalBaseAddress()) << 32) |
+                    regs.reg_array[PICA_REG_INDEX(pipeline.index_array)],
+                u64(pipe.vertex_offset) | (u64(regs.reg_array[PICA_REG_INDEX(texturing.main_config)]) << 32),
+                (u64(tex.texture0.GetPhysicalAddress()) << 32) | tex.texture1.GetPhysicalAddress(),
+                u64(tex.texture2.GetPhysicalAddress()) | (texture_formats << 32));
+        }
+        if (Cara::ExperimentalP3DCompletionEnabled())
+            g_state.experimental_p3d_work.Draw(regs.pipeline.num_vertices,
+                                             static_cast<unsigned>(regs.pipeline.triangle_topology.Value()));
+        if (Common::FrameTiming::counters.enabled)
+            ++Common::FrameTiming::counters.pica_draw_requests;
         MICROPROFILE_SCOPE(GPU_Drawing);
+        CommandCPUProfileScope command_draw_profile(true);
 
 #if PICA_LOG_TEV
         DebugUtils::DumpTevStageConfig(regs.GetTevStages());
@@ -434,8 +661,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         if (offset >= 4096) {
             LOG_ERROR(HW_GPU, "Invalid GS program offset {}", offset);
         } else {
-            g_state.gs.program_code[offset] = value;
-            g_state.gs.MarkProgramCodeDirty();
+            WriteShaderWord(g_state.gs, offset, value, false);
             offset++;
         }
         break;
@@ -453,8 +679,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         if (offset >= g_state.gs.swizzle_data.size()) {
             LOG_ERROR(HW_GPU, "Invalid GS swizzle pattern offset {}", offset);
         } else {
-            g_state.gs.swizzle_data[offset] = value;
-            g_state.gs.MarkSwizzleDataDirty();
+            WriteShaderWord(g_state.gs, offset, value, true);
             offset++;
         }
         break;
@@ -503,11 +728,9 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         if (offset >= 512) {
             LOG_ERROR(HW_GPU, "Invalid VS program offset {}", offset);
         } else {
-            g_state.vs.program_code[offset] = value;
-            g_state.vs.MarkProgramCodeDirty();
+            WriteShaderWord(g_state.vs, offset, value, false);
             if (!g_state.regs.pipeline.gs_unit_exclusive_configuration) {
-                g_state.gs.program_code[offset] = value;
-                g_state.gs.MarkProgramCodeDirty();
+                WriteShaderWord(g_state.gs, offset, value, false);
             }
             offset++;
         }
@@ -526,11 +749,9 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         if (offset >= g_state.vs.swizzle_data.size()) {
             LOG_ERROR(HW_GPU, "Invalid VS swizzle pattern offset {}", offset);
         } else {
-            g_state.vs.swizzle_data[offset] = value;
-            g_state.vs.MarkSwizzleDataDirty();
+            WriteShaderWord(g_state.vs, offset, value, true);
             if (!g_state.regs.pipeline.gs_unit_exclusive_configuration) {
-                g_state.gs.swizzle_data[offset] = value;
-                g_state.gs.MarkSwizzleDataDirty();
+                WriteShaderWord(g_state.gs, offset, value, true);
             }
             offset++;
         }
@@ -598,13 +819,37 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         VideoCore::Rasterizer()->SyncProcTexLutData();
         break;
     }
-    default:
-        VideoCore::Rasterizer()->NotifyPicaRegisterChanged(id);
+    default: {
+        const bool repeated_shader_state = (RepeatStateEnabled() || CommandProfileEnabled()) &&
+                                           old_value == regs.reg_array[id] &&
+                                           ShaderConfigNotification(id);
+        if (CommandProfileEnabled()) {
+            ++command_profile.notifications;
+            command_profile.repeated_shader_notifications += repeated_shader_state;
+        }
+        if (!RepeatStateEnabled() || !repeated_shader_state)
+            VideoCore::Rasterizer()->NotifyPicaRegisterChanged(id);
         break;
+    }
     }
 }
 
+u64 TakeExperimentalP3DNanoseconds() {
+    return g_state.experimental_p3d_work.TakeNanoseconds();
+}
+
 void ProcessCommandList(PAddr list, u32 size) {
+    if (PostIRQProfileEnabled()) post_irq_submission = {};
+    if (Common::FrameTiming::counters.enabled)
+        ++Common::FrameTiming::counters.pica_command_lists;
+    static const bool reported_options = [] {
+        LOG_INFO(HW_GPU, "PICA command options repeat_state={} command_profile={}",
+                 RepeatStateEnabled(), CommandProfileEnabled());
+        return true;
+    }();
+    (void)reported_options;
+    CommandCPUProfileScope command_list_profile(false);
+    Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::GPUCommand);
     u32* buffer = (u32*)VideoCore::Memory()->GetPhysicalPointer(list);
     g_state.cmd_list.addr = list;
     g_state.cmd_list.head_ptr = g_state.cmd_list.current_ptr = buffer;
@@ -625,6 +870,19 @@ void ProcessCommandList(PAddr list, u32 size) {
             cmd_id += group_factor;
             WritePicaReg(cmd_id, *g_state.cmd_list.current_ptr++, header.parameter_mask);
         }
+    }
+    if (PostIRQProfileEnabled()) {
+        auto& counters = Common::FrameTiming::counters;
+        counters.pica_post_irq_submissions += post_irq_submission.saw_irq;
+        counters.pica_post_irq_writes += post_irq_submission.writes;
+        counters.pica_post_irq_draw_requests += post_irq_submission.draws;
+        counters.pica_post_irq_jumps += post_irq_submission.jumps;
+        counters.pica_first_irq_remaining_words += post_irq_submission.first_irq_remaining_words;
+        if (counters.pica_command_lists % 256 == 0)
+            LOG_INFO(HW_GPU, "PICA post IRQ profile submissions={} with_irq={} writes={} draws={} jumps={} first_irq_remaining_words={}",
+                     counters.pica_command_lists, counters.pica_post_irq_submissions,
+                     counters.pica_post_irq_writes, counters.pica_post_irq_draw_requests,
+                     counters.pica_post_irq_jumps, counters.pica_first_irq_remaining_words);
     }
 }
 

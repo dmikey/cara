@@ -8,6 +8,8 @@ SCOPES = ['core', 'common', 'video_core', 'audio_core', 'network', 'web_service'
 # These are provenance or external/on-disk contracts, not Cara product branding.
 ALLOWED = {
     'emulator/src/ios/shell_controllers.mm': ['@"Cara is built on the open-source Citra emulator. See the bundled source and license notices."'],
+    'emulator/src/cara/p3d_completion.h': ['Approximate geometry/command constants adapted from Citra/Azahar DelayGenerator'],
+    'emulator/src/core/hle/service/gsp/interrupt_relay_policy.h': ['Queue semantics adapted from Azahar PR'],
     'emulator/src/core/memory.cpp': ['adapted from Azahar commit'],
     'emulator/src/core/memory.h': ['Adapted from Azahar PR'],
     'emulator/src/core/cheats/gateway_cheat.cpp': ['"*citra_enabled"'],

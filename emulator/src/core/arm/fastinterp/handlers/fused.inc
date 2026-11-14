@@ -484,7 +484,7 @@ handle_FusedAddCmpBcc: {
 handle_ThumbUnrolledSubsLoop: {
     // Thumb: SUBS Rd, #imm8; BNE self - tight countdown loop
     // Execute up to 16 iterations inline before returning to dispatcher
-    constexpr int UNROLL_COUNT = 16;
+    const int UNROLL_COUNT = UnrollLimit(inst->ticks);
 
     u8 rd = inst->rd;
     u32 imm = inst->fused.imm;
@@ -521,6 +521,8 @@ handle_ThumbUnrolledSubsLoop: {
 
     if (value != 0) {
         // Loop continues: re-enter this block via chain, skipping Run()
+        // Hot reoptimization admits only a singleton block for this loop.
+        SET_PC(BOUNDARY_PC(block->start_pc, GET_PC()));
         goto chain;
     }
 
@@ -531,7 +533,7 @@ handle_ThumbUnrolledSubsLoop: {
 
 handle_ArmUnrolledSubsLoop: {
     // ARM: SUBS Rd, Rn, #imm; BNE self - tight countdown loop
-    constexpr int UNROLL_COUNT = 16;
+    const int UNROLL_COUNT = UnrollLimit(inst->ticks);
 
     u8 rd = inst->rd;
     u8 rn = inst->fused.rn;
@@ -576,6 +578,8 @@ handle_ArmUnrolledSubsLoop: {
 
     if (value != 0) {
         // Loop continues: re-enter this block via chain, skipping Run()
+        // Hot reoptimization admits only a singleton block for this loop.
+        SET_PC(BOUNDARY_PC(block->start_pc, GET_PC()));
         goto chain;
     }
 
@@ -602,6 +606,8 @@ handle_ThumbUnrolledCmpLoop: {
 
     if (result != 0) {
         // Still not equal: re-enter this block via chain, skipping Run()
+        // Hot reoptimization admits only a singleton block for this loop.
+        SET_PC(BOUNDARY_PC(block->start_pc, GET_PC()));
         goto chain;
     }
 

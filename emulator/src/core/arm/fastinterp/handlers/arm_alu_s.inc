@@ -8,7 +8,7 @@
 // Note: ALU_DISPATCH() macro defined in arm_alu.inc handles Rd=15 branch
 
 handle_AndS: {
-    CHECK_COND();
+    CHECK_COND(AndS);
     const u32 old_nzcv = state_.lazy_flags.GetPacked();
     bool carry = (old_nzcv >> 29) & 1;
     u32 op2 = GetOp2(carry);
@@ -29,7 +29,7 @@ handle_AndS: {
 }
 
 handle_EorS: {
-    CHECK_COND();
+    CHECK_COND(EorS);
     const u32 old_nzcv = state_.lazy_flags.GetPacked();
     bool carry = (old_nzcv >> 29) & 1;
     u32 op2 = GetOp2(carry);
@@ -50,7 +50,7 @@ handle_EorS: {
 }
 
 handle_SubS: {
-    CHECK_COND();
+    CHECK_COND(SubS);
     u32 op1 = state_.regs[inst->dp.rn];
     u32 op2 = GetOp2Fast();
 #ifdef __aarch64__
@@ -70,7 +70,7 @@ handle_SubS: {
 }
 
 handle_RsbS: {
-    CHECK_COND();
+    CHECK_COND(RsbS);
     u32 op1 = state_.regs[inst->dp.rn];
     u32 op2 = GetOp2Fast();
 #ifdef __aarch64__
@@ -90,7 +90,7 @@ handle_RsbS: {
 }
 
 handle_AddS: {
-    CHECK_COND();
+    CHECK_COND(AddS);
     u32 op1 = state_.regs[inst->dp.rn];
     u32 op2 = GetOp2Fast();
 #ifdef __aarch64__
@@ -110,7 +110,7 @@ handle_AddS: {
 }
 
 handle_AdcS: {
-    CHECK_COND();
+    CHECK_COND(AdcS);
     u32 op1 = state_.regs[inst->dp.rn];
     u32 op2 = GetOp2Fast();
     u32 c = state_.lazy_flags.GetC() ? 1 : 0;
@@ -132,7 +132,7 @@ handle_AdcS: {
 }
 
 handle_SbcS: {
-    CHECK_COND();
+    CHECK_COND(SbcS);
     u32 op1 = state_.regs[inst->dp.rn];
     u32 op2 = GetOp2Fast();
     u32 c = state_.lazy_flags.GetC() ? 1 : 0;
@@ -154,7 +154,7 @@ handle_SbcS: {
 }
 
 handle_RscS: {
-    CHECK_COND();
+    CHECK_COND(RscS);
     u32 op1 = state_.regs[inst->dp.rn];
     u32 op2 = GetOp2Fast();
     u32 c = state_.lazy_flags.GetC() ? 1 : 0;
@@ -176,7 +176,7 @@ handle_RscS: {
 }
 
 handle_OrrS: {
-    CHECK_COND();
+    CHECK_COND(OrrS);
     const u32 old_nzcv = state_.lazy_flags.GetPacked();
     bool carry = (old_nzcv >> 29) & 1;
     u32 op2 = GetOp2(carry);
@@ -197,7 +197,7 @@ handle_OrrS: {
 }
 
 handle_MovS: {
-    CHECK_COND();
+    CHECK_COND(MovS);
     const u32 old_nzcv = state_.lazy_flags.GetPacked();
     bool carry = (old_nzcv >> 29) & 1;
     u32 op2 = GetOp2(carry);
@@ -216,7 +216,7 @@ handle_MovS: {
 }
 
 handle_BicS: {
-    CHECK_COND();
+    CHECK_COND(BicS);
     const u32 old_nzcv = state_.lazy_flags.GetPacked();
     bool carry = (old_nzcv >> 29) & 1;
     u32 op2 = GetOp2(carry);
@@ -237,7 +237,7 @@ handle_BicS: {
 }
 
 handle_MvnS: {
-    CHECK_COND();
+    CHECK_COND(MvnS);
     const u32 old_nzcv = state_.lazy_flags.GetPacked();
     bool carry = (old_nzcv >> 29) & 1;
     u32 op2 = GetOp2(carry);

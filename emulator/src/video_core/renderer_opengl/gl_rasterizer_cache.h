@@ -143,6 +143,7 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
     }
 
     std::vector<u8> gl_buffer;
+    std::vector<u32> depth_upload_buffer; // Normalized UNORM32 upload view of canonical D24 bytes.
     std::vector<u8> rgba_readback_buffer;
 
     // Read/Write data in 3DS memory to/from gl_buffer
@@ -153,7 +154,8 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
     const Core::CustomTexInfo* LoadCustomTexture(u64 tex_hash);
 
     // Upload/Download data in gl_buffer in/to this surface's texture
-    void UploadGLTexture(const Common::Rectangle<u32>& rect);
+    void UploadGLTexture(const Common::Rectangle<u32>& rect,
+                         FormatReinterpreterOpenGL* depth_transfer = nullptr);
     void DownloadGLTexture(const Common::Rectangle<u32>& rect);
     double last_download_wait_seconds = 0;
     double last_download_read_seconds = 0;
@@ -166,6 +168,14 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
         auto watcher = std::make_shared<SurfaceWatcher>(weak_from_this());
         watchers.push_front(watcher);
         return watcher;
+    }
+
+    std::shared_ptr<SurfaceWatcher> GetTextureLookupWatcher() {
+        // Reuse one node per surface; cache eviction must not accumulate dead
+        // weak watcher-list nodes on long-lived textures.
+        if (!texture_lookup_watcher || !texture_lookup_watcher->Get())
+            texture_lookup_watcher = CreateWatcher();
+        return texture_lookup_watcher;
     }
 
     void InvalidateAllWatcher() {
@@ -188,6 +198,7 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
 
 private:
     std::list<std::weak_ptr<SurfaceWatcher>> watchers;
+    std::shared_ptr<SurfaceWatcher> texture_lookup_watcher;
 };
 
 struct CachedTextureCube {
@@ -208,6 +219,8 @@ public:
 
     // ROM-free GPU/cache oracle; invoke before guest execution on an unused scratch page.
     bool RunSmallWriteSelfTest(std::string& error);
+    bool RunTextureLookupSelfTest(std::string& error);
+    bool RunDepthCPUCoherenceSelfTest(std::string& error);
 
     /// Blit one surface's texture to another
     bool BlitSurfaces(const Surface& src_surface, const Common::Rectangle<u32>& src_rect,
@@ -274,8 +287,8 @@ private:
     bool IntervalHasInvalidPixelFormat(SurfaceParams& params, const SurfaceInterval& interval);
 
     // Attempt to find a reinterpretable surface in the cache and use it to copy for validation
-    bool ValidateByReinterpretation(const Surface& surface, SurfaceParams& params,
-                                    const SurfaceInterval& interval);
+    bool ValidateByReinterpretation(const Surface& surface, const SurfaceParams& params,
+                                    const SurfaceInterval& interval, SurfaceInterval* copied_interval);
 
     /// Create a new surface
     Surface CreateSurface(const SurfaceParams& params);
@@ -289,7 +302,10 @@ private:
     /// Increase/decrease the number of surface in pages touching the specified region
     void UpdatePagesCachedCount(PAddr addr, u32 size, int delta);
 
-    enum class FlushReason : u32 { External, Validation, SmallCPUWrite, All };
+    struct SurfaceUploadTrace;
+    std::unique_ptr<SurfaceUploadTrace> surface_upload_trace;
+
+    enum class FlushReason : u32 { External, Validation, SmallCPUWrite, All, Cleanup };
     struct FlushTraceFrame {
         std::uintptr_t address{}, image_base{};
         std::string image, symbol;
@@ -303,17 +319,42 @@ private:
         SurfaceParams source_params{}, destination_params{};
         u32 copy_reject_bits{};
     };
+    struct TextureLookupEntry {
+        SurfaceParams params;
+        ScaleMatch scale_match = ScaleMatch::Exact;
+        u64 generation = 0;
+        u16 selected_scale = 0;
+        std::shared_ptr<SurfaceWatcher> watcher;
+    };
+    static constexpr size_t TextureLookupCapacity = 8;
+    std::array<TextureLookupEntry, TextureLookupCapacity> texture_lookup_entries{};
+    size_t texture_lookup_next = 0;
+    u64 texture_lookup_generation = 1;
+    bool texture_lookup_reuse = false;
+    bool texture_lookup_verify = false;
+    bool texture_exact_prefilter = false;
+    void AdvanceTextureLookupGeneration() {
+        if (++texture_lookup_generation == 0) {
+            texture_lookup_entries = {};
+            texture_lookup_next = 0;
+            texture_lookup_generation = 1;
+        }
+    }
     bool trace_flushes = false;
     bool retain_small_cpu_writes = false;
     bool gpu_surface_remap = false;
     std::unique_ptr<SurfaceRemapper> surface_remapper;
-    bool TryRemapSurface(const Surface& destination, const SurfaceParams& params);
+    bool TryRemapSurface(const Surface& destination, const SurfaceParams& params,
+                         SurfaceInterval* remapped_interval = nullptr,
+                         const SurfaceInterval* requested_interval = nullptr);
     FlushReason flush_reason = FlushReason::External;
     std::vector<FlushTrace> flush_trace;
     SurfaceParams validation_destination{};
     void RecordFlush(const Surface& surface, u32 requested_bytes, u32 width, u32 height,
                      double seconds);
     void WriteFlushTrace() const;
+    bool ExportDepthForCPU(const Surface& surface, const SurfaceInterval& interval);
+    Surface depth_export_scratch; // Host-only, never registered or given guest ownership.
 
     u16 resolution_scale_factor = 1;
 

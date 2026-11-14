@@ -8,7 +8,9 @@
 #include <ostream>
 #include "core/arm/arm_interface.h"
 #include "core/arm/fastinterp/fastinterp_cache.h"
+#include "core/arm/fastinterp/decode_cost_profile.h"
 #include "core/arm/fastinterp/fastinterp_types.h"
+#include "core/arm/fastinterp/guest_pc_cpu_profile.h"
 
 namespace Memory {
 class MemorySystem;
@@ -37,7 +39,7 @@ public:
     void ClearInstructionCache() override;
     void InvalidateCacheRange(u32 start_address, std::size_t length) override;
     void ClearExclusiveState();
-    void PurgeState() override { ClearExclusiveState(); ClearInstructionCache(); }
+    void PurgeState() override { ClearExclusiveState(); ClearInstructionCache(); if (guest_pc_cpu_.Enabled()) guest_pc_cpu_.Reset(); }
     void SetPageTable(const std::shared_ptr<Memory::PageTable>& page_table) override;
 
     void SetPC(u32 addr) override;
@@ -63,6 +65,7 @@ protected:
     std::shared_ptr<Memory::PageTable> GetPageTable() const override;
 
 private:
+    friend struct DecodeRecordSelfTestAccess;
     /// Execute a single basic block, returns number of instructions executed
     u64 ExecuteBlock(BasicBlock* block);
 
@@ -96,6 +99,17 @@ private:
     /// Check if a condition passes
     bool CheckCondition(u8 cond);
 
+    void PrepareDispatch(DecodedInst& inst) const {
+        inst.dispatch_index = static_cast<u16>(inst.opcode) +
+            ((al_dispatch_ && inst.cond == 0xE) ? static_cast<u16>(Opcode::OpcodeCount) : 0);
+    }
+
+    // Cold path while VFP11 short-vector mode is active. LEN=0 stays in the
+    // existing handlers; software VFP supplies bank traversal and guest FP
+    // controls/exceptions, including scalar-bank destinations under nonzero LEN.
+    void ExecuteVFPShortVector(u32 encoding, unsigned sd, unsigned sn, unsigned sm,
+                               bool is_double);
+
     /// Log the instruction at pc as unhandled (once per unique encoding)
     void LogUnhandledInstruction(u32 pc);
 
@@ -111,9 +125,14 @@ private:
     /// Reoptimize a hot block (apply additional optimizations after detection)
     void ReoptimizeHotBlock(BasicBlock* block);
 
+    std::uint32_t ProfileThreadId() const;
+    Core::System& system_;
+    GuestPCCPU::Tracker guest_pc_cpu_;
+    std::uint32_t profile_thread_id_ = 0;
     Memory::MemorySystem& memory_;
     InterpreterState state_;
     BlockCache cache_;
+    DecodeCostProfile decode_cost_;
     std::shared_ptr<Memory::PageTable> page_table_;
 
     // Per-core LDREX/STREX reservation. FastInterp handles exclusives itself
@@ -136,6 +155,14 @@ private:
     bool stepping_{false};
     bool decode_breakpoints_{false};
     bool ram_burst_{false};
+    bool contiguous_transfers_{false};
+    bool chain_budget_{false};
+    bool precise_block_end_{true};
+    bool al_dispatch_{false};
+    bool secondary_link_{false};
+    static bool AluPairsEnabled();
+    u64 cache_mode_redecodes_{};
+    u64 cache_page_table_changes_{};
 
     FusionStats fusion_stats_;
 

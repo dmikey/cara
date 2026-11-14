@@ -5,11 +5,24 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include "common/common_types.h"
 #include "core/arm/fastinterp/fastinterp_flags.h"
 
 namespace Core::FastInterp {
+
+// Only compare integer host ranges here; never dereference artificial test addresses.
+constexpr bool ContiguousTransferRangesDisjoint(std::uintptr_t page, u32 offset, u32 bytes,
+                                                std::uintptr_t registers) {
+    constexpr auto maximum = std::numeric_limits<std::uintptr_t>::max();
+    constexpr auto register_bytes = 16 * sizeof(u32);
+    if (!bytes || page > maximum - offset) return false;
+    const auto memory = page + offset;
+    if (memory > maximum - bytes || registers > maximum - register_bytes) return false;
+    return memory + bytes <= registers || registers + register_bytes <= memory;
+}
 
 // ============================================================================
 // Instruction Opcodes
@@ -465,6 +478,22 @@ enum class Opcode : u16 {
 
     VcmpVmrsS, // Opt-in VCMP.S + VMRS APSR pair, original slots retained
 
+    // Default-off decode-time specializations; no flags or PC operands.
+    AddImm,
+    AddLslImm,
+    MovImm,
+    MovLslImm,
+
+    // Static, unconditional ARM pairs; second original record is retained.
+    AddPairImmImm,
+    AddPairImmLsl,
+    AddPairLslImm,
+    AddPairLslLsl,
+    MovPairImmImm,
+    MovPairImmLsl,
+    MovPairLslImm,
+    MovPairLslLsl,
+
     OpcodeCount
 };
 
@@ -542,6 +571,7 @@ struct DecodedInst {
             u8 flags;     // P,U,S,W bits
             s8 base_off;  // Base-to-first-access offset (folds increment/before)
             s16 wb_delta; // Writeback delta: +count*4 or -count*4
+            u8 contiguous_first; // First of a contiguous 4/8-register span, or 0xFF.
         } lsm;
 
         // Branch format
@@ -592,9 +622,14 @@ struct DecodedInst {
 
     // Tick cost for this instruction (matches Dynarmic's variable tick model)
     u8 ticks;
+
+    // Uses former tail padding; semantic opcode/condition stay intact.
+    u16 dispatch_index;
 };
 
 static_assert(sizeof(DecodedInst) == 20, "DecodedInst should be 20 bytes");
+static_assert(offsetof(DecodedInst, dispatch_index) == 18, "Dispatch index must use tail padding");
+static_assert(2u * static_cast<unsigned>(Opcode::OpcodeCount) <= 65536u);
 
 // ============================================================================
 // Basic Block Structure
@@ -613,6 +648,8 @@ constexpr u16 BLOCK_FLAG_REOPTIMIZED = 0x04; // Block has been reoptimized
 /// Threshold for considering a block "hot" (frequently executed)
 constexpr u32 HOT_BLOCK_THRESHOLD = 1000;
 
+constexpr u16 INVALID_BLOCK_SLOT = 0xffff;
+
 /// Basic block of decoded instructions
 struct BasicBlock {
     u32 start_pc;   // Starting PC of this block
@@ -627,6 +664,9 @@ struct BasicBlock {
     // Chain target for block chaining (kept in the header so the chain fast
     // path and the other hot header fields share a cache line)
     BasicBlock* chain_target; // Next block for chaining
+
+    // Full current tag is validated before the original fallback NRU touch.
+    u16 secondary_slot;
 
     // Decoded instructions (inline for cache locality)
     std::array<DecodedInst, MAX_BLOCK_SIZE> instructions;

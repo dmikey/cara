@@ -15,6 +15,8 @@
 #include <dlfcn.h>
 #endif
 #include <iterator>
+#include <limits>
+#include <stdexcept>
 #include <memory>
 #include <optional>
 #include <unordered_set>
@@ -27,6 +29,8 @@
 #include "common/color.h"
 #include "common/hash.h"
 #include "common/frame_timing.h"
+#include "video_core/renderer_opengl/gl_texture_lookup_key.h"
+#include "video_core/renderer_opengl/gl_reinterpret_lookup_cache.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
 #include "common/microprofile.h"
@@ -43,6 +47,7 @@
 #include "video_core/renderer_opengl/gl_format_reinterpreter.h"
 #include "video_core/renderer_opengl/gl_color_readback.h"
 #include "video_core/renderer_opengl/gl_surface_remap.h"
+#include "video_core/renderer_opengl/gl_surface_remap_layout.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_rasterizer_cache.h"
 #include "video_core/renderer_opengl/gl_state.h"
@@ -312,8 +317,17 @@ static void AllocateTextureCube(GLuint texture, const FormatTuple& format_tuple,
 }
 
 static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect, GLuint dst_tex,
-                         const Common::Rectangle<u32>& dst_rect, SurfaceType type) {
+                         const Common::Rectangle<u32>& dst_rect, SurfaceType type,
+                         bool checked_copy = false) {
     OpenGLState prev_state = OpenGLState::GetCurState();
+    SCOPE_EXIT({ prev_state.SubApply(); });
+    if (checked_copy && glGetError() != GL_NO_ERROR)
+        throw std::runtime_error("Native texture copy rejected preexisting GL error");
+    // A framebuffer copy requires a known attachment category. The surface overload
+    // additionally rejects incompatible attachment formats before this checked fallback.
+    if (checked_copy && type != SurfaceType::Color && type != SurfaceType::Texture &&
+        type != SurfaceType::Depth && type != SurfaceType::DepthStencil)
+        throw std::runtime_error("Native texture copy requires a supported attachment type");
     OpenGLState state;
     state.draw.read_framebuffer = g_read_framebuffer.handle;
     state.draw.draw_framebuffer = g_draw_framebuffer.handle;
@@ -355,6 +369,10 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
         buffers = GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
     }
 
+    if (checked_copy && (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ||
+                         glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE))
+        throw std::runtime_error("Native texture copy framebuffer is incomplete");
+
     // TODO (wwylele): use GL_NEAREST for shadow map texture
     // Note: shadow map is treated as RGBA8 format in PICA, as well as in the rasterizer cache, but
     // doing linear intepolation componentwise would cause incorrect value. However, for a
@@ -363,13 +381,14 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
     glBlitFramebuffer(src_rect.left, src_rect.bottom, src_rect.right, src_rect.top, dst_rect.left,
                       dst_rect.bottom, dst_rect.right, dst_rect.top, buffers,
                       buffers == GL_COLOR_BUFFER_BIT ? GL_LINEAR : GL_NEAREST);
-    prev_state.SubApply();
+    if (checked_copy && glGetError() != GL_NO_ERROR)
+        throw std::runtime_error("Native framebuffer texture copy failed");
 }
 
 static void BlitTextures(const Surface& src, const Common::Rectangle<u32>& src_rect,
                          const Surface& dst, const Common::Rectangle<u32>& dst_rect) {
 #ifndef CARA_IOS_GLES
-    if (src->pixel_format == dst->pixel_format &&
+    if (GLAD_GL_ARB_copy_image && glCopyImageSubData && src->pixel_format == dst->pixel_format &&
         src->pixel_format < SurfaceParams::PixelFormat::IA8 && src_rect.bottom < src_rect.top) {
         // same color format, same size, don't flip vertically
         u32 src_width = src_rect.GetWidth();
@@ -387,7 +406,15 @@ static void BlitTextures(const Surface& src, const Common::Rectangle<u32>& src_r
     }
 
 #endif
-    BlitTextures(src->texture.handle, src_rect, dst->texture.handle, dst_rect, src->type);
+    // Preserve legal color conversions, but reject attachment-category changes and
+    // depth format conversions before callers can validate a stale destination.
+    const bool depth_copy =
+        src->type == SurfaceType::Depth || src->type == SurfaceType::DepthStencil;
+    if (!GLES && (!SurfaceParams::CheckFormatsBlittable(src->pixel_format, dst->pixel_format) ||
+                  (depth_copy && src->pixel_format != dst->pixel_format))) {
+        throw std::runtime_error("Native framebuffer copy has unsupported attachment formats");
+    }
+    BlitTextures(src->texture.handle, src_rect, dst->texture.handle, dst_rect, src->type, !GLES);
 }
 
 static bool FillSurface(const Surface& surface, const u8* fill_data,
@@ -527,6 +554,8 @@ void RasterizerCacheOpenGL::CopySurface(const Surface& src_surface, const Surfac
 }
 
 void CachedSurface::LoadGLBuffer(PAddr load_start, PAddr load_end) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Load);
     ASSERT(type != SurfaceType::Fill);
 
     const u8* const texture_src_data = VideoCore::Memory()->GetPhysicalPointer(addr);
@@ -548,7 +577,21 @@ void CachedSurface::LoadGLBuffer(PAddr load_start, PAddr load_end) {
     const u32 start_offset = load_start - addr;
 
     if (!is_tiled) {
-        ASSERT(type == SurfaceType::Color);
+        ASSERT(type == SurfaceType::Color || type == SurfaceType::Depth || type == SurfaceType::DepthStencil);
+        if (pixel_format == PixelFormat::D24 || pixel_format == PixelFormat::D24S8) {
+            const u32 guest_bpp = GetFormatBpp() / 8;
+            for (u32 pixel = start_offset / guest_bpp;
+                 pixel < (load_end - addr + guest_bpp - 1) / guest_bpp; ++pixel) {
+                const u8* source = texture_src_data + size_t(pixel) * guest_bpp;
+                u8* target = gl_buffer.data() + size_t(pixel) * 4;
+                if (pixel_format == PixelFormat::D24S8) {
+                    target[0]=source[3]; target[1]=source[0]; target[2]=source[1]; target[3]=source[2];
+                } else {
+                    target[0]=0; target[1]=source[0]; target[2]=source[1]; target[3]=source[2];
+                }
+            }
+            return;
+        }
         // TODO(liushuyu): check if the byteswap here is 100% correct, cannot fully test this
         if (pixel_format == PixelFormat::RGBA8) {
             for (std::size_t i = start_offset; i < load_end - addr; i += 4) {
@@ -627,8 +670,15 @@ void CachedSurface::FlushGLBuffer(PAddr flush_start, PAddr flush_end) {
         if (backup_bytes)
             std::memcpy(&dst_buffer[coarse_start_offset], &backup_data[0], backup_bytes);
     } else if (!is_tiled) {
-        ASSERT(type == SurfaceType::Color);
-        if (pixel_format == PixelFormat::RGBA8 || pixel_format == PixelFormat::RGB8) {
+        ASSERT(type == SurfaceType::Color || type == SurfaceType::Depth || type == SurfaceType::DepthStencil);
+        if (pixel_format == PixelFormat::D24 || pixel_format == PixelFormat::D24S8) {
+            const u32 guest_bpp = GetFormatBpp() / 8;
+            for (u32 i=start_offset; i<end_offset; ++i) {
+                const u32 pixel=i/guest_bpp, component=i%guest_bpp;
+                const u32 source_component=pixel_format==PixelFormat::D24S8 ? (component+1)%4 : component+1;
+                dst_buffer[i]=gl_buffer[size_t(pixel)*4+source_component];
+            }
+        } else if (pixel_format == PixelFormat::RGBA8 || pixel_format == PixelFormat::RGB8) {
             // Dirty ownership can split inside a pixel after a CPU byte write.
             // Do not overwrite the neighboring CPU-owned bytes when flushing it.
             if (pixel_format == PixelFormat::RGBA8)
@@ -649,12 +699,15 @@ const Core::CustomTexInfo* CachedSurface::LoadCustomTexture(u64 tex_hash) {
     return custom_tex_cache.LoadTexture(tex_hash);
 }
 
-void CachedSurface::UploadGLTexture(const Common::Rectangle<u32>& rect) {
+void CachedSurface::UploadGLTexture(const Common::Rectangle<u32>& rect,
+                                    FormatReinterpreterOpenGL* depth_transfer) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Upload);
     // Required for rect to function properly with custom textures
     Common::Rectangle custom_rect = rect;
     PixelFormat custom_format = pixel_format;
 
-    if (Settings::values.custom_textures) {
+    if (Settings::values.custom_textures && pixel_format < PixelFormat::D16) {
         u64 tex_hash = Common::TextureHash64(gl_buffer.data(), gl_buffer.size());
         if (!custom_tex_info || custom_tex_info->hash != tex_hash) {
             custom_tex_info = LoadCustomTexture(tex_hash);
@@ -678,6 +731,33 @@ void CachedSurface::UploadGLTexture(const Common::Rectangle<u32>& rect) {
     const FormatTuple& tuple = GetFormatTuple(custom_format);
     GLuint target_tex = texture.handle;
 
+    // Depth uploads consume client bytes with canonical unpack state, including
+    // callers that left an unpack PBO or nonzero skips bound.
+    const bool depth_upload = pixel_format == PixelFormat::D16 || pixel_format == PixelFormat::D24 ||
+                              pixel_format == PixelFormat::D24S8;
+    if (depth_upload && (rect.right <= rect.left || rect.top <= rect.bottom ||
+        rect.right > stride || rect.top > height ||
+        (u64(rect.top - 1) * stride + rect.right) > gl_buffer.size() / bytes_per_pixel)) {
+        throw std::runtime_error("Depth RAM upload source rectangle is out of bounds");
+    }
+    GLint unpack_buffer=0, unpack_alignment=4, unpack_row=0, unpack_skip_rows=0, unpack_skip_pixels=0;
+    if (depth_upload) {
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack_buffer);
+        glGetIntegerv(GL_UNPACK_ALIGNMENT,&unpack_alignment);
+        glGetIntegerv(GL_UNPACK_ROW_LENGTH,&unpack_row);
+        glGetIntegerv(GL_UNPACK_SKIP_ROWS,&unpack_skip_rows);
+        glGetIntegerv(GL_UNPACK_SKIP_PIXELS,&unpack_skip_pixels);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS,0); glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);
+    }
+    SCOPE_EXIT({ if (depth_upload) {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER,unpack_buffer);
+        glPixelStorei(GL_UNPACK_ALIGNMENT,unpack_alignment);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH,unpack_row);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS,unpack_skip_rows);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS,unpack_skip_pixels);
+    } });
     // If not 1x scale, create 1x texture that we will blit from to replace texture subrect in
     // surface
     OGLTexture unscaled_tex;
@@ -695,8 +775,34 @@ void CachedSurface::UploadGLTexture(const Common::Rectangle<u32>& rect) {
         AllocateSurfaceTexture(texture.handle, tuple, custom_tex_info->width, custom_tex_info->height);
     }
 
+    const u8* upload_data=gl_buffer.data()+buffer_offset;
+    if (!GLES && pixel_format == PixelFormat::D24 && !custom_tex_info) {
+        depth_upload_buffer.resize(size_t(stride)*height);
+        for (u32 y=rect.bottom; y<rect.top; ++y) for (u32 x=rect.left; x<rect.right; ++x) {
+            const size_t index=size_t(y)*stride+x;
+            const u8* bytes=gl_buffer.data()+index*4;
+            const u32 z=u32(bytes[1]) | (u32(bytes[2])<<8) | (u32(bytes[3])<<16);
+            // GL_UNSIGNED_INT is UNORM32; zero extending UNORM24 loses 8 bits
+            // of scale. Keep canonical CPU/guest staging separate from upload.
+            depth_upload_buffer[index]=(z<<8)|(z>>16);
+        }
+        upload_data=reinterpret_cast<const u8*>(depth_upload_buffer.data())+buffer_offset;
+    }
     GLuint old_tex = OpenGLState::BindTexture2D(0, target_tex);
-    if (custom_tex_info) {
+    if (GLES && (pixel_format == PixelFormat::D24 || pixel_format == PixelFormat::D24S8)) {
+        // Packed D24 uploads on Apple GLES can collapse adjacent guest depths.
+        // Integer texels and exact fragment depth writes preserve every code.
+        const Common::Rectangle<u32> target_rect{
+            u32(x0), u32(y0) + rect.GetHeight(), u32(x0) + rect.GetWidth(), u32(y0)};
+        const u32 target_width = unscaled_tex.handle ? rect.GetWidth() : GetScaledWidth();
+        const u32 target_height = unscaled_tex.handle ? rect.GetHeight() : GetScaledHeight();
+        if (!depth_transfer || buffer_offset > gl_buffer.size() ||
+            !depth_transfer->UploadDepthChecked(target_tex, pixel_format, target_rect,
+                gl_buffer.data() + buffer_offset, gl_buffer.size() - buffer_offset,
+                stride, target_width, target_height)) {
+            throw std::runtime_error("Exact depth RAM upload failed; surface remains invalid");
+        }
+    } else if (custom_tex_info) {
         glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(custom_tex_info->width));
         glTexSubImage2D(GL_TEXTURE_2D, 0, x0, y0, custom_tex_info->width, custom_tex_info->height,
                         GL_RGBA, GL_UNSIGNED_BYTE, custom_tex_info->tex.data());
@@ -704,7 +810,7 @@ void CachedSurface::UploadGLTexture(const Common::Rectangle<u32>& rect) {
         glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(stride));
         glTexSubImage2D(GL_TEXTURE_2D, 0, x0, y0, static_cast<GLsizei>(rect.GetWidth()),
                         static_cast<GLsizei>(rect.GetHeight()), tuple.format, tuple.type,
-                        &gl_buffer[buffer_offset]);
+                        upload_data);
     }
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     OpenGLState::BindTexture2D(0, old_tex);
@@ -805,11 +911,15 @@ void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
         }
         last_download_wait_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
         started = std::chrono::steady_clock::now();
-        glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
-                     static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
-                     read_destination);
+        {
+            Common::FrameTiming::Scope read_timing(Common::FrameTiming::Phase::SurfaceReadPixels);
+            glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
+                         static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
+                         read_destination);
+        }
         last_download_read_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     } else {
+        Common::FrameTiming::Scope read_timing(Common::FrameTiming::Phase::SurfaceReadPixels);
         glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
                      static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
                      read_destination);
@@ -862,7 +972,12 @@ GLuint CachedSurface::GetTextureCopyHandle() {
     const Common::Rectangle<u32> rect{0, GetScaledHeight(), GetScaledWidth(), 0};
     BlitTextures(texture.handle, rect, texture_copy.handle, rect, type);
 #else
-    glCopyImageSubData(texture.handle, GL_TEXTURE_2D, 0, 0, 0, 0, texture_copy.handle, GL_TEXTURE_2D, 0, 0, 0, 0, GetScaledWidth(), GetScaledHeight(), 1);
+    if (GLAD_GL_ARB_copy_image && glCopyImageSubData) {
+        glCopyImageSubData(texture.handle, GL_TEXTURE_2D, 0, 0, 0, 0, texture_copy.handle, GL_TEXTURE_2D, 0, 0, 0, 0, GetScaledWidth(), GetScaledHeight(), 1);
+    } else {
+        const Common::Rectangle<u32> rect{0, GetScaledHeight(), GetScaledWidth(), 0};
+        BlitTextures(texture.handle, rect, texture_copy.handle, rect, type, true);
+    }
 #endif
     return texture_copy.handle;
 }
@@ -885,7 +1000,11 @@ static constexpr MatchFlags operator|(MatchFlags lhs, MatchFlags rhs) {
 template <MatchFlags find_flags>
 static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams& params,
                          ScaleMatch match_scale_type,
-                         std::optional<SurfaceInterval> validate_interval = std::nullopt) {
+                         std::optional<SurfaceInterval> validate_interval = std::nullopt,
+                         ExactLookupSelection<const CachedSurface*>* selection = nullptr,
+                         bool exact_prefilter = false) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Selection);
     Surface match_surface = nullptr;
     bool match_valid = false;
     u32 match_scale = 0;
@@ -893,6 +1012,21 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
 
     for (const auto& pair : RangeFromInterval(surface_cache, params.GetInterval())) {
         for (const auto& surface : pair.second) {
+            if constexpr (find_flags == (MatchFlags::Exact | MatchFlags::Invalid)) {
+                const bool profile = Common::FrameTiming::TextureAcquisitionTracingActive();
+                if (profile) ++Common::FrameTiming::counters.texture_exact_candidates;
+                if (exact_prefilter || profile) {
+                    const bool exact = surface->ExactMatch(params);
+                    if (!exact) {
+                        if (profile) ++Common::FrameTiming::counters.texture_exact_wrong_layout;
+                        if (exact_prefilter) {
+                            if (profile) ++Common::FrameTiming::counters.texture_exact_early_rejects;
+                            continue;
+                        }
+                    }
+                }
+                if (profile) ++Common::FrameTiming::counters.texture_exact_validity_lookups;
+            }
             const bool res_scale_matched = match_scale_type == ScaleMatch::Exact
                                                ? (params.res_scale == surface->res_scale)
                                                : (params.res_scale <= surface->res_scale);
@@ -918,6 +1052,11 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
                 if (!res_scale_matched && match_scale_type != ScaleMatch::Ignore &&
                     surface->type != SurfaceType::Fill)
                     return;
+
+                // The sink is used only by GetSurface's Exact|Invalid query.
+                // Observe all eligible identities, not only winner updates;
+                // validity can change later without a structural cache mutation.
+                if (selection) selection->Observe(surface.get(), surface->res_scale);
 
                 // Found a match, update only if this is better than the previous one
                 auto UpdateMatch = [&] {
@@ -970,12 +1109,324 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
     return match_surface;
 }
 
+// Runtime-opt-in, fixed-capacity metadata only. This observes fallback calls,
+// not GPU completion or definitive invalidation causality.
+struct RasterizerCacheOpenGL::SurfaceUploadTrace {
+    static constexpr size_t Capacity = 256;
+    struct State {
+        std::weak_ptr<CachedSurface> surface;
+        u64 generation = 0, fallback_calls = 0, invalidation_count = 0;
+        u64 cpu_invalidations = 0, gpu_invalidations = 0;
+        u32 created_frame = 0, invalidated_frame = 0;
+        PAddr invalid_start = 0, invalid_end = 0;
+        // 0 unknown, 1 initial allocation, 2 CPU write, 3 other GPU owner, 4 mixed.
+        u32 invalidation = 0;
+    };
+    static constexpr size_t OwnerCapacity = 8;
+    struct Owner {
+        SurfaceParams params{};
+        u64 generation = 0, invalid_bytes = 0;
+        PAddr start = 0, end = 0;
+        u32 disposition = 0, texture_handle = 0;
+        bool registered = false;
+    };
+    struct OwnerSnapshot {
+        std::array<Owner, OwnerCapacity> owners{};
+        size_t count = 0;
+        u64 covered_bytes = 0, gap_bytes = 0, depth_export_bytes = 0;
+        u64 overflow_fragments = 0, overflow_bytes = 0;
+        PAddr invalid_start = 0, invalid_end = 0;
+        bool Same(const OwnerSnapshot& other) const {
+            if (count != other.count || covered_bytes != other.covered_bytes || gap_bytes != other.gap_bytes ||
+                depth_export_bytes != other.depth_export_bytes || overflow_fragments != other.overflow_fragments ||
+                overflow_bytes != other.overflow_bytes || invalid_start != other.invalid_start || invalid_end != other.invalid_end) return false;
+            for (size_t i = 0; i < count; ++i) {
+                const auto& a = owners[i]; const auto& b = other.owners[i];
+                if (a.generation != b.generation || a.start != b.start || a.end != b.end ||
+                    a.invalid_bytes != b.invalid_bytes || a.disposition != b.disposition ||
+                    a.registered != b.registered || a.texture_handle != b.texture_handle ||
+                    !a.params.ExactMatch(b.params) || a.params.type != b.params.type ||
+                    a.params.res_scale != b.params.res_scale) return false;
+            }
+            return true;
+        }
+    };
+    struct Totals {
+        u64 calls = 0, guest_bytes = 0, gl_bytes = 0;
+        u64 dirty_owner_bytes = 0, non_dirty_owned_bytes = 0, depth_export_bytes = 0;
+        u64 owner_overflow_fragments = 0, owner_overflow_bytes = 0;
+        double load_seconds = 0, upload_seconds = 0;
+        void Add(u64 guest, u64 gl, double load, double upload, const OwnerSnapshot& owners) {
+            ++calls; guest_bytes += guest; gl_bytes += gl;
+            load_seconds += load; upload_seconds += upload;
+            dirty_owner_bytes += owners.covered_bytes; non_dirty_owned_bytes += owners.gap_bytes;
+            depth_export_bytes += owners.depth_export_bytes;
+            owner_overflow_fragments += owners.overflow_fragments; owner_overflow_bytes += owners.overflow_bytes;
+        }
+    };
+    struct Entry {
+        SurfaceParams params{};
+        u64 generation = 0, frame_group = 0, frames_seen = 0;
+        u64 observed_invalidations = 0, cpu_invalidations = 0, gpu_invalidations = 0;
+        OwnerSnapshot dirty_owners{};
+        u32 created_frame = 0, first_frame = 0, last_frame = 0, invalidated_frame = 0;
+        PAddr load_start = 0, load_end = 0, invalid_start = 0, invalid_end = 0;
+        Common::Rectangle<u32> rect{};
+        u32 invalidation = 0, texture_handle = 0;
+        bool first_fallback = false, custom_texture = false, texture_context = false;
+        Totals totals{};
+    };
+    std::array<State, Capacity> states{};
+    std::array<Entry, Capacity> entries{};
+    size_t entry_count = 0;
+    u64 allocations = 0, untracked_allocations = 0, unknown_identity_calls = 0;
+    u32 start_frame = 300, end_frame = 1200, min_frame = 0, max_frame = 0;
+    Totals totals{}, overflow{};
+    explicit SurfaceUploadTrace() {
+        const auto frame = [](const char* name, u32 fallback) {
+            const char* text = std::getenv(name);
+            if (!text || !*text || *text == '-') return fallback;
+            char* end = nullptr;
+            const auto parsed = std::strtoull(text, &end, 10);
+            return end && !*end && parsed <= std::numeric_limits<u32>::max()
+                ? static_cast<u32>(parsed) : fallback;
+        };
+        start_frame = frame("CARA_SURFACE_UPLOAD_TRACE_START_FRAME", 300);
+        end_frame = frame("CARA_SURFACE_UPLOAD_TRACE_END_FRAME", 1200);
+    }
+    bool InWindow(u32 frame) const { return frame >= start_frame && frame < end_frame; }
+    State* Find(const Surface& surface) {
+        for (auto& state : states) {
+            if (state.surface.lock() == surface) return &state;
+        }
+        return nullptr;
+    }
+    void Created(const Surface& surface) {
+        const auto generation = ++allocations;
+        for (auto& state : states) {
+            if (!state.surface.expired()) continue;
+            state = {};
+            state.surface = surface; state.generation = generation;
+            state.created_frame = VideoCore::GetCurrentFrame();
+            state.invalidated_frame = state.created_frame;
+            state.invalidation = 1; state.invalidation_count = 1;
+            state.invalid_start = surface->addr; state.invalid_end = surface->end;
+            return;
+        }
+        ++untracked_allocations;
+    }
+    void Invalidated(const Surface& surface, PAddr start, PAddr end, bool gpu_owner) {
+        if (auto* state = Find(surface)) {
+            const u32 reason = gpu_owner ? 3 : 2;
+            if (gpu_owner) ++state->gpu_invalidations; else ++state->cpu_invalidations;
+            if (state->invalidation_count) {
+                // Multiple observed events, including a still-unconsumed initial
+                // allocation. The envelope is metadata, not an exact dirty set.
+                state->invalidation = 4;
+                state->invalid_start = std::min(state->invalid_start, start);
+                state->invalid_end = std::max(state->invalid_end, end);
+            } else {
+                state->invalidation = reason;
+                state->invalid_start = start; state->invalid_end = end;
+            }
+            ++state->invalidation_count;
+            state->invalidated_frame = VideoCore::GetCurrentFrame();
+        }
+    }
+    OwnerSnapshot SnapshotOwners(const SurfaceMap& dirty_regions, const SurfaceInterval& requested,
+                                 const SurfaceInterval& invalid) {
+        OwnerSnapshot result;
+        result.invalid_start = boost::icl::first(invalid);
+        result.invalid_end = boost::icl::last_next(invalid);
+        for (const auto& pair : RangeFromInterval(dirty_regions, requested)) {
+            const auto span = pair.first & requested;
+            const auto bytes = boost::icl::length(span);
+            result.covered_bytes += bytes;
+            const auto& surface = pair.second;
+            const bool depth_export = surface && GLES && surface->type != SurfaceType::Fill && surface->pixel_format >= PixelFormat::D16;
+            if (depth_export) result.depth_export_bytes += bytes;
+            if (result.count == OwnerCapacity) {
+                ++result.overflow_fragments; result.overflow_bytes += bytes; continue;
+            }
+            auto& owner = result.owners[result.count++];
+            owner.start = boost::icl::first(span); owner.end = boost::icl::last_next(span);
+            if (!surface) continue;
+            owner.params = *surface;
+            if (auto* state = Find(surface)) owner.generation = state->generation;
+            owner.texture_handle = surface->texture.handle; owner.registered = surface->registered;
+            owner.disposition = depth_export ? 3 : surface->type == SurfaceType::Fill ? 2 : 1;
+            const auto invalid_regions = surface->invalid_regions & span;
+            for (const auto& region : invalid_regions) owner.invalid_bytes += boost::icl::length(region);
+        }
+        const auto requested_bytes = boost::icl::length(requested);
+        result.gap_bytes = requested_bytes >= result.covered_bytes ? requested_bytes - result.covered_bytes : 0;
+        return result;
+    }
+    void Record(const Surface& surface, PAddr start, PAddr end,
+                const Common::Rectangle<u32>& rect, double load, double upload,
+                const OwnerSnapshot& owners) {
+        const u32 frame = VideoCore::GetCurrentFrame();
+        auto* state = Find(surface);
+        const u64 generation = state ? state->generation : 0;
+        const bool first = state && state->fallback_calls == 0;
+        const bool custom = surface->custom_tex_info != nullptr;
+        const bool texture_context = Common::FrameTiming::TextureAcquisitionTracingActive();
+        const u32 reason = state ? state->invalidation : 0;
+        const u64 invalidations = state ? state->invalidation_count : 0;
+        const u64 cpu_invalidations = state ? state->cpu_invalidations : 0;
+        const u64 gpu_invalidations = state ? state->gpu_invalidations : 0;
+        const u64 guest_bytes = u64(end) - start;
+        const u64 gl_bytes = custom
+            ? u64(surface->custom_tex_info->width) * surface->custom_tex_info->height * 4
+            : u64(rect.GetWidth()) * rect.GetHeight() * CachedSurface::GetGLBytesPerPixel(surface->pixel_format);
+        if (state) {
+            ++state->fallback_calls;
+            state->invalidation = 0; state->invalidation_count = 0;
+            state->cpu_invalidations = state->gpu_invalidations = 0;
+        }
+        if (!InWindow(frame)) return;
+        if (!totals.calls) min_frame = max_frame = frame;
+        min_frame = std::min(min_frame, frame); max_frame = std::max(max_frame, frame);
+        totals.Add(guest_bytes, gl_bytes, load, upload, owners);
+        if (!generation) ++unknown_identity_calls;
+        const auto same_rect = [&](const Entry& e) {
+            return e.rect.left == rect.left && e.rect.right == rect.right &&
+                   e.rect.top == rect.top && e.rect.bottom == rect.bottom;
+        };
+        Entry* entry = nullptr;
+        for (size_t i = 0; i < entry_count; ++i) {
+            auto& e = entries[i];
+            if (e.generation == generation && e.frame_group == frame / 60 &&
+                e.params.ExactMatch(*surface) && e.params.type == surface->type &&
+                e.params.res_scale == surface->res_scale && e.load_start == start && e.load_end == end &&
+                same_rect(e) && e.first_fallback == first && e.custom_texture == custom &&
+                e.texture_context == texture_context && e.texture_handle == surface->texture.handle &&
+                e.invalidation == reason &&
+                e.observed_invalidations == invalidations && e.cpu_invalidations == cpu_invalidations &&
+                e.gpu_invalidations == gpu_invalidations && e.dirty_owners.Same(owners) &&
+                (!state || (e.invalid_start == state->invalid_start && e.invalid_end == state->invalid_end &&
+                            e.invalidated_frame == state->invalidated_frame))) {
+                entry = &e; break;
+            }
+        }
+        if (!entry && entry_count < Capacity) {
+            entry = &entries[entry_count++];
+            entry->params = *surface; entry->generation = generation;
+            entry->frame_group = frame / 60; entry->first_frame = entry->last_frame = frame;
+            entry->load_start = start; entry->load_end = end; entry->rect = rect;
+            entry->first_fallback = first; entry->custom_texture = custom;
+            entry->texture_context = texture_context; entry->invalidation = reason;
+            entry->observed_invalidations = invalidations; entry->texture_handle = surface->texture.handle;
+            entry->cpu_invalidations = cpu_invalidations; entry->gpu_invalidations = gpu_invalidations;
+            entry->dirty_owners = owners;
+            if (state) {
+                entry->created_frame = state->created_frame;
+                entry->invalid_start = state->invalid_start; entry->invalid_end = state->invalid_end;
+                entry->invalidated_frame = state->invalidated_frame;
+            }
+        }
+        if (!entry) { overflow.Add(guest_bytes, gl_bytes, load, upload, owners); return; }
+        entry->first_frame = std::min(entry->first_frame, frame);
+        entry->last_frame = std::max(entry->last_frame, frame);
+        entry->frames_seen |= u64{1} << (frame % 60);
+        entry->totals.Add(guest_bytes, gl_bytes, load, upload, owners);
+    }
+    void Write() const {
+        std::ofstream out(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "surface-uploads.json");
+        const auto write_totals = [&](const Totals& value) {
+            out << "{\"calls\":" << value.calls << ",\"requested_guest_bytes\":" << value.guest_bytes
+                << ",\"gl_upload_payload_bytes\":" << value.gl_bytes << ",\"load_seconds\":" << value.load_seconds
+                << ",\"upload_seconds\":" << value.upload_seconds
+                << ",\"preflush_dirty_owner_bytes\":" << value.dirty_owner_bytes
+                << ",\"preflush_non_dirty_owned_bytes\":" << value.non_dirty_owned_bytes
+                << ",\"preflush_GLES_depth_export_bytes\":" << value.depth_export_bytes
+                << ",\"owner_overflow_fragments\":" << value.owner_overflow_fragments
+                << ",\"owner_overflow_bytes\":" << value.owner_overflow_bytes << '}';
+        };
+        out << std::setprecision(12)
+            << "{\"kind\":\"validate_surface_guest_ram_fallback_uploads\",\"enabled\":true,\"read_only_diagnostic\":true"
+            << ",\"written_frame\":" << VideoCore::GetCurrentFrame()
+            << ",\"window_start_inclusive\":" << start_frame << ",\"window_end_exclusive\":" << end_frame
+            << ",\"frame_clock\":\"VideoCore::GetCurrentFrame\",\"actual_min_frame\":";
+        if (totals.calls) out << min_frame; else out << "null";
+        out << ",\"actual_max_frame\":";
+        if (totals.calls) out << max_frame; else out << "null";
+        out << ",\"aggregate_capacity\":" << Capacity << ",\"identity_capacity\":" << Capacity
+            << ",\"observed_surface_allocations_all_frames\":" << allocations
+            << ",\"untracked_surface_allocations_all_frames\":" << untracked_allocations
+            << ",\"unknown_identity_calls\":" << unknown_identity_calls
+            << ",\"invalidation_labels\":[\"unknown\",\"initial_allocation\",\"CPU_write\",\"other_GPU_owner\",\"mixed\"]"
+            << ",\"owner_snapshot_capacity\":" << OwnerCapacity
+            << ",\"owner_flush_dispositions\":[\"unknown\",\"color_download\",\"fill_CPU_write\",\"GLES_depth_CPU_export\"]"
+            << ",\"limitations\":\"Last observed invalidation is context, not proven cause; interval envelopes may contain gaps. Calls and requested bytes do not prove GPU completion, successful RAM load, or GL success. Initial means first fallback for tracked surface lifetime, not first GL use. Frame groups are original VideoCore frame/60, not benchmark refresh IDs.\""
+            << ",\"totals\":";
+        write_totals(totals); out << ",\"overflow_totals\":"; write_totals(overflow);
+        out << ",\"entries\":[";
+        for (size_t i = 0; i < entry_count; ++i) {
+            const auto& e = entries[i];
+            unsigned distinct = 0;
+            for (auto mask = e.frames_seen; mask; mask &= mask - 1) ++distinct;
+            out << (i ? "," : "") << "{\"allocation_generation\":" << e.generation
+                << ",\"identity_known\":" << (e.generation ? "true" : "false")
+                << ",\"created_frame\":" << e.created_frame << ",\"texture_handle\":" << e.texture_handle
+                << ",\"surface_address\":" << e.params.addr << ",\"surface_end_exclusive\":" << e.params.end
+                << ",\"surface_size\":" << e.params.size << ",\"format\":" << unsigned(e.params.pixel_format)
+                << ",\"surface_type\":" << unsigned(e.params.type) << ",\"width\":" << e.params.width
+                << ",\"height\":" << e.params.height << ",\"stride\":" << e.params.stride
+                << ",\"tiled\":" << (e.params.is_tiled ? "true" : "false") << ",\"scale\":" << e.params.res_scale
+                << ",\"frame_group_start\":" << e.frame_group * 60 << ",\"first_frame\":" << e.first_frame
+                << ",\"last_frame\":" << e.last_frame << ",\"distinct_original_frames\":" << distinct
+                << ",\"load_start\":" << e.load_start << ",\"load_end_exclusive\":" << e.load_end
+                << ",\"destination_rect\":{\"left\":" << e.rect.left << ",\"right\":" << e.rect.right
+                << ",\"bottom\":" << e.rect.bottom << ",\"top\":" << e.rect.top << '}'
+                << ",\"first_fallback_for_allocation\":" << (e.first_fallback ? "true" : "false")
+                << ",\"custom_texture\":" << (e.custom_texture ? "true" : "false")
+                << ",\"inside_texture_acquisition_context\":" << (e.texture_context ? "true" : "false")
+                << ",\"last_observed_invalidation\":" << e.invalidation
+                << ",\"observed_invalidations_since_previous_fallback\":" << e.observed_invalidations
+                << ",\"observed_CPU_invalidation_intervals\":" << e.cpu_invalidations
+                << ",\"observed_GPU_invalidation_intervals\":" << e.gpu_invalidations
+                << ",\"last_invalidation_frame\":" << e.invalidated_frame
+                << ",\"invalidation_envelope_start\":" << e.invalid_start
+                << ",\"invalidation_envelope_end_exclusive\":" << e.invalid_end << ",\"totals\":";
+            write_totals(e.totals);
+            const auto& snapshot = e.dirty_owners;
+            out << ",\"preflush_dirty_owners\":{\"covered_bytes\":" << snapshot.covered_bytes
+                << ",\"non_dirty_owned_bytes\":" << snapshot.gap_bytes
+                << ",\"GLES_depth_export_bytes\":" << snapshot.depth_export_bytes
+                << ",\"overflow_fragments\":" << snapshot.overflow_fragments
+                << ",\"overflow_bytes\":" << snapshot.overflow_bytes
+                << ",\"invalid_interval_start\":" << snapshot.invalid_start
+                << ",\"invalid_interval_end_exclusive\":" << snapshot.invalid_end << ",\"owners\":[";
+            for (size_t j = 0; j < snapshot.count; ++j) {
+                const auto& owner = snapshot.owners[j]; const auto& p = owner.params;
+                out << (j ? "," : "") << "{\"allocation_generation\":" << owner.generation
+                    << ",\"start\":" << owner.start << ",\"end_exclusive\":" << owner.end
+                    << ",\"surface_address\":" << p.addr << ",\"surface_end_exclusive\":" << p.end
+                    << ",\"format\":" << unsigned(p.pixel_format) << ",\"surface_type\":" << unsigned(p.type)
+                    << ",\"width\":" << p.width << ",\"height\":" << p.height << ",\"stride\":" << p.stride
+                    << ",\"tiled\":" << (p.is_tiled ? "true" : "false") << ",\"scale\":" << p.res_scale
+                    << ",\"registered\":" << (owner.registered ? "true" : "false")
+                    << ",\"owner_invalid_bytes_in_span\":" << owner.invalid_bytes
+                    << ",\"flush_disposition\":" << owner.disposition << '}';
+            }
+            out << "]}}";
+        }
+        out << "]}\n";
+    }
+};
+
 RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
     const auto enabled = [](const char* name) {
         const char* value = std::getenv(name);
         return value && std::strcmp(value, "1") == 0;
     };
+    texture_lookup_reuse = enabled("CARA_TEXTURE_LOOKUP_REUSE");
+    texture_lookup_verify = enabled("CARA_TEXTURE_LOOKUP_VERIFY");
+    texture_exact_prefilter = enabled("CARA_TEXTURE_EXACT_PREFILTER");
     trace_flushes = enabled("CARA_SURFACE_FLUSH_TRACE");
+    if (enabled("CARA_SURFACE_UPLOAD_TRACE"))
+        surface_upload_trace = std::make_unique<SurfaceUploadTrace>();
     retain_small_cpu_writes = enabled("CARA_RETAIN_SMALL_CPU_WRITES");
     gpu_surface_remap = enabled("CARA_GPU_SURFACE_REMAP");
     resolution_scale_factor = VideoCore::GetResolutionScaleFactor();
@@ -987,6 +1438,7 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
 
 RasterizerCacheOpenGL::~RasterizerCacheOpenGL() {
     if (trace_flushes) WriteFlushTrace();
+    if (surface_upload_trace) surface_upload_trace->Write();
     g_read_framebuffer.Release();
     g_draw_framebuffer.Release();
 }
@@ -1039,8 +1491,10 @@ void RasterizerCacheOpenGL::RecordFlush(const Surface& surface, u32 requested_by
         }
     }
     ++found->calls;
-    const bool repacked = GLES && surface->type == SurfaceType::Color && surface->pixel_format != PixelFormat::RGBA8;
-    found->readback_bytes += u64(width) * height * (repacked ? 4 : CachedSurface::GetGLBytesPerPixel(surface->pixel_format));
+    const bool rgba_export = GLES && surface->type != SurfaceType::Fill &&
+        ((surface->type == SurfaceType::Color && surface->pixel_format != PixelFormat::RGBA8) ||
+         surface->pixel_format >= PixelFormat::D16);
+    found->readback_bytes += u64(width) * height * (rgba_export ? 4 : CachedSurface::GetGLBytesPerPixel(surface->pixel_format));
     found->seconds += seconds;
     found->wait_seconds += surface->last_download_wait_seconds;
     found->read_seconds += surface->last_download_read_seconds;
@@ -1051,7 +1505,7 @@ void RasterizerCacheOpenGL::WriteFlushTrace() const {
     std::ofstream file(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "surface-flushes.json");
     const char* wait = std::getenv("CARA_READBACK_WAIT_TRACE");
     file << "{\"wait_instrumented\":" << (wait && std::strcmp(wait, "1") == 0 ? "true" : "false")
-         << ",\"reasons\":[\"external\",\"validation\",\"small_cpu_write\",\"all\"],\"entries\":[";
+         << ",\"reasons\":[\"external\",\"validation\",\"small_cpu_write\",\"all\",\"cleanup\"],\"entries\":[";
     for (size_t i = 0; i < flush_trace.size(); ++i) {
         const auto& item = flush_trace[i];
         file << (i ? "," : "") << "{\"reason\":" << unsigned(item.reason)
@@ -1111,8 +1565,43 @@ Surface RasterizerCacheOpenGL::GetSurface(const SurfaceParams& params, ScaleMatc
     ASSERT(!params.is_tiled || (params.width % 8 == 0 && params.height % 8 == 0));
 
     // Check for an exact match in existing surfaces
-    Surface surface =
-        FindMatch<MatchFlags::Exact | MatchFlags::Invalid>(surface_cache, params, match_res_scale);
+    Surface surface;
+    const bool count_lookup = texture_lookup_reuse && Common::FrameTiming::counters.enabled;
+    const u64 selection_generation = texture_lookup_generation;
+    ExactLookupSelection<const CachedSurface*> selection;
+    bool lookup_hit = false;
+    bool verification_mismatch = false;
+    if (texture_lookup_reuse) {
+        if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_checks;
+        for (const auto& entry : texture_lookup_entries) {
+            if (entry.generation != selection_generation || entry.scale_match != match_res_scale ||
+                !SameTextureLookupParams(entry.params, params) || !entry.watcher || !entry.watcher->IsValid()) continue;
+            auto candidate = entry.watcher->Get();
+            if (!candidate || !candidate->registered || candidate->type == SurfaceType::Fill ||
+                candidate->res_scale != entry.selected_scale || !candidate->ExactMatch(params) ||
+                !candidate->IsRegionValid(params.GetInterval())) continue;
+            if (texture_lookup_verify) {
+                auto reference = FindMatch<MatchFlags::Exact | MatchFlags::Invalid>(surface_cache, params, match_res_scale);
+                if (reference != candidate) {
+                    if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_verify_mismatches;
+                    surface = std::move(reference);
+                    texture_lookup_entries = {};
+                    texture_lookup_next = 0;
+                    verification_mismatch = true;
+                    break;
+                }
+                if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_verified_hits;
+            }
+            surface = std::move(candidate);
+            lookup_hit = true;
+            if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_hits;
+            break;
+        }
+        if (!lookup_hit && count_lookup) ++Common::FrameTiming::counters.texture_lookup_misses;
+    }
+    if (!surface)
+        surface = FindMatch<MatchFlags::Exact | MatchFlags::Invalid>(surface_cache, params, match_res_scale,
+            std::nullopt, texture_lookup_reuse ? &selection : nullptr, texture_exact_prefilter);
 
     if (surface == nullptr) {
         u16 target_res_scale = params.res_scale;
@@ -1144,6 +1633,21 @@ Surface RasterizerCacheOpenGL::GetSurface(const SurfaceParams& params, ScaleMatc
         ValidateSurface(surface, params.addr, params.size);
     }
 
+    if (texture_lookup_reuse && !lookup_hit && !verification_mismatch) {
+        if (selection_generation != texture_lookup_generation) {
+            if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_epoch_rejects;
+        } else if (!selection.IsUnique(surface.get())) {
+            if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_ambiguous_rejects;
+        } else if (surface->registered && surface->type != SurfaceType::Fill &&
+                   surface->IsRegionValid(params.GetInterval())) {
+            auto watcher = surface->GetTextureLookupWatcher();
+            watcher->Validate();
+            auto& entry = texture_lookup_entries[texture_lookup_next];
+            entry = {params, match_res_scale, selection_generation, surface->res_scale, std::move(watcher)};
+            texture_lookup_next = (texture_lookup_next + 1) % TextureLookupCapacity;
+            if (count_lookup) ++Common::FrameTiming::counters.texture_lookup_stores;
+        }
+    }
     surface->last_used_frame = VideoCore::GetCurrentFrame();
 
     return surface;
@@ -1250,6 +1754,9 @@ Surface RasterizerCacheOpenGL::GetTextureSurface(
 
 Surface RasterizerCacheOpenGL::GetTextureSurface(const Pica::Texture::TextureInfo& info,
                                                  u32 max_level) {
+    Common::FrameTiming::TextureAcquisitionContext context;
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Acquire);
     if (info.physical_address == 0) {
         return nullptr;
     }
@@ -1284,6 +1791,8 @@ Surface RasterizerCacheOpenGL::GetTextureSurface(const Pica::Texture::TextureInf
 
     // Update mipmap if necessary
     if (max_level != 0) {
+        Common::FrameTiming::TextureAcquisitionScope mip_timing(
+            Common::FrameTiming::TextureAcquisitionPhase::Mipmap);
         if (info.width != (min_width << max_level) || info.height != (min_height << max_level)) {
             for (u32 i = 1; i < max_level; ++i) {
                 if ((info.width >> i) == 8) {
@@ -1664,41 +2173,97 @@ void RasterizerCacheOpenGL::DuplicateSurface(const Surface& src_surface,
     }
 }
 
-bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const SurfaceParams& params) {
+bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const SurfaceParams& params,
+                                               SurfaceInterval* remapped_interval,
+                                               const SurfaceInterval* requested_interval) {
+    static const bool byte_remap = [] {
+        const char* value = std::getenv("CARA_GPU_BYTE_SURFACE_REMAP");
+        return !value || std::strcmp(value, "1") == 0;
+    }();
+    if (!byte_remap) {
+        const auto eligible = [](const Surface& surface) {
+            return surface->pixel_format == PixelFormat::RGBA8 && surface->res_scale == 1 &&
+                   surface->width != 0 && surface->height != 0 && surface->width == surface->stride &&
+                   (!surface->is_tiled || ((surface->width | surface->height) & 7) == 0) &&
+                   (surface->addr & 3) == 0 && surface->texture.handle != 0 && !surface->custom_tex_info;
+        };
+        if (!GLES || !eligible(destination)) return false;
+        const auto interval = params.GetInterval();
+        if (params.addr < destination->addr || params.end > destination->end) return false;
+        for (const auto& group : RangeFromInterval(surface_cache, interval)) {
+            for (const auto& source : group.second) {
+                if (source == destination || !eligible(source) ||
+                    source->texture.handle == destination->texture.handle ||
+                    params.addr < source->addr || params.end > source->end ||
+                    !source->IsRegionValid(interval) || destination->addr < source->addr ||
+                    destination->end > source->end) continue;
+                Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceRemap);
+                if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
+                if (!surface_remapper->RemapRGBA8(source->texture.handle, *source,
+                                                  destination->texture.handle, *destination,
+                                                  destination->GetSubRect(params))) continue;
+                destination->InvalidateAllWatcher();
+                if (Common::FrameTiming::counters.enabled) {
+                    ++Common::FrameTiming::counters.surface_remap_calls;
+                    Common::FrameTiming::counters.surface_remap_bytes += params.size;
+                }
+                if (remapped_interval) *remapped_interval = interval;
+                return true;
+            }
+        }
+        return false;
+    }
     const auto eligible = [](const Surface& surface) {
-        return surface->pixel_format == PixelFormat::RGBA8 && surface->res_scale == 1 &&
+        return (surface->pixel_format == PixelFormat::RGBA8 ||
+                surface->pixel_format == PixelFormat::RGB8) && surface->res_scale == 1 &&
                surface->width != 0 && surface->height != 0 && surface->width == surface->stride &&
                (!surface->is_tiled || ((surface->width | surface->height) & 7) == 0) &&
-               (surface->addr & 3) == 0 && surface->texture.handle != 0 && !surface->custom_tex_info;
+               surface->texture.handle != 0 && !surface->custom_tex_info;
     };
     if (!GLES || !eligible(destination)) return false;
-    const auto interval = params.GetInterval();
+    const auto interval = requested_interval ? *requested_interval : params.GetInterval();
     if (params.addr < destination->addr || params.end > destination->end) return false;
     for (const auto& group : RangeFromInterval(surface_cache, interval)) {
         for (const auto& source : group.second) {
-            // A cached byte interval can cover padding that has no corresponding
-            // texel. Restrict this first path to dense, native-resolution surfaces.
             if (source == destination || !eligible(source) ||
-                source->texture.handle == destination->texture.handle ||
-                params.addr < source->addr || params.end > source->end ||
-                !source->IsRegionValid(interval)) continue;
-            Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceRemap);
-            if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
-            if (!surface_remapper->RemapRGBA8(source->texture.handle, *source,
-                                              destination->texture.handle, *destination,
-                                              destination->GetSubRect(params))) continue;
-            destination->InvalidateAllWatcher();
-            if (Common::FrameTiming::counters.enabled) {
-                ++Common::FrameTiming::counters.surface_remap_calls;
-                Common::FrameTiming::counters.surface_remap_bytes += params.size;
+                source->texture.handle == destination->texture.handle) continue;
+            // Split at valid source ownership boundaries before selecting a whole
+            // pixel/tile rectangle. Never align outwards across CPU-owned bytes.
+            const auto valid_regions = SurfaceRegions(interval & source->GetInterval()) -
+                                       source->invalid_regions;
+            for (const auto& valid : valid_regions) {
+                const u64 unit = destination->BytesInPixels(destination->is_tiled ? 64 : 1);
+                const u64 row = destination->BytesInPixels(destination->stride *
+                                                          (destination->is_tiled ? 8 : 1));
+                const auto span = SurfaceRemapLayout::RectangleSpan(destination->addr, row, unit,
+                    {boost::icl::first(valid), boost::icl::last_next(valid)});
+                if (!span) continue;
+                const SurfaceInterval candidate(static_cast<PAddr>(span.begin),
+                                                static_cast<PAddr>(span.end));
+                if (!remapped_interval && candidate != interval) continue;
+                const auto copy_params = destination->FromInterval(candidate);
+                if (copy_params.GetInterval() != candidate || !source->IsRegionValid(candidate)) continue;
+                Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceRemap);
+                if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
+                if (!surface_remapper->RemapBytes(source->texture.handle, *source,
+                                                  destination->texture.handle, *destination,
+                                                  destination->GetSubRect(copy_params))) continue;
+                destination->InvalidateAllWatcher();
+                if (Common::FrameTiming::counters.enabled) {
+                    ++Common::FrameTiming::counters.surface_remap_calls;
+                    Common::FrameTiming::counters.surface_remap_bytes += span.end - span.begin;
+                }
+                if (remapped_interval) *remapped_interval = candidate;
+                return true;
             }
-            return true;
         }
     }
     return false;
 }
 
 void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, u32 size) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Validation);
     if (size == 0)
         return;
 
@@ -1709,6 +2274,16 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
         ASSERT(surface->IsRegionValid(validate_interval));
         return;
     }
+
+    // An entirely valid surface has no regions for the validation loop to
+    // process. Avoid constructing its empty intersection; retain the timing
+    // scope and the size/Fill sanity checks above. The override permits a
+    // same-build comparison with the original path.
+    static const bool empty_fastpath = [] {
+        const char* value = std::getenv("CARA_VALIDATE_EMPTY_FASTPATH");
+        return !value || std::strcmp(value, "0") != 0;
+    }();
+    if (empty_fastpath && surface->invalid_regions.empty()) return;
 
     auto validate_regions = surface->invalid_regions & validate_interval;
     auto notify_validated = [&](SurfaceInterval interval) {
@@ -1736,15 +2311,17 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
 
         // Preserve guest byte addressing across a tiling/stride alias without
         // synchronously exporting the source render target through CPU memory.
-        if (gpu_surface_remap && TryRemapSurface(surface, params)) {
-            notify_validated(params.GetInterval());
+        SurfaceInterval remapped_interval;
+        if (gpu_surface_remap && TryRemapSurface(surface, params, &remapped_interval, &interval)) {
+            notify_validated(remapped_interval);
             continue;
         }
 
         // Try to find surface in cache with different format
         // that can can be reinterpreted to the requested format.
-        if (ValidateByReinterpretation(surface, params, interval)) {
-            notify_validated(interval);
+        SurfaceInterval reinterpreted_interval;
+        if (ValidateByReinterpretation(surface, params, interval, &reinterpreted_interval)) {
+            notify_validated(reinterpreted_interval);
             continue;
         }
 
@@ -1764,20 +2341,44 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
         }
 
         // Load data from 3DS memory
-        if (surface->pixel_format < PixelFormat::D16) {
-            {
+        if (surface->pixel_format < PixelFormat::D16 || surface->pixel_format == PixelFormat::D16 ||
+            surface->pixel_format == PixelFormat::D24 || surface->pixel_format == PixelFormat::D24S8) {
+            const auto flush_for_ram = [&] {
                 const auto previous_reason = flush_reason;
                 const auto previous_destination = validation_destination;
                 if (trace_flushes) validation_destination = surface->FromInterval(interval);
                 flush_reason = FlushReason::Validation;
                 SCOPE_EXIT({ flush_reason = previous_reason; validation_destination = previous_destination; });
                 FlushRegion(params.addr, params.size);
+                if (!VideoCore::Memory()->GetPhysicalPointer(params.addr) ||
+                    !VideoCore::Memory()->GetPhysicalPointer(params.end-1))
+                    throw std::runtime_error("Surface RAM validation source unavailable");
+                if (GLES && surface->pixel_format >= PixelFormat::D16 && glGetError()!=GL_NO_ERROR)
+                    throw std::runtime_error("Depth RAM upload has a preexisting GL error");
+            };
+            if (surface_upload_trace) {
+                const auto owners = surface_upload_trace->SnapshotOwners(dirty_regions,
+                    SurfaceInterval(params.addr, params.end), interval);
+                flush_for_ram();
+                const auto rect = surface->GetSubRect(params);
+                const auto started = std::chrono::steady_clock::now();
+                surface->LoadGLBuffer(params.addr, params.end);
+                const auto loaded = std::chrono::steady_clock::now();
+                surface->UploadGLTexture(rect, format_reinterpreter.get());
+                const auto uploaded = std::chrono::steady_clock::now();
+                surface_upload_trace->Record(surface, params.addr, params.end, rect,
+                    std::chrono::duration<double>(loaded - started).count(),
+                    std::chrono::duration<double>(uploaded - loaded).count(), owners);
+            } else {
+                flush_for_ram();
+                surface->LoadGLBuffer(params.addr, params.end);
+                surface->UploadGLTexture(surface->GetSubRect(params), format_reinterpreter.get());
             }
-            surface->LoadGLBuffer(params.addr, params.end);
-            surface->UploadGLTexture(surface->GetSubRect(params));
         } else {
-            LOG_INFO(Render_OpenGL, "ValidateSurface load depth: {}", (u32)surface->pixel_format);
+            throw std::runtime_error("Cannot validate unsupported surface format from RAM");
         }
+        if (GLES && surface->pixel_format >= PixelFormat::D16 && glGetError()!=GL_NO_ERROR)
+            throw std::runtime_error("Depth RAM upload failed; surface remains invalid");
         notify_validated(params.GetInterval());
     }
 }
@@ -1785,6 +2386,20 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
 bool RasterizerCacheOpenGL::NoUnimplementedReinterpretations(const Surface& surface,
                                                              SurfaceParams& params,
                                                              const SurfaceInterval& interval) {
+    Common::FrameTiming::TextureAcquisitionScope texture_timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Reinterpretation);
+    const bool profile = Common::FrameTiming::RenderBookkeepingProfileEnabled();
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ReinterpretCheck, profile);
+    static const bool reuse = [] {
+        const char* value = std::getenv("CARA_RENDER_BOOKKEEPING_REUSE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    const bool count_lookups = Common::FrameTiming::counters.enabled && (profile || reuse);
+    // RGBA8 is the only repeated entry (nine implicit zero initializers).
+    // The first matching format for 32bpp is RGBA8, so one cached slot suffices.
+    ReinterpretLookupCache<PixelFormat, Surface, 1> lookup_cache;
+    bool seen_rgba8 = false;
+    if (count_lookups) ++Common::FrameTiming::counters.render_reinterpret_invocations;
     static constexpr std::array<PixelFormat, 17> all_formats{
         PixelFormat::RGBA8, PixelFormat::RGB8,   PixelFormat::RGB5A1, PixelFormat::RGB565,
         PixelFormat::RGBA4, PixelFormat::D16,    PixelFormat::D24, PixelFormat::D24S8,
@@ -1795,8 +2410,19 @@ bool RasterizerCacheOpenGL::NoUnimplementedReinterpretations(const Surface& surf
             params.pixel_format = format;
             // This could potentially be expensive,
             // although experimentally it hasn't been too bad
-            Surface test_surface =
-                FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore, interval);
+            if (count_lookups) {
+                if (format == PixelFormat::RGBA8) {
+                    if (seen_rgba8) ++Common::FrameTiming::counters.render_reinterpret_repeat_opportunities;
+                    seen_rgba8 = true;
+                }
+            }
+            const auto result = lookup_cache.Get(reuse, format, [&] {
+                if (count_lookups) ++Common::FrameTiming::counters.render_reinterpret_find_calls;
+                return FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore, interval);
+            });
+            if (count_lookups && result.reused)
+                ++Common::FrameTiming::counters.render_reinterpret_avoided_calls;
+            const Surface& test_surface = result.value;
             if (test_surface != nullptr) {
                 LOG_WARNING(Render_OpenGL, "Missing pixel_format reinterpreter: {} -> {}", (u32)format,
                             (u32)surface->pixel_format);
@@ -1820,27 +2446,117 @@ bool RasterizerCacheOpenGL::IntervalHasInvalidPixelFormat(SurfaceParams& params,
 }
 
 bool RasterizerCacheOpenGL::ValidateByReinterpretation(const Surface& surface,
-                                                       SurfaceParams& params,
-                                                       const SurfaceInterval& interval) {
+                                                       const SurfaceParams& params,
+                                                       const SurfaceInterval& interval,
+                                                       SurfaceInterval* copied_interval) {
+    Common::FrameTiming::TextureAcquisitionScope texture_timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Reinterpretation);
     for (const auto& entity : format_reinterpreter->GetReinterpreters()) {
-        if (entity.dst_format != surface->pixel_format) {
-            continue;
-        }
-        params.pixel_format = entity.src_format;
-        Surface reinterpret_surface =
-            FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore, interval);
-        if (reinterpret_surface != nullptr) {
-            SurfaceInterval reinterpret_interval = params.GetCopyableInterval(reinterpret_surface);
-            SurfaceParams reinterpret_params = surface->FromInterval(reinterpret_interval);
-            auto src_rect = reinterpret_surface->GetScaledSubRect(reinterpret_params);
-            auto dest_rect = surface->GetScaledSubRect(reinterpret_params);
-            entity.reinterpreter->Reinterpret(reinterpret_surface->texture.handle, src_rect,
-                                              g_read_framebuffer.handle, surface->texture.handle,
-                                              dest_rect, g_draw_framebuffer.handle);
-            return true;
-        }
+        if (entity.dst_format != surface->pixel_format) continue;
+        auto source_params = params;
+        source_params.pixel_format = entity.src_format;
+        Surface source = FindMatch<MatchFlags::Copy>(surface_cache, source_params,
+                                                   ScaleMatch::Ignore, interval);
+        if (!source) continue;
+        const auto copied = source_params.GetCopyableInterval(source);
+        // An invalid byte span need not be a whole texture rectangle. Copying
+        // neighboring bytes is safe only when the source is current for the
+        // entire actual rectangle; CPU/other GPU writes invalidate that source.
+        // Require progress, destination containment and copyability for this
+        // actual interval, rather than FindMatch's narrower selection interval.
+        if (boost::icl::length(copied) == 0 ||
+            boost::icl::length(copied & interval) == 0 ||
+            boost::icl::first(copied) < surface->addr ||
+            boost::icl::last_next(copied) > surface->end ||
+            !source->IsRegionValid(copied) || !source->CanCopy(source_params, copied)) continue;
+        const auto copy_params = surface->FromInterval(copied);
+        if (copy_params.GetInterval() != copied || !surface->CanSubRect(copy_params)) continue;
+        const auto src_rect = source->GetScaledSubRect(copy_params);
+        const auto dst_rect = surface->GetScaledSubRect(copy_params);
+        if (!entity.reinterpreter->ReinterpretChecked(source->texture.handle, src_rect,
+                g_read_framebuffer.handle, surface->texture.handle, dst_rect,
+                g_draw_framebuffer.handle, source->GetScaledWidth(), source->GetScaledHeight())) continue;
+        if (copied_interval) *copied_interval = copied;
+        return true;
     }
     return false;
+}
+
+bool RasterizerCacheOpenGL::ExportDepthForCPU(const Surface& surface, const SurfaceInterval& interval) {
+    const auto format=surface->pixel_format;
+    if (!GLES || (format!=PixelFormat::D16 && format!=PixelFormat::D24 && format!=PixelFormat::D24S8) ||
+        surface->res_scale!=1 || !surface->width || !surface->height || surface->width!=surface->stride ||
+        boost::icl::length(interval)==0 || boost::icl::first(interval)<surface->addr ||
+        boost::icl::last_next(interval)>surface->end) return false;
+    const auto start=boost::icl::first(interval), end=boost::icl::last_next(interval);
+    const auto* first=VideoCore::Memory()->GetPhysicalPointer(start);
+    const auto* last=VideoCore::Memory()->GetPhysicalPointer(end-1);
+    if (!first || !last || reinterpret_cast<std::uintptr_t>(last)-reinterpret_cast<std::uintptr_t>(first)!=end-start-1 ||
+        !VideoCore::Memory()->GetPhysicalPointer(surface->addr)) return false;
+    const auto rect=surface->GetSubRect(surface->FromInterval(interval));
+    if (!depth_export_scratch || depth_export_scratch->width!=surface->width ||
+        depth_export_scratch->height!=surface->height) {
+        SurfaceParams params;
+        params.addr=0; params.width=params.stride=surface->width; params.height=surface->height;
+        params.res_scale=1; params.is_tiled=false; params.pixel_format=PixelFormat::RGBA8; params.UpdateParams();
+        auto staging=std::make_shared<CachedSurface>();
+        static_cast<SurfaceParams&>(*staging)=params;
+        staging->texture.Create();
+        GLint previous_unpack=0; glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&previous_unpack);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+        AllocateSurfaceTexture(staging->texture.handle,GetFormatTuple(PixelFormat::RGBA8),params.width,params.height);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER,previous_unpack);
+        depth_export_scratch=std::move(staging);
+    }
+    if (glGetError()!=GL_NO_ERROR || !format_reinterpreter->EncodeDepthChecked(surface->texture.handle,
+            format,rect,depth_export_scratch->texture.handle,rect,surface->width,surface->height)) return false;
+    const auto previous=OpenGLState::GetCurState();
+    GLint pack_buffer=0, pack_alignment=4, pack_row=0, pack_skip_rows=0, pack_skip_pixels=0;
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&pack_buffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT,&pack_alignment); glGetIntegerv(GL_PACK_ROW_LENGTH,&pack_row);
+    glGetIntegerv(GL_PACK_SKIP_ROWS,&pack_skip_rows); glGetIntegerv(GL_PACK_SKIP_PIXELS,&pack_skip_pixels);
+    OpenGLState::BindReadFramebuffer(g_read_framebuffer.handle);
+    GLint read_buffer=0; glGetIntegerv(GL_READ_BUFFER,&read_buffer);
+    SCOPE_EXIT({
+        OpenGLState::BindReadFramebuffer(g_read_framebuffer.handle); glReadBuffer(read_buffer);
+        previous.Apply();
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,pack_buffer);
+        glPixelStorei(GL_PACK_ALIGNMENT,pack_alignment); glPixelStorei(GL_PACK_ROW_LENGTH,pack_row);
+        glPixelStorei(GL_PACK_SKIP_ROWS,pack_skip_rows); glPixelStorei(GL_PACK_SKIP_PIXELS,pack_skip_pixels);
+    });
+    glBindBuffer(GL_PIXEL_PACK_BUFFER,0); glPixelStorei(GL_PACK_ALIGNMENT,1);
+    glPixelStorei(GL_PACK_SKIP_ROWS,0); glPixelStorei(GL_PACK_SKIP_PIXELS,0);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    // No depth/stencil ReadPixels: only a legal color RGBA/UNSIGNED_BYTE read.
+    depth_export_scratch->DownloadGLTexture(rect);
+    if (glGetError()!=GL_NO_ERROR) return false;
+    surface->last_download_wait_seconds=depth_export_scratch->last_download_wait_seconds;
+    surface->last_download_read_seconds=depth_export_scratch->last_download_read_seconds;
+    surface->last_download_pack_seconds=0;
+    const auto pack_started=trace_flushes ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const size_t bpp=CachedSurface::GetGLBytesPerPixel(format);
+    surface->gl_buffer.resize(size_t(surface->stride)*surface->height*bpp);
+    const auto& rgba=depth_export_scratch->gl_buffer;
+    {
+    Common::FrameTiming::Scope pack_timing(Common::FrameTiming::Phase::SurfacePack);
+    for (u32 y=rect.bottom; y<rect.top; ++y) for (u32 x=rect.left; x<rect.right; ++x) {
+        const size_t pixel=size_t(y)*surface->stride+x;
+        const u8* source=rgba.data()+pixel*4;
+        u8* target=surface->gl_buffer.data()+pixel*bpp;
+        if (format==PixelFormat::D24S8) {
+            target[0]=source[0]; target[1]=source[3]; target[2]=source[2]; target[3]=source[1];
+        } else if (format==PixelFormat::D24) {
+            // Match MortonCopy's canonical D24 staging: padding, low, mid, high.
+            target[0]=0; target[1]=source[3]; target[2]=source[2]; target[3]=source[1];
+        } else {
+            target[0]=source[3]; target[1]=source[2];
+        }
+    }
+    }
+    if (trace_flushes) surface->last_download_pack_seconds=
+        std::chrono::duration<double>(std::chrono::steady_clock::now()-pack_started).count();
+    surface->FlushGLBuffer(start,end); // Exact owned bytes only, preserving CPU-written neighbors.
+    return true;
 }
 
 void RasterizerCacheOpenGL::FlushRegion(PAddr addr, u32 size, const Surface& flush_surface) {
@@ -1861,7 +2577,18 @@ void RasterizerCacheOpenGL::FlushRegion(PAddr addr, u32 size, const Surface& flu
         if (flush_surface != nullptr && surface != flush_surface)
             continue;
 
-        if (!GLES || surface->pixel_format < PixelFormat::D16) {
+        if (surface->type == SurfaceType::Fill) {
+            surface->FlushGLBuffer(boost::icl::first(interval),boost::icl::last_next(interval));
+        } else if (GLES && surface->pixel_format >= PixelFormat::D16) {
+            const auto started=trace_flushes ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            if (!ExportDepthForCPU(surface,interval))
+                throw std::runtime_error("GPU depth export failed; dirty ownership retained and RAM is not coherent");
+            if (trace_flushes) {
+                const auto rect=surface->GetSubRect(surface->FromInterval(interval));
+                RecordFlush(surface,size,rect.GetWidth(),rect.GetHeight(),
+                    std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count());
+            }
+        } else {
             if (surface->type != SurfaceType::Fill) {
                 SurfaceParams params = surface->FromInterval(interval);
                 const auto rect = surface->GetSubRect(params);
@@ -1899,6 +2626,30 @@ void RasterizerCacheOpenGL::CleanUp(u32 deadline_frame) {
                 unused.push_back(surface);
             }
         }
+    }
+    static const bool selective = [] {
+        const char* value = std::getenv("CARA_SELECTIVE_SURFACE_CLEANUP");
+        return !value || std::strcmp(value, "1") == 0;
+    }();
+    if (selective) {
+        // Interval-map segments may list the same surface more than once. Only
+        // export bytes owned by each evicted producer; a stale clean alias must
+        // not force unrelated live render targets back through guest RAM.
+        SurfaceSet evicted(unused.begin(), unused.end());
+        // Deferred framebuffer replacement can unregister an old producer while
+        // dirty_regions still owns its untouched bytes. These orphan producers
+        // no longer appear in surface_cache, but must be drained before their
+        // final GPU allocation is released. Registered live owners stay resident.
+        for (const auto& entry : dirty_regions)
+            if (!entry.second->registered) evicted.insert(entry.second);
+        const auto previous_reason = flush_reason;
+        flush_reason = FlushReason::Cleanup;
+        SCOPE_EXIT({ flush_reason = previous_reason; });
+        for (const auto& surface : evicted) {
+            FlushRegion(surface->addr, surface->size, surface);
+            UnregisterSurface(surface);
+        }
+        return;
     }
     if (!unused.empty()) {
         FlushAll();
@@ -1965,6 +2716,9 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
             // discard only overwritten GPU bytes and preserve every other dirty byte.
             const auto interval = cached_surface->GetInterval() & invalid_interval;
             cached_surface->invalid_regions.insert(interval);
+            if (surface_upload_trace)
+                surface_upload_trace->Invalidated(cached_surface, boost::icl::first(interval),
+                    boost::icl::last_next(interval), region_owner != nullptr);
             cached_surface->InvalidateAllWatcher();
 
             // Remove only "empty" fill surfaces to avoid destroying and recreating OGL textures
@@ -1998,6 +2752,8 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
 }
 
 Surface RasterizerCacheOpenGL::CreateSurface(const SurfaceParams& params) {
+    Common::FrameTiming::TextureAcquisitionScope timing(
+        Common::FrameTiming::TextureAcquisitionPhase::Allocation);
     Surface surface = std::make_shared<CachedSurface>();
     static_cast<SurfaceParams&>(*surface) = params;
 
@@ -2005,6 +2761,7 @@ Surface RasterizerCacheOpenGL::CreateSurface(const SurfaceParams& params) {
     surface->invalid_regions.insert(surface->GetInterval());
     AllocateSurfaceTexture(surface->texture.handle, GetFormatTuple(surface->pixel_format),
                            surface->GetScaledWidth(), surface->GetScaledHeight());
+    if (surface_upload_trace) surface_upload_trace->Created(surface);
 
     return surface;
 }
@@ -2014,6 +2771,7 @@ void RasterizerCacheOpenGL::RegisterSurface(const Surface& surface) {
         return;
     }
     surface->registered = true;
+    AdvanceTextureLookupGeneration();
     surface_cache.add({surface->GetInterval(), SurfaceSet{surface}});
     UpdatePagesCachedCount(surface->addr, surface->size, 1);
 }
@@ -2023,6 +2781,7 @@ void RasterizerCacheOpenGL::UnregisterSurface(const Surface& surface) {
         return;
     }
     surface->registered = false;
+    AdvanceTextureLookupGeneration();
     UpdatePagesCachedCount(surface->addr, surface->size, -1);
     surface_cache.subtract({surface->GetInterval(), SurfaceSet{surface}});
 }
@@ -2051,6 +2810,11 @@ void RasterizerCacheOpenGL::UpdatePagesCachedCount(PAddr addr, u32 size, int del
             VideoCore::Memory()->RasterizerMarkRegionCached(interval_start_addr, interval_size,
                                                             true);
         } else if (count == -delta) {
+            // The last registered view is leaving these pages. Orphan GPU
+            // producers can still own newer bytes here; CPU fast pointers must
+            // not become visible until every such byte is coherent in RAM.
+            // Pages covered by another registered alias remain GPU-resident.
+            FlushRegion(interval_start_addr, interval_size);
             VideoCore::Memory()->RasterizerMarkRegionCached(interval_start_addr, interval_size,
                                                             false);
         }

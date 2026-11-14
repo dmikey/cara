@@ -17,6 +17,7 @@ using RegGetter = std::function<std::string(u32)>;
 
 struct ProgramResult {
     std::string code;
+    u16 input_mask = 0xffff; // Conservative union of every decompiled input read.
 };
 
 std::string GetCommonDeclarations();

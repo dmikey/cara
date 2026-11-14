@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#include "cara/guest_gpu_trace.h"
+#ifdef CARA_INTERNAL_HOST_PC_SAMPLER
+#include "cara/host_pc_sampler.h"
+#endif
 #include <mach/mach.h>
+#include <pthread/qos.h>
+#include <sys/qos.h>
 #include <sys/resource.h>
 #include <time.h>
 #import "ios/skin_controls.h"
@@ -13,6 +19,7 @@ extern "C" void __llvm_profile_set_filename(const char*);
 extern "C" int __llvm_profile_write_file(void);
 #endif
 #include "audio_core/dsp_interface.h"
+#include "cara/p3d_completion.h"
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
 #import "ios/state_catalog.h"
@@ -35,6 +42,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "ios/button_state.h"
 #include "cara/adaptive_clock.h"
 #include "cara/frame_pacer.h"
+#include "cara/presentation_guard.h"
 #include "ios/play_profile.h"
 #include "ios/session_presentation.h"
 #include <algorithm>
@@ -52,6 +60,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
+#include "common/cpu_category_timing.h"
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
 #include "core/core.h"
@@ -62,8 +71,18 @@ extern "C" int __llvm_profile_write_file(void);
 #include "core/frontend/emu_window.h"
 #include "core/frontend/input.h"
 #include "core/settings.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/process.h"
+#include "core/memory.h"
 
+static std::atomic<u64> displayLinkSequence{0};
 #ifdef CARA_IOS_GLES
+@interface CaraDisplayClock : NSObject
+- (void)tick:(CADisplayLink*)link;
+@end
+@implementation CaraDisplayClock
+- (void)tick:(CADisplayLink*)link { displayLinkSequence.fetch_add(1,std::memory_order_relaxed); }
+@end
 @interface CaraGPUView : UIView
 @end
 @implementation CaraGPUView
@@ -80,6 +99,97 @@ extern "C" int __llvm_profile_write_file(void);
 }
 @end
 #endif
+
+// Benchmark-only, bounded reads of ordinary process RAM. Strings accept decimal
+// or 0x hexadecimal integers only; no expressions, signed offsets or write API.
+static bool ProfileMemoryU32Integer(id object, u32& value) {
+    if ([object isKindOfClass:NSNumber.class]) {
+        if (CFGetTypeID((__bridge CFTypeRef)object)==CFBooleanGetTypeID()) return false;
+        const double number=[object doubleValue];
+        if (!std::isfinite(number) || number<0 || number>4294967295.0 || std::floor(number)!=number)
+            return false;
+        value=static_cast<u32>(number); return true;
+    }
+    if (![object isKindOfClass:NSString.class]) return false;
+    const char* text=[object UTF8String];
+    const auto length=[object lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    if (!text || !length || length>10 || std::strlen(text)!=length) return false;
+    unsigned base=10;
+    if (text[0]=='0' && (text[1]=='x' || text[1]=='X')) { base=16; text+=2; }
+    if (!*text) return false;
+    u64 parsed=0;
+    for (;*text;++text) {
+        const unsigned char c=*text;
+        const unsigned digit=c>='0' && c<='9'?c-'0':c>='a' && c<='f'?c-'a'+10:
+                             c>='A' && c<='F'?c-'A'+10:16;
+        if (digit>=base || parsed>(4294967295ULL-digit)/base) return false;
+        parsed=parsed*base+digit;
+    }
+    value=static_cast<u32>(parsed); return true;
+}
+
+static NSString* ProfileMemoryU32Read(Core::System& system, const Kernel::Process* process,
+                                      u32 address, u32& value) {
+    if (!process || !process->vm_manager.page_table) return @"no_current_process";
+    const u64 end=u64(address)+4;
+    const auto inside=[&](u32 begin,u32 limit) { return address>=begin && end<=limit; };
+    if (end>0x100000000ULL ||
+        !(inside(Memory::PROCESS_IMAGE_VADDR,Memory::PROCESS_IMAGE_VADDR_END) ||
+          inside(Memory::HEAP_VADDR,Memory::HEAP_VADDR_END) ||
+          inside(Memory::LINEAR_HEAP_VADDR,Memory::LINEAR_HEAP_VADDR_END) ||
+          inside(Memory::NEW_LINEAR_HEAP_VADDR,Memory::NEW_LINEAR_HEAP_VADDR_END)))
+        return @"outside_image_or_heap";
+    const auto& pages=*process->vm_manager.page_table;
+    for (u64 byte=address;byte<end;++byte) {
+        const auto page=static_cast<std::size_t>(byte>>Memory::PAGE_BITS);
+        // Exclude MMIO, unmapped and rasterizer-cached pages. This diagnostic
+        // deliberately declines reads that could invoke a device or GPU flush.
+        if (pages.attributes[page]!=Memory::PageType::Memory ||
+            !Memory::IsValidVirtualAddress(*process,static_cast<u32>(byte)))
+            return @"not_ordinary_mapped_ram";
+    }
+    std::array<u8,4> bytes{};
+    system.Memory().ReadBlock(*process,address,bytes.data(),bytes.size());
+    value=u32(bytes[0]) | (u32(bytes[1])<<8) | (u32(bytes[2])<<16) | (u32(bytes[3])<<24);
+    return nil;
+}
+
+static NSDictionary* CaptureProfileMemoryU32(Core::System& system, NSArray* probes,
+                                             unsigned frame, NSString* phase) {
+    NSMutableArray* values=[NSMutableArray arrayWithCapacity:probes.count];
+    const auto process=system.Kernel().GetCurrentProcess();
+    for (id item in probes) {
+        NSMutableDictionary* entry=[@{@"address":NSNull.null,@"address_mapped":@NO,
+            @"field_address":NSNull.null,@"mapped":@NO,@"raw_u32":NSNull.null} mutableCopy];
+        u32 address=0,offset=0;
+        NSDictionary* probe=[item isKindOfClass:NSDictionary.class]?item:nil;
+        const bool indirect=probe && probe[@"pointer_offset"]!=nil;
+        if (!probe || probe.count!=(indirect?2u:1u) ||
+            !ProfileMemoryU32Integer(probe[@"address"],address) ||
+            (indirect && !ProfileMemoryU32Integer(probe[@"pointer_offset"],offset))) {
+            entry[@"status"]=@"invalid_probe"; [values addObject:entry]; continue;
+        }
+        entry[@"address"]=@(address);
+        if (indirect) { entry[@"pointer_offset"]=@(offset); entry[@"pointer"]=NSNull.null; }
+        u32 word=0;
+        NSString* error=ProfileMemoryU32Read(system,process.get(),address,word);
+        entry[@"address_mapped"]=@(error==nil);
+        if (!error && indirect) {
+            entry[@"pointer"]=@(word);
+            const u64 field=u64(word)+offset;
+            if (field>4294967292ULL) error=@"pointer_offset_overflow";
+            else {
+                entry[@"field_address"]=@(static_cast<u32>(field));
+                error=ProfileMemoryU32Read(system,process.get(),static_cast<u32>(field),word);
+            }
+        } else if (!indirect) entry[@"field_address"]=@(address);
+        entry[@"mapped"]=@(error==nil);
+        entry[@"status"]=error?:@"ok";
+        if (!error) entry[@"raw_u32"]=@(word);
+        [values addObject:entry];
+    }
+    return @{@"frame":@(frame),@"phase":phase,@"probes":values};
+}
 
 static bool CaptureBurst(unsigned frame) {
     const char* start_env = std::getenv("CARA_CAPTURE_BURST_START");
@@ -143,6 +253,25 @@ public:
     std::function<void(unsigned, unsigned, unsigned, const std::vector<u8>&, unsigned)> present;
     std::function<void(unsigned)> frame_presented;
     unsigned frames = 0;
+    // Emulation-thread policy, independent of guest CPU underclocking.
+    Cara::PresentationGuard presentation_guard;
+    bool presentation_paced = true;
+    unsigned presentation_speed = 100;
+    u64 presentation_submissions = 0;
+    u64 presentation_coalesced = 0;
+    double last_presentation_start = 0;
+    double minimum_presentation_interval = 0;
+    void RecordPresentation() {
+        const double now=std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (presentation_submissions) {
+            const double interval=now-last_presentation_start;
+            minimum_presentation_interval=minimum_presentation_interval>0?
+                std::min(minimum_presentation_interval,interval):interval;
+        }
+        last_presentation_start=now; ++presentation_submissions;
+    }
+
     std::string graphics_error;
 #ifdef CARA_IOS_GLES
     EAGLContext* __strong graphics_context = nil;
@@ -185,7 +314,13 @@ public:
     }
     void MakeCurrent() override {
 #ifdef CARA_IOS_GLES
-        if (!graphics_context) graphics_context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+        if (!graphics_context) {
+            graphics_context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+            // Driver-owned workers preserve command order; the application still
+            // accesses this context exclusively from its emulation thread.
+            const char* threaded = std::getenv("CARA_EAGL_THREADED");
+            graphics_context.multiThreaded = threaded && std::strcmp(threaded, "1") == 0;
+        }
         if (!graphics_context || ![EAGLContext setCurrentContext:graphics_context]) {
             graphics_error = "Unable to create an iOS GLES3 context"; return;
         }
@@ -266,6 +401,7 @@ public:
     void SwapBuffers() override {
 #ifdef CARA_IOS_GLES
         if (drawable_framebuffer) {
+            if (presentation_guard.Admit(displayLinkSequence.load(std::memory_order_relaxed))) {
             CGRect destinations[2]; int desired_width,desired_height;
             {
                 std::lock_guard<std::mutex> lock(display_mutex);
@@ -296,12 +432,14 @@ public:
                     glBlitFramebuffer(screen?40:0,screen?0:240,screen?360:400,screen?240:480,x0,y0,x1,y1,GL_COLOR_BUFFER_BIT,GL_NEAREST);
                 }
                 if (scissor) glEnable(GL_SCISSOR_TEST);
+                RecordPresentation();
                 if (![graphics_context presentRenderbuffer:GL_RENDERBUFFER])
                     graphics_error = "iOS screen presentation failed";
                 OpenGL::OpenGLState::BindRenderbuffer(previous_renderbuffer);
                 OpenGL::OpenGLState::BindDrawFramebuffer(previous_draw);
                 OpenGL::OpenGLState::BindReadFramebuffer(previous_read);
             }
+            } else { ++presentation_coalesced; }
             if (Common::FrameTiming::counters.enabled && std::getenv("CARA_GPU_WAIT_TIMING")) {
                 Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GPUWait);
                 glFinish();
@@ -353,10 +491,18 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     const NSInteger saved=[CaraEmulationValue(@"maximumSpeedPercent") integerValue];
     const unsigned maximum=saved>=50 && saved<=200?unsigned(saved):100;
     const char* override=std::getenv("CARA_ADAPTIVE_GUEST_CPU");
-    return Cara::MakePlayPolicy([CaraEmulationValue(@"playMode") isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,
+    auto policy=Cara::MakePlayPolicy([CaraEmulationValue(@"playMode") isEqual:@"accuracy"]?Cara::PlayMode::Accuracy:Cara::PlayMode::Performance,
         maximum,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,override?(std::strcmp(override,"1")==0?1:0):-1,
         [CaraEmulationValue(@"fixedGuestClockEnabled") boolValue],unsigned(std::clamp<NSInteger>([CaraEmulationValue(@"fixedGuestClockPercent") integerValue],25,200)),
         [CaraEmulationValue(@"speedLimitEnabled") boolValue]);
+    // Explicit diagnostic only: normal tests retain 100%, independent of saved settings.
+    if (const char* clock=std::getenv("CARA_PROFILE_GUEST_CPU_PERCENT")) {
+        char* end=nullptr;
+        const long value=std::strtol(clock,&end,10);
+        if (end!=clock && *end=='\0' && (value==50 || value==100))
+            policy=Cara::DiagnosticGuestClock(policy,std::getenv("CARA_BENCHMARK_FRAMES")!=nullptr,unsigned(value));
+    }
+    return policy;
 }
 
 @interface EmulatorController : UIViewController <UIDocumentPickerDelegate>
@@ -406,6 +552,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     CGSize lastSkinSize;
     std::unique_ptr<IOSWindow> emuWindow;
     std::thread worker;
+    CADisplayLink* presentationLink;
     std::atomic<bool> stop;
     std::atomic<bool> running;
     std::atomic<bool> gameLoaded;
@@ -493,8 +640,11 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     }
     if (!autoStarted && rom.length && !running) {
         autoStarted=true;
+        [self ensureLibrary];
         NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
         NSURL* url=[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:rom.lastPathComponent]];
+        if (![NSFileManager.defaultManager fileExistsAtPath:url.path])
+            url=[libraryStore.defaultFolder URLByAppendingPathComponent:rom.lastPathComponent];
         if ([NSFileManager.defaultManager fileExistsAtPath:url.path]) [self openGameURL:url];
         else status.text=@"Game file not found.";
     }
@@ -506,7 +656,20 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     if (!std::getenv("CARA_GPU_PACKED_INPUTS")) setenv("CARA_GPU_PACKED_INPUTS","1",0);
     // Keep eligible tiled/linear RGBA8 aliases on the GPU; other layouts fall back.
     if (!std::getenv("CARA_GPU_SURFACE_REMAP")) setenv("CARA_GPU_SURFACE_REMAP","1",0);
+    if (!std::getenv("CARA_GPU_DEPTH_REINTERPRET")) setenv("CARA_GPU_DEPTH_REINTERPRET","1",0);
     if (!std::getenv("CARA_VS_UNIFORM_REUSE")) setenv("CARA_VS_UNIFORM_REUSE","1",0);
+    if (!std::getenv("CARA_FASTINTERP_ALU_OPERANDS")) setenv("CARA_FASTINTERP_ALU_OPERANDS","1",0);
+    if (!std::getenv("CARA_FASTINTERP_TICK_BUCKETS")) setenv("CARA_FASTINTERP_TICK_BUCKETS","1",0);
+    if (!std::getenv("CARA_FASTINTERP_CHAIN_BUDGET")) setenv("CARA_FASTINTERP_CHAIN_BUDGET","1",0);
+    if (!std::getenv("CARA_FASTINTERP_CACHE_WAYS")) setenv("CARA_FASTINTERP_CACHE_WAYS","8",0);
+    // A larger decoded working set reduces repeated interpretation setup on
+    // devices with enough RAM. Explicit diagnostic overrides remain intact.
+    if (!std::getenv("CARA_FASTINTERP_CACHE_ENTRIES") &&
+        NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
+        setenv("CARA_FASTINTERP_CACHE_ENTRIES","32768",0);
+    if (!std::getenv("CARA_GL_STATE_REUSE")) setenv("CARA_GL_STATE_REUSE","1",0);
+    if (!std::getenv("CARA_FASTINTERP_RAM_BURST")) setenv("CARA_FASTINTERP_RAM_BURST","1",0);
+    if (!std::getenv("CARA_FASTINTERP_AL_DISPATCH")) setenv("CARA_FASTINTERP_AL_DISPATCH","1",0);
     if (!std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
@@ -516,6 +679,11 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
         setenv("CARA_VERTEX_UPLOAD_REUSE","1",0);
+    if (!std::getenv("CARA_VERTEX_UPLOAD_ORDER_REUSE")) {
+        const char* reuse = std::getenv("CARA_VERTEX_UPLOAD_REUSE");
+        if (reuse && std::strcmp(reuse,"1")==0)
+            setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE","1",0);
+    }
     if (!std::getenv("CARA_VERTEX_INDEX_CACHE") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
@@ -542,6 +710,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 #ifdef CARA_IOS_GLES
     gpuSurface=[[CaraGPUView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:gpuSurface];
+    presentationLink=[CADisplayLink displayLinkWithTarget:[CaraDisplayClock new] selector:@selector(tick:)];
+    if (@available(iOS 15.0,*)) presentationLink.preferredFrameRateRange=CAFrameRateRangeMake(60,60,60);
+    else presentationLink.preferredFramesPerSecond=60;
+    [presentationLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 #endif
     skinArt=[UIImageView new]; skinArt.opaque=NO; skinArt.userInteractionEnabled=NO; [self.view addSubview:skinArt];
     skinControls=[[CaraSkinControls alloc] initWithFrame:CGRectZero]; [self.view addSubview:skinControls];
@@ -686,6 +858,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     }
 #ifdef CARA_IOS_GLES
     gpuSurface.hidden=Cara::ClearSessionPresentation(state);
+    presentationLink.paused=state!=Cara::SessionPresentation::Running;
 #endif
 }
 - (void)resumeFromMenu {
@@ -710,7 +883,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         libraryController.showSettings=^{ [owner showFullSettings]; };
         libraryController.statesForGame=^NSArray*(NSURL* url) { return [owner libraryStatesForGame:url]; };
         libraryController.startFromState=^(NSURL* url,NSString* filename) { EmulatorController* c=owner; if(!c) return; c->pendingLibraryState=filename; [c openGameURL:url]; };
-        libraryController.gameSettings=^(NSURL* url) { [owner showGameSettings:url]; };
+        libraryController.gameSettings=^(NSURL* url) { EmulatorController* c=owner; if (c) [c showGameSettings:url navigation:(UINavigationController*)c->libraryController.presentedViewController]; };
         libraryController.clearGameSettings=^(NSURL* url) { EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":@{},@"actionLayout":CaraNewActionLayout()} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { [c reloadActionLayout]; CaraGameOverrides=nil; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
         libraryController.gameFileInUse=^BOOL(NSURL* url) { EmulatorController* c=owner; return c && (c->running || c->openingGame) && [url.URLByStandardizingPath isEqual:c->gameURL.URLByStandardizingPath]; };
         libraryController.resumeGame=^{ [owner hideLibrary]; };
@@ -879,15 +1052,18 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     __weak EmulatorController* owner=self; settings.finished=^{ EmulatorController* c=owner; if(c) [c->libraryController reloadLibrary]; [owner resumeFromMenu]; };
     UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationFullScreen; [self presentViewController:nav animated:YES completion:nil];
 }
-- (void)showGameSettings:(NSURL*)url {
-    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings"; settings.usesLibraryAppearance=YES;
+- (void)showGameSettings:(NSURL*)url navigation:(UINavigationController*)navigation {
+    if (!url) return;
+    [self ensureLibrary];
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings"; settings.usesLibraryAppearance=libraryVisible;
+    __weak CaraSettingsController* weakSettings=settings;
     NSMutableDictionary* values=[[[libraryStore metadataForGame:url] objectForKey:@"overrides"] mutableCopy]?:[NSMutableDictionary new];
     __weak EmulatorController* owner=self;
     void(^save)(NSString*,id)=^(NSString* key,id value) { values[key]=value; EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":values} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { CaraGameOverrides=[values copy]; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
     id(^value)(NSString*)=^id(NSString* key) { return values[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; };
     settings.sectionsProvider=^NSArray* {
     BOOL accuracy=[value(@"playMode") isEqual:@"accuracy"];
-    return @[@{@"title":@"Touch controls",@"rows":@[@{@"title":@"Controller Demapping",@"subtitle":@"Arrange actions and bind them to 3DS inputs",@"symbol":@"hand.draw",@"action":^{ EmulatorController* c=owner; if (c) [c editActionLayout:url navigation:(UINavigationController*)c.presentedViewController]; }}]},@{@"title":@"Emulation",@"rows":@[
+    return @[@{@"title":@"Touch controls",@"rows":@[CaraActionLayoutSettingsRow(^{ EmulatorController* c=owner; if (c) [c editActionLayout:url navigation:weakSettings.navigationController]; })]},@{@"title":@"Emulation",@"rows":@[
         @{@"title":@"Accuracy mode",@"subtitle":@"Locks guest clock and speed to 100%. Uses the same 100% guest clock and speed as global Accuracy mode.",@"value":@(accuracy),@"change":^(BOOL on) { save(@"playMode",on?@"accuracy":@"performance"); }},
         @{@"title":@"Fixed guest clock",@"value":@(accuracy || [value(@"fixedGuestClockEnabled") boolValue]),@"enabled":@(!accuracy),@"change":^(BOOL on) { save(@"fixedGuestClockEnabled",@(on)); }},
         @{@"title":@"Guest clock",@"enabled":@(!accuracy && [value(@"fixedGuestClockEnabled") boolValue]),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:([value(@"fixedGuestClockPercent") integerValue]?:100))},@"sliderChange":^(double v) { save(@"fixedGuestClockPercent",@(lround(v))); }},
@@ -895,7 +1071,17 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         @{@"title":@"Maximum speed",@"enabled":@(!accuracy && [value(@"speedLimitEnabled") boolValue]),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(accuracy?100:([value(@"maximumSpeedPercent") integerValue]?:100))},@"sliderChange":^(double v) { save(@"maximumSpeedPercent",@(lround(v))); }},
     ],@"footer":@"Only this game uses these overrides. Clear game settings in Game details to use global preferences again."},@{@"title":@"Audio",@"rows":@[@{@"title":@"Audio stretching",@"value":@([value(@"audioStretching") boolValue]),@"change":^(BOOL on) { save(@"audioStretching",@(on)); }}]}];
     };
-    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationPageSheet; nav.preferredContentSize=CGSizeMake(620,800); [self presentViewController:nav animated:YES completion:nil];
+    // Keep the caller's navigation stack: Done closes the sheet, while editor Save/Cancel
+    // return to these settings. The library stays paused; an in-game sheet resumes its game.
+    settings.finished=^{ [owner resumeFromMenu]; };
+    if ([navigation isKindOfClass:UINavigationController.class]) {
+        [navigation pushViewController:settings animated:YES];
+    } else {
+        UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings];
+        nav.modalPresentationStyle=UIModalPresentationPageSheet; nav.preferredContentSize=CGSizeMake(620,800);
+        nav.presentationController.delegate=settings;
+        [self presentViewController:nav animated:YES completion:nil];
+    }
 }
 - (void)showMenu {
     if (openingGame || self.presentedViewController) return;
@@ -910,7 +1096,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     quick.showFPS=![NSUserDefaults.standardUserDefaults objectForKey:meterKey] || [NSUserDefaults.standardUserDefaults boolForKey:meterKey];
     quick.toggleFPS=^(BOOL visible) { [NSUserDefaults.standardUserDefaults setBool:visible forKey:meterKey]; [owner.view setNeedsLayout]; };
     NSMutableArray* actions=[NSMutableArray new];
-    if (running) {
+    if (gameURL && [self sessionPresentation]==Cara::SessionPresentation::Paused) {
+        NSURL* currentGame=gameURL;
+        [actions addObject:@{@"title":@"Game settings",@"subtitle":@"Controller Demapping and per-game preferences",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ EmulatorController* c=owner; if (c) [c showGameSettings:currentGame navigation:(UINavigationController*)c.presentedViewController]; }}];
         [actions addObject:@{@"title":@"Save state",@"symbol":@"square.and.arrow.down",@"action":^{ [owner showStateSlots:YES]; }}];
         [actions addObject:@{@"title":@"Load state",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner showStateSlots:NO]; }}];
     }
@@ -1221,6 +1409,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             if (timing.enabled) {
                 std::ofstream report(user + "runtime-status.json");
                 report << "{\"title_id\":" << title << ",\"frame\":" << frame << ",\"display_fps\":" << fps
+                       << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
+                       << ",\"presentation_mode\":\"mono_left_top\""
+                       << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
+                       << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
                        << ",\"guest_cpu_percent\":" << controller->guestClock.load()
                        << ",\"maximum_speed_percent\":" << controller->maximumSpeedLimit.load()
                        << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
@@ -1244,6 +1436,13 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
     worker = std::thread([self,rom,user,session,url,requestedState] {
+        // Diagnostic only: requested QoS is not evidence of P/E-core placement.
+        const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
+        const bool worker_interactive_qos = interactive_qos_env &&
+                                            std::strcmp(interactive_qos_env, "1") == 0;
+        const auto worker_qos_initial = qos_class_self();
+        const int worker_qos_set_result = worker_interactive_qos
+            ? pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) : 0;
         @autoreleasepool {
             Common::DetachedTasks tasks;
             FileUtil::SetUserPath(user);
@@ -1251,8 +1450,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             // never mistaken for evidence from this launch.
             for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
                                      "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
-                                     "surface-flushes.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
-                                     "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json"})
+                                     "surface-flushes.json","surface-uploads.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
+                                     "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json",
+                                     "profile-memory-u32.json"})
                 FileUtil::Delete(user+name);
 
 #ifdef CARA_PGO_GENERATE
@@ -1277,7 +1477,8 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             s.use_separable_shader = false;
             s.allow_shadow = false;
             s.shadow_rendering = false;
-            s.use_shader_cache = false;
+            const char* pipeline_cache = std::getenv("CARA_IOS_PIPELINE_CACHE");
+            s.use_shader_cache = pipeline_cache && std::strcmp(pipeline_cache, "1") == 0; // Experimental.
 #endif
             s.use_virtual_sd = true; s.region_value = Settings::REGION_VALUE_AUTO_SELECT;
             s.resolution_factor = 1; s.use_frame_limit = false; // Frontend counts every presented vblank.
@@ -1407,6 +1608,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
             }
             if (result==Core::System::ResultStatus::Success)
                 LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
+            if (result==Core::System::ResultStatus::Success) Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
             gameLoaded=result==Core::System::ResultStatus::Success;
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (self->sessionGeneration!=session) return;
@@ -1426,9 +1628,16 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         paced_speed=unsigned(value); has_speed_override=true;
                     }
                 }
-                Cara::FramePacer frame_pacer(paced_speed);
+                const char* bounded_pacing_env=std::getenv("CARA_BOUNDED_FRAME_PACING");
+                const bool bounded_frame_pacing=!bounded_pacing_env || std::strcmp(bounded_pacing_env,"1")==0;
+                Cara::FramePacer frame_pacer(paced_speed,bounded_frame_pacing);
                 pace_frames=Cara::ShouldPaceFrames(target_frames!=0,benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
-                frame_pacer.Reset(host_seconds(benchmark_start));
+                const auto reset_pacing=[&](std::chrono::steady_clock::time_point at) {
+                    const double seconds=host_seconds(at);
+                    frame_pacer.Reset(seconds);
+                    emuWindow->presentation_guard.Reset();
+                };
+                reset_pacing(benchmark_start);
                 unsigned paced_frame = emuWindow->frames;
                 unsigned late_paced_frames = 0;
                 bool was_paused = false;
@@ -1439,6 +1648,21 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 std::vector<double> frame_times;
                 std::vector<std::string> timing_windows;
                 auto previous_counters = Common::FrameTiming::counters;
+                const bool category_timing=Common::FrameTiming::counters.enabled && Common::CPUCategoryTiming::DiagnosticEnabled();
+                Common::CPUCategoryTiming::Counters previous_categories{};
+                double category_clock_ns_per_read=0;
+                bool category_clock_calibrated=false;
+                if (category_timing) {
+                    Common::CPUCategoryTiming::Reset();
+                    std::uint64_t begin=0,end=0,value=0;
+                    unsigned good=0;
+                    if (Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr,begin)) {
+                        for (unsigned i=0;i<4096;++i) good+=Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr,value);
+                        category_clock_calibrated=Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr,end) && good==4096 && end>=begin;
+                        if (category_clock_calibrated) category_clock_ns_per_read=double(end-begin)/4097;
+                    }
+                    previous_categories=Common::CPUCategoryTiming::Snapshot();
+                }
                 const bool host_cpu_timing=std::getenv("CARA_HOST_CPU_TIMING")!=nullptr;
                 const auto read_host_cpu=[]() -> std::pair<double,double> {
                     timespec thread{}; rusage process{};
@@ -1477,6 +1701,23 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         }
                     }
                 }
+                // Diagnostic touch input uses emulated refresh counts, like the A/circle scripts.
+                // It is unavailable during normal play and follows the same packed HID touch path.
+                struct TestTouchSegment { unsigned begin,end,x,y; };
+                std::vector<TestTouchSegment> test_touch_segments;
+                if (target_frames) {
+                    if (const char* touches=std::getenv("CARA_TEST_TOUCH_SEGMENTS")) {
+                        std::istringstream stream(touches); std::string item;
+                        while (std::getline(stream,item,',')) {
+                            TestTouchSegment segment{}; char trailing{};
+                            if (std::sscanf(item.c_str(),"%u:%u:%u:%u%c",&segment.begin,&segment.end,&segment.x,&segment.y,&trailing)==4 &&
+                                segment.begin<segment.end && segment.end<=target_frames &&
+                                segment.x<320 && segment.y<240)
+                                test_touch_segments.push_back(segment);
+                        }
+                    }
+                }
+                unsigned test_touch_frame=~0u;
                 unsigned test_circle_frame=~0u;
                 size_t next_test_press = 0;
                 unsigned active_test_press = 0;
@@ -1501,6 +1742,42 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 // frontend policy before the first slice, including fixed-clock tests.
                 reset_clock_samples();
                 LOG_INFO(Frontend,"Session guest CPU policy: {}%",policy_clock());
+                // Read-only field diagnostics run only in an explicit benchmark,
+                // after state restoration and current-clock policy application.
+                NSMutableDictionary* profile_memory_report=nil;
+                NSArray* profile_memory_probes=nil;
+                bool profile_memory_frame_300=false;
+                bool profile_memory_frame_300_done=false;
+                const auto write_profile_memory=[&](NSString* phase) {
+                    if (!profile_memory_report) return;
+                    if (profile_memory_probes)
+                        [profile_memory_report[@"samples"] addObject:CaptureProfileMemoryU32(system,
+                            profile_memory_probes,emuWindow->frames,phase)];
+                    NSError* error=nil;
+                    NSData* json=[NSJSONSerialization dataWithJSONObject:profile_memory_report
+                        options:NSJSONWritingPrettyPrinted error:&error];
+                    NSString* path=[NSString stringWithUTF8String:(user+"profile-memory-u32.json").c_str()];
+                    if (!json || ![json writeToFile:path options:NSDataWritingAtomic error:&error])
+                        LOG_ERROR(Frontend,"Memory u32 diagnostic report: {}",error.localizedDescription.UTF8String?:"unknown error");
+                };
+                if (target_frames) {
+                    if (const char* input=std::getenv("CARA_PROFILE_MEMORY_U32")) {
+                        profile_memory_report=[@{@"title_id":@(system.GetTitleID()),
+                            @"engine_build_fingerprint":[NSString stringWithUTF8String:Core::GetSaveStateBuildFingerprint()],
+                            @"read_only":@YES,@"benchmark_only":@YES,@"ordinary_ram_only":@YES,
+                            @"samples":[NSMutableArray array]} mutableCopy];
+                        const std::size_t length=strnlen(input,4097);
+                        NSError* error=nil;
+                        id parsed=length<=4096?[NSJSONSerialization JSONObjectWithData:
+                            [NSData dataWithBytes:input length:length] options:0 error:&error]:nil;
+                        if (![parsed isKindOfClass:NSArray.class] || [parsed count]<1 || [parsed count]>8)
+                            profile_memory_report[@"configuration_error"]=@"Expected JSON array of 1..8 probes, at most 4096 bytes";
+                        else profile_memory_probes=parsed;
+                        const char* repeat=std::getenv("CARA_PROFILE_MEMORY_U32_FRAME_300");
+                        profile_memory_frame_300=profile_memory_probes && repeat && std::strcmp(repeat,"1")==0;
+                        write_profile_memory(@"before_runloop_after_clock_reset");
+                    }
+                }
                 const auto state_test_frame=[](const char* name) -> unsigned {
                     const char* value=std::getenv(name);
                     return value?unsigned(std::clamp(std::strtol(value,nullptr,10),0L,100000L)):0;
@@ -1526,7 +1803,23 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                     report << "{\"saved\":" << state_saved << ",\"loaded\":" << state_loaded << ",\"frame\":" << emuWindow->frames << ",\"failed\":" << !error.empty() << "}";
                     if (!error.empty()) LOG_ERROR(Frontend,"Save-state device test: {}",error);
                 };
+#ifdef CARA_INTERNAL_HOST_PC_SAMPLER
+                const char* host_pc_switch=std::getenv("CARA_HOST_PC_SAMPLER");
+                const bool host_pc_enabled=target_frames && host_pc_switch && std::strcmp(host_pc_switch,"1")==0;
+                Cara::HostPcSampler host_pc_sampler(host_pc_enabled);
+                // Guard owns teardown on exceptional exits too. The sampler must join
+                // while its registered emulation thread and core still exist.
+                const auto finish_host_pc=[&](Cara::HostPcSampler*) noexcept {
+                    try {
+                        host_pc_sampler.StopAndWrite(user+"host-pc-samples.json",Core::GetSaveStateBuildFingerprint());
+                    } catch (...) { /* Destructor still joins; report writing is best effort. */ }
+                };
+                std::unique_ptr<Cara::HostPcSampler,decltype(finish_host_pc)> host_pc_guard(&host_pc_sampler,finish_host_pc);
+#endif
                 while (!stop && (!target_frames || emuWindow->frames < target_frames)) {
+#ifdef CARA_INTERNAL_HOST_PC_SAMPLER
+                    host_pc_sampler.OnFrame(emuWindow->frames);
+#endif
                     if (self->adaptiveCPUDirty.exchange(false)) {
                         clock_control.SetEnabled(self->adaptiveCPU.load()); reset_clock_samples();
                     }
@@ -1556,9 +1849,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         if (state_saved && state_load_frame && !state_loaded && emuWindow->frames>=state_load_frame) {
                             AudioCore::SetIOSAudioPaused(true);
                             system.LoadStateFromPath(user+"device-test.carastate");
+                            Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
                             if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
                             state_loaded=true; state_test_report(""); reset_clock_samples();
-                            frame_pacer.Reset(host_seconds(std::chrono::steady_clock::now())); paced_frame=emuWindow->frames;
+                            reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
                             AudioCore::SetIOSAudioPaused(paused);
                         }
                     } catch (const std::exception& error) {
@@ -1569,10 +1863,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         try {
                             if (command==101) system.SaveStateToPath(user+"profile-comparison.carastate");
                             else if (command>0) { system.SaveState(unsigned(command)); [stateSync captureCommittedSave]; }
-                            else system.LoadState(unsigned(-command));
+                            else { system.LoadState(unsigned(-command)); Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv"); }
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
-                        frame_pacer.Reset(host_seconds(std::chrono::steady_clock::now())); paced_frame=emuWindow->frames;
+                        reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
                         const bool powered=system.IsPoweredOn();
                         NSString* message=failure.empty()?[NSString stringWithFormat:@"State %@ in slot %d",command>0?@"saved":@"loaded",std::abs(command)]:[NSString stringWithUTF8String:failure.c_str()];
                         if (command==101 && failure.empty()) message=@"Comparison checkpoint saved";
@@ -1599,7 +1893,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         const auto resumed = std::chrono::steady_clock::now();
                         paused_duration += resumed - pause_started;
                         last_frame_time += resumed - pause_started;
-                        frame_pacer.Reset(host_seconds(resumed)); paced_frame=emuWindow->frames;
+                        reset_pacing(resumed); paced_frame=emuWindow->frames;
                         was_paused = false; reset_clock_samples();
                     }
                     if (test_start_frame && !test_start_pressed && emuWindow->frames>=test_start_frame) {
@@ -1626,13 +1920,34 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         }
                         circleX=x; circleY=y;
                     }
+                    if (!test_touch_segments.empty() && test_touch_frame!=emuWindow->frames) {
+                        test_touch_frame=emuWindow->frames;
+                        int touch=-1;
+                        for (const auto& segment:test_touch_segments) {
+                            if (test_touch_frame>=segment.begin && test_touch_frame<segment.end) {
+                                touch=int(segment.x | (segment.y<<16)); break;
+                            }
+                        }
+                        emuWindow->touch=touch;
+                    }
                     static uint64_t observedSave=0;
                     static unsigned saveFrame=0;
                     const uint64_t generation=Cara::save_commit_generation.load(std::memory_order_relaxed);
                     if (generation!=observedSave) { observedSave=generation; saveFrame=emuWindow->frames+120; }
                     if (saveFrame && emuWindow->frames>=saveFrame) { saveFrame=0; std::fflush(nullptr); [saveSync captureCommittedSave]; }
                     const auto work_started=clock_control.Enabled()?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
+                    emuWindow->presentation_paced=Cara::ShouldPaceFrames(target_frames!=0,
+                        benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
+                    emuWindow->presentation_speed=has_speed_override?paced_speed:self->maximumSpeedLimit.load();
                     result = system.RunLoop();
+                    Cara::GuestGPUTrace::Flush();
+                    if (Cara::GuestGPUTrace::TakeExportError())
+                        LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
+                    if (profile_memory_frame_300 && !profile_memory_frame_300_done && emuWindow->frames>=300 &&
+                        result==Core::System::ResultStatus::Success) {
+                        profile_memory_frame_300_done=true;
+                        write_profile_memory(@"frame_300_or_next_runloop_boundary");
+                    }
                     if (clock_control.Enabled()) clock_work_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-work_started).count();
                     if (audio_diagnostics && emuWindow->frames >= audio_report_frame+60) {
                         const auto audio=system.DSP().GetOutputCounters();
@@ -1659,8 +1974,27 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                             const bool host_cpu_valid=host_cpu_timing && previous_host_cpu.first>=0 &&
                                 host_cpu.first>=previous_host_cpu.first && host_cpu.second>=previous_host_cpu.second;
 
+                            std::string category_window;
+                            if (category_timing) {
+                                const auto categories=Common::CPUCategoryTiming::Snapshot();
+                                std::uint64_t entries=0;
+                                category_window=",\"cpu_category_ns\":[";
+                                for (size_t i=0;i<Common::CPUCategoryTiming::CategoryCount;++i)
+                                    category_window+=(i?",":"")+std::to_string(categories.cpu_ns[i]-previous_categories.cpu_ns[i]);
+                                category_window+="],\"cpu_category_entries\":[";
+                                for (size_t i=0;i<Common::CPUCategoryTiming::CategoryCount;++i) {
+                                    const auto delta=categories.entries[i]-previous_categories.entries[i]; entries+=delta;
+                                    category_window+=(i?",":"")+std::to_string(delta);
+                                }
+                                category_window+="],\"cpu_category_clock_failures\":"+std::to_string(categories.clock_failures-previous_categories.clock_failures)+
+                                    ",\"cpu_category_overflows\":"+std::to_string(categories.counter_overflows-previous_categories.counter_overflows)+
+                                    ",\"cpu_category_clock_reads\":"+std::to_string(entries*2);
+                                previous_categories=categories;
+                            }
                             timing_windows.push_back("{\"end_frame\":" + std::to_string(timed_frame) +
                                 ",\"frames\":" + std::to_string(frame_times.size()) +
+                                ",\"factor_3d_percent\":" + std::to_string(unsigned(Settings::values.factor_3d.load())) +
+                                ",\"presentation_mode\":\"mono_left_top\"" +
                                 ",\"guest_cpu_percent\":" + std::to_string(policy_clock()) +
                                 ",\"mean_ms\":" + std::to_string(total_ms / count) +
                                 ",\"host_cpu_timing\":" + std::string(host_cpu_valid?"true":"false") +
@@ -1673,6 +2007,31 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"cpu_shader_ms_per_frame\":" + std::to_string((current.shader_seconds - previous_counters.shader_seconds) * 1000 / count) +
                                 ",\"guest_cpu_ms_per_frame\":" + std::to_string((current.guest_cpu_seconds - previous_counters.guest_cpu_seconds) * 1000 / count) +
                                 ",\"draw_ms_per_frame\":" + std::to_string((current.draw_seconds - previous_counters.draw_seconds) * 1000 / count) +
+                                ",\"texture_lookup_checks\":" + std::to_string(current.texture_lookup_checks - previous_counters.texture_lookup_checks) +
+                                ",\"texture_lookup_hits\":" + std::to_string(current.texture_lookup_hits - previous_counters.texture_lookup_hits) +
+                                ",\"texture_lookup_misses\":" + std::to_string(current.texture_lookup_misses - previous_counters.texture_lookup_misses) +
+                                ",\"texture_lookup_stores\":" + std::to_string(current.texture_lookup_stores - previous_counters.texture_lookup_stores) +
+                                ",\"texture_lookup_ambiguous_rejects\":" + std::to_string(current.texture_lookup_ambiguous_rejects - previous_counters.texture_lookup_ambiguous_rejects) +
+                                ",\"texture_lookup_epoch_rejects\":" + std::to_string(current.texture_lookup_epoch_rejects - previous_counters.texture_lookup_epoch_rejects) +
+                                ",\"texture_lookup_verified_hits\":" + std::to_string(current.texture_lookup_verified_hits - previous_counters.texture_lookup_verified_hits) +
+                                ",\"texture_lookup_verify_mismatches\":" + std::to_string(current.texture_lookup_verify_mismatches - previous_counters.texture_lookup_verify_mismatches) +
+                                ",\"draw_framebuffer_acquire_ms_per_frame\":" + std::to_string((current.draw_framebuffer_acquire_seconds - previous_counters.draw_framebuffer_acquire_seconds) * 1000 / count) +
+                                ",\"draw_framebuffer_acquire_calls\":" + std::to_string((current.draw_framebuffer_acquire_calls - previous_counters.draw_framebuffer_acquire_calls)) +
+                                ",\"draw_texture_acquire_ms_per_frame\":" + std::to_string((current.draw_texture_acquire_seconds - previous_counters.draw_texture_acquire_seconds) * 1000 / count) +
+                                ",\"draw_texture_acquire_calls\":" + std::to_string((current.draw_texture_acquire_calls - previous_counters.draw_texture_acquire_calls)) +
+                                ",\"draw_shader_setup_ms_per_frame\":" + std::to_string((current.draw_shader_setup_seconds - previous_counters.draw_shader_setup_seconds) * 1000 / count) +
+                                ",\"draw_shader_setup_calls\":" + std::to_string((current.draw_shader_setup_calls - previous_counters.draw_shader_setup_calls)) +
+                                ",\"draw_dirty_invalidate_ms_per_frame\":" + std::to_string((current.draw_dirty_invalidate_seconds - previous_counters.draw_dirty_invalidate_seconds) * 1000 / count) +
+                                ",\"draw_dirty_invalidate_calls\":" + std::to_string((current.draw_dirty_invalidate_calls - previous_counters.draw_dirty_invalidate_calls)) +
+                                ",\"render_reinterpret_check_ms_per_frame\":" + std::to_string((current.render_reinterpret_check_seconds - previous_counters.render_reinterpret_check_seconds) * 1000 / count) +
+                                ",\"render_reinterpret_check_calls\":" + std::to_string((current.render_reinterpret_check_calls - previous_counters.render_reinterpret_check_calls)) +
+                                ",\"render_reinterpret_invocations\":" + std::to_string((current.render_reinterpret_invocations - previous_counters.render_reinterpret_invocations)) +
+                                ",\"render_reinterpret_find_calls\":" + std::to_string((current.render_reinterpret_find_calls - previous_counters.render_reinterpret_find_calls)) +
+                                ",\"render_reinterpret_avoided_calls\":" + std::to_string((current.render_reinterpret_avoided_calls - previous_counters.render_reinterpret_avoided_calls)) +
+                                ",\"render_reinterpret_repeat_opportunities\":" + std::to_string((current.render_reinterpret_repeat_opportunities - previous_counters.render_reinterpret_repeat_opportunities)) +
+                                ",\"contiguous_transfer_loads\":" + std::to_string((current.contiguous_transfer_loads - previous_counters.contiguous_transfer_loads)) +
+                                ",\"contiguous_transfer_stores\":" + std::to_string((current.contiguous_transfer_stores - previous_counters.contiguous_transfer_stores)) +
+                                ",\"contiguous_transfer_bytes\":" + std::to_string((current.contiguous_transfer_bytes - previous_counters.contiguous_transfer_bytes)) +
                                 ",\"vertex_prepare_ms_per_frame\":" + std::to_string((current.vertex_prepare_seconds - previous_counters.vertex_prepare_seconds) * 1000 / count) +
                                 ",\"vertex_upload_ms_per_frame\":" + std::to_string((current.vertex_upload_seconds - previous_counters.vertex_upload_seconds) * 1000 / count) +
                                 ",\"vertex_orphan_upload_ms_per_frame\":" + std::to_string((current.vertex_orphan_upload_seconds - previous_counters.vertex_orphan_upload_seconds) * 1000 / count) +
@@ -1707,6 +2066,60 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"vertex_subimage_sample_cpu_ms\":" + std::to_string((current.vertex_subimage_cpu_samples.cpu_seconds - previous_counters.vertex_subimage_cpu_samples.cpu_seconds)*1000.0) +
                                 ",\"vertex_subimage_samples\":" + std::to_string((current.vertex_subimage_cpu_samples.samples - previous_counters.vertex_subimage_cpu_samples.samples)) +
                                 ",\"vertex_subimage_sample_clock_failures\":" + std::to_string((current.vertex_subimage_cpu_samples.clock_failures - previous_counters.vertex_subimage_cpu_samples.clock_failures)) +
+                                ",\"texture_acquire_calls\":" + std::to_string((current.texture_acquisition_samples[0].calls - previous_counters.texture_acquisition_samples[0].calls)) +
+                                ",\"texture_acquire_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[0].timing.wall_seconds - previous_counters.texture_acquisition_samples[0].timing.wall_seconds)*1000.0) +
+                                ",\"texture_acquire_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[0].timing.cpu_seconds - previous_counters.texture_acquisition_samples[0].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_acquire_samples\":" + std::to_string((current.texture_acquisition_samples[0].timing.samples - previous_counters.texture_acquisition_samples[0].timing.samples)) +
+                                ",\"texture_acquire_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[0].timing.clock_failures - previous_counters.texture_acquisition_samples[0].timing.clock_failures)) +
+                                ",\"texture_selection_calls\":" + std::to_string((current.texture_acquisition_samples[1].calls - previous_counters.texture_acquisition_samples[1].calls)) +
+                                ",\"texture_selection_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[1].timing.wall_seconds - previous_counters.texture_acquisition_samples[1].timing.wall_seconds)*1000.0) +
+                                ",\"texture_selection_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[1].timing.cpu_seconds - previous_counters.texture_acquisition_samples[1].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_selection_samples\":" + std::to_string((current.texture_acquisition_samples[1].timing.samples - previous_counters.texture_acquisition_samples[1].timing.samples)) +
+                                ",\"texture_selection_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[1].timing.clock_failures - previous_counters.texture_acquisition_samples[1].timing.clock_failures)) +
+                                ",\"texture_validation_calls\":" + std::to_string((current.texture_acquisition_samples[2].calls - previous_counters.texture_acquisition_samples[2].calls)) +
+                                ",\"texture_validation_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[2].timing.wall_seconds - previous_counters.texture_acquisition_samples[2].timing.wall_seconds)*1000.0) +
+                                ",\"texture_validation_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[2].timing.cpu_seconds - previous_counters.texture_acquisition_samples[2].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_validation_samples\":" + std::to_string((current.texture_acquisition_samples[2].timing.samples - previous_counters.texture_acquisition_samples[2].timing.samples)) +
+                                ",\"texture_validation_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[2].timing.clock_failures - previous_counters.texture_acquisition_samples[2].timing.clock_failures)) +
+                                ",\"texture_reinterpretation_calls\":" + std::to_string((current.texture_acquisition_samples[3].calls - previous_counters.texture_acquisition_samples[3].calls)) +
+                                ",\"texture_reinterpretation_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[3].timing.wall_seconds - previous_counters.texture_acquisition_samples[3].timing.wall_seconds)*1000.0) +
+                                ",\"texture_reinterpretation_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[3].timing.cpu_seconds - previous_counters.texture_acquisition_samples[3].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_reinterpretation_samples\":" + std::to_string((current.texture_acquisition_samples[3].timing.samples - previous_counters.texture_acquisition_samples[3].timing.samples)) +
+                                ",\"texture_reinterpretation_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[3].timing.clock_failures - previous_counters.texture_acquisition_samples[3].timing.clock_failures)) +
+                                ",\"texture_allocation_calls\":" + std::to_string((current.texture_acquisition_samples[4].calls - previous_counters.texture_acquisition_samples[4].calls)) +
+                                ",\"texture_allocation_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[4].timing.wall_seconds - previous_counters.texture_acquisition_samples[4].timing.wall_seconds)*1000.0) +
+                                ",\"texture_allocation_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[4].timing.cpu_seconds - previous_counters.texture_acquisition_samples[4].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_allocation_samples\":" + std::to_string((current.texture_acquisition_samples[4].timing.samples - previous_counters.texture_acquisition_samples[4].timing.samples)) +
+                                ",\"texture_allocation_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[4].timing.clock_failures - previous_counters.texture_acquisition_samples[4].timing.clock_failures)) +
+                                ",\"texture_load_calls\":" + std::to_string((current.texture_acquisition_samples[5].calls - previous_counters.texture_acquisition_samples[5].calls)) +
+                                ",\"texture_load_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[5].timing.wall_seconds - previous_counters.texture_acquisition_samples[5].timing.wall_seconds)*1000.0) +
+                                ",\"texture_load_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[5].timing.cpu_seconds - previous_counters.texture_acquisition_samples[5].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_load_samples\":" + std::to_string((current.texture_acquisition_samples[5].timing.samples - previous_counters.texture_acquisition_samples[5].timing.samples)) +
+                                ",\"texture_load_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[5].timing.clock_failures - previous_counters.texture_acquisition_samples[5].timing.clock_failures)) +
+                                ",\"texture_upload_calls\":" + std::to_string((current.texture_acquisition_samples[6].calls - previous_counters.texture_acquisition_samples[6].calls)) +
+                                ",\"texture_upload_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[6].timing.wall_seconds - previous_counters.texture_acquisition_samples[6].timing.wall_seconds)*1000.0) +
+                                ",\"texture_upload_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[6].timing.cpu_seconds - previous_counters.texture_acquisition_samples[6].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_upload_samples\":" + std::to_string((current.texture_acquisition_samples[6].timing.samples - previous_counters.texture_acquisition_samples[6].timing.samples)) +
+                                ",\"texture_upload_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[6].timing.clock_failures - previous_counters.texture_acquisition_samples[6].timing.clock_failures)) +
+                                ",\"texture_mipmap_calls\":" + std::to_string((current.texture_acquisition_samples[7].calls - previous_counters.texture_acquisition_samples[7].calls)) +
+                                ",\"texture_mipmap_sample_wall_ms\":" + std::to_string((current.texture_acquisition_samples[7].timing.wall_seconds - previous_counters.texture_acquisition_samples[7].timing.wall_seconds)*1000.0) +
+                                ",\"texture_mipmap_sample_cpu_ms\":" + std::to_string((current.texture_acquisition_samples[7].timing.cpu_seconds - previous_counters.texture_acquisition_samples[7].timing.cpu_seconds)*1000.0) +
+                                ",\"texture_mipmap_samples\":" + std::to_string((current.texture_acquisition_samples[7].timing.samples - previous_counters.texture_acquisition_samples[7].timing.samples)) +
+                                ",\"texture_mipmap_sample_clock_failures\":" + std::to_string((current.texture_acquisition_samples[7].timing.clock_failures - previous_counters.texture_acquisition_samples[7].timing.clock_failures)) +
+                                ",\"texture_exact_candidates\":" + std::to_string(current.texture_exact_candidates - previous_counters.texture_exact_candidates) +
+                                ",\"texture_exact_wrong_layout\":" + std::to_string(current.texture_exact_wrong_layout - previous_counters.texture_exact_wrong_layout) +
+                                ",\"texture_exact_early_rejects\":" + std::to_string(current.texture_exact_early_rejects - previous_counters.texture_exact_early_rejects) +
+                                ",\"texture_exact_validity_lookups\":" + std::to_string(current.texture_exact_validity_lookups - previous_counters.texture_exact_validity_lookups) +
+                                ",\"surface_download_sample_wall_ms\":" + std::to_string((current.surface_download_cpu_samples.wall_seconds - previous_counters.surface_download_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"surface_download_sample_cpu_ms\":" + std::to_string((current.surface_download_cpu_samples.cpu_seconds - previous_counters.surface_download_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"surface_download_samples\":" + std::to_string((current.surface_download_cpu_samples.samples - previous_counters.surface_download_cpu_samples.samples)) +
+                                ",\"surface_download_sample_clock_failures\":" + std::to_string((current.surface_download_cpu_samples.clock_failures - previous_counters.surface_download_cpu_samples.clock_failures)) +
+                                ",\"surface_read_pixels_sample_wall_ms\":" + std::to_string((current.surface_read_pixels_cpu_samples.wall_seconds - previous_counters.surface_read_pixels_cpu_samples.wall_seconds)*1000.0) +
+                                ",\"surface_read_pixels_sample_cpu_ms\":" + std::to_string((current.surface_read_pixels_cpu_samples.cpu_seconds - previous_counters.surface_read_pixels_cpu_samples.cpu_seconds)*1000.0) +
+                                ",\"surface_read_pixels_samples\":" + std::to_string((current.surface_read_pixels_cpu_samples.samples - previous_counters.surface_read_pixels_cpu_samples.samples)) +
+                                ",\"surface_read_pixels_sample_clock_failures\":" + std::to_string((current.surface_read_pixels_cpu_samples.clock_failures - previous_counters.surface_read_pixels_cpu_samples.clock_failures)) +
+                                ",\"surface_read_pixels_ms_per_frame\":" + std::to_string((current.surface_read_pixels_seconds - previous_counters.surface_read_pixels_seconds)*1000.0/count) +
+                                ",\"surface_read_pixels_calls\":" + std::to_string(current.surface_read_pixels_calls - previous_counters.surface_read_pixels_calls) +
                                 ",\"uniform_upload_ms_per_frame\":" + std::to_string((current.uniform_upload_seconds - previous_counters.uniform_upload_seconds)*1000.0/count) +
                                 ",\"surface_remap_ms_per_frame\":" + std::to_string((current.surface_remap_seconds - previous_counters.surface_remap_seconds)*1000.0/count) +
                                 ",\"surface_remap_calls\":" + std::to_string(current.surface_remap_calls - previous_counters.surface_remap_calls) +
@@ -1748,6 +2161,10 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"vertex_reuse_check_ms_per_frame\":" + std::to_string((current.vertex_reuse_check_seconds - previous_counters.vertex_reuse_check_seconds)*1000/count) +
                                 ",\"vertex_index_upload_bytes\":" + std::to_string(current.vertex_index_upload_bytes - previous_counters.vertex_index_upload_bytes) +
                                 ",\"gpu_input_records\":" + std::to_string(current.gpu_input_records - previous_counters.gpu_input_records) +
+                                ",\"vertex_input_stage_draws\":" + std::to_string(current.vertex_input_stage_draws - previous_counters.vertex_input_stage_draws) +
+                                ",\"vertex_configured_input_registers\":" + std::to_string(current.vertex_configured_input_registers - previous_counters.vertex_configured_input_registers) +
+                                ",\"vertex_selected_input_registers\":" + std::to_string(current.vertex_selected_input_registers - previous_counters.vertex_selected_input_registers) +
+                                ",\"vertex_pruned_input_draws\":" + std::to_string(current.vertex_pruned_input_draws - previous_counters.vertex_pruned_input_draws) +
                                 ",\"gpu_indexed_input_draws\":" + std::to_string(current.gpu_indexed_input_draws - previous_counters.gpu_indexed_input_draws) +
                                 ",\"gpu_packed_input_draws\":" + std::to_string(current.gpu_packed_input_draws - previous_counters.gpu_packed_input_draws) +
                                 ",\"packed_validation_failures\":" + std::to_string(current.packed_validation_failures) +
@@ -1767,6 +2184,24 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"readback_ms_per_frame\":" + std::to_string((current.readback_seconds - previous_counters.readback_seconds) * 1000 / count) +
                                 ",\"present_ms_per_frame\":" + std::to_string((current.present_seconds - previous_counters.present_seconds) * 1000 / count) +
                                 ",\"shader_calls\":" + std::to_string(current.shader_calls - previous_counters.shader_calls) +
+                                ",\"pica_command_lists\":" + std::to_string(current.pica_command_lists - previous_counters.pica_command_lists) +
+                                ",\"pica_draw_requests\":" + std::to_string(current.pica_draw_requests - previous_counters.pica_draw_requests) +
+                                ",\"pica_post_irq_submissions\":" + std::to_string(current.pica_post_irq_submissions - previous_counters.pica_post_irq_submissions) +
+                                ",\"pica_post_irq_writes\":" + std::to_string(current.pica_post_irq_writes - previous_counters.pica_post_irq_writes) +
+                                ",\"pica_post_irq_draw_requests\":" + std::to_string(current.pica_post_irq_draw_requests - previous_counters.pica_post_irq_draw_requests) +
+                                ",\"pica_post_irq_jumps\":" + std::to_string(current.pica_post_irq_jumps - previous_counters.pica_post_irq_jumps) +
+                                ",\"pica_first_irq_remaining_words\":" + std::to_string(current.pica_first_irq_remaining_words - previous_counters.pica_first_irq_remaining_words) +
+                                ",\"experimental_ppf_scheduled\":" + std::to_string(current.experimental_ppf_scheduled - previous_counters.experimental_ppf_scheduled) +
+                                ",\"experimental_ppf_delivered\":" + std::to_string(current.experimental_ppf_delivered - previous_counters.experimental_ppf_delivered) +
+                                ",\"experimental_ppf_modeled_ns\":" + std::to_string(current.experimental_ppf_modeled_ns - previous_counters.experimental_ppf_modeled_ns) +
+                                ",\"experimental_ppf_queued_ticks\":" + std::to_string(current.experimental_ppf_queued_ticks - previous_counters.experimental_ppf_queued_ticks) +
+                                ",\"experimental_p3d_scheduled\":" + std::to_string(current.experimental_p3d_scheduled - previous_counters.experimental_p3d_scheduled) +
+                                ",\"experimental_p3d_delivered\":" + std::to_string(current.experimental_p3d_delivered - previous_counters.experimental_p3d_delivered) +
+                                ",\"experimental_p3d_retired\":" + std::to_string(current.experimental_p3d_retired - previous_counters.experimental_p3d_retired) +
+                                ",\"experimental_p3d_modeled_ns\":" + std::to_string(current.experimental_p3d_modeled_ns - previous_counters.experimental_p3d_modeled_ns) +
+                                ",\"experimental_p3d_queued_ticks\":" + std::to_string(current.experimental_p3d_queued_ticks - previous_counters.experimental_p3d_queued_ticks) +
+                                ",\"top_buffer_swaps\":" + std::to_string(current.top_buffer_swaps - previous_counters.top_buffer_swaps) +
+                                ",\"stereo_top_buffer_swaps\":" + std::to_string(current.stereo_top_buffer_swaps - previous_counters.stereo_top_buffer_swaps) +
                                 ",\"gpu_vertex_draws\":" + std::to_string(current.gpu_vertex_draws - previous_counters.gpu_vertex_draws) +
                                 ",\"gpu_lit_pair_draws\":" + std::to_string(current.gpu_lit_pair_draws - previous_counters.gpu_lit_pair_draws) +
                                 ",\"gpu_lit_pair_vertices\":" + std::to_string(current.gpu_lit_pair_vertices - previous_counters.gpu_lit_pair_vertices) +
@@ -1777,7 +2212,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                                 ",\"gpu_feedback_vertex_draws\":" + std::to_string(current.gpu_feedback_vertex_draws - previous_counters.gpu_feedback_vertex_draws) +
                                 ",\"gpu_feedback_source_vertices\":" + std::to_string(current.gpu_feedback_source_vertices - previous_counters.gpu_feedback_source_vertices) +
                                 ",\"gpu_vertices\":" + std::to_string(current.gpu_vertices - previous_counters.gpu_vertices) +
-                                ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + "}");
+                                ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + category_window + "}");
                             previous_counters = current;
                             previous_host_cpu = host_cpu;
                             frame_times.clear();
@@ -1785,8 +2220,21 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                             timing_report << "{\"title_id\":" << system.GetTitleID()
                                           << ",\"rom_filename\":" << std::quoted(std::string(FileUtil::GetFilename(rom)))
                                           << ",\"cpu_backend\":" << std::quoted(CaraSelectedCPUBackend())
+                                          << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
+                                          << ",\"presentation_mode\":\"mono_left_top\""
+                                          << ",\"used_input_attributes_requested\":" << ((std::getenv("CARA_GPU_USED_INPUTS") && std::string_view(std::getenv("CARA_GPU_USED_INPUTS")) == "1")?"true":"false")
+                                          << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
+                       << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
                                           << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
+                                          << ",\"cpu_category_timing\":" << (category_timing?"true":"false")
+                                          << ",\"cpu_category_clock_calibrated\":" << (category_clock_calibrated?"true":"false")
+                                          << ",\"cpu_category_clock_ns_per_read\":" << category_clock_ns_per_read
+                                          << ",\"cpu_category_names\":[\"others\",\"cpu_execution_including_memory\",\"hle_svc\",\"gpu_command\",\"dsp_hle_tick\"]"
+                                          << ",\"worker_interactive_qos_requested\":" << (worker_interactive_qos?"true":"false")
+                                          << ",\"worker_qos_set_result\":" << (worker_interactive_qos?std::to_string(worker_qos_set_result):"null")
+                                          << ",\"worker_qos_initial_class_self\":" << static_cast<unsigned>(worker_qos_initial)
+                                          << ",\"worker_qos_class_self\":" << static_cast<unsigned>(qos_class_self())
                                           << ",\"vertex_reuse_probe\":" << (std::getenv("CARA_VERTEX_REUSE_TRACE")?"true":"false")
                                           << ",\"instrumented\":true,\"uncapped\":" << (pace_frames ? "false" : "true") << ",\"windows\":[";
                             for (size_t i = 0; i < timing_windows.size(); ++i)
@@ -1816,7 +2264,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                         const bool pacing_changed=should_pace!=pace_frames; pace_frames=should_pace;
                         if (!has_speed_override) paced_speed=self->maximumSpeedLimit.load();
                         if (!pace_frames || pacing_changed || emuWindow->frames<paced_frame) {
-                            // Uncapped play, policy changes and frame resets discard old deadlines.
+                            // The aggregate frame pacer owns emulated time; display tickets never sleep.
                             frame_pacer.Reset(host_seconds(now));
                         } else {
                             frame_pacer.SetSpeedPercent(paced_speed,host_seconds(now));
@@ -1837,12 +2285,23 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                            << ",\"fps\":" << emuWindow->frames / elapsed
                            << ",\"paced\":" << (pace_frames ? "true" : "false")
                            << ",\"maximum_speed_percent\":" << paced_speed
+                           << ",\"bounded_frame_pacing\":" << (bounded_frame_pacing?"true":"false")
                            << ",\"late_paced_frames\":" << late_paced_frames
+                           << ",\"host_presentation_submissions\":" << emuWindow->presentation_submissions
+                           << ",\"host_presentation_min_interval_ms\":" << emuWindow->minimum_presentation_interval*1000
+                           << ",\"host_presentation_paced\":" << (emuWindow->presentation_paced?"true":"false")
+                           << ",\"host_presentation_coalesced\":" << emuWindow->presentation_coalesced
+                           << ",\"host_presentation_clock\":\"ios_display_link_60\""
                            << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "dyncom") == 0) ? "dyncom" : "fastinterp") << "\""
                            << ",\"adaptive_guest_cpu\":" << (clock_control.Enabled()?"true":"false")
                            << ",\"guest_cpu_percent\":" << policy_clock()
                            << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
+                           << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
+                           << ",\"presentation_mode\":\"mono_left_top\""
+                           << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
+                       << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
 #ifdef CARA_IOS_GLES
+                           << ",\"eagl_multithreaded\":" << (emuWindow->graphics_context.isMultiThreaded ? "true" : "false")
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
                            << ",\"gpu_vertices\":" << Common::FrameTiming::counters.gpu_vertices
                            << ",\"cpu_vertex_draws\":" << Common::FrameTiming::counters.cpu_vertex_draws
@@ -1890,6 +2349,13 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                     }
                     profile << "]}\n";
                 }
+#ifdef CARA_INTERNAL_HOST_PC_SAMPLER
+                host_pc_sampler.OnFrame(emuWindow->frames);
+                host_pc_guard.reset(); // Stop/join/write before core teardown.
+#endif
+                Cara::GuestGPUTrace::Flush(true);
+                if (Cara::GuestGPUTrace::TakeExportError())
+                    LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
                 system.Shutdown();
                 [saveSync captureCommittedSave];
                 [stateSync captureCommittedSave];
@@ -1911,13 +2377,16 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
                 if (keepAwake) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 900 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                     if (!self->running) UIApplication.sharedApplication.idleTimerDisabled = NO;
                 });
-                if (result != Core::System::ResultStatus::Success && !self->sessionFailure)
+                // Homebrew utilities and system apps can close through the emulated OS.
+                const bool failed=result!=Core::System::ResultStatus::Success &&
+                                  result!=Core::System::ResultStatus::ShutdownRequested;
+                if (failed && !self->sessionFailure)
                     self->sessionFailure = [NSString stringWithFormat:@"Stopped · Error %u",unsigned(result)];
                 [self updateSessionPresentation];
                 self->libraryController.canResume=NO;
                 if (!target_frames && !self->openingGame) {
                     [self showLibrary];
-                    if (result != Core::System::ResultStatus::Success && !self.presentedViewController) [self shellError:@"Game stopped" message:self->status.text];
+                    if (failed && !self.presentedViewController) [self shellError:@"Game stopped" message:self->status.text];
                 }
             });
         }
@@ -1926,6 +2395,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
 - (void)dealloc {
     stop = true;
     if (worker.joinable()) worker.join();
+    [presentationLink invalidate];
     [cloudFeedbackTimer invalidate];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }

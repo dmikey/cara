@@ -280,6 +280,7 @@ private:
     IOSVertexSourceMap ios_vertex_source_map;
     std::vector<u16> ios_vertex_input_indices;
     unsigned ios_indexed_vertex_inputs = 0;
+    u16 ios_vertex_input_mask = 0xffff;
     bool ios_direct_vertex_reuse = false;
     bool ios_lit_pair_vertex_reuse = false;
     bool ios_feedback_vertex_reuse = false;

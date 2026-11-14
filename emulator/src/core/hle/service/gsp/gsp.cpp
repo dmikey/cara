@@ -12,10 +12,10 @@ namespace Service::GSP {
 
 static std::weak_ptr<GSP_GPU> gsp_gpu;
 
-void SignalInterrupt(InterruptId interrupt_id) {
+void SignalInterrupt(InterruptId interrupt_id, u64 transfer_ns) {
     auto gpu = gsp_gpu.lock();
     ASSERT(gpu != nullptr);
-    return gpu->SignalInterrupt(interrupt_id);
+    return gpu->SignalInterrupt(interrupt_id, transfer_ns);
 }
 
 void InstallInterfaces(Core::System& system) {

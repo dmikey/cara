@@ -17,13 +17,15 @@ public:
     static constexpr unsigned MaxSpeedPercent = 200;
     static constexpr double VBlankHz = 59.833997376556916;
 
-    explicit FramePacer(unsigned speed_percent = DefaultSpeedPercent)
-        : speed_percent_(ClampSpeedPercent(speed_percent)) {}
+    explicit FramePacer(unsigned speed_percent = DefaultSpeedPercent,
+                        bool bounded_catchup = false)
+        : speed_percent_(ClampSpeedPercent(speed_percent)), bounded_catchup_(bounded_catchup) {}
 
     static constexpr unsigned ClampSpeedPercent(unsigned percent) {
         return std::clamp(percent, MinSpeedPercent, MaxSpeedPercent);
     }
     unsigned SpeedPercent() const { return speed_percent_; }
+    bool BoundedCatchup() const { return bounded_catchup_; }
     double SecondsPerVBlank() const {
         return (1.0 / VBlankHz) * (100.0 / speed_percent_);
     }
@@ -45,8 +47,12 @@ public:
     }
 
     // Pass the TOTAL number of vblanks advanced since the preceding call, not
-    // one per frontend iteration. Late work discards debt instead of allowing
-    // subsequent fast iterations to burst through overdue guest frames.
+    // one per frontend iteration. By default late work discards debt. Opt-in
+    // bounded catchup retains at most one target vblank of lateness (16.713ms
+    // at 100%, 33.426ms at 50%, 8.357ms at 200%). This lets alternating heavy
+    // and light work recover, without replaying a long stall at full speed.
+    // A returned deadline may be in the past; callers sleep only if it is future.
+    // Presentation remains independently limited by the display ticket policy.
     double Advance(std::uint64_t advanced_vblanks, double now_seconds) {
         ValidateTime(now_seconds);
         if (!initialized_ || now_seconds < last_now_seconds_) {
@@ -62,7 +68,13 @@ public:
             Reset(now_seconds);
             return deadline_seconds_;
         }
-        deadline_seconds_ = std::max(static_cast<double>(candidate), now_seconds);
+        // Use extended precision for the subtraction as well: even finite host
+        // values near -DBL_MAX must not produce an infinite debt floor.
+        const long double debt_floor = static_cast<long double>(now_seconds) -
+            (bounded_catchup_ ? SecondsPerVBlank() : 0.0);
+        const long double bounded = std::max(candidate, debt_floor);
+        deadline_seconds_ = static_cast<double>(
+            std::max(bounded, -static_cast<long double>(std::numeric_limits<double>::max())));
         last_now_seconds_ = now_seconds;
         return deadline_seconds_;
     }
@@ -74,6 +86,7 @@ private:
         }
     }
     unsigned speed_percent_;
+    bool bounded_catchup_;
     bool initialized_ = false;
     double deadline_seconds_ = 0;
     double last_now_seconds_ = 0;

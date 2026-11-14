@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/cpu_category_timing.h"
 #include <boost/serialization/array.hpp>
 #include <boost/serialization/base_object.hpp>
 #include <boost/serialization/shared_ptr.hpp>
@@ -12,6 +13,8 @@
 #include "audio_core/hle/wmf_decoder.h"
 #elif HAVE_FFMPEG
 #include "audio_core/hle/ffmpeg_decoder.h"
+#elif HAVE_APPLE_AAC
+#include "audio_core/hle/apple_aac_decoder.h"
 #elif ANDROID
 #include "audio_core/hle/mediandk_decoder.h"
 #elif HAVE_FDK
@@ -65,6 +68,7 @@ public:
     std::array<u8, Memory::DSP_RAM_SIZE>& GetDspMemory();
 
     void SetServiceToInterrupt(std::weak_ptr<DSP_DSP> dsp);
+    void ResetDecoder() { decoder->Reset(); }
 
 private:
     void ResetPipes();
@@ -128,6 +132,8 @@ DspHle::Impl::Impl(DspHle& parent_, Memory::MemorySystem& memory) : parent(paren
     decoder = std::make_unique<HLE::WMFDecoder>(memory);
 #elif defined(HAVE_FFMPEG)
     decoder = std::make_unique<HLE::FFMPEGDecoder>(memory);
+#elif defined(HAVE_APPLE_AAC)
+    decoder = std::make_unique<HLE::AppleAACDecoder>(memory);
 #elif ANDROID
     decoder = std::make_unique<HLE::MediaNDKDecoder>(memory);
 #elif defined(HAVE_FDK)
@@ -249,12 +255,14 @@ void DspHle::Impl::PipeWrite(DspPipe pipe_number, const std::vector<u8>& buffer)
 
         switch (static_cast<StateChange>(buffer[0])) {
         case StateChange::Initialize:
+            ResetDecoder();
             LOG_INFO(Audio_DSP, "Application has requested initialization of DSP hardware");
             ResetPipes();
             AudioPipeWriteStructAddresses();
             dsp_state = DspState::On;
             break;
         case StateChange::Shutdown:
+            decoder->Reset();
             LOG_INFO(Audio_DSP, "Application has requested shutdown of DSP hardware");
             dsp_state = DspState::Off;
             break;
@@ -437,6 +445,7 @@ bool DspHle::Impl::Tick() {
 }
 
 void DspHle::Impl::AudioTickCallback(s64 cycles_late) {
+    Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::DSPHLETick);
     if (Tick()) {
         // TODO(merry): Signal all the other interrupts as appropriate.
         if (auto service = dsp_dsp.lock()) {
@@ -498,7 +507,7 @@ void DspHle::LoadComponent(const std::vector<u8>& component_data) {
 }
 
 void DspHle::UnloadComponent() {
-    // Do nothing
+    impl->ResetDecoder();
 }
 
 } // namespace AudioCore

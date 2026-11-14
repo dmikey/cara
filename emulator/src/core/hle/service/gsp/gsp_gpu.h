@@ -9,6 +9,8 @@
 #include <string>
 #include <boost/serialization/base_object.hpp>
 #include <boost/serialization/shared_ptr.hpp>
+#include <boost/serialization/array.hpp>
+#include "cara/p3d_completion.h"
 #include "common/bit_field.h"
 #include "common/common_types.h"
 #include "core/hle/kernel/event.h"
@@ -18,6 +20,7 @@
 
 namespace Core {
 class System;
+struct TimingEventType;
 }
 
 namespace Kernel {
@@ -218,7 +221,7 @@ private:
 class GSP_GPU final : public ServiceFramework<GSP_GPU, SessionData> {
 public:
     explicit GSP_GPU(Core::System& system);
-    ~GSP_GPU() = default;
+    ~GSP_GPU() override;
 
     void ClientDisconnected(std::shared_ptr<Kernel::ServerSession> server_session) override;
 
@@ -226,7 +229,7 @@ public:
      * Signals that the specified interrupt type has occurred to userland code
      * @param interrupt_id ID of interrupt that is being signalled
      */
-    void SignalInterrupt(InterruptId interrupt_id);
+    void SignalInterrupt(InterruptId interrupt_id, u64 transfer_ns = 0);
 
     /**
      * Retrieves the framebuffer info stored in the GSP shared memory for the
@@ -246,6 +249,14 @@ private:
      * @param thread_id GSP thread that will receive the interrupt.
      */
     void SignalInterruptForThread(InterruptId interrupt_id, u32 thread_id);
+    void BindP3DEvent();
+    void CompleteP3D(u64 token);
+    struct P3DCallback {
+        GSP_GPU* owner;
+        void operator()(u64 token, int) const { owner->CompleteP3D(token); }
+    };
+    Cara::P3DCompletionQueue p3d_completions;
+    Core::TimingEventType* p3d_event = nullptr;
 
     /**
      * GSP_GPU::WriteHWRegs service function
@@ -453,6 +464,21 @@ private:
         ar& active_thread_id;
         ar& first_initialization;
         ar& used_thread_ids;
+        bool saved_p3d_enabled = Cara::ExperimentalP3DCompletionEnabled();
+        ar& saved_p3d_enabled;
+        ar& p3d_completions;
+        if (Archive::is_loading::value) {
+            p3d_completions.Validate();
+            const bool pending = std::any_of(p3d_completions.records.begin(), p3d_completions.records.end(),
+                                            [](const auto& record) { return record.active; });
+            if ((!saved_p3d_enabled || !Cara::ExperimentalP3DCompletionEnabled()) && pending)
+                throw std::runtime_error("Cannot restore pending experimental P3D events with timing disabled");
+            if (!Cara::ExperimentalPPFDependencyEnabled() && std::any_of(
+                    p3d_completions.records.begin(), p3d_completions.records.end(),
+                    [](const auto& record) { return record.active && record.transfer; }))
+                throw std::runtime_error("Cannot restore pending PPF dependency events with dependency mode disabled");
+            BindP3DEvent();
+        }
     }
 
     friend class boost::serialization::access;

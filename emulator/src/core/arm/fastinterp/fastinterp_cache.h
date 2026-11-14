@@ -4,8 +4,16 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <limits>
+#include <memory>
+#include <ostream>
 #include <cstring>
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 #include "core/arm/fastinterp/fastinterp_types.h"
 
 namespace Core::FastInterp {
@@ -13,89 +21,269 @@ namespace Core::FastInterp {
 // ============================================================================
 // TLB-Style Block Cache
 // ============================================================================
-// Fixed-size, 4-way set-associative block cache (chosen over unordered_map for
-// O(1) lookups with no per-entry allocation), with LRU replacement.
+// Fixed-size set-associative block cache with no per-entry allocation.
+// Four ways are the baseline; eight ways retain the same total block storage.
 
-/// Number of sets in the cache (power of 2)
-/// 4096 sets * 4 ways * ~660 bytes per block = ~10MB cache
-constexpr size_t CACHE_SETS = 4096;
-
-/// Number of ways per set (associativity)
-constexpr size_t CACHE_WAYS = 4;
-
-/// Total number of cache entries
-constexpr size_t CACHE_SIZE = CACHE_SETS * CACHE_WAYS;
+constexpr unsigned CACHE_WAYS = 4;
+constexpr unsigned DEFAULT_CACHE_SIZE = 16384;
+constexpr unsigned MAX_CACHE_SIZE = 32768;
+constexpr unsigned MAX_CACHE_SETS = MAX_CACHE_SIZE / CACHE_WAYS;
+static_assert(MAX_CACHE_SIZE < INVALID_BLOCK_SLOT);
 
 /// Invalid tag marker (a guest PC of 0xFFFFFFFF can never be a real block start)
 constexpr u32 INVALID_TAG = 0xFFFFFFFF;
 
-/// Set-associative block cache with LRU replacement
+/// Set-associative block cache with recently-used-bit replacement
 class BlockCache {
+    friend struct SecondaryLinkCacheTestAccess;
 public:
-    BlockCache() {
+    static unsigned CapacityFromEnvironment() {
+        const char* value = std::getenv("CARA_FASTINTERP_CACHE_ENTRIES");
+        return value && std::strcmp(value, "32768") == 0 ? MAX_CACHE_SIZE : DEFAULT_CACHE_SIZE;
+    }
+    explicit BlockCache(unsigned entries = CapacityFromEnvironment())
+        : capacity_(entries == MAX_CACHE_SIZE ? MAX_CACHE_SIZE : DEFAULT_CACHE_SIZE),
+          four_way_mask_(capacity_ / 4 - 1), eight_way_mask_(capacity_ / 8 - 1),
+          blocks_(new BasicBlock[capacity_]) {
+        const char* value = std::getenv("CARA_FASTINTERP_CHAIN_RECENCY");
+        chain_recency_ = value && std::strcmp(value, "1") == 0;
+        value = std::getenv("CARA_FASTINTERP_SIMD_TAGS");
+        SetSimdTags(value && std::strcmp(value, "1") == 0);
         Clear();
     }
+    bool SimdTagsEnabled() const { return simd_tags_; }
+    static constexpr bool SimdTagsSupported() {
+#if defined(__aarch64__) && defined(__ARM_NEON)
+        return true;
+#else
+        return false;
+#endif
+    }
+    void SetSimdTags(bool enabled) { simd_tags_ = enabled && SimdTagsSupported(); }
+    bool ChainRecencyEnabled() const { return chain_recency_; }
+    void SetChainRecency(bool enabled) {
+        if (chain_recency_ != enabled) { chain_recency_ = enabled; Clear(); }
+    }
+
+    struct Profile {
+        u64 lookup_calls{}, lookup_hits{}, lookup_tag_comparisons{};
+        u64 secondary_probes{}, secondary_hits{};
+        u64 lookup_or_allocate_calls{}, lookup_or_allocate_hits{}, lookup_or_allocate_tag_comparisons{};
+        u64 allocation_misses{};
+        u64 empty_allocations{};
+        u64 live_replacements{};
+        u64 clears{};
+        u64 invalidation_calls{};
+        u64 invalidated_entries{};
+        u64 counter_discontinuities{};
+    };
+
+    void SetEightWay(bool enabled) {
+        if (eight_way_ != enabled) {
+            if (profiling_ && profile_.allocation_misses) ++profile_mapping_changes_;
+            eight_way_ = enabled;
+            Clear(); // Changing the set mapping always invalidates old entries.
+        }
+    }
+    unsigned Ways() const { return eight_way_ ? 8u : 4u; }
+    unsigned Capacity() const { return capacity_; }
+    unsigned Sets() const { return capacity_ / Ways(); }
+    std::size_t BlockStorageBytes() const { return capacity_ * sizeof(BasicBlock); }
+    // Owned storage excludes the allocator's implementation-specific overhead.
+    std::size_t OwnedBytes() const { return sizeof(*this) + BlockStorageBytes(); }
+
+    void SetProfiling(bool enabled) { profiling_ = enabled; }
+    bool ProfilingEnabled() const { return profiling_; }
+    const Profile& GetProfile() const { return profile_; }
 
     /// Clear all cache entries
     void Clear() {
-        tags_.fill(INVALID_TAG);
-        for (auto& block : blocks_) {
+        if (profiling_) ++profile_.clears;
+        std::fill_n(tags_.begin(), capacity_, INVALID_TAG);
+        std::fill_n(observed_executions_.begin(), capacity_, 0);
+        std::fill_n(observed_modes_.begin(), capacity_, 0);
+        for (unsigned i = 0; i < capacity_; ++i) {
+            auto& block = blocks_[i];
             block.inst_count = 0;
             block.chain_target = nullptr; // Prevent dangling pointers
+            block.secondary_slot = INVALID_BLOCK_SLOT;
         }
         std::memset(lru_state_.data(), 0, lru_state_.size());
     }
 
     /// Invalidate cache entries whose decoded range intersects [start_addr, start_addr+length)
     void InvalidateRange(u32 start_addr, u32 length) {
+        if (profiling_) ++profile_.invalidation_calls;
         // Set indices are hashed, so an address range does not map to a set
         // range: walk every entry and match on the block's own address range.
         // inst_count is zeroed so surviving pointers to the entry (chain
         // targets) fizzle instead of executing the stale decode.
         const u64 end_addr = static_cast<u64>(start_addr) + length;
-        for (size_t i = 0; i < CACHE_SIZE; ++i) {
+        for (size_t i = 0; i < capacity_; ++i) {
             if (tags_[i] == INVALID_TAG) {
                 continue;
             }
             if (blocks_[i].start_pc < end_addr && blocks_[i].end_pc > start_addr) {
+                if (profiling_) ++profile_.invalidated_entries;
                 tags_[i] = INVALID_TAG;
+                observed_executions_[i] = 0; observed_modes_[i] = 0;
                 blocks_[i].inst_count = 0;
                 blocks_[i].chain_target = nullptr;
+                blocks_[i].secondary_slot = INVALID_BLOCK_SLOT;
             }
         }
     }
 
-    /// Look up a block by PC (returns nullptr if not found)
-    BasicBlock* Lookup(u32 pc) {
-        u32 set_idx = GetSetIndex(pc);
-        u32 base = set_idx * CACHE_WAYS;
+    BasicBlock* Lookup(u32 pc, u16* slot = nullptr) {
+        if (profiling_) ++profile_.lookup_calls;
+        return eight_way_ ? LookupImpl<8>(pc, slot) : LookupImpl<4>(pc, slot);
+    }
 
-        for (u32 way = 0; way < CACHE_WAYS; ++way) {
-            if (tags_[base + way] == pc) {
-                UpdateLRU(set_idx, way);
-                return &blocks_[base + way];
-            }
+    // Stale probes change neither request counters nor NRU state before the
+    // caller's ordinary Lookup. Exact current tags validate recycled slots;
+    // mode/poison rejection stays with the caller AFTER the original hit touch.
+    BasicBlock* LookupSecondary(u32 pc, u16 slot) {
+        if (profiling_) ++profile_.secondary_probes;
+        if (slot >= capacity_ || pc == INVALID_TAG || tags_[slot] != pc) return nullptr;
+        const unsigned shift = eight_way_ ? 3 : 2;
+        const unsigned way = slot & ((1u << shift) - 1);
+        if (profiling_) {
+            ++profile_.secondary_hits;
+            ++profile_.lookup_calls;
+            ++profile_.lookup_hits;
+            // Logical scalar-equivalent prefix count, not physical probes.
+            profile_.lookup_tag_comparisons += way + 1;
         }
+        if (eight_way_) UpdateLRU<8>(slot >> 3, way);
+        else UpdateLRU<4>(slot >> 2, way);
+        return &blocks_[slot];
+    }
+    BasicBlock* LookupOrAllocate(u32 pc, bool& was_hit) {
+        if (profiling_) ++profile_.lookup_or_allocate_calls;
+        return eight_way_ ? LookupOrAllocateImpl<8>(pc, was_hit)
+                          : LookupOrAllocateImpl<4>(pc, was_hit);
+    }
+
+    template <typename Visitor>
+    void VisitResidentBlocks(Visitor visit) const {
+        for (size_t i = 0; i < capacity_; ++i)
+            if (tags_[i] != INVALID_TAG && blocks_[i].inst_count) visit(blocks_[i]);
+    }
+
+    // Miss-only diagnostic data: fixed per-set totals plus first/last 64 live
+    // replacement samples. No guest-memory reads and no hit/chain hooks.
+    void WriteReplacementProfile(std::ostream& out) const {
+        out << "{\"enabled\":" << (profiling_ ? "true" : "false")
+            << ",\"mapping_changes\":" << profile_mapping_changes_
+            << ",\"counter_discontinuities\":" << profile_.counter_discontinuities
+            << ",\"sets\":[";
+        bool comma = false;
+        for (unsigned i = 0; i < capacity_ / CACHE_WAYS; ++i) {
+            if (!set_profile_[i].misses) continue;
+            const auto& item = set_profile_[i];
+            out << (comma ? "," : "") << "{\"set\":" << i << ",\"misses\":" << item.misses
+                << ",\"live_replacements\":" << item.replacements << '}'; comma = true;
+        }
+        out << "],\"samples\":["; comma = false;
+        const auto write = [&](const ReplacementSample& sample, const char* phase) {
+            out << (comma ? "," : "") << "{\"phase\":\"" << phase << "\",\"miss\":" << sample.miss
+                << ",\"set\":" << sample.set << ",\"new_pc\":" << sample.new_pc
+                << ",\"victim_pc\":" << sample.victim_pc << ",\"victim_executions\":" << sample.executions
+                << ",\"activity_observed\":" << (sample.activity_known ? "true" : "false")
+                << ",\"victim_interval_executions\":" << sample.interval
+                << ",\"active_ways\":" << sample.active_ways << '}'; comma = true;
+        };
+        const auto initial = std::min<u64>(profile_.live_replacements, 64);
+        for (unsigned i = 0; i < initial; ++i) write(replacement_samples_[i], "first");
+        const auto tail = profile_.live_replacements > 64 ? profile_.live_replacements - 64 : 0;
+        const auto count = std::min<u64>(tail, 64);
+        const auto begin = tail > 64 ? tail % 64 : 0;
+        for (unsigned i = 0; i < count; ++i) write(replacement_samples_[64 + (begin + i) % 64], "last");
+        out << "]}";
+    }
+
+private:
+    // Return the first matching way, including the original INVALID_TAG
+    // behavior. Only tag search changes: callers still perform the same NRU
+    // touch and retain responsibility for decoded/live and ARM/Thumb checks.
+    template <unsigned Ways>
+    u32 FindTag(u32 base, u32 pc) const {
+#if defined(__aarch64__) && defined(__ARM_NEON)
+        if (simd_tags_) {
+            const auto wanted = vdupq_n_u32(pc);
+            const uint32x4_t low_bits = {1, 2, 4, 8};
+            auto matches = vandq_u32(vceqq_u32(vld1q_u32(tags_.data() + base), wanted), low_bits);
+            if constexpr (Ways == 8) {
+                const uint32x4_t high_bits = {16, 32, 64, 128};
+                matches = vorrq_u32(matches, vandq_u32(
+                    vceqq_u32(vld1q_u32(tags_.data() + base + 4), wanted), high_bits));
+            }
+            const auto mask = vaddvq_u32(matches);
+            return mask ? static_cast<u32>(__builtin_ctz(mask)) : Ways;
+        }
+#endif
+        for (u32 way = 0; way < Ways; ++way)
+            if (tags_[base + way] == pc) return way;
+        return Ways;
+    }
+    struct SetProfile { u64 misses = 0, replacements = 0; };
+    struct ReplacementSample {
+        u64 miss = 0;
+        u32 set = 0, new_pc = 0, victim_pc = 0, executions = 0, interval = 0, active_ways = 0;
+        bool activity_known = false;
+    };
+    /// Look up a block by PC (returns nullptr if not found)
+    template <unsigned Ways>
+    BasicBlock* LookupImpl(u32 pc, u16* slot) {
+        u32 set_idx = GetSetIndex<Ways>(pc);
+        u32 base = set_idx * Ways;
+
+        const u32 way = FindTag<Ways>(base, pc);
+        if (way != Ways) {
+            if (profiling_) { ++profile_.lookup_hits; profile_.lookup_tag_comparisons += way + 1; }
+            UpdateLRU<Ways>(set_idx, way);
+            if (slot) *slot = static_cast<u16>(base + way);
+            return &blocks_[base + way];
+        }
+        if (profiling_) profile_.lookup_tag_comparisons += Ways;
         return nullptr;
     }
 
     /// Look up a block, allocating an LRU victim on miss; sets was_hit
-    BasicBlock* LookupOrAllocate(u32 pc, bool& was_hit) {
-        u32 set_idx = GetSetIndex(pc);
-        u32 base = set_idx * CACHE_WAYS;
+    template <unsigned Ways>
+    BasicBlock* LookupOrAllocateImpl(u32 pc, bool& was_hit) {
+        u32 set_idx = GetSetIndex<Ways>(pc);
+        u32 base = set_idx * Ways;
 
-        for (u32 way = 0; way < CACHE_WAYS; ++way) {
-            if (tags_[base + way] == pc) {
-                UpdateLRU(set_idx, way);
-                was_hit = true;
-                return &blocks_[base + way];
+        const u32 way = FindTag<Ways>(base, pc);
+        if (way != Ways) {
+            if (profiling_) { ++profile_.lookup_or_allocate_hits; profile_.lookup_or_allocate_tag_comparisons += way + 1; }
+            UpdateLRU<Ways>(set_idx, way);
+            was_hit = true;
+            return &blocks_[base + way];
+        }
+
+        if (profiling_) profile_.lookup_or_allocate_tag_comparisons += Ways;
+        was_hit = false;
+        u32 victim_way = GetLRUVictim<Ways>(set_idx);
+        BasicBlock& block = blocks_[base + victim_way];
+        // Diagnostics touch only an existing allocation slow path, never hits
+        // or direct block chaining. Clear/invalidation retain lifetime totals.
+        if (profiling_) {
+            ++profile_.allocation_misses;
+            ++set_profile_[set_idx].misses;
+            if (tags_[base + victim_way] == INVALID_TAG) ++profile_.empty_allocations;
+            else {
+                ++profile_.live_replacements; ++set_profile_[set_idx].replacements;
+                const auto count = profile_.live_replacements;
+                const auto sample = count <= 64 ? count - 1 : 64 + (count - 65) % 64;
+                replacement_samples_[sample] = {profile_.allocation_misses, set_idx, pc,
+                    tags_[base + victim_way], block.exec_count, victim_interval_, active_ways_, chain_recency_};
             }
         }
 
-        was_hit = false;
-        u32 victim_way = GetLRUVictim(set_idx);
-        BasicBlock& block = blocks_[base + victim_way];
-
+        observed_executions_[base + victim_way] = 0;
+        observed_modes_[base + victim_way] = 0;
         tags_[base + victim_way] = pc;
         block.start_pc = pc;
         block.end_pc = pc;
@@ -103,44 +291,77 @@ public:
         block.exec_count = 0;
         block.flags = 0;
         block.chain_target = nullptr;
+        block.secondary_slot = INVALID_BLOCK_SLOT;
 
-        UpdateLRU(set_idx, victim_way);
+        UpdateLRU<Ways>(set_idx, victim_way);
         return &block;
     }
 
-    template <typename Visitor>
-    void VisitResidentBlocks(Visitor visit) const {
-        for (size_t i = 0; i < CACHE_SIZE; ++i)
-            if (tags_[i] != INVALID_TAG && blocks_[i].inst_count) visit(blocks_[i]);
-    }
-
-private:
     /// Hash a PC to a set index. Multiply-xor-shift spreads the aligned,
     /// clustered PCs of real code across sets better than bit extraction.
-    static u32 GetSetIndex(u32 pc) {
+    template <unsigned Ways>
+    u32 GetSetIndex(u32 pc) const {
         constexpr u32 HASH_MULT = 0x9E3779B9; // 2^32 / golden ratio
         u32 hash = pc * HASH_MULT;
         hash ^= (hash >> 16);
-        return (hash >> 4) & (CACHE_SETS - 1);
+        return (hash >> 4) & (Ways == 8 ? eight_way_mask_ : four_way_mask_);
     }
 
     /// Update LRU state when way is accessed
+    template <unsigned Ways>
     void UpdateLRU(u32 set_idx, u32 accessed_way) {
-        // Simple pseudo-LRU using a 4-bit field per set
+        // Pseudo-LRU with four or eight recently-used bits per active set
         // Bit i is set if way i was recently used
         u8& lru = lru_state_[set_idx];
         lru |= (1 << accessed_way);
-        if (lru == 0x0F) {
+        if (lru == ((1u << Ways) - 1)) {
             // All ways recently used, clear except accessed
             lru = (1 << accessed_way);
         }
     }
 
     /// Get LRU victim for eviction
+    template <unsigned Ways>
     u32 GetLRUVictim(u32 set_idx) {
         u8 lru = lru_state_[set_idx];
+        victim_interval_ = active_ways_ = 0;
+        if (chain_recency_) {
+            const auto base = set_idx * Ways;
+            // Always consume an invalid slot before evicting live decoded data.
+            for (u32 way = 0; way < Ways; ++way)
+                if (tags_[base + way] == INVALID_TAG) return way;
+            std::array<u32, Ways> activity{};
+            u32 minimum = std::numeric_limits<u32>::max();
+            for (u32 way = 0; way < Ways; ++way) {
+                const auto index = base + way;
+                const auto now = blocks_[index].exec_count;
+                const auto before = observed_executions_[index];
+                const auto mode = u8(blocks_[index].IsThumb());
+                // A decrease can be counter wrap or a decode/reset. Do not turn
+                // it into a huge unsigned frequency or retain cumulative heat.
+                if (now < before || (before && mode != observed_modes_[index])) {
+                    activity[way] = 1;
+                    if (profiling_) ++profile_.counter_discontinuities;
+                } else activity[way] = now - before;
+                observed_executions_[index] = now; observed_modes_[index] = mode;
+                active_ways_ += activity[way] != 0;
+                minimum = std::min(minimum, activity[way]);
+            }
+            // Prefer inactive ways. If all executed, choose the smallest interval
+            // delta. Existing NRU bits break ties, then stable way order.
+            u32 victim = 0;
+            bool found = false;
+            for (u32 way = 0; way < Ways; ++way) {
+                if (activity[way] != minimum) continue;
+                if (!found || ((lru & (1u << victim)) && !(lru & (1u << way)))) {
+                    victim = way; found = true;
+                }
+            }
+            victim_interval_ = activity[victim];
+            return victim;
+        }
         // Find first way that wasn't recently used
-        for (u32 way = 0; way < CACHE_WAYS; ++way) {
+        for (u32 way = 0; way < Ways; ++way) {
             if (!(lru & (1 << way))) {
                 return way;
             }
@@ -151,10 +372,23 @@ private:
 
     // Tags hold the full PC, so a match needs no start_pc re-check. Split from
     // the blocks (structure-of-arrays): a 4-way set probe touches one cache
-    // line of tags instead of 4 far-apart block headers.
-    std::array<u32, CACHE_SIZE> tags_;
-    std::array<BasicBlock, CACHE_SIZE> blocks_;
-    std::array<u8, CACHE_SETS> lru_state_;
+    // line of tags instead of four/eight far-apart block headers.
+    const unsigned capacity_;
+    const u32 four_way_mask_, eight_way_mask_;
+    bool chain_recency_{false};
+    bool simd_tags_{false};
+    bool eight_way_{false};
+    bool profiling_{false};
+    Profile profile_{};
+    std::array<SetProfile, MAX_CACHE_SETS> set_profile_{};
+    std::array<ReplacementSample, 128> replacement_samples_{};
+    u64 profile_mapping_changes_ = 0;
+    u32 victim_interval_ = 0, active_ways_ = 0;
+    std::array<u32, MAX_CACHE_SIZE> observed_executions_{};
+    std::array<u8, MAX_CACHE_SIZE> observed_modes_{};
+    std::array<u32, MAX_CACHE_SIZE> tags_;
+    std::unique_ptr<BasicBlock[]> blocks_;
+    std::array<u8, MAX_CACHE_SETS> lru_state_;
 };
 
 } // namespace Core::FastInterp

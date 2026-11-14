@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/cpu_category_timing.h"
 #include "common/archives.h"
 #include <stdexcept>
 #include "common/serialization/atomic.h"
@@ -120,6 +121,7 @@ void KernelSystem::Run(ARM_Interface* cpu) {
         current_cpu->GetTimer().Idle();
         thread_managers[new_cpu_id]->PrepareReschedule();
     } else {
+        Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::CPUExecution);
         current_cpu->Run();
     }
 }

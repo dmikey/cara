@@ -686,12 +686,17 @@ bool TryDowngrade(DecodedInst& inst) {
     }
 }
 
-u32 EliminateDeadFlags(BasicBlock* block) {
+u32 EliminateDeadFlags(BasicBlock* block, bool precise_block_end) {
     u32 eliminated = 0;
     u8 live = FLAG_NZCV; // Successor block unknown: all flags live at exit
     for (int i = static_cast<int>(block->inst_count) - 1; i >= 0; --i) {
         DecodedInst& inst = block->instructions[i];
         FlagEffects fx = ClassifyFlagEffects(inst);
+        // LDM-PC may return before any decoded tail executes. Keep incoming
+        // flags live across that possible exit, including conditional returns
+        // and compatibility mode where the old decoded span is retained.
+        if (precise_block_end && inst.opcode == Opcode::Ldm && (inst.lsm.reg_list & (1u << 15)))
+            fx.barrier = true;
         if (!fx.barrier && fx.writes != 0 && (live & fx.writes) == 0 && TryDowngrade(inst)) {
             eliminated++;
             fx = ClassifyFlagEffects(inst);
@@ -1305,6 +1310,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     block->SetThumb(state_.thumb_mode);
     block->inst_count = 0; // Reset before decoding (critical for re-decode on mode change)
     block->chain_target = nullptr;
+    block->secondary_slot = INVALID_BLOCK_SLOT;
     fusion_stats_.blocks_decoded++;
 
     u32 current_pc = pc;
@@ -1338,6 +1344,13 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     // EndBlock terminator appended below (DISPATCH has no bounds check).
     while (!end_block && block->inst_count < MAX_BLOCK_SIZE - 1) {
         DecodedInst& inst = block->instructions[block->inst_count];
+        // A cache victim retains prior union operands and rd. Decoders write
+        // only their instruction's fields, while shared block/flag analysis
+        // also inspects common fields. Match Step's fresh-record contract so
+        // cache replacement history cannot change block boundaries or operands.
+        // This is the next free slot: a PcSetup prefix copied its real record
+        // into the previous slot before the shared instruction count advanced.
+        std::memset(&inst, 0, sizeof(inst));
 
         if (state_.thumb_mode) {
             u16 thumb_inst = ReadMemory16(current_pc);
@@ -1388,6 +1401,14 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         // increment above plus the shared increment cover both).
         const DecodedInst& last = block->instructions[block->inst_count - 1];
         switch (last.opcode) {
+        case Opcode::Ldm:
+            // rd is zero for this family, but the handler branches when PC
+            // is loaded. Shorten unconditional returns only in chain-budget
+            // mode; retain conditional fallthrough and legacy chain-quantum
+            // boundaries. Flag analysis separately guards every possible return.
+            end_block = precise_block_end_ && chain_budget_ && last.cond == 0xE &&
+                        (last.lsm.reg_list & (1u << 15));
+            break;
         case Opcode::B:
         case Opcode::Bl:
         case Opcode::Bx:
@@ -1440,7 +1461,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         tick_addr += inst.inst_size;
     }
 
-    fusion_stats_.dead_flags_eliminated += EliminateDeadFlags(block);
+    fusion_stats_.dead_flags_eliminated += EliminateDeadFlags(block, precise_block_end_);
 
     // Default-off experiment: preserve original block ranges, slots and chain
     // quantum. Only combine an ADD and an already fused immediate CMP/Bcc;
@@ -1545,6 +1566,74 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
         }
     }
 
+    // Run after dead-flag elimination and pair selection: preserve existing
+    // fusion priority, slots, guest tick costs and chain/scheduler boundaries.
+    // Fast handlers remove operand-kind/shift/PC tests from frequent ADD/MOV.
+    static const bool alu_operands = [] {
+        const char* value = std::getenv("CARA_FASTINTERP_ALU_OPERANDS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (alu_operands && !is_thumb) {
+        for (unsigned slot = 0; slot < block->inst_count; ++slot) {
+            auto& inst = block->instructions[slot];
+            const bool add = inst.opcode == Opcode::Add;
+            if ((!add && inst.opcode != Opcode::Mov) || inst.rd == 15 ||
+                (add && inst.dp.rn == 15))
+                continue;
+            if (inst.dp.rm == 0xFF) {
+                inst.opcode = add ? Opcode::AddImm : Opcode::MovImm;
+            } else if (inst.dp.rm != 15 && inst.dp.rs == 0xFF &&
+                       inst.dp.shift_type == ShiftType::LSL && inst.dp.shift_imm < 32) {
+                inst.opcode = add ? Opcode::AddLslImm : Opcode::MovLslImm;
+            }
+        }
+    }
+
+    // Last postpass: retain the first operands and the entire second record.
+    // Check original words as dead-flag elimination and PC folding can otherwise
+    // disguise an S-form or PC source as an eligible no-flags operation.
+    if (AluPairsEnabled() && !is_thumb) {
+        auto kind = [](const DecodedInst& inst, u32 raw) -> int {
+            if (inst.cond != 0xE || inst.inst_size != 4 || inst.rd == 15 ||
+                (raw >> 28) != 0xE || (raw & (1u << 20))) return -1;
+            const unsigned op = (raw >> 21) & 15;
+            const bool add = op == 4;
+            if ((!add && op != 13) || ((raw >> 26) & 3) != 0 ||
+                (add && ((raw >> 16) & 15) == 15)) return -1;
+            if (inst.opcode != (add ? Opcode::Add : Opcode::Mov) &&
+                inst.opcode != (add ? Opcode::AddImm : Opcode::MovImm) &&
+                inst.opcode != (add ? Opcode::AddLslImm : Opcode::MovLslImm)) return -1;
+            if (raw & (1u << 25)) return add ? 0 : 2;
+            if ((raw & 15) == 15 || (raw & 0x70) || inst.dp.rs != 0xFF ||
+                inst.dp.shift_type != ShiftType::LSL || inst.dp.shift_imm >= 32) return -1;
+            return add ? 1 : 3;
+        };
+        u32 pair_pc = pc;
+        for (unsigned slot = 0; slot < block->inst_count;) {
+            auto& first = block->instructions[slot];
+            const unsigned size = first.inst_size;
+            if (slot + 1 < block->inst_count && size == 4) {
+                const auto& second = block->instructions[slot + 1];
+                const int a = kind(first, ReadMemory32(pair_pc));
+                const int b = kind(second, ReadMemory32(pair_pc + 4));
+                if (a >= 0 && b >= 0 && a / 2 == b / 2) {
+                    first.opcode = static_cast<Opcode>(unsigned(Opcode::AddPairImmImm) +
+                        (a / 2) * 4 + (a % 2) * 2 + b % 2);
+                    first.inst_size += second.inst_size;
+                    first.ticks += second.ticks;
+                    pair_pc += first.inst_size;
+                    slot += 2;
+                    continue;
+                }
+            }
+            // Prior VFP group passes also retain consumed source slots.
+            pair_pc += size;
+            slot += (first.opcode == Opcode::Vmul4S || first.opcode == Opcode::Vmul4Gather ||
+                     first.opcode == Opcode::Vmla4S || first.opcode == Opcode::Vmla4Gather) ? 4 :
+                    first.opcode == Opcode::VcmpVmrsS ? 2 : 1;
+        }
+    }
+
     // Append the EndBlock terminator. Every block gets one - conditional
     // block-enders (Bcc, fused not-taken paths, conditional Bx, ...) DISPATCH on
     // their not-taken path, and DISPATCH has no bounds check. The terminator
@@ -1556,6 +1645,7 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
     std::memset(&term, 0, sizeof(term));
     term.opcode = Opcode::EndBlock;
     term.cond = 0xE;
+    for (u16 i = 0; i <= block->inst_count; ++i) PrepareDispatch(block->instructions[i]);
 }
 
 // ============================================================================
@@ -1589,6 +1679,7 @@ void ARM_FastInterp::ReoptimizeHotBlock(BasicBlock* block) {
     if (inst.opcode == Opcode::ThumbFusedSubsBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
         inst.opcode = Opcode::ThumbUnrolledSubsLoop;
+        PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
     }
@@ -1597,6 +1688,7 @@ void ARM_FastInterp::ReoptimizeHotBlock(BasicBlock* block) {
     if (inst.opcode == Opcode::ThumbFusedCmpRegBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
         inst.opcode = Opcode::ThumbUnrolledCmpLoop;
+        PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
     }
@@ -1605,6 +1697,7 @@ void ARM_FastInterp::ReoptimizeHotBlock(BasicBlock* block) {
     if (inst.opcode == Opcode::FusedSubsBcc && inst.fused.branch_cond == 1 && // BNE
         inst.fused.branch_target == block->start_pc) {
         inst.opcode = Opcode::ArmUnrolledSubsLoop;
+        PrepareDispatch(inst);
         fusion_stats_.hot_blocks_reoptimized++;
         return;
     }
@@ -2935,6 +3028,14 @@ void ARM_FastInterp::DecodeARM(u32 inst, u32 pc, DecodedInst& out) {
             // Add 4 when (increment == before): STMIB/LDMIB, STMDA/LDMDA
             if (increment == before)
                 base_off += 4;
+            out.lsm.contiguous_first = 0xFF;
+            // Resolve the process-fixed experiment once per decoded instruction.
+            // PurgeState discards cached blocks before every save-state load.
+            if (contiguous_transfers_ && (count == 4 || count == 8)) {
+                const auto first = std::countr_zero(out.lsm.reg_list);
+                if ((u32(out.lsm.reg_list) >> first) == ((1u << count) - 1))
+                    out.lsm.contiguous_first = static_cast<u8>(first);
+            }
             out.lsm.count = static_cast<u8>(count);
             out.lsm.base_off = static_cast<s8>(base_off);
             out.lsm.wb_delta = static_cast<s16>(increment ? static_cast<s32>(count * 4)

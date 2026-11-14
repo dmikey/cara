@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/cpu_category_timing.h"
 #include <memory>
 #include <stdexcept>
 #include <cryptopp/sha.h>
@@ -25,6 +26,7 @@
 #include "core/arm/dyncom/arm_dyncom.h"
 #include "core/arm/fastinterp/fastinterp.h"
 #include "core/cheats/cheats.h"
+#include "cara/p3d_completion.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/custom_tex_cache.h"
@@ -57,7 +59,15 @@ System System::s_instance;
 System::~System() = default;
 
 System::ResultStatus System::RunLoop() {
-    return Settings::values.is_new_3ds ? RunLoopMultiCores() : RunLoopSingleCore();
+    Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::Others);
+    try {
+        return Settings::values.is_new_3ds ? RunLoopMultiCores() : RunLoopSingleCore();
+    } catch (const std::exception& error) {
+        if (!Cara::ExperimentalP3DCompletionEnabled()) throw;
+        LOG_CRITICAL(Core, "Experimental P3D diagnostic stopped: {}", error.what());
+        SetStatus(ResultStatus::ErrorUnknown, error.what());
+        return status;
+    }
 }
 
 System::ResultStatus System::RunLoopMultiCores() {

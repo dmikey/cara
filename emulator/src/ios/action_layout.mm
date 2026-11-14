@@ -8,6 +8,11 @@ static NSArray* Buttons() { return @[@"a",@"b",@"x",@"y",@"l",@"r",@"zl",@"zr",@
 static NSDictionary* Control(NSString* label,NSString* kind,NSString* binding,double x,double y,double w,double h) {
     return @{@"id":NSUUID.UUID.UUIDString,@"label":label,@"kind":kind,@"binding":binding,@"toggle":@NO,@"hidden":@NO,@"travel":@64,@"frame":@{@"x":@(x),@"y":@(y),@"width":@(w),@"height":@(h)}};
 }
+NSDictionary* CaraActionLayoutSettingsRow(void(^openEditor)(void)) {
+    return @{@"title":@"Controller Demapping",@"subtitle":@"Arrange actions and bind them to 3DS inputs",
+             @"symbol":@"hand.draw",@"keepOpen":@YES,@"action":[openEditor copy]};
+}
+
 NSDictionary* CaraNewActionLayout() {
     // Deliberately unbound: action names never imply a particular game's controls.
     NSArray* portrait=@[Control(@"Move",@"stick",@"unbound",.06,.69,.27,.18),Control(@"Fire",@"button",@"unbound",.76,.72,.18,.12),Control(@"Jump",@"button",@"unbound",.56,.81,.18,.12)];

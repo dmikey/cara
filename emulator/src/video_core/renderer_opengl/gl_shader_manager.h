@@ -112,7 +112,7 @@ public:
     ~ShaderProgramManager();
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     unsigned ios_indexed_inputs = false);
+                                     unsigned ios_indexed_inputs = false, u16 ios_input_mask = 0xffff);
 
     void UseTrivialVertexShader();
 
@@ -123,7 +123,9 @@ public:
     void UseFragmentShader(const Pica::Regs& regs);
 
 #ifdef CARA_IOS_GLES
-    GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup);
+    u16 GetIOSVertexInputReadMask(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup);
+    GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
+                                       u16 ios_input_mask = 0xffff);
 #endif
     void ApplyTo(OpenGLState& state);
 

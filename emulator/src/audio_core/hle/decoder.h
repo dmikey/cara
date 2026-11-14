@@ -71,6 +71,7 @@ enum_le<DecoderSampleRate> GetSampleRateEnum(u32 sample_rate);
 class DecoderBase {
 public:
     virtual ~DecoderBase();
+    virtual void Reset() {}
     virtual std::optional<BinaryResponse> ProcessRequest(const BinaryRequest& request) = 0;
     /// Return true if this Decoder can be loaded. Return false if the system cannot create the
     /// decoder

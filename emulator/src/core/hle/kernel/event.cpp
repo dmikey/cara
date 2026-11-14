@@ -2,6 +2,8 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "cara/guest_gpu_trace.h"
+#include "core/core.h"
 #include <algorithm>
 #include <map>
 #include <vector>
@@ -33,6 +35,8 @@ bool Event::ShouldWait(const Thread* thread) const {
 }
 
 void Event::Acquire(Thread* thread) {
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
+        Cara::GuestGPUTrace::Kind::EventAcquire, thread ? thread->GetThreadId() : 0, GetObjectId());
     ASSERT_MSG(!ShouldWait(thread), "object unavailable!");
 
     if (reset_type == ResetType::OneShot)
@@ -40,11 +44,15 @@ void Event::Acquire(Thread* thread) {
 }
 
 void Event::Signal() {
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
+        Cara::GuestGPUTrace::Kind::EventSignal, 0, GetObjectId());
     signaled = true;
     WakeupAllWaitingThreads();
 }
 
 void Event::Clear() {
+    if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
+        Cara::GuestGPUTrace::Kind::EventClear, 0, GetObjectId());
     signaled = false;
 }
 

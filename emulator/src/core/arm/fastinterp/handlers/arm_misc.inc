@@ -10,26 +10,37 @@
 //     synchronization (Ldrex/Strex{,b,h,d}, Clrex), and coprocessor (Mrc, Mcr)
 
 handle_Clz: {
-    CHECK_COND();
+    CHECK_COND(Clz);
     u32 val = state_.regs[inst->dp.rm];
     state_.regs[inst->rd] = val ? __builtin_clz(val) : 32;
     ADVANCE_AND_DISPATCH();
 }
 
 handle_Swi: {
-    CHECK_COND();
+    CHECK_COND(Swi);
     // Software interrupt - dispatch to kernel SVC handler
-    SET_PC(GET_PC() + inst->inst_size);
+    SET_PC(BOUNDARY_PC(block->end_pc, GET_PC() + inst->inst_size));
     SYNC_PC();
     {
         u32 svc_num = inst->imm32 & 0xFF;
         // Flush accumulated ticks to timer before kernel call so the
         // kernel sees correct time state for scheduling decisions.
         executed += inst->ticks;
+        if (Common::FrameTiming::counters.enabled) {
+            auto& counters = Common::FrameTiming::counters;
+            counters.guest_ticks += executed;
+            counters.guest_core_ticks[GetID()] += executed;
+            counters.last_guest_pc[GetID()] = state_.PC();
+        }
         timer->AddTicks(executed);
         executed = 0;
 
+        if (guest_pc_cpu_.Active()) guest_pc_cpu_.EnterExternal();
         svc_context_->CallSVC(svc_num);
+        if (guest_pc_cpu_.Active()) {
+            profile_thread_id_ = ProfileThreadId();
+            guest_pc_cpu_.LeaveExternal(profile_thread_id_);
+        }
     }
     // Kernel may have switched thread context via LoadContext,
     // which changes state_.regs[15]. Reload local_pc and exit the
@@ -40,13 +51,13 @@ handle_Swi: {
 }
 
 handle_Mrs: {
-    CHECK_COND();
+    CHECK_COND(Mrs);
     state_.regs[inst->rd] = state_.GetCPSR();
     ADVANCE_AND_DISPATCH();
 }
 
 handle_Msr: {
-    CHECK_COND();
+    CHECK_COND(Msr);
     u32 value = (inst->dp.rm != 0xFF) ? state_.regs[inst->dp.rm] : inst->dp.imm;
     // Only update allowed fields (based on mask in flags)
     u32 mask = 0;
@@ -63,7 +74,7 @@ handle_Msr: {
 // ----------------------------------------------------------------------------
 
 handle_Sxtb: {
-    CHECK_COND();
+    CHECK_COND(Sxtb);
     u32 val = state_.regs[inst->dp.rm];
     u8 rotation = inst->dp.shift_imm;
     val = std::rotr(val, rotation);
@@ -72,7 +83,7 @@ handle_Sxtb: {
 }
 
 handle_Sxth: {
-    CHECK_COND();
+    CHECK_COND(Sxth);
     u32 val = state_.regs[inst->dp.rm];
     u8 rotation = inst->dp.shift_imm;
     val = std::rotr(val, rotation);
@@ -81,7 +92,7 @@ handle_Sxth: {
 }
 
 handle_Uxtb: {
-    CHECK_COND();
+    CHECK_COND(Uxtb);
     u32 val = state_.regs[inst->dp.rm];
     u8 rotation = inst->dp.shift_imm;
     val = std::rotr(val, rotation);
@@ -90,7 +101,7 @@ handle_Uxtb: {
 }
 
 handle_Uxth: {
-    CHECK_COND();
+    CHECK_COND(Uxth);
     u32 val = state_.regs[inst->dp.rm];
     u8 rotation = inst->dp.shift_imm;
     val = std::rotr(val, rotation);
@@ -103,21 +114,21 @@ handle_Uxth: {
 // ----------------------------------------------------------------------------
 
 handle_Rev: {
-    CHECK_COND();
+    CHECK_COND(Rev);
     u32 val = state_.regs[inst->dp.rm];
     state_.regs[inst->rd] = __builtin_bswap32(val);
     ADVANCE_AND_DISPATCH();
 }
 
 handle_Rev16: {
-    CHECK_COND();
+    CHECK_COND(Rev16);
     u32 val = state_.regs[inst->dp.rm];
     state_.regs[inst->rd] = ((val & 0xFF00FF00) >> 8) | ((val & 0x00FF00FF) << 8);
     ADVANCE_AND_DISPATCH();
 }
 
 handle_Revsh: {
-    CHECK_COND();
+    CHECK_COND(Revsh);
     u32 val = state_.regs[inst->dp.rm];
     u16 swapped = ((val & 0xFF) << 8) | ((val >> 8) & 0xFF);
     state_.regs[inst->rd] = static_cast<u32>(static_cast<s16>(swapped));
@@ -130,7 +141,7 @@ handle_Revsh: {
 
 handle_Qadd: {
     // QADD Rd, Rm, Rn - Signed saturating add
-    CHECK_COND();
+    CHECK_COND(Qadd);
     s32 rm = static_cast<s32>(state_.regs[inst->dp.rm]);
     s32 rn = static_cast<s32>(state_.regs[inst->dp.rn]);
     s64 result = static_cast<s64>(rm) + static_cast<s64>(rn);
@@ -148,7 +159,7 @@ handle_Qadd: {
 
 handle_Qsub: {
     // QSUB Rd, Rm, Rn - Signed saturating subtract
-    CHECK_COND();
+    CHECK_COND(Qsub);
     s32 rm = static_cast<s32>(state_.regs[inst->dp.rm]);
     s32 rn = static_cast<s32>(state_.regs[inst->dp.rn]);
     s64 result = static_cast<s64>(rm) - static_cast<s64>(rn);
@@ -167,7 +178,7 @@ handle_Qsub: {
 handle_Qdadd: {
     // QDADD Rd, Rm, Rn - Signed saturating double and add
     // Rd = saturate(Rm + saturate(Rn * 2))
-    CHECK_COND();
+    CHECK_COND(Qdadd);
     s32 rm = static_cast<s32>(state_.regs[inst->dp.rm]);
     s32 rn = static_cast<s32>(state_.regs[inst->dp.rn]);
     // Double Rn with saturation
@@ -199,7 +210,7 @@ handle_Qdadd: {
 handle_Qdsub: {
     // QDSUB Rd, Rm, Rn - Signed saturating double and subtract
     // Rd = saturate(Rm - saturate(Rn * 2))
-    CHECK_COND();
+    CHECK_COND(Qdsub);
     s32 rm = static_cast<s32>(state_.regs[inst->dp.rm]);
     s32 rn = static_cast<s32>(state_.regs[inst->dp.rn]);
     // Double Rn with saturation
@@ -231,7 +242,7 @@ handle_Qdsub: {
 handle_Ssat: {
     // SSAT Rd, #sat, Rm{, shift}
     // Saturate signed value to sat bits (-2^(sat-1) to 2^(sat-1)-1)
-    CHECK_COND();
+    CHECK_COND(Ssat);
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 shift_amt = inst->dp.shift_imm;
     s32 shifted;
@@ -263,7 +274,7 @@ handle_Ssat: {
 handle_Usat: {
     // USAT Rd, #sat, Rm{, shift}
     // Saturate to unsigned value to sat bits (0 to 2^sat-1)
-    CHECK_COND();
+    CHECK_COND(Usat);
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 shift_amt = inst->dp.shift_imm;
     s32 shifted;
@@ -299,7 +310,7 @@ handle_Usat: {
 #define GET_GE() ((state_.cpsr_other >> 16) & 0xF)
 
 handle_Sadd16: {
-    CHECK_COND();
+    CHECK_COND(Sadd16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     s32 lo = static_cast<s16>(rn) + static_cast<s16>(rm);
@@ -314,7 +325,7 @@ handle_Sadd16: {
 }
 
 handle_Ssub16: {
-    CHECK_COND();
+    CHECK_COND(Ssub16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     s32 lo = static_cast<s16>(rn) - static_cast<s16>(rm);
@@ -329,7 +340,7 @@ handle_Ssub16: {
 }
 
 handle_Sadd8: {
-    CHECK_COND();
+    CHECK_COND(Sadd8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -347,7 +358,7 @@ handle_Sadd8: {
 }
 
 handle_Ssub8: {
-    CHECK_COND();
+    CHECK_COND(Ssub8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -365,7 +376,7 @@ handle_Ssub8: {
 }
 
 handle_Uadd16: {
-    CHECK_COND();
+    CHECK_COND(Uadd16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 lo = (rn & 0xFFFF) + (rm & 0xFFFF);
@@ -379,7 +390,7 @@ handle_Uadd16: {
 }
 
 handle_Usub16: {
-    CHECK_COND();
+    CHECK_COND(Usub16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 rn_lo = rn & 0xFFFF, rm_lo = rm & 0xFFFF;
@@ -393,7 +404,7 @@ handle_Usub16: {
 }
 
 handle_Uadd8: {
-    CHECK_COND();
+    CHECK_COND(Uadd8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -411,7 +422,7 @@ handle_Uadd8: {
 }
 
 handle_Usub8: {
-    CHECK_COND();
+    CHECK_COND(Usub8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -429,7 +440,7 @@ handle_Usub8: {
 
 // Unsigned saturating parallel operations
 handle_Uqadd16: {
-    CHECK_COND();
+    CHECK_COND(Uqadd16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 lo = (rn & 0xFFFF) + (rm & 0xFFFF);
@@ -441,7 +452,7 @@ handle_Uqadd16: {
 }
 
 handle_Uqsub16: {
-    CHECK_COND();
+    CHECK_COND(Uqsub16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 lo_rn = rn & 0xFFFF, lo_rm = rm & 0xFFFF;
@@ -453,7 +464,7 @@ handle_Uqsub16: {
 }
 
 handle_Uqadd8: {
-    CHECK_COND();
+    CHECK_COND(Uqadd8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -469,7 +480,7 @@ handle_Uqadd8: {
 }
 
 handle_Uqsub8: {
-    CHECK_COND();
+    CHECK_COND(Uqsub8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -485,7 +496,7 @@ handle_Uqsub8: {
 
 // Signed saturating parallel operations
 handle_Qadd16: {
-    CHECK_COND();
+    CHECK_COND(Qadd16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     s32 lo = static_cast<s16>(rn) + static_cast<s16>(rm);
@@ -498,7 +509,7 @@ handle_Qadd16: {
 }
 
 handle_Qsub16: {
-    CHECK_COND();
+    CHECK_COND(Qsub16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     s32 lo = static_cast<s16>(rn) - static_cast<s16>(rm);
@@ -511,7 +522,7 @@ handle_Qsub16: {
 }
 
 handle_Qadd8: {
-    CHECK_COND();
+    CHECK_COND(Qadd8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -527,7 +538,7 @@ handle_Qadd8: {
 }
 
 handle_Qsub8: {
-    CHECK_COND();
+    CHECK_COND(Qsub8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -544,7 +555,7 @@ handle_Qsub8: {
 
 // Signed halving parallel operations
 handle_Shadd16: {
-    CHECK_COND();
+    CHECK_COND(Shadd16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     s32 lo = (static_cast<s16>(rn) + static_cast<s16>(rm)) >> 1;
@@ -555,7 +566,7 @@ handle_Shadd16: {
 }
 
 handle_Shsub16: {
-    CHECK_COND();
+    CHECK_COND(Shsub16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     s32 lo = (static_cast<s16>(rn) - static_cast<s16>(rm)) >> 1;
@@ -566,7 +577,7 @@ handle_Shsub16: {
 }
 
 handle_Shadd8: {
-    CHECK_COND();
+    CHECK_COND(Shadd8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -580,7 +591,7 @@ handle_Shadd8: {
 }
 
 handle_Shsub8: {
-    CHECK_COND();
+    CHECK_COND(Shsub8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -595,7 +606,7 @@ handle_Shsub8: {
 
 // Unsigned halving parallel operations
 handle_Uhadd16: {
-    CHECK_COND();
+    CHECK_COND(Uhadd16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 lo = ((rn & 0xFFFF) + (rm & 0xFFFF)) >> 1;
@@ -605,7 +616,7 @@ handle_Uhadd16: {
 }
 
 handle_Uhsub16: {
-    CHECK_COND();
+    CHECK_COND(Uhsub16);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 lo = ((rn & 0xFFFF) - (rm & 0xFFFF)) >> 1;
@@ -615,7 +626,7 @@ handle_Uhsub16: {
 }
 
 handle_Uhadd8: {
-    CHECK_COND();
+    CHECK_COND(Uhadd8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -629,7 +640,7 @@ handle_Uhadd8: {
 }
 
 handle_Uhsub8: {
-    CHECK_COND();
+    CHECK_COND(Uhsub8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 result = 0;
@@ -644,7 +655,7 @@ handle_Uhsub8: {
 
 // Extend with Add operations
 handle_Sxtab: {
-    CHECK_COND();
+    CHECK_COND(Sxtab);
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 rotated = std::rotr(rm_val, inst->dp.shift_imm);
     s32 extended = static_cast<s8>(rotated & 0xFF);
@@ -653,7 +664,7 @@ handle_Sxtab: {
 }
 
 handle_Sxtab16: {
-    CHECK_COND();
+    CHECK_COND(Sxtab16);
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 rotated = std::rotr(rm_val, inst->dp.shift_imm);
     // Rn=15 encodes SXTB16 (no add)
@@ -665,7 +676,7 @@ handle_Sxtab16: {
 }
 
 handle_Sxtah: {
-    CHECK_COND();
+    CHECK_COND(Sxtah);
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 rotated = std::rotr(rm_val, inst->dp.shift_imm);
     s32 extended = static_cast<s16>(rotated & 0xFFFF);
@@ -674,7 +685,7 @@ handle_Sxtah: {
 }
 
 handle_Uxtab: {
-    CHECK_COND();
+    CHECK_COND(Uxtab);
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 rotated = std::rotr(rm_val, inst->dp.shift_imm);
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] + (rotated & 0xFF);
@@ -682,7 +693,7 @@ handle_Uxtab: {
 }
 
 handle_Uxtab16: {
-    CHECK_COND();
+    CHECK_COND(Uxtab16);
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 rotated = std::rotr(rm_val, inst->dp.shift_imm);
     // Rn=15 encodes UXTB16 (no add)
@@ -694,7 +705,7 @@ handle_Uxtab16: {
 }
 
 handle_Uxtah: {
-    CHECK_COND();
+    CHECK_COND(Uxtah);
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 rotated = std::rotr(rm_val, inst->dp.shift_imm);
     state_.regs[inst->rd] = state_.regs[inst->dp.rn] + (rotated & 0xFFFF);
@@ -703,7 +714,7 @@ handle_Uxtah: {
 
 // Bit field operations
 handle_Bfc: {
-    CHECK_COND();
+    CHECK_COND(Bfc);
     u32 lsb = inst->dp.imm;
     u32 width = inst->dp.shift_imm;
     // width is 1-32: shift the all-ones mask down instead of 1<<32
@@ -713,7 +724,7 @@ handle_Bfc: {
 }
 
 handle_Bfi: {
-    CHECK_COND();
+    CHECK_COND(Bfi);
     u32 lsb = inst->dp.imm;
     u32 width = inst->dp.shift_imm;
     u32 mask = (0xFFFFFFFFu >> (32 - width)) << lsb;
@@ -723,7 +734,7 @@ handle_Bfi: {
 }
 
 handle_Sbfx: {
-    CHECK_COND();
+    CHECK_COND(Sbfx);
     u32 lsb = inst->dp.imm;
     u32 width = inst->dp.shift_imm;
     u32 src = state_.regs[inst->dp.rn];
@@ -738,7 +749,7 @@ handle_Sbfx: {
 }
 
 handle_Ubfx: {
-    CHECK_COND();
+    CHECK_COND(Ubfx);
     u32 lsb = inst->dp.imm;
     u32 width = inst->dp.shift_imm;
     u32 src = state_.regs[inst->dp.rn];
@@ -748,7 +759,7 @@ handle_Ubfx: {
 
 // MOVT - Move Top (set upper 16 bits, preserve lower 16)
 handle_Movt: {
-    CHECK_COND();
+    CHECK_COND(Movt);
     u32 imm16 = inst->dp.imm;
     state_.regs[inst->rd] = (state_.regs[inst->rd] & 0xFFFF) | (imm16 << 16);
     ADVANCE_AND_DISPATCH();
@@ -756,7 +767,7 @@ handle_Movt: {
 
 // RBIT - Reverse bits
 handle_Rbit: {
-    CHECK_COND();
+    CHECK_COND(Rbit);
     u32 val = state_.regs[inst->dp.rm];
     val = ((val & 0x55555555) << 1) | ((val & 0xAAAAAAAA) >> 1);
     val = ((val & 0x33333333) << 2) | ((val & 0xCCCCCCCC) >> 2);
@@ -774,7 +785,7 @@ handle_Rbit: {
 handle_Pkhbt: {
     // PKHBT Rd, Rn, Rm{, LSL #imm}
     // Rd[15:0] = Rn[15:0], Rd[31:16] = (Rm << shift)[31:16]
-    CHECK_COND();
+    CHECK_COND(Pkhbt);
     u32 rn_val = state_.regs[inst->dp.rn];
     u32 rm_val = state_.regs[inst->dp.rm];
     u32 shifted = rm_val << inst->dp.shift_imm;
@@ -785,7 +796,7 @@ handle_Pkhbt: {
 handle_Pkhtb: {
     // PKHTB Rd, Rn, Rm{, ASR #imm}
     // Rd[31:16] = Rn[31:16], Rd[15:0] = (Rm >> shift)[15:0] (arithmetic shift)
-    CHECK_COND();
+    CHECK_COND(Pkhtb);
     u32 rn_val = state_.regs[inst->dp.rn];
     u32 rm_val = state_.regs[inst->dp.rm];
     // ASR #0 encodes ASR #32; >> 31 sign-fills identically without the
@@ -798,7 +809,7 @@ handle_Pkhtb: {
 
 // SEL: select bytes based on GE flags
 handle_Sel: {
-    CHECK_COND();
+    CHECK_COND(Sel);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 ge = GET_GE();
@@ -813,7 +824,7 @@ handle_Sel: {
 
 // USAD8: unsigned sum of absolute differences
 handle_Usad8: {
-    CHECK_COND();
+    CHECK_COND(Usad8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 sum = 0;
@@ -828,7 +839,7 @@ handle_Usad8: {
 
 // USADA8: unsigned sum of absolute differences with accumulate
 handle_Usada8: {
-    CHECK_COND();
+    CHECK_COND(Usada8);
     u32 rn = state_.regs[inst->dp.rn];
     u32 rm = state_.regs[inst->dp.rm];
     u32 sum = 0;
@@ -851,7 +862,7 @@ handle_Usada8: {
 // reads and swaps through the page table inline; MMIO / rasterizer-cached pages
 // (null in the page array) fall back to the MemorySystem slow path.
 #define EXCLUSIVE_LOAD(bits, memtype, memread)                                                      \
-    CHECK_COND();                                                                                   \
+    CHECK_COND_GATE();                                                                              \
     const u32 addr = state_.regs[inst->dp.rn];                                                      \
     memtype value;                                                                                  \
     if (u8* page = local_page_ptrs[addr >> FASTINTERP_PAGE_BITS]) {                                 \
@@ -865,7 +876,7 @@ handle_Usada8: {
     exclusive_.valid = true;
 
 #define EXCLUSIVE_STORE(bits, memtype, memwrite, srcval)                                            \
-    CHECK_COND();                                                                                   \
+    CHECK_COND_GATE();                                                                              \
     const u32 addr = state_.regs[inst->dp.rn];                                                      \
     bool ok = false;                                                                                \
     if (exclusive_.valid && exclusive_.addr == addr && exclusive_.size == bits / 8) {               \
@@ -944,7 +955,7 @@ handle_Clrex:
 
 handle_Mrc: {
     // MRC p15, opc1, Rt, CRn, CRm, opc2
-    CHECK_COND();
+    CHECK_COND(Mrc);
     u32 crn = inst->dp.rn;       // CRn
     u32 crm = inst->dp.rm;       // CRm
     u32 opc1 = inst->dp.shift_imm; // opc1
@@ -969,7 +980,7 @@ handle_Mrc: {
 
 handle_Mcr: {
     // MCR p15, opc1, Rt, CRn, CRm, opc2
-    CHECK_COND();
+    CHECK_COND(Mcr);
     u32 crn = inst->dp.rn;
     u32 crm = inst->dp.rm;
     u32 opc1 = inst->dp.shift_imm;

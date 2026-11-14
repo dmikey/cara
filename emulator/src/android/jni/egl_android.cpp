@@ -69,6 +69,12 @@ bool EGLAndroid::Initialize(ANativeWindow* surface) {
     setenv("CARA_VERTEX_INDEX_CACHE", "1", 1);
     setenv("CARA_VERTEX_UPLOAD_BANK_MIB", "80", 1);
     setenv("CARA_VS_UNIFORM_REUSE", "1", 1);
+    // Match the shipping Apple GLES residency/reuse paths. Multi-context
+    // presentation keeps raster-state reuse off because its cache is shared.
+    setenv("CARA_GPU_SURFACE_REMAP", "1", 1);
+    setenv("CARA_GPU_DEPTH_REINTERPRET", "1", 1);
+    setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", "1", 1);
+    setenv("CARA_GL_STATE_REUSE", use_shared_context ? "0" : "1", 1);
 #endif
     host_window = surface;
     egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);

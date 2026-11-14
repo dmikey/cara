@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -44,8 +45,9 @@ int main() {
              1e-12, "Backward clock retained stale future deadline");
         Require(Cara::FramePacer(0).SpeedPercent() == 50, "Lower clamp failed");
         Require(Cara::FramePacer(999).SpeedPercent() == 200, "Upper clamp failed");
-        for (unsigned percent : {100u, 105u, 200u}) {
-            Cara::FramePacer run(percent);
+        for (bool bounded : {false, true}) {
+        for (unsigned percent : {50u, 100u, 105u, 200u}) {
+            Cara::FramePacer run(percent, bounded);
             double now = 0;
             run.Reset(now);
             std::uint64_t total = 0;
@@ -59,6 +61,7 @@ int main() {
             const double expected = static_cast<double>(total) /
                 59.833997376556916 * (100.0 / percent);
             Near(now, expected, 2e-7, "Long-run speed budget drifted");
+        }
         }
         pacer.Reset(0);
         Require(std::isfinite(pacer.Advance(std::numeric_limits<std::uint64_t>::max(), 0)),
@@ -74,8 +77,58 @@ int main() {
             catch (const std::invalid_argument&) { rejected = true; }
             Require(rejected, "Nonfinite clock accepted");
         }
+        // Model the frontend accurately: sleeping cannot move the clock backward
+        // when a catchup deadline is already overdue.
+        double elapsed[2] = {};
+        for (unsigned mode = 0; mode < 2; ++mode) {
+            Cara::FramePacer alternating(100, mode == 1);
+            alternating.Reset(0);
+            double now = 0;
+            for (unsigned frame = 0; frame < 2400; ++frame) {
+                now += frame % 2 == 0 ? .020 : 0;
+                now = std::max(now, alternating.Advance(1, now));
+            }
+            elapsed[mode] = now;
+        }
+        Near(2400 / elapsed[1], Cara::FramePacer::VBlankHz, 1e-9,
+             "Alternating heavy/light work lost guest speed");
+        Require(2400 / elapsed[0] < 55,
+                "Alternating-work regression no longer reproduces legacy slowdown");
+        Cara::FramePacer bounded(100, true);
+        bounded.Reset(0);
+        double now = 0;
+        for (unsigned frame = 0; frame < 2400; ++frame) {
+            now += .025; // Sustained overload must not bank unlimited debt.
+            const double deadline = bounded.Advance(1, now);
+            Require(deadline <= now, "Overloaded work was unnecessarily delayed");
+            Require(now - deadline <= period + 1e-12, "Overload debt exceeded one vblank");
+        }
+        // The very next light frame must have exhausted the bounded debt.
+        Require(bounded.Advance(1, now + .001) >= now - 1e-12,
+                "Sustained overload left a future catchup burst");
+        bounded.Reset(0);
+        Near(bounded.Advance(1, 3600), 3600 - period, 1e-10,
+             "Long stall retained more than one vblank of debt");
+        Near(bounded.Advance(1, 3600), 3600, 1e-10,
+             "Long stall required more than one recovery frame");
+        Near(bounded.Advance(1, 3600), 3600 + period, 1e-10,
+             "Long stall allowed unlimited fast-forward");
+        for (unsigned percent : {50u, 100u, 200u, 50u}) {
+            bounded.SetSpeedPercent(percent, 4000 + percent);
+            const double start = 4000 + percent;
+            Near(bounded.Advance(1, start), start + bounded.SecondsPerVBlank(), 1e-10,
+                 "Speed transition retained previous bounded debt or deadline");
+            bounded.Reset(start);
+            Near(bounded.Advance(0, start), start, 1e-10,
+                 "Reset retained bounded debt");
+        }
+        bounded.Reset(-std::numeric_limits<double>::max());
+        Require(std::isfinite(bounded.Advance(0, -std::numeric_limits<double>::max())),
+                "Huge negative finite host time overflowed debt floor");
+        std::cout << "Alternating 20ms/0ms: legacy " << 2400 / elapsed[0]
+                  << " Hz; bounded " << 2400 / elapsed[1] << " Hz\n";
         std::cout << "Frame pacing: full vblank counts, debt discard, reset, speed changes, "
-                     "bounds, backward/invalid time and long-run budgets passed\n";
+                     "bounds, backward/invalid time, bounded catchup and long-run budgets passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
