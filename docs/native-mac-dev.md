@@ -121,3 +121,24 @@ jobs and retains the no-JIT audit and configure command. It does not launch a RO
 or require a logged-in GUI. It verifies frontend compilation and linkage; GPU
 pixels, interactive input and sound still require a local run. The existing mac
 probe build and its software-presentation defaults remain separate.
+
+## Native CPU profiling
+
+For a separate diagnostic run, attach Time Profiler to the already-running Mac
+process. This tool never launches or restarts Cara:
+
+```sh
+python3 tools/profile_cpu_stacks.py --local-pid PID \
+  --binary /absolute/path/to/the/running/cara --duration 20 \
+  --output /Volumes/Fast/CaraBuild/profiles/new-capture
+```
+
+The output directory must be new. The tool archives the executable, records its
+hash and Mach-O identity, checks the process identity before and after capture,
+and requires matching image identity in target-process trace rows. Individual
+weighted leaf addresses remain available even when many share `ExecuteBlock`.
+Only Time Profiler data is accepted; CPU-counter cycle weights are rejected.
+An optional `--source-fingerprint` records a caller-supplied value and labels it
+as unverified. Profiling perturbs execution: keep these captures separate from
+matched performance comparisons. Parser and capture-command tests pass; a live
+native capture with this tool still needs validation.
