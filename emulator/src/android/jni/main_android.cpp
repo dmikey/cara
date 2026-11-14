@@ -28,6 +28,7 @@
 #include "core/loader/smdh.h"
 #include "core/settings.h"
 #include "video_core/video_core.h"
+#include "video_core/surface_coherence_probe.h"
 
 #include "camera/ndk_camera.h"
 #include "camera/still_image_camera.h"

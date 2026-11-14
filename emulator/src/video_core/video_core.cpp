@@ -16,6 +16,7 @@
 #include "video_core/renderer_opengl/renderer_opengl.h"
 #include "video_core/swrasterizer/swrasterizer.h"
 #include "video_core/video_core.h"
+#include "video_core/surface_coherence_probe.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Video Core namespace
