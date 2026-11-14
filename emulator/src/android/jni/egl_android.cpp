@@ -64,18 +64,20 @@ private:
 EGLAndroid::EGLAndroid(bool use_shared_context) : use_shared_context(use_shared_context) {}
 
 bool EGLAndroid::Initialize(ANativeWindow* surface) {
+    // Both GLES pipelines use these caches. Shared-context presentation keeps
+    // raster-state reuse off until its cross-context tracking is isolated.
+    setenv("CARA_GL_STATE_REUSE", use_shared_context ? "0" : "1", 1);
+    setenv("CARA_VS_UNIFORM_REUSE", "1", 1);
 #ifdef CARA_ANDROID_GLES_EXPERIMENT
     setenv("CARA_GPU_PACKED_INPUTS", "1", 1);
     setenv("CARA_VERTEX_UPLOAD_REUSE", "1", 1);
     setenv("CARA_VERTEX_INDEX_CACHE", "1", 1);
     setenv("CARA_VERTEX_UPLOAD_BANK_MIB", "80", 1);
-    setenv("CARA_VS_UNIFORM_REUSE", "1", 1);
     // Match the shipping Apple GLES residency/reuse paths. Multi-context
     // presentation keeps raster-state reuse off because its cache is shared.
     setenv("CARA_GPU_SURFACE_REMAP", "1", 1);
     setenv("CARA_GPU_DEPTH_REINTERPRET", "1", 1);
     setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", "1", 1);
-    setenv("CARA_GL_STATE_REUSE", use_shared_context ? "0" : "1", 1);
 #endif
     host_window = surface;
     egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
