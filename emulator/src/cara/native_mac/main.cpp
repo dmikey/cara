@@ -18,6 +18,7 @@
 #include "cara/config.h"
 #include "cara/lodepng_image_interface.h"
 #include "cara/native_mac/emu_window.h"
+#include "cara/native_mac/cpu_category_profile.h"
 #include "cara/native_mac/profile_snapshot.h"
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
@@ -176,6 +177,10 @@ int main(int argc, char** argv) {
                 std::string(std::getenv("CARA_NATIVE_TIMING_COUNTERS")) != "0";
         WriteNativeManifest(directory);
         WriteNativeProfileSnapshot(directory + "native-startup", VideoCore::GetCurrentFrame());
+        std::unique_ptr<NativeMac::CPUCategoryProfiler> category_profile;
+        if (NativeMac::CategoryFlag("CARA_NATIVE_CPU_CATEGORY_PROFILE"))
+            category_profile = std::make_unique<NativeMac::CPUCategoryProfiler>(
+                directory, Core::GetSaveStateBuildFingerprint(), VideoCore::GetCurrentFrame());
         std::signal(SIGTERM, StopNative);
         std::signal(SIGINT, StopNative);
         if (const char* benchmark = std::getenv("CARA_NATIVE_BENCHMARK");
@@ -189,9 +194,17 @@ int main(int argc, char** argv) {
                 std::cerr << "Run failure: " << static_cast<unsigned>(result) << std::endl;
                 return 4;
             }
+            // This explicit attribution mode samples only after RunLoop and all
+            // nested timing scopes have returned. It never injects input.
+            if (category_profile && category_profile->Observe(VideoCore::GetCurrentFrame(),
+                    system.CoreTiming().GetTicks(), system.CoreTiming().GetGlobalTicks()))
+                break;
             // PollEvents only queues requests. Serialize here, after RunLoop and
             // its timing callbacks return/requeue, with the GL context still live.
-            switch (window.TakeStateCommand()) {
+            const auto state_command = window.TakeStateCommand();
+            if (category_profile && state_command != EmuWindow_SDL2::StateCommand::None)
+                throw std::runtime_error("Save/load during native category measurement is unsupported");
+            switch (state_command) {
             case EmuWindow_SDL2::StateCommand::Save:
                 system.SaveState(1);
                 record_state("save");
