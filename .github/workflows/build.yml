@@ -26,6 +26,11 @@ jobs:
         run: python3 tools/prepare.py
       - name: Compile SDL frontend and audit linked no-JIT binary
         run: python3 tools/build_mac_sdl.py --build-dir work/build-mac-sdl --jobs 2
+      - name: Check private relay configuration and diagnostic touch bounds without a GUI
+        run: |
+          cmake --build work/build-mac-sdl --target cara-native-relay-config-self-test cara-native-touch-command-self-test -j2
+          work/build-mac-sdl/bin/cara-native-relay-config-self-test
+          work/build-mac-sdl/bin/cara-native-touch-command-self-test
       - name: Compile native GPU correctness harnesses without running a GUI
         run: cmake --build work/build-mac-sdl --target cara-mac-depth-self-test cara-mac-lut-self-test cara-mac-blit-state-self-test cara-surface-copy-interval-self-test cara-fastinterp-decoded-record-self-test -j2
       - name: Check real surface-copy interval selection without a GPU context

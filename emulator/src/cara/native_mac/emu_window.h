@@ -40,6 +40,11 @@ public:
     bool IsOpen() const;
 
 private:
+    void NativeFrameDiagnostics();
+    bool diagnostic_touch = false;
+    u32 diagnostic_touch_release = 0;
+    u32 diagnostic_touch_deadline = 0;
+
     /// Called by PollEvents when a key is pressed or released.
     void OnKeyEvent(int key, u8 state);
 

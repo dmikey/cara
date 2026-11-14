@@ -25,6 +25,7 @@
 #include <fmt/format.h>
 #include <glad/glad.h>
 #include "cara/native_mac/emu_window.h"
+#include "cara/native_mac/touch_command.h"
 #include "cara/native_mac/profile_snapshot.h"
 #include "cara/native_mac/benchmark_controls.h"
 #include "common/logging/log.h"
@@ -209,6 +210,7 @@ EmuWindow_SDL2::EmuWindow_SDL2(bool fullscreen) {
 }
 
 EmuWindow_SDL2::~EmuWindow_SDL2() {
+    TouchReleased();
     Network::Shutdown();
     InputCommon::Shutdown();
     DoneCurrent();
@@ -283,7 +285,7 @@ static u32 NativeFrameOption(const char* name, u32 fallback = 0) {
     return static_cast<u32>(parsed);
 }
 
-static void NativeFrameDiagnostics() {
+void EmuWindow_SDL2::NativeFrameDiagnostics() {
     static const bool enabled = [] {
         const auto* p = std::getenv("CARA_NATIVE_DIAGNOSTICS");
         return p && std::string(p) == "1";
@@ -294,6 +296,10 @@ static void NativeFrameDiagnostics() {
     static const auto starts = NativeFrameList("CARA_NATIVE_PRESS_START_FRAMES");
     static const auto captures = NativeFrameList("CARA_NATIVE_CAPTURE_FRAMES");
     const u32 completed = VideoCore::GetCurrentFrame() + 1;
+    if (diagnostic_touch && (completed>=diagnostic_touch_release ||
+        static_cast<s32>(SDL_GetTicks()-diagnostic_touch_deadline)>=0)) {
+        TouchReleased(); diagnostic_touch=false;
+    }
     if (benchmark_active) {
         const u32 relative =
             completed >= benchmark_base_frame ? completed - benchmark_base_frame : 0;
@@ -364,6 +370,7 @@ static void NativeFrameDiagnostics() {
         if (input) {
             char line[96]{};
             input.getline(line, sizeof(line));
+            const bool complete_line=!input.fail();
             input.close();
             std::remove(request.c_str());
             std::istringstream command(line);
@@ -371,7 +378,20 @@ static void NativeFrameDiagnostics() {
             unsigned duration = 6;
             command >> name >> duration;
             duration = std::clamp(duration, 1u, 600u);
-            if (name == "save") {
+            if (name == "touch" && complete_line) {
+                if (const auto touch=NativeMac::ParseTouchCommand(line)) {
+                    const auto& layout=GetFramebufferLayout();
+                    const auto& screen=layout.bottom_screen;
+                    if (const auto pixel=NativeMac::TouchFramebufferPoint(*touch,screen.left,
+                            screen.top,screen.right,screen.bottom,layout.bottom_screen_enabled)) {
+                        TouchReleased();
+                        TouchPressed(pixel->first,pixel->second);
+                        diagnostic_touch=true;
+                        diagnostic_touch_release=completed+touch->frames;
+                        diagnostic_touch_deadline=SDL_GetTicks()+30000;
+                    }
+                }
+            } else if (name == "save") {
                 pending_state_command = EmuWindow_SDL2::StateCommand::Save;
             } else if (name == "load") {
                 pending_state_command = EmuWindow_SDL2::StateCommand::Load;
@@ -519,7 +539,11 @@ void EmuWindow_SDL2::PollEvents() {
             case SDL_WINDOWEVENT_MINIMIZED:
                 OnResize();
                 break;
+            case SDL_WINDOWEVENT_FOCUS_LOST:
+                TouchReleased(); diagnostic_touch=false;
+                break;
             case SDL_WINDOWEVENT_CLOSE:
+                TouchReleased(); diagnostic_touch=false;
                 is_open = false;
                 break;
             }
@@ -551,6 +575,7 @@ void EmuWindow_SDL2::PollEvents() {
             OnFingerUp();
             break;
         case SDL_QUIT:
+            TouchReleased(); diagnostic_touch=false;
             is_open = false;
             break;
         default:

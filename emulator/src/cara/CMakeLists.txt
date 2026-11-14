@@ -43,6 +43,19 @@ if (CARA_MAC_SDL_DEV_HOST)
     set_source_files_properties(native_mac/relay_config.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     find_package(PNG REQUIRED)
     target_link_libraries(cara PRIVATE PNG::PNG)
+    add_executable(cara-native-relay-config-self-test
+        "${PROJECT_SOURCE_DIR}/../tests/native_relay_config_test.mm"
+        native_mac/relay_config.mm)
+    target_include_directories(cara-native-relay-config-self-test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    set_target_properties(cara-native-relay-config-self-test PROPERTIES
+        OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
+    target_compile_options(cara-native-relay-config-self-test PRIVATE -fobjc-arc -UNDEBUG)
+    target_link_libraries(cara-native-relay-config-self-test PRIVATE "-framework Foundation")
+    add_executable(cara-native-touch-command-self-test
+        "${PROJECT_SOURCE_DIR}/../tests/native_touch_command_test.cpp")
+    target_include_directories(cara-native-touch-command-self-test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_compile_options(cara-native-touch-command-self-test PRIVATE -UNDEBUG)
+
 else()
     target_link_libraries(cara PRIVATE lodepng)
 endif()
