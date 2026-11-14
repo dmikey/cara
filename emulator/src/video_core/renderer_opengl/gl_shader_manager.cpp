@@ -11,7 +11,11 @@
 #include <chrono>
 #include <fstream>
 #ifdef CARA_IOS_GLES
+#if defined(__APPLE__)
 #include <sys/sysctl.h>
+#elif defined(ANDROID)
+#include <sys/system_properties.h>
+#endif
 #include "video_core/renderer_opengl/ios_pipeline_cache.h"
 #endif
 #include <cstring>
@@ -448,8 +452,12 @@ public:
             if (value) identity += reinterpret_cast<const char*>(value);
         }
         char os[256]{};
+#if defined(__APPLE__)
         size_t length = sizeof(os);
         if (sysctlbyname("kern.osversion", os, &length, nullptr, 0) == 0) identity += os;
+#elif defined(ANDROID)
+        if (__system_property_get("ro.build.fingerprint", os) > 0) identity += os;
+#endif
         GLint count = 0;
         glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &count);
         if (count > 0 && count <= 64) {
