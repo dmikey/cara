@@ -378,9 +378,14 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
     // doing linear intepolation componentwise would cause incorrect value. However, for a
     // well-programmed game this code path should be rarely executed for shadow map with
     // inconsistent scale.
+    // Validation copies preserve guest bytes. Linear filtering can round an
+    // 8-bit channel even for equal-size rectangles on GLES drivers; do not
+    // interpolate when no scaling is requested. Retain filtering for rescaling.
+    const bool same_size = src_rect.GetWidth() == dst_rect.GetWidth() &&
+                           src_rect.GetHeight() == dst_rect.GetHeight();
     glBlitFramebuffer(src_rect.left, src_rect.bottom, src_rect.right, src_rect.top, dst_rect.left,
                       dst_rect.bottom, dst_rect.right, dst_rect.top, buffers,
-                      buffers == GL_COLOR_BUFFER_BIT ? GL_LINEAR : GL_NEAREST);
+                      buffers == GL_COLOR_BUFFER_BIT && !same_size ? GL_LINEAR : GL_NEAREST);
     if (checked_copy && glGetError() != GL_NO_ERROR)
         throw std::runtime_error("Native framebuffer texture copy failed");
 }
