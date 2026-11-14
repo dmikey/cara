@@ -8,6 +8,7 @@
 #include <dynarmic/interface/A32/context.h>
 #include "common/assert.h"
 #include "common/atomic_ops.h"
+#include "common/frame_timing.h"
 #include <dynarmic/interface/exclusive_monitor.h>
 #include "common/microprofile.h"
 #include "core/arm/dynarmic/arm_dynarmic.h"
@@ -197,7 +198,8 @@ MICROPROFILE_DEFINE(ARM_Jit, "ARM JIT", "ARM JIT", MP_RGB(255, 64, 64));
 void ARM_Dynarmic::Run() {
     ASSERT(memory.GetCurrentPageTable() == current_page_table);
     MICROPROFILE_SCOPE(ARM_Jit);
-
+    // Inclusive of HLE callbacks and renderer work entered by guest SVCs.
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GuestCPU);
     jit->Run();
 }
 

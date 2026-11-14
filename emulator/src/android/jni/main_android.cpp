@@ -161,7 +161,7 @@ void BootGame(const std::string& path) {
             auto& phases = Common::FrameTiming::counters;
             if (phases.enabled && std::chrono::steady_clock::now() >= next_phase_report) {
                 LOG_INFO(Frontend,
-                    "Android renderer window: guest_ms={:.3f} draw_ms={:.3f} submit_ms={:.3f} prepare_ms={:.3f} upload_ms={:.3f} readback_ms={:.3f} download_ms={:.3f} remap_ms={:.3f} compile_ms={:.3f} compile_calls={} downloads={} remaps={} gpu_draws={} cpu_draws={}",
+                    "Android renderer window: jit_run_inclusive_ms={:.3f} draw_ms={:.3f} submit_ms={:.3f} prepare_ms={:.3f} upload_ms={:.3f} readback_ms={:.3f} download_ms={:.3f} remap_ms={:.3f} compile_ms={:.3f} compile_calls={} downloads={} remaps={} gpu_draws={} cpu_draws={}",
                     phases.guest_cpu_seconds*1000, phases.draw_seconds*1000,
                     phases.draw_submit_seconds*1000, phases.vertex_prepare_seconds*1000,
                     phases.vertex_upload_seconds*1000, phases.readback_seconds*1000,
