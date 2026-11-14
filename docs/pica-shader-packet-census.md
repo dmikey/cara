@@ -41,3 +41,9 @@ The fixed-size counters and integer classifier live in
 `emulator/src/video_core/pica_shader_packet_profile.h`. No trace-enabled probe is
 called. This diagnostic does not repair the scalar parser's pre-existing lack
 of header/extra bounds checks.
+
+Summarize a complete log with `python3 tools/summarize_shader_packets.py LOG`.
+Use `--session ID --snapshots FIRST LAST` to select exact cumulative endpoints.
+The helper rejects missing, duplicate, reset or inconsistent rows; percentages
+use source-packet/extra-word denominators, never mirrored-store or CPU-time units.
+The existing `summarize_pica_commands.py` format and behavior are unchanged.
