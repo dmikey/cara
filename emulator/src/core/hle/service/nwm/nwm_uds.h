@@ -20,6 +20,7 @@
 #include "common/swap.h"
 #include "core/hle/service/service.h"
 #include "network/network.h"
+#include "network/relay_client.h"
 
 namespace Core {
 class System;
@@ -137,9 +138,20 @@ public:
     ~NWM_UDS();
 
     class ThreadCallback;
+    // Foreground emulation worker only. No asynchronous core callback ownership.
+    std::size_t DrainRelayPackets();
 
 private:
+    friend struct RelayHLETestDriver; // Linked only by the standalone service-HLE witness.
     Core::System& system;
+    std::shared_ptr<Network::RelayClient> relay_session;
+    std::uint64_t relay_generation{};
+    bool relay_connected{};
+    bool relay_needs_initial_sync = true;
+    void RelayDisconnected();
+    void SyncRelayNodeMap();
+    void RelayPeerLeft(const Network::RelayClient::Mac& mac);
+    bool AdmitRelayPacket(const Network::RelayClient::Packet& packet);
 
     void UpdateNetworkAttribute(Kernel::HLERequestContext& ctx);
 

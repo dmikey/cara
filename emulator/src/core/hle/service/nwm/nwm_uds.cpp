@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <boost/serialization/list.hpp>
 #include <boost/serialization/map.hpp>
 #include <cryptopp/osrng.h>
@@ -23,6 +24,8 @@
 #include "core/hle/service/nwm/uds_beacon.h"
 #include "core/hle/service/nwm/uds_connection.h"
 #include "core/hle/service/nwm/uds_data.h"
+#include "core/hle/service/sm/sm.h"
+#include "network/uds_relay_admission.h"
 #include "core/memory.h"
 
 SERIALIZE_EXPORT_IMPL(Service::NWM::NWM_UDS)
@@ -76,6 +79,20 @@ std::list<Network::WifiPacket> NWM_UDS::GetReceivedBeacons(const MacAddress& sen
 
 /// Sends a WifiPacket to the room we're currently connected to.
 void SendPacket(Network::WifiPacket& packet) {
+    if (auto relay = Network::GetRelaySession()) {
+        Network::RelayClient::Packet outgoing;
+        outgoing.kind = static_cast<Cara::Relay::Kind>(packet.type);
+        outgoing.channel = packet.channel;
+        outgoing.destination = packet.destination_address;
+        outgoing.payload = packet.data;
+        if (outgoing.kind == Cara::Relay::Kind::NodeMap) {
+            auto canonical = Cara::Relay::NativeNodeMapToWire(outgoing.payload);
+            if (!canonical) return;
+            outgoing.payload = std::move(*canonical);
+        }
+        relay->TrySend(outgoing);
+        return;
+    }
     if (auto room_member = Network::GetRoomMember().lock()) {
         if (room_member->GetState() == Network::RoomMember::State::Joined ||
             room_member->GetState() == Network::RoomMember::State::Moderator) {
@@ -191,6 +208,11 @@ void NWM_UDS::HandleAssociationResponseFrame(const Network::WifiPacket& packet) 
 }
 
 void NWM_UDS::HandleEAPoLPacket(const Network::WifiPacket& packet) {
+    if (packet.data.size() < 10) return;
+    const auto type = GetEAPoLFrameType(packet.data);
+    const auto active_nodes = type == EAPoLLogoffMagic ? Network::UDSRelay::ActiveNodes(packet.data) : std::nullopt;
+    if ((type == EAPoLStartMagic && packet.data.size() < 56) ||
+        (type != EAPoLStartMagic && !active_nodes)) return;
     std::unique_lock hle_lock(HLE::g_hle_lock, std::defer_lock);
     std::unique_lock lock(connection_status_mutex, std::defer_lock);
     std::lock(hle_lock, lock);
@@ -214,7 +236,10 @@ void NWM_UDS::HandleEAPoLPacket(const Network::WifiPacket& packet) {
             return;
         }
 
-        ASSERT(connection_status.max_nodes != connection_status.total_nodes);
+        // Network input can race pending authentications for the last free slot.
+        if (connection_status.max_nodes > UDSMaxNodes ||
+            connection_status.total_nodes >= connection_status.max_nodes ||
+            network_info.total_nodes >= node_info.size()) return;
 
         auto node = DeserializeNodeInfoFromFrame(packet.data);
 
@@ -268,12 +293,14 @@ void NWM_UDS::HandleEAPoLPacket(const Network::WifiPacket& packet) {
         connection_status.total_nodes = logoff.connected_nodes;
         connection_status.max_nodes = logoff.max_nodes;
 
+        const auto old_mask = static_cast<u16>(connection_status.node_bitmask);
+        connection_status.node_bitmask = active_nodes->mask;
+        connection_status.changed_nodes |= old_mask ^ active_nodes->mask;
+        for (unsigned id=0;id<UDSMaxNodes;++id) connection_status.nodes[id] = active_nodes->slots[id];
         node_info.clear();
         node_info.reserve(network_info.max_nodes);
         for (std::size_t index = 0; index < logoff.connected_nodes; ++index) {
-            connection_status.node_bitmask |= 1 << index;
-            connection_status.changed_nodes |= 1 << index;
-            connection_status.nodes[index] = logoff.nodes[index].network_node_id;
+
 
             node_info.emplace_back(DeserializeNodeInfo(logoff.nodes[index]));
         }
@@ -295,14 +322,14 @@ void NWM_UDS::HandleEAPoLPacket(const Network::WifiPacket& packet) {
         network_info.total_nodes = logoff.connected_nodes;
         connection_status.total_nodes = logoff.connected_nodes;
 
+        const auto old_mask = static_cast<u16>(connection_status.node_bitmask);
+        connection_status.node_bitmask = active_nodes->mask;
+        connection_status.changed_nodes |= old_mask ^ active_nodes->mask;
+        for (unsigned id=0;id<UDSMaxNodes;++id) connection_status.nodes[id] = active_nodes->slots[id];
         node_info.clear();
         node_info.reserve(network_info.max_nodes);
         for (std::size_t index = 0; index < logoff.connected_nodes; ++index) {
-            if ((connection_status.node_bitmask & (1 << index)) == 0) {
-                connection_status.changed_nodes |= 1 << index;
-            }
-            connection_status.nodes[index] = logoff.nodes[index].network_node_id;
-            connection_status.node_bitmask |= 1 << index;
+
             node_info.emplace_back(DeserializeNodeInfo(logoff.nodes[index]));
         }
         connection_status_event->Signal();
@@ -364,6 +391,19 @@ void NWM_UDS::HandleSecureDataPacket(const Network::WifiPacket& packet) {
     if (channel_info->second.network_node_id != BroadcastNetworkNodeId &&
         channel_info->second.network_node_id != secure_data.src_node_id)
         return;
+
+    // Bound both this channel and the whole relay-backed UDS backlog.
+    if (relay_session) {
+        if (channel_info->second.received_packets.size() >= Network::RelayClient::MaxQueuePackets) return;
+        std::size_t queued = 0;
+        for (const auto& channel : channel_data) {
+            for (const auto& pending : channel.second.received_packets) {
+                if (pending.size() > Network::RelayClient::MaxQueueBytes - queued) return;
+                queued += pending.size();
+            }
+        }
+        if (packet.data.size() > Network::RelayClient::MaxQueueBytes - queued) return;
+    }
 
     // Add the received packet to the data queue.
     channel_info->second.received_packets.emplace_back(packet.data);
@@ -489,9 +529,13 @@ void NWM_UDS::HandleDeauthenticationFrame(const Network::WifiPacket& packet) {
     network_info.total_nodes--;
     // TODO(B3N30): broadcast new connection_status to clients
 
-    node_it->Reset();
+    // Keep the active prefix compact: EAPoL appends at total_nodes and exports
+    // the first connected_nodes records. Preserve assigned IDs, not old slots.
+    std::move(std::next(node_it), node_info.end(), node_it);
+    node_info.back().Reset();
 
     connection_status_event->Signal();
+    if (relay_session) BroadcastNodeMap();
 }
 
 void NWM_UDS::HandleDataFrame(const Network::WifiPacket& packet) {
@@ -530,6 +574,168 @@ void NWM_UDS::OnWifiPacketReceived(const Network::WifiPacket& packet) {
         HandleNodeMapPacket(packet);
         break;
     }
+}
+
+bool NWM_UDS::AdmitRelayPacket(const Network::RelayClient::Packet& packet) {
+    std::lock_guard lock(connection_status_mutex);
+    Network::UDSRelay::Snapshot snapshot;
+    const auto status = static_cast<NetworkStatus>(static_cast<u32>(connection_status.status));
+    using Role = Network::UDSRelay::Role;
+    snapshot.role = status == NetworkStatus::ConnectedAsHost ? Role::Hosting :
+                    status == NetworkStatus::Connecting ? Role::Connecting :
+                    status == NetworkStatus::ConnectedAsClient ? Role::Client : Role::Offline;
+    snapshot.local = relay_session->GetLocalMac();
+    snapshot.host = network_info.host_mac_address;
+    snapshot.channel = network_channel;
+    snapshot.local_node = connection_status.network_node_id;
+    snapshot.maximum = connection_status.max_nodes;
+    snapshot.total = connection_status.total_nodes;
+    snapshot.storage_ready = node_info.size() >= snapshot.maximum &&
+                             network_info.total_nodes < node_info.size();
+    if (snapshot.maximum >= 1 && snapshot.maximum <= UDSMaxNodes) {
+        const unsigned mask = (1u << snapshot.maximum) - 1;
+        snapshot.free_node = (connection_status.node_bitmask & mask) != mask;
+    }
+    if (node_map.size() > snapshot.peers.size()) return false;
+    for (const auto& [mac, node] : node_map) {
+        const bool has_data = std::any_of(node_info.begin(), node_info.end(), [&](const NodeInfo& info) {
+            return info.network_node_id == node.node_id;
+        });
+        snapshot.peers[snapshot.peer_count++] = {mac, node.node_id, node.connected, has_data};
+    }
+    return Network::UDSRelay::Allows(packet, snapshot);
+}
+
+void NWM_UDS::RelayDisconnected() {
+    std::lock_guard lock(connection_status_mutex);
+    system.CoreTiming().UnscheduleEvent(beacon_broadcast_event, 0);
+    const bool notify = (initialized && connection_status.status != static_cast<u32>(NetworkStatus::NotConnected)) || !node_map.empty();
+    const u16 local_node = connection_status.network_node_id;
+    connection_status = {};
+    connection_status.status = static_cast<u32>(NetworkStatus::NotConnected);
+    connection_status.network_node_id = local_node;
+    node_map.clear();
+    node_info.clear();
+    for (auto& [channel, binding] : channel_data) binding.event->Signal();
+    channel_data.clear();
+    { std::lock_guard beacon_lock(beacon_mutex); received_beacons.clear(); }
+    if (notify) connection_status_event->Signal();
+    if (connection_event) connection_event->Signal();
+}
+
+void NWM_UDS::SyncRelayNodeMap() {
+    bool disconnected = false;
+    {
+        std::lock_guard lock(connection_status_mutex);
+        if (connection_status.status != static_cast<u32>(NetworkStatus::ConnectedAsClient)) return;
+        const auto local = node_map.find(relay_session->GetLocalMac());
+        disconnected = local == node_map.end() || local->second.node_id != connection_status.network_node_id;
+        if (!disconnected) {
+            unsigned retained = 1; // Host is not in the synthetic map.
+            for (const auto& [mac, node] : node_map) if (node.connected && node.node_id>=1 && node.node_id<=UDSMaxNodes) retained |= 1u << (node.node_id-1);
+            const unsigned removed = connection_status.node_bitmask & ~retained;
+            for (unsigned id=1;id<=UDSMaxNodes;++id) if (removed & (1u << (id-1))) {
+                connection_status.nodes[id-1]=0;
+                if (connection_status.total_nodes) --connection_status.total_nodes;
+                if (network_info.total_nodes) --network_info.total_nodes;
+                for (auto& info : node_info) if (info.network_node_id==id) info.Reset();
+                for (auto& [channel, binding] : channel_data) {
+                    auto& queue = binding.received_packets;
+                    queue.erase(std::remove_if(queue.begin(),queue.end(),[&](const auto& bytes) {return bytes.size()>=22 && Cara::Relay::BE(bytes,20)==id;}),queue.end());
+                }
+            }
+            connection_status.node_bitmask &= retained;
+            connection_status.changed_nodes |= removed;
+            if (removed) connection_status_event->Signal();
+        }
+    }
+    if (disconnected) RelayDisconnected();
+}
+
+void NWM_UDS::RelayPeerLeft(const Network::RelayClient::Mac& mac) {
+    bool disconnect_host = false;
+    bool deauth_client = false;
+    {
+        std::lock_guard lock(connection_status_mutex);
+        const auto status = static_cast<NetworkStatus>(static_cast<u32>(connection_status.status));
+        disconnect_host = (status == NetworkStatus::Connecting || status == NetworkStatus::ConnectedAsClient) &&
+                          mac == network_info.host_mac_address;
+        auto peer = node_map.find(mac);
+        if (!disconnect_host && peer != node_map.end()) {
+            const unsigned id = peer->second.node_id;
+            auto info = std::find_if(node_info.begin(), node_info.end(), [&](const NodeInfo& n) {return n.network_node_id == id;});
+            if (peer->second.connected && id >= 1 && id <= UDSMaxNodes) {
+                for (auto& [channel, binding] : channel_data) {
+                    auto& queued = binding.received_packets;
+                    queued.erase(std::remove_if(queued.begin(), queued.end(), [&](const auto& bytes) {
+                        return bytes.size() >= 22 && Cara::Relay::BE(bytes, 20) == id;
+                    }), queued.end());
+                }
+            }
+            if (status == NetworkStatus::ConnectedAsHost && peer->second.connected &&
+                id >= 1 && id <= UDSMaxNodes && info != node_info.end()) {
+                deauth_client = true;
+            } else {
+                if (peer->second.connected && id >= 1 && id <= UDSMaxNodes) {
+                    connection_status.node_bitmask &= ~(1u << (id - 1));
+                    connection_status.changed_nodes |= 1u << (id - 1);
+                    connection_status.nodes[id - 1] = 0;
+                    if (connection_status.total_nodes) --connection_status.total_nodes;
+                    if (network_info.total_nodes) --network_info.total_nodes;
+                    if (info != node_info.end()) info->Reset();
+                    connection_status_event->Signal();
+                }
+                node_map.erase(peer);
+            }
+        }
+    }
+    if (disconnect_host) RelayDisconnected();
+    else if (deauth_client) {
+        Network::WifiPacket packet;
+        packet.type = Network::WifiPacket::PacketType::Deauthentication;
+        packet.transmitter_address = mac;
+        HandleDeauthenticationFrame(packet);
+    }
+}
+
+std::size_t NWM_UDS::DrainRelayPackets() {
+    if (!relay_session) return 0;
+    std::lock_guard hle_lock(HLE::g_hle_lock);
+    const auto status = relay_session->GetStatus();
+    const bool connected = status.state == Network::RelayClient::State::Connected;
+    if (relay_needs_initial_sync) {
+        // Kernel save states can restore a previous host-session MAC afterward.
+        system.Kernel().GetSharedPageHandler().SetMacAddress(relay_session->GetLocalMac());
+    }
+    if (status.generation != relay_generation || (relay_connected && !connected) ||
+        (relay_needs_initial_sync && !connected)) RelayDisconnected();
+    relay_needs_initial_sync = false;
+    relay_generation = status.generation;
+    relay_connected = connected;
+    if (!connected) return 0;
+    auto received = relay_session->Drain();
+    std::size_t delivered = 0;
+    for (auto& envelope : received) {
+        if (envelope.peer_left) {RelayPeerLeft(envelope.packet.transmitter); continue;}
+        if (!initialized || !AdmitRelayPacket(envelope.packet)) continue;
+        Network::WifiPacket packet;
+        packet.type = static_cast<Network::WifiPacket::PacketType>(envelope.packet.kind);
+        packet.channel = envelope.packet.channel;
+        packet.transmitter_address = envelope.packet.transmitter;
+        packet.destination_address = envelope.packet.destination;
+        if (envelope.packet.kind == Cara::Relay::Kind::NodeMap) {
+            auto native = Cara::Relay::WireNodeMapToNative(envelope.packet.payload);
+            if (!native) continue;
+            packet.data = std::move(*native);
+        } else {
+            packet.data = std::move(envelope.packet.payload);
+        }
+        OnWifiPacketReceived(packet);
+        if (packet.type == Network::WifiPacket::PacketType::NodeMap) SyncRelayNodeMap();
+        ++delivered;
+    }
+    if (relay_session->GetStatus().rx_queued) Network::Detail::NotifyRelayWork();
+    return delivered;
 }
 
 boost::optional<Network::MacAddress> NWM_UDS::GetNodeMacAddress(u16 dest_node_id, u8 flags) {
@@ -593,13 +799,20 @@ void NWM_UDS::RecvBeaconBroadcastData(Kernel::HLERequestContext& ctx) {
     Kernel::MappedBuffer out_buffer = rp.PopMappedBuffer();
     ASSERT(out_buffer.GetSize() == out_buffer_size);
 
+    if (out_buffer_size < sizeof(BeaconDataReplyHeader)) {
+        IPC::RequestBuilder rb = rp.MakeBuilder(1, 2);
+        rb.Push(ResultCode(ErrorDescription::InvalidSize, ErrorModule::UDS,
+                           ErrorSummary::WrongArgument, ErrorLevel::Usage));
+        rb.PushMappedBuffer(out_buffer);
+        return;
+    }
     std::size_t cur_buffer_size = sizeof(BeaconDataReplyHeader);
 
     // Retrieve all beacon frames that were received from the desired mac address.
     auto beacons = GetReceivedBeacons(mac_address);
 
     BeaconDataReplyHeader data_reply_header{};
-    data_reply_header.total_entries = static_cast<u32>(beacons.size());
+    data_reply_header.total_entries = 0;
     data_reply_header.max_output_size = out_buffer_size;
 
     // Write each of the received beacons into the buffer
@@ -612,7 +825,9 @@ void NWM_UDS::RecvBeaconBroadcastData(Kernel::HLERequestContext& ctx) {
         entry.header_size = sizeof(BeaconEntryHeader);
         entry.mac_address = beacon.transmitter_address;
 
-        ASSERT(cur_buffer_size < out_buffer_size);
+        if (sizeof(BeaconEntryHeader) > out_buffer_size - cur_buffer_size ||
+            beacon.data.size() > out_buffer_size - cur_buffer_size - sizeof(BeaconEntryHeader)) break;
+        ++data_reply_header.total_entries;
 
         out_buffer.Write(&entry, cur_buffer_size, sizeof(BeaconEntryHeader));
         cur_buffer_size += sizeof(BeaconEntryHeader);
@@ -872,7 +1087,9 @@ ResultCode NWM_UDS::BeginHostingNetwork(const u8* network_info_buffer,
         // Notify the application that the first node was set.
         connection_status.changed_nodes |= 1;
 
-        if (auto room_member = Network::GetRoomMember().lock()) {
+        if (relay_session) {
+            network_info.host_mac_address = relay_session->GetLocalMac();
+        } else if (auto room_member = Network::GetRoomMember().lock()) {
             if (room_member->IsConnected()) {
                 network_info.host_mac_address = room_member->GetMacAddress();
             } else {
@@ -1272,6 +1489,8 @@ void NWM_UDS::ConnectToNetwork(Kernel::HLERequestContext& ctx, u16 command_id,
     network_info = {};
     std::memcpy(&network_info, network_info_buffer, network_info_size);
 
+    if (relay_session) network_channel = network_info.channel ? network_info.channel : DefaultNetworkChannel;
+
     // Start the connection sequence
     StartConnectionSequence(network_info.host_mac_address);
 
@@ -1499,7 +1718,14 @@ NWM_UDS::NWM_UDS(Core::System& system) : ServiceFramework("nwm::UDS"), system(sy
     // Keep the Nintendo 3DS MAC header and randomly generate the last 3 bytes
     rng.GenerateBlock(static_cast<CryptoPP::byte*>(mac.data() + 3), 3);
 
-    if (auto room_member = Network::GetRoomMember().lock()) {
+    relay_session = Network::GetRelaySession();
+    if (relay_session) {
+        mac = relay_session->GetLocalMac();
+        const auto status = relay_session->GetStatus();
+        relay_generation = status.generation;
+        relay_connected = status.state == Network::RelayClient::State::Connected;
+        Network::Detail::NotifyRelayWork();
+    } else if (auto room_member = Network::GetRoomMember().lock()) {
         if (room_member->IsConnected()) {
             mac = room_member->GetMacAddress();
         }
@@ -1508,17 +1734,21 @@ NWM_UDS::NWM_UDS(Core::System& system) : ServiceFramework("nwm::UDS"), system(sy
     system.Kernel().GetSharedPageHandler().SetMacAddress(mac);
     system.Kernel().GetSharedPageHandler().SetWifiLinkLevel(SharedPage::WifiLinkLevel::BEST);
 
-    if (auto room_member = Network::GetRoomMember().lock()) {
-        wifi_packet_received = room_member->BindOnWifiPacketReceived(
-            [this](const Network::WifiPacket& packet) { OnWifiPacketReceived(packet); });
-    } else {
-        LOG_ERROR(Service_NWM, "Network isn't initalized");
+    if (!relay_session) {
+        if (auto room_member = Network::GetRoomMember().lock()) {
+            wifi_packet_received = room_member->BindOnWifiPacketReceived(
+                [this](const Network::WifiPacket& packet) { OnWifiPacketReceived(packet); });
+        } else {
+            LOG_ERROR(Service_NWM, "Network isn't initalized");
+        }
     }
 }
 
 NWM_UDS::~NWM_UDS() {
-    if (auto room_member = Network::GetRoomMember().lock())
-        room_member->Unbind(wifi_packet_received);
+    if (!relay_session) {
+        if (auto room_member = Network::GetRoomMember().lock())
+            room_member->Unbind(wifi_packet_received);
+    }
 
     system.CoreTiming().UnscheduleEvent(beacon_broadcast_event, 0);
 }
@@ -1526,3 +1756,11 @@ NWM_UDS::~NWM_UDS() {
 } // namespace Service::NWM
 
 SERIALIZE_EXPORT_IMPL(Service::NWM::NWM_UDS::ThreadCallback)
+
+namespace Network {
+std::size_t DrainRelayPackets(Core::System& system) {
+    if (!Detail::TakeRelayWork()) return 0;
+    auto uds = system.ServiceManager().GetService<Service::NWM::NWM_UDS>("nwm::UDS");
+    return uds ? uds->DrainRelayPackets() : 0;
+}
+} // namespace Network
