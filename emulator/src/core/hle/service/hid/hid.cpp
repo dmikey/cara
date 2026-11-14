@@ -107,6 +107,11 @@ void Module::LoadInputDevices() {
 }
 
 void Module::UpdatePad() {
+    // Frontends can request an immediate refresh before the first scheduled
+    // HID callback. Initialize host devices here so every caller sees them.
+    if (is_device_reload_pending.exchange(false))
+        LoadInputDevices();
+
     auto mem = reinterpret_cast<SharedMem*>(shared_mem->GetPointer());
 
     using namespace Settings::NativeButton;
@@ -193,9 +198,6 @@ void Module::UpdatePad() {
 }
 
 void Module::UpdatePadCallback(u64 userdata, s64 cycles_late) {
-    if (is_device_reload_pending.exchange(false))
-        LoadInputDevices();
-
     // gamepad input
     UpdatePad();
 
