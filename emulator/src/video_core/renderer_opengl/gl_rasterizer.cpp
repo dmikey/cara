@@ -1639,6 +1639,9 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
 #endif
 
     // Bind the framebuffer surfaces
+    {
+    Common::FrameTiming::Scope setup(Common::FrameTiming::Phase::DrawFramebufferSetup,
+                                     Common::FrameTiming::RenderBookkeepingProfileEnabled());
     OpenGLState::BindDrawFramebuffer(framebuffer.handle);
 
     if (shadow_rendering) {
@@ -1696,6 +1699,8 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         }
     }
 
+    }
+
     // Scissor checks are window-, not viewport-relative, which means that if the cached texture
     // sub-rect changes, the scissor bounds also need to be updated.
     GLint scissor_x1 =
@@ -1728,8 +1733,12 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     }
 
     // Sync the LUTs within the texture buffer
-    SyncAndUploadLUTs();
-    SyncAndUploadLUTsLF();
+    {
+        Common::FrameTiming::Scope luts(Common::FrameTiming::Phase::DrawLUTUpload,
+                                       Common::FrameTiming::RenderBookkeepingProfileEnabled());
+        SyncAndUploadLUTs();
+        SyncAndUploadLUTsLF();
+    }
 
     // Sync the uniform data
     UploadUniforms(accelerate);
@@ -1752,6 +1761,8 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     // Draw the vertex batch
     bool succeeded = true;
     if (accelerate) {
+        Common::FrameTiming::Scope vertex(Common::FrameTiming::Phase::DrawVertexExecution,
+                                         Common::FrameTiming::RenderBookkeepingProfileEnabled());
         succeeded = AccelerateDrawBatchInternal(is_indexed);
     } else {
         state.draw.vertex_array = sw_vao.handle;

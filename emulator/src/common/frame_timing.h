@@ -58,6 +58,9 @@ struct Counters {
     std::uint64_t texture_lookup_verified_hits = 0;
     std::uint64_t texture_lookup_verify_mismatches = 0;
 
+    double draw_framebuffer_setup_seconds = 0;
+    double draw_lut_upload_seconds = 0;
+    double draw_vertex_execution_seconds = 0;
     double draw_framebuffer_acquire_seconds = 0;
     std::uint64_t draw_framebuffer_acquire_calls = 0;
     double draw_texture_acquire_seconds = 0;
@@ -265,7 +268,7 @@ inline bool RenderBookkeepingProfileEnabled() {
     return enabled;
 }
 
-enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
+enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck, DrawFramebufferSetup, DrawLUTUpload, DrawVertexExecution };
 class Scope {
 public:
     explicit Scope(Phase phase_, bool enabled = true) : phase(phase_), active(counters.enabled && enabled) {
@@ -356,6 +359,12 @@ public:
         } else if (phase == Phase::ShaderCompile) {
             counters.shader_compile_seconds += seconds;
             ++counters.shader_compile_calls;
+        } else if (phase == Phase::DrawFramebufferSetup) {
+            counters.draw_framebuffer_setup_seconds += seconds;
+        } else if (phase == Phase::DrawLUTUpload) {
+            counters.draw_lut_upload_seconds += seconds;
+        } else if (phase == Phase::DrawVertexExecution) {
+            counters.draw_vertex_execution_seconds += seconds;
         } else if (phase == Phase::DrawFramebufferAcquire) {
             counters.draw_framebuffer_acquire_seconds += seconds;
             ++counters.draw_framebuffer_acquire_calls;

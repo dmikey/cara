@@ -188,6 +188,11 @@ void BootGame(const std::string& path) {
                     phases.draw_framebuffer_acquire_calls, phases.draw_texture_acquire_calls,
                     phases.draw_dirty_invalidate_calls, phases.vertex_upload_bytes,
                     phases.vertex_upload_reused_bytes);
+                LOG_INFO(Frontend,
+                    "Android draw detail: framebuffer_setup_ms={:.3f} luts_ms={:.3f} vertex_execution_ms={:.3f}",
+                    phases.draw_framebuffer_setup_seconds*1000,
+                    phases.draw_lut_upload_seconds*1000,
+                    phases.draw_vertex_execution_seconds*1000);
                 phases = {};
                 phases.enabled = true;
                 next_phase_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
