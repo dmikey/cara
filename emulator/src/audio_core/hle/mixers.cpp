@@ -196,7 +196,7 @@ void Mixers::MixCurrentFrame() {
 }
 
 DspStatus Mixers::GetCurrentStatus() const {
-    DspStatus status;
+    DspStatus status{};
     status.unknown = 0;
     status.dropped_frames = 0;
     return status;
