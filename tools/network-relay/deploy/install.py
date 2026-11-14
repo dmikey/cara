@@ -42,7 +42,8 @@ def nginx_hashes():
 
 
 def public_get(url):
-    with urllib.request.urlopen(url, timeout=15) as response:
+    request = urllib.request.Request(url, headers={'User-Agent': 'cara-relay-deployment/1.0', 'Cache-Control': 'no-cache'})
+    with urllib.request.urlopen(request, timeout=15) as response:
         return response.read(8192)
 
 
@@ -95,6 +96,7 @@ def main():
     before_hashes = nginx_hashes()
     receipt = {'revision': commit, 'before_container_ids': before_ids,
                'before_nginx_sha256': before_hashes}
+    (BASE / 'preflight-receipt.json').write_text(json.dumps(receipt, indent=2))
     # Only host configuration is affected: no tenant database/writer is touched.
     archive = run(['tar', '-C', '/', '-czf', '-', 'etc/nginx'])
     key = private / 'config-backup.key'
@@ -156,7 +158,14 @@ def main():
         challenge.write_text(nonce)
         challenge.chmod(0o644)
         try:
-            if public_get('http://' + DOMAIN + '/.well-known/acme-challenge/' + challenge.name).decode() != nonce:
+            for attempt in range(10):
+                try:
+                    if public_get('http://' + DOMAIN + '/.well-known/acme-challenge/' + challenge.name).decode() == nonce:
+                        break
+                except Exception:
+                    pass
+                time.sleep(1)
+            else:
                 raise RuntimeError('public hostname does not reach the verified origin')
         finally:
             challenge.unlink(missing_ok=True)
@@ -199,6 +208,9 @@ def main():
                 path.unlink()
         subprocess.run(['nginx', '-t'], check=True, capture_output=True)
         subprocess.run(['systemctl', 'reload', 'nginx'], check=True, capture_output=True)
+        receipt.update({'rolled_back': True, 'after_rollback_container_ids': docker_ids(),
+                        'after_rollback_nginx_sha256': nginx_hashes()})
+        (BASE / 'failed-receipt.json').write_text(json.dumps(receipt, indent=2))
         print('Scoped install rolled back; protected backup/release files retained', flush=True)
         raise
 

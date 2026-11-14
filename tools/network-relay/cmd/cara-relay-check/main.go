@@ -53,7 +53,7 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	dial := func(room, password string) (*websocket.Conn, net.Conn, relay.Frame, error) {
-		ws, response, err := websocket.Dial(ctx, *endpoint, &websocket.DialOptions{HTTPClient: client})
+		ws, response, err := websocket.Dial(ctx, *endpoint, &websocket.DialOptions{HTTPClient: client, HTTPHeader: http.Header{"User-Agent": []string{"cara-relay-check/1.0"}}})
 		if err != nil {
 			return nil, nil, relay.Frame{}, fmt.Errorf("trusted WebSocket connection failed")
 		}
@@ -122,7 +122,7 @@ func run() error {
 	}
 	for _, tlsConfig := range []*tls.Config{{MinVersion: tls.VersionTLS13, ServerName: "invalid-hostname.invalid"}, {MinVersion: tls.VersionTLS13, RootCAs: x509.NewCertPool()}} {
 		wrong := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}, Timeout: 5 * time.Second}
-		ws, _, err := websocket.Dial(ctx, *endpoint, &websocket.DialOptions{HTTPClient: wrong})
+		ws, _, err := websocket.Dial(ctx, *endpoint, &websocket.DialOptions{HTTPClient: wrong, HTTPHeader: http.Header{"User-Agent": []string{"cara-relay-check/1.0"}}})
 		if err == nil {
 			ws.CloseNow()
 			return fmt.Errorf("invalid hostname or trust accepted")
@@ -131,7 +131,9 @@ func run() error {
 	healthURL := *u
 	healthURL.Scheme = "https"
 	healthURL.Path = "/healthz"
-	response, err := client.Get(healthURL.String())
+	request, _ := http.NewRequest(http.MethodGet, healthURL.String(), nil)
+	request.Header.Set("User-Agent", "cara-relay-check/1.0")
+	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("public health failed")
 	}
