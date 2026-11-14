@@ -26,7 +26,7 @@ Audit date: 2026-11-13. This work uses high-level emulation and an original Cara
 
 `tools/network-relay/` contains an independent, standard-library Go TCP/TLS prototype. It authenticates configured private rooms, forwards unchanged bounded opaque packets only inside a room, assigns routing-only source tags, bounds every peer queue, disconnects slow peers, caps total concurrent connections and tears sessions down on disconnect. The CLI refuses a non-loopback listener without TLS 1.3 credentials. Its protocol is documented beside the code.
 
-This is **not ENet-compatible** and has no emulator adapter yet. It does not modify current game network behavior or claim title compatibility. No process was deployed, and no external server or account was contacted by the tests.
+This is **not ENet-compatible** and has no emulator adapter yet. It does not modify current game network behavior or claim title compatibility. The original transport tests were local. Deployment packaging now includes a loopback-only WebSocket transport for HTTPS proxy hosting; see `tools/network-relay/DEPLOYMENT.md` for the separately verified deployment status. No emulator adapter or title compatibility is implied.
 
 ## Implementation sequence and proof gates
 
