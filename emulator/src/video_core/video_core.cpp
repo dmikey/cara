@@ -57,15 +57,6 @@ static void ApplySetting() {
     g_setting_update = false;
 }
 
-bool RunDrawFramebufferCacheSelfTest(std::string& error) {
-#ifndef CARA_SOFTWARE_PRESENTATION
-    if (Settings::values.use_hw_renderer && Rasterizer())
-        return static_cast<OpenGL::RasterizerOpenGL*>(Rasterizer())->RunDrawFramebufferCacheSelfTest(error);
-#endif
-    error = "OpenGL hardware renderer is unavailable";
-    return false;
-}
-
 /// Initialize the video core
 ResultStatus Init(Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
     g_memory = &memory;
