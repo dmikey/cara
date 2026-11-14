@@ -20,6 +20,7 @@
 #include "cara/native_mac/emu_window.h"
 #include "cara/native_mac/cpu_category_profile.h"
 #include "cara/native_mac/profile_snapshot.h"
+#include "cara/native_mac/relay_config.h"
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
@@ -118,9 +119,30 @@ static void StopNative(int) {
 int main(int argc, char** argv) {
     try {
         if (argc < 2 || std::string(argv[1]) == "--help") {
-            std::cout << "Cara native no-JIT developer host\nUsage: cara ROM [--fullscreen]\nSet "
+            std::cout << "Cara native no-JIT developer host\nUsage: cara ROM [--fullscreen] [--relay-stdin]\nSet "
                          "CARA_USER_DIR to a fresh absolute data directory.\n";
             return argc < 2 ? 1 : 0;
+        }
+        bool fullscreen = false, relay_requested = false;
+        for (int i=2; i<argc; ++i) {
+            const std::string option(argv[i]);
+            if (option=="--fullscreen") fullscreen=true;
+            else if (option=="--relay-stdin") relay_requested=true;
+            else throw std::runtime_error("Unknown native host option");
+        }
+        Network::RelayClient::Config relay_config;
+        if (relay_requested) {
+            if (isatty(STDIN_FILENO))
+                throw std::runtime_error("Relay configuration requires a private stdin pipe");
+            std::string input;
+            char ch;
+            while (std::cin.get(ch) && ch!='\n') {
+                if (input.size()>=16384) throw std::runtime_error("Invalid relay configuration");
+                input.push_back(ch);
+            }
+            if (!NativeMac::ParseRelayConfig(input, relay_config))
+                throw std::runtime_error("Invalid relay configuration");
+            input.assign(input.size(), '\0');
         }
         const char* configured = std::getenv("CARA_USER_DIR");
         if (!configured || configured[0] != '/')
@@ -146,12 +168,15 @@ int main(int argc, char** argv) {
         Frontend::RegisterDefaultApplets();
         auto& system = Core::System::GetInstance();
         system.RegisterImageInterface(std::make_shared<LodePNGImageInterface>());
-        const bool fullscreen = argc > 2 && std::string(argv[2]) == "--fullscreen";
+        std::shared_ptr<Network::RelayClient> relay;
+        if (relay_requested) relay=Network::RelayClient::Create();
+        Network::InstallRelaySession(relay);
+        SCOPE_EXIT({ if (relay) relay->Disconnect(); Network::InstallRelaySession(nullptr); });
         EmuWindow_SDL2 window(fullscreen);
         window.MakeCurrent();
         // Release GPU/core resources while the owning window and GL context are alive,
         // including failure paths from checked framebuffer copies.
-        SCOPE_EXIT({ system.Shutdown(); });
+        SCOPE_EXIT({ if (relay) relay->Disconnect(); system.Shutdown(); });
         const auto loaded = system.Load(window, argv[1]);
         std::cout << "Native load result: " << static_cast<unsigned>(loaded) << std::endl;
         if (loaded != Core::System::ResultStatus::Success)
@@ -167,9 +192,14 @@ int main(int argc, char** argv) {
         };
         if (const char* load = std::getenv("CARA_NATIVE_LOAD_SLOT");
             diagnostics && load && std::string(load) == "1") {
+            if (relay) relay->Disconnect();
             system.LoadState(1);
             record_state("load");
         }
+        if (relay && !relay->Connect(std::move(relay_config)))
+            throw std::runtime_error("Relay connection could not start");
+        auto relay_state = Network::RelayClient::State::Idle;
+        u64 relay_status_frame = ~u64{0};
         if (const char* diagnostic = std::getenv("CARA_NATIVE_DIAGNOSTICS");
             diagnostic && std::string(diagnostic) == "1")
             Common::FrameTiming::counters.enabled =
@@ -187,6 +217,18 @@ int main(int argc, char** argv) {
             diagnostics && benchmark && std::string(benchmark) == "1")
             window.BeginBenchmark();
         while (window.IsOpen() && !stop_requested) {
+            if (relay) {
+                const auto frame=VideoCore::GetCurrentFrame();
+                if (frame!=relay_status_frame) {
+                    relay_status_frame=frame;
+                    const auto status=relay->GetStatus();
+                    if (status.state!=relay_state) {
+                        std::cout << "Local multiplayer: " << Network::RelayClient::StatusText(status) << std::endl;
+                        relay_state=status.state;
+                    }
+                }
+                Network::DrainRelayPackets(system);
+            }
             const auto result = system.RunLoop();
             if (result == Core::System::ResultStatus::ShutdownRequested)
                 break;
@@ -210,6 +252,7 @@ int main(int argc, char** argv) {
                 record_state("save");
                 break;
             case EmuWindow_SDL2::StateCommand::Load:
+                if (relay) relay->Disconnect();
                 system.LoadState(1);
                 record_state("load");
                 break;

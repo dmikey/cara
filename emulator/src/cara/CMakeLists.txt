@@ -8,6 +8,8 @@ if (CARA_MAC_SDL_DEV_HOST)
     endif()
     add_executable(cara
         native_mac/main.cpp
+        native_mac/relay_config.mm
+        native_mac/relay_config.h
         native_mac/config.cpp
         native_mac/emu_window.cpp
         native_mac/emu_window.h
@@ -36,6 +38,9 @@ create_target_directory_groups(cara)
 target_link_libraries(cara PRIVATE common core input_common network)
 target_link_libraries(cara PRIVATE inih glad)
 if (CARA_MAC_SDL_DEV_HOST)
+    enable_language(OBJCXX)
+    set_target_properties(cara PROPERTIES OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
+    set_source_files_properties(native_mac/relay_config.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     find_package(PNG REQUIRED)
     target_link_libraries(cara PRIVATE PNG::PNG)
 else()
