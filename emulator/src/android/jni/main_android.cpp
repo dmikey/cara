@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <exception>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -30,6 +31,7 @@
 #include "video_core/video_core.h"
 #include "video_core/surface_coherence_probe.h"
 #ifdef CARA_ANDROID_GLES_EXPERIMENT
+#include "video_core/renderer_opengl/gl_state.h"
 #include "ios/gpu_state_self_test.h"
 #include "ios/gpu_vertex_self_test.h"
 #endif
@@ -126,6 +128,9 @@ void BootGame(const std::string& path) {
         } catch (...) {
             error = "Unexpected GPU fixture exception";
         }
+        OpenGL::OpenGLState::InvalidateRasterState();
+        Common::FrameTiming::counters = {};
+        Common::FrameTiming::counters.enabled = Config::Get(phase_timing);
         if (!passed) {
             LOG_ERROR(Frontend, "Android GPU vertex self-test failed: {}", error);
             NativeLibrary::ShowMessageDialog(0, "GPU vertex self-test failed: " + error);
