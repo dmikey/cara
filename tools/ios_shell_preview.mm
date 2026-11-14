@@ -46,6 +46,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     NSDictionary* previewRepresentation;
     BOOL fixtureFixed,fixtureLimit;
     NSUInteger fixtureClock,fixtureMaximum;
+    UINavigationController* pendingActionNavigation;
 }
 - (BOOL)prefersStatusBarHidden { return [Scenario() containsString:@"skin"]; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { if ([Scenario() containsString:@"actions"]) return UIInterfaceOrientationMaskAllButUpsideDown; return [Scenario() containsString:@"landscape"]?UIInterfaceOrientationMaskLandscape:UIInterfaceOrientationMaskPortrait; }
@@ -67,7 +68,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
         unsigned seed=1;
         for (NSString* title in @[@"Moon Meadow",@"Citrus Valley",@"Little Lantern",@"Starlight Trail",@"Afterglow",@"Garden Notes",@"Pocket Adventure",@"Cloud Harbor"]) FixtureGame([store.defaultFolder URLByAppendingPathComponent:[title stringByAppendingPathExtension:@"3ds"]],title,seed++);
     }
-    if ([Scenario() containsString:@"actions"]) { [self showActions]; return; }
+    if ([Scenario() containsString:@"actions"] || [Scenario() hasSuffix:@"game-settings"]) { [self showActions]; return; }
     if ([Scenario() containsString:@"skin"]) { [self showSkin]; return; }
     [store recordPlayed:[store.defaultFolder URLByAppendingPathComponent:@"Moon Meadow.3ds"]];
     library=[CaraLibraryController new]; library.store=store;
@@ -86,6 +87,12 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     CheckActionLayout();
     NSURL* game=[store.defaultFolder URLByAppendingPathComponent:@"Moon Meadow.3ds"];
     CaraSettingsController* landing=[CaraSettingsController new]; landing.title=@"Fixture game settings";
+    const BOOL inGame=[Scenario() isEqual:@"in-game-settings"];
+    const BOOL stopped=[Scenario() isEqual:@"stopped-game-settings"];
+    UILabel* context=[UILabel new]; context.frame=CGRectMake(20,100,600,70); context.textColor=UIColor.whiteColor;
+    context.text=stopped?@"Stopped fixture · Library":@"Paused fixture game"; [self.view addSubview:context];
+    void(^finished)(void)=^{ context.text=stopped?@"Stopped fixture · Library":@"Running fixture game"; };
+    landing.finished=finished;
     UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:landing]; nav.view.tintColor=UIColor.systemOrangeColor;
     __weak UINavigationController* weakNav=nav; __weak PreviewRoot* owner=self;
     void(^openEditor)(void)=^{
@@ -102,8 +109,17 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
         };
         [weakNav pushViewController:editor animated:NO];
     };
-    landing.sections=@[@{@"title":@"Touch controls",@"rows":@[@{@"title":@"Controller Demapping",@"action":openEditor}]}];
-    [self addChildViewController:nav]; nav.view.frame=self.view.bounds; nav.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:nav.view]; [nav didMoveToParentViewController:self]; openEditor();
+    landing.sections=@[@{@"title":@"Touch controls",@"rows":@[CaraActionLayoutSettingsRow(openEditor)]}];
+    nav.modalPresentationStyle=UIModalPresentationPageSheet;
+    nav.presentationController.delegate=landing;
+    if (inGame) {
+        CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=@"performance";
+        quick.actions=@[@{@"title":@"Game settings",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [weakNav pushViewController:landing animated:YES]; }}];
+        quick.finished=finished; nav.viewControllers=@[quick]; nav.presentationController.delegate=quick;
+    } else if (!stopped) {
+        openEditor();
+    }
+    pendingActionNavigation=nav;
 }
 - (void)showFilePicker:(BOOL)folder {
     UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[folder?UTTypeFolder:UTTypeData] asCopy:NO]; picker.delegate=self; [self presentViewController:picker animated:YES completion:nil];
@@ -178,6 +194,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+    if (pendingActionNavigation) { UINavigationController* nav=pendingActionNavigation; pendingActionNavigation=nil; [self presentViewController:nav animated:YES completion:nil]; }
     if ([Scenario() isEqual:@"settings"] && !self.presentedViewController) [self showSettings];
     if ([Scenario() isEqual:@"advanced"] && !self.presentedViewController) { [self showSettings]; settings.title=@"Advanced"; [self refreshAdvancedFixture]; }
     if ([Scenario() isEqual:@"quick-settings"] && !self.presentedViewController) {

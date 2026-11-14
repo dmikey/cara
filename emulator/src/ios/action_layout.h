@@ -7,6 +7,8 @@
 FOUNDATION_EXPORT NSDictionary* CaraNewActionLayout(void);
 FOUNDATION_EXPORT BOOL CaraValidateActionLayout(id value, NSError** error);
 FOUNDATION_EXPORT CGRect CaraActionFrame(NSDictionary* control, CGSize size);
+// Navigation rows must retain their presenting sheet while pushing the editor.
+FOUNDATION_EXPORT NSDictionary* CaraActionLayoutSettingsRow(void(^openEditor)(void));
 
 @interface CaraActionControls : UIView
 @property(nonatomic,copy) NSArray<NSDictionary*>* controls;

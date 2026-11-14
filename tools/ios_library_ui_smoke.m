@@ -3,6 +3,32 @@
 @end
 @implementation CaraUISmoke
 - (void)shot:(XCUIApplication*)app name:(NSString*)name { XCTAttachment* shot=[XCTAttachment attachmentWithScreenshot:app.screenshot]; shot.name=name; shot.lifetime=XCTAttachmentLifetimeKeepAlways; [self addAttachment:shot]; }
+- (void)testInGameSettingsNavigation {
+ self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
+ app.launchEnvironment=@{@"CARA_UI_SCENE":@"in-game-settings"}; [app launch];
+ XCTAssertTrue([app.buttons[@"Game settings"] waitForExistenceWithTimeout:15]); [app.buttons[@"Game settings"] tap];
+ XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
+ [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
+ [app.navigationBars.buttons[@"Save"] tap]; XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
+ [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
+ [app.navigationBars.buttons[@"Cancel"] tap]; XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
+ [app.navigationBars.buttons[@"Done"] tap]; XCTAssertTrue([app.staticTexts[@"Running fixture game"] waitForExistenceWithTimeout:5]);
+ XCTAssertFalse(app.navigationBars[@"Fixture game settings"].exists);
+ // The quick menu remains the presentation delegate even with the editor on its stack.
+ [app terminate]; [app launch]; [app.buttons[@"Game settings"] tap]; [app.staticTexts[@"Controller Demapping"] tap];
+ XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
+ [app.navigationBars[@"Controller Demapping"] swipeDown];
+ XCTAssertTrue([app.staticTexts[@"Running fixture game"] waitForExistenceWithTimeout:5]);
+}
+- (void)testStoppedGameSettingsDoesNotStartGame {
+ self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
+ app.launchEnvironment=@{@"CARA_UI_SCENE":@"stopped-game-settings"}; [app launch];
+ XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:15]);
+ [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
+ [app.navigationBars.buttons[@"Cancel"] tap]; [app.navigationBars.buttons[@"Done"] tap];
+ XCTAssertTrue([app.staticTexts[@"Stopped fixture · Library"] waitForExistenceWithTimeout:5]);
+ XCTAssertFalse(app.staticTexts[@"Running fixture game"].exists);
+}
 - (void)testActionLayoutEditor {
  self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
  XCUIDevice.sharedDevice.orientation=UIDeviceOrientationPortrait; app.launchEnvironment=@{@"CARA_UI_SCENE":@"actions"}; [app launch];

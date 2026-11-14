@@ -883,7 +883,7 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         libraryController.showSettings=^{ [owner showFullSettings]; };
         libraryController.statesForGame=^NSArray*(NSURL* url) { return [owner libraryStatesForGame:url]; };
         libraryController.startFromState=^(NSURL* url,NSString* filename) { EmulatorController* c=owner; if(!c) return; c->pendingLibraryState=filename; [c openGameURL:url]; };
-        libraryController.gameSettings=^(NSURL* url) { [owner showGameSettings:url]; };
+        libraryController.gameSettings=^(NSURL* url) { EmulatorController* c=owner; if (c) [c showGameSettings:url navigation:(UINavigationController*)c->libraryController.presentedViewController]; };
         libraryController.clearGameSettings=^(NSURL* url) { EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":@{},@"actionLayout":CaraNewActionLayout()} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { [c reloadActionLayout]; CaraGameOverrides=nil; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
         libraryController.gameFileInUse=^BOOL(NSURL* url) { EmulatorController* c=owner; return c && (c->running || c->openingGame) && [url.URLByStandardizingPath isEqual:c->gameURL.URLByStandardizingPath]; };
         libraryController.resumeGame=^{ [owner hideLibrary]; };
@@ -1052,15 +1052,18 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     __weak EmulatorController* owner=self; settings.finished=^{ EmulatorController* c=owner; if(c) [c->libraryController reloadLibrary]; [owner resumeFromMenu]; };
     UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationFullScreen; [self presentViewController:nav animated:YES completion:nil];
 }
-- (void)showGameSettings:(NSURL*)url {
-    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings"; settings.usesLibraryAppearance=YES;
+- (void)showGameSettings:(NSURL*)url navigation:(UINavigationController*)navigation {
+    if (!url) return;
+    [self ensureLibrary];
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings"; settings.usesLibraryAppearance=libraryVisible;
+    __weak CaraSettingsController* weakSettings=settings;
     NSMutableDictionary* values=[[[libraryStore metadataForGame:url] objectForKey:@"overrides"] mutableCopy]?:[NSMutableDictionary new];
     __weak EmulatorController* owner=self;
     void(^save)(NSString*,id)=^(NSString* key,id value) { values[key]=value; EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":values} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { CaraGameOverrides=[values copy]; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
     id(^value)(NSString*)=^id(NSString* key) { return values[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; };
     settings.sectionsProvider=^NSArray* {
     BOOL accuracy=[value(@"playMode") isEqual:@"accuracy"];
-    return @[@{@"title":@"Touch controls",@"rows":@[@{@"title":@"Controller Demapping",@"subtitle":@"Arrange actions and bind them to 3DS inputs",@"symbol":@"hand.draw",@"action":^{ EmulatorController* c=owner; if (c) [c editActionLayout:url navigation:(UINavigationController*)c.presentedViewController]; }}]},@{@"title":@"Emulation",@"rows":@[
+    return @[@{@"title":@"Touch controls",@"rows":@[CaraActionLayoutSettingsRow(^{ EmulatorController* c=owner; if (c) [c editActionLayout:url navigation:weakSettings.navigationController]; })]},@{@"title":@"Emulation",@"rows":@[
         @{@"title":@"Accuracy mode",@"subtitle":@"Locks guest clock and speed to 100%. Uses the same 100% guest clock and speed as global Accuracy mode.",@"value":@(accuracy),@"change":^(BOOL on) { save(@"playMode",on?@"accuracy":@"performance"); }},
         @{@"title":@"Fixed guest clock",@"value":@(accuracy || [value(@"fixedGuestClockEnabled") boolValue]),@"enabled":@(!accuracy),@"change":^(BOOL on) { save(@"fixedGuestClockEnabled",@(on)); }},
         @{@"title":@"Guest clock",@"enabled":@(!accuracy && [value(@"fixedGuestClockEnabled") boolValue]),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:([value(@"fixedGuestClockPercent") integerValue]?:100))},@"sliderChange":^(double v) { save(@"fixedGuestClockPercent",@(lround(v))); }},
@@ -1068,7 +1071,17 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
         @{@"title":@"Maximum speed",@"enabled":@(!accuracy && [value(@"speedLimitEnabled") boolValue]),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(accuracy?100:([value(@"maximumSpeedPercent") integerValue]?:100))},@"sliderChange":^(double v) { save(@"maximumSpeedPercent",@(lround(v))); }},
     ],@"footer":@"Only this game uses these overrides. Clear game settings in Game details to use global preferences again."},@{@"title":@"Audio",@"rows":@[@{@"title":@"Audio stretching",@"value":@([value(@"audioStretching") boolValue]),@"change":^(BOOL on) { save(@"audioStretching",@(on)); }}]}];
     };
-    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationPageSheet; nav.preferredContentSize=CGSizeMake(620,800); [self presentViewController:nav animated:YES completion:nil];
+    // Keep the caller's navigation stack: Done closes the sheet, while editor Save/Cancel
+    // return to these settings. The library stays paused; an in-game sheet resumes its game.
+    settings.finished=^{ [owner resumeFromMenu]; };
+    if ([navigation isKindOfClass:UINavigationController.class]) {
+        [navigation pushViewController:settings animated:YES];
+    } else {
+        UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings];
+        nav.modalPresentationStyle=UIModalPresentationPageSheet; nav.preferredContentSize=CGSizeMake(620,800);
+        nav.presentationController.delegate=settings;
+        [self presentViewController:nav animated:YES completion:nil];
+    }
 }
 - (void)showMenu {
     if (openingGame || self.presentedViewController) return;
@@ -1083,7 +1096,9 @@ static Cara::PlayPolicy CaraSavedPlayPolicy() {
     quick.showFPS=![NSUserDefaults.standardUserDefaults objectForKey:meterKey] || [NSUserDefaults.standardUserDefaults boolForKey:meterKey];
     quick.toggleFPS=^(BOOL visible) { [NSUserDefaults.standardUserDefaults setBool:visible forKey:meterKey]; [owner.view setNeedsLayout]; };
     NSMutableArray* actions=[NSMutableArray new];
-    if (running) {
+    if (gameURL && [self sessionPresentation]==Cara::SessionPresentation::Paused) {
+        NSURL* currentGame=gameURL;
+        [actions addObject:@{@"title":@"Game settings",@"subtitle":@"Controller Demapping and per-game preferences",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ EmulatorController* c=owner; if (c) [c showGameSettings:currentGame navigation:(UINavigationController*)c.presentedViewController]; }}];
         [actions addObject:@{@"title":@"Save state",@"symbol":@"square.and.arrow.down",@"action":^{ [owner showStateSlots:YES]; }}];
         [actions addObject:@{@"title":@"Load state",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner showStateSlots:NO]; }}];
     }
