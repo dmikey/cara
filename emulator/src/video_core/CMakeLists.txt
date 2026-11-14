@@ -100,6 +100,11 @@ if(CARA_ENABLE_JIT AND ARCHITECTURE_x86_64)
     )
 endif()
 
+# Reuse the production GLES fixtures on Mali before selecting optional vertex paths.
+if(CARA_ANDROID_GLES_EXPERIMENT)
+    target_sources(video_core PRIVATE ../ios/gpu_state_self_test.cpp ../ios/gpu_vertex_self_test.cpp)
+endif()
+
 create_target_directory_groups(video_core)
 
 target_link_libraries(video_core PUBLIC common core)

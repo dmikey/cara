@@ -29,6 +29,10 @@
 #include "core/settings.h"
 #include "video_core/video_core.h"
 #include "video_core/surface_coherence_probe.h"
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+#include "ios/gpu_state_self_test.h"
+#include "ios/gpu_vertex_self_test.h"
+#endif
 
 #include "camera/ndk_camera.h"
 #include "camera/still_image_camera.h"
@@ -86,6 +90,12 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> retain_input{{"Debug", "retain_input_bindings"}, false};
     setenv("CARA_RETAIN_DRAW_BINDINGS", Config::Get(retain_draw) ? "1" : "0", 1);
     setenv("CARA_GPU_RETAIN_INPUT_BINDINGS", Config::Get(retain_input) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> vertex_reuse{{"Debug", "gpu_vertex_reuse"}, false};
+    const Config::ConfigInfo<bool> lit_pair_reuse{{"Debug", "gpu_lit_pair_reuse"}, false};
+    const Config::ConfigInfo<bool> lit_pair_probe{{"Debug", "gpu_lit_pair_probe"}, false};
+    setenv("CARA_GPU_VERTEX_REUSE", Config::Get(vertex_reuse) ? "1" : "0", 1);
+    setenv("CARA_GPU_LIT_PAIR_REUSE", Config::Get(lit_pair_reuse) ? "1" : "0", 1);
+    setenv("CARA_GPU_LIT_PAIR_PROBE", Config::Get(lit_pair_probe) ? "1" : "0", 1);
     Common::FrameTiming::counters = {};
     Common::FrameTiming::counters.enabled = Config::Get(phase_timing);
     const bool trace_guest_threads = Config::Get(guest_trace);
@@ -104,6 +114,29 @@ void BootGame(const std::string& path) {
         return;
     }
     LOG_INFO(Frontend, "Android boot: EGL ready");
+#ifdef CARA_ANDROID_GLES_EXPERIMENT
+    const Config::ConfigInfo<bool> verify_vertices{{"Debug", "verify_gpu_vertices"}, false};
+    if (Config::Get(verify_vertices)) {
+        std::string error;
+        bool passed = false;
+        try {
+            passed = RunGPUStateSelfTest(error) && RunGPUVertexSelfTest(error);
+        } catch (const std::exception& exception) {
+            error = exception.what();
+        } catch (...) {
+            error = "Unexpected GPU fixture exception";
+        }
+        if (!passed) {
+            LOG_ERROR(Frontend, "Android GPU vertex self-test failed: {}", error);
+            NativeLibrary::ShowMessageDialog(0, "GPU vertex self-test failed: " + error);
+            s_render_window.reset(); return;
+        }
+        LOG_INFO(Frontend, "Android GPU vertex self-test passed");
+    }
+#endif
+    LOG_INFO(Frontend, "Android vertex options: unlit_reuse={} lit_pair_reuse={} pair_probe={}",
+             Config::Get(vertex_reuse), Config::Get(lit_pair_reuse), Config::Get(lit_pair_probe));
+
 
     Core::System& system{Core::System::GetInstance()};
 
@@ -215,6 +248,13 @@ void BootGame(const std::string& path) {
                     phases.draw_framebuffer_setup_seconds*1000,
                     phases.draw_lut_upload_seconds*1000,
                     phases.draw_vertex_execution_seconds*1000);
+                LOG_INFO(Frontend,
+                    "Android vertex reuse: direct_draws={} direct_vertices={} direct_unique={} pair_draws={} pair_vertices={} pair_ids={} probe_draws={} probe_baseline_vs={} probe_lru32_vs={}",
+                    phases.gpu_direct_vertex_draws, phases.gpu_direct_vertices,
+                    phases.gpu_direct_unique_inputs, phases.gpu_lit_pair_draws,
+                    phases.gpu_lit_pair_vertices, phases.gpu_lit_pair_ids,
+                    phases.lit_pair_probe_draws, phases.lit_pair_probe_baseline_vs_runs,
+                    phases.lit_pair_probe_lru32_vs_runs);
                 const auto report_cpu = [](const char* name, const Common::FrameTiming::PhaseCPUSamples& sample) {
                     LOG_INFO(Frontend, "Android phase CPU: phase={} samples={} wall_ms={:.3f} cpu_ms={:.3f} failures={}",
                         name, sample.samples, sample.wall_seconds*1000, sample.cpu_seconds*1000, sample.clock_failures);
