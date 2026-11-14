@@ -58,7 +58,6 @@ struct Counters {
     std::uint64_t texture_lookup_verified_hits = 0;
     std::uint64_t texture_lookup_verify_mismatches = 0;
 
-    std::uint64_t draw_framebuffer_cache_hits = 0, draw_framebuffer_cache_misses = 0;
     double draw_framebuffer_setup_seconds = 0;
     double draw_lut_upload_seconds = 0;
     double draw_vertex_execution_seconds = 0;

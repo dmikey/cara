@@ -40,7 +40,6 @@ public:
     RasterizerOpenGL();
     ~RasterizerOpenGL() override;
     bool RunUniformReuseSelfTest(std::string& error);
-    bool RunDrawFramebufferCacheSelfTest(std::string& error);
     bool RunSurfaceCoherenceSelfTest(std::string& error) { return res_cache.RunSmallWriteSelfTest(error); }
 
     void AddTriangle(const Pica::Shader::OutputVertex& v0, const Pica::Shader::OutputVertex& v1,
@@ -388,18 +387,6 @@ private:
     OGLStreamBuffer texture_buffer;
     OGLStreamBuffer texture_lf_buffer;
     OGLFramebuffer framebuffer;
-    struct DrawFramebufferEntry {
-        OGLFramebuffer fbo;
-        std::weak_ptr<CachedSurface> color, depth;
-        GLuint color_name = 0, depth_name = 0;
-        bool stencil = false;
-        u64 last_used = 0;
-    };
-    std::array<DrawFramebufferEntry, 32> draw_framebuffers;
-    u64 draw_framebuffer_sequence = 0;
-    GLuint GetDrawFramebuffer(const Surface& color, const Surface& depth, bool stencil);
-    void ClearDrawFramebuffers();
-    void ClearExpiredDrawFramebuffers();
     GLint uniform_buffer_alignment;
     VSUniformData previous_vs_uniforms{};
     bool previous_vs_uniforms_valid = false;
