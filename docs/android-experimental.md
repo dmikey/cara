@@ -96,3 +96,62 @@ trace_renderer_bookkeeping debug settings expose the phase reports.
 
 Buffer-texture addressing and capacity rules follow the
 [Khronos GLES 3.2 specification, section 8.9](https://registry.khronos.org/OpenGL/specs/es/3.2/es_spec_3.2.pdf).
+
+
+## Exact surface copies and native GLES residency
+
+The November 14 RG Slide investigation exposed a byte-coherence failure after
+partial CPU writes in both Android GLES renderer variants. The generated-data
+oracle first remapped a GPU-owned image correctly, then invalidated sixteen
+bytes for a CPU write and validated the destination through the production
+cache path. An untouched RGBA8 byte at offset 292 changed from 188 to 187;
+there was no GL error. This was not a reason to tolerate approximate guest
+memory or disable the oracle.
+
+The shared framebuffer-copy helper selected `GL_LINEAR` even when source and
+destination rectangles had identical dimensions. Selecting `GL_NEAREST` for
+these unscaled copies passed the unchanged oracle on this device. Scaled color
+copies retain linear filtering. The observation identifies an exact-copy
+problem in this driver/path combination; it does not establish the driver's
+internal arithmetic or a general GLES conformance finding.
+
+The Android debug setting `verify_surface_coherence=true` runs the generated,
+ROM-free production-cache test after initialization and before guest execution.
+Failure stops launch. It covers exhaustive packed 16-bit colors, linear/tiled
+RGB8 and RGBA8 aliases, partial destinations, CPU-write fallback, later GPU
+owner writes, split producers, retained small writes, and selective cleanup.
+Diagnostic failures report formats, layouts, first mismatching byte and GL
+error. The repair is commit `bc23e1f`; native GLES APK and ARM64 Dynarmic checks
+passed in [Actions run 43619360906](https://github.com/dmikey/cara/actions/runs/43619360906).
+
+Native GLES 3.2 now also receives the existing residency-remapper enablement;
+it was previously set only in the atlas EGL initialization. The Android debug
+setting `gpu_surface_remap` selects the same cache mechanism in either renderer.
+It does not change GPU-completion events, guest clock, scheduler or frame timing.
+
+A same-APK on/off/on comparison used Dark Moon's warmed title screen on the RG
+Slide, native resolution, JIT enabled, 100% guest CPU, sound enabled, single-context
+presentation and a 100% speed limit. Each row averages the last ten steady
+nominal two-second windows, excluding shader compilation. The title animates;
+these are matched title-screen runs, not a restored gameplay checkpoint.
+
+| Native GLES 3.2 measurement | Residency on A | Residency off B | Residency on C |
+| --- | ---: | ---: | ---: |
+| Top-buffer swaps per window | 19.4 | 16.5 | 19.3 |
+| Surface downloads per window | 0 | 33 | 0 |
+| Surface download time | 0 ms | 1167.4 ms | 0 ms |
+| GPU remap time | 14.5 ms | 0 ms | 15.6 ms |
+| Draw time | 1093.0 ms | 450.3 ms | 1098.3 ms |
+
+The bracketed residency-on throughput is approximately 17% higher. It remains
+about 9.7 refreshes per second and does not establish full-speed Luigi gameplay.
+The draw phase rises when readbacks are removed; synchronization/driver costs
+can move between phases. These nested wall timings must not be summed as
+exclusive CPU time or interpreted as GPU execution timestamps. Android's audio
+service reported an active output track; listening quality was not verified.
+
+The atlas renderer remains the default and was faster in the earlier warmed
+native-LUT title test. Native GLES residency is a validated comparison mechanism,
+not justification to switch the default renderer or replace the public APK.
+The device logs, generated-data oracle results, configurations, screenshots and
+raw comparison windows are retained with the RG Slide profiling artifacts.
