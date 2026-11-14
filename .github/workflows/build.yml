@@ -168,6 +168,7 @@ jobs:
           work/build-mac/bin/cara-render-bookkeeping-self-test
           work/build-mac/bin/cara-vertex-upload-bank-self-test
           work/build-mac/bin/cara-vertex-input-usage-self-test
+          work/build-mac/bin/cara-shader-flow-self-test
           work/build-mac/bin/cara-fastinterp-chain-recency-self-test
           work/build-mac/bin/cara-guest-pc-cpu-self-test
           CARA_GUEST_PC_CPU_EQUIVALENCE_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
