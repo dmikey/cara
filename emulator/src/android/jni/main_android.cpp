@@ -1,6 +1,8 @@
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -12,6 +14,9 @@
 #include "common/file_util.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
+#include "core/arm/arm_interface.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/hle/kernel/thread.h"
 #include "core/frontend/applets/default_applets.h"
 #include "core/frontend/mic.h"
 #include "core/hle/service/am/am.h"
@@ -60,6 +65,10 @@ static std::map<std::string, GameInfo> s_app_dict;
 void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
+    const Config::ConfigInfo<bool> callback_memory{{"Debug", "jit_callback_memory"}, false};
+    const Config::ConfigInfo<bool> no_optimizations{{"Debug", "jit_no_optimizations"}, false};
+    setenv("CARA_JIT_CALLBACK_MEMORY", Config::Get(callback_memory) ? "1" : "0", 1);
+    setenv("CARA_JIT_NO_OPTIMIZATIONS", Config::Get(no_optimizations) ? "1" : "0", 1);
     s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
     LOG_INFO(Frontend, "Android boot: CPU JIT={}, present thread={}",
              Settings::values.use_cpu_jit, Settings::values.use_present_thread);
@@ -136,9 +145,26 @@ void BootGame(const std::string& path) {
     s_update_hid = false;
     s_stop_running = false;
     s_is_running = true;
+    auto next_thread_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    unsigned thread_reports = 0;
     while (!s_stop_running) {
         if (s_is_running) {
             result = system.RunLoop();
+            if (thread_reports < 8 && std::chrono::steady_clock::now() >= next_thread_report) {
+                ++thread_reports;
+                next_thread_report = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                auto& manager = system.Kernel().GetCurrentThreadManager();
+                const auto* current = manager.GetCurrentThread();
+                LOG_INFO(Frontend, "Android guest snapshot {}: active={} pc={:08X}",
+                         thread_reports, current ? current->thread_id : 0,
+                         system.Kernel().GetRunningCore().GetPC());
+                for (const auto& thread : manager.GetThreadList()) {
+                    LOG_INFO(Frontend, "Guest thread {} name={} status={} pc={:08X} waits={} arb={:08X}",
+                             thread->thread_id, thread->name, static_cast<unsigned>(thread->status),
+                             thread->context->GetCpuRegister(15), thread->wait_objects.size(),
+                             thread->wait_address);
+                }
+            }
             if (result == Core::System::ResultStatus::ShutdownRequested) {
                 // End emulation execution
                 s_render_window->UpdateSurface(nullptr);

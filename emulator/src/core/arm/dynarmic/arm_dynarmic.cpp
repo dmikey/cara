@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <cstring>
+#include <cstdlib>
 #include <dynarmic/interface/A32/a32.h>
 #include <dynarmic/interface/A32/context.h>
 #include "common/assert.h"
@@ -128,7 +129,7 @@ public:
 
     void CallSVC(std::uint32_t swi) override {
 #ifdef ANDROID
-        if (startup_svc_count++ < 48) {
+        if (startup_svc_count++ < 128) {
             LOG_INFO(Core_ARM11, "Dynarmic startup SVC core={} svc={:02X} pc={:08X} r0={:08X} r1={:08X}",
                      parent.GetID(), swi, parent.GetPC(), parent.GetReg(0), parent.GetReg(1));
         }
@@ -356,6 +357,16 @@ std::unique_ptr<Dynarmic::A32::Jit> ARM_Dynarmic::MakeJit() {
     config.global_monitor = &GlobalExclusiveMonitor();
     config.arch_version = Dynarmic::A32::ArchVersion::v6K;
     config.page_table = &current_page_table->GetPointerArray();
+#ifdef ANDROID
+    if (const char* value = std::getenv("CARA_JIT_CALLBACK_MEMORY"); value && std::strcmp(value, "1") == 0) {
+        config.page_table = nullptr;
+        LOG_INFO(Core_ARM11, "Dynarmic diagnostic: callback memory enabled");
+    }
+    if (const char* value = std::getenv("CARA_JIT_NO_OPTIMIZATIONS"); value && std::strcmp(value, "1") == 0) {
+        config.optimizations = Dynarmic::no_optimizations;
+        LOG_INFO(Core_ARM11, "Dynarmic diagnostic: optimizations disabled");
+    }
+#endif
     config.coprocessors[15] = std::make_shared<DynarmicCP15>(cp15_state);
     config.define_unpredictable_behaviour = true;
     return std::make_unique<Dynarmic::A32::Jit>(config);
