@@ -78,10 +78,18 @@ int main() {
         Reject([] { CategoryWindow x(10,120,720); x.Poll(730,1,2); }, "missed baseline accepted");
         Reject([] { CategoryWindow x(10,120,720); x.Poll(9,1,2); }, "frame before base accepted");
         Reject([] { CategoryWindow x(10,120,720); x.Poll(129,1,2); x.Poll(128,2,3); }, "frame reset accepted");
+        // RunLoopSingleCore advances the local CPU timer but can leave the
+        // global scheduler timer at zero. This is an observer, not a clock fix.
+        CategoryWindow single_core(10,120,720);
+        Require(single_core.Poll(130,10,0)==CategoryBoundary::Before, "single-core baseline missed");
+        Require(single_core.Poll(730,11,0)==CategoryBoundary::After, "flat global zero rejected");
+        CategoryWindow flat_global(10,120,720);
+        Require(flat_global.Poll(130,10,20)==CategoryBoundary::Before, "flat global baseline missed");
+        Require(flat_global.Poll(730,11,20)==CategoryBoundary::After, "flat nonzero global rejected");
         for (unsigned which=0; which<3; ++which)
             Reject([&] { CategoryWindow x(10,120,720); x.Poll(130,10,20);
-                x.Poll(730,which==0?10:11,which==1?20:which==2?19:21); },
-                "nonpositive timer interval accepted");
+                x.Poll(730,which==0?10:which==1?9:11,which==2?19:20); },
+                "nonpositive local or backward global interval accepted");
         const auto a=Before(), b=After();
         const auto delta=CategoryDelta(a,b);
         Require(b.frame-a.frame==601, "actual refresh delta normalized to requested count");
@@ -94,16 +102,23 @@ int main() {
             Reject([&] { CategoryDelta(a,reset); }, "category entry reset accepted");
         }
         Require(delta.clock_failures==4 && delta.counter_overflows==5, "error deltas hidden");
-        for (unsigned which=0; which<7; ++which) {
+        auto single_a=a, single_b=b;
+        single_a.global_ticks=0; single_b.global_ticks=0;
+        Require(CategoryDelta(single_a,single_b).cpu_ns==delta.cpu_ns, "single-core zero global delta rejected");
+        single_b.global_ticks=single_a.global_ticks=100;
+        Require(CategoryDelta(single_a,single_b).entries==delta.entries, "flat nonzero global delta rejected");
+        for (unsigned which=0; which<9; ++which) {
             auto bad=b;
             switch(which) {
             case 0: bad.frame=a.frame; break;
             case 1: bad.ticks=a.ticks; break;
-            case 2: bad.global_ticks=a.global_ticks; break;
+            case 2: bad.global_ticks=a.global_ticks-1; break;
             case 3: bad.wall_ns=a.wall_ns; break;
             case 4: bad.thread_cpu_ns=a.thread_cpu_ns-1; break;
             case 5: bad.categories.clock_failures=a.categories.clock_failures-1; break;
             case 6: bad.categories.counter_overflows=a.categories.counter_overflows-1; break;
+            case 7: bad.frame=a.frame-1; break;
+            case 8: bad.ticks=a.ticks-1; break;
             }
             Reject([&] { CategoryDelta(a,bad); }, "invalid endpoint accepted");
         }
