@@ -1,12 +1,12 @@
 # Cara packet relay prototype
 
-A standalone Go room relay for Cara-controlled local-wireless adapters. It uses binary packet frames after a JSON join, bounded queues, a total connection cap, and TLS 1.3 for remote listeners. No BIOS, firmware, console keys, Nintendo client certificates, account tokens, or external packages are used.
+A standalone Go room relay for Cara-controlled local-wireless adapters. It uses binary packet frames after a JSON join, bounded queues, a total connection cap, and TLS 1.3 for remote listeners. No BIOS, firmware, console keys, Nintendo client certificates, account tokens are used. The WebSocket deployment transport uses the pinned `github.com/coder/websocket` dependency; its license is retained in `THIRD_PARTY_NOTICES.txt`.
 
-**Status: locally tested transport prototype.** Cara's current ENet `RoomMember` cannot connect to this protocol. The iOS adapter and StreetPass mailbox exchange are not implemented. Running this process does not enable Pokémon Internet play, trading, battling, or physical-console wireless interoperability.
+**Status: private relay transport deployed and remotely verified at `wss://carap2p.therad.ninja/relay`; deployment/rollback evidence is in `DEPLOYMENT.md`.** Cara's current ENet `RoomMember` cannot connect to this protocol. The iOS adapter and StreetPass mailbox exchange are not implemented. Running this process does not enable Pokémon Internet play, trading, battling, or physical-console wireless interoperability.
 
 ## Local development
 
-Use a currently supported Go release for any future deployed service. The local validation host currently has Go 1.20.3; no deployment is authorized or performed.
+Use a currently supported Go release. The module language minimum is Go 1.23; production should use a currently supported toolchain. This deployment is built and tested with Go 1.27.4. The older Go 1.20.3 results below are historical TCP-only validation.
 
 ```sh
 cd tools/network-relay
@@ -39,7 +39,7 @@ The first adapter must define a stable serialization for `Network::WifiPacket` (
 
 ## Limits of this prototype
 
-TCP/TLS keeps the first protocol small and testable and provides ordered delivery, but packet loss can cause head-of-line blocking. Benchmark the actual two-device game path before selecting TCP, QUIC, or UDP for release. This relay has no reconnect/resume, protocol negotiation beyond v1, metrics, per-room bandwidth quotas, room-owner revocation API, or production abuse controls. It is not a public hosting package.
+TCP/TLS keeps the first protocol small and testable and provides ordered delivery, but packet loss can cause head-of-line blocking. Benchmark the actual two-device game path before selecting TCP, QUIC, or UDP for release. This relay has no reconnect/resume, protocol negotiation beyond v1, metrics, per-room bandwidth quotas, room-owner revocation API, or production abuse controls. This deployment serves configured private rooms; it does not provide public hosting/account management.
 
 ## Local validation record — 2026-11-13
 
@@ -48,3 +48,17 @@ On the development Mac (`darwin/arm64`, Go 1.20.3), `go vet ./...` and `go test 
 The TLS loopback integration test uses the same `TLSListener` helper as the CLI. It generates an ephemeral CA and server certificate entirely in memory, connects two clients that verify the CA and hostname, confirms TLS 1.3 negotiation, joins a room and forwards exact binary payload/source tags. It also checks rejection of an untrusted CA, a wrong hostname and TLS 1.2. No permanent certificate or external network is used. `go vet ./...` and five consecutive race-test runs passed after these additions.
 
 Three loopback benchmark runs forwarding a 1200-byte packet from one client through the relay to a second client measured **28.9–33.5 µs per packet (35.8–41.5 MB/s), 7 allocations per operation**. This sequential benchmark includes client framing and both local TCP legs, excludes TLS and WAN latency, and does not measure game compatibility or physical-device performance. Remote hosting and actual iOS game behavior remain untested.
+
+## WebSocket deployment transport
+
+`cmd/cara-relay-websocket` serves the same protocol-v1 byte stream at `/relay` over binary WebSocket messages. A message may contain part or all of a protocol frame; message boundaries do not replace the five-byte protocol framing. Each WebSocket message is limited to 4,101 bytes. Text and compression are disabled. The authenticated packet size and source tags are unchanged. This is a new transport for a future adapter, not an ENet bridge.
+
+The HTTP listener accepts only literal loopback addresses. Publish it through a trusted HTTPS proxy with the exact `-public-host`, preserving Host and WebSocket upgrade headers. Same-host browser Origin checks remain enabled; native clients can omit Origin. Room secrets are read from a regular JSON file at most 64 KiB, mode0600 or0400, with the same room/password map used by the TCP server. Never put credentials in URLs, logs or command arguments. `/healthz` reports only service readiness, protocol and transport, never rooms, passwords or peer identities.
+
+The deployment compose file confines the read-only, non-root service to loopback24874 on the existing host network; it exposes no raw TCP relay port. Its memory, CPU, process, descriptor and Docker log limits are explicit. Only its own container uses the new restart policy and health check. Nginx configuration is scoped to `carap2p.therad.ninja`, with bounded admission/connections, no traffic access log, and a dedicated Let's Encrypt certificate. Its renewal hook only acts for that certificate lineage. Existing DNS and other services remain separate.
+
+Public clients must validate the system trust chain and hostname and require TLS1.3. The edge proxy negotiates public TLS; do not infer that a shared Cloudflare zone rejects TLS1.2 merely because this service and its verification client use TLS1.3. No global zone TLS policy is changed by this package.
+
+`cmd/cara-relay-check` performs a bounded remote transport check using a private credentials file: three authenticated peers, exact maximum-size binary forwarding/source tag, no self echo, room isolation, wrong-password rejection, hostname/CA rejection and HTTPS health. It requires verified TLS1.3. It does not create rooms, invoke game services or prove emulator integration.
+
+See `DEPLOYMENT.md` for the deployment receipt, scoped operations and rollback.

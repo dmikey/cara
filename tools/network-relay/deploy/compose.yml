@@ -1,0 +1,28 @@
+services:
+  relay:
+    image: ${CARA_RELAY_IMAGE:?Set an immutable locally built image ID}
+    container_name: cara-relay
+    restart: unless-stopped
+    network_mode: host
+    command: ["-listen", "127.0.0.1:24874", "-public-host", "carap2p.therad.ninja", "-rooms-file", "/rooms.json", "-max-peers", "32", "-queue-depth", "64"]
+    volumes:
+      - type: bind
+        source: ${CARA_RELAY_ROOMS_FILE:?Set the private 0400 room JSON path}
+        target: /rooms.json
+        read_only: true
+    read_only: true
+    cap_drop: [ALL]
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 48
+    ulimits:
+      nofile: {soft: 256, hard: 256}
+    logging:
+      driver: json-file
+      options: {max-size: "2m", max-file: "2"}
+    healthcheck:
+      test: ["CMD", "/cara-relay", "-healthcheck", "http://127.0.0.1:24874/healthz", "-public-host", "carap2p.therad.ninja"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
