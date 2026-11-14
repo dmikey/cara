@@ -74,11 +74,14 @@ struct DecodeRecordSelfTestAccess {
 #include "fastinterp_capacity_self_test.h"
 #include "fastinterp_blx_link_self_test.h"
 #include "fastinterp_pc_boundary_self_test.h"
+#include "fastinterp_short_vector_self_test.h"
 
 int main() {
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
+    if (std::getenv("CARA_FASTINTERP_SHORT_VECTOR_TEST"))
+        return VerifyFastInterpShortVectors(system);
     if (std::getenv("CARA_FASTINTERP_PC_BOUNDARY_TEST"))
         return VerifyFastInterpPCBoundary(system);
     if (std::getenv("CARA_FASTINTERP_BLX_LINK_TEST"))

@@ -18,6 +18,8 @@
 #include "common/scope_exit.h"
 #include "core/arm/fastinterp/arm_tick_counts.h"
 #include "core/arm/fastinterp/fastinterp.h"
+#include "core/arm/skyeye_common/armstate.h"
+#include "core/arm/skyeye_common/vfp/vfp.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/svc.h"
@@ -91,6 +93,39 @@ private:
 
 
 namespace Core::FastInterp {
+
+// ARM DDI0274G, VFP11 short-vector register banks. Reuse the same software
+// arithmetic as DynCom so vector mode observes guest rounding, DN/FZ and sticky
+// exceptions, rather than inheriting the host's FP environment. This does not
+// change the existing LEN=0 handlers' floating-point accuracy limitations.
+void ARM_FastInterp::ExecuteVFPShortVector(u32 encoding, unsigned sd, unsigned sn,
+                                         unsigned sm, bool is_double) {
+    // One scratch per host thread, never guest CPU state. The VFP routines only
+    // access ExtReg, VFP and Reg[15]; they never use its memory/system references.
+    // Copy every input on each call so contexts and cores cannot leak state.
+    static thread_local auto scratch =
+        std::make_unique<ARMul_State>(system_, memory_, USER32MODE);
+    auto& soft = *scratch;
+    std::copy(state_.vfp_regs.begin(), state_.vfp_regs.end(), soft.ExtReg.begin());
+    soft.VFP[VFP_FPSCR] = state_.fpscr;
+    soft.Reg[15] = state_.regs[15]; // Diagnostics only; no guest execution here.
+    // Unary extension instructions already encode their operation in Vn/N.
+    const bool unary = (encoding & 0x00b00000u) == 0x00b00000u;
+    if (is_double) {
+        encoding |= 0x100u | ((sd & 15u) << 12) | ((sd & 16u) << 18) |
+                    (sm & 15u) | ((sm & 16u) << 1);
+        if (!unary) encoding |= ((sn & 15u) << 16) | ((sn & 16u) << 3);
+    } else {
+        encoding |= ((sd >> 1) << 12) | ((sd & 1u) << 22) |
+                    (sm >> 1) | ((sm & 1u) << 5);
+        if (!unary) encoding |= ((sn >> 1) << 16) | ((sn & 1u) << 7);
+    }
+    const u32 exceptions = is_double ? vfp_double_cpdo(&soft, encoding, state_.fpscr)
+                                     : vfp_single_cpdo(&soft, encoding, state_.fpscr);
+    vfp_raise_exceptions(&soft, exceptions, encoding, state_.fpscr);
+    std::copy(soft.ExtReg.begin(), soft.ExtReg.end(), state_.vfp_regs.begin());
+    state_.fpscr = soft.VFP[VFP_FPSCR];
+}
 
 // MMJ's scalar memory API assumes an access fits within one host page.
 // Keep the common path direct; split uncommon unaligned page crossings explicitly.

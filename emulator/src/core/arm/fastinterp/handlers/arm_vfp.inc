@@ -26,6 +26,39 @@
     std::memcpy(&state_.vfp_regs[(idx) * 2], &vfp_d_tmp_, sizeof(vfp_d_tmp_)); \
 } while(0)
 
+// Checks follow CHECK_COND, including its AL entry. Comparisons, conversions,
+// immediates, CPU transfers and memory transfers remain scalar as specified by
+// VFP11; only arithmetic and register-to-register FP moves expand into vectors.
+// Bank-zero destinations still execute once, but while LEN is active they
+// must observe the same guest FP controls and sticky exceptions as vector banks.
+// The software engine applies that scalar-bank rule internally.
+#define VFP_SHORT_VECTOR(base, is_double) do { \
+    if (state_.fpscr & (7u << 16)) [[unlikely]] { \
+        ExecuteVFPShortVector(base, inst->vfp.sd, inst->vfp.sn, inst->vfp.sm, is_double); \
+        ADVANCE_AND_DISPATCH(); \
+    } \
+} while (0)
+
+// Scalar SIMD fusion is a decode-time choice, but FPSCR may change at runtime
+// inside the same cached block. Retain guest instruction order when short-vector
+// mode is active: expanded register banks can alias despite scalar alias checks.
+#define VFP_FUSED_SHORT_VECTOR(accumulate, gather) do { \
+    if (state_.fpscr & (7u << 16)) [[unlikely]] { \
+        for (unsigned i = 0; i < 4; ++i) { \
+            const unsigned sd = (gather) ? inst->vfp4.sd[i] : inst->vfp.sd + i; \
+            const unsigned sn = (gather) ? inst->vfp4.sn[i] : \
+                (inst->vfp.flags ? inst->vfp.sm : inst->vfp.sn + i); \
+            const unsigned sm = (gather) ? inst->vfp4.sm[i] : \
+                (inst->vfp.flags ? inst->vfp.sn + i : inst->vfp.sm); \
+            ExecuteVFPShortVector((accumulate) ? 0xee000a00u : 0xee200a00u, sd, sn, sm, false); \
+        } \
+        executed += inst->ticks; \
+        SET_PC(GET_PC() + inst->inst_size); \
+        inst += 3; \
+        DISPATCH(); \
+    } \
+} while (0)
+
 // VFP Register Transfer: VMOV ARM to single VFP
 handle_VmovArmToS:
     CHECK_COND(VmovArmToS);
@@ -66,21 +99,25 @@ handle_Vmsr:
 
 handle_VaddS:
     CHECK_COND(VaddS);
+    VFP_SHORT_VECTOR(0xee300a00u, false);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) + VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VsubS:
     CHECK_COND(VsubS);
+    VFP_SHORT_VECTOR(0xee300a40u, false);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) - VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmulS:
     CHECK_COND(VmulS);
+    VFP_SHORT_VECTOR(0xee200a00u, false);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 // Four independent unconditional scalar VMULs, decoded only after alias checks.
 handle_Vmul4S: {
+    VFP_FUSED_SHORT_VECTOR(false, false);
 #ifdef __aarch64__
     const auto vector = vreinterpretq_f32_u32(vld1q_u32(&state_.vfp_regs[inst->vfp.sn]));
     const auto scalar = vreinterpretq_f32_u32(vdupq_n_u32(state_.vfp_regs[inst->vfp.sm]));
@@ -107,6 +144,7 @@ handle_Vmul4S: {
 // The decoder rejects every read-after-write dependency. Gather inputs before
 // writing outputs; scatter in guest instruction order for repeated destinations.
 handle_Vmul4Gather: {
+    VFP_FUSED_SHORT_VECTOR(false, true);
 #ifdef __aarch64__
     const uint32x4_t n{state_.vfp_regs[inst->vfp4.sn[0]], state_.vfp_regs[inst->vfp4.sn[1]],
                       state_.vfp_regs[inst->vfp4.sn[2]], state_.vfp_regs[inst->vfp4.sn[3]]};
@@ -135,6 +173,7 @@ handle_Vmul4Gather: {
 }
 
 handle_Vmla4S: {
+    VFP_FUSED_SHORT_VECTOR(true, false);
 #ifdef __aarch64__
     const auto vector = vreinterpretq_f32_u32(vld1q_u32(&state_.vfp_regs[inst->vfp.sn]));
     const auto scalar = vreinterpretq_f32_u32(vdupq_n_u32(state_.vfp_regs[inst->vfp.sm]));
@@ -159,6 +198,7 @@ handle_Vmla4S: {
 }
 
 handle_Vmla4Gather: {
+    VFP_FUSED_SHORT_VECTOR(true, true);
 #ifdef __aarch64__
     const uint32x4_t n{state_.vfp_regs[inst->vfp4.sn[0]], state_.vfp_regs[inst->vfp4.sn[1]],
                       state_.vfp_regs[inst->vfp4.sn[2]], state_.vfp_regs[inst->vfp4.sn[3]]};
@@ -190,51 +230,61 @@ handle_Vmla4Gather: {
 
 handle_VdivS:
     CHECK_COND(VdivS);
+    VFP_SHORT_VECTOR(0xee800a00u, false);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sn) / VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmlaS:
     CHECK_COND(VmlaS);
+    VFP_SHORT_VECTOR(0xee000a00u, false);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sd) + VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmlsS:
     CHECK_COND(VmlsS);
+    VFP_SHORT_VECTOR(0xee000a40u, false);
     VFP_S_WRITE(inst->vfp.sd, VFP_S_READ(inst->vfp.sd) - VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmlaS:
     CHECK_COND(VnmlaS);
+    VFP_SHORT_VECTOR(0xee100a40u, false);
     VFP_S_WRITE(inst->vfp.sd, -VFP_S_READ(inst->vfp.sd) - VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmlsS:
     CHECK_COND(VnmlsS);
+    VFP_SHORT_VECTOR(0xee100a00u, false);
     VFP_S_WRITE(inst->vfp.sd, -VFP_S_READ(inst->vfp.sd) + VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmulS:
     CHECK_COND(VnmulS);
+    VFP_SHORT_VECTOR(0xee200a40u, false);
     VFP_S_WRITE(inst->vfp.sd, -(VFP_S_READ(inst->vfp.sn) * VFP_S_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VabsS:
     CHECK_COND(VabsS);
+    VFP_SHORT_VECTOR(0xeeb00ac0u, false);
     VFP_S_WRITE(inst->vfp.sd, std::fabs(VFP_S_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VnegS:
     CHECK_COND(VnegS);
+    VFP_SHORT_VECTOR(0xeeb10a40u, false);
     VFP_S_WRITE(inst->vfp.sd, -VFP_S_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VsqrtS:
     CHECK_COND(VsqrtS);
+    VFP_SHORT_VECTOR(0xeeb10ac0u, false);
     VFP_S_WRITE(inst->vfp.sd, std::sqrt(VFP_S_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VmovS:
     CHECK_COND(VmovS);
+    VFP_SHORT_VECTOR(0xeeb00a40u, false);
     VFP_S_WRITE_U32(inst->vfp.sd, VFP_S_READ_U32(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
@@ -246,66 +296,79 @@ handle_VmovImmS:
 
 handle_VaddD:
     CHECK_COND(VaddD);
+    VFP_SHORT_VECTOR(0xee300a00u, true);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sn) + VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VsubD:
     CHECK_COND(VsubD);
+    VFP_SHORT_VECTOR(0xee300a40u, true);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sn) - VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmulD:
     CHECK_COND(VmulD);
+    VFP_SHORT_VECTOR(0xee200a00u, true);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VdivD:
     CHECK_COND(VdivD);
+    VFP_SHORT_VECTOR(0xee800a00u, true);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sn) / VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmlaD:
     CHECK_COND(VmlaD);
+    VFP_SHORT_VECTOR(0xee000a00u, true);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sd) + VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VmlsD:
     CHECK_COND(VmlsD);
+    VFP_SHORT_VECTOR(0xee000a40u, true);
     VFP_D_WRITE(inst->vfp.sd, VFP_D_READ(inst->vfp.sd) - VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmlaD:
     CHECK_COND(VnmlaD);
+    VFP_SHORT_VECTOR(0xee100a40u, true);
     VFP_D_WRITE(inst->vfp.sd, -VFP_D_READ(inst->vfp.sd) - VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmlsD:
     CHECK_COND(VnmlsD);
+    VFP_SHORT_VECTOR(0xee100a00u, true);
     VFP_D_WRITE(inst->vfp.sd, -VFP_D_READ(inst->vfp.sd) + VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VnmulD:
     CHECK_COND(VnmulD);
+    VFP_SHORT_VECTOR(0xee200a40u, true);
     VFP_D_WRITE(inst->vfp.sd, -(VFP_D_READ(inst->vfp.sn) * VFP_D_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VabsD:
     CHECK_COND(VabsD);
+    VFP_SHORT_VECTOR(0xeeb00ac0u, true);
     VFP_D_WRITE(inst->vfp.sd, std::fabs(VFP_D_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VnegD:
     CHECK_COND(VnegD);
+    VFP_SHORT_VECTOR(0xeeb10a40u, true);
     VFP_D_WRITE(inst->vfp.sd, -VFP_D_READ(inst->vfp.sm));
     ADVANCE_AND_DISPATCH();
 
 handle_VsqrtD:
     CHECK_COND(VsqrtD);
+    VFP_SHORT_VECTOR(0xeeb10ac0u, true);
     VFP_D_WRITE(inst->vfp.sd, std::sqrt(VFP_D_READ(inst->vfp.sm)));
     ADVANCE_AND_DISPATCH();
 
 handle_VmovD:
     CHECK_COND(VmovD);
+    VFP_SHORT_VECTOR(0xeeb00a40u, true);
     state_.vfp_regs[inst->vfp.sd * 2] = state_.vfp_regs[inst->vfp.sm * 2];
     state_.vfp_regs[inst->vfp.sd * 2 + 1] = state_.vfp_regs[inst->vfp.sm * 2 + 1];
     ADVANCE_AND_DISPATCH();
@@ -662,3 +725,6 @@ handle_VstmD:
 #undef VFP_S_WRITE_U32
 #undef VFP_D_READ
 #undef VFP_D_WRITE
+
+#undef VFP_SHORT_VECTOR
+#undef VFP_FUSED_SHORT_VECTOR

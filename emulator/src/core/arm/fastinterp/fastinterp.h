@@ -104,6 +104,12 @@ private:
             ((al_dispatch_ && inst.cond == 0xE) ? static_cast<u16>(Opcode::OpcodeCount) : 0);
     }
 
+    // Cold path while VFP11 short-vector mode is active. LEN=0 stays in the
+    // existing handlers; software VFP supplies bank traversal and guest FP
+    // controls/exceptions, including scalar-bank destinations under nonzero LEN.
+    void ExecuteVFPShortVector(u32 encoding, unsigned sd, unsigned sn, unsigned sm,
+                               bool is_double);
+
     /// Log the instruction at pc as unhandled (once per unique encoding)
     void LogUnhandledInstruction(u32 pc);
 

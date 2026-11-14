@@ -77,6 +77,9 @@ jobs:
           CARA_FASTINTERP_AL_DISPATCH_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_BLX_LINK_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_PC_BOUNDARY_TEST=1 work/build-mac/bin/cara-fastinterp-self-test
+          for cara_vfp_simd in 0 1 2 3; do
+            CARA_FASTINTERP_SHORT_VECTOR_TEST=1 CARA_FASTINTERP_VFP_SIMD=$cara_vfp_simd work/build-mac/bin/cara-fastinterp-self-test
+          done
           CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
           CARA_FASTINTERP_SECONDARY_LINK=1 CARA_FASTINTERP_AL_DISPATCH=1 CARA_FASTINTERP_ALU_OPERANDS=1 CARA_FASTINTERP_CHAIN_BUDGET=1 CARA_FASTINTERP_CACHE_WAYS=8 work/build-mac/bin/cara-fastinterp-self-test
           work/build-mac/bin/cara-fastinterp-simd-tags-self-test --test-only
