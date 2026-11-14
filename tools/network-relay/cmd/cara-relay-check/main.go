@@ -57,7 +57,7 @@ func run() error {
 	if json.NewDecoder(io.LimitReader(credentialReader, 65537)).Decode(&rooms) != nil || len(rooms[*roomA]) < 16 || len(rooms[*roomB]) < 16 {
 		return fmt.Errorf("two private test rooms required")
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13}}, Timeout: 10 * time.Second}
+	client := verificationClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	dial := func(room, password string) (*websocket.Conn, net.Conn, relay.Frame, error) {
@@ -155,4 +155,15 @@ func run() error {
 	}
 	fmt.Println("PASS: trusted hostname TLS1.3, three private peers, exact 4088-byte forwarding/source tag, no echo, room isolation, wrong-password rejection, wrong-hostname/untrusted-CA rejection, public health")
 	return nil
+}
+
+// A credentialed relay probe must never follow an endpoint to another address.
+func verificationClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13}},
+		Timeout:   10 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return fmt.Errorf("relay redirects are forbidden")
+		},
+	}
 }
