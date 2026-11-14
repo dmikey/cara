@@ -34,14 +34,15 @@ namespace {
 void Check(bool okay,const char* reason){if(!okay)throw std::runtime_error(reason);}
 class FixtureRelay final:public Network::RelayClient {
 public:
+ bool flip_on_drain{}, flip_on_send{};
  Mac local{2,0,0,0,0,1};Status status;std::deque<ReceivedPacket> rx;std::vector<Packet> sent;
  FixtureRelay(){status.state=State::Connected;status.generation=1;}
  bool Connect(Config)override{return false;}
  void Disconnect()override{status.state=State::Disconnected;++status.generation;rx.clear();Network::Detail::NotifyRelayWork();}
  Status GetStatus()const override{auto result=status;result.rx_queued=rx.size();return result;}
  Mac GetLocalMac()const override{return local;}
- bool TrySend(const Packet& packet)override{auto copy=packet;copy.transmitter=local;if(status.state!=State::Connected||!Cara::Relay::Valid(copy))return false;sent.push_back(std::move(copy));return true;}
- std::vector<ReceivedPacket> Drain(std::size_t limit=MaxDrainPackets)override{std::vector<ReceivedPacket> result;while(!rx.empty()&&result.size()<std::min(limit,MaxDrainPackets)){result.push_back(std::move(rx.front()));rx.pop_front();}return result;}
+ bool TrySend(const Packet& packet)override{auto copy=packet;copy.transmitter=local;if(status.state!=State::Connected||!Cara::Relay::Valid(copy))return false;sent.push_back(std::move(copy));if(flip_on_send){flip_on_send=false;++status.generation;local[5]=91;Network::Detail::NotifyRelayWork();}return true;}
+ std::vector<ReceivedPacket> Drain(std::size_t limit=MaxDrainPackets)override{std::vector<ReceivedPacket> result;while(!rx.empty()&&result.size()<std::min(limit,MaxDrainPackets)){result.push_back(std::move(rx.front()));rx.pop_front();}if(flip_on_drain){flip_on_drain=false;++status.generation;local[5]=92;Network::Detail::NotifyRelayWork();}return result;}
  void Emit(Packet p,bool departed=false){rx.push_back({2,std::move(p),departed});Network::Detail::NotifyRelayWork();}
 };
 class Window final:public Frontend::EmuWindow {
@@ -130,6 +131,18 @@ struct RelayHLETestDriver {
   for(unsigned channel=1;channel<=3;++channel)for(unsigned i=0;i<65;++i)emit(packet(Cara::Relay::Kind::Data,GenerateDataPayload(std::vector<u8>(1478,0x5a),channel,1,2,0),2));
   std::size_t bytes=0,count=0;for(const auto& [channel,binding]:uds.channel_data){Check(binding.received_packets.size()<=64,"UDS channel queue exceeded bound");for(const auto& p:binding.received_packets){bytes+=p.size();++count;}}
   Check(bytes<=Network::RelayClient::MaxQueueBytes&&count==174,"UDS global queue byte cap incorrect");emit(packet(Cara::Relay::Kind::Deauthentication,{},2),true);for(const auto& [channel,binding]:uds.channel_data)Check(binding.received_packets.empty(),"Departed source backlog survived assignment reuse");
+  // A batch copied before a room transition must be erased before guest RunLoop.
+  for(bool flip_during_send:{false,true}) {
+   reset_host();uds.connection_status.total_nodes=2;uds.network_info.total_nodes=2;uds.connection_status.node_bitmask=3;uds.node_info[1].network_node_id=2;uds.node_map[M(2)]={true,2};
+   if(flip_during_send) {relay.Emit(packet(Cara::Relay::Kind::Authentication,{0,0,1,0,0,0},3));relay.flip_on_send=true;}
+   else relay.flip_on_drain=true;
+   relay.Emit(packet(Cara::Relay::Kind::Data,GenerateDataPayload({0x45,0x50,0x4f,0x43,0x48},1,1,2,0),2));
+   Network::DrainRelayPackets(uds.system);
+   Check(Status(uds)==static_cast<unsigned>(NetworkStatus::NotConnected)&&uds.node_map.empty()&&uds.channel_data.empty()&&uds.node_info.empty(),"Old batch survived room-generation transition");
+   const auto& page=uds.system.Kernel().GetSharedPageHandler().GetSharedPage();Check(std::equal(relay.local.begin(),relay.local.end(),page.wifi_macaddr),"Room transition retained old shared-page MAC");
+   Check(uds.relay_generation==relay.status.generation&&uds.relay_connected&&Network::Detail::TakeRelayWork(),"Room transition was not reconciled/rearmed");
+  }
+  std::cout<<"PASS generation changes during Drain/first TrySend clear old guest batch and rearm\n";
   // Real mapped IPC output: short/exact/partial beacon entries preserve poison beyond bounds.
   for(unsigned size:{0u,11u,12u,51u,52u,64u,128u}){
    std::vector<u8> poison(256,0xa5);uds.system.Memory().WriteBlock(*uds.system.Kernel().GetCurrentProcess(),0x101000,poison.data(),poison.size());uds.received_beacons.clear();

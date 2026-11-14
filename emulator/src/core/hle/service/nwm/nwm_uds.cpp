@@ -734,7 +734,19 @@ std::size_t NWM_UDS::DrainRelayPackets() {
         if (packet.type == Network::WifiPacket::PacketType::NodeMap) SyncRelayNodeMap();
         ++delivered;
     }
-    if (relay_session->GetStatus().rx_queued) Network::Detail::NotifyRelayWork();
+    // The UI may replace the room while this bounded batch is being handled.
+    // Reconcile after all callbacks, without holding any transport mutex across HLE.
+    const auto final_status = relay_session->GetStatus();
+    const bool final_connected = final_status.state == Network::RelayClient::State::Connected;
+    if (final_status.generation != status.generation || !final_connected) {
+        RelayDisconnected();
+        system.Kernel().GetSharedPageHandler().SetMacAddress(relay_session->GetLocalMac());
+        relay_generation = final_status.generation;
+        relay_connected = final_connected;
+        Network::Detail::NotifyRelayWork();
+        return 0;
+    }
+    if (final_status.rx_queued) Network::Detail::NotifyRelayWork();
     return delivered;
 }
 
