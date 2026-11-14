@@ -140,5 +140,6 @@ weighted leaf addresses remain available even when many share `ExecuteBlock`.
 Only Time Profiler data is accepted; CPU-counter cycle weights are rejected.
 An optional `--source-fingerprint` records a caller-supplied value and labels it
 as unverified. Profiling perturbs execution: keep these captures separate from
-matched performance comparisons. Parser and capture-command tests pass; a live
-native capture with this tool still needs validation.
+matched performance comparisons. Parser and capture-command tests pass. A live 20-second M1 capture also passed
+process and executable identity checks; see [the verified capture](host-pc-sampling.md#native-m1-time-profiler-verification-2026-11-13)
+for results and interpretation limits.
