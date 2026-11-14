@@ -860,8 +860,8 @@ float rsq_safe(float x) {
                 shader.AddLine("while (true) {");
                 ++shader.scope;
 
-#ifdef CARA_IOS_GLES
-                // Apple's GLES linker crashes on some generated switch/fallthrough trees.
+#if defined(CARA_IOS_GLES) || defined(__APPLE__)
+                // Apple's GLES and desktop GL linkers crash on some switch/fallthrough trees.
                 // A single-iteration loop preserves switch breaks and case fallthrough.
                 shader.AddLine("do {");
                 shader.AddLine("bool cara_case_active = false;");
@@ -870,7 +870,7 @@ float rsq_safe(float x) {
 #endif
 
                 for (auto label : labels) {
-#ifdef CARA_IOS_GLES
+#if defined(CARA_IOS_GLES) || defined(__APPLE__)
                     shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) cara_case_active = true;");
                     shader.AddLine("if (cara_case_active) {");
 #else
@@ -892,7 +892,7 @@ float rsq_safe(float x) {
                     shader.AddLine("}");
                 }
 
-#ifdef CARA_IOS_GLES
+#if defined(CARA_IOS_GLES) || defined(__APPLE__)
                 shader.AddLine("return false;");
                 shader.AddLine("} while (false);");
 #else

@@ -606,7 +606,13 @@ public:
         }
     }
 
+#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+    // Desktop Apple GL now lowers switch dispatch like the GLES generator. Never
+    // reload older switch-based source from the persistent program cache.
+    static constexpr u32 PROGRAM_CACHE_VERSION = 0xA;
+#else
     static constexpr u32 PROGRAM_CACHE_VERSION = 0x9;
+#endif
 
     static std::string GetCacheFile() {
         u64 program_id = 0;
