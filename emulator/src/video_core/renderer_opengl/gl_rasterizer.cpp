@@ -177,13 +177,13 @@ static bool IsVendorMali() {
     return gpu_vendor.find("ARM") != std::string::npos;
 }
 
-static GLsizeiptr LightingLUTBufferSize(bool mali) {
+static GLsizeiptr LightingLUTBufferSize(GLsizeiptr regular_size) {
 #ifdef CARA_IOS_GLES
     // GLES 3.2 guarantees at least 65,536 buffer texels. Keep the entire
     // streaming ring addressable through its RG32F view on minimum-capability GPUs.
     if (UseNativeLUTBuffers()) return 65536 * sizeof(GLvec2);
 #endif
-    return mali ? 525312 : TEXTURE_BUFFER_SIZE;
+    return regular_size;
 }
 
 RasterizerOpenGL::RasterizerOpenGL()
@@ -192,7 +192,7 @@ RasterizerOpenGL::RasterizerOpenGL()
       uniform_buffer(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE),
       index_buffer(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE),
       texture_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 11264 : TEXTURE_BUFFER_SIZE),
-      texture_lf_buffer(GL_TEXTURE_BUFFER, LightingLUTBufferSize(is_mali_gpu)) {
+      texture_lf_buffer(GL_TEXTURE_BUFFER, LightingLUTBufferSize(is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE)) {
 
 #ifdef CARA_ANDROID_GLES_EXPERIMENT
     LOG_INFO(Render_OpenGL, "Android native LUT buffers={}", UseNativeLUTBuffers());
