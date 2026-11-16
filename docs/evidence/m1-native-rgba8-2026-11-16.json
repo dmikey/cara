@@ -101,6 +101,11 @@
       "filename": "INSTALLED-SMOKE.json",
       "sha256": "09fbe09e6733bde2c7ebb6ad51a63d040819f8814ceaa2adc75eb43505bfd679",
       "availability": "private retained test artifact; not included in repository"
+    },
+    "mac_deadlock_recovery": {
+      "filename": "SDL-ASYNC-RECOVERY.json",
+      "sha256": "8f51417fca752f9a6659b212c4978f82fac59d4bbf32995911ce8349f6734cd3",
+      "availability": "private retained test artifact; not included in repository"
     }
   },
   "separate_local_mac_package": {
@@ -131,6 +136,14 @@
     "native_menu_action_fixture_passed": true,
     "live_ui_switch_automated": false,
     "long_gameplay_acceptance": "pending",
-    "published_release": false
+    "published_release": false,
+    "later_deadlock_recovery": {
+      "hint": "SDL_MAC_OPENGL_ASYNC_DISPATCH",
+      "value": "1",
+      "binary_unchanged": true,
+      "guest_timing_changed": false,
+      "previously_frozen_transition_acceptance": "pending",
+      "measured_speed_gain": false
+    }
   }
 }
