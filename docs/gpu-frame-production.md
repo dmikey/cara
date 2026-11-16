@@ -27,9 +27,16 @@ pixels and workload differ, so this is a workload diagnostic.
 | Elapsed time | 24.025 ms | 13.954 ms |
 | Emulation-thread CPU | 22.042 ms | 12.966 ms |
 | Accelerated draws | 918.961 | 493.486 |
-| Submitted vertices | 2,281,176 | 1,224,618 |
+| Triangle-order vertex references | 2,281,176 | 1,224,618 |
+| Distinct input records within draws, summed | 389,719 | 209,205 |
 | Input/index subimage uploads | 302.933 | 244.154 |
 | Input/index bytes uploaded | 2,962,045 | 2,919,709 |
+
+The vertex-reference count is not a unique scene-vertex count or exact shader
+invocation count. Input records deduplicate within a draw on the indexed/packed
+path; the same input used in another draw is counted again. These observations
+show roughly the same average geometry per accelerated draw at both clocks,
+with fewer draws at the lower clock. They do not prove duplicate output.
 
 A separate instrumented capture reports exclusive CPU categories:
 
@@ -126,13 +133,61 @@ per-title address patch. The core investigation concerns correct completion
 ordering, bounded queueing/backpressure, command termination, and reuse of
 provably equivalent work.
 
+## Retained M1 causal traces, 2026-11-15
+
+These are read-only analyses of retained matched captures, not a timing fix.
+All baseline runtime captures use 100% guest CPU, sound and no JIT. A separately
+labeled 50% clock arm is diagnostic only. Host preparation time is not substituted
+for guest time.
+
+- Actual `GetSystemTick` return values averaged 5.053 ms between successive
+  pacer starts, approximately 197.9 Hz, over five complete intervals. The short
+  capture does not show runaway pacing above the configured 200 Hz target.
+  The game fine-polls; no pacer `SleepThread` was observed in that window.
+- In a same-scene closed 50 ms guest interval, 100% versus 50% clock produced
+  ten versus six outer updates, 45 versus 27 PICA lists, and 3,050 versus 1,830
+  draw triggers. Both average 305 draw triggers per update. This establishes
+  producer-rate sensitivity, not that each update is a unique display frame.
+- P3D directly wakes the low-level descriptor worker, guest thread11. Across
+  two captures there are thirteen such blocked-worker wake chains. Each then
+  encounters a separate main-thread-signaled address-arbiter gate before its
+  next graphics submission. The high-level render worker is thread10.
+- The main render callback’s fourteen checked completion waits contain the
+  high-level worker’s matching event signal and no PICA IRQ. P3D is therefore
+  not the direct completion event for those waits.
+- In thirteen checked cases, the next high-level builder enters while an older
+  descriptor-executor scope remains active and before its next PICA submission.
+  The game/library is already pipelined; it does not universally wait for all
+  descriptors before building the next batch.
+- Historical decoded code admits another descriptor only when
+  `submitted < retired + admission_window`. Its completion path advances
+  retirement. Typed runtime captures do not retain the retirement counter,
+  window value and all active/publication transitions, so early retirement or
+  an incorrectly permissive window remains unproved. Historical code mapping
+  is not complete byte-identity proof for every current runtime instruction.
+
+The original researcher’s [Capcom timing-field guide](https://gbatemp.net/threads/finding-fps-and-rendering-codes-on-most-capcom-games.549440/)
+identifies Stories USA’s 200-valued field at `0x08D88670`, matching the captured
+pacer object `0x08D88640 + 0x30`. Citra’s own
+[CPU-slider explanation](https://citra.azahar-emu.org/entry/citra-progress-report-2020-q2/)
+describes how instruction-count timing can permit additional game work and why
+underclocking can reduce it. These corroborate the investigation; neither proves
+Stories’ exact hardware GPU completion latency or safe draw suppression.
+
+Private retained evidence: `cara-stories-pacer-returned-ticks-20261115`,
+`cara-producer-clock-compare-20261115`, `cara-stories-causal-v5-20261115`,
+`cara-stories-list-generation-20261115`, and the offline
+`cara-side-p3d-causality-20261115/{REPORT.md,NEXT-BATCH.md,analysis.json,next-builder-analysis.json}`.
+Temporary paths are not public reproduction dependencies. No ROM bytes, memory
+images, raw game states or screenshots are distributed here.
+
 ## Cross-title validation
 
 | Title | Required coverage | Current status |
 | --- | --- | --- |
 | Monster Hunter Stories | Moving grass replay; game progression, audio and intermediate passes | Clock/request diagnosis and temporary cap experiment captured |
-| Luigi's Mansion: Dark Moon | Slow opening with lighting/effects | Requested engine comparison pending |
-| The Legend of Zelda: A Link Between Worlds | Known gameplay/control baseline | Requested engine comparison pending |
+| Luigi's Mansion: Dark Moon | Slow opening with lighting/effects | Later M1 checked RGBA8 comparison: 28.41 → 16.65 ms/refresh; scoped save/replay passed. This is a residency gain, not a completion-timing fix. |
+| The Legend of Zelda: A Link Between Worlds | Known gameplay/control baseline | Later M1 native-remap normal-boot opener matched six checkpoints; extended gameplay remains separate. |
 | Xenoblade Chronicles 3D | Opening and known moving scene; depth/lighting/audio | Requested engine comparison pending |
 
 Use 100% guest CPU, 100% maximum emulation speed, native resolution, sound and no

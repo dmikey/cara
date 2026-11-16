@@ -5,7 +5,7 @@
 
 <img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
 
-**A new Nintendo 3DS emulator core for Apple hardware.**
+**A new Nintendo 3DS emulator core and emulator shell for Apple hardware.**
 
 Our goal is the smoothest 3DS experience on Apple hardware without CPU JIT.
 Cara brings a performance-first approach to emulation on iPhone and iPad:
@@ -15,7 +15,7 @@ integration.
 
 ## Performance you can measure
 
-In a recorded Xenoblade Chronicles 3D opening replay on an M4 iPad, Cara reached
+In an earlier Xenoblade Chronicles 3D opening replay on an M4 iPad, Cara reached
 **99.5% emulation speed** using **758 MiB peak sampled memory**—about **40–45% less
 memory** than the two Azahar-based apps in the same comparison.
 
@@ -29,6 +29,19 @@ All three completed the opening replay at native resolution, with sound enabled,
 CPU JIT disabled, and **100% guest CPU clock**. This is a whole-app comparison of
 one scene; performance and compatibility vary by game. See the
 [full results, build revision, and methodology](docs/performance.md).
+
+## Latest development: Luigi reaches near-full speed on M1
+
+Keeping a recurring graphics conversion on the GPU brought the tested Luigi’s
+Mansion: Dark Moon scene from **28.41 to 16.65 ms per refresh** on an M1 Mac—
+**41.4% less frame time**, near the test’s 60 Hz cap. The comparison kept
+**100% guest CPU, sound, normal graphics checks and no CPU or shader JIT**, with
+matching captured images and selected guest state. It eliminated two readbacks
+per refresh without dropping effects or changing guest timing.
+
+This result covers one M1 scene. A local Mac development build is installed for
+longer gameplay testing. See the [November development update](docs/updates/2026-11-16.md)
+for the measured runs, save/load checks, recent merged fixes and release status.
 
 ## What makes Cara different
 
@@ -65,7 +78,7 @@ the signed app, without runtime CPU code generation.
 Cara combines these execution changes with its Apple graphics pipeline, bounded
 memory and upload caches, a reusable core, and its own native shell.
 
-## Going to Vulkan was never the answer
+## Faster by understanding the hardware
 
 Cara’s progress has come from understanding more of the machine: how the guest
 CPU produces graphics commands, who owns each byte of shared memory, when work
@@ -79,7 +92,7 @@ The stronger evidence comes from changing one mechanism at a time:
 
 | Finding | What changed or what we learned |
 |---|---|
-| **Keep graphics data on the GPU** | GPU alias remapping lets compatible surfaces share GPU-resident data while preserving guest-visible bytes. A matched Luigi laboratory replay fell from roughly 24.5 to 16.7 ms per refresh, eliminating six downloads per refresh with matching final pixels. [Results](docs/gpu-surface-aliases.md) |
+| **Keep graphics data on the GPU** | GPU alias remapping lets compatible surfaces share GPU-resident data while preserving guest-visible bytes. An earlier physical M4 iPad Luigi laboratory replay fell from roughly 24.5 to 16.7 ms per refresh, eliminating six downloads per refresh with matching final pixels. [Results](docs/gpu-surface-aliases.md) |
 | **Preserve memory ownership** | Targeted cache cleanup and alias invalidation preserve coherence without flushing unrelated dirty surfaces. Partial writes, overlapping views and CPU reads need explicit correctness checks. [Residency research](docs/gpu-residency-prior-art.md) |
 | **Fix host pacing** | Bounded pacing recovered near-full speed in a matched Xenoblade replay while preserving guest event timing, draw counts and final pixels. [Results](docs/frame-pacing.md) |
 | **Follow the guest’s work** | Stories traces distinguish command submission, draw work, completion events and display refresh. Offline instruction inspection identified copying, visibility tests and a tick-poll pacing loop; their execution counts alone do not establish CPU cost or justify skipping them. [Trace findings](docs/stories-gpu-trace-2026-11-13.md) |

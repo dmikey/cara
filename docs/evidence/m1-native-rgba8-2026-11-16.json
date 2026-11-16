@@ -1,0 +1,136 @@
+{
+  "schema": "cara-development-evidence-v1",
+  "date": "2026-11-16",
+  "hardware": "Apple M1 Mac",
+  "backend": "native OpenGL",
+  "title": "Luigi’s Mansion: Dark Moon",
+  "scope": "one checkpoint; one OFF/ON/ON/OFF block; two enabled arms; capped",
+  "source_fingerprint": "1a8e71575f8c616fb00d5d21205349499ba1533e7859cf7218a81aea5918bff2",
+  "binary_sha256": "b097b926bcb83aebb64e09086c38ead8fe6b25face789d91de0460166197a8b4",
+  "settings": {
+    "guest_cpu_percent": 100,
+    "speed_cap_percent": 100,
+    "sound": true,
+    "cpu_jit": false,
+    "shader_jit": false,
+    "normal_graphics_checks": true,
+    "unchecked_copy_recorder": false,
+    "guest_timing_changed": false,
+    "effects_removed": false
+  },
+  "measured_refreshes_per_arm": 120,
+  "runs": [
+    {
+      "arm": "native-rgba8-quiet-A1",
+      "remap_enabled": false,
+      "completed_wall_ms_per_refresh": 28.254221183333332,
+      "producer_readbacks": 240
+    },
+    {
+      "arm": "native-rgba8-quiet-B1",
+      "remap_enabled": true,
+      "completed_wall_ms_per_refresh": 16.650470833333333,
+      "producer_readbacks": 0
+    },
+    {
+      "arm": "native-rgba8-quiet-B2",
+      "remap_enabled": true,
+      "completed_wall_ms_per_refresh": 16.650763883333333,
+      "producer_readbacks": 0
+    },
+    {
+      "arm": "native-rgba8-quiet-A2",
+      "remap_enabled": false,
+      "completed_wall_ms_per_refresh": 28.569201733333333,
+      "producer_readbacks": 240
+    }
+  ],
+  "mean_wall_ms_per_refresh": {
+    "off": 28.411711458333333,
+    "on": 16.650617358333335
+  },
+  "wall_reduction_percent": 41.39523279774262,
+  "validation": {
+    "selected_endpoint_state_exact": true,
+    "final_rgba_and_both_lcd_images_exact": true,
+    "persistent_files_exact": true,
+    "gpu_complete_timing_endpoints": true,
+    "separate_populated_cache_save_replay_passed": true,
+    "separate_zelda_six_checkpoint_opener_passed": true
+  },
+  "release_status": "validated development build; not a claim of current-main binary identity, released default or physical-device rollout",
+  "limitations": [
+    "One scene and one ABBA; not universal title performance.",
+    "Cap hides additional throughput.",
+    "Selected state and captures are not complete RAM/VRAM or every intermediate draw equivalence.",
+    "No new memory-usage result.",
+    "No Stories speed gain inferred from compatibility control."
+  ],
+  "private_artifact_hashes": {
+    "luigi_quiet_abba_report": {
+      "filename": "ACTUAL-REPORT.md",
+      "sha256": "dab0e4905b008fd73b64d0be5a127bfd6bd77345774c14c7c02039630f0fb06c",
+      "availability": "private retained test artifact; not included in repository"
+    },
+    "luigi_quiet_abba_analysis": {
+      "filename": "analysis.json",
+      "sha256": "3d46c4c527161d712d83f691ec5d52a58f9397255162ea2d1632c5f54874cf58",
+      "availability": "private retained test artifact; not included in repository"
+    },
+    "luigi_independent_audit": {
+      "filename": "LUIGI-NATIVE-RGBA8-QUIET-ACTUAL-REVIEW.json",
+      "sha256": "cd6d84167cfeb62bfd11299f2cbb0fd6255b6b30c11754638df05f9c0e75b2be",
+      "availability": "private retained test artifact; not included in repository"
+    },
+    "luigi_save_replay_report": {
+      "filename": "ACTUAL-REPORT.md",
+      "sha256": "cffa9499b4856a5f2413f7386519d5c5168792e3660d7d9c7f1ebeaf88fb7b05",
+      "availability": "private retained test artifact; not included in repository"
+    },
+    "zelda_opener_report": {
+      "filename": "ACTUAL-REPORT.md",
+      "sha256": "73397ae285a2b36e40a6dfafa545fb2d4794500c8b2d9c102c9c6e3fba6b17a3",
+      "availability": "private retained test artifact; not included in repository"
+    },
+    "stories_current_control_report": {
+      "filename": "ACTUAL-REPORT.md",
+      "sha256": "2a4ddee1700eb7b5a8354b04034dab1037331d8a0ae6a2b8b6dbb246f13215c9",
+      "availability": "private retained test artifact; not included in repository"
+    },
+    "installed_mac_smoke": {
+      "filename": "INSTALLED-SMOKE.json",
+      "sha256": "09fbe09e6733bde2c7ebb6ad51a63d040819f8814ceaa2adc75eb43505bfd679",
+      "availability": "private retained test artifact; not included in repository"
+    }
+  },
+  "separate_local_mac_package": {
+    "source_fingerprint": "76466a412647b12ae97327d2f73859b6b4e694f45e22825bf327c8d353b945ff",
+    "binary_sha256": "3c0c92215d5c261116283ecf171ed2ba391edefd5951e34be91340d1f7c3931c",
+    "normal_luigi_startup_passed": true,
+    "guest_cpu_percent": 100,
+    "all_timers_percent": [
+      100,
+      100,
+      100,
+      100
+    ],
+    "sound_sink": "sdl2",
+    "cpu_jit": false,
+    "shader_jit": false,
+    "enabled_controls": {
+      "CARA_NATIVE_DIAGNOSTICS": "0",
+      "CARA_NATIVE_DEV_COMMANDS": "0",
+      "CARA_NATIVE_BENCHMARK": "0",
+      "CARA_NATIVE_SCRIPT_ONLY_INPUT": "0",
+      "CARA_GL_COMMAND_QUEUE": "1",
+      "CARA_GL_QUEUE_NATIVE_MAP_UPLOAD": "1",
+      "CARA_NATIVE_RGBA8_SURFACE_REMAP": "1",
+      "CARA_NATIVE_COPY_RUNTIME_QUERIES": "1",
+      "CARA_MAC_GPU_DEPTH_REINTERPRET": "0"
+    },
+    "native_menu_action_fixture_passed": true,
+    "live_ui_switch_automated": false,
+    "long_gameplay_acceptance": "pending",
+    "published_release": false
+  }
+}

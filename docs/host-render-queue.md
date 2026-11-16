@@ -1,9 +1,21 @@
 # Ordered host GLES worker proposal
 
-Source review, November 13, 2026. No worker is implemented and no gain has been
-measured. This expands the larger queue proposal in
+The proposal below records the source review of November 13, 2026. It describes
+an ownership design at that revision, not the current state of every frontend.
+
+**Development update, November 16:** an opt-in ordered OpenGL worker and owned
+mapped uploads have since been tested on the M1. Repeated Stories comparisons
+measured 6.3–6.4% lower completed-work time; Luigi comparisons measured 4.1–7.5%.
+Whole-process CPU increased even as elapsed time fell. These are scene-specific
+prototype results, not evidence that all renderer preparation moved off the guest
+thread or that the iOS GLES worker/default shipped. The corrected mapping path
+restores the original map/flush/unmap contract; a large gain over the earlier
+broken SubData adapter is not a gain over the direct baseline.
+
+The [November update](updates/2026-11-16.md) separates this queue experiment from
+the later checked Luigi GPU-residency result. The original proposal expands
 [apple-parallelism.md](apple-parallelism.md), preserving its smaller-worker
-analysis and existing measurements.
+analysis and earlier measurements.
 
 An ordered backend worker could overlap host renderer execution with guest CPU
 execution while preserving the existing guest event schedule. PICA parsing,
