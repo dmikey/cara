@@ -143,7 +143,10 @@
       "binary_unchanged": true,
       "guest_timing_changed": false,
       "previously_frozen_transition_acceptance": "pending",
-      "measured_speed_gain": false
+      "measured_speed_gain": false,
+      "reported_freeze_recurrence": true,
+      "stability_status": "unresolved; launch-setting change is not established as a complete fix",
+      "recurrence_evidence": "main-thread reported ordinary-play recurrence; no new cause established by this summary"
     }
   }
 }

@@ -40,9 +40,10 @@ backpressure blocked the producer/main thread while SDL’s worker-side swap wai
 for that main thread to update the OpenGL context. The launcher recovery uses
 `SDL_MAC_OPENGL_ASYNC_DISPATCH=1`, documented by
 [SDL2](https://wiki.libsdl.org/SDL2/SDL_HINT_MAC_OPENGL_ASYNC_DISPATCH) for this
-Mac-specific dependency. Relaunch/configuration is verified; completion of the
-previously frozen transition remains a user acceptance check. This is separate
-from the measured remap gain and is not a guest completion-timing change.
+Mac-specific dependency. Relaunch/configuration is verified, but a later freeze was reported. The hint
+is not a complete stability fix; the recurring stall remains under investigation.
+This is separate from the matched remap gain and is not a guest completion-timing
+change.
 
 The queue’s dependency audit must include host-window/main-thread callbacks as
 well as guest resource ownership. A correct FIFO and bounded byte budget alone
