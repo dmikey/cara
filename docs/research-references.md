@@ -26,6 +26,13 @@ a calibrated retail-console GPU completion model. Emulator source review, physic
 board evidence, interpreter-reference tests and real-hardware measurements remain
 distinct forms of evidence.
 
+The [November 16 development update](updates/2026-11-16.md) summarizes the latest
+M1 checked GPU-residency gain, save/replay checks, prototype worker results and
+remaining Stories work. [Frame-production findings](gpu-frame-production.md#retained-m1-causal-traces-2026-11-15)
+also connect the retained P3D/descriptor trace to the original Capcom field
+research and Citra timing explanation without treating those sources as proof
+of an early-completion bug.
+
 Cara's current findings are collected in the
 [Stories dependency trace](stories-gpu-trace-2026-11-13.md),
 [tick-poll audit](stories-tick-poll-audit.md),

@@ -1,5 +1,21 @@
 # Hardware investigation
 
+## Latest evidence, 2026-11-16
+
+The [November development update](updates/2026-11-16.md) records the latest M1
+native OpenGL results separately from the earlier physical M4 GLES experiments
+below. A normal-checked Luigi RGBA8 alias comparison reduced completed-work
+wall time from 28.41 to 16.65 ms per refresh, eliminating 240 readbacks per
+120-refresh arm with matching captured output and selected guest state. Runtime
+save/load replay and a six-checkpoint Zelda opener regression passed separately.
+Stories passed the current compatibility control, but its scene had no readbacks
+to remove and no quiet performance gain was established. The timing-loop and
+P3D analyses identify actual dependencies; they do not prove a hardware-timing bug.
+
+See [per-run performance](performance.md), [surface aliases](gpu-surface-aliases.md),
+and [retained causal traces](gpu-frame-production.md#retained-m1-causal-traces-2026-11-15).
+Historical measurements below keep their original hardware, settings and scope.
+
 Last updated: 2026-11-12.
 
 Working record for the static, no-host-JIT iOS renderer. Keep measured behavior,

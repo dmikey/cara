@@ -1,5 +1,39 @@
 # GPU surface alias conversion
 
+## Latest status: native M1 RGBA8 path, 2026-11-16
+
+A matched native OpenGL development build now validates the existing RGBA8
+remapper on the M1. Luigi repeatedly used a tiled RGBA8 256×416 owner through a
+linear 128×416 view. With native remapping disabled, this layout fell through
+GPU readback and fallback upload; enabling the byte-preserving GPU path kept the
+conversion GPU-resident. This is an ownership/layout conversion, not a dropped
+lighting pass, ROM patch or guest-clock change.
+
+One checked OFF/ON/ON/OFF comparison reduced completed-work wall time from
+28.412 to 16.651 ms per refresh (41.4%). Each disabled arm had 240 producer
+readbacks over 120 refreshes; both enabled arms had zero. A preceding traced
+correctness pair also observed four bounded fallback uploads becoming zero;
+that count is from a separate window and is not a per-refresh timing result.
+
+Normal graphics checks stayed enabled; the unchecked-copy recorder stayed off.
+FastInterp, 100% guest CPU, cap100, sound, effects and guest timing were unchanged.
+Both enabled arms reached approximately the existing 60 Hz cap. Captured output,
+selected architectural state and files matched. A populated-cache runtime
+save/load plus fresh-process replay passed separately, and six Zelda opener
+checkpoints matched with the switch off/on.
+
+Stories’ current same-build control also matched output/state/files, but had
+zero readbacks in both arms and 1,200 additional synchronous host transactions
+with the switch on. Its performance effect was not quietly measured. This is
+compatibility evidence, not a Stories speedup or proof that the path has no cost.
+
+This native result does not promote the development flag to a shipping default
+or establish another driver’s behavior. The local Mac gameplay package has separately passed ordinary Luigi startup;
+main/release integration and longer gameplay acceptance remain separate. See [measured runs](performance.md#latest-m1-development-result-luigi-gpu-residency-2026-11-16),
+[release preparation](updates/2026-11-16.md), and the
+[evidence summary](evidence/m1-native-rgba8-2026-11-16.json).
+The older physical-device sections below retain their original dates and scope.
+
 ## Luigi diagnostic, 2026-11-13
 
 A physical M4 iPad replay of the advanced laboratory dialogue used FastInterp,

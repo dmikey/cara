@@ -1,9 +1,21 @@
 # Ordered host GLES worker proposal
 
-Source review, November 13, 2026. No worker is implemented and no gain has been
-measured. This expands the larger queue proposal in
+The proposal below records the source review of November 13, 2026. It describes
+an ownership design at that revision, not the current state of every frontend.
+
+**Development update, November 16:** an opt-in ordered OpenGL worker and owned
+mapped uploads have since been tested on the M1. Repeated Stories comparisons
+measured 6.3–6.4% lower completed-work time; Luigi comparisons measured 4.1–7.5%.
+Whole-process CPU increased even as elapsed time fell. These are scene-specific
+prototype results, not evidence that all renderer preparation moved off the guest
+thread or that the iOS GLES worker/default shipped. The corrected mapping path
+restores the original map/flush/unmap contract; a large gain over the earlier
+broken SubData adapter is not a gain over the direct baseline.
+
+The [November update](updates/2026-11-16.md) separates this queue experiment from
+the later checked Luigi GPU-residency result. The original proposal expands
 [apple-parallelism.md](apple-parallelism.md), preserving its smaller-worker
-analysis and existing measurements.
+analysis and earlier measurements.
 
 An ordered backend worker could overlap host renderer execution with guest CPU
 execution while preserving the existing guest event schedule. PICA parsing,
@@ -20,6 +32,22 @@ figures identify an overlap opportunity, not achievable parallel throughput.
 Snapshotting, remaining frontend work, CPU/GPU dependencies, bandwidth, scheduling
 and queue stalls can erase the benefit. Current windows with no readback samples
 do not establish that a queued implementation would never require fences.
+
+## Mac main-thread context updates
+
+The November 16 local gameplay package exposed a separate host deadlock: queue
+backpressure blocked the producer/main thread while SDL’s worker-side swap waited
+for that main thread to update the OpenGL context. The launcher recovery uses
+`SDL_MAC_OPENGL_ASYNC_DISPATCH=1`, documented by
+[SDL2](https://wiki.libsdl.org/SDL2/SDL_HINT_MAC_OPENGL_ASYNC_DISPATCH) for this
+Mac-specific dependency. Relaunch/configuration is verified, but a later freeze was reported. The hint
+is not a complete stability fix; the recurring stall remains under investigation.
+This is separate from the matched remap gain and is not a guest completion-timing
+change.
+
+The queue’s dependency audit must include host-window/main-thread callbacks as
+well as guest resource ownership. A correct FIFO and bounded byte budget alone
+do not prevent a wait cycle involving the window system.
 
 ## Ownership
 

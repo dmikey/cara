@@ -54,6 +54,28 @@ from guest draw production, and defines the Luigi, Zelda and Xenoblade checks fo
 any reusable engine fix. [Prior art](performance-prior-art.md) links the upstream
 interpreter and GPU timing implementations being evaluated.
 
+## Recent GPU-residency and host-worker findings
+
+The M1 development backend can keep Luigi’s supported RGBA8 tiled/linear alias
+conversion on the GPU. Its matched checked comparison reached 16.65 ms per
+refresh from 28.41 ms, with no underclock, JIT or guest-timing change. Native
+OpenGL on the Mac and GLES3 on iOS are distinct paths; the result is not a native
+Metal or Vulkan measurement. See the [current update](updates/2026-11-16.md) and
+[per-run evidence](performance.md).
+
+An opt-in ordered host worker also has measured M1 results. It preserves owned
+upload bytes and GL mapping semantics, and trades more whole-process CPU for
+some overlap. Producer-side PICA interpretation, memory ownership and dependency
+checks remain significant; a worker is not an automatic solution to every CPU
+cost. The [worker proposal and status](host-render-queue.md) distinguish tested
+parts from the larger ownership design.
+
+The existing guest descriptor executor itself has an outstanding-work gate.
+Offline Stories traces show P3D waking its descriptor worker and next high-level
+building overlapping older submissions. They do not prove early hardware
+completion or justify a universal frame-rate cap. [Updated causal findings](gpu-frame-production.md#retained-m1-causal-traces-2026-11-15)
+record the measured boundary and missing evidence.
+
 ## A reusable core and a native shell
 
 Cara is developed as a reusable 3DS core for integration into Delta, alongside
