@@ -431,10 +431,10 @@ static int RunNativeMain(int argc, char** argv) {
         }
         const bool diagnostics = std::getenv("CARA_NATIVE_DIAGNOSTICS") &&
                                  std::string(std::getenv("CARA_NATIVE_DIAGNOSTICS")) == "1";
-        const auto record_state = [&](const char* operation) {
+        const auto record_state = [&](const char* operation, unsigned slot = 1) {
             std::ofstream state(directory + "native-state-status.json");
             state << "{\"operation\":\"" << operation
-                  << "\",\"slot\":1,\"frame\":" << VideoCore::GetCurrentFrame()
+                  << "\",\"slot\":" << slot << ",\"frame\":" << VideoCore::GetCurrentFrame()
                   << ",\"fingerprint\":\"" << Core::GetSaveStateBuildFingerprint()
                   << "\",\"ticks\":" << system.CoreTiming().GetTicks()
                   << ",\"guest_cpu_percent\":" << Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())
@@ -560,23 +560,30 @@ static int RunNativeMain(int argc, char** argv) {
                 break;
             // PollEvents only queues requests. Serialize here, after RunLoop and
             // its timing callbacks return/requeue, with the GL context still live.
-            const auto state_command = window.TakeStateCommand();
+            auto state_command = window.TakeStateCommand();
+            const auto menu_state = Cara::NativeGameMenu::TakeStateRequest();
+            const unsigned state_slot = menu_state.action == Cara::NativeGameMenu::StateAction::None ? 1 : menu_state.slot;
+            if (menu_state.action != Cara::NativeGameMenu::StateAction::None)
+                state_command = menu_state.action == Cara::NativeGameMenu::StateAction::Save ? EmuWindow_SDL2::StateCommand::Save : EmuWindow_SDL2::StateCommand::Load;
             if (category_profile && state_command != EmuWindow_SDL2::StateCommand::None)
                 throw std::runtime_error("Save/load during native category measurement is unsupported");
+            try {
             switch (state_command) {
             case EmuWindow_SDL2::StateCommand::Save:
-                system.SaveState(1);
-                record_state("save");
+                system.SaveState(state_slot);
+                record_state("save", state_slot);
+                if (menu_state.action != Cara::NativeGameMenu::StateAction::None) window.StateCompleted(true, state_slot);
                 WriteNativeProfileSnapshot(directory + "native-saved-state", VideoCore::GetCurrentFrame());
                 break;
             case EmuWindow_SDL2::StateCommand::Load:
                 if (relay) relay->Disconnect();
                 flush_copy_trace(true);
                 flush_gpu_trace(true);
-                system.LoadState(1);
+                system.LoadState(state_slot);
                 Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
                     Cara::NativeScriptOnlyInput::Enabled(),"runtime-state-load");
-                record_state("load");
+                record_state("load", state_slot);
+                if (menu_state.action != Cara::NativeGameMenu::StateAction::None) window.StateCompleted(false, state_slot);
                 if (copy_trace_requested)
                     Cara::TextureCopyTrace::Arm(directory + "native-texture-copy-trace.json");
                 if (gpu_trace_requested)
@@ -584,6 +591,11 @@ static int RunNativeMain(int argc, char** argv) {
                 break;
             case EmuWindow_SDL2::StateCommand::None:
                 break;
+            }
+            } catch (const std::exception& error) {
+                if (menu_state.action == Cara::NativeGameMenu::StateAction::None) throw;
+                Cara::NativeGameMenu::StateFailure(error.what());
+                if (!system.IsPoweredOn()) break;
             }
             if (window.TakeBenchmarkStop())
                 break;

@@ -3,16 +3,21 @@
 #include <SDL.h>
 #include <string>
 #include "cara/native_mac/game_menu.h"
+#include "core/core.h"
 #include "cara/native_mac/mac_preferences_ui.h"
 
 namespace {
 std::string requested_rom;
 bool closing_for_open = false;
+Cara::NativeGameMenu::StateRequest state_request;
 }
 
 @interface CaraGameMenuActions : NSObject
 - (void)openROM:(id)sender;
 - (void)preferences:(id)sender;
+- (void)saveState:(id)sender;
+- (void)loadState:(id)sender;
+- (BOOL)validateMenuItem:(NSMenuItem*)item;
 @end
 
 @implementation CaraGameMenuActions
@@ -48,9 +53,28 @@ bool closing_for_open = false;
     }
 }
 - (void)preferences:(id)sender { (void)sender; Cara::MacUI::ShowPreferences(); }
+- (void)saveState:(id)sender { Cara::NativeGameMenu::RequestState(Cara::NativeGameMenu::StateAction::Save, (unsigned)[sender tag]); }
+- (void)loadState:(id)sender { Cara::NativeGameMenu::RequestState(Cara::NativeGameMenu::StateAction::Load, (unsigned)[sender tag]); }
+- (BOOL)validateMenuItem:(NSMenuItem*)item {
+    if (item.action == @selector(saveState:) || item.action == @selector(loadState:))
+        return Core::System::GetInstance().IsPoweredOn() && !closing_for_open;
+    return YES;
+}
 @end
 
 namespace Cara::NativeGameMenu {
+bool RequestState(StateAction action, unsigned slot) {
+    if (!Core::System::GetInstance().IsPoweredOn() || closing_for_open || slot < 1 || slot > 10 || action == StateAction::None || state_request.action != StateAction::None) return false;
+    state_request = {action, slot};
+    return true;
+}
+StateRequest TakeStateRequest() { auto result = state_request; state_request = {}; return result; }
+void StateFailure(const std::string& message) {
+    NSAlert* alert = [[[NSAlert alloc] init] autorelease];
+    alert.messageText = @"Save state unavailable";
+    alert.informativeText = [NSString stringWithUTF8String:message.c_str()];
+    [alert runModal];
+}
 void Install() {
     NSMenu* main_menu = NSApp.mainMenu;
     if (!main_menu)
@@ -70,6 +94,18 @@ void Install() {
                                          keyEquivalent:@"o"];
     open.target = actions;
     [file addItem:open];
+    [file addItem:[NSMenuItem separatorItem]];
+    for (int operation = 0; operation < 2; ++operation) {
+        NSMenuItem* group = [[[NSMenuItem alloc] initWithTitle:operation ? @"Load State" : @"Save State" action:nil keyEquivalent:@""] autorelease];
+        NSMenu* slots = [[[NSMenu alloc] initWithTitle:group.title] autorelease];
+        for (unsigned slot = 1; slot <= 10; ++slot) {
+            NSMenuItem* item = [[[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"Slot %u", slot] action:operation ? @selector(loadState:) : @selector(saveState:) keyEquivalent:slot == 1 ? (operation ? @"l" : @"s") : @""] autorelease];
+            item.target = actions; item.tag = slot;
+            item.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+            [slots addItem:item];
+        }
+        group.submenu = slots; [file addItem:group];
+    }
     root.submenu = file; root.tag=7102;
     [main_menu insertItem:root atIndex:MIN((NSInteger)1, main_menu.numberOfItems)];
     [open release];

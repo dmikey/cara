@@ -105,11 +105,7 @@ void EmuWindow_SDL2::OnFingerUp() {
 }
 
 void EmuWindow_SDL2::OnKeyEvent(int key, u8 state) {
-    if (state == SDL_PRESSED) {
-        InputCommon::GetKeyboard()->PressKey(key);
-    } else if (state == SDL_RELEASED) {
-        InputCommon::GetKeyboard()->ReleaseKey(key);
-    }
+    keyboard_latch.Event(*InputCommon::GetKeyboard(), key, state == SDL_PRESSED);
 }
 
 bool EmuWindow_SDL2::IsOpen() const {
@@ -423,6 +419,13 @@ EmuWindow_SDL2::StateCommand EmuWindow_SDL2::TakeStateCommand() {
     pending_state_command = StateCommand::None;
     return command;
 }
+void EmuWindow_SDL2::StateCompleted(bool saved, unsigned slot) {
+    keyboard_latch.Release(*InputCommon::GetKeyboard());
+    const auto text = fmt::format("State {} — slot {} | Cara", saved ? "saved" : "loaded", slot);
+    SDL_SetWindowTitle(render_window, text.c_str());
+    last_time = SDL_GetTicks();
+}
+
 bool EmuWindow_SDL2::TakeBenchmarkStop() {
     const bool stop = benchmark_stop;
     benchmark_stop = false;
@@ -718,6 +721,8 @@ void EmuWindow_SDL2::PollEvents() {
                 OnResize();
                 break;
             case SDL_WINDOWEVENT_FOCUS_LOST:
+                if (!Cara::NativeScriptOnlyInput::Enabled())
+                    keyboard_latch.Release(*InputCommon::GetKeyboard());
                 if (Cara::NativeScriptOnlyInput::ReleaseTouchOnFocusLost(
                         Cara::NativeScriptOnlyInput::Enabled())) {
                     TouchReleased(); diagnostic_touch=false;
@@ -762,6 +767,15 @@ void EmuWindow_SDL2::PollEvents() {
         default:
             break;
         }
+    }
+
+    if (!Cara::NativeScriptOnlyInput::Enabled()) {
+        int count = 0;
+        const auto* physical = SDL_GetKeyboardState(&count);
+        if (SDL_GetKeyboardFocus() != render_window)
+            keyboard_latch.Release(*InputCommon::GetKeyboard());
+        else
+            keyboard_latch.Reconcile(*InputCommon::GetKeyboard(), physical, count);
     }
 
     const u32 current_time = SDL_GetTicks();

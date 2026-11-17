@@ -37,3 +37,9 @@ The Mac ZIP contains a native launcher, private copies of its non-system librari
 Publish a GitHub release from a tag containing this workflow to build and attach `Cara-macOS-arm64-JIT.zip`, `Cara-iOS-arm64-GLES3-unsigned.ipa`, audit reports and `SHA256SUMS.txt`. Both builds must pass before the upload job runs. A published prerelease follows the same flow. A manual run without `release_tag` produces Actions artifacts only; supplying an existing release tag builds that exact tag and updates only these generated assets. Tags predating the packaging tools must be replaced by a new release tag containing them. Existing Android and signed iOS assets are not renamed or deleted.
 
 There are no Apple distribution credentials configured. The Mac app is ad-hoc signed and is not notarized. The unsigned IPA needs signing with the user's own credentials or sideloading service; it is not an App Store or immediately installable distribution-signed IPA. This pipeline does not contact a physical iPad.
+
+## Save states and keyboard input
+
+With a game open, use **File > Save State > Slot 1–10** and **File > Load State > Slot 1–10**. Command-Shift-S saves slot 1; Command-Shift-L loads slot 1. The window title confirms the slot; errors appear in a dialog without silently closing the game. States are separate from a game's normal save files and require the same compatible engine build, CPU backend, and system mode. Build updates can invalidate states; keep normal in-game saves.
+
+Keyboard input releases on focus loss and reconciles held keys with SDL's current keyboard state after event polling. A key still physically held stays held across a scene; a missed release no longer leaves a direction latched. Script-owned diagnostic input is excluded.
