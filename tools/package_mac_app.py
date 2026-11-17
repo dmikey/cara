@@ -13,6 +13,13 @@ from mac_bundle import bundle, audit as audit_bundle, minimum_os, version_key
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def validate_build_identity(report, binary, revision):
+    if report.get('source_revision') != revision:
+        raise ValueError('Build audit belongs to another source revision; complete the current build first')
+    if report.get('binary_sha256') != hashlib.sha256(binary.read_bytes()).hexdigest():
+        raise ValueError('Build binary differs from its audit')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir', type=Path, required=True)
@@ -24,12 +31,19 @@ def main():
     output = args.output.resolve()
     if output.exists():
         parser.error('Output exists; preserve it or choose another path')
+    if (build/'native-build-in-progress.json').exists():
+        parser.error('The latest native build did not complete; its previous executable cannot be packaged')
+    if subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip():
+        parser.error('Commit source changes before packaging a release app')
     cache = (build / 'CMakeCache.txt').read_text()
     cpu_jit = 'CARA_MAC_CPU_JIT:BOOL=ON' in cache
     audit_name = 'native-cpu-jit-audit.json' if cpu_jit else 'native-no-jit-audit.json'
     audit = json.loads((build / audit_name).read_text())
-    if audit.get('binary_sha256') != hashlib.sha256((build / 'bin/cara').read_bytes()).hexdigest():
-        parser.error('Build binary differs from its audit')
+    revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+    try:
+        validate_build_identity(audit, build/'bin/cara', revision)
+    except ValueError as error:
+        parser.error(str(error))
     if audit.get('jit_enabled') is not cpu_jit or audit.get('shader_jit_enabled') is not False:
         parser.error('Build audit does not match the requested CPU-only JIT policy')
     if audit.get('forbidden_objects') or audit.get('forbidden_symbols'):
@@ -79,8 +93,7 @@ def main():
                     user_dir=args.user_dir, cpu_jit_available=cpu_jit,
                     cpu_default='fastinterp', shader_jit=False, automatic_game=False, self_contained=True,
                     source_url='https://github.com/dmikey/cara',
-                    source_revision=subprocess.check_output(
-                        ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip())
+                    source_revision=revision)
     (resources / 'build.json').write_text(json.dumps(manifest, indent=2) + '\n')
     shutil.copy2(build / audit_name, resources / audit_name)
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(launcher)], check=True)

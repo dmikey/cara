@@ -64,19 +64,19 @@ public:
     void InitHat(int hat) { std::lock_guard lock{mutex}; state.hats.try_emplace(hat, SDL_HAT_CENTERED); }
 
     void RefreshState() {
-        std::shared_ptr<SDL_Joystick> device;
-        { std::lock_guard lock{mutex}; device=sdl_joystick; }
         // Match SDL's callback lock order; RAII also releases the lock on allocation failure.
         struct Lock { Lock(){SDL_LockJoysticks();} ~Lock(){SDL_UnlockJoysticks();} } joystick_lock;
-        const bool attached=device && SDL_JoystickGetAttached(device.get());
-        std::vector<Uint8> buttons(attached?std::max(0,SDL_JoystickNumButtons(device.get())):0);
-        std::vector<Sint16> axes(attached?std::max(0,SDL_JoystickNumAxes(device.get())):0);
-        std::vector<Uint8> hats(attached?std::max(0,SDL_JoystickNumHats(device.get())):0);
-        for(unsigned i=0;i<buttons.size();++i)buttons[i]=SDL_JoystickGetButton(device.get(),i);
-        for(unsigned i=0;i<axes.size();++i)axes[i]=SDL_JoystickGetAxis(device.get(),i);
-        for(unsigned i=0;i<hats.size();++i)hats[i]=SDL_JoystickGetHat(device.get(),i);
+        SDL_Joystick* device;
+        { std::lock_guard lock{mutex}; device=sdl_joystick.get(); }
+        const bool attached=device && SDL_JoystickGetAttached(device);
+        std::vector<Uint8> buttons(attached?std::max(0,SDL_JoystickNumButtons(device)):0);
+        std::vector<Sint16> axes(attached?std::max(0,SDL_JoystickNumAxes(device)):0);
+        std::vector<Uint8> hats(attached?std::max(0,SDL_JoystickNumHats(device)):0);
+        for(unsigned i=0;i<buttons.size();++i)buttons[i]=SDL_JoystickGetButton(device,i);
+        for(unsigned i=0;i<axes.size();++i)axes[i]=SDL_JoystickGetAxis(device,i);
+        for(unsigned i=0;i<hats.size();++i)hats[i]=SDL_JoystickGetHat(device,i);
         std::lock_guard lock{mutex};
-        if(sdl_joystick!=device)return;
+        if(sdl_joystick.get()!=device)return;
         for(auto& [key,value]:state.buttons)value=false;
         for(auto& [key,value]:state.axes)value=0;
         for(auto& [key,value]:state.hats)value=SDL_HAT_CENTERED;
@@ -141,13 +141,15 @@ public:
     }
 
     SDL_Joystick* GetSDLJoystick() const {
+        std::lock_guard lock{mutex};
         return sdl_joystick.get();
     }
 
     void SetSDLJoystick(SDL_Joystick* joystick,
                         decltype(&SDL_JoystickClose) deleter = &SDL_JoystickClose) {
-        sdl_joystick =
-            std::unique_ptr<SDL_Joystick, decltype(&SDL_JoystickClose)>(joystick, deleter);
+        std::unique_ptr<SDL_Joystick, decltype(&SDL_JoystickClose)> replacement(joystick, deleter);
+        { std::lock_guard lock{mutex}; sdl_joystick.swap(replacement); }
+        // Close the old SDL handle outside our cache lock.
     }
 
 private:

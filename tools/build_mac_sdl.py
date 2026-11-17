@@ -2,6 +2,7 @@
 """Build the separate native macOS SDL developer host; leave probe defaults alone."""
 import argparse
 import hashlib
+import time
 import json
 import os
 from pathlib import Path
@@ -53,7 +54,7 @@ def audit(build):
         raise RuntimeError('Excluded JIT facilities found: ' + repr(forbidden_objects + forbidden_symbols))
     # SDL2/SDL3 and libpng are expected dynamic developer dependencies. This is
     # deliberately separate from the system-libraries-only iOS product audit.
-    report = dict(binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), platform='mac-sdl', jit_enabled=cpu_jit, shader_jit_enabled=False, default_cpu='fastinterp', forbidden_objects=forbidden_objects,
+    report = dict(source_revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(), binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), platform='mac-sdl', jit_enabled=cpu_jit, shader_jit_enabled=False, default_cpu='fastinterp', forbidden_objects=forbidden_objects,
                   forbidden_symbols=forbidden_symbols,
                   non_executable_journal_maps=journal_maps,
                   linkage=subprocess.check_output(['otool', '-L', str(binary)], text=True))
@@ -125,10 +126,18 @@ def main():
     if int(re.search(r'version (\d+)', version).group(1)) >= 4:
         command.append('-DCMAKE_POLICY_VERSION_MINIMUM=3.5')
     (build / 'configure-command.json').write_text(json.dumps(command, indent=2) + '\n')
+    progress=build/'native-build-in-progress.json'
+    if progress.exists():
+        shutil.copy2(progress, build/('native-incomplete-'+str(time.time_ns())+'.json'))
+    revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
+    progress.write_text(json.dumps(dict(source_revision=revision,command=command),indent=2)+'\n')
     subprocess.run(command, check=True, env=env)
     subprocess.run([args.cmake, '--build', str(build), '--target', 'cara', '-j' + str(args.jobs)],
                    check=True, env=env)
+    if subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()!=revision:
+        raise RuntimeError('Source revision changed during the build')
     audit(build)
+    progress.unlink()
     print(build / 'bin/cara')
 
 

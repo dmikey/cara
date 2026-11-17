@@ -15,6 +15,7 @@ TOOLS = Path(__file__).resolve().parents[1] / 'tools'
 sys.path.insert(0, str(TOOLS))
 import package_ipa
 import mac_bundle
+import package_mac_app
 
 
 class IPATests(unittest.TestCase):
@@ -51,6 +52,10 @@ class IPATests(unittest.TestCase):
         (self.app / 'cara-ios').write_bytes(b'changed fixture executable')
         with self.assertRaises(ValueError):
             self.package()
+
+    def test_stale_ipa_source_rejected(self):
+        with self.assertRaisesRegex(ValueError,'another source'):
+            package_ipa.package(self.app,self.audit,self.out,expected_revision='new-source')
 
     def test_profile_not_published(self):
         (self.app / 'embedded.mobileprovision').write_bytes(b'fixture profile')
@@ -109,6 +114,16 @@ class BundleTests(unittest.TestCase):
         with patch.object(mac_bundle, 'dependencies', side_effect=lambda p: [str(self.library)]), patch.object(mac_bundle, 'rpaths', return_value=[]):
             with self.assertRaisesRegex(RuntimeError, 'sdl2-compat requires'):
                 mac_bundle.bundle(self.core, self.frameworks)
+
+    def test_stale_build_source_rejected(self):
+        report=dict(source_revision='old-source',binary_sha256=hashlib.sha256(self.core.read_bytes()).hexdigest())
+        with self.assertRaisesRegex(ValueError,'another source'):
+            package_mac_app.validate_build_identity(report,self.core,'new-source')
+
+    def test_changed_build_binary_rejected(self):
+        report=dict(source_revision='source',binary_sha256='wrong')
+        with self.assertRaisesRegex(ValueError,'differs'):
+            package_mac_app.validate_build_identity(report,self.core,'source')
 
     def test_missing_dependency_fails(self):
         with self.assertRaisesRegex(RuntimeError, 'Unresolved'):
