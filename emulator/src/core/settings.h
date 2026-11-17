@@ -252,6 +252,8 @@ struct Values {
 // value to fit the region lockout info of the game
 static constexpr int REGION_VALUE_AUTO_SELECT = -1;
 
+// Queue only input-device replacement; leave CPU, renderer, audio and clocks untouched.
+void ApplyInputProfile(const InputProfile& profile);
 void Apply();
 void LogSettings();
 

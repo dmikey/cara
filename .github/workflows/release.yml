@@ -1,0 +1,138 @@
+name: Release packages
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'emulator/**'
+      - 'tools/build.py'
+      - 'tools/build_mac_sdl.py'
+      - 'tools/audit_no_jit.py'
+      - 'tools/package_*.py'
+      - 'tools/mac_bundle.py'
+      - 'tools/mac_app_launcher.mm'
+      - 'tools/mac_runtime.json'
+      - 'tools/audit_release_mac.py'
+      - 'tests/test_release_packages.py'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing release tag to build and attach to; leave empty for build artifacts only'
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-packages-${{ github.event.release.tag_name || inputs.release_tag || github.ref }}
+  cancel-in-progress: false
+jobs:
+  source:
+    name: Pin one source commit for both binaries
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.event.release.tag_name || github.sha }}
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  mac:
+    needs: source
+    name: Self-contained macOS arm64 / optional CPU JIT included
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - name: Install build-only dependencies
+        run: |
+          brew install sdl2 libpng sdl3
+          python3 -m venv work/tools
+          work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+      - name: Packaging policy checks
+        run: python3 -m unittest discover -s tests -p test_release_packages.py
+      - name: Build Mac app with experimental CPU JIT, shader JIT off
+        run: |
+          python3 tools/build_mac_sdl.py --atlas --cpu-jit --build-dir work/build-mac-release --jobs 2
+          cmake --build work/build-mac-release --target cara-mac-preferences-self-test -j2
+          work/build-mac-release/bin/cara-mac-preferences-self-test
+      - name: Package native launcher and private dependency closure
+        run: |
+          python3 tools/package_mac_app.py --build-dir work/build-mac-release --output work/Cara.app --sdl3-library "$(brew --prefix sdl3)/lib/libSDL3.dylib"
+          python3 tools/audit_release_mac.py work/Cara.app --report work/mac-release-audit.json
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent work/Cara.app dist/Cara-macOS-arm64-JIT.zip
+          cp work/mac-release-audit.json dist/
+          cp work/Cara.app/Contents/Resources/build.json dist/mac-build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cara-macOS-arm64-JIT
+          path: dist/*
+          if-no-files-found: error
+  ios:
+    needs: source
+    name: iOS arm64 GLES3 / unsigned IPA / no JIT
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - name: Install pinned build tools
+        run: |
+          python3 -m venv work/tools
+          work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+      - name: Build and audit the physical-device app without signing
+        run: |
+          python3 tools/prepare.py
+          python3 tools/build.py ios --renderer gles3 --jobs 2
+          python3 tools/audit_no_jit.py ios --renderer gles3
+      - name: Package sideloading IPA
+        run: |
+          python3 tools/package_ipa.py --app work/build-ios-gles3/bin/cara-ios.app --audit work/build-ios-gles3/no-jit-audit.json --output dist/Cara-iOS-arm64-GLES3-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cara-iOS-arm64-GLES3-unsigned
+          path: dist/*
+          if-no-files-found: error
+  publish:
+    name: Attach audited binaries to the existing release
+    needs: [source, mac, ios]
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Cara-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums and release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: |
+          test -f dist/Cara-macOS-arm64-JIT.zip
+          test -f dist/Cara-iOS-arm64-GLES3-unsigned.ipa
+          python3 - <<'PYCODE'
+          import json, os
+          for path in ('dist/mac-build.json', 'dist/Cara-iOS-arm64-GLES3-unsigned.ipa.json'):
+              assert json.load(open(path))['source_revision'] == os.environ['EXPECTED_SHA'], 'Source mismatch: ' + path
+          PYCODE
+          (cd dist && sha256sum -- * > ../SHA256SUMS.txt)
+          case "$RELEASE_TAG" in ""|-*) echo "Invalid release tag" >&2; exit 1;; esac
+          git check-ref-format "refs/tags/$RELEASE_TAG"
+          gh release view "$RELEASE_TAG" >/dev/null
+          gh release upload "$RELEASE_TAG" dist/* SHA256SUMS.txt --clobber

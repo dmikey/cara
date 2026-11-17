@@ -19,6 +19,28 @@ namespace Settings {
 
 Values values{};
 
+static void ReloadInputDevices(Core::System& system) {
+    auto hid = Service::HID::GetModule(system);
+    if (hid) {
+        hid->ReloadInputDevices();
+    }
+
+    auto sm = system.ServiceManager();
+    auto ir_user = sm.GetService<Service::IR::IR_USER>("ir:USER");
+    if (ir_user)
+        ir_user->ReloadInputDevices();
+    auto ir_rst = sm.GetService<Service::IR::IR_RST>("ir:rst");
+    if (ir_rst)
+        ir_rst->ReloadInputDevices();
+
+}
+
+void ApplyInputProfile(const InputProfile& profile) {
+    values.current_input_profile = profile;
+    auto& system = Core::System::GetInstance();
+    if (system.IsPoweredOn()) ReloadInputDevices(system);
+}
+
 void Apply() {
 #if !defined(CARA_ENABLE_JIT) && !defined(CARA_MAC_CPU_JIT)
     values.use_cpu_jit = false;
@@ -33,18 +55,7 @@ void Apply() {
         system.DSP().SetSink(values.sink_id, values.audio_device_id);
         system.DSP().EnableStretching(values.enable_audio_stretching);
 
-        auto hid = Service::HID::GetModule(system);
-        if (hid) {
-            hid->ReloadInputDevices();
-        }
-
-        auto sm = system.ServiceManager();
-        auto ir_user = sm.GetService<Service::IR::IR_USER>("ir:USER");
-        if (ir_user)
-            ir_user->ReloadInputDevices();
-        auto ir_rst = sm.GetService<Service::IR::IR_RST>("ir:rst");
-        if (ir_rst)
-            ir_rst->ReloadInputDevices();
+        ReloadInputDevices(system);
 
         auto cam = Service::CAM::GetModule(system);
         if (cam) {

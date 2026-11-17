@@ -76,7 +76,7 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
  if(waiting<0)return;const auto row=waiting;
  if(row<(NSInteger)model->buttons.size())model->buttons[row].value=value;
  else{const auto n=row-model->buttons.size();auto& a=model->analogs[n/5];if(n%5==4){a.controller=value;a.use_controller=true;}else{a.directions[n%5]=value;a.use_controller=false;}}
- [self stopBinding];[table reloadData];status.stringValue=@"Binding updated. Save to use it for the next game.";
+ [self stopBinding];[table reloadData];status.stringValue=@"Binding updated. Save applies controls to your current game.";
 }
 -(void)tick:(id)sender{
  (void)sender;SDL_PumpEvents();if(waiting<0)return;
@@ -90,7 +90,7 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
   std::filesystem::create_directories(path.parent_path());NSError* error=nil;
   NSData* data=[NSData dataWithBytes:text.data() length:text.size()];
   if(![data writeToFile:Text(path.string()) options:NSDataWritingAtomic error:&error])throw std::runtime_error(String(error.localizedDescription));
-  model->original=text;[NSApp stopModalWithCode:NSModalResponseOK];
+  model->original=text;Settings::ApplyInputProfile(model->Controls(Settings::values.current_input_profile));[NSApp stopModalWithCode:NSModalResponseOK];
  }catch(const std::exception& e){Alert(@"Could not save settings",Text(e.what()));}
 }
 -(void)cancel:(id)sender{(void)sender;[self stopBinding];[NSApp abortModal];}
@@ -116,7 +116,7 @@ CaraPreferencesActions* BuildPreferences(){
  for(auto col:{std::pair{@"action",@"Action"},std::pair{@"binding",@"Binding"}}){auto* c=[[[NSTableColumn alloc]initWithIdentifier:col.first]autorelease];c.title=col.second;c.width=[col.first isEqualToString:@"action"]?250:390;[a->table addTableColumn:c];}
  scroll.documentView=a->table;[root addSubview:scroll];
  a->bind=Button(@"Change binding…",NSMakeRect(24,105,164,32),a,@selector(change:));a->bind.enabled=NO;[root addSubview:a->bind];[root addSubview:Button(@"Restore default controls",NSMakeRect(198,105,190,32),a,@selector(reset:))];
- a->status=Label(@"CPU and control changes apply when you next open a game.",NSMakeRect(24,65,672,30));[root addSubview:a->status];
+ a->status=Label(@"Controls apply on Save. CPU engine changes apply to the next game.",NSMakeRect(24,65,672,30));[root addSubview:a->status];
  [root addSubview:Button(@"Cancel",NSMakeRect(496,20,90,32),a,@selector(cancel:))];auto* save=Button(@"Save",NSMakeRect(596,20,100,32),a,@selector(save:));save.keyEquivalent=@"\r";[root addSubview:save];[window center];return a;
 }
 void CleanupPreferences(CaraPreferencesActions* a){[a stopBinding];if(a->key_monitor)[NSEvent removeMonitor:a->key_monitor];[a->timer invalidate];if(auto* k=InputCommon::GetKeyboard())k->ReleaseAllKeys();SDL_FlushEvents(SDL_KEYDOWN,SDL_KEYUP);[settings_window close];[settings_window release];settings_window=nil;[a release];}
@@ -189,9 +189,12 @@ int SelfTest(const std::string& out){
   const auto button=a->model->buttons[1].value,analog=a->model->analogs[0].controller;
   SDL_JoystickClose(joystick);SDL_JoystickDetachVirtual(index);SDL_PumpEvents();
   snapshot(settings_window,"settings.png");
+  const bool cpu_before=Settings::values.use_cpu_jit;
   auto* save_timer=[NSTimer timerWithTimeInterval:.05 repeats:NO block:^(NSTimer*){[a save:nil];}];
   [[NSRunLoop mainRunLoop]addTimer:save_timer forMode:NSModalPanelRunLoopMode];
   require([NSApp runModalForWindow:settings_window]==NSModalResponseOK,"actual Save action failed");
+  require(Settings::values.current_input_profile.buttons[Settings::NativeButton::B]==button,"Save did not update live input profile");
+  require(Settings::values.use_cpu_jit==cpu_before,"Control Save changed running CPU choice");
   Model saved(Read(ConfigPath()));require(saved.buttons[0].value==MacPreferences::Keyboard(SDL_SCANCODE_Q)
       &&saved.buttons[1].value==button&&saved.analogs[0].controller==analog,"binding persistence failed");
   require(saved.backend==(MacPreferences::JitAvailable()?"jit":"fastinterp"),"backend persistence failed");
@@ -205,7 +208,7 @@ int SelfTest(const std::string& out){
       snapshot(welcome_window,"welcome.png");[NSApp abortModal];}];
   [[NSRunLoop mainRunLoop]addTimer:welcome_timer forMode:NSModalPanelRunLoopMode];
   require(Welcome().empty(),"Welcome automatically selected a game");
-  std::ofstream(out+"/ui-result.json")<<"{\"settings_window\":true,\"keyboard_capture\":true,\"virtual_controller_button\":true,\"virtual_controller_stick\":true,\"save_roundtrip\":true,\"cancel_unchanged\":true,\"welcome_empty\":true,\"jit_available\":"<<(MacPreferences::JitAvailable()?"true":"false")<<",\"game_loaded\":false}\n";
+  std::ofstream(out+"/ui-result.json")<<"{\"settings_window\":true,\"keyboard_capture\":true,\"virtual_controller_button\":true,\"virtual_controller_stick\":true,\"live_profile_updated\":true,\"cpu_choice_unchanged\":true,\"save_roundtrip\":true,\"cancel_unchanged\":true,\"welcome_empty\":true,\"jit_available\":"<<(MacPreferences::JitAvailable()?"true":"false")<<",\"game_loaded\":false}\n";
   return 0;
  }catch(const std::exception& e){std::ofstream(out+"/ui-error.txt")<<e.what();return 1;}}
 }

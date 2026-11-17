@@ -8,6 +8,7 @@
 #include <vector>
 #include <SDL_scancode.h>
 #include "common/param_package.h"
+#include "core/settings.h"
 namespace Cara::MacPreferences {
 inline std::string Trim(std::string s) { const auto a=s.find_first_not_of(" \t\r");if(a==s.npos)return {};return s.substr(a,s.find_last_not_of(" \t\r")-a+1); }
 class Ini {
@@ -61,13 +62,13 @@ struct Model {
   const std::array<Button,15> defaults{{
    {"button_a","A","",SDL_SCANCODE_A},{"button_b","B","",SDL_SCANCODE_S},
    {"button_x","X","",SDL_SCANCODE_Z},{"button_y","Y","",SDL_SCANCODE_X},
-   {"button_up","D-pad Up","",SDL_SCANCODE_T},{"button_down","D-pad Down","",SDL_SCANCODE_G},
-   {"button_left","D-pad Left","",SDL_SCANCODE_F},{"button_right","D-pad Right","",SDL_SCANCODE_H},
+   {"button_up","D-pad Up","",SDL_SCANCODE_UP},{"button_down","D-pad Down","",SDL_SCANCODE_DOWN},
+   {"button_left","D-pad Left","",SDL_SCANCODE_LEFT},{"button_right","D-pad Right","",SDL_SCANCODE_RIGHT},
    {"button_l","L","",SDL_SCANCODE_Q},{"button_r","R","",SDL_SCANCODE_W},
    {"button_start","Start","",SDL_SCANCODE_M},{"button_select","Select","",SDL_SCANCODE_N},
    {"button_zl","ZL","",SDL_SCANCODE_1},{"button_zr","ZR","",SDL_SCANCODE_2},
    {"button_home","Home","",SDL_SCANCODE_B}}};
-  for(auto b:defaults){b.value=ini.Get("Controls",b.key,Keyboard(b.default_key));buttons.push_back(std::move(b));}
+  for(auto b:defaults){b.value=ini.Get("Controls",b.key,Keyboard(b.default_key));if(b.value.empty())b.value=Keyboard(b.default_key);buttons.push_back(std::move(b));}
   constexpr int keys[2][4]={{SDL_SCANCODE_UP,SDL_SCANCODE_DOWN,SDL_SCANCODE_LEFT,SDL_SCANCODE_RIGHT},{SDL_SCANCODE_I,SDL_SCANCODE_K,SDL_SCANCODE_J,SDL_SCANCODE_L}};
   for(unsigned i=0;i<2;++i){auto& a=analogs[i];a.key=i?"c_stick":"circle_pad";a.label=i?"C-stick":"Circle Pad";
    for(unsigned d=0;d<4;++d)a.directions[d]=Keyboard(keys[i][d]);
@@ -75,6 +76,15 @@ struct Model {
    a.use_controller=p.Get("engine","")=="sdl";a.controller=a.use_controller?p.Serialize():"";
    if(p.Get("engine","")=="analog_from_button"){a.keyboard_package=p.Serialize();const char* names[]={"up","down","left","right"};for(unsigned d=0;d<4;++d)a.directions[d]=p.Get(names[d],a.directions[d]);}
   }
+ }
+ Settings::InputProfile Controls(const Settings::InputProfile& current)const {
+  auto profile=current;
+  for(const auto& b:buttons)for(std::size_t i=0;i<Settings::NativeButton::mapping.size();++i)
+   if(b.key==Settings::NativeButton::mapping[i])profile.buttons[i]=b.value;
+  Ini saved(Serialize(true));
+  for(unsigned i=0;i<Settings::NativeAnalog::NumAnalogs;++i)
+   profile.analogs[i]=saved.Get("Controls",Settings::NativeAnalog::mapping[i],profile.analogs[i]);
+  return profile;
  }
  std::string Serialize(bool jit)const{ValidateBackend(backend,jit);Ini ini(original);ini.Set("Core","cpu_backend",backend);
   for(const auto& b:buttons)ini.Set("Controls",b.key,b.value);
