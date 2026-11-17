@@ -62,3 +62,13 @@ checked GPU remapping, shader source cache, conservative diagnostic suffix shari
 source/host-span capture and attribution, developer game menu and CPU-only tests.
 Derived emulator changes retain the existing Citra/MMJ GPL notices. Experimental
 paths remain explicit opt-ins; these changes do not authorize omitted GPU work.
+
+Optional ordered shader extra-word stream dispatch: batching concept referenced
+from Azahar PR #2318, commit c688076ac96491bd0d390fc8e6d8325fd3fb420f,
+authored by PabloMK7 and Wunkolo. Cara retains per-word operations and does not
+import deferred renderer dirtiness or unchanged-word suppression.
+https://github.com/azahar-emu/azahar/pull/2318
+
+The optional Old3DS syscore diagnostic policy is original Cara code; its interface
+references are listed in old3ds_syscore_policy.h. It is not a port of external code
+and remains OFF by default with hardware edge behavior unverified.

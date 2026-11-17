@@ -12,6 +12,8 @@ ALLOWED = {
     'emulator/src/core/hle/service/gsp/interrupt_relay_policy.h': ['Queue semantics adapted from Azahar PR'],
     'emulator/src/core/memory.cpp': ['adapted from Azahar commit'],
     'emulator/src/core/memory.h': ['Adapted from Azahar PR'],
+    'emulator/src/core/hle/kernel/old3ds_syscore_policy.h': ['Original small policy, not a port of Azahar/Luma code. Interface references:'],
+    'emulator/src/video_core/command_processor.cpp': ['Azahar PR2318, c688076ac96491bd0d390fc8e6d8325fd3fb420f,'],
     'emulator/src/core/cheats/gateway_cheat.cpp': ['"*citra_enabled"'],
     'emulator/src/common/file_util.cpp': ['"citra-emu"'],
     'emulator/src/web_service/verify_user_jwt.cpp': ['issuer("citra-core")'],
