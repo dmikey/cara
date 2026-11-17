@@ -133,6 +133,8 @@ endif()
 
 # This layout witness requires no renderer or window context.
 if ((CARA_SOFTWARE_PRESENTATION OR CARA_MAC_SDL_DEV_HOST) AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-ios-pipeline-cache-self-test ../../tests/ios_pipeline_cache_test.cpp)
+    target_compile_options(cara-ios-pipeline-cache-self-test PRIVATE -UNDEBUG)
     add_executable(cara-fastinterp-decoded-record-self-test ../../tests/fastinterp_decoded_record_test.cpp)
     target_include_directories(cara-fastinterp-decoded-record-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(cara-save-archive-relocation-self-test save_archive_relocation_self_test.cpp)
@@ -146,6 +148,8 @@ if ((CARA_SOFTWARE_PRESENTATION OR CARA_MAC_SDL_DEV_HOST) AND NOT CMAKE_SYSTEM_N
     endif()
     add_executable(cara-vertex-index-range-self-test ../../tests/vertex_index_range_test.cpp)
     target_include_directories(cara-vertex-index-range-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(cara-fastinterp-self-test fastinterp_self_test.cpp)
+    target_link_libraries(cara-fastinterp-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
 endif()
 
 if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -157,8 +161,6 @@ if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(cara-render-bookkeeping-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(cara-surface-remap-layout-self-test ../../tests/surface_remap_layout_test.cpp)
     target_compile_options(cara-surface-remap-layout-self-test PRIVATE -UNDEBUG)
-    add_executable(cara-ios-pipeline-cache-self-test ../../tests/ios_pipeline_cache_test.cpp)
-    target_compile_options(cara-ios-pipeline-cache-self-test PRIVATE -UNDEBUG)
     add_executable(cara-vertex-upload-bank-self-test vertex_upload_bank_self_test.cpp)
     target_include_directories(cara-vertex-upload-bank-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(cara-frame-pacer-self-test frame_pacer_self_test.cpp)
@@ -197,8 +199,6 @@ if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries(cara-extdata-state-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-save-state-self-test save_state_self_test.cpp)
     target_link_libraries(cara-save-state-self-test PRIVATE core common nihstro-headers cryptopp libzstd_static ${PLATFORM_LIBRARIES} Threads::Threads)
-    add_executable(cara-fastinterp-self-test fastinterp_self_test.cpp)
-    target_link_libraries(cara-fastinterp-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-core-cache-self-test core_cache_self_test.cpp)
     target_link_libraries(cara-core-cache-self-test PRIVATE core common ${PLATFORM_LIBRARIES} Threads::Threads)
     add_executable(cara-fastinterp-capacity-self-test ../../tests/fastinterp_capacity_test.cpp)
@@ -233,9 +233,39 @@ if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CARA_SOFTWARE_PRESENTATION)
+    if (CARA_MAC_ATLAS_PIPELINE)
+        add_executable(cara-mac-atlas-self-test EXCLUDE_FROM_ALL mac_atlas_self_test.cpp mac_atlas_clip_self_test.cpp
+            cara/native_mac/config.cpp ios/gpu_state_self_test.cpp ios/gpu_vertex_self_test.cpp)
+        target_compile_options(cara-mac-atlas-self-test PRIVATE -UNDEBUG)
+        target_link_libraries(cara-mac-atlas-self-test PRIVATE core common input_common inih glad nihstro-headers SDL2
+            ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
+    endif()
     # Explicit GPU correctness test: unavailable contexts must fail, not skip.
     add_executable(cara-mac-depth-self-test EXCLUDE_FROM_ALL mac_depth_self_test.cpp)
     target_link_libraries(cara-mac-depth-self-test PRIVATE core common glad
+        ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
+    add_executable(cara-host-include-scissor-self-test EXCLUDE_FROM_ALL
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/host_include_scissor_test.cpp")
+    target_include_directories(cara-host-include-scissor-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(cara-host-include-scissor-self-test PRIVATE glad)
+    target_compile_options(cara-host-include-scissor-self-test PRIVATE -UNDEBUG)
+
+    add_executable(cara-scissor-damage-self-test EXCLUDE_FROM_ALL
+        ../../tests/scissor_damage_test.cpp)
+    target_include_directories(cara-scissor-damage-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(cara-scissor-damage-self-test PRIVATE -UNDEBUG)
+    add_executable(cara-scissor-damage-interval-self-test EXCLUDE_FROM_ALL
+        ../../tests/scissor_damage_interval_test.cpp
+        video_core/renderer_opengl/gl_surface_params.cpp)
+    target_compile_options(cara-scissor-damage-interval-self-test PRIVATE -UNDEBUG)
+    target_link_libraries(cara-scissor-damage-interval-self-test PRIVATE core common glad nihstro-headers
+        ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
+    # Avoid loading unused SDL compatibility libraries in this metadata-only tool.
+    target_link_options(cara-scissor-damage-interval-self-test PRIVATE -Wl,-dead_strip -Wl,-dead_strip_dylibs)
+    add_executable(cara-mac-scissor-damage-self-test EXCLUDE_FROM_ALL mac_scissor_damage_self_test.cpp)
+    # Test-only access to the real cache for the ROM-free ownership oracle.
+    target_compile_options(cara-mac-scissor-damage-self-test PRIVATE -fno-access-control)
+    target_link_libraries(cara-mac-scissor-damage-self-test PRIVATE core common glad nihstro-headers
         ${PLATFORM_LIBRARIES} Threads::Threads "-framework OpenGL")
     add_executable(cara-mac-blit-state-self-test EXCLUDE_FROM_ALL mac_blit_state_self_test.cpp)
     target_link_libraries(cara-mac-blit-state-self-test PRIVATE core common glad nihstro-headers
@@ -365,4 +395,26 @@ if (APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(cara-skin-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_definitions(cara-skin-self-test PRIVATE CARA_BUILTIN_SKIN="${CMAKE_CURRENT_SOURCE_DIR}/ios/skins/CarbonDuo.deltaskin")
     target_link_libraries(cara-skin-self-test PRIVATE "-framework Foundation" "-framework CoreGraphics" z)
+endif()
+
+# Pure generated-source rewrite checks: no driver, ROM or guest execution.
+add_executable(cara-shader-suffix-sharing-self-test
+    "${PROJECT_SOURCE_DIR}/../tests/shader_suffix_sharing_test.cpp")
+target_include_directories(cara-shader-suffix-sharing-self-test PRIVATE
+    "${PROJECT_SOURCE_DIR}/src/video_core/renderer_opengl")
+target_compile_options(cara-shader-suffix-sharing-self-test PRIVATE
+    "$<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-UNDEBUG>")
+
+if (UNIX AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-gl-host-latency-reader EXCLUDE_FROM_ALL
+        "${PROJECT_SOURCE_DIR}/../tools/read_gl_host_latency.cpp")
+    target_include_directories(cara-gl-host-latency-reader PRIVATE "${PROJECT_SOURCE_DIR}/src")
+endif()
+
+if (UNIX AND NOT CARA_MAC_ATLAS_PIPELINE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-gl-observer-stub-self-test EXCLUDE_FROM_ALL
+        "${PROJECT_SOURCE_DIR}/../tests/gl_observer_stub_test.cpp"
+        video_core/renderer_opengl/gl_observer_stubs.cpp)
+    target_include_directories(cara-gl-observer-stub-self-test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_compile_options(cara-gl-observer-stub-self-test PRIVATE -UNDEBUG)
 endif()

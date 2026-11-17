@@ -62,7 +62,13 @@ static bool RunFeedbackCaptureFixture(std::string& error) {
         if (data) {
             for (GLsizei v=0;v<vertices;++v) {
                 if (data[v*4]!=float(first+v) || data[v*4+1]!=2 || data[v*4+2]!=3 || data[v*4+3]!=4) {
-                    passed=false; error="feedback capture mismatch vertex="+std::to_string(first+v)+" actual="+std::to_string(data[v*4]); break;
+                    passed=false;
+                    error="feedback capture mismatch vertex="+std::to_string(first+v)+
+                        " expected=("+std::to_string(first+v)+",2,3,4) actual=("+
+                        std::to_string(data[v*4])+","+std::to_string(data[v*4+1])+","+
+                        std::to_string(data[v*4+2])+","+std::to_string(data[v*4+3])+") query="+
+                        std::to_string(primitives)+" expected_query="+std::to_string(vertices/3)+
+                        " draw_error="+std::to_string(draw_error); break;
                 }
             }
             if (!glUnmapBuffer(GL_TRANSFORM_FEEDBACK_BUFFER)) { passed=false; error="feedback capture corrupted"; }
@@ -877,7 +883,11 @@ static bool RunRetainedInputBindingFixture(std::string& error) {
     using namespace OpenGL;
     // This oracle runs before renderer initialization sets the GLES globals.
     const bool previous_gles = GLES;
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    if (previous_gles) { error="Mac atlas input oracle requires native GL API mode"; return false; }
+#else
     GLES = true;
+#endif
     auto previous = OpenGLState::GetCurState();
     // Before renderer initialization, the window's actual framebuffer can
     // differ from the renderer's cached defaults. Preserve the real bindings.

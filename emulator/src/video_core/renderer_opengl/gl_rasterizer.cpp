@@ -1,3 +1,8 @@
+#include "cara/quad_uv_plan.h"
+#include "cara/guest_gpu_trace.h"
+#include "cara/quad_input_capture_trace.h"
+#include "video_core/renderer_opengl/gl_effect_family_ablation.h"
+#include "cara/texture_copy_trace.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
@@ -12,6 +17,8 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <stdexcept>
+#include <limits>
 #include <tuple>
 #include <utility>
 #include <glad/glad.h>
@@ -29,6 +36,7 @@
 #include "common/vector_math.h"
 #include "core/hw/gpu.h"
 #include "core/settings.h"
+#include "core/memory.h"
 #include "video_core/pica_state.h"
 #include "video_core/debug_utils/debug_utils.h"
 #include "video_core/primitive_assembly.h"
@@ -38,10 +46,13 @@
 #include "video_core/regs_texturing.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
+#include "video_core/renderer_opengl/gl_scissor_damage.h"
+#include "video_core/renderer_opengl/gl_host_scissor.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_vertex_upload_ranges.h"
-#include "video_core/renderer_opengl/gl_vertex_index_range.h"
+#include "video_core/renderer_opengl/gl_packed_vertex_padding.h"
 #include "video_core/renderer_opengl/gl_vertex_upload_order_reuse.h"
+#include "video_core/renderer_opengl/gl_packed_snapshot_compare.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -50,6 +61,28 @@
 #include "video_core/video_core.h"
 
 namespace OpenGL {
+// Diagnostics suppress final raster submission only. CPU VS/GS, primitive
+// assembly, uploads, state validation, batch clear and dirty bookkeeping run.
+// PICA command_processor invokes DrawTriangles synchronously before the draw
+// trigger returns; entries/textures here still belong to that live trigger.
+static bool SuppressEffectFamilyHostDraw(std::uint64_t vertices) {
+    namespace E=EffectFamilyAblation;
+    if (!E::ParticleEnabled() && !E::CompositeEnabled() && !E::RayEnabled()) return false;
+    const auto& r=Pica::g_state.regs;
+    const auto& t=r.texturing;
+    const auto& f=r.framebuffer.framebuffer;
+    const E::Snapshot s{static_cast<u32>(r.pipeline.use_gs.Value()),
+        static_cast<u32>(r.pipeline.triangle_topology.Value()),r.pipeline.num_vertices,
+        r.vs.main_offset,r.gs.main_offset,r.reg_array[PICA_REG_INDEX(texturing.main_config)],
+        t.texture0.GetPhysicalAddress(),t.texture1.GetPhysicalAddress(),t.texture2.GetPhysicalAddress(),
+        static_cast<u32>(t.texture0_format.Value()),static_cast<u32>(t.texture1_format.Value()),
+        static_cast<u32>(t.texture2_format.Value()),f.GetColorBufferPhysicalAddress(),f.GetWidth(),f.GetHeight(),
+        r.reg_array[PICA_REG_INDEX(framebuffer.output_merger.depth_test_enable)],
+        r.reg_array[PICA_REG_INDEX(framebuffer.output_merger.fragment_operation_mode)],
+        r.reg_array[PICA_REG_INDEX(framebuffer.output_merger.alpha_blending)]};
+    return E::Suppress(s,vertices);
+}
+
 
 using PixelFormat = SurfaceParams::PixelFormat;
 using SurfaceType = SurfaceParams::SurfaceType;
@@ -186,7 +219,9 @@ RasterizerOpenGL::RasterizerOpenGL()
       texture_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 11264 : TEXTURE_BUFFER_SIZE),
       texture_lf_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE) {
 
+    SetPicaWriteHooksActive(SoftwareBatching::Active());
     DrawCostProfile::Reset();
+    IndexPayloadReuse::ResetStats();
     OpenGLState::InvalidateRasterState();
 
 #ifdef CARA_IOS_GLES
@@ -351,6 +386,17 @@ RasterizerOpenGL::RasterizerOpenGL()
 RasterizerOpenGL::~RasterizerOpenGL() = default;
 
 void RasterizerOpenGL::SyncEntireState() {
+    FlushSoftwareBatch(SoftwareBatching::Reason::ExplicitVisibility);
+#ifdef CARA_IOS_GLES
+    ios_packed_snapshot_lease.reset();
+    if (IndexPayloadReuse::Enabled()) {
+        ios_vertex_index_cache.ResetIdentities();
+        for (auto& bank : ios_vertex_frame_uploads)
+            for (auto& pool : bank.sizes)
+                for (auto& entry : pool) entry.index_shadow.InvalidateIdentity();
+        IndexPayloadReuse::RecordReset();
+    }
+#endif
     // Sync fixed function OpenGL state
     SyncClipEnabled();
     SyncCullMode();
@@ -432,6 +478,26 @@ static bool AreQuaternionsOpposite(Common::Vec4<Pica::float24> qa, Common::Vec4<
 void RasterizerOpenGL::AddTriangle(const Pica::Shader::OutputVertex& v0,
                                    const Pica::Shader::OutputVertex& v1,
                                    const Pica::Shader::OutputVertex& v2) {
+    if (SoftwareBatching::Active()) {
+        SoftwareBatching::Add(software_vertices_since_request,3);
+        // The first triangle proves the SW path, but later vertices/indices in
+        // this same request may still be unread. Check their full envelope now
+        // before a later size-cap flush could publish this request early.
+        if (SoftwareBatching::LazySoftwareAdmission(SoftwareBatching::Enabled(),
+                SoftwareBatching::CensusEnabled(),vertex_batch.empty(),
+                software_has_deferred,software_framebuffer_visibility.pending)) {
+            using namespace SoftwareBatching;
+            const auto before_texture=stats.unsafe_texture,before_target=stats.unsafe_target_alias,
+                       before_input=stats.unsafe_vertex_index;
+            Add(stats.first_software_admission_checks);
+            software_batch_draw_safe=software_batch_planner.in_list &&
+                SoftwareBatchResourcesSafe(software_batch_input_guard_required,software_batch_input_indexed);
+            if(!software_batch_draw_safe)FlushSoftwareBatch(stats.unsafe_target_alias!=before_target?Reason::TargetAlias:stats.unsafe_texture!=before_texture?Reason::TextureAlias:stats.unsafe_vertex_index!=before_input?Reason::VertexIndexAlias:Reason::Unsupported);
+        }
+        if (SoftwareBatching::Enabled() && software_batch_planner.in_list && software_batch_draw_safe &&
+            vertex_batch.size()+3>SoftwareBatching::Capacity)
+            FlushSoftwareBatch(SoftwareBatching::Reason::SizeCap,false);
+    }
     vertex_batch.emplace_back(v0, false);
     vertex_batch.emplace_back(v1, AreQuaternionsOpposite(v0.quat, v1.quat));
     vertex_batch.emplace_back(v2, AreQuaternionsOpposite(v0.quat, v2.quat));
@@ -457,11 +523,27 @@ RasterizerOpenGL::VertexArrayInfo RasterizerOpenGL::AnalyzeVertexArray(bool is_i
         const u16* index_address_16 = reinterpret_cast<const u16*>(index_address_8);
         const bool index_u16 = index_info.format != 0;
 
-        const auto range = index_u16
-            ? AnalyzeVertexIndexRange(index_address_16, u32(regs.pipeline.num_vertices))
-            : AnalyzeVertexIndexRange(index_address_8, u32(regs.pipeline.num_vertices));
-        vertex_min = range.minimum;
-        vertex_max = range.maximum;
+        vertex_min = 0xFFFF;
+        vertex_max = 0;
+        // u32 size = regs.pipeline.num_vertices * (index_u16 ? 2 : 1);
+        // res_cache.FlushRegion(address, size, nullptr);
+        if (index_u16) {
+            for (u32 i = 0; i < regs.pipeline.num_vertices; ++i) {
+                u32 vertex = index_address_16[i];
+                if (vertex < vertex_min)
+                    vertex_min = vertex;
+                if (vertex > vertex_max)
+                    vertex_max = vertex;
+            }
+        } else {
+            for (u32 i = 0; i < regs.pipeline.num_vertices; ++i) {
+                u32 vertex = index_address_8[i];
+                if (vertex < vertex_min)
+                    vertex_min = vertex;
+                if (vertex > vertex_max)
+                    vertex_max = vertex;
+            }
+        }
     } else {
         vertex_min = regs.pipeline.vertex_offset;
         vertex_max = regs.pipeline.vertex_offset + regs.pipeline.num_vertices - 1;
@@ -580,6 +662,8 @@ bool RasterizerOpenGL::SetupGeometryShader() {
 }
 
 bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
+    if(SoftwareBatching::CensusEnabled())software_census_after_draw=true;
+    if(SoftwareBatching::Active()) {software_batch_planner.Hardware();FlushSoftwareBatch(SoftwareBatching::Reason::HardwareDraw,false);}
     const auto& regs = Pica::g_state.regs;
     const auto reject=[&](const char* reason) {
 #ifdef CARA_IOS_GLES
@@ -594,6 +678,8 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     };
     if (regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No) return reject("geometry shader");
 #ifdef CARA_IOS_GLES
+    if (PackedPoolObserver::Enabled()) packed_pool_observation = {};
+    SCOPE_EXIT({ ios_packed_snapshot_lease.reset(); if (PackedPoolObserver::Enabled()) FinishPackedPoolObservation(); });
     if (!PrepareIOSVertices(is_indexed)) return reject("vertex input preparation");
     static const bool direct_reuse=[] { const char* v=std::getenv("CARA_GPU_VERTEX_REUSE"); return v && std::strcmp(v,"1")==0; }();
     // Quaternion orientation is irrelevant only when fragment lighting is disabled.
@@ -619,12 +705,75 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
 #endif
     if (!SetupVertexShader()) return reject("vertex shader translation");
     if (!SetupGeometryShader()) return reject("geometry setup");
+#ifdef CARA_IOS_GLES
+    // Prepared input is current here: PrepareIOSVertices succeeded above and
+    // its immutable lease remains alive until the earlier SCOPE_EXIT executes.
+    Cara::QuadInputCapture::Scope quad_input_scope;
+    if(Cara::QuadInputCapture::Enabled())quad_input_scope.Bind([this,is_indexed](const auto& join){
+        namespace Q=Cara::QuadInputCapture;Q::Spec spec;
+        spec.mode=ios_indexed_vertex_inputs;spec.indexed=is_indexed;
+        spec.span=ios_vertex_input_span;spec.records=ios_vertex_input_records;
+        spec.alternate_reuse=ios_direct_vertex_reuse||ios_lit_pair_vertex_reuse||ios_feedback_vertex_reuse;
+        const auto& regs=Pica::g_state.regs;const auto& config=regs.vs;
+        spec.witness=Q::FromPlan(Cara::QuadUVPlan::Observe(join,Pica::g_state).plan);
+        if(spec.mode!=2||is_indexed||spec.span!=4||spec.records!=4||spec.alternate_reuse||!Q::Family(spec.witness))return spec;
+        spec.input_mask=ios_vertex_input_mask;spec.shader_register=config.GetRegisterForAttribute(0);
+        spec.input_map_low=config.input_attribute_to_register_map_low;spec.input_map_high=config.input_attribute_to_register_map_high;spec.max_input=config.max_input_attribute_index;
+        const IOSVertexInputLayout layout(config,ios_vertex_input_mask);
+        const auto slot=layout.offsets[spec.shader_register];
+        if(slot<0||unsigned(slot)>=layout.stride)return spec;
+        spec.selected_attribute=layout.source_attributes[slot];
+        const Pica::VertexLoader loader(regs.pipeline);const auto source=loader.GetAttributeLayout(0);
+        spec.source_defined=source.elements>0||source.is_default;spec.source_default=source.is_default;
+        spec.source_format=static_cast<u32>(source.format);spec.source_elements=source.elements;spec.source_stride=source.stride;
+        spec.layout=ios_packed_layout[spec.shader_register];
+        if(spec.selected_attribute!=0||!spec.source_defined||spec.source_default||
+           source.format!=Pica::PipelineRegs::VertexAttributeFormat::FLOAT||source.elements!=4||source.stride!=16||
+           spec.layout[0]<0||spec.layout[1]!=16||spec.layout[2]!=3||spec.layout[3]!=4)return spec;
+        spec.data=IOSVertexInputData();spec.bytes=IOSVertexInputBytes();
+        const auto& triangles=IOSTriangles();const auto& indices=IOSInputIndices();
+        spec.triangle_count=triangles.size();spec.index_count=indices.size();spec.first_vertex=regs.pipeline.vertex_offset;
+        if(triangles.size()==6&&indices.size()>=6)for(unsigned i=0;i<6;++i){spec.triangles[i]=triangles[i];spec.indices[i]=indices[i];}
+        // Same scalar conversion used by PicaUniformsData::SetFromRegs. No VS runs.
+        spec.uniform95_zw={Q::FloatBits(Pica::g_state.vs.uniforms.f[95].z.ToFloat32()),Q::FloatBits(Pica::g_state.vs.uniforms.f[95].w.ToFloat32())};
+        spec.viewport_half_raw={regs.rasterizer.viewport_size_x.Value(),regs.rasterizer.viewport_size_y.Value()};
+        spec.viewport_half_float_bits={Q::FloatBits(Pica::float24::FromRaw(spec.viewport_half_raw[0]).ToFloat32()),Q::FloatBits(Pica::float24::FromRaw(spec.viewport_half_raw[1]).ToFloat32())};
+        spec.viewport_corner={regs.rasterizer.viewport_corner.x.Value(),regs.rasterizer.viewport_corner.y.Value()};
+        spec.native_snap_env_present=std::getenv("CARA_UNSNAPPED_VERTICES")!=nullptr;spec.ios_path=true;
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        spec.atlas_path=true;
+#endif
+        return spec;
+    });
+#endif
+#ifdef CARA_IOS_GLES
+    if(NativeNearestBorrowEnabled()) CaptureNativeNearestBorrow(is_indexed);
+#endif
     const bool result=Draw(true,is_indexed);
     if (!result) reject("draw submission");
     return result;
 }
 
 #ifdef CARA_IOS_GLES
+void RasterizerOpenGL::FinishPackedPoolObservation() {
+    using namespace PackedPoolObserver;
+    auto& t=packed_pool_observation;
+    if (t.state==State::Inactive) return;
+    if (t.state==State::Pending) t.state=State::Bypassed;
+    struct Totals { std::array<u64,size_t(State::Count)> states{}; u64 draws=0,payload=0,padding=0,index=0,hits=0,merged=0; unsigned logs=0; };
+    static Totals totals;
+    ++totals.draws; ++totals.states[size_t(t.state)];
+    totals.payload+=t.payload_requested; totals.padding+=t.padding_requested; totals.index+=t.index_requested;
+    if (t.state==State::Concordant && t.match.input_equal) {++totals.hits; totals.merged+=t.merged;}
+    if (totals.logs<32 && (totals.draws & (totals.draws-1))==0) {
+        ++totals.logs;
+        LOG_INFO(Render_OpenGL,"Packed pool OBSERVATION ONLY frame={} packed_draw_ordinal={} policy_off={} cold_index={} shape={} storage={} sources={} concordant={} owner_changed={} decision_changed={} unsupported_mode={} bypassed={} payload_requested_bytes={} padding_requested_bytes={} index_requested_bytes={} concordant_input_hits={} concordant_merged_source_bytes={} materialization_unchanged=1 no_gain_assertion=1",
+            VideoCore::GetCurrentFrame(),totals.draws,totals.states[1],totals.states[2],totals.states[3],totals.states[4],totals.states[5],
+            totals.states[7],totals.states[8],totals.states[9],totals.states[10],totals.states[11],totals.payload,totals.padding,totals.index,totals.hits,totals.merged);
+    }
+    t={};
+}
+
 bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layout) {
     const auto& pipeline = Pica::g_state.regs.pipeline;
     const auto& triangles = IOSTriangles();
@@ -680,14 +829,159 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
     if (bytes>8*1024*1024 || bytes>sizeof(constants)+unique*layout.stride*sizeof(GLvec4)) return false;
     const size_t rows=(bytes+IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4)-1)/(IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4));
     if (rows>unsigned(ios_vertex_max_texture_size)) return false;
-    ios_vertex_inputs.resize(rows*IOS_VERTEX_INPUT_WIDTH);
-    auto* output=reinterpret_cast<u8*>(ios_vertex_inputs.data());
-    std::memset(output,0,ios_vertex_inputs.size()*sizeof(GLvec4));
-    std::memcpy(output,constants.data(),sizeof(constants));
+    static const bool previous_snapshot_trace = [] {
+        const char* value = std::getenv("CARA_PACKED_PREVIOUS_SNAPSHOT_TRACE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (previous_snapshot_trace) {
+        // Observation at the original snapshot boundary; NEVER skips materialization.
+        using namespace PackedSnapshotCompare;
+        struct Totals { u64 draws=0, mismatch=0, equal=0, different=0, invalid=0;
+            u64 logical=0, merged=0, padding=0, payload_requested=0, padding_requested=0, avoidable_source=0;
+            unsigned logs=0; };
+        static Totals totals;
+        const size_t logical = rows*IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4);
+        size_t merged = 0;
+        for (const auto& range : ranges) merged += range.end-range.begin;
+        ++totals.draws; totals.logical += logical; totals.merged += merged;
+        totals.padding += logical-sizeof(constants)-merged;
+        if (ios_vertex_inputs.size()*sizeof(GLvec4) != logical) ++totals.mismatch;
+        else {
+            std::array<MemoryRef,16> owners{};
+            std::array<Segment,MaxSegments> segments{};
+            segments[0] = {reinterpret_cast<const u8*>(constants.data()),sizeof(constants),0,sizeof(constants)};
+            size_t count = 1;
+            bool valid = true;
+            for (const auto& range : ranges) {
+                if (count == segments.size()) { valid=false; break; }
+                auto& memory = owners[count-1];
+                memory = VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
+                const size_t size = range.end-range.begin;
+                if (!memory || memory.GetSize()<size) { valid=false; break; }
+                segments[count++] = {memory.GetPtr(),memory.GetSize(),range.destination,size};
+            }
+            const auto result = valid ? Compare(segments.data(),count,logical,Padding::Zero,
+                reinterpret_cast<const u8*>(ios_vertex_inputs.data()),logical) : Result{};
+            totals.payload_requested += result.payload_bytes_requested;
+            totals.padding_requested += result.padding_bytes_requested;
+            if (result.decision == Decision::Equal) { ++totals.equal; totals.avoidable_source += merged; }
+            else if (result.decision == Decision::Different) ++totals.different;
+            else ++totals.invalid;
+        }
+        // At most 32 cumulative observations; no clocks, hashes or cache trust.
+        if (totals.logs<32 && (totals.draws & (totals.draws-1))==0) {
+            ++totals.logs;
+            LOG_INFO(Render_OpenGL, "Packed previous snapshot OBSERVATION ONLY frame={} packed_draw_ordinal={} size_mismatch={} equal={} different={} invalid={} logical_bytes={} merged_source_bytes={} padding_bytes={} payload_requested_bytes={} padding_requested_bytes={} equal_source_copy_bytes={} materialization_unchanged=1 no_gain_assertion=1",
+                VideoCore::GetCurrentFrame(),totals.draws,totals.mismatch,totals.equal,totals.different,totals.invalid,
+                totals.logical,totals.merged,totals.padding,totals.payload_requested,
+                totals.padding_requested,totals.avoidable_source);
+        }
+    }
+    if (PackedPoolObserver::Enabled()) {
+        using namespace PackedPoolObserver;
+        auto& t=packed_pool_observation;
+        const auto enabled=[](const char* key) {const auto* v=std::getenv(key); return v && std::strcmp(v,"1")==0;};
+        if (!enabled("CARA_VERTEX_UPLOAD_REUSE") || !enabled("CARA_VERTEX_UPLOAD_ORDER_REUSE")) t.state=State::PolicyOff;
+        else if (!ios_cached_index_data) t.state=State::ColdIndex;
+        else {
+            const auto frame=VideoCore::GetCurrentFrame();
+            const auto& bank=ios_vertex_frame_uploads[frame%ios_vertex_frame_uploads.size()];
+            const auto* v=std::getenv("CARA_VERTEX_UPLOAD_MAX_DRAWS");
+            const auto limit=v?std::clamp(std::strtol(v,nullptr,10),1L,8192L):4096L;
+            t=Virtual(frame,ios_vertex_upload_frame,ios_vertex_upload_index,0,unsigned(rows),
+                ios_cached_index_data->packed.size(),IOS_VERTEX_INPUT_WIDTH,limit,ios_vertex_max_texture_size);
+            if (t.state==State::Pending) {
+                t.ordinal=frame==ios_vertex_upload_frame?bank.used[t.size_class]:0;
+                std::array<MemoryRef,16> owners{};
+                std::array<PackedSnapshotCompare::Segment,17> spans{};
+                spans[0]={reinterpret_cast<const u8*>(constants.data()),sizeof(constants),0,sizeof(constants)};
+                size_t count=1; t.logical=rows*IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4);
+                for (const auto& range:ranges) {
+                    auto& memory=owners[count-1]; memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
+                    const size_t length=range.end-range.begin;
+                    if (!memory || memory.GetSize()<length) {t.state=State::Sources; break;}
+                    spans[count++]={memory.GetPtr(),memory.GetSize(),range.destination,length}; t.merged+=length;
+                }
+                Probe(t,bank.sizes[t.size_class],spans.data(),count,
+                    ios_cached_index_data->packed.data(),ios_cached_index_data->packed.size());
+            }
+        }
+    }
+    static const bool snapshot_lease_enabled=[] {
+        const auto* value=std::getenv("CARA_PACKED_SNAPSHOT_LEASE");
+        return value && std::strcmp(value,"1")==0;
+    }();
+    static const bool snapshot_lease_trace=[] {
+        const auto* value=std::getenv("CARA_PACKED_SNAPSHOT_LEASE_TRACE");
+        return value && std::strcmp(value,"1")==0;
+    }();
+    bool capture_failed=false;
+    if (snapshot_lease_enabled && ios_cached_index_data) {
+        // Capture CPU bytes at the original snapshot boundary. The later GPU
+        // selector still validates/selects/uploads normally using this byte view.
+        const auto frame=VideoCore::GetCurrentFrame();
+        auto& bank=ios_vertex_frame_uploads[frame%ios_vertex_frame_uploads.size()];
+        static const auto limit=[] {
+            const auto* value=std::getenv("CARA_VERTEX_UPLOAD_MAX_DRAWS");
+            return value?std::clamp(std::strtol(value,nullptr,10),1L,8192L):4096L;
+        }();
+        auto token=PackedPoolObserver::Virtual(frame,ios_vertex_upload_frame,ios_vertex_upload_index,0,
+            unsigned(rows),ios_cached_index_data->packed.size(),IOS_VERTEX_INPUT_WIDTH,limit,ios_vertex_max_texture_size);
+        if (token.state==PackedPoolObserver::State::Pending) {
+            token.ordinal=frame==ios_vertex_upload_frame?bank.used[token.size_class]:0;
+            auto& pool=bank.sizes[token.size_class];
+            if (token.ordinal<pool.size()) {
+                std::array<MemoryRef,16> owners{};
+                std::array<PackedSnapshotCompare::Segment,17> spans{};
+                spans[0]={reinterpret_cast<const u8*>(constants.data()),sizeof(constants),0,sizeof(constants)};
+                size_t count=1; token.logical=rows*IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4);
+                for (const auto& range:ranges) {
+                    auto& memory=owners[count-1]; memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
+                    const size_t length=range.end-range.begin;
+                    if (!memory || memory.GetSize()<length) {token.state=PackedPoolObserver::State::Sources; break;}
+                    spans[count++]={memory.GetPtr(),memory.GetSize(),range.destination,length};
+                }
+                PackedPoolObserver::Probe(token,pool,spans.data(),count,
+                    ios_cached_index_data->packed.data(),ios_cached_index_data->packed.size());
+                if (token.state==PackedPoolObserver::State::Pending && token.match.input_equal) {
+                    ios_packed_snapshot_lease=pool[token.match.selected].input_shadow.CaptureLease();
+                    if (snapshot_lease_trace && !ios_packed_snapshot_lease) capture_failed=true;
+                }
+            }
+        }
+    }
+    if (snapshot_lease_trace) {
+        struct Totals { u64 calls=0,materialized=0,captured=0,logical=0,skipped_source=0,failed=0; unsigned logs=0; };
+        static Totals totals;
+        ++totals.calls; totals.failed+=capture_failed;
+        if (ios_packed_snapshot_lease) {
+            ++totals.captured; totals.logical+=ios_packed_snapshot_lease->size();
+            for (const auto& range:ranges) totals.skipped_source+=range.end-range.begin;
+        } else ++totals.materialized;
+        if (totals.logs<32 && (totals.calls & (totals.calls-1))==0) {
+            ++totals.logs;
+            LOG_INFO(Render_OpenGL,"Packed snapshot lease frame={} packed_call_ordinal={} materialized={} captured={} capture_fail={} captured_logical_bytes={} skipped_merged_source_bytes={} cpu_snapshot_only=1 no_gain_assertion=1",
+                VideoCore::GetCurrentFrame(),totals.calls,totals.materialized,totals.captured,
+                totals.failed,totals.logical,totals.skipped_source);
+        }
+    }
+    static const bool padding_only_zero=PackedVertexPaddingOnlyEnabled();
+    u8* materialized=nullptr;
+    if (!ios_packed_snapshot_lease) {
+        ios_vertex_inputs.resize(rows*IOS_VERTEX_INPUT_WIDTH);
+        materialized=reinterpret_cast<u8*>(ios_vertex_inputs.data());
+        if (!padding_only_zero ||
+            !ranges.ClearPadding(materialized,ios_vertex_inputs.size()*sizeof(GLvec4),sizeof(constants)))
+            std::memset(materialized,0,ios_vertex_inputs.size()*sizeof(GLvec4));
+        std::memcpy(materialized,constants.data(),sizeof(constants));
+    }
+    const u8* output=IOSVertexInputData();
     for (const auto& range:ranges) {
-        const auto memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
-        if (!memory || memory.GetSize()<range.end-range.begin) return false;
-        std::memcpy(output+range.destination,memory.GetPtr(),range.end-range.begin);
+        if (!ios_packed_snapshot_lease) {
+            const auto memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
+            if (!memory || memory.GetSize()<range.end-range.begin) return false;
+            std::memcpy(materialized+range.destination,memory.GetPtr(),range.end-range.begin);
+        }
         for (unsigned reg=0;reg<16;++reg)
             if (loaded[reg] && addresses[reg]>=range.begin && addresses[reg]<range.end)
                 ios_packed_layout[reg][0]=GLint(range.destination+addresses[reg]-range.begin);
@@ -737,6 +1031,8 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
 }
 
 bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
+    if(NativeNearestBorrowEnabled()){++native_borrow_input_epoch;native_borrow_prepared=false;}
+    ios_packed_snapshot_lease.reset();
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexPrepare);
     constexpr u32 MAX_VERTICES = IOS_MAX_EXPANDED_VERTICES;
     const auto& regs = Pica::g_state.regs;
@@ -830,6 +1126,9 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         ios_indexed_vertex_inputs = 2;
         return true;
     }
+    // Packed verification/preparation may fail after capture; decoded fallback
+    // must use its own newly materialized input, never the abandoned lease.
+    ios_packed_snapshot_lease.reset();
     if (ios_indexed_vertex_inputs) {
         ios_vertex_source_map.BeginDraw();
         ios_vertex_inputs.clear();
@@ -907,14 +1206,19 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
 #endif
 
 void RasterizerOpenGL::CheckForConfigChanges() {
+    FlushSoftwareBatch(SoftwareBatching::Reason::ConfigOrFrame);
     u16 scale_factor = VideoCore::GetResolutionScaleFactor();
     if (res_cache.GetScaleFactor() != scale_factor) {
+        OpenGLState::BindDrawFramebuffer(framebuffer.handle);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
         framebuffer_info = {};
         res_cache.SetScaleFactor(scale_factor);
     }
 }
 
 void RasterizerOpenGL::OnFrameUpdate() {
+    FlushSoftwareBatch(SoftwareBatching::Reason::ConfigOrFrame);
     const u32 current_frame = VideoCore::GetCurrentFrame();
     if (current_frame >= last_clean_frame + CLEAN_FRAME_INTERVAL) {
         res_cache.CleanUp(last_clean_frame);
@@ -929,8 +1233,18 @@ static GLenum GetCurrentPrimitiveMode() {
 
 bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 #ifdef CARA_IOS_GLES
+    const auto* input_data=IOSVertexInputData();
+    const size_t input_bytes=IOSVertexInputBytes();
     const auto& input_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_pairs : IOSInputIndices();
     const auto& element_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_elements : IOSInputIndices();
+    // Identity is ONLY the current immutable cached packed-index payload. It is
+    // not a guest-address, input snapshot, VS output or register-generation hint.
+    const IndexPayloadReuse::Identity current_index_identity =
+        IndexPayloadReuse::Enabled() && ios_cached_index_data && ios_indexed_vertex_inputs == 2 &&
+        !ios_direct_vertex_reuse && !ios_lit_pair_vertex_reuse && !ios_feedback_vertex_reuse &&
+        input_indices.data() == ios_cached_index_data->packed.data() &&
+        input_indices.size() == ios_cached_index_data->packed.size() ?
+            ios_cached_index_data->identity : IndexPayloadReuse::Identity{};
     const size_t element_bytes = (ios_lit_pair_vertex_reuse || ios_direct_vertex_reuse) ?
         element_indices.size() * sizeof(u16) : 0;
     const GLenum index_internal = ios_lit_pair_vertex_reuse ? GL_RG16UI : GL_R16UI;
@@ -953,6 +1267,9 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     if (!state.draw.shader_program) return false;
     state.Apply();
     const bool raw_inputs = ios_indexed_vertex_inputs == 2;
+    if (PackedPoolObserver::Enabled() && packed_pool_observation.state==PackedPoolObserver::State::Pending &&
+        (!raw_inputs || ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse || ios_feedback_vertex_reuse))
+        packed_pool_observation.state=PackedPoolObserver::State::Mode;
     const GLint input_internal = raw_inputs ? GL_RGBA32UI : GL_RGBA32F;
     const GLenum input_format = raw_inputs ? GL_RGBA_INTEGER : GL_RGBA;
     const GLenum input_type = raw_inputs ? GL_UNSIGNED_INT : GL_FLOAT;
@@ -968,12 +1285,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         } else glUniform4iv(glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
     }
     glActiveTexture(GL_TEXTURE7);
-    const unsigned upload_rows = static_cast<unsigned>(ios_vertex_inputs.size() / IOS_VERTEX_INPUT_WIDTH);
+    const unsigned upload_rows = static_cast<unsigned>(input_bytes / (IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4)));
     OGLTexture* selected_texture = &ios_vertex_fallback_texture;
     OGLTexture* selected_indices = &ios_vertex_index_fallback_texture;
     IOSVertexUpload* selected_upload = nullptr;
     bool order_reuse_checked = false;
     bool order_reuse_input = false, order_reuse_index = false;
+    static const bool self_equal_enabled = [] {
+        const char* value = std::getenv("CARA_VERTEX_UPLOAD_SELF_EQUAL");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    const bool input_self_equal = self_equal_enabled && bool(ios_packed_snapshot_lease);
     static const bool order_reuse_enabled = [] {
         const char* value = std::getenv("CARA_VERTEX_UPLOAD_ORDER_REUSE");
         return value && std::strcmp(value, "1") == 0;
@@ -1040,15 +1362,23 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                 !ios_direct_vertex_reuse && !ios_lit_pair_vertex_reuse &&
                 !ios_feedback_vertex_reuse && !resize_storage) {
                 Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
-                const auto match = IOSVertexUploadOrderReuse::Find(
-                    pool, ordinal, 32, ios_vertex_inputs.data(),
-                    ios_vertex_inputs.size() * sizeof(GLvec4), input_indices.data(),
-                    input_indices.size() * sizeof(u16), [rows](const IOSVertexUpload& entry) {
-                        return entry.rows == rows && entry.texture.handle && entry.indices.handle;
-                    });
+                const auto eligible = [rows](const IOSVertexUpload& entry) {
+                    return entry.rows == rows && entry.texture.handle && entry.indices.handle;
+                };
+                const auto match = IndexPayloadReuse::Enabled() ?
+                    IOSVertexUploadOrderReuse::FindWithIndexIdentity(pool, ordinal, 32, input_data,
+                        input_bytes, input_indices.data(), input_indices.size() * sizeof(u16), eligible,
+                        current_index_identity, input_self_equal) : input_self_equal ?
+                    IOSVertexUploadOrderReuse::FindWithInputSelfEquality(pool, ordinal, 32, input_data,
+                        input_bytes, input_indices.data(), input_indices.size() * sizeof(u16), eligible) :
+                    IOSVertexUploadOrderReuse::Find(pool, ordinal, 32, input_data,
+                        input_bytes, input_indices.data(), input_indices.size() * sizeof(u16), eligible);
                 order_reuse_checked = true;
                 order_reuse_input = match.input_equal;
                 order_reuse_index = match.index_equal;
+                if (PackedPoolObserver::Enabled() && packed_pool_observation.state==PackedPoolObserver::State::Pending)
+                    packed_pool_observation.state=PackedPoolObserver::Actual(packed_pool_observation,frame,size_class,
+                        ordinal,ios_vertex_upload_index-1,match,pool[match.selected].texture.handle,pool[match.selected].indices.handle);
                 if (match.selected != ordinal) std::swap(pool[ordinal], pool[match.selected]);
                 // Bounded diagnostic proof; frame_timing can expose these later.
                 struct Totals { u64 checks=0, candidates=0, full=0, swaps=0; unsigned logs=0, frame=~0u; };
@@ -1073,11 +1403,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         auto& counters = Common::FrameTiming::counters;
         counters.vertex_upload_bank_budget_bytes = max_bank_bytes;
         const size_t index_bytes = input_indices.size() * sizeof(u16) + (ios_lit_pair_vertex_reuse ? element_bytes : 0);
-        counters.vertex_upload_bytes += ios_vertex_inputs.size() * sizeof(GLvec4) + index_bytes;
+        counters.vertex_upload_bytes += input_bytes + index_bytes;
         counters.vertex_index_upload_bytes += index_bytes;
         if (orphan_upload) {
             ++counters.vertex_upload_fallbacks;
-            counters.vertex_orphan_upload_bytes += ios_vertex_inputs.size() * sizeof(GLvec4) + index_bytes;
+            counters.vertex_orphan_upload_bytes += input_bytes + index_bytes;
         }
         if (orphan_upload || resize_storage) counters.vertex_storage_allocations += ios_lit_pair_vertex_reuse ? 3 : ios_indexed_vertex_inputs ? 2 : 1;
         size_t bytes = 0;
@@ -1100,6 +1430,8 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     if (ios_indexed_vertex_inputs && !ios_direct_vertex_reuse) {
         glActiveTexture(GL_TEXTURE8);
         if (!selected_indices->handle) {
+            if (selected_upload && IndexPayloadReuse::Enabled())
+                selected_upload->index_shadow.InvalidateIdentity();
             selected_indices->Create();
             glBindTexture(GL_TEXTURE_2D, selected_indices->handle);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -1112,17 +1444,21 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         glActiveTexture(GL_TEXTURE7);
     }
     const bool cache_inputs=raw_inputs && upload_reuse_enabled && selected_upload;
-    const size_t input_bytes=ios_vertex_inputs.size()*sizeof(GLvec4);
     const size_t index_bytes=input_indices.size()*sizeof(u16);
     bool reuse_input=false,reuse_index=false,reuse_elements=false;
     if (cache_inputs && !resize_storage) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
-        const auto matches=[](const std::vector<u8>& shadow,const void* data,size_t bytes) {
+        const auto matches=[](const auto& shadow,const void* data,size_t bytes) {
             return shadow.size()==bytes && bytes && std::memcmp(shadow.data(),data,bytes)==0;
         };
-        reuse_input=order_reuse_checked ? order_reuse_input :
-            matches(selected_upload->input_shadow,ios_vertex_inputs.data(),input_bytes);
-        reuse_index=order_reuse_checked ? order_reuse_index :
+        size_t input_full_comparisons = 0;
+        reuse_input=order_reuse_checked ? order_reuse_input : input_self_equal ?
+            IOSVertexUploadOrderReuse::EqualInputSelf(selected_upload->input_shadow,input_data,input_bytes,
+                                                     input_full_comparisons,false) :
+            matches(selected_upload->input_shadow,input_data,input_bytes);
+        reuse_index=order_reuse_checked ? order_reuse_index : IndexPayloadReuse::Enabled() ?
+            IOSVertexUploadOrderReuse::EqualIndexIdentity(selected_upload->index_shadow,
+                input_indices.data(),index_bytes,current_index_identity,input_full_comparisons,false) :
             matches(selected_upload->index_shadow,input_indices.data(),index_bytes);
         if (ios_lit_pair_vertex_reuse) reuse_elements=matches(selected_upload->elements_shadow,element_indices.data(),element_bytes);
     }
@@ -1141,7 +1477,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
             glTexImage2D(GL_TEXTURE_2D, 0, input_internal, IOS_VERTEX_INPUT_WIDTH, upload_rows, 0,
-                         input_format, input_type, ios_vertex_inputs.data());
+                         input_format, input_type, input_data);
         } else {
             if (resize_storage) {
                 Common::FrameTiming::Scope storage_timing(Common::FrameTiming::Phase::VertexStorageAllocate);
@@ -1152,10 +1488,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             Common::FrameTiming::Scope update_timing(Common::FrameTiming::Phase::VertexSubImageUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_subimage_calls;
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
-                            input_format, input_type, ios_vertex_inputs.data());
+                            input_format, input_type, input_data);
         }
     }
     if (ios_indexed_vertex_inputs && !ios_direct_vertex_reuse && !reuse_index) {
+        if (selected_upload && IndexPayloadReuse::Enabled())
+            selected_upload->index_shadow.InvalidateIdentity();
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         glActiveTexture(GL_TEXTURE8);
         if (orphan_upload) {
@@ -1190,7 +1528,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     if (cache_inputs) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
         if (!reuse_input) {
-            const auto* data=reinterpret_cast<const u8*>(ios_vertex_inputs.data());
+            const auto* data=reinterpret_cast<const u8*>(input_data);
             selected_upload->input_shadow.assign(data,data+input_bytes);
         }
         if (!reuse_index) {
@@ -1201,6 +1539,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             const auto* data=reinterpret_cast<const u8*>(element_indices.data());
             selected_upload->elements_shadow.assign(data,data+element_bytes);
         }
+    }
+    if (IndexPayloadReuse::Enabled() && selected_upload) {
+        // Match/upload and the original owned-shadow commit have completed.
+        // An uncached or non-default payload must never retain an older proof.
+        selected_upload->index_shadow.CommitIdentity(cache_inputs ? current_index_identity :
+                                                     IndexPayloadReuse::Identity{});
     }
     if (ios_feedback_vertex_reuse) {
         // Re-evaluate every draw: only the current draw's transformed outputs are
@@ -1243,13 +1587,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         ++Common::FrameTiming::counters.gpu_feedback_vertex_draws;
         Common::FrameTiming::counters.gpu_feedback_source_vertices+=ios_vertex_input_span;
     }
+    if (ShaderProgramManager::VertexProvenanceEnabled())
+        shader_program_manager->ObserveBoundVertexProgram(state.draw.shader_program,
+            ios_lit_pair_vertex_reuse?6u:ios_feedback_vertex_reuse?5u:ios_direct_vertex_reuse?3u:ios_indexed_vertex_inputs);
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::DrawSubmit);
         if (ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse) {
             {
                 DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedElements,
                                                 triangles.size());
-                glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(triangles.size()),GL_UNSIGNED_SHORT,nullptr);
+                if (!SuppressEffectFamilyHostDraw(triangles.size()))
+                    glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(triangles.size()),GL_UNSIGNED_SHORT,nullptr);
             }
             if (ios_lit_pair_vertex_reuse) {
                 ++Common::FrameTiming::counters.gpu_lit_pair_draws;
@@ -1263,7 +1611,10 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         } else {
             DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedArrays,
                                             triangles.size());
-            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
+            if (!SuppressEffectFamilyHostDraw(triangles.size())) {
+                if(NativeNearestBorrowEnabled() && !BeforeNativeNearestBorrowDraw())return false;
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
+            }
         }
     }
     if (elements) glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,index_buffer.GetHandle());
@@ -1365,14 +1716,16 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 
         DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::DesktopRange,
                                         regs.pipeline.num_vertices);
-        glDrawRangeElementsBaseVertex(
+        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices))
+            glDrawRangeElementsBaseVertex(
             primitive_mode, vs_input_index_min, vs_input_index_max, regs.pipeline.num_vertices,
             index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
             reinterpret_cast<const void*>(buffer_offset), -static_cast<GLint>(vs_input_index_min));
     } else {
         DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedArrays,
                                         regs.pipeline.num_vertices);
-        glDrawArrays(primitive_mode, 0, regs.pipeline.num_vertices);
+        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices))
+            glDrawArrays(primitive_mode, 0, regs.pipeline.num_vertices);
     }
 
     return true;
@@ -1380,18 +1733,212 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 }
 
 void RasterizerOpenGL::DrawTriangles() {
-    if (vertex_batch.empty())
+    if(SoftwareBatching::CensusEnabled())software_census_after_draw=true;
+    if (!SoftwareBatching::Active()) {if (!vertex_batch.empty()) Draw(false,false);return;}
+    const auto vertices=software_vertices_since_request;software_vertices_since_request=0;
+    software_batch_planner.Software(vertices,software_batch_draw_safe);
+    if (SoftwareBatching::Enabled() && software_batch_planner.in_list && software_batch_draw_safe) {
+        if(vertices)++software_completed_requests;
+        software_has_deferred=!vertex_batch.empty();
+        if(vertex_batch.size()>SoftwareBatching::stats.max_deferred_vertices)
+            SoftwareBatching::stats.max_deferred_vertices=vertex_batch.size();
         return;
-    Draw(false, false);
+    }
+    // Census-only mode executes the original draw immediately, leaving only the
+    // bounded virtual planner pending. Unsafe draws retain their original boundaries.
+    software_census_submission_succeeded=false;
+    if (!vertex_batch.empty()) software_census_submission_succeeded=Draw(false,false);
+}
+
+void RasterizerOpenGL::FlushSoftwareBatch(SoftwareBatching::Reason reason,bool plan_boundary) {
+    if(!SoftwareBatching::Active() || software_batch_flushing)return;
+    if(plan_boundary)software_batch_planner.Boundary(reason);
+    if(!SoftwareBatching::Enabled()) {
+        // Census executes the original draw immediately; only its virtual obligation remains.
+        if(SoftwareBatching::CensusEnabled())software_framebuffer_visibility.Materialized(reason,true);
+        return;
+    }
+    if(vertex_batch.empty() || (!software_has_deferred && reason!=SoftwareBatching::Reason::SizeCap)) {
+        if(software_framebuffer_visibility.pending)throw std::runtime_error("Framebuffer visibility lost its owned software batch");
+        return;
+    }
+    Cara::GuestGPUTrace::Join::Scope validation_copy_deferred_scope;
+    if (Cara::GuestGPUTrace::validation_copy_join_enabled)
+        validation_copy_deferred_scope.Set(Cara::GuestGPUTrace::Join::state.Deferred(
+            Cara::GuestGPUTrace::owner_generation.load(std::memory_order_relaxed)));
+    software_batch_flushing=true;
+    SoftwareBatching::Add(SoftwareBatching::stats.actual_flushes);
+    SoftwareBatching::Add(SoftwareBatching::stats.actual_flushed_vertices,vertex_batch.size());
+    SoftwareBatching::Add(SoftwareBatching::stats.actual_flush_reasons[unsigned(reason)]);
+    if(software_completed_requests>1)SoftwareBatching::Add(SoftwareBatching::stats.actual_merged_completed_requests,software_completed_requests-1);
+    software_completed_requests=0;
+    try {if(!Draw(false,false)||!vertex_batch.empty())throw std::runtime_error("Deferred software draw did not consume its batch");software_has_deferred=false;software_framebuffer_visibility.Materialized(reason);software_batch_flushing=false;}
+    catch(...){software_batch_flushing=false;throw;}
+}
+void RasterizerOpenGL::BeginPicaCommandList(){if(!SoftwareBatching::Active())return;FlushSoftwareBatch(SoftwareBatching::Reason::ListBegin);software_batch_planner.Begin();software_batch_draw_safe=false;software_census_after_draw=false;software_batch_input_guard_required=software_batch_input_indexed=true;}
+void RasterizerOpenGL::EndPicaCommandList(){if(!SoftwareBatching::Active())return;FlushSoftwareBatch(SoftwareBatching::Reason::ListEnd);software_batch_planner.End();software_batch_draw_safe=false;software_census_after_draw=false;software_batch_input_guard_required=software_batch_input_indexed=true;}
+void RasterizerOpenGL::FlushDeferredDraws(){FlushSoftwareBatch(SoftwareBatching::Reason::ExplicitVisibility);}
+
+bool RasterizerOpenGL::SoftwareBatchResourcesSafe(bool include_vertex_inputs,bool indexed) {
+    using namespace SoftwareBatching;
+    const auto& r=Pica::g_state.regs;const auto& f=r.framebuffer.framebuffer;
+    if(Pica::g_debug_context || r.framebuffer.IsShadowRendering() || (vertex_batch.size() && !software_has_deferred)) {Add(stats.unsupported);return false;}
+    const auto color_format=unsigned(f.color_format.Value()),depth_format=unsigned(f.depth_format.Value());
+    if(color_format>4 || (depth_format!=0&&depth_format!=2&&depth_format!=3)){Add(stats.unsupported);return false;}
+    const auto width=std::uint64_t(f.GetWidth()),height=std::uint64_t(f.GetHeight());
+    if(!width||!height||width>2048||height>2048||(width&7)||(height&7)){Add(stats.unsupported);return false;}
+    // Four bytes per pixel conservatively includes every supported color/depth
+    // format and stencil. Treat read-only depth as a potential write as well.
+    std::array<Range,2> targets{};unsigned target_count=0;
+    for(auto address:{f.GetColorBufferPhysicalAddress(),f.GetDepthBufferPhysicalAddress()}) {
+        if(!address)continue;Range range;
+        if(!MakeRange(address,width*height*4,range)){Add(stats.unsupported);return false;}
+        targets[target_count++]=range;
+    }
+    if(!target_count){Add(stats.unsupported);return false;}
+    // Separate host color/depth views can share guest physical bytes. The immediate
+    // path reconciles their ownership after each draw; merging would remove that
+    // dependency. Conservatively include even currently unused target envelopes.
+    if(target_count==2 && Overlap(targets[0],targets[1])) {
+        Add(stats.unsafe_target_alias);return false;
+    }
+    const auto overlaps=[&](Range range){for(unsigned i=0;i<target_count;++i)if(Overlap(range,targets[i]))return true;return false;};
+    // Command fetch is another GPU read. A draw may not be delayed past a
+    // later command word that aliases its output. Compare the actual host spans
+    // of mapped physical memory without dereferencing or copying guest data.
+    const auto& command=Pica::g_state.cmd_list;
+    if(!command.head_ptr || command.length>std::numeric_limits<std::uintptr_t>::max()/sizeof(u32)) {Add(stats.unsupported);return false;}
+    const auto command_begin=reinterpret_cast<std::uintptr_t>(command.head_ptr);
+    const auto command_bytes=std::uintptr_t(command.length)*sizeof(u32);
+    if(command_begin>std::numeric_limits<std::uintptr_t>::max()-command_bytes){Add(stats.unsupported);return false;}
+    for(unsigned i=0;i<target_count;++i) {
+        const auto* pointer=VideoCore::Memory()->GetPhysicalPointer(PAddr(targets[i].begin));
+        if(!pointer){Add(stats.unsupported);return false;}
+        const auto begin=reinterpret_cast<std::uintptr_t>(pointer),bytes=std::uintptr_t(targets[i].end-targets[i].begin);
+        if(begin>std::numeric_limits<std::uintptr_t>::max()-bytes ||
+            (begin<command_begin+command_bytes && command_begin<begin+bytes)){Add(stats.unsafe_vertex_index);return false;}
+    }
+    const auto textures=r.texturing.GetTextures();
+    for(unsigned i=0;i<textures.size();++i) {
+        const auto& t=textures[i];if(!t.enabled)continue;
+        if(unsigned(t.format)>13){Add(stats.unsupported);return false;}
+        if(i==0 && t.config.type!=Pica::TexturingRegs::TextureConfig::Texture2D){Add(stats.unsupported);return false;}
+        const auto w=std::uint64_t(t.config.width),h=std::uint64_t(t.config.height);
+        if(!w||!h||w>2048||h>2048){Add(stats.unsupported);return false;}
+        // Conservative envelope: max32bpp, all mip levels and small tiled-level
+        // padding. Unknown wraparound ranges are never accepted for deferral.
+        const auto bytes=((w+7)/8*8)*((h+7)/8*8)*8+65536;
+        Range range;if(!MakeRange(t.config.GetPhysicalAddress(),bytes,range)){Add(stats.unsupported);return false;}
+        if(overlaps(range)){Add(stats.unsafe_texture);return false;}
+    }
+    if(!include_vertex_inputs)return true;
+    const auto& p=r.pipeline;const auto n=std::uint64_t(p.num_vertices);
+    if(!n)return true;
+    const auto base=std::uint64_t(p.vertex_attributes.GetPhysicalBaseAddress());
+    const auto max_vertex=indexed?(p.index_array.format?65535u:255u):std::uint64_t(p.vertex_offset)+n-1;
+    if(indexed){Range range;const auto first=base+std::uint64_t(p.index_array.offset);
+        if(!MakeRange(first,n*(p.index_array.format?2:1),range)||overlaps(range)){Add(stats.unsafe_vertex_index);return false;}}
+    for(const auto& loader:p.vertex_attributes.attribute_loaders) {
+        if(!loader.component_count)continue;
+        // At most12 components of at most16 bytes plus alignment per loader;
+        // 4096 bytes deliberately overbounds the scalar VertexLoader layout.
+        const auto begin=base+std::uint64_t(loader.data_offset);
+        const auto bytes=std::uint64_t(loader.byte_count)*max_vertex+4096;
+        Range range;if(!MakeRange(begin,bytes,range)||overlaps(range)){Add(stats.unsafe_vertex_index);return false;}
+    }
+    return true;
+}
+void RasterizerOpenGL::PrePicaRegisterWrite(u32 id,u32 value,u32 mask) {
+    using namespace SoftwareBatching;if(!Active())return;
+    if(Pica::g_debug_context) {
+        // A debugger may attach after an eligible draw but before a0x111 trigger.
+        // Drain owned work before observing this command, regardless of whether
+        // an explicit framebuffer visibility obligation has been requested yet.
+        if(software_has_deferred || software_framebuffer_visibility.pending)
+            FlushSoftwareBatch(Reason::ExplicitVisibility);
+        software_batch_draw_safe=false;
+    }
+    // Keep the guest masked write and its original notification. Defer only its
+    // logical visibility implementation, never a target/state or resource observer.
+    if(id==0x111) {
+        const bool census_only=!Enabled()&&CensusEnabled();
+        const auto owned=census_only?software_batch_planner.pending:vertex_batch.size();
+        const bool owned_safe=software_batch_draw_safe &&
+            (census_only?software_census_submission_succeeded:software_has_deferred);
+        if(software_framebuffer_visibility.Request(value,mask,DeferFramebufferFlushEnabled(),
+               software_batch_planner.in_list,owned_safe,bool(Pica::g_debug_context),owned))return;
+    }
+    if(CensusEnabled() && software_census_after_draw && !InputOnlyRegister(id) && id!=0x22e && id!=0x22f && id<stats.post_draw_other_writes.size()) {
+        Add(stats.post_draw_other_writes[id]);
+        const auto bytes=(mask&1?0x000000ffu:0u)|(mask&2?0x0000ff00u:0u)|
+                         (mask&4?0x00ff0000u:0u)|(mask&8?0xff000000u:0u);
+        if(((Pica::g_state.regs.reg_array[id]^value)&bytes)==0)Add(stats.post_draw_other_unchanged[id]);
+    }
+    if(id==0x22e||id==0x22f) {
+        software_batch_input_guard_required=true;software_batch_input_indexed=id==0x22f;
+        if(LazySoftwareAdmission(Enabled(),CensusEnabled(),vertex_batch.empty(),
+                                 software_has_deferred,software_framebuffer_visibility.pending)) {
+            Add(stats.lazy_empty_input_skips);software_batch_draw_safe=false;return;
+        }
+        Add(stats.pre_input_resource_checks);
+        const auto before_texture=stats.unsafe_texture,before_input=stats.unsafe_vertex_index,
+                   before_target=stats.unsafe_target_alias;
+        software_batch_draw_safe=software_batch_planner.in_list && SoftwareBatchResourcesSafe(true,id==0x22f);
+        if(!software_batch_draw_safe)FlushSoftwareBatch(stats.unsafe_target_alias!=before_target?Reason::TargetAlias:stats.unsafe_texture!=before_texture?Reason::TextureAlias:stats.unsafe_vertex_index!=before_input?Reason::VertexIndexAlias:Reason::Unsupported);
+        return;
+    }
+    // Immediate-mode vertex emission consumes only already-owned attributes.
+    if(id>=0x232&&id<=0x235) {
+        software_batch_input_guard_required=false;software_batch_input_indexed=false;
+        if(LazySoftwareAdmission(Enabled(),CensusEnabled(),vertex_batch.empty(),
+                                 software_has_deferred,software_framebuffer_visibility.pending)) {
+            Add(stats.lazy_empty_input_skips);software_batch_draw_safe=false;return;
+        }
+        Add(stats.pre_input_resource_checks);
+        const auto before_target=stats.unsafe_target_alias;
+        software_batch_draw_safe=software_batch_planner.in_list && SoftwareBatchResourcesSafe(false,false);
+        if(!software_batch_draw_safe)FlushSoftwareBatch(stats.unsafe_target_alias!=before_target?Reason::TargetAlias:Reason::Unsupported);
+        return;
+    }
+    if(InputOnlyRegister(id))return;
+    if(CensusEnabled() && (software_batch_planner.pending || software_batch_planner.last_hardware) && id<stats.fence_registers.size()) {
+        Add(stats.fence_registers[id]);
+        const auto bytes=(mask&1?0x000000ffu:0u)|(mask&2?0x0000ff00u:0u)|
+                         (mask&4?0x00ff0000u:0u)|(mask&8?0xff000000u:0u);
+        if(((Pica::g_state.regs.reg_array[id]^value)&bytes)==0) Add(stats.unchanged_fence_registers[id]);
+    }
+    FlushSoftwareBatch(id==0x111?Reason::FramebufferFlush:id==0x10?Reason::IRQ:(id==0x23c||id==0x23d)?Reason::Jump:Reason::FragmentOrUnknownWrite);
+    software_batch_draw_safe=false;
+}
+
+void RasterizerOpenGL::DiscardExpiredFramebufferAttachments() {
+    if (framebuffer_info.color_attachment && framebuffer_info.color_surface.expired()) {
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        framebuffer_info.color_attachment = 0;
+        framebuffer_info.color_width = framebuffer_info.color_height = 0;
+        framebuffer_info.color_surface.reset();
+    }
+    if (framebuffer_info.depth_attachment && framebuffer_info.depth_surface.expired()) {
+        // Deletion may auto-detach only a currently bound FBO. Explicitly clear
+        // both slots, also releasing an orphan object retained by an unbound FBO.
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+        framebuffer_info.depth_attachment = 0;
+        framebuffer_info.depth_width = framebuffer_info.depth_height = 0;
+        framebuffer_info.depth_surface.reset();
+        framebuffer_info.depth_stencil = false;
+    }
 }
 
 void RasterizerOpenGL::BindFramebufferColor(OpenGLState& state, const Surface& surface) {
     state.draw.draw_framebuffer = framebuffer.handle;
     OpenGLState::BindDrawFramebuffer(framebuffer.handle);
-    if (framebuffer_info.color_attachment != surface->texture.handle) {
+    DiscardExpiredFramebufferAttachments();
+    if (framebuffer_info.color_attachment != surface->texture.handle ||
+        !SameFramebufferSurface(framebuffer_info.color_surface, surface)) {
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                surface->texture.handle, 0);
         framebuffer_info.color_attachment = surface->texture.handle;
+        framebuffer_info.color_surface = surface;
         framebuffer_info.color_width = surface->width;
         framebuffer_info.color_height = surface->height;
     }
@@ -1402,16 +1949,23 @@ void RasterizerOpenGL::BindFramebufferColor(OpenGLState& state, const Surface& s
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0,
                                0);
         framebuffer_info.depth_attachment = 0;
+        framebuffer_info.depth_surface.reset();
+        framebuffer_info.depth_stencil = false;
     }
 }
 
 void RasterizerOpenGL::BindFramebufferDepthStencil(OpenGLState& state, const Surface& surface) {
     state.draw.draw_framebuffer = framebuffer.handle;
     OpenGLState::BindDrawFramebuffer(framebuffer.handle);
-    if (framebuffer_info.depth_attachment != surface->texture.handle) {
+    DiscardExpiredFramebufferAttachments();
+    if (framebuffer_info.depth_attachment != surface->texture.handle ||
+        !SameFramebufferSurface(framebuffer_info.depth_surface, surface) ||
+        framebuffer_info.depth_stencil != true) {
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D,
                                surface->texture.handle, 0);
         framebuffer_info.depth_attachment = surface->texture.handle;
+        framebuffer_info.depth_surface = surface;
+        framebuffer_info.depth_stencil = true;
         framebuffer_info.depth_width = surface->width;
         framebuffer_info.depth_height = surface->height;
     }
@@ -1421,17 +1975,23 @@ void RasterizerOpenGL::BindFramebufferDepthStencil(OpenGLState& state, const Sur
          framebuffer_info.depth_height > framebuffer_info.color_height)) {
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         framebuffer_info.color_attachment = 0;
+        framebuffer_info.color_surface.reset();
     }
 }
 
 void RasterizerOpenGL::BindFramebufferDepth(OpenGLState& state, const Surface& surface) {
     state.draw.draw_framebuffer = framebuffer.handle;
     OpenGLState::BindDrawFramebuffer(framebuffer.handle);
-    if (framebuffer_info.depth_attachment != surface->texture.handle) {
+    DiscardExpiredFramebufferAttachments();
+    if (framebuffer_info.depth_attachment != surface->texture.handle ||
+        !SameFramebufferSurface(framebuffer_info.depth_surface, surface) ||
+        framebuffer_info.depth_stencil != false) {
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
                                surface->texture.handle, 0);
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
         framebuffer_info.depth_attachment = surface->texture.handle;
+        framebuffer_info.depth_surface = surface;
+        framebuffer_info.depth_stencil = false;
         framebuffer_info.depth_width = surface->width;
         framebuffer_info.depth_height = surface->height;
     }
@@ -1441,10 +2001,152 @@ void RasterizerOpenGL::BindFramebufferDepth(OpenGLState& state, const Surface& s
          framebuffer_info.depth_height > framebuffer_info.color_height)) {
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         framebuffer_info.color_attachment = 0;
+        framebuffer_info.color_surface.reset();
     }
 }
 
+bool RasterizerOpenGL::NativeNearestBorrowEnabled() {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    static const bool enabled=[] { const char* s=std::getenv("CARA_NATIVE_NEAREST_BORROW"); return s&&std::strcmp(s,"1")==0; }();
+    return enabled;
+#else
+    return false;
+#endif
+}
+
+#ifdef CARA_IOS_GLES
+bool RasterizerOpenGL::CaptureNativeNearestBorrow(bool indexed) {
+#ifdef CARA_IOS_GLES
+    namespace Q=Cara::QuadUVPlan;
+    native_borrow_prepared=false;
+    const auto& r=Pica::g_state.regs;
+    if(indexed || ios_indexed_vertex_inputs!=2 || ios_vertex_input_span!=4 || ios_vertex_input_records!=4 ||
+       ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse || ios_feedback_vertex_reuse ||
+       r.pipeline.use_gs!=Pica::PipelineRegs::UseGS::No ||
+       Pica::g_state.primitive_assembler.GetTopology()!=Pica::PipelineRegs::TriangleTopology::Strip ||
+       r.vs.shader_mode!=Pica::ShaderRegs::ShaderMode::VS || r.vs.input_to_uniform!=0 ||
+       std::getenv("CARA_UNSNAPPED_VERTICES")) return false;
+    Q::View v;v.program=Pica::g_state.vs.program_code.data();v.entry=r.vs.main_offset;
+    if(v.entry>Pica::g_state.vs.program_code.size() || Pica::g_state.vs.program_code.size()-v.entry<6)return false;
+    v.program_words=v.entry+6; // bounded current program, never census hashes/full shader walks
+    v.swizzles=Pica::g_state.vs.swizzle_data.data();v.swizzle_words=Pica::g_state.vs.swizzle_data.size();
+    v.max_input=r.vs.max_input_attribute_index;v.input_map_low=r.vs.input_attribute_to_register_map_low;
+    v.input_map_high=r.vs.input_attribute_to_register_map_high;v.output_mask=r.vs.output_mask;
+    v.output_total=r.rasterizer.vs_output_total;
+    for(unsigned i=0;i<v.semantics.size();++i)v.semantics[i]=r.rasterizer.vs_output_attributes[i].raw;
+    const auto p=Q::Classify(v);
+    if(!p.structural || !p.ended || p.scanned!=6 || p.moves!=5 || p.nops || p.arithmetic)return false;
+    const auto attr=[&](unsigned lane,unsigned component) {const auto& s=p.semantic_sources[lane];return Q::Known(s)&&s.source==Q::Source::InputAttribute&&s.index==0&&s.component==component;};
+    if(!attr(0,0)||!attr(1,1)||!attr(4,2)||!attr(5,3))return false;
+    const auto bits=[](float f){u32 b;std::memcpy(&b,&f,4);return b;};
+    const auto uniform=[&](unsigned lane,u32 expected) {
+        const auto& s=p.semantic_sources[lane];
+        return Q::Known(s)&&s.source==Q::Source::FloatUniform&&s.index<std::size(Pica::g_state.vs.uniforms.f)&&s.component<4&&
+            bits(Pica::g_state.vs.uniforms.f[s.index][s.component].ToFloat32())==expected;
+    };
+    if(!uniform(2,0)||!uniform(3,0x3f800000))return false;
+    const auto shader_register=r.vs.GetRegisterForAttribute(0);
+    const IOSVertexInputLayout layout(r.vs,ios_vertex_input_mask);
+    if(shader_register>=16 || !(ios_vertex_input_mask&(1u<<shader_register)))return false;
+    const auto slot=layout.offsets[shader_register];
+    if(slot<0||unsigned(slot)>=layout.stride||layout.source_attributes[slot]!=0)return false;
+    const Pica::VertexLoader loader(r.pipeline);const auto source=loader.GetAttributeLayout(0);
+    const auto packed=ios_packed_layout[shader_register];
+    if(source.is_default || source.format!=Pica::PipelineRegs::VertexAttributeFormat::FLOAT ||
+       source.elements!=4 || source.stride!=16 || packed[0]<0 || packed[1]!=16||packed[2]!=3||packed[3]!=4)return false;
+    const auto offset=std::size_t(packed[0]);const auto bytes=IOSVertexInputBytes();
+    if(!IOSVertexInputData()||offset>bytes||64>bytes-offset)return false;
+    std::array<std::array<u32,4>,4> data{};
+    std::memcpy(data.data(),IOSVertexInputData()+offset,64); // coherent owned shadow only
+    const auto& triangles=IOSTriangles();const auto& indices=IOSInputIndices();
+    if(triangles.size()!=6 || indices.size()<6 || u32(r.pipeline.vertex_offset)>0xfffffffbu)return false;
+    for(unsigned i=0;i<6;++i) {
+        if(triangles[i]<u32(r.pipeline.vertex_offset)||triangles[i]-u32(r.pipeline.vertex_offset)>=4||
+           indices[i]!=triangles[i]-u32(r.pipeline.vertex_offset))return false;
+        native_borrow_inputs.triangles[i]=indices[i];
+    }
+    for(unsigned i=0;i<4;++i) {
+        native_borrow_inputs.vertices[i].position={data[i][0],data[i][1],0,0x3f800000};
+        native_borrow_inputs.vertices[i].uv={data[i][2],data[i][3]};
+    }
+    native_borrow_inputs.viewport_bits={bits(float(r.rasterizer.viewport_corner.x)),bits(float(r.rasterizer.viewport_corner.y)),
+        bits(Pica::float24::FromRaw(r.rasterizer.viewport_size_x).ToFloat32()),bits(Pica::float24::FromRaw(r.rasterizer.viewport_size_y).ToFloat32())};
+    native_borrow_inputs.native_snap16=true;native_borrow_inputs.no_geometry_shader=true;
+    native_borrow_capture_input_epoch=native_borrow_input_epoch;native_borrow_capture_pica_epoch=native_borrow_pica_epoch;
+    native_borrow_prepared=true;return true;
+#else
+    return false;
+#endif
+}
+
+bool RasterizerOpenGL::NativeNearestBorrowDrawStateSafe() const {
+    const auto& r=Pica::g_state.regs;const auto t=r.texturing.GetTextures();
+    using C=Pica::TexturingRegs::TextureConfig;
+    if(!native_borrow_prepared || !GLAD_GL_NV_texture_barrier || !glTextureBarrierNV ||
+       !t[0].enabled || t[1].enabled || t[2].enabled || r.texturing.main_config.texture3_enable ||
+       t[0].config.type!=C::TextureType::Texture2D || t[0].config.min_filter!=C::Nearest ||
+       t[0].config.mag_filter!=C::Nearest || t[0].config.mip_filter!=C::Nearest ||
+       t[0].config.wrap_s!=C::ClampToEdge || t[0].config.wrap_t!=C::ClampToEdge ||
+       t[0].config.lod.min_level!=0 || t[0].config.lod.max_level!=0 || t[0].config.lod.bias!=0 ||
+       Settings::values.use_linear_filter || !r.lighting.disable || r.framebuffer.IsShadowRendering() ||
+       state.depth.write_mask || state.stencil.test_enabled) return false;
+    // User clip has no x/y/z term and is nonnegative for W=1, or is disabled.
+    if(state.clip_distance[1]) {
+        const auto& c=uniform_block_data.data.clip_coef;
+        if(c[0]!=0 || c[1]!=0 || c[2]!=0 || !std::isfinite(c[3]) || !(c[3]>=0))return false;
+    }
+    return true;
+}
+
+bool RasterizerOpenGL::BeforeNativeNearestBorrowDraw() {
+    if(!native_borrow_lease)return true;
+    const auto actual=OpenGLState::GetCurState();
+    const std::array<GLuint,3> aliases{actual.texture_units[1].texture_2d,actual.texture_units[2].texture_2d,framebuffer_info.depth_attachment};
+    const auto& sampler=texture_samplers[0];
+    using C=Pica::TexturingRegs::TextureConfig;
+    const bool ok=NativeNearestBorrowDrawStateSafe() && native_borrow_fragment_selected && !shader_dirty &&
+        native_borrow_capture_input_epoch==native_borrow_input_epoch && native_borrow_capture_pica_epoch==native_borrow_pica_epoch &&
+        actual.clip_distance==state.clip_distance &&
+        actual.viewport.x==GLint(native_borrow_inputs.viewport.left) && actual.viewport.y==GLint(native_borrow_inputs.viewport.bottom) &&
+        actual.viewport.width==GLsizei(native_borrow_inputs.viewport.right-native_borrow_inputs.viewport.left) &&
+        actual.viewport.height==GLsizei(native_borrow_inputs.viewport.top-native_borrow_inputs.viewport.bottom) &&
+        actual.draw.draw_framebuffer==framebuffer.handle && state.draw.draw_framebuffer==framebuffer.handle &&
+        actual.draw.shader_program==state.draw.shader_program && actual.draw.shader_program &&
+        sampler.NativeNearestCompatible() &&
+        actual.texture_units[0].sampler==sampler.sampler.handle &&
+        res_cache.RevalidateNearestBorrow(*native_borrow_lease,framebuffer_info.color_surface.lock(),
+            framebuffer_info.color_attachment,actual.texture_units[0].texture_2d,aliases,true);
+    // Diagnostic-only exercise of the bounded baseline recovery before any game draw.
+    static const bool force_baseline=[] {
+        const char* s=std::getenv("CARA_NATIVE_NEAREST_BORROW_FORCE_FALLBACK");
+        return s && std::strcmp(s,"1")==0;
+    }();
+    if(!ok || force_baseline) {++native_borrow_stats.late_rejections;native_borrow_restart=true;return false;}
+    glTextureBarrierNV(); // dependency barrier, after final checks, before this sole host draw
+    ++native_borrow_stats.barriers;++native_borrow_stats.borrowed_draws;return true;
+}
+
+#endif
+
 bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
+    bool native_borrow_disabled_for_draw=false;
+#ifdef CARA_IOS_GLES
+    SCOPE_EXIT({ if(NativeNearestBorrowEnabled()) native_borrow_lease.reset(); });
+#endif
+    for(unsigned native_borrow_attempt=0;native_borrow_attempt<2;++native_borrow_attempt) {
+#ifdef CARA_IOS_GLES
+    if(NativeNearestBorrowEnabled()) {
+        native_borrow_restart=false;native_borrow_lease.reset();
+        if(native_borrow_fragment_selected){native_borrow_fragment_selected=false;shader_dirty=true;}
+    }
+#endif
+    Cara::QuadInputCapture::Scope quad_software_scope;
+    if(Cara::QuadInputCapture::Enabled()&&!accelerate)quad_software_scope.RejectSoftware();
+    // A matching guest join alone is insufficient: multiple host draws can
+    // share one trigger. Clear at entry and all exits, including exceptions.
+    const bool observe_copy_attachments = res_cache.ValidationCopyTracePresent();
+    if (observe_copy_attachments) res_cache.ClearValidationCopyDrawAttachments();
+    SCOPE_EXIT({ if (observe_copy_attachments) res_cache.ClearValidationCopyDrawAttachments(); });
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::Draw);
     const auto& regs = Pica::g_state.regs;
     const bool shadow_rendering = regs.framebuffer.IsShadowRendering();
@@ -1492,6 +2194,45 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         res_scale = depth_surface->res_scale;
     }
 
+    // Intended selected surfaces, before texture acquisition can change cache
+    // state. This is not a query of the currently bound GL framebuffer.
+    if (observe_copy_attachments)
+        res_cache.RecordValidationCopyDrawAttachments(color_surface, depth_surface);
+
+    if(Cara::QuadInputCapture::Enabled()&&accelerate) {
+        using R=Cara::QuadInputCapture::Rect;
+        Cara::QuadInputCapture::PublishPlanned(
+            R{viewport_rect_unscaled.left,viewport_rect_unscaled.bottom,viewport_rect_unscaled.right,viewport_rect_unscaled.top},
+            R{surfaces_rect.left,surfaces_rect.bottom,surfaces_rect.right,surfaces_rect.top},res_scale,
+            static_cast<u32>(regs.rasterizer.scissor_test.mode.Value()),
+            {regs.rasterizer.scissor_test.x1.Value(),regs.rasterizer.scissor_test.y1.Value(),regs.rasterizer.scissor_test.x2.Value(),regs.rasterizer.scissor_test.y2.Value()});
+    }
+#ifdef CARA_IOS_GLES
+    std::optional<NearestBorrow::Plan> native_plan;
+    if(NativeNearestBorrowEnabled() && accelerate && !native_borrow_disabled_for_draw) {
+        ++native_borrow_stats.attempts;
+        if(!native_borrow_prepared) ++native_borrow_stats.prepared_rejections;
+        else if(!NativeNearestBorrowDrawStateSafe() || !color_surface || depth_surface || res_scale!=1 ||
+                !PicaFSConfig::SupportsNativeNearestBorrow(regs)) ++native_borrow_stats.state_rejections;
+        else {
+            const s64 left=s64(surfaces_rect.left)+viewport_rect_unscaled.left;
+            const s64 bottom=s64(surfaces_rect.bottom)+viewport_rect_unscaled.bottom;
+            const s64 right=s64(surfaces_rect.left)+viewport_rect_unscaled.right;
+            const s64 top=s64(surfaces_rect.bottom)+viewport_rect_unscaled.top;
+            if(left<0 || bottom<0 || right>UINT32_MAX || top>UINT32_MAX || right<=left || top<=bottom)
+                ++native_borrow_stats.plan_rejections;
+            else {
+                native_borrow_inputs.viewport={u32(left),u32(bottom),u32(right),u32(top)};
+                native_borrow_inputs.conservative_write=native_borrow_inputs.viewport;
+                native_borrow_inputs.logical_width=regs.texturing.texture0.width;
+                native_borrow_inputs.logical_height=regs.texturing.texture0.height;
+                const auto plan=NearestBorrow::PlanQuad(native_borrow_inputs);
+                if(plan.reason==NearestBorrow::Reason::None)native_plan=plan.plan;
+                else ++native_borrow_stats.plan_rejections;
+            }
+        }
+    }
+#endif
     // Sync and bind the texture surfaces
     const auto pica_textures = regs.texturing.GetTextures();
     {
@@ -1575,10 +2316,28 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             }
 
             texture_samplers[texture_index].SyncWithConfig(texture.config);
-            Surface surface = res_cache.GetTextureSurface(texture);
+            Surface surface;
+#ifdef CARA_IOS_GLES
+            if(texture_index==0 && native_plan) {
+                const auto info=Pica::Texture::TextureInfo::FromPicaRegister(texture.config,texture.format);
+                native_borrow_lease=res_cache.DescribeNearestBorrow(color_surface,info,0,
+                    native_plan->logical_read,native_plan->conservative_write);
+                if(native_borrow_lease) {
+                    surface=native_borrow_lease->owner;
+                    state.texture_units[0].texture_2d=native_borrow_lease->handle;
+                    native_borrow_fragment_selected=true;shader_dirty=true;
+                    uniform_block_data.data.cara_tex0_view=native_borrow_lease->view;
+                    uniform_block_data.data.cara_tex0_crop=native_borrow_lease->crop;
+                    uniform_block_data.dirty=true;
+                    continue; // no destination acquisition/validation/validity publication
+                }
+                ++native_borrow_stats.cache_rejections;
+            }
+#endif
+            surface = res_cache.GetTextureSurface(texture);
             if (surface) {
                 if (surface->texture.handle == color_attachment) {
-                    state.texture_units[texture_index].texture_2d = surface->GetTextureCopyHandle();
+                    state.texture_units[texture_index].texture_2d = res_cache.GetTextureCopyHandle(surface);
                 } else {
                     state.texture_units[texture_index].texture_2d = surface->texture.handle;
                 }
@@ -1636,13 +2395,17 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
 
     // Bind the framebuffer surfaces
     OpenGLState::BindDrawFramebuffer(framebuffer.handle);
+    DiscardExpiredFramebufferAttachments();
 
     if (shadow_rendering) {
         if (color_surface == nullptr) {
             return true;
         }
         framebuffer_info.color_attachment = 0;
+        framebuffer_info.color_surface.reset();
         framebuffer_info.depth_attachment = 0;
+        framebuffer_info.depth_surface.reset();
+        framebuffer_info.depth_stencil = false;
         glFramebufferParameteri(GL_DRAW_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH,
                                 color_surface->GetScaledWidth());
         glFramebufferParameteri(GL_DRAW_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT,
@@ -1652,22 +2415,32 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
                                0);
         state.image_shadow_buffer = color_surface->texture.handle;
     } else {
-        if (framebuffer_info.color_attachment != color_attachment) {
+        if (framebuffer_info.color_attachment != color_attachment ||
+            !SameFramebufferSurface(framebuffer_info.color_surface, color_surface)) {
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                    color_attachment, 0);
             framebuffer_info.color_attachment = color_attachment;
+            framebuffer_info.color_surface = color_surface;
+            framebuffer_info.color_width = color_surface ? color_surface->width : 0;
+            framebuffer_info.color_height = color_surface ? color_surface->height : 0;
         }
         if (depth_surface != nullptr) {
             if (has_stencil) {
-                if (framebuffer_info.depth_attachment != depth_surface->texture.handle) {
+                if (framebuffer_info.depth_attachment != depth_surface->texture.handle ||
+                    !SameFramebufferSurface(framebuffer_info.depth_surface, depth_surface) ||
+                    framebuffer_info.depth_stencil != has_stencil) {
                     // attach both depth and stencil
                     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                                            GL_TEXTURE_2D, depth_surface->texture.handle, 0);
                     framebuffer_info.depth_attachment = depth_surface->texture.handle;
+                framebuffer_info.depth_surface = depth_surface;
+                framebuffer_info.depth_stencil = has_stencil;
                     framebuffer_info.depth_width = depth_surface->width;
                     framebuffer_info.depth_height = depth_surface->height;
                 }
-            } else if (framebuffer_info.depth_attachment != depth_surface->texture.handle) {
+            } else if (framebuffer_info.depth_attachment != depth_surface->texture.handle ||
+                    !SameFramebufferSurface(framebuffer_info.depth_surface, depth_surface) ||
+                    framebuffer_info.depth_stencil != has_stencil) {
                 // attach depth
                 glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
                                        depth_surface->texture.handle, 0);
@@ -1675,6 +2448,8 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
                 glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0,
                                        0);
                 framebuffer_info.depth_attachment = depth_surface->texture.handle;
+                framebuffer_info.depth_surface = depth_surface;
+                framebuffer_info.depth_stencil = has_stencil;
                 framebuffer_info.depth_width = depth_surface->width;
                 framebuffer_info.depth_height = depth_surface->height;
             }
@@ -1685,6 +2460,8 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
                 glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                                        GL_TEXTURE_2D, 0, 0);
                 framebuffer_info.depth_attachment = 0;
+                framebuffer_info.depth_surface.reset();
+                framebuffer_info.depth_stencil = false;
             } else {
                 state.depth.test_enabled = false;
                 state.depth.write_mask = GL_FALSE;
@@ -1717,12 +2494,24 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         uniform_block_data.dirty = true;
     }
 
+#ifdef CARA_IOS_GLES
+    if(NativeNearestBorrowEnabled() && !native_borrow_lease &&
+       (uniform_block_data.data.cara_tex0_view!=GLivec4{} || uniform_block_data.data.cara_tex0_crop!=GLivec4{})) {
+        uniform_block_data.data.cara_tex0_view={};uniform_block_data.data.cara_tex0_crop={};uniform_block_data.dirty=true;
+    }
+#endif
     // Sync and bind the shader
     if (shader_dirty) {
         SetShader();
         shader_dirty = false;
     }
 
+#ifdef CARA_IOS_GLES
+    if(native_borrow_restart) {
+        if(native_borrow_attempt!=0)return false;
+        native_borrow_disabled_for_draw=true;shader_dirty=true;++native_borrow_stats.baseline_restarts;continue;
+    }
+#endif
     // Sync the LUTs within the texture buffer
     SyncAndUploadLUTs();
     SyncAndUploadLUTsLF();
@@ -1739,6 +2528,17 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     state.scissor.y = draw_rect.bottom;
     state.scissor.width = draw_rect.GetWidth();
     state.scissor.height = draw_rect.GetHeight();
+
+    // Separate rendering experiment: retain generated shader discard and all
+    // pre-draw validation. Only intersect the existing framebuffer host clip.
+    static const bool host_include_scissor = [] {
+        const char* value = std::getenv("CARA_HOST_INCLUDE_SCISSOR");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    HostScissor::ScopedInclude host_include_scope(
+        state, {scissor_x1, scissor_y1, scissor_x2, scissor_y2},
+        static_cast<u32>(regs.rasterizer.scissor_test.mode.Value()), res_scale, shadow_rendering,
+        host_include_scissor);
 
     if (Common::FrameTiming::counters.enabled && !regs.lighting.disable) {
         ++Common::FrameTiming::counters.lit_draws;
@@ -1773,12 +2573,21 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             std::memcpy(vbo, vertex_batch.data() + base_vertex, vertex_size);
             vertex_buffer.Unmap(vertex_size);
             DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::SoftwareArrays, vertices);
-            glDrawArrays(GL_TRIANGLES, static_cast<GLint>(offset / sizeof(HardwareVertex)),
+            if (!SuppressEffectFamilyHostDraw(vertices))
+                glDrawArrays(GL_TRIANGLES, static_cast<GLint>(offset / sizeof(HardwareVertex)),
                          static_cast<GLsizei>(vertices));
         }
     }
 
+#ifdef CARA_IOS_GLES
+    if(native_borrow_restart) {
+        host_include_scope.Restore();
+        if(native_borrow_attempt!=0)return false;
+        native_borrow_disabled_for_draw=true;shader_dirty=true;++native_borrow_stats.baseline_restarts;continue;
+    }
+#endif
     vertex_batch.clear();
+    host_include_scope.Restore();
 
     // Reset textures in rasterizer state context because the rasterizer cache might delete them
     for (auto& texture_unit : state.texture_units) {
@@ -1801,30 +2610,78 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
                         GL_TEXTURE_UPDATE_BARRIER_BIT | GL_FRAMEBUFFER_BARRIER_BIT);
     }
 
-    // Mark framebuffer surfaces as dirty
-    Common::Rectangle<u32> draw_rect_unscaled{draw_rect.left / res_scale, draw_rect.top / res_scale,
-                                              draw_rect.right / res_scale,
-                                              draw_rect.bottom / res_scale};
+    // Mark framebuffer surfaces as dirty. Rendering/scissor/prevalidation above
+    // remain unchanged; only this conservative ownership footprint is narrowed.
+    static const bool include_scissor_damage = [] {
+        const char* value = std::getenv("CARA_INCLUDE_SCISSOR_DAMAGE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    auto dirty_rect = draw_rect;
+    if (include_scissor_damage) {
+        const auto damage = ScissorDamage::NarrowInclude(
+            {draw_rect.left, draw_rect.bottom, draw_rect.right, draw_rect.top},
+            {scissor_x1, scissor_y1, scissor_x2, scissor_y2},
+            static_cast<u32>(regs.rasterizer.scissor_test.mode.Value()), res_scale,
+            shadow_rendering,
+            has_stencil && state.stencil.test_enabled && state.stencil.write_mask != 0);
+        if (damage.eligible) {
+            dirty_rect = {static_cast<u32>(damage.rect.left), static_cast<u32>(damage.rect.top),
+                          static_cast<u32>(damage.rect.right), static_cast<u32>(damage.rect.bottom)};
+        }
+    }
+    Common::Rectangle<u32> draw_rect_unscaled{dirty_rect.left / res_scale, dirty_rect.top / res_scale,
+                                              dirty_rect.right / res_scale,
+                                              dirty_rect.bottom / res_scale};
 
+    SurfaceInvalidationContext draw_context;
+    const SurfaceInvalidationContext* trace_context = nullptr;
+    if (res_cache.ValidationCopyTracingEnabled()) {
+        draw_context.valid = true;
+        draw_context.viewport = {draw_rect.left, draw_rect.bottom, draw_rect.right, draw_rect.top};
+        draw_context.actual_damage = {dirty_rect.left, dirty_rect.bottom, dirty_rect.right, dirty_rect.top};
+        draw_context.shader_scissor = {scissor_x1, scissor_y1, scissor_x2, scissor_y2};
+        draw_context.mode = static_cast<u32>(regs.rasterizer.scissor_test.mode.Value());
+        draw_context.scale = res_scale;
+        draw_context.shadow = shadow_rendering;
+        draw_context.color_write = write_color_fb;
+        draw_context.depth_write = state.depth.test_enabled && state.depth.write_mask != 0;
+        draw_context.depth_surface_write = write_depth_fb;
+        draw_context.damage_narrowing_active = include_scissor_damage;
+        draw_context.has_stencil = has_stencil;
+        draw_context.stencil_test = state.stencil.test_enabled;
+        draw_context.stencil_mask = state.stencil.write_mask;
+        draw_context.depth_test = state.depth.test_enabled;
+        draw_context.depth_mask = state.depth.write_mask;
+        draw_context.color_mask = (state.color_mask.red_enabled ? 1u : 0u) |
+                                  (state.color_mask.green_enabled ? 2u : 0u) |
+                                  (state.color_mask.blue_enabled ? 4u : 0u) |
+                                  (state.color_mask.alpha_enabled ? 8u : 0u);
+        trace_context = &draw_context;
+    }
     {
     Common::FrameTiming::Scope invalidate(Common::FrameTiming::Phase::DrawDirtyInvalidate,
                                          Common::FrameTiming::RenderBookkeepingProfileEnabled());
     if (color_surface != nullptr) {
         auto interval = color_surface->GetSubRectInterval(draw_rect_unscaled);
         res_cache.InvalidateRegion(boost::icl::first(interval), boost::icl::length(interval),
-                                   color_surface);
+                                   color_surface, SurfaceInvalidationOrigin::DrawColor, trace_context);
     }
     if (depth_surface != nullptr && write_depth_fb) {
         auto interval = depth_surface->GetSubRectInterval(draw_rect_unscaled);
         res_cache.InvalidateRegion(boost::icl::first(interval), boost::icl::length(interval),
-                                   depth_surface);
+                                   depth_surface, SurfaceInvalidationOrigin::DrawDepth, trace_context);
     }
 
     }
     return succeeded;
+    } // at most one baseline restart before any host game draw
+    return false;
 }
 
 void RasterizerOpenGL::NotifyPicaRegisterChanged(u32 id) {
+#ifdef CARA_IOS_GLES
+    if(NativeNearestBorrowEnabled())++native_borrow_pica_epoch;
+#endif
     const auto& regs = Pica::g_state.regs;
 
     switch (id) {
@@ -2199,23 +3056,28 @@ void RasterizerOpenGL::NotifyPicaRegisterChanged(u32 id) {
 }
 
 void RasterizerOpenGL::FlushAll() {
+    FlushSoftwareBatch(SoftwareBatching::Reason::FlushAll);
     res_cache.FlushAll();
 }
 
 void RasterizerOpenGL::FlushRegion(PAddr addr, u32 size) {
+    FlushSoftwareBatch(SoftwareBatching::Reason::FlushRegion);
     res_cache.FlushRegion(addr, size);
 }
 
 void RasterizerOpenGL::InvalidateRegion(PAddr addr, u32 size) {
+    FlushSoftwareBatch(SoftwareBatching::Reason::Invalidate);
     res_cache.InvalidateRegion(addr, size, nullptr);
 }
 
 void RasterizerOpenGL::FlushAndInvalidateRegion(PAddr addr, u32 size) {
+    FlushSoftwareBatch(SoftwareBatching::Reason::Invalidate);
     res_cache.FlushRegion(addr, size);
     res_cache.InvalidateRegion(addr, size, nullptr);
 }
 
 bool RasterizerOpenGL::AccelerateDisplayTransfer(const GPU::Regs::DisplayTransferConfig& config) {
+    FlushSoftwareBatch(SoftwareBatching::Reason::Transfer);
     SurfaceParams src_params;
     src_params.addr = config.GetPhysicalInputAddress();
     src_params.width = config.output_width;
@@ -2281,40 +3143,44 @@ bool RasterizerOpenGL::AccelerateDisplayTransfer(const GPU::Regs::DisplayTransfe
     if (!res_cache.BlitSurfaces(src_surface, src_rect, dst_surface, dst_rect))
         return false;
 
-    res_cache.InvalidateRegion(dst_params.addr, dst_params.size, dst_surface);
+    res_cache.InvalidateRegion(dst_params.addr, dst_params.size, dst_surface,
+                               SurfaceInvalidationOrigin::DisplayTransfer);
     return true;
 }
 
 bool RasterizerOpenGL::AccelerateTextureCopy(const GPU::Regs::DisplayTransferConfig& config) {
+    FlushSoftwareBatch(SoftwareBatching::Reason::Transfer);
+    namespace Trace = Cara::TextureCopyTrace;
+    const auto reject = [](Trace::Reason reason) { Trace::SetReason(reason); return false; };
     u32 copy_size = Common::AlignDown(config.texture_copy.size, 16);
     if (copy_size == 0) {
-        return false;
+        return reject(Trace::Reason::ZeroSize);
     }
 
     u32 input_gap = config.texture_copy.input_gap * 16;
     u32 input_width = config.texture_copy.input_width * 16;
     if (input_width == 0 && input_gap != 0) {
-        return false;
+        return reject(Trace::Reason::InputWidth);
     }
     if (input_gap == 0 || input_width >= copy_size) {
         input_width = copy_size;
         input_gap = 0;
     }
     if (copy_size % input_width != 0) {
-        return false;
+        return reject(Trace::Reason::InputRemainder);
     }
 
     u32 output_gap = config.texture_copy.output_gap * 16;
     u32 output_width = config.texture_copy.output_width * 16;
     if (output_width == 0 && output_gap != 0) {
-        return false;
+        return reject(Trace::Reason::OutputWidth);
     }
     if (output_gap == 0 || output_width >= copy_size) {
         output_width = copy_size;
         output_gap = 0;
     }
     if (copy_size % output_width != 0) {
-        return false;
+        return reject(Trace::Reason::OutputRemainder);
     }
 
     SurfaceParams src_params;
@@ -2329,14 +3195,16 @@ bool RasterizerOpenGL::AccelerateTextureCopy(const GPU::Regs::DisplayTransferCon
     Surface src_surface;
     std::tie(src_surface, src_rect) = res_cache.GetTexCopySurface(src_params);
     if (src_surface == nullptr) {
+        Trace::SetReason(Settings::values.skip_texture_copy ? Trace::Reason::SourceMissSkipped : Trace::Reason::SourceMiss);
         return Settings::values.skip_texture_copy;
     }
+    Trace::Source(*src_surface);
 
     if (output_gap != 0 &&
         (output_width != src_surface->BytesInPixels(src_rect.GetWidth() / src_surface->res_scale) *
                              (src_surface->is_tiled ? 8 : 1) ||
          output_gap % src_surface->BytesInPixels(src_surface->is_tiled ? 64 : 1) != 0)) {
-        return false;
+        return reject(Trace::Reason::OutputLayout);
     }
 
     SurfaceParams dst_params = *src_surface;
@@ -2352,33 +3220,40 @@ bool RasterizerOpenGL::AccelerateTextureCopy(const GPU::Regs::DisplayTransferCon
     const bool load_gap = output_gap != 0;
     Common::Rectangle<u32> dst_rect;
     Surface dst_surface;
-    std::tie(dst_surface, dst_rect) =
-        res_cache.GetSurfaceSubRect(dst_params, ScaleMatch::Upscale, load_gap);
-    if (dst_surface == nullptr) {
-        return false;
+    {
+        Trace::Scope phase(Trace::Phase::DestinationAcquire);
+        std::tie(dst_surface, dst_rect) =
+            res_cache.GetSurfaceSubRect(dst_params, ScaleMatch::Upscale, load_gap);
+    }
+    if (dst_surface == nullptr) return reject(Trace::Reason::DestinationMiss);
+    Trace::Destination(*dst_surface);
+
+    if (dst_surface->type == SurfaceType::Texture) return reject(Trace::Reason::DestinationTexture);
+
+    {
+        Trace::Scope phase(Trace::Phase::Blit);
+        if (!res_cache.BlitSurfaces(src_surface, src_rect, dst_surface, dst_rect))
+            return reject(Trace::Reason::BlitFailed);
     }
 
-    if (dst_surface->type == SurfaceType::Texture) {
-        return false;
-    }
-
-    if (!res_cache.BlitSurfaces(src_surface, src_rect, dst_surface, dst_rect)) {
-        return false;
-    }
-
-    res_cache.InvalidateRegion(dst_params.addr, dst_params.size, dst_surface);
+    res_cache.InvalidateRegion(dst_params.addr, dst_params.size, dst_surface,
+                               SurfaceInvalidationOrigin::TextureCopy);
+    Trace::SetReason(Trace::Reason::Accelerated);
     return true;
 }
 
 bool RasterizerOpenGL::AccelerateFill(const GPU::Regs::MemoryFillConfig& config) {
+    FlushSoftwareBatch(SoftwareBatching::Reason::Transfer);
     Surface dst_surface = res_cache.GetFillSurface(config);
-    res_cache.InvalidateRegion(dst_surface->addr, dst_surface->size, dst_surface);
+    res_cache.InvalidateRegion(dst_surface->addr, dst_surface->size, dst_surface,
+                               SurfaceInvalidationOrigin::Fill);
     return true;
 }
 
 bool RasterizerOpenGL::AccelerateDisplay(const GPU::Regs::FramebufferConfig& config,
                                          PAddr framebuffer_addr, u32 pixel_stride,
                                          ScreenInfo& screen_info) {
+    FlushSoftwareBatch(SoftwareBatching::Reason::Present);
     if (framebuffer_addr == 0) {
         return false;
     }
@@ -2495,7 +3370,12 @@ void RasterizerOpenGL::SamplerInfo::SyncWithConfig(const TextureConfig& config) 
 void RasterizerOpenGL::SetShader() {
     Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
                                            Common::FrameTiming::RenderBookkeepingProfileEnabled());
+#ifdef CARA_IOS_GLES
+    if(!shader_program_manager->UseFragmentShader(Pica::g_state.regs,native_borrow_fragment_selected))
+        native_borrow_restart=true;
+#else
     shader_program_manager->UseFragmentShader(Pica::g_state.regs);
+#endif
 }
 
 void RasterizerOpenGL::SyncClipEnabled() {
@@ -3345,6 +4225,50 @@ void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
     }
 
     uniform_buffer.Unmap(used_bytes);
+}
+
+
+// Diagnostic only: read actual framebuffer attachment state without reconciling
+// cache metadata or modifying attachments. Consumed errors remain sticky so this
+// instrumentation cannot turn an oracle failure into a pass.
+void RasterizerOpenGL::TraceSoftwareBatchVisibilityFBO(const char* stage,GLuint selected_color,GLuint selected_depth) {
+    static const bool enabled=[] {const char* value=std::getenv("CARA_SW_BATCH_VISIBILITY_TEST");return value&&std::strcmp(value,"1")==0;}();
+    if(!enabled)return;
+    const auto errors=[] {GLenum first=GL_NO_ERROR;for(unsigned n=0;n<32;++n){const auto error=glGetError();if(error==GL_NO_ERROR)break;if(first==GL_NO_ERROR)first=error;}return first;};
+    const auto entry_error=errors();
+    if(!software_visibility_first_gl_error&&entry_error)software_visibility_first_gl_error=entry_error;
+    struct Snapshot {GLenum status=0;GLint color_type=0,color_name=0,depth_type=0,depth_name=0,stencil_type=0,stencil_name=0;};
+    const auto snapshot=[](GLenum target,GLuint object) {
+        Snapshot result;result.status=glCheckFramebufferStatus(target);
+        if(!object)return result; // default-FBO attachment enums differ; do not probe them
+        const auto attachment=[target](GLenum point,GLint& type,GLint& name){
+            glGetFramebufferAttachmentParameteriv(target,point,GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,&type);
+            if(type!=GL_NONE)glGetFramebufferAttachmentParameteriv(target,point,GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,&name);
+        };
+        attachment(GL_COLOR_ATTACHMENT0,result.color_type,result.color_name);
+        attachment(GL_DEPTH_ATTACHMENT,result.depth_type,result.depth_name);
+        attachment(GL_STENCIL_ATTACHMENT,result.stencil_type,result.stencil_name);
+        return result;
+    };
+    GLint actual_draw=0,actual_read=0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&actual_draw);glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&actual_read);
+    const auto draw_state=snapshot(GL_DRAW_FRAMEBUFFER,GLuint(actual_draw));
+    const auto read_state=snapshot(GL_READ_FRAMEBUFFER,GLuint(actual_read));
+    // Query the rasterizer-owned FBO as well if an export helper temporarily
+    // selected another one. Restore the actual binding; tracker state is untouched.
+    if(GLuint(actual_draw)!=framebuffer.handle)glBindFramebuffer(GL_DRAW_FRAMEBUFFER,framebuffer.handle);
+    const auto owned_state=snapshot(GL_DRAW_FRAMEBUFFER,framebuffer.handle);
+    if(GLuint(actual_draw)!=framebuffer.handle)glBindFramebuffer(GL_DRAW_FRAMEBUFFER,GLuint(actual_draw));
+    const bool selected_color_live=selected_color&&glIsTexture(selected_color);
+    const bool cached_color_live=framebuffer_info.color_attachment&&glIsTexture(framebuffer_info.color_attachment);
+    const auto query_error=errors();
+    if(!software_visibility_first_query_error&&query_error)software_visibility_first_query_error=query_error;
+    LOG_INFO(Render_OpenGL,"SW_VIS_FBO seq={} stage={} owner_fbo={} tracked_fbo={} actual_draw={} actual_read={} cached_color={} cached_depth={} selected_color={} selected_depth={} cached_color_live={} selected_color_live={} owned_status=0x{:x} owned_color_type=0x{:x} owned_color={} owned_depth_type=0x{:x} owned_depth={} owned_stencil_type=0x{:x} owned_stencil={} draw_status=0x{:x} draw_color_type=0x{:x} draw_color={} read_status=0x{:x} read_color_type=0x{:x} read_color={} entry_error={} query_error={} sticky_error={} sticky_query_error={} vertices={} visibility_pending={}",
+        ++software_visibility_oracle_trace_sequence,stage,framebuffer.handle,state.draw.draw_framebuffer,actual_draw,actual_read,
+        framebuffer_info.color_attachment,framebuffer_info.depth_attachment,selected_color,selected_depth,cached_color_live,selected_color_live,
+        unsigned(owned_state.status),unsigned(owned_state.color_type),owned_state.color_name,unsigned(owned_state.depth_type),owned_state.depth_name,unsigned(owned_state.stencil_type),owned_state.stencil_name,
+        unsigned(draw_state.status),unsigned(draw_state.color_type),draw_state.color_name,unsigned(read_state.status),unsigned(read_state.color_type),read_state.color_name,entry_error,query_error,
+        software_visibility_first_gl_error,software_visibility_first_query_error,vertex_batch.size(),software_framebuffer_visibility.pending);
 }
 
 } // namespace OpenGL

@@ -77,6 +77,8 @@ void Thread::Stop() {
     if (status == ThreadStatus::Dead) return;
     // Cancel any outstanding wakeup events for this thread
     thread_manager.kernel.timing.UnscheduleEvent(thread_manager.ThreadWakeupEventType, thread_id);
+    Cara::GuestGPUTrace::ObserveWaitCancel(thread_manager.kernel.timing,thread_id,
+        static_cast<u32>(status),Cara::GuestGPUTrace::WaitOrigins::Cancel::ThreadStop);
     thread_manager.wakeup_callback_table.erase(thread_id);
 
     // Clean up thread from ready queue
@@ -136,6 +138,8 @@ void ThreadManager::SwitchContext(Thread* new_thread) {
 
         // Cancel any outstanding wakeup events for this thread
         timing.UnscheduleEvent(ThreadWakeupEventType, new_thread->thread_id);
+        Cara::GuestGPUTrace::ObserveWaitCancel(timing,new_thread->thread_id,
+            static_cast<u32>(new_thread->status),Cara::GuestGPUTrace::WaitOrigins::Cancel::ContextSwitch);
 
         current_thread = SharedFrom(new_thread);
 
@@ -194,6 +198,13 @@ void ThreadManager::ThreadWakeupCallback(u64 thread_id, s64 cycles_late) {
         return;
     }
 
+    if (Cara::GuestGPUTrace::WaitOriginsEnabled()) {
+        auto& callback_cpu = kernel.GetRunningCore();
+        Cara::GuestGPUTrace::ObserveWaitTimer(kernel.timing,thread->GetThreadId(),
+            static_cast<u32>(thread->status),thread->status==ThreadStatus::WaitArb?thread->wait_address:0,
+            thread->status==ThreadStatus::WaitArb,cycles_late,
+            callback_cpu.GetID(),callback_cpu.GetTimer().GetTicks());
+    }
     if (thread->status == ThreadStatus::WaitSynchAny ||
         thread->status == ThreadStatus::WaitSynchAll || thread->status == ThreadStatus::WaitArb ||
         thread->status == ThreadStatus::WaitHleEvent) {
@@ -215,16 +226,24 @@ void ThreadManager::ThreadWakeupCallback(u64 thread_id, s64 cycles_late) {
 
 void Thread::WakeAfterDelay(s64 nanoseconds) {
     // Don't schedule a wakeup if the thread wants to wait forever
-    if (nanoseconds == -1)
+    if (nanoseconds == -1) {
+        Cara::GuestGPUTrace::ObserveWaitArm(thread_manager.kernel.timing,thread_id,
+            static_cast<u32>(status),status==ThreadStatus::WaitArb?wait_address:0,
+            status==ThreadStatus::WaitArb,nanoseconds,0,false);
         return;
-
-    thread_manager.kernel.timing.ScheduleEvent(nsToCycles(nanoseconds),
+    }
+    const auto delay=nsToCycles(nanoseconds); // exactly the original scheduling argument
+    thread_manager.kernel.timing.ScheduleEvent(delay,
                                                thread_manager.ThreadWakeupEventType, thread_id);
+    Cara::GuestGPUTrace::ObserveWaitArm(thread_manager.kernel.timing,thread_id,
+        static_cast<u32>(status),status==ThreadStatus::WaitArb?wait_address:0,
+        status==ThreadStatus::WaitArb,nanoseconds,delay,true);
 }
 
 void Thread::ResumeFromWait() {
     ASSERT_MSG(wait_objects.empty(), "Thread is waking up while waiting for objects");
-
+    const auto wait_trace=Cara::GuestGPUTrace::BeginWaitResume(thread_id,static_cast<u32>(status),
+        status==ThreadStatus::WaitArb?wait_address:0,status==ThreadStatus::WaitArb);
     switch (status) {
     case ThreadStatus::WaitSynchAll:
     case ThreadStatus::WaitSynchAny:
@@ -242,15 +261,21 @@ void Thread::ResumeFromWait() {
         // If the thread is waiting on multiple wait objects, it might be awoken more than once
         // before actually resuming. We can ignore subsequent wakeups if the thread status has
         // already been set to ThreadStatus::Ready.
+        Cara::GuestGPUTrace::EndWaitResume(thread_manager.kernel.timing,wait_trace,
+            static_cast<u32>(status),Cara::GuestGPUTrace::WaitOrigins::Resume::AlreadyReady);
         return;
 
     case ThreadStatus::Running:
         DEBUG_ASSERT_MSG(false, "Thread with object id {} has already resumed.", GetObjectId());
+        Cara::GuestGPUTrace::EndWaitResume(thread_manager.kernel.timing,wait_trace,
+            static_cast<u32>(status),Cara::GuestGPUTrace::WaitOrigins::Resume::AlreadyRunning);
         return;
     case ThreadStatus::Dead:
         // This should never happen, as threads must complete before being stopped.
         DEBUG_ASSERT_MSG(false, "Thread with object id {} cannot be resumed because it's DEAD.",
                          GetObjectId());
+        Cara::GuestGPUTrace::EndWaitResume(thread_manager.kernel.timing,wait_trace,
+            static_cast<u32>(status),Cara::GuestGPUTrace::WaitOrigins::Resume::Dead);
         return;
     }
 
@@ -258,6 +283,8 @@ void Thread::ResumeFromWait() {
 
     thread_manager.ready_queue.push_back(current_priority, this);
     status = ThreadStatus::Ready;
+    Cara::GuestGPUTrace::EndWaitResume(thread_manager.kernel.timing,wait_trace,
+        static_cast<u32>(status),Cara::GuestGPUTrace::WaitOrigins::Resume::ReadyQueued);
     thread_manager.kernel.PrepareReschedule();
 }
 
@@ -334,7 +361,14 @@ ResultVal<std::shared_ptr<Thread>> KernelSystem::CreateThread(
         return ERR_OUT_OF_RANGE_KERNEL;
     }
 
-    if (!Settings::values.is_new_3ds) processor_id = 0;
+    if (!Settings::values.is_new_3ds) {
+        if (!Old3dsSyscoreRequested() || !Old3dsSyscoreSupported()) {
+            processor_id = 0; // Explicit fallback for unsupported single/unknown descriptors.
+        } else if (processor_id < 0 || processor_id > 1 ||
+                   (processor_id == 1 && !Old3dsSyscoreMayCreate())) {
+            return ERR_NOT_AUTHORIZED;
+        }
+    }
 
     // TODO(yuriks): Other checks, returning 0xD9001BEA
 

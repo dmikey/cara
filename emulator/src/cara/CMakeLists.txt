@@ -8,6 +8,16 @@ if (CARA_MAC_SDL_DEV_HOST)
     endif()
     add_executable(cara
         native_mac/main.cpp
+        native_mac/game_menu.mm
+        native_mac/game_menu.h
+        native_mac/native_command_policy.h
+        native_mac/gl_query_census.cpp
+        native_mac/gl_query_census.h
+        native_mac/profile_gpu_boundary.h
+        native_mac/behavior_fixture.cpp
+        native_mac/required_copy_fixture.cpp
+        native_mac/required_copy_fixture.h
+        native_mac/behavior_fixture.h
         native_mac/relay_config.mm
         native_mac/relay_config.h
         native_mac/config.cpp
@@ -41,8 +51,10 @@ if (CARA_MAC_SDL_DEV_HOST)
     enable_language(OBJCXX)
     set_target_properties(cara PROPERTIES OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
     set_source_files_properties(native_mac/relay_config.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    set_source_files_properties(native_mac/game_menu.mm PROPERTIES COMPILE_FLAGS "-fno-objc-arc")
+    target_link_libraries(cara PRIVATE "-framework AppKit")
     find_package(PNG REQUIRED)
-    target_link_libraries(cara PRIVATE PNG::PNG)
+    target_link_libraries(cara PRIVATE PNG::PNG nihstro-headers)
     add_executable(cara-native-relay-config-self-test
         "${PROJECT_SOURCE_DIR}/../tests/native_relay_config_test.mm"
         native_mac/relay_config.mm)

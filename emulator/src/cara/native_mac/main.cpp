@@ -1,3 +1,10 @@
+#include "cara/native_mac/native_command_policy.h"
+#include "cara/native_mac/game_menu.h"
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#include "cara/native_mac/diagnostic_clock.h"
+#include <atomic>
+#include "video_core/renderer_opengl/gl_rasterizer.h"
+#include "video_core/video_core.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
@@ -6,8 +13,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Native macOS SDL developer host adapted to Cara's current EmuWindow API.
 #include <csignal>
+#include <cerrno>
+#include <cstring>
+#include <cstdio>
+#include "cara/native_mac/profile_gpu_boundary.h"
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -16,10 +28,15 @@
 #include <glad/glad.h>
 #include <unistd.h>
 #include "cara/config.h"
+#include "cara/guest_gpu_trace.h"
+#include "cara/texture_copy_trace.h"
 #include "cara/lodepng_image_interface.h"
 #include "cara/native_mac/emu_window.h"
 #include "cara/native_mac/cpu_category_profile.h"
 #include "cara/native_mac/profile_snapshot.h"
+#include "cara/native_mac/behavior_fixture.h"
+#include "cara/native_mac/required_copy_fixture.h"
+#include "cara/native_mac/gl_query_census.h"
 #include "cara/native_mac/relay_config.h"
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
@@ -34,6 +51,22 @@
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/video_core.h"
+// Optional audit wraps existing driver queries; it never adds a query in the loop.
+static PFNGLGETERRORPROC native_original_get_error=nullptr;
+static std::atomic<GLenum> native_first_gl_error{GL_NO_ERROR};
+static GLenum NativeAuditedGetError() {
+    const auto error=native_original_get_error();
+    if(error!=GL_NO_ERROR) {
+        GLenum expected=GL_NO_ERROR;
+        native_first_gl_error.compare_exchange_strong(expected,error,std::memory_order_relaxed);
+    }
+    return error;
+}
+static bool NativeAuditHookConnected() {
+    // Explicitly registered exclusive wrappers; never accept an arbitrary hook.
+    return Cara::NativeGLQueryCensus::AuditConnected(NativeAuditedGetError) ||
+           OpenGL::CommandQueue::ForwardsGetError(NativeAuditedGetError);
+}
 static void NativeCPUDefaults() {
     for (const auto& item : {std::pair{"CARA_CPU_BACKEND", "fastinterp"},
                              {"CARA_FASTINTERP_ALU_OPERANDS", "1"},
@@ -48,10 +81,13 @@ static void NativeCPUDefaults() {
     }
 }
 static void WriteNativeManifest(const std::string& directory) {
+    auto& system=Core::System::GetInstance();
     const auto& v = Settings::values;
     std::ofstream out(directory + "native-settings.json");
     out << std::boolalpha;
-    out << "{\"guest_cpu_percent\":100,\"maximum_speed_percent\":100";
+    out << "{\"guest_cpu_percent\":" << Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())
+        << ",\"maximum_speed_percent\":" << v.frame_limit << ",\"diagnostic_clock\":";
+    Cara::NativeDiagnosticClock::WriteJSON(out,system.CoreTiming(),system.GetNumCores());
     out << ",\"use_cpu_jit\":" << v.use_cpu_jit;
     out << ",\"use_shader_jit\":" << v.use_shader_jit;
     out << ",\"use_gles\":" << v.use_gles;
@@ -101,7 +137,6 @@ static void WriteNativeManifest(const std::string& directory) {
         comma = true;
     }
     out << "},\"cores\":[";
-    auto& system = Core::System::GetInstance();
     for (u32 i = 0; i < system.GetNumCores(); ++i) {
         if (i)
             out << ',';
@@ -112,16 +147,67 @@ static void WriteNativeManifest(const std::string& directory) {
     }
     out << "]}\n";
 }
+static std::string NativeOracleJSONQuote(const std::string& input) {
+    static constexpr char hex[]="0123456789abcdef";
+    std::string out="\"";
+    for (unsigned char c : input) {
+        if (c=='"' || c=='\\') { out+='\\'; out+=c; }
+        else if(c<0x20) { out+="\\u00";out+=hex[c>>4];out+=hex[c&15]; }
+        else out+=c;
+    }
+    out+='"';return out;
+}
 static volatile std::sig_atomic_t stop_requested = 0;
 static void StopNative(int) {
     stop_requested = 1;
 }
-int main(int argc, char** argv) {
+static int RunNativeMain(int argc, char** argv) {
     try {
         if (argc < 2 || std::string(argv[1]) == "--help") {
             std::cout << "Cara native no-JIT developer host\nUsage: cara ROM [--fullscreen] [--relay-stdin]\nSet "
                          "CARA_USER_DIR to a fresh absolute data directory.\n";
             return argc < 2 ? 1 : 0;
+        }
+        if (NativeMac::DeveloperCommands::InvalidRequest(
+                std::getenv("CARA_NATIVE_DEV_COMMANDS"),std::getenv("CARA_NATIVE_DIAGNOSTICS")))
+            throw std::runtime_error("Developer commands require CARA_NATIVE_DIAGNOSTICS=1");
+        const bool required_copy_integration=std::getenv("CARA_NATIVE_UNCHECKED_BLIT_INTEGRATION_TEST")&&
+            std::string(std::getenv("CARA_NATIVE_UNCHECKED_BLIT_INTEGRATION_TEST"))=="1";
+        const bool original_required_copy_fixture=required_copy_integration ||std::getenv("CARA_NATIVE_REQUIRED_COPY_COUNTERS_OFF_TEST")&&
+            std::string(std::getenv("CARA_NATIVE_REQUIRED_COPY_COUNTERS_OFF_TEST"))=="1";
+        const bool original_behavior_fixture=original_required_copy_fixture ||
+            (std::getenv("CARA_NATIVE_BEHAVIOR_FIXTURE")&&
+             std::string(std::getenv("CARA_NATIVE_BEHAVIOR_FIXTURE"))=="1");
+        if(original_behavior_fixture) {
+            std::string error;
+            if(!Cara::NativeBehavior::ValidateBootstrap(argv[1],error))throw std::runtime_error(error);
+            const char* user=std::getenv("CARA_USER_DIR");
+            if(!user||!std::filesystem::path(user).is_absolute()||
+               (std::filesystem::exists(user)&&(!std::filesystem::is_directory(user)||!std::filesystem::is_empty(user))))
+                throw std::runtime_error("original behavior fixture requires a fresh empty private user directory");
+            for(const char* flag:{"CARA_NATIVE_DIAGNOSTICS","CARA_NATIVE_SCRIPT_ONLY_INPUT"}) {
+                const char* value=std::getenv(flag);
+                if(!value||std::string(value)!="1")throw std::runtime_error("original behavior fixture requires diagnostics and script-only input");
+            }
+            for(const char* flag:{"CARA_GPU_ABLATE_FRAGMENT_LIGHTING","CARA_GPU_ABLATE_PARTICLE_FAMILY",
+                "CARA_GPU_ABLATE_COMPOSITE_PASS","CARA_GPU_ABLATE_RAY_CANDIDATE",
+                "CARA_GPU_LIT_VERTEX_REUSE","CARA_GPU_LIT_PAIR_REUSE","CARA_GPU_VERTEX_REUSE",
+                "CARA_NATIVE_NEAREST_BORROW","CARA_GPU_FEEDBACK_GROW_ONLY"}) {
+                const char* value=std::getenv(flag);
+                if(value&&std::string(value)=="1")throw std::runtime_error("original behavior fixture requires default rendering feature selection");
+            }
+        }
+        const bool original_software_fixture=std::getenv("CARA_NATIVE_BEHAVIOR_SOFTWARE")&&
+            std::string(std::getenv("CARA_NATIVE_BEHAVIOR_SOFTWARE"))=="1";
+        const bool original_software_indexed=std::getenv("CARA_NATIVE_BEHAVIOR_INDEXED")&&
+            std::string(std::getenv("CARA_NATIVE_BEHAVIOR_INDEXED"))=="1";
+        if(original_software_indexed&&!original_software_fixture)
+            throw std::runtime_error("indexed fixture requires software fixture");
+        if(original_software_fixture) {
+            if(!original_behavior_fixture||original_required_copy_fixture)
+                throw std::runtime_error("software fixture requires original one-draw bootstrap mode");
+            const char* queue=std::getenv("CARA_GL_COMMAND_QUEUE");
+            if(queue&&std::string(queue)=="1")throw std::runtime_error("software fixture requires queue OFF");
         }
         bool fullscreen = false, relay_requested = false;
         for (int i=2; i<argc; ++i) {
@@ -155,6 +241,7 @@ int main(int argc, char** argv) {
         FileUtil::SetUserPath(directory);
         std::ofstream(directory + "native.pid") << getpid() << "\n";
         NativeCPUDefaults();
+        (void)Cara::NativeDiagnosticClock::Get(); // validate explicit request before SDL/window/core load
         Common::DetachedTasks tasks;
         Config config;
         Log::Filter filter(Log::Level::Info);
@@ -173,14 +260,134 @@ int main(int argc, char** argv) {
         Network::InstallRelaySession(relay);
         SCOPE_EXIT({ if (relay) relay->Disconnect(); Network::InstallRelaySession(nullptr); });
         EmuWindow_SDL2 window(fullscreen);
+        if (!NativeMac::DeveloperCommands::One(std::getenv("CARA_NATIVE_DIAGNOSTICS")))
+            Cara::NativeGameMenu::Install();
         window.MakeCurrent();
+        const bool native_gl_audit=std::getenv("CARA_NATIVE_GL_ERROR_AUDIT") &&
+            std::string(std::getenv("CARA_NATIVE_GL_ERROR_AUDIT"))=="1" &&
+            std::getenv("CARA_NATIVE_DIAGNOSTICS") &&
+            std::string(std::getenv("CARA_NATIVE_DIAGNOSTICS"))=="1";
+        if(native_gl_audit) {
+            if(!glad_glGetError)throw std::runtime_error("GL audit missing driver entry point");
+            native_original_get_error=glad_glGetError;native_first_gl_error.store(GL_NO_ERROR);
+            glad_glGetError=NativeAuditedGetError;
+        }
+        SCOPE_EXIT({if(native_gl_audit)glad_glGetError=native_original_get_error;});
+        if(std::getenv("CARA_NATIVE_GL_AUDIT_SELF_TEST") &&
+           std::string(std::getenv("CARA_NATIVE_GL_AUDIT_SELF_TEST"))=="1") {
+            if(!native_gl_audit)throw std::runtime_error("GL audit self-test requires installed audit");
+            window.StartCommandQueue();
+            SCOPE_EXIT({window.StopCommandQueue();});
+            const auto before=glGetError();
+            glEnable(GLenum(0xffffffffu)); // Deliberate invalid enum in this test-only exit path.
+            const auto consumed=glGetError();
+            const auto pending=glGetError();
+            const auto first=native_first_gl_error.load();
+            const bool passed=before==GL_NO_ERROR && consumed==GL_INVALID_ENUM &&
+                pending==GL_NO_ERROR && first==GL_INVALID_ENUM && NativeAuditHookConnected();
+            std::ofstream report(directory+"native-gl-audit-self-test.json");
+            report << "{\"passed\":" << (passed?"true":"false") << ",\"consumed_error\":" << consumed
+                   << ",\"pending_error\":" << pending << ",\"first_observed_error\":" << first
+                   << ",\"queue_enabled\":" << (OpenGL::CommandQueue::Enabled()?"true":"false")
+                   << ",\"guest_instructions_executed\":false,\"source_fingerprint\":"
+                   << NativeOracleJSONQuote(Core::GetSaveStateBuildFingerprint()) << "}\n";
+            report.flush();return passed && report?0:4;
+        }
         // Release GPU/core resources while the owning window and GL context are alive,
         // including failure paths from checked framebuffer copies.
-        SCOPE_EXIT({ if (relay) relay->Disconnect(); system.Shutdown(); });
+        window.StartCommandQueue();
+        bool core_closed=false,shutdown_failed=false,core_load_started=false;
+        const auto close_core=[&]() noexcept {
+            if(core_closed)return;core_closed=true;
+            try{if(relay)relay->Disconnect();}catch(...){shutdown_failed=true;}
+            if(!window.PrepareForCoreShutdown())shutdown_failed=true;
+            // Drain/join/unhook and reacquire the context before resource teardown.
+            if(!window.StopCommandQueue())shutdown_failed=true;
+            if(Cara::NativeProfile::MustExitWithoutGLDestructors(core_load_started,window.IsOwnedContextCurrent())) {
+                try{std::ofstream fatal(directory+"native-fatal-context-loss.json");fatal<<"{\"fatal\":true,\"core_load_started\":true,\"owned_context_current\":false,\"gl_destructors_skipped\":true,\"exit_code\":70}\n";fatal.flush();}catch(...){}
+                std::fputs("Fatal native GL context loss after Core load; skipping unsafe GL destructors\n",stderr);
+                std::fflush(stderr);
+                std::_Exit(70);
+            }
+            try{system.Shutdown();}catch(...){shutdown_failed=true;}
+            try{std::ofstream status(directory+"native-shutdown-status.json");status<<"{\"core_closed\":true,\"powered_on\":"<<(system.IsPoweredOn()?"true":"false")<<",\"shutdown_failed\":"<<(shutdown_failed?"true":"false")<<"}\n";}catch(...){}
+        };
+        SCOPE_EXIT({close_core();});
+        const bool native_query_census=std::getenv("CARA_NATIVE_GL_QUERY_CENSUS") &&
+            std::string(std::getenv("CARA_NATIVE_GL_QUERY_CENSUS"))=="1";
+        if(native_query_census) {
+            const bool cpu=std::getenv("CARA_NATIVE_GL_QUERY_CENSUS_CPU") &&
+                std::string(std::getenv("CARA_NATIVE_GL_QUERY_CENSUS_CPU"))=="1";
+            Cara::NativeGLQueryCensus::Install(cpu);
+        }
+        // Preserve the census report/uninstall boundary before any core teardown.
+        bool query_census_closed=false;
+        const auto finish_query_census=[&] {
+            if(native_query_census&&!query_census_closed) {
+                query_census_closed=true;
+                Cara::NativeGLQueryCensus::WriteReport(directory+"native-gl-query-census.json",
+                    Core::GetSaveStateBuildFingerprint());
+                Cara::NativeGLQueryCensus::Uninstall();
+            }
+        };
+        SCOPE_EXIT({finish_query_census();});
+        // LIFO: stop worker while audit/census hooks and all core owners still live.
+        SCOPE_EXIT({if(!window.StopCommandQueue())shutdown_failed=true;});
+        core_load_started=true;
         const auto loaded = system.Load(window, argv[1]);
         std::cout << "Native load result: " << static_cast<unsigned>(loaded) << std::endl;
         if (loaded != Core::System::ResultStatus::Success)
             return 3;
+        if(original_behavior_fixture) {
+            if(Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())!=100)
+                throw std::runtime_error("original behavior fixture requires 100 percent guest CPU clock");
+            const auto fixture_stem=directory+(required_copy_integration ? "native-unchecked-blit-integration" : original_required_copy_fixture ? "native-original-required-copy" :
+                original_software_fixture ? (original_software_indexed ? "native-original-software-indexed" : "native-original-software-unindexed") : "native-original-behavior");
+            WriteNativeProfileSnapshot(fixture_stem+"-origin",VideoCore::GetCurrentFrame());
+            auto fixture=required_copy_integration ? Cara::NativeBehavior::RunRequiredCopyIntegration(system) : original_required_copy_fixture ? Cara::NativeBehavior::RunRequiredCopy(system)
+                                                       : Cara::NativeBehavior::RunOneDraw(system,original_software_fixture,original_software_indexed);
+            if(native_gl_audit&&(native_first_gl_error.load()!=GL_NO_ERROR||!NativeAuditHookConnected())) {
+                fixture.passed=false;fixture.error+="; GL audit observed error or lost hook";
+            }
+            const bool fixture_system_live=system.IsPoweredOn();
+            if(!fixture_system_live){fixture.passed=false;fixture.error+="; System closed during fixture: after-profile unavailable";}
+            std::ofstream report(fixture_stem+".json");
+            report << "{\"passed\":" << (fixture.passed?"true":"false") << ",\"error\":" << NativeOracleJSONQuote(fixture.error)
+                   << ",\"source_fingerprint\":" << NativeOracleJSONQuote(Core::GetSaveStateBuildFingerprint())
+                   << ",\"after_profile_available\":" << (fixture_system_live?"true":"false")
+                   << ",\"scope\":\"authored bootstrap and one actual-engine host batch only\",\"detail\":" << fixture.detail_json << "}\n";
+            report.flush();if(fixture_system_live)WriteNativeProfileSnapshot(fixture_stem+"-after",VideoCore::GetCurrentFrame());
+            finish_query_census();close_core();
+            return fixture.passed&&report&&!shutdown_failed?0:4;
+        }
+        for (const auto* oracle : {"CARA_SW_BATCH_VISIBILITY_TEST", "CARA_LUT_EFFECTIVE_CHANGE_TEST", "CARA_NATIVE_REQUIRED_COPY_TEST"}) {
+            const auto* flag=std::getenv(oracle);
+            if (!flag || std::string(flag)!="1") continue;
+            auto* rasterizer=dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
+            std::string error;
+            const bool visibility=std::string(oracle)=="CARA_SW_BATCH_VISIBILITY_TEST";
+            const bool required_copy=std::string(oracle)=="CARA_NATIVE_REQUIRED_COPY_TEST";
+            bool passed=rasterizer && (visibility ? rasterizer->RunSoftwareBatchVisibilitySelfTest(error)
+                : required_copy ? rasterizer->RunNativeRequiredCopySelfTest(error)
+                                : rasterizer->RunLUTEffectiveChangeSelfTest(error));
+            if(native_gl_audit && (native_first_gl_error.load()!=GL_NO_ERROR || !NativeAuditHookConnected())) {
+                passed=false;error+="; GL audit error or lost driver hook "+std::to_string(native_first_gl_error.load());
+            }
+            const auto stem=directory+(visibility ? "native-software-batch-visibility-oracle" :
+                required_copy ? "native-required-copy-oracle" : "native-lut-effective-change-oracle");
+            std::ofstream report(stem+".json");
+            report << "{\"passed\":" << (passed?"true":"false")
+                   << ",\"error\":" << NativeOracleJSONQuote(error)
+                   << ",\"source_fingerprint\":" << NativeOracleJSONQuote(Core::GetSaveStateBuildFingerprint())
+                   << ",\"guest_instructions_executed\":false"
+                   << ",\"native_copytex_surface_copy_calls\":" << (rasterizer?rasterizer->NativeCopyTexSurfaceCopyCalls():0)
+                   << ",\"native_shader_surface_copy_calls\":" << (rasterizer?rasterizer->NativeShaderSurfaceCopyCalls():0)
+                   << ",\"software_batching\":";
+            OpenGL::SoftwareBatching::WriteJSON(report);report << "}\n";report.flush();
+            WriteNativeProfileSnapshot(stem,VideoCore::GetCurrentFrame());
+            finish_query_census();close_core();
+            return passed && report && !shutdown_failed ? 0 : 4;
+        }
         const bool diagnostics = std::getenv("CARA_NATIVE_DIAGNOSTICS") &&
                                  std::string(std::getenv("CARA_NATIVE_DIAGNOSTICS")) == "1";
         const auto record_state = [&](const char* operation) {
@@ -188,14 +395,77 @@ int main(int argc, char** argv) {
             state << "{\"operation\":\"" << operation
                   << "\",\"slot\":1,\"frame\":" << VideoCore::GetCurrentFrame()
                   << ",\"fingerprint\":\"" << Core::GetSaveStateBuildFingerprint()
-                  << "\",\"ticks\":" << system.CoreTiming().GetTicks() << "}\n";
+                  << "\",\"ticks\":" << system.CoreTiming().GetTicks()
+                  << ",\"guest_cpu_percent\":" << Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())
+                  << ",\"diagnostic_clock\":";
+            Cara::NativeDiagnosticClock::WriteJSON(state,system.CoreTiming(),system.GetNumCores());
+            state << "}\n";
         };
         if (const char* load = std::getenv("CARA_NATIVE_LOAD_SLOT");
             diagnostics && load && std::string(load) == "1") {
             if (relay) relay->Disconnect();
             system.LoadState(1);
+            Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
+                Cara::NativeScriptOnlyInput::Enabled(),"startup-state-load");
             record_state("load");
+        } else {
+            Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
+                Cara::NativeScriptOnlyInput::Enabled(),"startup-normal-load");
         }
+        const char* copy_trace_flag = std::getenv("CARA_TEXTURE_COPY_TRACE");
+        const bool copy_trace_requested = diagnostics && copy_trace_flag &&
+                                          std::string(copy_trace_flag) == "1";
+        const auto flush_copy_trace = [&](bool force) {
+            if (!copy_trace_requested) return;
+            Cara::TextureCopyTrace::Flush(force);
+            if (Cara::TextureCopyTrace::TakeExportError()) {
+                std::ofstream error(directory + "native-texture-copy-trace-error.json");
+                error << "{\"export_failed\":true,\"forced\":" << (force ? "true" : "false") << "}\n";
+                throw std::runtime_error("Native TextureCopy trace export failed");
+            }
+        };
+        // Configure only on this owner thread, after state load and with no live GPU hooks.
+        if (copy_trace_requested) {
+            Cara::TextureCopyTrace::Arm(directory + "native-texture-copy-trace.json");
+            std::ofstream config(directory + "native-texture-copy-trace-config.json");
+            config << "{\"enabled\":true,\"start_frame\":" << Cara::TextureCopyTrace::start_frame
+                   << ",\"duration\":" << Cara::TextureCopyTrace::duration
+                   << ",\"path\":\"native-texture-copy-trace.json\",\"frame_origin\":\"vblank_since_arm\"}\n";
+            if (!config) throw std::runtime_error("Native TextureCopy trace config export failed");
+        }
+        SCOPE_EXIT({
+            try { flush_copy_trace(true); }
+            catch (const std::exception& error) {
+                std::cerr << "Native TextureCopy shutdown export failed: " << error.what() << std::endl;
+            }
+        });
+        const char* trace_flag = std::getenv("CARA_GPU_TRACE");
+        const bool gpu_trace_requested = diagnostics && trace_flag && std::string(trace_flag) == "1";
+        const auto flush_gpu_trace = [&](bool force) {
+            if (!gpu_trace_requested)
+                return;
+            Cara::GuestGPUTrace::Flush(force);
+            if (Cara::GuestGPUTrace::TakeExportError()) {
+                std::ofstream error(directory + "native-gpu-trace-error.json");
+                error << "{\"export_failed\":true,\"forced\":" << (force ? "true" : "false")
+                      << ",\"frame\":" << VideoCore::GetCurrentFrame() << "}\n";
+                throw std::runtime_error("Native guest GPU trace export failed");
+            }
+        };
+        // State restoration precedes ownership/arming; trace data is never restored guest state.
+        if (gpu_trace_requested)
+            Cara::GuestGPUTrace::Arm(directory + "native-gpu-trace.csv");
+        // Exception paths must force export before core/window teardown. Never throw
+        // from a scope-exit destructor; ordinary exits call the checked helper below.
+        SCOPE_EXIT({
+            if (gpu_trace_requested) {
+                try {
+                    flush_gpu_trace(true);
+                } catch (const std::exception& error) {
+                    std::cerr << "Native trace shutdown export failed: " << error.what() << std::endl;
+                }
+            }
+        });
         if (relay && !relay->Connect(std::move(relay_config)))
             throw std::runtime_error("Relay connection could not start");
         auto relay_state = Network::RelayClient::State::Idle;
@@ -230,10 +500,16 @@ int main(int argc, char** argv) {
                 Network::DrainRelayPackets(system);
             }
             const auto result = system.RunLoop();
+            flush_copy_trace(false);
+            // Export only after RunLoop and nested GPU/kernel hooks have returned.
+            if (gpu_trace_requested)
+                flush_gpu_trace(false);
             if (result == Core::System::ResultStatus::ShutdownRequested)
                 break;
             if (result != Core::System::ResultStatus::Success) {
                 std::cerr << "Run failure: " << static_cast<unsigned>(result) << std::endl;
+                flush_copy_trace(true);
+                flush_gpu_trace(true);
                 return 4;
             }
             // This explicit attribution mode samples only after RunLoop and all
@@ -250,11 +526,20 @@ int main(int argc, char** argv) {
             case EmuWindow_SDL2::StateCommand::Save:
                 system.SaveState(1);
                 record_state("save");
+                WriteNativeProfileSnapshot(directory + "native-saved-state", VideoCore::GetCurrentFrame());
                 break;
             case EmuWindow_SDL2::StateCommand::Load:
                 if (relay) relay->Disconnect();
+                flush_copy_trace(true);
+                flush_gpu_trace(true);
                 system.LoadState(1);
+                Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
+                    Cara::NativeScriptOnlyInput::Enabled(),"runtime-state-load");
                 record_state("load");
+                if (copy_trace_requested)
+                    Cara::TextureCopyTrace::Arm(directory + "native-texture-copy-trace.json");
+                if (gpu_trace_requested)
+                    Cara::GuestGPUTrace::Arm(directory + "native-gpu-trace.csv");
                 break;
             case EmuWindow_SDL2::StateCommand::None:
                 break;
@@ -262,9 +547,52 @@ int main(int argc, char** argv) {
             if (window.TakeBenchmarkStop())
                 break;
         }
-        return 0;
+        // Explicit test boundary, after the measured run and before GL teardown.
+        // Normal play performs no additional queries. Nonzero errors fail closed.
+        if (diagnostics && std::getenv("CARA_NATIVE_END_GL_ERROR_CHECK") &&
+            std::string(std::getenv("CARA_NATIVE_END_GL_ERROR_CHECK"))=="1") {
+            const auto error=glGetError();
+            const auto first=native_gl_audit?native_first_gl_error.load():GL_NO_ERROR;
+            const bool hook_connected=!native_gl_audit || NativeAuditHookConnected();
+            const bool passed=error==GL_NO_ERROR && first==GL_NO_ERROR && hook_connected;
+            std::ofstream report(directory+"native-end-gl-error.json");
+            report << "{\"passed\":" << (passed?"true":"false")
+                   << ",\"error\":" << error << ",\"audited_existing_queries\":" << (native_gl_audit?"true":"false")
+                   << ",\"first_observed_error\":" << first << ",\"hook_connected\":" << (hook_connected?"true":"false") << ",\"source_fingerprint\":"
+                   << NativeOracleJSONQuote(Core::GetSaveStateBuildFingerprint()) << "}\n";
+            report.flush();
+            if (!report || !passed)
+                throw std::runtime_error("Native final GL error check failed");
+        }
+        flush_copy_trace(true);
+        flush_gpu_trace(true);
+        finish_query_census();
+        close_core();
+        return shutdown_failed?2:0;
     } catch (const std::exception& error) {
         std::cerr << "Native host failed: " << error.what() << std::endl;
         return 2;
     }
+}
+
+// Replacing the process happens only after the Core, queue, window and all
+// RunNativeMain scope guards have completed their ordinary shutdown.
+int main(int argc, char** argv) {
+    // Avoid worker-to-AppKit synchronous dispatch while main waits on the render queue.
+    // An explicit launcher override survives; guest timing and GL work are unchanged.
+    setenv("SDL_MAC_OPENGL_ASYNC_DISPATCH", "1", 0);
+    const int result = RunNativeMain(argc, argv);
+    if (result != 0)
+        return result;
+    std::string next_rom = Cara::NativeGameMenu::TakeRequestedROM();
+    if (next_rom.empty())
+        return 0;
+    bool fullscreen = false;
+    for (int i = 2; i < argc; ++i)
+        fullscreen |= std::string(argv[i]) == "--fullscreen";
+    char fullscreen_arg[] = "--fullscreen";
+    char* next_argv[] = {argv[0], next_rom.data(), fullscreen ? fullscreen_arg : nullptr, nullptr};
+    execv(argv[0], next_argv);
+    std::cerr << "Could not open selected game: " << std::strerror(errno) << std::endl;
+    return 2;
 }

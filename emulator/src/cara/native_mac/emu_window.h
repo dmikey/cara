@@ -9,6 +9,7 @@
 #include <utility>
 #include "core/frontend/emu_window.h"
 
+namespace Common { class HostRenderQueue; }
 struct SDL_Window;
 
 class EmuWindow_SDL2 : public Frontend::EmuWindow {
@@ -26,6 +27,11 @@ public:
     StateCommand TakeStateCommand();
     bool TakeBenchmarkStop();
     void BeginBenchmark();
+    // Drain normal work, or join/reclaim a failed context before core teardown.
+    bool PrepareForCoreShutdown() noexcept;
+    void StartCommandQueue();
+    bool StopCommandQueue() noexcept;
+    bool IsOwnedContextCurrent() const noexcept;
 
     /// Polls window events
     void PollEvents() override;
@@ -41,6 +47,11 @@ public:
 
 private:
     void NativeFrameDiagnostics();
+    // Explicit diagnostic benchmark guard; interactive windows retain their behavior.
+    void ValidateDiagnosticGeometry(const char* boundary, bool record = false) const;
+    bool diagnostic_window_locked = false;
+    int diagnostic_drawable_width = 0;
+    int diagnostic_drawable_height = 0;
     bool diagnostic_touch = false;
     u32 diagnostic_touch_release = 0;
     u32 diagnostic_touch_deadline = 0;
@@ -85,6 +96,9 @@ private:
 
     /// The OpenGL context associated with the window
     SDL_GLContext window_context;
+    // The worker owns actual GL calls; window events stay on the SDL owner.
+    std::unique_ptr<Common::HostRenderQueue> render_queue;
+    bool render_queue_failed = false;
 
     /// Keeps track of how often to update the title bar during gameplay
     u32 last_time = 0;

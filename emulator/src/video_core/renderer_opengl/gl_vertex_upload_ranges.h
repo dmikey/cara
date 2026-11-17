@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace OpenGL {
 
@@ -43,6 +44,24 @@ public:
     const Range* begin() const { return ranges.data(); }
     const Range* end() const { return ranges.data() + count; }
     std::size_t Size() const { return count; }
+
+    // Call only when the prefix and every payload range will be overwritten.
+    // This leaves the same zero-filled alignment/tail bytes as clearing the
+    // whole allocation, without writing the payload twice.
+    bool ClearPadding(void* destination, std::size_t bytes, std::size_t prefix) const {
+        if (prefix > bytes) return false;
+        auto* data = static_cast<std::uint8_t*>(destination);
+        std::size_t cursor = prefix;
+        for (const auto& range : *this) {
+            if (range.destination < cursor || range.destination > bytes ||
+                range.end < range.begin || range.end-range.begin > bytes-range.destination)
+                return false;
+            std::memset(data+cursor, 0, range.destination-cursor);
+            cursor = range.destination + static_cast<std::size_t>(range.end-range.begin);
+        }
+        std::memset(data+cursor, 0, bytes-cursor);
+        return true;
+    }
 
 private:
     static_assert(Capacity > 0);

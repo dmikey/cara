@@ -23,14 +23,31 @@ def audit(build):
                          'shader/shader_jit_x64.cpp.o') if name in graph]
     binary = build / 'bin/cara'
     symbols = subprocess.check_output(['nm', str(binary)], text=True)
+    # Atlas diagnostics map two file-backed journals as RW, never executable.
+    # Keep executable-memory/JIT rejection; permit mmap only for the explicit
+    # atlas build after checking the actual compiled observer source calls.
+    atlas = 'CARA_MAC_ATLAS_PIPELINE:BOOL=ON' in cache
+    journal_maps = []
+    if atlas:
+        for name in ('gl_host_latency.cpp', 'gl_pipeline_capture.cpp'):
+            source = ROOT / 'emulator/src/video_core/renderer_opengl' / name
+            if name + '.o' not in graph:
+                raise RuntimeError('Missing compiled journal observer: ' + name)
+            calls = re.findall(r'\bmmap\s*\([^;]*', source.read_text())
+            expected = 'mmap(nullptr,sizeof(Journal),PROT_READ|PROT_WRITE,MAP_SHARED,fd,0)'
+            if len(calls) != 1 or re.sub(r'\s+', '', calls[0]) != expected:
+                raise RuntimeError('Unreviewed memory mapping in ' + name)
+            journal_maps.append(name)
     forbidden_symbols = [line for line in symbols.splitlines()
-                         if re.search(r'ARM_Dynarmic|JitX64Engine| _mmap$| _mprotect$| _vm_protect$', line)]
+                         if re.search(r'ARM_Dynarmic|JitX64Engine| _mprotect$| _vm_protect$', line)
+                         or (not atlas and re.search(r' _mmap$', line))]
     if forbidden_objects or forbidden_symbols:
         raise RuntimeError('Excluded JIT facilities found: ' + repr(forbidden_objects + forbidden_symbols))
     # SDL2/SDL3 and libpng are expected dynamic developer dependencies. This is
     # deliberately separate from the system-libraries-only iOS product audit.
     report = dict(platform='mac-sdl', jit_enabled=False, forbidden_objects=forbidden_objects,
                   forbidden_symbols=forbidden_symbols,
+                  non_executable_journal_maps=journal_maps,
                   linkage=subprocess.check_output(['otool', '-L', str(binary)], text=True))
     (build / 'native-no-jit-audit.json').write_text(json.dumps(report, indent=2) + '\n')
 
@@ -44,6 +61,7 @@ def main():
     parser.add_argument('--prefix-path', type=Path, help='Additional CMake dependency prefix, e.g. Homebrew')
     parser.add_argument('--jobs', type=int, choices=(1, 2), default=2)
     parser.add_argument('--lto', action='store_true')
+    parser.add_argument('--atlas', action='store_true', help='Build the explicit native GL4.1 atlas/render-queue developer path')
     parser.add_argument('--compact-decoded', action='store_true', help='Opt in to experimental 16-byte interpreter records')
     args = parser.parse_args()
     if platform.system() != 'Darwin':
@@ -83,6 +101,7 @@ def main():
                '-DCARA_FASTINTERP_COMPACT_DECODED=' + ('ON' if args.compact_decoded else 'OFF'),
                '-DCARA_SOFTWARE_PRESENTATION=OFF', '-DCARA_INTERPRETER_GUEST_DEBUG=OFF',
                '-DCARA_PGO_GENERATE=OFF', '-DCARA_PGO_USE=',
+               '-DCARA_MAC_ATLAS_PIPELINE=' + ('ON' if args.atlas else 'OFF'),
                '-DCARA_MAC_SDL_DEV_HOST=ON', '-DENABLE_SDL2=ON', '-DENABLE_QT=OFF', '-DENABLE_CUBEB=OFF',
                '-DENABLE_WEB_SERVICE=OFF', '-DENABLE_FFMPEG_AUDIO_DECODER=OFF',
                '-DENABLE_FFMPEG_VIDEO_DUMPER=OFF',

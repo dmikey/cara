@@ -16,6 +16,8 @@
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_stream_buffer.h"
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#include <stdexcept>
 
 namespace OpenGL {
 
@@ -46,6 +48,9 @@ GLsizeiptr OGLStreamBuffer::GetSize() const {
 std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr alignment) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::StreamMap);
     if (Common::FrameTiming::counters.enabled) Common::FrameTiming::counters.stream_mapped_bytes += size;
+    if (CommandQueue::Enabled() &&
+        (size <= 0 || size > buffer_size || alignment <= 0 || queued_reserved != 0))
+        throw std::invalid_argument("Invalid owned stream upload reservation");
     bool invalidate = false;
 
     buffer_pos = Common::AlignUp<std::size_t>(buffer_pos, alignment);
@@ -56,6 +61,15 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
         }
     }
 
+    queued_native_map=CommandQueue::Enabled()&&size>256*1024-64;
+    if (CommandQueue::Enabled()&&!queued_native_map) {
+        queued_budget=CommandQueue::ReserveStreamPayload();
+        queued_staging.resize(static_cast<std::size_t>(size));
+        queued_reserved = size;
+        queued_orphan = invalidate;
+        return std::make_tuple(queued_staging.data(), buffer_pos, invalidate);
+    }
+
     GLbitfield flags = GL_MAP_WRITE_BIT | (explicit_flush ? GL_MAP_FLUSH_EXPLICIT_BIT : 0) |
                        (invalidate ? GL_MAP_INVALIDATE_BUFFER_BIT : GL_MAP_UNSYNCHRONIZED_BIT);
     u8* mapped_ptr = static_cast<u8*>(glMapBufferRange(gl_target, buffer_pos, size, flags));
@@ -64,6 +78,18 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
 
 void OGLStreamBuffer::Unmap(GLsizeiptr size) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::StreamUnmap);
+    if (CommandQueue::Enabled()&&!queued_native_map) {
+        if (queued_reserved == 0 || size < 0 || size > queued_reserved)
+            throw std::invalid_argument("Invalid owned stream upload completion");
+        queued_staging.resize(static_cast<std::size_t>(size));
+        // The upload and its lifetime travel together; later guest writes cannot
+        // alter this command. Orphaning preserves the old ring-wrap contract.
+        CommandQueue::UploadBufferOwned(gl_target, buffer_pos, std::move(queued_staging),
+                                        queued_orphan, buffer_size,explicit_flush,std::move(queued_budget),queued_reserved);
+        queued_reserved = 0;
+        buffer_pos += size;
+        return;
+    }
     if (size > 0 && explicit_flush) {
         // flush is relative to the start of the currently mapped range of buffer
         glFlushMappedBufferRange(gl_target, 0, size);

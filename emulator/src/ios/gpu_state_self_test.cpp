@@ -142,7 +142,11 @@ bool RunGPUStateSelfTest(std::string& error) {
     // This oracle runs before RendererOpenGL::Init initializes the global API mode.
     const bool old_gles = OpenGL::GLES;
     const bool old_shadow = OpenGL::AllowShadow;
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    if (old_gles) { error="Mac atlas state oracle requires native GL API mode"; return false; }
+#else
     OpenGL::GLES = true;
+#endif
     OpenGL::AllowShadow = false;
     SCOPE_EXIT({ OpenGL::GLES = old_gles; OpenGL::AllowShadow = old_shadow; });
     if (!CheckStreamBuffers(GL_ARRAY_BUFFER, error) ||

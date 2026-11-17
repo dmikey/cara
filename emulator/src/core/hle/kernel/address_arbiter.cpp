@@ -3,6 +3,7 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include "cara/guest_gpu_trace.h"
 #include "common/archives.h"
 #include "common/common_types.h"
 #include "common/logging/log.h"
@@ -24,6 +25,8 @@ void AddressArbiter::WaitThread(std::shared_ptr<Thread> thread, VAddr wait_addre
     thread->wait_address = wait_address;
     thread->status = ThreadStatus::WaitArb;
     waiting_threads.emplace_back(std::move(thread));
+    Cara::GuestGPUTrace::ObserveArbWait(kernel.timing,waiting_threads.back()->GetThreadId(),
+        GetObjectId(),wait_address,static_cast<u32>(ThreadStatus::WaitArb));
 }
 
 void AddressArbiter::ResumeAllThreads(VAddr address) {
@@ -36,7 +39,11 @@ void AddressArbiter::ResumeAllThreads(VAddr address) {
                                      });
 
     // Wake up all the found threads
-    std::for_each(itr, waiting_threads.end(), [](auto& thread) { thread->ResumeFromWait(); });
+    std::for_each(itr, waiting_threads.end(), [this,address](auto& thread) {
+        Cara::GuestGPUTrace::ObserveArbWake(kernel.timing,thread->GetThreadId(),GetObjectId(),address,
+            static_cast<u32>(thread->status),false);
+        thread->ResumeFromWait();
+    });
 
     // Remove the woken up threads from the wait list.
     waiting_threads.erase(itr, waiting_threads.end());
@@ -63,6 +70,8 @@ std::shared_ptr<Thread> AddressArbiter::ResumeHighestPriorityThread(VAddr addres
         return nullptr;
 
     auto thread = *itr;
+    Cara::GuestGPUTrace::ObserveArbWake(kernel.timing,thread->GetThreadId(),GetObjectId(),address,
+        static_cast<u32>(thread->status),false);
     thread->ResumeFromWait();
 
     waiting_threads.erase(itr);
@@ -83,6 +92,9 @@ std::shared_ptr<AddressArbiter> KernelSystem::CreateAddressArbiter(std::string n
 void AddressArbiter::WakeUp(ThreadWakeupReason reason, std::shared_ptr<Thread> thread,
                             std::shared_ptr<WaitObject> object) {
     ASSERT(reason == ThreadWakeupReason::Timeout);
+    Cara::GuestGPUTrace::ObserveArbWake(kernel.timing,thread->GetThreadId(),GetObjectId(),
+        thread->status==ThreadStatus::WaitArb?thread->wait_address:0,
+        static_cast<u32>(thread->status),true);
     // Remove the newly-awakened thread from the Arbiter's waiting list.
     waiting_threads.erase(std::remove(waiting_threads.begin(), waiting_threads.end(), thread),
                           waiting_threads.end());
@@ -91,6 +103,8 @@ void AddressArbiter::WakeUp(ThreadWakeupReason reason, std::shared_ptr<Thread> t
 ResultCode AddressArbiter::ArbitrateAddress(std::shared_ptr<Thread> thread, ArbitrationType type,
                                             VAddr address, s32 value, u64 nanoseconds) {
 
+    auto wait_trace=Cara::GuestGPUTrace::BeginWaitArb(kernel.timing,thread?thread->GetThreadId():0,
+        GetObjectId(),static_cast<u32>(type),address,value,nanoseconds);
     auto timeout_callback = std::dynamic_pointer_cast<WakeupCallback>(shared_from_this());
 
     switch (type) {

@@ -61,7 +61,8 @@ System::~System() = default;
 System::ResultStatus System::RunLoop() {
     Common::CPUCategoryTiming::Scope cpu_category_scope(Common::CPUCategoryTiming::Category::Others);
     try {
-        return Settings::values.is_new_3ds ? RunLoopMultiCores() : RunLoopSingleCore();
+        return (Settings::values.is_new_3ds || kernel->Old3dsSyscoreEnabled())
+                   ? RunLoopMultiCores() : RunLoopSingleCore();
     } catch (const std::exception& error) {
         if (!Cara::ExperimentalP3DCompletionEnabled()) throw;
         LOG_CRITICAL(Core, "Experimental P3D diagnostic stopped: {}", error.what());
@@ -71,12 +72,14 @@ System::ResultStatus System::RunLoop() {
 }
 
 System::ResultStatus System::RunLoopMultiCores() {
+    const u32 executing_cores = kernel->Old3dsSyscoreEnabled() ? 2u : 4u;
     // All cores should have executed the same amount of ticks. If this is not the case an event was
     // scheduled with a cycles_into_future smaller then the current downcount.
     // So we have to get those cores to the same global time first
     s64 max_delay = 100;
     ARM_Interface* current_core_to_execute = nullptr;
-    for (auto& cpu_core : cpu_cores) {
+    for (u32 i = 0; i < executing_cores; ++i) {
+        auto& cpu_core = cpu_cores[i];
         s64 delay = timing->GetDelayTicks(cpu_core->GetID());
         if (delay > 0) {
             kernel->Advance(cpu_core.get(), delay);
@@ -93,17 +96,33 @@ System::ResultStatus System::RunLoopMultiCores() {
         // Now all cores are at the same global time. So we will run them one after the other
         // with a max slice that is the minimum of all max slices of all cores
         // TODO: Make special check for idle since we can easily revert the time of idle cores
-        s64 max_slice = timing->GetMaxSliceLength();
-        for (auto& cpu_core : cpu_cores) {
+        s64 max_slice = executing_cores == 2 ? Timing::MAX_SLICE_LENGTH
+                                             : timing->GetMaxSliceLength();
+        if (executing_cores == 2) {
+            // Dormant timers2/3 must not determine the active-core minimum. Admit pending
+            // cross-core wakeups before calculating the slice, without executing those CPUs.
+            for (u32 i = 0; i < 2; ++i) timing->GetTimer(i)->MoveEvents();
+            max_slice = std::min<s64>(Timing::MAX_SLICE_LENGTH,
+                std::min(timing->GetTimer(0)->GetMaxSliceLength(),
+                         timing->GetTimer(1)->GetMaxSliceLength()));
+        }
+        for (u32 i = 0; i < executing_cores; ++i) {
+        auto& cpu_core = cpu_cores[i];
             kernel->Advance(cpu_core.get(), max_slice);
         }
         timing->AddToGlobalTicks(max_slice);
-        for (auto& cpu_core : cpu_cores) {
+        for (u32 i = 0; i < executing_cores; ++i) {
+        auto& cpu_core = cpu_cores[i];
             kernel->Run(cpu_core.get());
         }
     }
 
-    kernel->RescheduleMultiCores();
+    if (executing_cores == 2) {
+        kernel->GetThreadManager(0).Reschedule();
+        kernel->GetThreadManager(1).Reschedule();
+    } else {
+        kernel->RescheduleMultiCores();
+    }
 
     if (reset_requested.exchange(false)) {
         Reset();
@@ -633,6 +652,11 @@ namespace Core {
 template <class Archive> void System::serialize(Archive& ar, const unsigned int version) {
     u32 num_cores = static_cast<u32>(cpu_cores.size());
     ar& num_cores;
+    bool saved_syscore_mode = !Settings::values.is_new_3ds && Kernel::Old3dsSyscore::Requested();
+    const bool current_syscore_mode = saved_syscore_mode;
+    ar& saved_syscore_mode;
+    if (saved_syscore_mode != current_syscore_mode)
+        throw std::runtime_error("Incompatible Old3DS syscore save-state mode");
     if (num_cores != cpu_cores.size()) throw std::runtime_error("Incompatible CPU count in save state");
     if (Archive::is_loading::value) {
         Shutdown(true);

@@ -1,3 +1,6 @@
+#include "video_core/renderer_opengl/gl_driver_transactions.h"
+#include "cara/guest_gpu_trace.h"
+#include "cara/texture_copy_trace.h"
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -45,6 +48,8 @@
 #include "core/memory.h"
 #include "core/settings.h"
 #include "video_core/pica_state.h"
+#include "cara/quad_uv_plan_census.h"
+#include "cara/quad_input_capture_trace.h"
 #include "video_core/renderer_base.h"
 #include "video_core/renderer_opengl/gl_format_reinterpreter.h"
 #include "video_core/renderer_opengl/gl_color_readback.h"
@@ -54,6 +59,7 @@
 #include "video_core/renderer_opengl/gl_rasterizer_cache.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_vars.h"
+#include "video_core/renderer_opengl/gl_native_rgba8_remap.h"
 #include "video_core/utils.h"
 #include "video_core/video_core.h"
 
@@ -312,22 +318,57 @@ static void AllocateTextureCube(GLuint texture, const FormatTuple& format_tuple,
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_BASE_LEVEL, 0);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAX_LEVEL, 0);
 
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    // Immutable texture storage is not a GL4.1 core requirement.
+    for (GLenum face=0;face<6;++face)
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X+face,0,format_tuple.internal_format,
+                     width,width,0,format_tuple.format,format_tuple.type,nullptr);
+#else
     glTexStorage2D(GL_TEXTURE_CUBE_MAP, 1, format_tuple.internal_format, width, width);
+#endif
 
     // Restore previous texture bindings
     OpenGLState::BindTextureCube(old_tex);
 }
 
+// Native copies retain their runtime queries unless explicitly disabled. The
+// diagnostic override permits checked oracle runs without changing normal copies.
+static bool NativeCopyRuntimeQueriesEnabled() {
+    static const bool enabled = [] {
+        const char* force = std::getenv("CARA_NATIVE_COPY_FORCE_QUERIES");
+        if (force && std::strcmp(force, "1") == 0) return true;
+        const char* value = std::getenv("CARA_NATIVE_COPY_RUNTIME_QUERIES");
+        return !value || std::strcmp(value, "0") != 0;
+    }();
+    return enabled;
+}
+
 static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect, GLuint dst_tex,
                          const Common::Rectangle<u32>& dst_rect, SurfaceType type,
                          bool checked_copy = false) {
+    bool producer_recording = false;
+    if (const auto* bridge=DriverTransactions::Pending()) {
+        // Only already-unchecked color blits can use ordinary producer GL
+        // recording. Keep depth/stencil, force-checked and default paths on the
+        // original synchronous handoff. No Surface/rectangle reference escapes.
+        if ((type == SurfaceType::Color || type == SurfaceType::Texture) &&
+            DriverTransactions::TryUncheckedBlitProducer()) {
+            producer_recording = !(checked_copy && (GLES || NativeCopyRuntimeQueriesEnabled()));
+        }
+        if (!producer_recording) {
+            bridge->sync_void(DriverTransactions::Kind::Blit,[&] {
+                BlitTextures(src_tex,src_rect,dst_tex,dst_rect,type,checked_copy);
+            });return;
+        }
+    }
+    const bool checked_queries = checked_copy && (GLES || NativeCopyRuntimeQueriesEnabled());
     OpenGLState prev_state = OpenGLState::GetCurState();
     bool narrow_state = false;
     SCOPE_EXIT({
         if (!narrow_state || !prev_state.TryApplyBlitState())
             prev_state.SubApply();
     });
-    if (checked_copy && glGetError() != GL_NO_ERROR)
+    if (checked_queries && glGetError() != GL_NO_ERROR)
         throw std::runtime_error("Native texture copy rejected preexisting GL error");
     // A framebuffer copy requires a known attachment category. The surface overload
     // additionally rejects incompatible attachment formats before this checked fallback.
@@ -381,7 +422,7 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
         buffers = GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
     }
 
-    if (checked_copy && (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ||
+    if (checked_queries && (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ||
                          glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE))
         throw std::runtime_error("Native texture copy framebuffer is incomplete");
 
@@ -393,8 +434,10 @@ static void BlitTextures(GLuint src_tex, const Common::Rectangle<u32>& src_rect,
     glBlitFramebuffer(src_rect.left, src_rect.bottom, src_rect.right, src_rect.top, dst_rect.left,
                       dst_rect.bottom, dst_rect.right, dst_rect.top, buffers,
                       buffers == GL_COLOR_BUFFER_BIT ? GL_LINEAR : GL_NEAREST);
-    if (checked_copy && glGetError() != GL_NO_ERROR)
+    if (checked_queries && glGetError() != GL_NO_ERROR)
         throw std::runtime_error("Native framebuffer texture copy failed");
+    if (producer_recording)
+        DriverTransactions::unchecked_blit_commands_recorded.fetch_add(1,std::memory_order_relaxed);
 }
 
 static void BlitTextures(const Surface& src, const Common::Rectangle<u32>& src_rect,
@@ -558,6 +601,98 @@ void RasterizerCacheOpenGL::CopySurface(const Surface& src_surface, const Surfac
         return;
     }
     if (src_surface->CanSubRect(subrect_params)) {
+        // Native-only alternate API for this same required rectangle. No owner
+        // selection, validation or guest work is omitted. The two experimental
+        // backends are intentionally mutually exclusive.
+        static const bool native_copytex = [] {
+            const char* value = std::getenv("CARA_NATIVE_COPYTEX_SURFACE_COPY");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        static const bool requested_shader_copy = [] {
+            const char* value = std::getenv("CARA_NATIVE_SHADER_SURFACE_COPY");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        if (!GLES && native_copytex && requested_shader_copy)
+            throw std::runtime_error("Native CopyTex and shader copy experiments are mutually exclusive");
+        if (native_copytex && !GLES &&
+            !(GLAD_GL_ARB_copy_image && glCopyImageSubData) &&
+            src_surface->type == SurfaceType::Color && dst_surface->type == SurfaceType::Color &&
+            src_surface->pixel_format == PixelFormat::RGBA8 &&
+            dst_surface->pixel_format == PixelFormat::RGBA8 &&
+            src_surface->res_scale == 1 && dst_surface->res_scale == 1 &&
+            src_surface->is_tiled == dst_surface->is_tiled &&
+            !src_surface->custom_tex_info && !dst_surface->custom_tex_info &&
+            src_surface->texture.handle != 0 && dst_surface->texture.handle != 0 &&
+            src_surface->texture.handle != dst_surface->texture.handle &&
+            src_surface->IsRegionValid(copy_interval) && dst_surface->CanSubRect(subrect_params)) {
+            const auto source_rect = src_surface->GetScaledSubRect(subrect_params);
+            const auto destination_rect = dst_surface->GetScaledSubRect(subrect_params);
+            const auto positive_in_bounds = [](const auto& rect, const Surface& surface) {
+                return rect.left < rect.right && rect.bottom < rect.top &&
+                       rect.right <= surface->GetScaledWidth() &&
+                       rect.top <= surface->GetScaledHeight() &&
+                       rect.right <= static_cast<u32>(std::numeric_limits<GLint>::max()) &&
+                       rect.top <= static_cast<u32>(std::numeric_limits<GLint>::max());
+            };
+            if (positive_in_bounds(source_rect, src_surface) &&
+                positive_in_bounds(destination_rect, dst_surface) &&
+                source_rect.GetWidth() == destination_rect.GetWidth() &&
+                source_rect.GetHeight() == destination_rect.GetHeight()) {
+                const bool checked = NativeCopyRuntimeQueriesEnabled();
+                if (checked && glGetError() != GL_NO_ERROR)
+                    throw std::runtime_error("Native CopyTex rejected preexisting GL error");
+                // The tracker has no active texture field. Preserve raw active
+                // unit with one query; texture0/read-FBO use tracked restoration.
+                GLint previous_active = GL_TEXTURE0;
+                glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active);
+                const GLuint previous_read = OpenGLState::BindReadFramebuffer(g_read_framebuffer.handle);
+                const GLuint previous_texture = OpenGLState::BindTexture2D(0, dst_surface->texture.handle);
+                SCOPE_EXIT({
+                    OpenGLState::BindTexture2D(0, previous_texture);
+                    glActiveTexture(static_cast<GLenum>(previous_active));
+                    OpenGLState::BindReadFramebuffer(previous_read);
+                });
+                glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, src_surface->texture.handle, 0);
+                glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                       GL_TEXTURE_2D, 0, 0);
+                glReadBuffer(GL_COLOR_ATTACHMENT0);
+                if (checked && glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                    throw std::runtime_error("Native CopyTex read framebuffer is incomplete");
+                glCopyTexSubImage2D(GL_TEXTURE_2D, 0, destination_rect.left, destination_rect.bottom,
+                                   source_rect.left, source_rect.bottom,
+                                   source_rect.GetWidth(), source_rect.GetHeight());
+                if (checked && glGetError() != GL_NO_ERROR)
+                    throw std::runtime_error("Native CopyTex surface copy failed");
+                ++native_copytex_surface_copy_calls;
+                return;
+            }
+        }
+        // Existing shader backend, unchanged when selected alone.
+        static const bool native_shader_copy = [] {
+            const char* value = std::getenv("CARA_NATIVE_SHADER_SURFACE_COPY");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        if (native_shader_copy && !GLES &&
+            !(GLAD_GL_ARB_copy_image && glCopyImageSubData) &&
+            src_surface->type == SurfaceType::Color && dst_surface->type == SurfaceType::Color &&
+            src_surface->pixel_format == PixelFormat::RGBA8 &&
+            dst_surface->pixel_format == PixelFormat::RGBA8 &&
+            src_surface->res_scale == 1 && dst_surface->res_scale == 1 &&
+            !src_surface->custom_tex_info && !dst_surface->custom_tex_info &&
+            src_surface->texture.handle != 0 && dst_surface->texture.handle != 0 &&
+            src_surface->texture.handle != dst_surface->texture.handle &&
+            src_surface->IsRegionValid(copy_interval) && dst_surface->CanSubRect(subrect_params)) {
+            if (glGetError() != GL_NO_ERROR)
+                throw std::runtime_error("Native texture copy rejected preexisting GL error");
+            if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
+            if (surface_remapper->RemapRGBA8(src_surface->texture.handle, *src_surface,
+                    dst_surface->texture.handle, *dst_surface,
+                    dst_surface->GetScaledSubRect(subrect_params), true)) {
+                ++native_shader_surface_copy_calls;
+                return;
+            }
+        }
         BlitTextures(src_surface, src_surface->GetScaledSubRect(subrect_params), dst_surface,
                      dst_surface->GetScaledSubRect(subrect_params));
         return;
@@ -844,6 +979,9 @@ void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::SurfaceDownload);
     u32 bytes_per_pixel = GetGLBytesPerPixel(pixel_format);
     const bool repack_color = GLES && type == SurfaceType::Color && pixel_format != PixelFormat::RGBA8;
+    Cara::TextureCopyTrace::DownloadSurface(*this, rect.left, rect.bottom, rect.GetWidth(), rect.GetHeight(),
+        std::uint64_t(rect.GetWidth()) * rect.GetHeight() * (repack_color ? 4 : bytes_per_pixel));
+    Cara::TextureCopyTrace::Scope download_phase(Cara::TextureCopyTrace::Phase::Download);
     if (Common::FrameTiming::counters.enabled) {
         ++Common::FrameTiming::counters.surface_download_calls;
         Common::FrameTiming::counters.surface_download_bytes += u64(rect.GetWidth()) * rect.GetHeight() * (repack_color ? 4 : bytes_per_pixel);
@@ -925,6 +1063,7 @@ void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
         started = std::chrono::steady_clock::now();
         {
             Common::FrameTiming::Scope read_timing(Common::FrameTiming::Phase::SurfaceReadPixels);
+            Cara::TextureCopyTrace::Scope copy_read_phase(Cara::TextureCopyTrace::Phase::ReadPixels);
             glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
                          static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
                          read_destination);
@@ -932,6 +1071,7 @@ void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
         last_download_read_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     } else {
         Common::FrameTiming::Scope read_timing(Common::FrameTiming::Phase::SurfaceReadPixels);
+        Cara::TextureCopyTrace::Scope copy_read_phase(Cara::TextureCopyTrace::Phase::ReadPixels);
         glReadPixels(x0, y0, static_cast<GLsizei>(rect.GetWidth()),
                      static_cast<GLsizei>(rect.GetHeight()), read_format, read_type,
                      read_destination);
@@ -940,6 +1080,7 @@ void CachedSurface::DownloadGLTexture(const Common::Rectangle<u32>& rect) {
     if (repack_color) {
         const auto started = std::chrono::steady_clock::now();
         Common::FrameTiming::Scope pack_timing(Common::FrameTiming::Phase::SurfacePack);
+        Cara::TextureCopyTrace::Scope copy_pack_phase(Cara::TextureCopyTrace::Phase::Repack);
         const u8* source = rgba_readback_buffer.data();
         for (u32 y = 0; y < rect.GetHeight(); ++y) {
             u8* destination = &gl_buffer[buffer_offset + size_t(y) * stride * bytes_per_pixel];
@@ -1126,6 +1267,89 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
         if (selected_copy_interval && match_surface) *selected_copy_interval = match_interval;
     }
     return match_surface;
+}
+
+// Read-only tight-fit search. The experimental caller supplies separate safety guards.
+struct FramebufferCandidateVisits { u64 visited = 0, compatible = 0; };
+static Surface FindTightFramebufferCandidate(const SurfaceCache& cache, const SurfaceParams& query,
+                                             const SurfaceSet& pending,
+                                             FramebufferCandidateVisits& visits) {
+    Surface best;
+    bool best_valid = false;
+    if (query.pixel_format != PixelFormat::RGBA8 || query.type != SurfaceType::Color ||
+        !query.size || query.end <= query.addr) return best;
+    for (const auto& pair : RangeFromInterval(cache, query.GetInterval())) {
+        for (const auto& candidate : pair.second) {
+            ++visits.visited; // Interval-map visits, explicitly not unique identities.
+            if (!candidate->registered || candidate->custom_tex_info || pending.count(candidate) ||
+                candidate->type != SurfaceType::Color || candidate->res_scale != query.res_scale ||
+                !candidate->CanSubRect(query)) continue;
+            ++visits.compatible;
+            const bool valid = candidate->IsRegionValid(query.GetInterval());
+            if (!best || candidate->size < best->size ||
+                (candidate->size == best->size && valid && !best_valid)) {
+                best = candidate;
+                best_valid = valid;
+            }
+        }
+    }
+    return best;
+}
+
+// A query must occupy whole, evenly spaced partitions of this backing. This
+// excludes expanded screen views whose padded extents overlap (for example,
+// two 512-row views starting 400 rows apart in a 912-row allocation).
+static bool WholeFramebufferPartition(const SurfaceParams& backing, const SurfaceParams& query) {
+    return query.pixel_format == PixelFormat::RGBA8 && query.type == SurfaceType::Color &&
+           query.width && query.height && query.size && query.end > query.addr &&
+           query.width == query.stride && backing.width == query.width &&
+           backing.stride == query.stride && query.addr >= backing.addr && query.end <= backing.end &&
+           backing.height % query.height == 0 && backing.size % query.size == 0 &&
+           (query.addr - backing.addr) % query.size == 0;
+}
+
+// Fail cheap sampler guards before any surface-map walk. Layouts are stack
+// metadata, not acquired textures or hashes. Disabled units are never inspected.
+static bool DescribeTightFramebufferSamplers(
+    const std::array<Pica::TexturingRegs::FullTextureConfig, 3>& textures,
+    std::array<SurfaceParams, 3>& layouts) {
+    for (size_t unit = 0; unit < textures.size(); ++unit) {
+        const auto& t = textures[unit];
+        if (!t.enabled) continue;
+        if ((unit == 0 && t.config.type != Pica::TexturingRegs::TextureConfig::Texture2D) ||
+            t.config.lod.max_level != 0 || !t.config.width || !t.config.height ||
+            (t.config.width % 8) || (t.config.height % 8) || unsigned(t.format) > 13 ||
+            !t.config.GetPhysicalAddress()) return false;
+        auto& sample = layouts[unit];
+        sample.addr = t.config.GetPhysicalAddress();
+        sample.width = t.config.width; sample.height = t.config.height;
+        sample.is_tiled = true;
+        sample.pixel_format = SurfaceParams::PixelFormatFromTextureFormat(t.format);
+        sample.UpdateParams();
+        if (!sample.size || sample.end <= sample.addr) return false;
+    }
+    return true;
+}
+
+static Surface SelectTightFramebufferBacking(
+    const SurfaceCache& cache, const SurfaceParams& query, const SurfaceSet& pending,
+    const Surface& legacy, const Surface& depth, const Common::Rectangle<u32>& color_rect,
+    const Common::Rectangle<u32>& depth_rect, bool shadow,
+    const std::array<Pica::TexturingRegs::FullTextureConfig, 3>& textures) {
+    if (shadow || !legacy || !legacy->registered || legacy->custom_tex_info ||
+        legacy->res_scale != query.res_scale || legacy->size <= query.size ||
+        !WholeFramebufferPartition(*legacy, query) || !legacy->CanSubRect(query) ||
+        legacy->GetScaledSubRect(query) != color_rect || (depth && color_rect != depth_rect)) return legacy;
+    std::array<SurfaceParams, 3> sampler_layouts{};
+    if (!DescribeTightFramebufferSamplers(textures, sampler_layouts)) return legacy;
+    FramebufferCandidateVisits ignored;
+    auto candidate = FindTightFramebufferCandidate(cache, query, pending, ignored);
+    if (!candidate || candidate == legacy || candidate->size >= legacy->size || candidate->max_level ||
+        !WholeFramebufferPartition(*candidate, query) ||
+        candidate->GetScaledSubRect(query) != color_rect) return legacy;
+    for (size_t unit = 0; unit < textures.size(); ++unit)
+        if (textures[unit].enabled && candidate->ExactMatch(sampler_layouts[unit])) return legacy;
+    return candidate;
 }
 
 // Runtime-opt-in, fixed-capacity metadata only. This observes fallback calls,
@@ -1441,8 +1665,34 @@ struct RasterizerCacheOpenGL::SurfaceUploadTrace {
 struct RasterizerCacheOpenGL::ValidationCopyTrace {
     using Totals = ValidationCopyProfile::Totals;
     static constexpr size_t DetailCapacity = 512, IdentityCapacity = 256, BucketCapacity = 64;
+    // Separate fixed census storage keeps Entry/ValidateSurface's frame unchanged.
+    bool quad_uv_plan_enabled=false;
+    u64 quad_uv_plan_seen=0;
+    size_t quad_uv_plan_count=0;
+    struct QuadUVEvent {
+        u64 invocation=0,fragment=0;u32 frame=0;
+        Cara::GuestGPUTrace::Join::Snapshot join{};
+        Cara::QuadUVPlan::Observation observation{};
+        Cara::QuadInputCapture::Snapshot inputs{};
+        bool full_source_view_geometry_known=false,full_source_view_valid=false;
+        Cara::QuadInputCapture::Rect full_source_view_rect{};
+    };
+    std::array<QuadUVEvent,Cara::QuadUVPlan::SampleCapacity> quad_uv_plan_events{};
+
+    struct Provenance {
+        Cara::GuestGPUTrace::Join::Snapshot join{};
+        u64 serial = 0, owner_id = 0;
+        u32 frame = 0;
+        PAddr start = 0, end = 0;
+        bool gpu_owner = false, owner_custom = false, owner_registered = false;
+        SurfaceInvalidationOrigin origin = SurfaceInvalidationOrigin::Unknown;
+        SurfaceParams owner_params{};
+        u32 owner_handle = 0;
+        SurfaceInvalidationContext draw{};
+    };
     struct Identity {
         std::weak_ptr<CachedSurface> surface;
+        Provenance last_event{}, own_write{};
         u64 allocation = 0, invalidation = 0;
         u32 created_frame = 0, invalidated_frame = 0;
         PAddr invalid_start = 0, invalid_end = 0;
@@ -1455,9 +1705,47 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
         bool registered = false, custom = false;
         Identity identity{};
     };
+    // Raw guest sampler observations only. No GL state/eligibility is inferred.
+    struct CopySamplerRaw {
+        u32 address = 0, width = 0, height = 0, format = 0;
+        u32 type_raw = 0, effective_type = 0, min_filter_raw = 0, mag_filter_raw = 0;
+        u32 mip_filter_raw = 0, wrap_s_raw = 0, wrap_t_raw = 0;
+        u32 lod_min_raw = 0, lod_max_raw = 0;
+        s32 lod_bias_raw_signed = 0;
+        bool enabled = false, linear_override_branch_risk = false;
+    };
+    struct CopySamplerObservation {
+        std::array<CopySamplerRaw, 3> units{};
+        u32 framebuffer_color_address = 0, framebuffer_depth_address = 0;
+        bool known = false, use_linear_filter_setting = false;
+    };
+    struct View {
+        SurfaceParams params{};
+        u64 id = 0;
+        u32 handle = 0, max_level = 0;
+        bool registered = false, custom = false;
+    };
+    struct DrawAttachments {
+        Cara::GuestGPUTrace::Join::Snapshot join{};
+        std::weak_ptr<CachedSurface> color, depth;
+        View color_view{}, depth_view{};
+        bool captured = false, color_present = false, depth_present = false;
+    };
+    DrawAttachments draw_attachments{};
     struct Entry {
+        View intended_color{}, intended_depth{};
+        bool attachments_known = false, color_present = false, depth_present = false;
+        bool color_alive = false, depth_alive = false;
+        bool source_is_intended_color = false, destination_is_intended_color = false;
+        bool source_is_intended_depth = false, destination_is_intended_depth = false;
         Layout src{}, dst{};
+
+        CopySamplerObservation sampler_observation{};
+        bool source_full_destination_interval_valid = false;
+        bool source_contains_full_destination_interval = false;
+        bool source_can_subrect_full_destination_view = false;
         u64 invocation = 0, fragment = 0, bytes = 0;
+        Cara::GuestGPUTrace::Join::Snapshot join{};
         u32 frame = 0;
         PAddr requested_start = 0, requested_end = 0;
         PAddr invalid_start = 0, invalid_end = 0, actual_start = 0, actual_end = 0;
@@ -1465,7 +1753,98 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
         bool fill = false, source_valid = false;
         ValidationCopyProfile::Elapsed wall{}, cpu{};
     };
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline,cold))
+#elif defined(_MSC_VER)
+    __declspec(noinline)
+#endif
+    void ObserveQuadUVPlan(const Entry& event,const Surface& source,const Surface& destination) {
+        ++quad_uv_plan_seen;
+        if(quad_uv_plan_count==quad_uv_plan_events.size())return;
+        auto& value=quad_uv_plan_events[quad_uv_plan_count++];
+        value.invocation=event.invocation;value.fragment=event.fragment;value.frame=event.frame;value.join=event.join;
+        value.observation=Cara::QuadUVPlan::Observe(event.join,Pica::g_state);
+        if(Cara::QuadInputCapture::Enabled()) {
+            value.inputs=Cara::QuadInputCapture::Current(event.join,value.observation);
+            value.full_source_view_valid=event.source_full_destination_interval_valid;
+            if(event.source_can_subrect_full_destination_view) {
+                const auto rect=source->GetScaledSubRect(*destination);
+                value.full_source_view_geometry_known=true;
+                value.full_source_view_rect={rect.left,rect.bottom,rect.right,rect.top};
+            }
+        }
+    }
+    static void ObserveCopyInputs(Entry& event, const Surface& source,
+                                  const Surface& destination) {
+        // Surface metadata is already live here; no guest memory or GL query.
+        const auto full = destination->GetInterval();
+        event.source_full_destination_interval_valid = source->IsRegionValid(full);
+        event.source_contains_full_destination_interval =
+            source->addr <= destination->addr && source->end >= destination->end;
+        event.source_can_subrect_full_destination_view =
+            source->CanSubRect(static_cast<const SurfaceParams&>(*destination));
+        // A copy outside an actual current Draw scope cannot borrow live regs.
+        if (!event.join.gx_valid || !event.join.draw_valid) return;
+        auto& observed = event.sampler_observation;
+        observed.known = true;
+        observed.use_linear_filter_setting = Settings::values.use_linear_filter;
+        const auto& regs = Pica::g_state.regs;
+        observed.framebuffer_color_address =
+            regs.framebuffer.framebuffer.GetColorBufferPhysicalAddress();
+        observed.framebuffer_depth_address =
+            regs.framebuffer.framebuffer.GetDepthBufferPhysicalAddress();
+        const auto textures = regs.texturing.GetTextures();
+        for (size_t i = 0; i < observed.units.size(); ++i) {
+            const auto& texture = textures[i];
+            const auto& config = texture.config;
+            auto& unit = observed.units[i];
+            unit.enabled = texture.enabled;
+            unit.address = config.GetPhysicalAddress();
+            unit.width = config.width.Value(); unit.height = config.height.Value();
+            unit.format = static_cast<u32>(texture.format);
+            unit.type_raw = static_cast<u32>(config.type.Value());
+            unit.effective_type = i == 0 ? unit.type_raw :
+                static_cast<u32>(Pica::TexturingRegs::TextureConfig::Texture2D);
+            unit.min_filter_raw = static_cast<u32>(config.min_filter.Value());
+            unit.mag_filter_raw = static_cast<u32>(config.mag_filter.Value());
+            unit.mip_filter_raw = static_cast<u32>(config.mip_filter.Value());
+            unit.wrap_s_raw = static_cast<u32>(config.wrap_s.Value());
+            unit.wrap_t_raw = static_cast<u32>(config.wrap_t.Value());
+            unit.lod_min_raw = config.lod.min_level.Value();
+            unit.lod_max_raw = config.lod.max_level.Value();
+            unit.lod_bias_raw_signed = config.lod.bias.Value();
+            // Mirrors only SyncWithConfig's override branch condition. When
+            // true that function retains prior sampler filters; actual GL
+            // filtering is deliberately NOT invented from these registers.
+            unit.linear_override_branch_risk = observed.use_linear_filter_setting &&
+                config.mag_filter == Pica::TexturingRegs::TextureConfig::Nearest;
+        }
+    }
     struct Bucket { Layout src{}, dst{}; bool fill = false; Totals totals{}; };
+    struct DamageTotals {
+        u64 calls = 0, actual_interval_bytes = 0, hypothetical_interval_bytes = 0;
+        u64 hypothetical_reduction_bytes = 0, saturations = 0;
+        void Add(u64 actual, u64 proposed) {
+            ValidationCopyProfile::Totals checked;
+            checked.AddInteger(calls, 1);
+            checked.AddInteger(actual_interval_bytes, actual);
+            checked.AddInteger(hypothetical_interval_bytes, proposed);
+            checked.AddInteger(hypothetical_reduction_bytes, actual - proposed);
+            checked.AddInteger(saturations, checked.saturations);
+        }
+    };
+    struct DamageBucket {
+        SurfaceParams owner{};
+        SurfaceInvalidationOrigin origin = SurfaceInvalidationOrigin::Unknown;
+        u32 eligibility = 0;
+        bool gpu_owner = false, owner_custom = false;
+        DamageTotals totals{};
+    };
+    std::array<DamageBucket, BucketCapacity> damage_buckets{};
+    size_t damage_bucket_count = 0;
+    DamageTotals damage_totals{}, damage_overflow{};
+    u64 unknown_owner_events = 0;
+    u32 damage_min_frame = 0, damage_max_frame = 0;
     std::array<Identity, IdentityCapacity> identities{};
     std::array<Entry, DetailCapacity> details{};
     std::array<Bucket, BucketCapacity> buckets{};
@@ -1476,6 +1855,154 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
     u64 invocations = 0, invalidations = 0;
     u32 start = 300, end = 1200, min_frame = 0, max_frame = 0;
     Totals totals{}, detail_overflow{}, bucket_overflow{};
+    static constexpr size_t CensusCapacity = 128, FeedbackCapacity = 128;
+    struct Sampler {
+        SurfaceParams params{};
+        u32 raw_type = 0, effective_type = 0, max_level = 0;
+        u32 address = 0, width = 0, height = 0, format = 0;
+        bool enabled = false, prediction_available = false, exact_proposal_layout = false;
+    };
+    struct FramebufferEvent {
+        SurfaceParams original{}, effective{};
+        View legacy{}, proposed{}, depth{};
+        std::array<Sampler, 3> samplers{};
+        Common::Rectangle<u32> legacy_rect{}, legacy_query_rect{}, proposed_rect{}, depth_rect{};
+        u32 frame = 0;
+        u64 visits = 0, compatible_visits = 0;
+        bool legacy_present = false, proposed_present = false, depth_present = false, depth_requested = false;
+        bool changed = false, same_rect = false, depth_compatible = false;
+        bool legacy_full_valid = false, legacy_viewport_valid = false;
+        bool proposed_full_valid = false, proposed_viewport_valid = false;
+        bool feedback_risk = false, mip_or_special_risk = false;
+    };
+    struct CensusTotals {
+        u64 calls = 0, proposal_found = 0, proposal_changed = 0, same_rect_changed = 0;
+        u64 same_rect_depth_compatible_changed = 0, guarded_proposal_changed = 0;
+        u64 legacy_full_valid = 0, legacy_viewport_valid = 0;
+        u64 proposed_full_valid = 0, proposed_viewport_valid = 0;
+        u64 feedback_risk = 0, mip_or_special_risk = 0, visits = 0, compatible_visits = 0;
+        u64 saturations = 0;
+        void Add(const FramebufferEvent& e) {
+            ValidationCopyProfile::Totals checked;
+            checked.AddInteger(calls, 1);
+            checked.AddInteger(proposal_found, e.proposed_present);
+            checked.AddInteger(proposal_changed, e.changed);
+            checked.AddInteger(same_rect_changed, e.changed && e.same_rect);
+            checked.AddInteger(same_rect_depth_compatible_changed, e.changed && e.same_rect && e.depth_compatible);
+            checked.AddInteger(guarded_proposal_changed, e.changed && e.same_rect && e.depth_compatible &&
+                               !e.feedback_risk && !e.mip_or_special_risk);
+            checked.AddInteger(legacy_full_valid, e.legacy_full_valid);
+            checked.AddInteger(legacy_viewport_valid, e.legacy_viewport_valid);
+            checked.AddInteger(proposed_full_valid, e.proposed_full_valid);
+            checked.AddInteger(proposed_viewport_valid, e.proposed_viewport_valid);
+            checked.AddInteger(feedback_risk, e.feedback_risk);
+            checked.AddInteger(mip_or_special_risk, e.mip_or_special_risk);
+            checked.AddInteger(visits, e.visits);
+            checked.AddInteger(compatible_visits, e.compatible_visits);
+            checked.AddInteger(saturations, checked.saturations);
+        }
+    };
+    struct FeedbackEvent {
+        View source{};
+        u32 frame = 0, copy_handle = 0;
+        u64 texels = 0, bytes = 0;
+        bool footprint_valid = false, cold = false;
+        ValidationCopyProfile::Elapsed wall{}, cpu{};
+    };
+    struct FeedbackTotals {
+        Totals timing{};
+        u64 texels = 0, allocation_attempts = 0, cold_allocations = 0, footprint_failures = 0;
+        u64 saturations = 0;
+        void Add(const FeedbackEvent& e) {
+            timing.Add(e.footprint_valid ? e.bytes : 0, e.wall, e.cpu);
+            ValidationCopyProfile::Totals checked;
+            checked.AddInteger(texels, e.texels);
+            checked.AddInteger(allocation_attempts, e.cold);
+            checked.AddInteger(cold_allocations, e.cold && e.copy_handle != 0);
+            checked.AddInteger(footprint_failures, !e.footprint_valid);
+            checked.AddInteger(saturations, checked.saturations);
+        }
+    };
+    std::array<FramebufferEvent, CensusCapacity> census_details{};
+    std::array<FeedbackEvent, FeedbackCapacity> feedback_details{};
+    size_t census_count = 0, feedback_count = 0;
+    CensusTotals census_totals{}, census_overflow{};
+    FeedbackTotals feedback_totals{}, feedback_overflow{};
+    std::array<u64, 32> census_classes{};
+    u64 census_class_saturations = 0;
+    u32 census_min = 0, census_max = 0, feedback_min = 0, feedback_max = 0;
+    View Compact(const Surface& surface) {
+        View value;
+        if (!surface) return value;
+        value.params = *surface; value.handle = surface->texture.handle;
+        value.registered = surface->registered; value.custom = surface->custom_tex_info != nullptr;
+        value.max_level = surface->max_level;
+        if (auto* state = Find(surface)) value.id = state->allocation;
+        return value;
+    }
+    void ClearDrawAttachments() { draw_attachments = {}; }
+    void RecordDrawAttachments(const Surface& color, const Surface& depth) {
+        ClearDrawAttachments();
+        if (!InWindow()) return;
+        const auto join = Cara::GuestGPUTrace::CurrentValidationCopyJoin();
+        if (!join.gx_valid || !join.draw_valid) return;
+        draw_attachments.join = join;
+        draw_attachments.captured = true;
+        draw_attachments.color_present = color != nullptr;
+        draw_attachments.depth_present = depth != nullptr;
+        // Only two weak control blocks live until the actual Draw scope exits.
+        // Neither observation storage nor detail records retain a strong owner.
+        if (color) {
+            draw_attachments.color = color;
+            draw_attachments.color_view = Compact(color);
+        }
+        if (depth) {
+            draw_attachments.depth = depth;
+            draw_attachments.depth_view = Compact(depth);
+        }
+    }
+    void ObserveDrawAttachments(Entry& event, const Surface& source,
+                                const Surface& destination) const {
+        const auto& a = draw_attachments;
+        const auto& join = event.join;
+        if (!a.captured || !join.gx_valid || !join.draw_valid ||
+            a.join.generation != join.generation ||
+            a.join.gx.sequence != join.gx.sequence ||
+            a.join.anchor.sequence != join.anchor.sequence) return;
+        event.attachments_known = true;
+        event.color_present = a.color_present; event.depth_present = a.depth_present;
+        event.color_alive = a.color_present && !a.color.expired();
+        event.depth_alive = a.depth_present && !a.depth.expired();
+        event.intended_color = a.color_view; event.intended_depth = a.depth_view;
+        const auto same_owner = [](const std::weak_ptr<CachedSurface>& weak,
+                                   const Surface& surface) {
+            return !weak.expired() && !weak.owner_before(surface) && !surface.owner_before(weak);
+        };
+        event.source_is_intended_color = event.color_alive && same_owner(a.color, source);
+        event.destination_is_intended_color = event.color_alive && same_owner(a.color, destination);
+        event.source_is_intended_depth = event.depth_alive && same_owner(a.depth, source);
+        event.destination_is_intended_depth = event.depth_alive && same_owner(a.depth, destination);
+    }
+    void RecordFramebuffer(const FramebufferEvent& e) {
+        if (!census_totals.calls) census_min = census_max = e.frame;
+        census_min = std::min(census_min, e.frame); census_max = std::max(census_max, e.frame);
+        census_totals.Add(e);
+        const u32 category = u32(e.changed) | (u32(e.same_rect) << 1) |
+            (u32(e.depth_compatible) << 2) | (u32(e.feedback_risk) << 3) |
+            (u32(e.mip_or_special_risk) << 4);
+        ValidationCopyProfile::Totals checked;
+        checked.AddInteger(census_classes[category], 1);
+        checked.AddInteger(census_class_saturations, checked.saturations);
+        if (census_count < census_details.size()) census_details[census_count++] = e;
+        else census_overflow.Add(e);
+    }
+    void RecordFeedback(const FeedbackEvent& e) {
+        if (!feedback_totals.timing.calls) feedback_min = feedback_max = e.frame;
+        feedback_min = std::min(feedback_min, e.frame); feedback_max = std::max(feedback_max, e.frame);
+        feedback_totals.Add(e);
+        if (feedback_count < feedback_details.size()) feedback_details[feedback_count++] = e;
+        else feedback_overflow.Add(e);
+    }
     static u32 FrameOption(const char* name, u32 fallback) {
         const char* text = std::getenv(name);
         if (!text || !*text || *text == '-') return fallback;
@@ -1485,6 +2012,8 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
                    ? static_cast<u32>(value) : fallback;
     }
     ValidationCopyTrace() {
+        const char* uv_plan=std::getenv("CARA_QUAD_UV_PLAN_CENSUS");
+        quad_uv_plan_enabled=uv_plan && std::string(uv_plan)=="1";
         start = FrameOption("CARA_SURFACE_VALIDATION_COPY_TRACE_START_FRAME", 300);
         end = FrameOption("CARA_SURFACE_VALIDATION_COPY_TRACE_END_FRAME", 1200);
     }
@@ -1514,10 +2043,101 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
         }
         ++untracked_allocations;
     }
-    void Invalidated(const Surface& surface, PAddr first, PAddr last, bool gpu) {
+    Provenance BeginInvalidation(const Surface& owner, PAddr first, PAddr last,
+                                 SurfaceInvalidationOrigin origin,
+                                 const SurfaceInvalidationContext* context) {
+        Provenance event;
+        event.serial = ++invalidations;
+        if (VideoCore::GetCurrentFrame() >= end) return event;
+        event.frame = VideoCore::GetCurrentFrame();
+        event.join = Cara::GuestGPUTrace::CurrentValidationCopyJoin();
+        event.start = first; event.end = last;
+        event.gpu_owner = owner != nullptr;
+        event.origin = owner ? origin : SurfaceInvalidationOrigin::CPU;
+        if (context) event.draw = *context;
+        if (owner) {
+            event.owner_params = *owner;
+            event.owner_handle = owner->texture.handle;
+            event.owner_custom = owner->custom_tex_info != nullptr;
+            event.owner_registered = owner->registered;
+            if (auto* identity = Find(owner)) {
+                event.owner_id = identity->allocation;
+                identity->own_write = event;
+            } else {
+                ++unknown_owner_events;
+            }
+        }
+        if (InWindow()) RecordDamage(event);
+        return event;
+    }
+    void RecordDamage(const Provenance& event) {
+        if (!damage_totals.calls) damage_min_frame = damage_max_frame = event.frame;
+        damage_min_frame = std::min(damage_min_frame, event.frame);
+        damage_max_frame = std::max(damage_max_frame, event.frame);
+        const u64 actual = u64(event.end) - event.start;
+        u64 proposed = actual;
+        // 0 no draw, 1 not INCLUDE, 2 shadow, 3 stencil, 4 invalid bounds,
+        // 5 actual/proposed interval mismatch, 6 eligible, 7 prototype already active.
+        u32 eligibility = 0;
+        const auto& c = event.draw;
+        const bool is_draw = event.origin == SurfaceInvalidationOrigin::DrawColor ||
+                             event.origin == SurfaceInvalidationOrigin::DrawDepth;
+        if (event.gpu_owner && is_draw && c.valid && c.damage_narrowing_active) eligibility = 7;
+        else if (event.gpu_owner && is_draw && c.valid) {
+            eligibility = c.mode != 3 ? 1 : c.shadow ? 2 :
+                (c.has_stencil && c.stencil_test && c.stencil_mask != 0) ? 3 : 4;
+            const auto result = ScissorDamage::NarrowInclude(c.actual_damage, c.shader_scissor,
+                c.mode, c.scale, c.shadow, c.has_stencil && c.stencil_test && c.stencil_mask != 0);
+            if (result.eligible) {
+                const auto interval_for = [&](ScissorDamage::Rect r) {
+                    return event.owner_params.GetSubRectInterval({
+                        static_cast<u32>(r.left / c.scale), static_cast<u32>(r.top / c.scale),
+                        static_cast<u32>(r.right / c.scale), static_cast<u32>(r.bottom / c.scale)});
+                };
+                if (u64(c.actual_damage.right) > u64(event.owner_params.width) * c.scale ||
+                    u64(c.actual_damage.top) > u64(event.owner_params.height) * c.scale) {
+                    eligibility = 5;
+                } else {
+                    const auto original = interval_for(c.actual_damage);
+                    const auto narrowed = interval_for(result.rect);
+                    const auto bytes = boost::icl::length(narrowed);
+                    const bool subset = !bytes ||
+                        (boost::icl::first(narrowed) >= event.start &&
+                         boost::icl::last_next(narrowed) <= event.end);
+                    if (boost::icl::first(original) == event.start &&
+                        boost::icl::last_next(original) == event.end && subset && bytes <= actual) {
+                        eligibility = 6;
+                        proposed = bytes;
+                    } else eligibility = 5;
+                }
+            }
+        }
+        damage_totals.Add(actual, proposed);
+        for (size_t i = 0; i < damage_bucket_count; ++i) {
+            auto& b = damage_buckets[i];
+            if (b.origin == event.origin && b.eligibility == eligibility &&
+                b.gpu_owner == event.gpu_owner &&
+                SameParamsLayout(event.owner_params, event.owner_custom, b.owner, b.owner_custom)) {
+                b.totals.Add(actual, proposed);
+                return;
+            }
+        }
+        if (damage_bucket_count == damage_buckets.size()) {
+            damage_overflow.Add(actual, proposed);
+            return;
+        }
+        auto& b = damage_buckets[damage_bucket_count++];
+        b.owner = event.owner_params; b.origin = event.origin;
+        b.eligibility = eligibility; b.gpu_owner = event.gpu_owner;
+        b.owner_custom = event.owner_custom;
+        b.totals.Add(actual, proposed);
+    }
+    void Invalidated(const Surface& surface, PAddr first, PAddr last, bool gpu,
+                     const Provenance& event) {
         if (VideoCore::GetCurrentFrame() >= end) return;
         if (auto* value = Find(surface)) {
-            value->invalidation = invalidations;
+            value->invalidation = event.serial;
+            value->last_event = event;
             value->invalidated_frame = VideoCore::GetCurrentFrame();
             value->invalid_start = first;
             value->invalid_end = last;
@@ -1550,12 +2170,15 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
         return false;
 #endif
     }
-    static bool SameLayout(const Layout& a, const Layout& b) {
-        const auto& x = a.params; const auto& y = b.params;
+    static bool SameParamsLayout(const SurfaceParams& x, bool x_custom,
+                                 const SurfaceParams& y, bool y_custom) {
         return x.pixel_format == y.pixel_format && x.type == y.type &&
                x.is_tiled == y.is_tiled && x.stride == y.stride &&
                x.width == y.width && x.height == y.height && x.res_scale == y.res_scale &&
-               a.custom == b.custom;
+               x_custom == y_custom;
+    }
+    static bool SameLayout(const Layout& a, const Layout& b) {
+        return SameParamsLayout(a.params, a.custom, b.params, b.custom);
     }
     void Record(Entry event) {
         // No payload reads, ownership changes, or lifetime extension.
@@ -1591,6 +2214,52 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
                 << ",\"wall_failures\":" << value.wall_failures << ",\"cpu_failures\":" << value.cpu_failures
                 << ",\"integer_saturations\":" << value.saturations << '}';
         };
+        const auto signed_rect = [&](ScissorDamage::Rect r) {
+            out << '[' << r.left << ',' << r.bottom << ',' << r.right << ',' << r.top << ']';
+        };
+        const auto provenance = [&](const Provenance& e) {
+            if (!e.serial) { out << "null"; return; }
+            out << "{\"serial\":" << e.serial << ",\"frame\":" << e.frame;
+            if (Cara::GuestGPUTrace::validation_copy_join_enabled) {
+                out << ",\"guest_join\":";
+                Cara::GuestGPUTrace::Join::WriteJSON(out,e.join);
+            }
+            out << ",\"range\":[" << e.start << ',' << e.end << "],\"origin\":" << unsigned(e.origin)
+                << ",\"gpu_owner\":" << (e.gpu_owner ? "true" : "false") << ",\"owner_allocation_id\":";
+            if (e.owner_id) out << e.owner_id; else out << "null";
+            out << ",\"owner\":";
+            if (!e.gpu_owner) out << "null";
+            else {
+                const auto& p = e.owner_params;
+                out << "{\"address\":" << p.addr << ",\"end\":" << p.end
+                    << ",\"format\":" << unsigned(p.pixel_format) << ",\"type\":" << unsigned(p.type)
+                    << ",\"width\":" << p.width << ",\"height\":" << p.height << ",\"stride\":" << p.stride
+                    << ",\"scale\":" << p.res_scale << ",\"tiled\":" << (p.is_tiled ? "true" : "false")
+                    << ",\"handle\":" << e.owner_handle
+                    << ",\"custom\":" << (e.owner_custom ? "true" : "false")
+                    << ",\"registered\":" << (e.owner_registered ? "true" : "false") << '}';
+            }
+            const auto& c = e.draw;
+            out << ",\"draw\":";
+            if (!c.valid) out << "null";
+            else {
+                out << "{\"mode\":" << c.mode << ",\"scale\":" << c.scale
+                    << ",\"shadow\":" << (c.shadow ? "true" : "false")
+                    << ",\"color_write\":" << (c.color_write ? "true" : "false")
+                    << ",\"depth_write\":" << (c.depth_write ? "true" : "false")
+                    << ",\"depth_surface_write\":" << (c.depth_surface_write ? "true" : "false")
+                    << ",\"damage_narrowing_active\":" << (c.damage_narrowing_active ? "true" : "false")
+                    << ",\"has_stencil\":" << (c.has_stencil ? "true" : "false")
+                    << ",\"stencil_test\":" << (c.stencil_test ? "true" : "false")
+                    << ",\"depth_test\":" << (c.depth_test ? "true" : "false")
+                    << ",\"depth_mask\":" << (c.depth_mask ? "true" : "false")
+                    << ",\"color_mask\":" << c.color_mask << ",\"stencil_mask\":" << c.stencil_mask
+                    << ",\"viewport_damage\":"; signed_rect(c.viewport);
+                out << ",\"actual_damage\":"; signed_rect(c.actual_damage);
+                out << ",\"shader_scissor\":"; signed_rect(c.shader_scissor); out << '}';
+            }
+            out << '}';
+        };
         const auto layout = [&](const Layout& value, bool identity) {
             const auto& p = value.params;
             out << "{\"format\":" << static_cast<u32>(p.pixel_format)
@@ -1610,13 +2279,15 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
                 out << ",\"invalidation_reason\":" << i.reason
                     << ",\"invalidation_frame\":" << i.invalidated_frame
                     << ",\"invalidation_start\":" << i.invalid_start << ",\"invalidation_end\":" << i.invalid_end;
+                out << ",\"last_invalidation_event\":"; provenance(i.last_event);
+                out << ",\"last_owner_write\":"; provenance(i.own_write);
             }
             out << '}';
         };
         const auto rect = [&](const Common::Rectangle<u32>& r) {
             out << '[' << r.left << ',' << r.top << ',' << r.right << ',' << r.bottom << ']';
         };
-        out << "{\"kind\":\"returned_validate_surface_copies\",\"enabled\":true,\"schema_version\":1"
+        out << "{\"kind\":\"returned_validate_surface_copies\",\"enabled\":true,\"schema_version\":2"
             << ",\"timing_scope\":\"host_CopySurface_return_enqueue_or_wait_not_GPU_completion\""
             << ",\"invalidation_reasons\":{\"0\":\"unknown_or_none_observed\",\"1\":\"CPU_observed\",\"2\":\"GPU_observed\"}"
             << ",\"common_counters_required\":false,\"written_frame\":" << VideoCore::GetCurrentFrame()
@@ -1641,7 +2312,152 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
             layout(b.src, false); out << ",\"dst\":"; layout(b.dst, false);
             out << ",\"totals\":"; write_totals(b.totals); out << '}';
         }
+        out << "],\"unknown_gpu_owner_events\":" << unknown_owner_events;
+        if(quad_uv_plan_enabled) {
+            out<<",\"quad_uv_plan_census\":{\"schema\":1,\"diagnostic_only\":true,\"footprint_certified\":false,\"capacity\":"
+               <<quad_uv_plan_events.size()<<",\"seen\":"<<quad_uv_plan_seen<<",\"stored\":"<<quad_uv_plan_count
+               <<",\"overflow\":"<<(quad_uv_plan_seen>quad_uv_plan_count?quad_uv_plan_seen-quad_uv_plan_count:0)
+               <<",\"source_enum\":\"0:unknown,1:mapped_input_attribute,2:float_uniform_selector\""
+               <<",\"lane_unknown_enum\":\"0:none,1:uninitialized,2:arithmetic,3:negated_move,4:missing_semantic\",\"records\":[";
+            for(size_t n=0;n<quad_uv_plan_count;++n){const auto& value=quad_uv_plan_events[n];
+                out<<(n?",":"")<<"{\"invocation\":"<<value.invocation<<",\"fragment\":"<<value.fragment<<",\"frame\":"<<value.frame<<",\"guest_join\":";
+                Cara::GuestGPUTrace::Join::WriteJSON(out,value.join);
+                out<<",\"plan\":";Cara::QuadUVPlan::WriteJSON(out,value.observation);
+                if(Cara::QuadInputCapture::Enabled()) {
+                    out<<",\"inputs\":";Cara::QuadInputCapture::WriteJSON(out,value.inputs);
+                    out<<",\"full_source_view\":{\"geometry_known\":"<<(value.full_source_view_geometry_known?"true":"false")
+                       <<",\"entire_interval_valid\":"<<(value.full_source_view_valid?"true":"false")<<",\"scaled_GL_rect\":";
+                    if(value.full_source_view_geometry_known)Cara::QuadInputCapture::RectJSON(out,value.full_source_view_rect);else out<<"null";out<<'}';
+                }
+                out<<'}';
+            }
+            out<<"]}";
+        }
+
+        if (Cara::GuestGPUTrace::validation_copy_join_enabled) {
+            out << ",\"join_schema\":1,\"join_capture_generation\":"
+                << Cara::GuestGPUTrace::owner_generation.load(std::memory_order_relaxed)
+                << ",\"join_export_owner_valid\":"
+                << (Cara::GuestGPUTrace::IsOwner() ? "true" : "false")
+                << ",\"join_context_overflow\":"
+                << (Cara::GuestGPUTrace::Join::state.Poisoned() ? "true" : "false")
+                << ",\"join_guest_trace_truncated\":"
+                << (Cara::GuestGPUTrace::buffer.truncated ? "true" : "false");
+        }
+        const auto damage = [&](const DamageTotals& t) {
+            out << "{\"calls\":" << t.calls << ",\"actual_interval_bytes\":" << t.actual_interval_bytes
+                << ",\"hypothetical_interval_bytes\":" << t.hypothetical_interval_bytes
+                << ",\"hypothetical_reduction_bytes\":" << t.hypothetical_reduction_bytes
+                << ",\"integer_saturations\":" << t.saturations << '}';
+        };
+        out << ",\"hypothetical_damage\":{\"scope\":\"top_level_invalidation_logical_intervals_not_copy_traffic\",\"totals\":";
+        damage(damage_totals); out << ",\"actual_min_frame\":";
+        if (damage_totals.calls) out << damage_min_frame; else out << "null";
+        out << ",\"actual_max_frame\":";
+        if (damage_totals.calls) out << damage_max_frame; else out << "null";
+        out << ",\"overflow\":"; damage(damage_overflow);
+        out << ",\"buckets\":[";
+        for (size_t n = 0; n < damage_bucket_count; ++n) {
+            const auto& b = damage_buckets[n]; Layout owner{}; owner.params = b.owner;
+            owner.custom = b.owner_custom;
+            out << (n ? "," : "") << "{\"origin\":" << unsigned(b.origin)
+                << ",\"eligibility\":" << b.eligibility
+                << ",\"gpu_owner\":" << (b.gpu_owner ? "true" : "false") << ",\"owner_layout\":";
+            if (b.gpu_owner) layout(owner, false); else out << "null";
+            out << ",\"totals\":"; damage(b.totals); out << '}';
+        }
+        out << "]}";
+        const auto params_json = [&](const SurfaceParams& p) {
+            out << "{\"format\":" << unsigned(p.pixel_format) << ",\"type\":" << unsigned(p.type)
+                << ",\"tiled\":" << (p.is_tiled ? "true" : "false") << ",\"width\":" << p.width
+                << ",\"height\":" << p.height << ",\"stride\":" << p.stride << ",\"scale\":" << p.res_scale
+                << ",\"address\":" << p.addr << ",\"end\":" << p.end << ",\"size\":" << p.size << '}';
+        };
+        const auto view_json = [&](const View& v) {
+            out << "{\"allocation_id\":"; if (v.id) out << v.id; else out << "null";
+            out << ",\"handle\":" << v.handle << ",\"max_level\":" << v.max_level
+                << ",\"registered\":" << (v.registered ? "true" : "false")
+                << ",\"custom\":" << (v.custom ? "true" : "false") << ",\"params\":";
+            params_json(v.params); out << '}';
+        };
+        const auto census_totals_json = [&](const CensusTotals& t) {
+            out << "{\"calls\":" << t.calls << ",\"proposal_found\":" << t.proposal_found
+                << ",\"proposal_changed\":" << t.proposal_changed << ",\"same_rect_changed\":" << t.same_rect_changed
+                << ",\"same_rect_depth_compatible_changed\":" << t.same_rect_depth_compatible_changed
+                << ",\"guarded_proposal_changed\":" << t.guarded_proposal_changed
+                << ",\"legacy_full_valid\":" << t.legacy_full_valid << ",\"legacy_viewport_valid\":" << t.legacy_viewport_valid
+                << ",\"proposed_full_valid\":" << t.proposed_full_valid << ",\"proposed_viewport_valid\":" << t.proposed_viewport_valid
+                << ",\"feedback_risk\":" << t.feedback_risk << ",\"mip_or_special_risk\":" << t.mip_or_special_risk
+                << ",\"candidate_visits\":" << t.visits << ",\"compatible_visits\":" << t.compatible_visits
+                << ",\"integer_saturations\":" << t.saturations << '}';
+        };
+        out << ",\"framebuffer_census\":{\"version\":1,\"detail_capacity\":" << CensusCapacity
+            << ",\"actual_min_frame\":"; if (census_totals.calls) out << census_min; else out << "null";
+        out << ",\"actual_max_frame\":"; if (census_totals.calls) out << census_max; else out << "null";
+        out << ",\"totals\":"; census_totals_json(census_totals);
+        out << ",\"detail_overflow\":"; census_totals_json(census_overflow);
+        out << ",\"class_saturations\":" << census_class_saturations << ",\"classes\":[";
+        for (size_t n = 0; n < census_classes.size(); ++n) out << (n ? "," : "") << census_classes[n];
         out << "],\"details\":[";
+        for (size_t n = 0; n < census_count; ++n) {
+            const auto& e = census_details[n];
+            out << (n ? "," : "") << "{\"frame\":" << e.frame << ",\"original\":"; params_json(e.original);
+            out << ",\"effective\":"; params_json(e.effective);
+            out << ",\"legacy\":"; if (e.legacy_present) view_json(e.legacy); else out << "null";
+            out << ",\"proposal\":"; if (e.proposed_present) view_json(e.proposed); else out << "null";
+            out << ",\"depth\":"; if (e.depth_present) view_json(e.depth); else out << "null";
+            out << ",\"legacy_rect\":"; rect(e.legacy_rect);
+            out << ",\"legacy_query_rect\":"; rect(e.legacy_query_rect);
+            out << ",\"proposal_rect\":"; rect(e.proposed_rect);
+            out << ",\"depth_rect\":"; rect(e.depth_rect);
+            out << ",\"depth_requested\":" << (e.depth_requested ? "true" : "false")
+                << ",\"changed\":" << (e.changed ? "true" : "false")
+                << ",\"same_rect\":" << (e.same_rect ? "true" : "false")
+                << ",\"depth_compatible\":" << (e.depth_compatible ? "true" : "false")
+                << ",\"legacy_full_valid\":" << (e.legacy_full_valid ? "true" : "false")
+                << ",\"legacy_viewport_valid\":" << (e.legacy_viewport_valid ? "true" : "false")
+                << ",\"proposed_full_valid\":" << (e.proposed_full_valid ? "true" : "false")
+                << ",\"proposed_viewport_valid\":" << (e.proposed_viewport_valid ? "true" : "false")
+                << ",\"feedback_risk\":" << (e.feedback_risk ? "true" : "false")
+                << ",\"mip_or_special_risk\":" << (e.mip_or_special_risk ? "true" : "false")
+                << ",\"candidate_visits\":" << e.visits << ",\"compatible_visits\":" << e.compatible_visits << ",\"samplers\":[";
+            for (size_t unit = 0; unit < e.samplers.size(); ++unit) {
+                const auto& t = e.samplers[unit];
+                out << (unit ? "," : "") << "{\"enabled\":" << (t.enabled ? "true" : "false")
+                    << ",\"raw_type\":" << t.raw_type << ",\"effective_type\":" << t.effective_type
+                    << ",\"max_level\":" << t.max_level << ",\"address\":" << t.address
+                    << ",\"width\":" << t.width << ",\"height\":" << t.height << ",\"format\":" << t.format
+                    << ",\"prediction_available\":" << (t.prediction_available ? "true" : "false")
+                    << ",\"exact_proposal_layout\":" << (t.exact_proposal_layout ? "true" : "false") << ",\"params\":";
+                if (t.prediction_available) params_json(t.params); else out << "null"; out << '}';
+            }
+            out << "]}";
+        }
+        const auto feedback_totals_json = [&](const FeedbackTotals& t) {
+            out << "{\"calls\":" << t.timing.calls << ",\"source_level0_texels\":" << t.texels
+                << ",\"source_level0_gl_bytes\":" << t.timing.guest_bytes
+                << ",\"allocation_attempts\":" << t.allocation_attempts << ",\"cold_allocations\":" << t.cold_allocations
+                << ",\"footprint_failures\":" << t.footprint_failures << ",\"wall_ns\":" << t.timing.wall_ns
+                << ",\"thread_cpu_ns\":" << t.timing.thread_cpu_ns << ",\"wall_samples\":" << t.timing.wall_samples
+                << ",\"cpu_samples\":" << t.timing.cpu_samples << ",\"wall_failures\":" << t.timing.wall_failures
+                << ",\"cpu_failures\":" << t.timing.cpu_failures << ",\"integer_saturations\":" << t.saturations
+                << ",\"timing_integer_saturations\":" << t.timing.saturations << '}';
+        };
+        out << "]},\"feedback\":{\"version\":1,\"detail_capacity\":" << FeedbackCapacity
+            << ",\"actual_min_frame\":"; if (feedback_totals.timing.calls) out << feedback_min; else out << "null";
+        out << ",\"actual_max_frame\":"; if (feedback_totals.timing.calls) out << feedback_max; else out << "null";
+        out << ",\"totals\":"; feedback_totals_json(feedback_totals);
+        out << ",\"detail_overflow\":"; feedback_totals_json(feedback_overflow); out << ",\"details\":[";
+        for (size_t n = 0; n < feedback_count; ++n) {
+            const auto& e = feedback_details[n];
+            out << (n ? "," : "") << "{\"frame\":" << e.frame << ",\"source\":"; view_json(e.source);
+            out << ",\"copy_handle\":" << e.copy_handle << ",\"source_level0_texels\":" << e.texels
+                << ",\"source_level0_gl_bytes\":"; if (e.footprint_valid) out << e.bytes; else out << "null";
+            out << ",\"allocation_attempt\":" << (e.cold ? "true" : "false")
+                << ",\"wall_ns\":"; if (e.wall.valid) out << e.wall.ns; else out << "null";
+            out << ",\"thread_cpu_ns\":"; if (e.cpu.valid) out << e.cpu.ns; else out << "null"; out << '}';
+        }
+        out << "]},\"details\":[";
         for (size_t n = 0; n < detail_slots.used; ++n) {
             const auto& e = details[n];
             out << (n ? "," : "") << "{\"invocation\":" << e.invocation << ",\"fragment\":" << e.fragment
@@ -1654,13 +2470,76 @@ struct RasterizerCacheOpenGL::ValidationCopyTrace {
             out << ",\"src_scaled_rect\":";
             if (e.fill) out << "null"; else rect(e.src_rect);
             out << ",\"dst_scaled_rect\":"; rect(e.dst_rect);
+            out << ",\"source_full_destination_interval_valid_before_copy\":"
+                << (e.source_full_destination_interval_valid ? "true" : "false")
+                << ",\"source_contains_full_destination_interval\":"
+                << (e.source_contains_full_destination_interval ? "true" : "false")
+                << ",\"source_can_subrect_full_destination_view\":"
+                << (e.source_can_subrect_full_destination_view ? "true" : "false")
+                << ",\"sampler_observation\":";
+            const auto& observed = e.sampler_observation;
+            if (!observed.known) {
+                out << "{\"known\":false,\"reason\":\"no_valid_current_draw_join\",\"units\":null}";
+            } else {
+                out << "{\"known\":true,\"scope\":\"current_guest_registers_not_GL_sampler_state_or_direct_view_eligibility\""
+                    << ",\"use_linear_filter_setting\":"
+                    << (observed.use_linear_filter_setting ? "true" : "false")
+                    << ",\"framebuffer_color_guest_address\":" << observed.framebuffer_color_address
+                    << ",\"framebuffer_depth_guest_address\":" << observed.framebuffer_depth_address
+                    << ",\"units\":[";
+                for (size_t i = 0; i < observed.units.size(); ++i) {
+                    const auto& u = observed.units[i];
+                    out << (i ? "," : "") << "{\"unit\":" << i
+                        << ",\"enabled\":" << (u.enabled ? "true" : "false")
+                        << ",\"guest_address\":" << u.address << ",\"width_raw\":" << u.width
+                        << ",\"height_raw\":" << u.height << ",\"format_raw\":" << u.format
+                        << ",\"type_raw\":" << u.type_raw << ",\"effective_type\":" << u.effective_type
+                        << ",\"min_filter_raw\":" << u.min_filter_raw << ",\"mag_filter_raw\":" << u.mag_filter_raw
+                        << ",\"mip_filter_raw\":" << u.mip_filter_raw << ",\"wrap_s_raw\":" << u.wrap_s_raw
+                        << ",\"wrap_t_raw\":" << u.wrap_t_raw << ",\"lod_min_raw\":" << u.lod_min_raw
+                        << ",\"lod_max_raw\":" << u.lod_max_raw << ",\"lod_bias_raw_signed\":" << u.lod_bias_raw_signed
+                        << ",\"linear_override_branch_risk\":" << (u.linear_override_branch_risk ? "true" : "false") << '}';
+                }
+                out << "]}";
+            }
+            out << ",\"intended_draw_attachments\":";
+            if (!e.attachments_known) {
+                out << "{\"known\":false,\"reason\":\"no_same_current_draw_attachment_scope\"}";
+            } else {
+                out << "{\"known\":true,\"scope\":\"intended_before_texture_loop_not_queried_GL_attachments\""
+                    << ",\"color_present\":" << (e.color_present ? "true" : "false")
+                    << ",\"depth_present\":" << (e.depth_present ? "true" : "false")
+                    << ",\"color_alive_at_copy\":" << (e.color_alive ? "true" : "false")
+                    << ",\"depth_alive_at_copy\":" << (e.depth_alive ? "true" : "false")
+                    << ",\"color\":";
+                if (e.color_present) view_json(e.intended_color); else out << "null";
+                out << ",\"depth\":";
+                if (e.depth_present) view_json(e.intended_depth); else out << "null";
+                out << ",\"source_is_intended_color_owner\":" << (e.source_is_intended_color ? "true" : "false")
+                    << ",\"destination_is_intended_color_owner\":" << (e.destination_is_intended_color ? "true" : "false")
+                    << ",\"source_is_intended_depth_owner\":" << (e.source_is_intended_depth ? "true" : "false")
+                    << ",\"destination_is_intended_depth_owner\":" << (e.destination_is_intended_depth ? "true" : "false") << '}';
+            }
             out << ",\"wall_ns\":"; if (e.wall.valid) out << e.wall.ns; else out << "null";
             out << ",\"thread_cpu_ns\":"; if (e.cpu.valid) out << e.cpu.ns; else out << "null";
+            if (Cara::GuestGPUTrace::validation_copy_join_enabled) {
+                out << ",\"guest_join\":";
+                Cara::GuestGPUTrace::Join::WriteJSON(out,e.join);
+            }
             out << '}';
         }
         out << "]}\n";
     }
 };
+
+void RasterizerCacheOpenGL::ClearValidationCopyDrawAttachments() {
+    if (validation_copy_trace) validation_copy_trace->ClearDrawAttachments();
+}
+
+void RasterizerCacheOpenGL::RecordValidationCopyDrawAttachments(const Surface& color,
+                                                               const Surface& depth) {
+    if (validation_copy_trace) validation_copy_trace->RecordDrawAttachments(color, depth);
+}
 
 RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
     const auto enabled = [](const char* name) {
@@ -1676,6 +2555,7 @@ RasterizerCacheOpenGL::RasterizerCacheOpenGL() {
     if (enabled("CARA_SURFACE_VALIDATION_COPY_TRACE"))
         validation_copy_trace = std::make_unique<ValidationCopyTrace>();
     retain_small_cpu_writes = enabled("CARA_RETAIN_SMALL_CPU_WRITES");
+    tight_framebuffer_backing = enabled("CARA_TIGHT_FRAMEBUFFER_BACKING");
     gpu_surface_remap = enabled("CARA_GPU_SURFACE_REMAP");
     resolution_scale_factor = VideoCore::GetResolutionScaleFactor();
     format_reinterpreter = std::make_unique<FormatReinterpreterOpenGL>();
@@ -1690,6 +2570,30 @@ RasterizerCacheOpenGL::~RasterizerCacheOpenGL() {
     if (validation_copy_trace) validation_copy_trace->Write();
     g_read_framebuffer.Release();
     g_draw_framebuffer.Release();
+}
+
+GLuint RasterizerCacheOpenGL::GetTextureCopyHandle(const Surface& surface) {
+    if (!validation_copy_trace || !validation_copy_trace->InWindow())
+        return surface->GetTextureCopyHandle();
+    auto& trace = *validation_copy_trace;
+    ValidationCopyTrace::FeedbackEvent e;
+    e.frame = VideoCore::GetCurrentFrame(); e.cold = surface->texture_copy.handle == 0;
+    e.texels = u64(surface->GetScaledWidth()) * surface->GetScaledHeight();
+    const u64 bpp = CachedSurface::GetGLBytesPerPixel(surface->pixel_format);
+    e.footprint_valid = bpp && e.texels <= std::numeric_limits<u64>::max() / bpp;
+    if (e.footprint_valid) e.bytes = e.texels * bpp;
+    if (trace.feedback_count < trace.feedback_details.size()) e.source = trace.Compact(surface);
+    u64 before = 0, after = 0;
+    const bool before_ok = ValidationCopyTrace::CPUTime(before);
+    const auto start = std::chrono::steady_clock::now();
+    const GLuint handle = surface->GetTextureCopyHandle(); // Exactly one original call.
+    const auto end = std::chrono::steady_clock::now();
+    const bool after_ok = ValidationCopyTrace::CPUTime(after);
+    e.copy_handle = handle; e.wall.valid = end >= start;
+    if (e.wall.valid) e.wall.ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    e.cpu = ValidationCopyProfile::Delta(before_ok, before, after_ok, after);
+    trace.RecordFeedback(e);
+    return handle;
 }
 
 void RasterizerCacheOpenGL::RecordFlush(const Surface& surface, u32 requested_bytes, u32 width,
@@ -1994,6 +2898,106 @@ SurfaceRect_Tuple RasterizerCacheOpenGL::GetSurfaceSubRect(const SurfaceParams& 
     return std::make_tuple(surface, surface->GetScaledSubRect(params));
 }
 
+namespace {
+bool SameNearestBorrowParams(const SurfaceParams& a, const SurfaceParams& b) {
+    return std::tie(a.addr,a.end,a.size,a.width,a.height,a.stride,a.res_scale,
+                    a.is_tiled,a.pixel_format,a.type)==
+           std::tie(b.addr,b.end,b.size,b.width,b.height,b.stride,b.res_scale,
+                    b.is_tiled,b.pixel_format,b.type);
+}
+// Bound all existing SurfaceParams u32 BPP/alignment intermediates before calling it.
+bool CheckedNearestBorrowOwner(const SurfaceParams& p) {
+    if (!p.width || !p.height || p.width!=p.stride || p.width%8 || p.height%8 ||
+        p.res_scale!=1 || !p.is_tiled || p.pixel_format!=SurfaceParams::PixelFormat::RGBA8 ||
+        p.type!=SurfaceParams::SurfaceType::Color || p.width>65536 || p.height>65536)
+        return false;
+    const u64 pixels=u64(p.width)*p.height;
+    const u64 size=pixels*4;
+    return size<=std::numeric_limits<u32>::max()/8 && p.size==size &&
+           u64(p.addr)+size<=std::numeric_limits<u32>::max() && p.end==u64(p.addr)+size;
+}
+}
+
+std::optional<RasterizerCacheOpenGL::NearestBorrowLease>
+RasterizerCacheOpenGL::DescribeNearestBorrowState(const Surface& owner,
+    const Pica::Texture::TextureInfo& info, u32 max_level, NearestBorrow::Rect logical_read,
+    NearestBorrow::Rect write, bool pending_removal, u64 generation) {
+    using namespace NearestBorrow;
+    if (!owner || !owner->registered || pending_removal || !generation ||
+        !owner->texture.handle || owner->custom_tex_info || owner->max_level || max_level ||
+        !CheckedNearestBorrowOwner(*owner) ||
+        info.format!=Pica::TexturingRegs::TextureFormat::RGBA8 ||
+        !PowerOfTwo(info.width) || !PowerOfTwo(info.height) ||
+        info.width<8 || info.height<8 || info.width>65536 || info.height>65536 ||
+        info.width!=owner->width || info.stride!=std::ptrdiff_t(u64(info.width)*32) ||
+        !info.physical_address || !Contains({0,0,info.width,info.height},logical_read) ||
+        !Contains({0,0,owner->width,owner->height},write)) return std::nullopt;
+    const u64 query_size=u64(info.width)*info.height*4;
+    if (query_size>std::numeric_limits<u32>::max()/8 ||
+        u64(info.physical_address)+query_size>std::numeric_limits<u32>::max()) return std::nullopt;
+    SurfaceParams query;
+    query.addr=info.physical_address; query.width=info.width; query.height=info.height;
+    query.is_tiled=true; query.pixel_format=SurfaceParams::PixelFormat::RGBA8;
+    query.UpdateParams();
+    if (query.stride!=owner->stride || !owner->CanSubRect(query)) return std::nullopt;
+    const auto full=owner->GetScaledSubRect(query);
+    if (full.right<full.left || full.top<full.bottom || full.right>owner->width ||
+        full.top>owner->height || full.right-full.left!=info.width ||
+        full.top-full.bottom!=info.height) return std::nullopt;
+    const u64 left=u64(full.left)+logical_read.left;
+    const u64 right=u64(full.left)+logical_read.right;
+    const u64 bottom=u64(full.bottom)+logical_read.bottom;
+    const u64 top=u64(full.bottom)+logical_read.top;
+    if (right>owner->width || top>owner->height || left>=right || bottom>=top) return std::nullopt;
+    const Rect read{u32(left),u32(bottom),u32(right),u32(top)};
+    if (!Disjoint(read,write)) return std::nullopt; // No same-pixel exception.
+    // Native API expects Rectangle(left,top,right,bottom), unscaled coordinates.
+    const auto interval=owner->GetSubRectInterval({read.left,read.top,read.right,read.bottom});
+    if (boost::icl::first(interval)<owner->addr || boost::icl::last_next(interval)>owner->end ||
+        boost::icl::first(interval)>=boost::icl::last_next(interval) ||
+        !owner->IsRegionValid(interval)) return std::nullopt;
+    NearestBorrowLease lease;
+    lease.owner=owner; lease.handle=owner->texture.handle; lease.owner_params=*owner;
+    lease.logical_params=query; lease.info=info; lease.read_interval=interval;
+    lease.logical_read=logical_read; lease.read_rect=read; lease.write_rect=write;
+    lease.view={s32(full.left),s32(full.bottom),s32(info.width),s32(info.height)};
+    lease.crop={s32(logical_read.left),s32(logical_read.bottom),s32(logical_read.right),s32(logical_read.top)};
+    lease.registration_generation=generation;
+    return lease;
+}
+
+bool RasterizerCacheOpenGL::RevalidateNearestBorrowState(const NearestBorrowLease& lease,
+    const Surface& current_color, GLuint color_attachment, GLuint unit0_binding,
+    std::span<const GLuint> other_handles, bool aliases_complete, bool pending_removal,
+    u64 generation) {
+    if (!aliases_complete || other_handles.size()>32 || !lease.owner ||
+        current_color!=lease.owner || color_attachment!=lease.handle ||
+        unit0_binding!=lease.handle || generation!=lease.registration_generation ||
+        !SameNearestBorrowParams(*lease.owner,lease.owner_params)) return false;
+    for (const GLuint handle:other_handles) if (handle && handle==lease.handle) return false;
+    const auto fresh=DescribeNearestBorrowState(lease.owner,lease.info,0,lease.logical_read,
+                                               lease.write_rect,pending_removal,generation);
+    return fresh && fresh->handle==lease.handle && fresh->view==lease.view &&
+           fresh->crop==lease.crop && fresh->read_rect==lease.read_rect &&
+           fresh->read_interval==lease.read_interval &&
+           SameNearestBorrowParams(fresh->logical_params,lease.logical_params);
+}
+
+std::optional<RasterizerCacheOpenGL::NearestBorrowLease>
+RasterizerCacheOpenGL::DescribeNearestBorrow(const Surface& intended_color,
+    const Pica::Texture::TextureInfo& info, u32 max_level, NearestBorrow::Rect logical_read,
+    NearestBorrow::Rect write) const {
+    return DescribeNearestBorrowState(intended_color,info,max_level,logical_read,write,
+        remove_surfaces.count(intended_color)!=0,texture_lookup_generation);
+}
+bool RasterizerCacheOpenGL::RevalidateNearestBorrow(const NearestBorrowLease& lease,
+    const Surface& current_color, GLuint color_attachment, GLuint unit0_binding,
+    std::span<const GLuint> other_handles, bool aliases_complete) const {
+    return RevalidateNearestBorrowState(lease,current_color,color_attachment,unit0_binding,
+        other_handles,aliases_complete,remove_surfaces.count(lease.owner)!=0,
+        texture_lookup_generation);
+}
+
 Surface RasterizerCacheOpenGL::GetTextureSurface(
     const Pica::TexturingRegs::FullTextureConfig& config) {
     Pica::Texture::TextureInfo info =
@@ -2248,6 +3252,63 @@ const CachedTextureCube& RasterizerCacheOpenGL::GetTextureCube(const TextureCube
     return cube;
 }
 
+void RasterizerCacheOpenGL::ObserveFramebufferSelection(const SurfaceParams& original,
+    const SurfaceParams& effective, const Surface& legacy, const Surface& depth,
+    const Common::Rectangle<u32>& color_rect, const Common::Rectangle<u32>& depth_rect,
+    SurfaceInterval viewport, bool depth_requested) {
+    if (!validation_copy_trace || !validation_copy_trace->InWindow()) return;
+    auto& trace = *validation_copy_trace;
+    ValidationCopyTrace::FramebufferEvent e;
+    e.frame = VideoCore::GetCurrentFrame(); e.original = original; e.effective = effective;
+    e.legacy_present = legacy != nullptr; e.depth_present = depth != nullptr; e.depth_requested = depth_requested;
+    e.legacy_rect = color_rect; e.depth_rect = depth_rect;
+    FramebufferCandidateVisits visits;
+    const auto proposed = FindTightFramebufferCandidate(surface_cache, effective, remove_surfaces, visits);
+    e.proposed_present = proposed != nullptr; e.visits = visits.visited; e.compatible_visits = visits.compatible;
+    e.changed = proposed && proposed != legacy;
+    if (legacy) {
+        e.legacy_query_rect = legacy->GetScaledSubRect(effective);
+        e.legacy_full_valid = legacy->IsRegionValid(effective.GetInterval());
+        e.legacy_viewport_valid = legacy->IsRegionValid(viewport);
+    }
+    if (proposed) {
+        e.proposed_rect = proposed->GetScaledSubRect(effective);
+        e.same_rect = e.proposed_rect == color_rect;
+        e.depth_compatible = !depth || e.proposed_rect == depth_rect;
+        e.proposed_full_valid = proposed->IsRegionValid(effective.GetInterval());
+        e.proposed_viewport_valid = proposed->IsRegionValid(viewport);
+        e.mip_or_special_risk = proposed->max_level != 0;
+    }
+    const auto textures = Pica::g_state.regs.texturing.GetTextures();
+    for (size_t unit = 0; unit < textures.size(); ++unit) {
+        const auto& t = textures[unit]; auto& sample = e.samplers[unit];
+        sample.enabled = t.enabled;
+        sample.raw_type = static_cast<u32>(t.config.type.Value());
+        sample.effective_type = unit == 0 ? sample.raw_type : 0;
+        sample.max_level = t.config.lod.max_level;
+        sample.address = t.config.GetPhysicalAddress(); sample.width = t.config.width;
+        sample.height = t.config.height; sample.format = unsigned(t.format);
+        const u32 width = t.config.width, height = t.config.height;
+        sample.prediction_available = t.enabled && width && height && !(width % 8) && !(height % 8) &&
+            unsigned(t.format) <= 13 && t.config.GetPhysicalAddress() != 0;
+        if (sample.prediction_available) {
+            sample.params.addr = t.config.GetPhysicalAddress(); sample.params.width = width;
+            sample.params.height = height; sample.params.is_tiled = true;
+            sample.params.pixel_format = SurfaceParams::PixelFormatFromTextureFormat(t.format);
+            sample.params.UpdateParams();
+            sample.exact_proposal_layout = proposed && proposed->ExactMatch(sample.params);
+        }
+        if (t.enabled && (!sample.prediction_available || sample.effective_type != 0 || sample.max_level != 0))
+            e.mip_or_special_risk = true;
+        e.feedback_risk |= sample.exact_proposal_layout;
+    }
+    // Weak-ID scans are needed only for retained details, never for aggregate flags.
+    if (trace.census_count < trace.census_details.size()) {
+        e.legacy = trace.Compact(legacy); e.proposed = trace.Compact(proposed); e.depth = trace.Compact(depth);
+    }
+    trace.RecordFramebuffer(e);
+}
+
 SurfaceSurfaceRect_Tuple RasterizerCacheOpenGL::GetFramebufferSurfaces(
     bool using_color_fb, bool using_depth_fb, const Common::Rectangle<s32>& viewport_rect) {
     const auto& config = Pica::g_state.regs.framebuffer.framebuffer;
@@ -2266,6 +3327,7 @@ SurfaceSurfaceRect_Tuple RasterizerCacheOpenGL::GetFramebufferSurfaces(
     color_params.width = config.GetWidth();
     color_params.height = config.GetHeight();
 
+    SurfaceParams effective_color_params = color_params;
     SurfaceParams depth_params = color_params;
 
     SurfaceInterval color_vp_interval;
@@ -2289,11 +3351,13 @@ SurfaceSurfaceRect_Tuple RasterizerCacheOpenGL::GetFramebufferSurfaces(
         color_params.addr = config.GetColorBufferPhysicalAddress();
         color_params.pixel_format = SurfaceParams::PixelFormatFromColorFormat(config.color_format);
         color_params.UpdateParams();
+        effective_color_params = color_params;
         color_vp_interval = color_params.GetSubRectInterval(viewport_clamped);
         if (depth_surface && depth_rect.bottom > 0) {
             SurfaceParams new_params = color_params;
             new_params.height = depth_rect.top / depth_surface->res_scale;
             new_params.UpdateParams();
+            effective_color_params = new_params;
             std::tie(color_surface, color_rect) =
                 GetSurfaceSubRect(new_params, ScaleMatch::Exact, false);
             color_rect.bottom += depth_rect.bottom;
@@ -2317,6 +3381,7 @@ SurfaceSurfaceRect_Tuple RasterizerCacheOpenGL::GetFramebufferSurfaces(
         if (depth_surface != nullptr && color_rect != depth_rect) {
             // Color and Depth surfaces must have the same dimensions and offsets
             auto new_color_surface = GetSurface(color_params, ScaleMatch::Exact, false);
+            effective_color_params = color_params;
             if (new_color_surface != color_surface) {
                 remove_surfaces.emplace(color_surface);
                 color_surface = new_color_surface;
@@ -2332,6 +3397,18 @@ SurfaceSurfaceRect_Tuple RasterizerCacheOpenGL::GetFramebufferSurfaces(
         }
     } else if (depth_surface != nullptr) {
         color_rect = depth_rect;
+    }
+
+    if (validation_copy_trace && using_color_fb && color_params.pixel_format == PixelFormat::RGBA8 &&
+        !Pica::g_state.regs.framebuffer.IsShadowRendering())
+        ObserveFramebufferSelection(color_params, effective_color_params, color_surface, depth_surface,
+                                    color_rect, depth_rect, color_vp_interval, using_depth_fb);
+
+    if (tight_framebuffer_backing && using_color_fb) {
+        color_surface = SelectTightFramebufferBacking(
+            surface_cache, effective_color_params, remove_surfaces, color_surface, depth_surface,
+            color_rect, depth_rect, Pica::g_state.regs.framebuffer.IsShadowRendering(),
+            Pica::g_state.regs.texturing.GetTextures());
     }
 
     if (color_surface != nullptr) {
@@ -2377,11 +3454,19 @@ Surface RasterizerCacheOpenGL::GetFillSurface(const GPU::Regs::MemoryFillConfig&
 SurfaceRect_Tuple RasterizerCacheOpenGL::GetTexCopySurface(const SurfaceParams& params) {
     Common::Rectangle<u32> rect{};
 
-    Surface match_surface = FindMatch<MatchFlags::TexCopy | MatchFlags::Invalid>(
-        surface_cache, params, ScaleMatch::Ignore);
+    Surface match_surface;
+    {
+        Cara::TextureCopyTrace::Scope phase(Cara::TextureCopyTrace::Phase::SourceLookup);
+        match_surface = FindMatch<MatchFlags::TexCopy | MatchFlags::Invalid>(
+            surface_cache, params, ScaleMatch::Ignore);
+    }
 
     if (match_surface != nullptr) {
-        ValidateSurface(match_surface, params.addr, params.size);
+        Cara::TextureCopyTrace::Source(*match_surface);
+        {
+            Cara::TextureCopyTrace::Scope phase(Cara::TextureCopyTrace::Phase::SourceValidate);
+            ValidateSurface(match_surface, params.addr, params.size);
+        }
 
         SurfaceParams match_subrect;
         if (params.width != params.stride) {
@@ -2426,6 +3511,17 @@ void RasterizerCacheOpenGL::DuplicateSurface(const Surface& src_surface,
 bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const SurfaceParams& params,
                                                SurfaceInterval* remapped_interval,
                                                const SurfaceInterval* requested_interval) {
+    static const bool native_rgba8 = [] {
+        const char* value = std::getenv("CARA_NATIVE_RGBA8_SURFACE_REMAP");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    const auto native_pair = [&](const Surface& source) {
+        return native_rgba8 && source->type == SurfaceType::Color &&
+               destination->type == SurfaceType::Color && PlanNativeRGBA8RemapEncoding(
+            source->pixel_format == PixelFormat::RGBA8,
+            destination->pixel_format == PixelFormat::RGBA8, source->addr, destination->addr,
+            source->is_tiled, destination->is_tiled).supported;
+    };
     static const bool byte_remap = [] {
         const char* value = std::getenv("CARA_GPU_BYTE_SURFACE_REMAP");
         return !value || std::strcmp(value, "1") == 0;
@@ -2437,12 +3533,12 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                    (!surface->is_tiled || ((surface->width | surface->height) & 7) == 0) &&
                    (surface->addr & 3) == 0 && surface->texture.handle != 0 && !surface->custom_tex_info;
         };
-        if (!GLES || !eligible(destination)) return false;
+        if ((!GLES && !native_pair(destination)) || !eligible(destination)) return false;
         const auto interval = params.GetInterval();
         if (params.addr < destination->addr || params.end > destination->end) return false;
         for (const auto& group : RangeFromInterval(surface_cache, interval)) {
             for (const auto& source : group.second) {
-                if (source == destination || !eligible(source) ||
+                if (source == destination || !eligible(source) || (!GLES && !native_pair(source)) ||
                     source->texture.handle == destination->texture.handle ||
                     params.addr < source->addr || params.end > source->end ||
                     !source->IsRegionValid(interval) || destination->addr < source->addr ||
@@ -2451,7 +3547,7 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                 if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
                 if (!surface_remapper->RemapRGBA8(source->texture.handle, *source,
                                                   destination->texture.handle, *destination,
-                                                  destination->GetSubRect(params))) continue;
+                                                  destination->GetSubRect(params), !GLES)) continue;
                 destination->InvalidateAllWatcher();
                 if (Common::FrameTiming::counters.enabled) {
                     ++Common::FrameTiming::counters.surface_remap_calls;
@@ -2470,12 +3566,12 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                (!surface->is_tiled || ((surface->width | surface->height) & 7) == 0) &&
                surface->texture.handle != 0 && !surface->custom_tex_info;
     };
-    if (!GLES || !eligible(destination)) return false;
+    if ((!GLES && !native_pair(destination)) || !eligible(destination)) return false;
     const auto interval = requested_interval ? *requested_interval : params.GetInterval();
     if (params.addr < destination->addr || params.end > destination->end) return false;
     for (const auto& group : RangeFromInterval(surface_cache, interval)) {
         for (const auto& source : group.second) {
-            if (source == destination || !eligible(source) ||
+            if (source == destination || !eligible(source) || (!GLES && !native_pair(source)) ||
                 source->texture.handle == destination->texture.handle) continue;
             // Split at valid source ownership boundaries before selecting a whole
             // pixel/tile rectangle. Never align outwards across CPU-owned bytes.
@@ -2497,7 +3593,7 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                 if (!surface_remapper) surface_remapper = std::make_unique<SurfaceRemapper>();
                 if (!surface_remapper->RemapBytes(source->texture.handle, *source,
                                                   destination->texture.handle, *destination,
-                                                  destination->GetSubRect(copy_params))) continue;
+                                                  destination->GetSubRect(copy_params), !GLES)) continue;
                 destination->InvalidateAllWatcher();
                 if (Common::FrameTiming::counters.enabled) {
                     ++Common::FrameTiming::counters.surface_remap_calls;
@@ -2561,8 +3657,10 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
             // winning interval without recomputing its valid-region intersection.
             if (validation_copy_trace && validation_copy_trace->InWindow()) {
                 ValidationCopyTrace::Entry event;
+                event.join = Cara::GuestGPUTrace::CurrentValidationCopyJoin();
                 event.invocation = copy_invocation; event.fragment = copy_fragment;
                 event.frame = VideoCore::GetCurrentFrame();
+
                 event.requested_start = addr; event.requested_end = addr + size;
                 event.invalid_start = boost::icl::first(interval);
                 event.invalid_end = boost::icl::last_next(interval);
@@ -2573,6 +3671,10 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr, 
                 event.dst = validation_copy_trace->Snapshot(surface);
                 event.fill = copy_surface->type == SurfaceType::Fill;
                 event.source_valid = copy_surface->IsRegionValid(copy_interval);
+                ValidationCopyTrace::ObserveCopyInputs(event, copy_surface, surface);
+                validation_copy_trace->ObserveDrawAttachments(event, copy_surface, surface);
+                if(validation_copy_trace->quad_uv_plan_enabled)
+                    validation_copy_trace->ObserveQuadUVPlan(event,copy_surface,surface);
                 const auto rect_params = surface->FromInterval(copy_interval);
                 if (!event.fill) event.src_rect = copy_surface->GetScaledSubRect(rect_params);
                 event.dst_rect = surface->GetScaledSubRect(rect_params);
@@ -2863,6 +3965,8 @@ void RasterizerCacheOpenGL::FlushRegion(PAddr addr, u32 size, const Surface& flu
         if (flush_surface != nullptr && surface != flush_surface)
             continue;
 
+        Cara::TextureCopyTrace::DirtySurface(*surface, boost::icl::first(interval),
+            boost::icl::last_next(interval) - boost::icl::first(interval));
         if (surface->type == SurfaceType::Fill) {
             surface->FlushGLBuffer(boost::icl::first(interval),boost::icl::last_next(interval));
         } else if (GLES && surface->pixel_format >= PixelFormat::D16) {
@@ -2957,13 +4061,18 @@ void RasterizerCacheOpenGL::SetScaleFactor(u16 scale) {
     resolution_scale_factor = scale;
 }
 
-void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface& region_owner) {
+void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface& region_owner,
+                                              SurfaceInvalidationOrigin origin,
+                                              const SurfaceInvalidationContext* context) {
     if (size == 0 || surface_cache.empty() || surface_cache.rbegin()->first.upper() < addr) {
         return;
     }
 
-    if (validation_copy_trace) ++validation_copy_trace->invalidations;
     const SurfaceInterval invalid_interval(addr, addr + size);
+    std::optional<ValidationCopyTrace::Provenance> invalidation_event;
+    if (validation_copy_trace)
+        invalidation_event = validation_copy_trace->BeginInvalidation(region_owner, addr, addr + size,
+                                                                     origin, context);
 
     if (region_owner != nullptr) {
         ASSERT(region_owner->type != SurfaceType::Texture);
@@ -3005,7 +4114,7 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
             cached_surface->invalid_regions.insert(interval);
             if (validation_copy_trace)
                 validation_copy_trace->Invalidated(cached_surface, boost::icl::first(interval),
-                    boost::icl::last_next(interval), region_owner != nullptr);
+                    boost::icl::last_next(interval), region_owner != nullptr, *invalidation_event);
             if (surface_upload_trace)
                 surface_upload_trace->Invalidated(cached_surface, boost::icl::first(interval),
                     boost::icl::last_next(interval), region_owner != nullptr);

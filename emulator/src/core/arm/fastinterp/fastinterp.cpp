@@ -5,12 +5,15 @@
 #include <bit>
 #include <algorithm>
 #include "common/frame_timing.h"
+#include "cara/guest_gpu_trace.h"
+#include "cara/record_snapshot_page_adapter.h"
 #include <cmath>
 #include <cstdlib>
 #ifdef __aarch64__
 #include <arm_neon.h>
 #endif
 #include <cstring>
+#include <limits>
 
 #include "common/assert.h"
 #include "common/atomic_ops.h"
@@ -175,6 +178,16 @@ ARM_FastInterp::ARM_FastInterp(Core::System& system, Memory::MemorySystem& memor
     state_.page_pointers = empty_page_table; // Never null
     const char* bkpt = std::getenv("CARA_FASTINTERP_DECODE_BKPT");
     decode_breakpoints_ = bkpt && std::strcmp(bkpt, "1") == 0;
+    const char* add_cmp_reg = std::getenv("CARA_FASTINTERP_ADD_CMP_REG");
+    add_cmp_reg_ = add_cmp_reg && std::strcmp(add_cmp_reg, "1") == 0;
+    const char* add_cmp_reg_census = std::getenv("CARA_FASTINTERP_ADD_CMP_REG_CENSUS");
+    add_cmp_reg_census_ = add_cmp_reg_census && std::strcmp(add_cmp_reg_census, "1") == 0;
+    const char* four_pairs = std::getenv("CARA_FASTINTERP_LDR_STR_FOUR_PAIRS");
+    ldr_str_four_pairs_ = four_pairs && std::strcmp(four_pairs, "1") == 0;
+    const char* four_census = std::getenv("CARA_FASTINTERP_LDR_STR_FOUR_PAIRS_CENSUS");
+    ldr_str_four_pairs_census_ = four_census && std::strcmp(four_census, "1") == 0;
+    const char* ldr_sp = std::getenv("CARA_FASTINTERP_LDR_SP_STATIC");
+    ldr_sp_static_ = ldr_sp && std::strcmp(ldr_sp, "1") == 0;
     const char* al_dispatch = std::getenv("CARA_FASTINTERP_AL_DISPATCH");
     al_dispatch_ = al_dispatch && std::strcmp(al_dispatch, "1") == 0;
     const char* secondary_link = std::getenv("CARA_FASTINTERP_SECONDARY_LINK");
@@ -228,6 +241,13 @@ bool ARM_FastInterp::AluPairsEnabled() {
     return enabled;
 }
 
+void ARM_FastInterp::QuickenLdrSpStatic(DecodedInst& inst, bool is_thumb) const {
+    if (ldr_sp_static_ && !is_thumb && inst.GetOpcode() == Opcode::LdrImm &&
+        inst.cond == 0xE && inst.inst_size == 4 && inst.ls.rn == 13 && inst.rd != 15 &&
+        inst.ls.mode == AddrMode::Offset)
+        inst.SetOpcode(Opcode::LdrSpImm);
+}
+
 void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
     // The existing hotness counters have no instrumentation overhead. Their
     // census is incomplete after eviction and counts fused-loop dispatches, not
@@ -261,6 +281,21 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
                 ++slot; // counts above include both logical original operations
             }
         }
+    u64 sp_blocks=0,sp_slots=0,sp_weighted=0,sp_quickened=0,sp_quickened_weighted=0;
+    for (const auto* resident : blocks) {
+        bool eligible_block=false;
+        if (resident->IsThumb()) continue;
+        for (unsigned slot=0;slot<resident->inst_count;++slot) {
+            const auto& item=resident->instructions[slot];
+            const auto op=item.GetOpcode();
+            if ((op==Opcode::LdrImm || op==Opcode::LdrSpImm) && item.cond==0xE &&
+                item.inst_size==4 && item.ls.rn==13 && item.rd!=15 && item.ls.mode==AddrMode::Offset) {
+                ++sp_slots;sp_weighted+=resident->exec_count;eligible_block=true;
+                if (op==Opcode::LdrSpImm) {++sp_quickened;sp_quickened_weighted+=resident->exec_count;}
+            }
+        }
+        sp_blocks+=eligible_block;
+    }
     u64 unrolled_blocks = 0, unrolled_dispatches = 0;
     for (const auto* block : blocks)
         for (unsigned slot = 0; slot < block->inst_count; ++slot) {
@@ -316,6 +351,21 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
            << ",\"cache_invalidated_entries\":" << cache_profile.invalidated_entries
            << ",\"cache_mode_redecodes\":" << cache_mode_redecodes_
            << ",\"cache_page_table_changes\":" << cache_page_table_changes_
+           << ",\"add_cmp_reg_enabled\":" << (add_cmp_reg_ ? "true" : "false")
+           << ",\"add_cmp_reg_runtime_counters_available\":" << (add_cmp_reg_census_ ? "true" : "false")
+           << ",\"add_cmp_reg_executed\":" << add_cmp_reg_executed_
+           << ",\"ldr_str_four_pairs_enabled\":" << (ldr_str_four_pairs_ ? "true" : "false")
+           << ",\"ldr_str_four_pairs_census_enabled\":" << (ldr_str_four_pairs_census_ ? "true" : "false")
+           << ",\"ldr_str_four_pairs_runtime_counters_available\":" << (ldr_str_four_pairs_census_ ? "true" : "false")
+           << ",\"ldr_str_four_pairs_fused\":" << ldr_str_four_pairs_fused_
+           << ",\"ldr_str_four_pairs_fallback\":" << ldr_str_four_pairs_fallback_
+           << ",\"ldr_sp_static_enabled\":" << (ldr_sp_static_ ? "true" : "false")
+           << ",\"ldr_sp_census\":{\"eligible_resident_blocks\":" << sp_blocks
+           << ",\"eligible_resident_decoded_slots\":" << sp_slots
+           << ",\"eligible_resident_entry_weighted_slots\":" << sp_weighted
+           << ",\"quickened_resident_decoded_slots\":" << sp_quickened
+           << ",\"quickened_resident_entry_weighted_slots\":" << sp_quickened_weighted
+           << ",\"semantics\":\"executed-resident-block census; entry-weighted slots are not executed instruction counts\"}"
            << ",\"alu_operands_enabled\":" << (alu_enabled ? "true" : "false")
            << ",\"alu_pairs_enabled\":" << (pairs_enabled ? "true" : "false")
            << ",\"alu_pair_resident_entry_weighted_dispatches\":{\"AddPairImmImm\":" << pair_weighted[0]
@@ -477,6 +527,7 @@ void ARM_FastInterp::Step() {
         }
     }
     block->instructions[slot].ticks = static_cast<u8>(Core::TicksForInstruction(state_.thumb_mode, raw));
+    QuickenLdrSpStatic(block->instructions[slot], state_.thumb_mode);
     DecodedInst& term = block->instructions[slot + 1];
     std::memset(&term, 0, sizeof(term));
     term.SetOpcode(Opcode::EndBlock);
@@ -875,6 +926,9 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         HANDLER(MovPairLslImm),
         HANDLER(MovPairLslLsl),
         HANDLER(VldrPairS),
+        HANDLER(LdrSpImm),
+        HANDLER(LdrStrFourPairsImm),
+        &&handle_AddCmpRegBccCounted,
 
 
         // AL entries share each checked handler body after its predicate gate.
@@ -1177,6 +1231,9 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         &&handle_MovPairLslImm,
         &&handle_MovPairLslLsl,
         &&handle_VldrPairS,
+        &&handle_LdrSpImm_al,
+        &&handle_LdrStrFourPairsImm_al,
+        &&handle_AddCmpRegBcc,
     };
 #undef HANDLER
 
@@ -1441,7 +1498,16 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         WriteCoherent<u32>(memory_, addr, value);
     };
 
+    // The closure performs no work until a typed diagnostic marker invokes it.
+    auto capture_record_snapshot=[this](u32 pc) {
+        return Cara::GuestGPUTrace::RecordSnapshots::Capture(
+            Cara::GuestGPUTrace::RecordSnapshots::PageAdapter{page_table_.get(),state_.page_pointers},
+            pc,state_.regs[2],state_.regs[4],state_.regs[5],state_.regs[8]);
+    };
+
     if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+    if (Cara::GuestGPUTrace::CallbacksEnabled())
+        Cara::GuestGPUTrace::CallbackBlock(system_.CoreTiming(), block->start_pc, state_.regs[14], state_.regs[0], state_.regs[1], state_.regs[2], state_.regs[3], [this] { return ProfileThreadId(); }, capture_record_snapshot);
 
     // Entry guard: poisoned blocks (inst_count = 0 from InvalidateRange/Clear)
     // must not execute their stale instructions.
@@ -1501,6 +1567,8 @@ chain:
             if (inst < end) {
                 decode_cost_.ChainSelf();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+    if (Cara::GuestGPUTrace::CallbacksEnabled())
+        Cara::GuestGPUTrace::CallbackBlock(system_.CoreTiming(), block->start_pc, state_.regs[14], state_.regs[0], state_.regs[1], state_.regs[2], state_.regs[3], [this] { return ProfileThreadId(); }, capture_record_snapshot);
                 goto* dispatch_table[inst->dispatch_index];
             }
         }
@@ -1516,6 +1584,8 @@ chain:
             if (inst < end) {
                 decode_cost_.ChainPrimary();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+    if (Cara::GuestGPUTrace::CallbacksEnabled())
+        Cara::GuestGPUTrace::CallbackBlock(system_.CoreTiming(), block->start_pc, state_.regs[14], state_.regs[0], state_.regs[1], state_.regs[2], state_.regs[3], [this] { return ProfileThreadId(); }, capture_record_snapshot);
                 goto* dispatch_table[inst->dispatch_index];
             }
         }
@@ -1545,6 +1615,8 @@ chain:
             if (inst < end) {
                 decode_cost_.ChainFallback();
                 if (guest_pc_cpu_.ObservesBlocks()) guest_pc_cpu_.Block(block->start_pc, block->end_pc, profile_thread_id_);
+    if (Cara::GuestGPUTrace::CallbacksEnabled())
+        Cara::GuestGPUTrace::CallbackBlock(system_.CoreTiming(), block->start_pc, state_.regs[14], state_.regs[0], state_.regs[1], state_.regs[2], state_.regs[3], [this] { return ProfileThreadId(); }, capture_record_snapshot);
                 goto* dispatch_table[inst->dispatch_index];
             }
         }

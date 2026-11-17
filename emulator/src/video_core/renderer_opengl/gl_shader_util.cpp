@@ -36,8 +36,12 @@ GLuint LoadShader(const char* source, GLenum type) {
 
     std::string compatible_source(source);
 #ifdef CARA_IOS_GLES
-    version = R"(#version 300 es
-#define CARA_GLES
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    version = "#version 410 core\n";
+#else
+    version = "#version 300 es\n";
+#endif
+    version += R"(#define CARA_GLES
 precision highp int;
 precision highp float;
 precision highp sampler2D;
@@ -51,7 +55,22 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
             compatible_source.replace(pos, from.size(), to); pos += to.size();
         }
     };
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    // Runtime API/state remains desktop GL, where these clip planes are enabled.
+    // Keep their original PICA writes without pretending an ES extension exists.
+    ReplaceAll("#if !defined(CARA_GLES) || defined(GL_EXT_clip_cull_distance)", "#if 1");
+    // Native generation emits these before its declarations, but our shared
+    // LUT helper is already a declaration. Shadows are rejected at Init.
+    ReplaceAll("#extension GL_ARB_shader_image_load_store : enable\n", "");
+    ReplaceAll("#extension GL_ARB_shader_image_size : enable\n", "");
+#endif
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    // Atlas LUTs are 2D; the independent native legacy PBO converter still
+    // uses a real buffer sampler and its native texelFetch signature.
+    ReplaceAll("samplerBuffer texture_buffer_lut_", "sampler2D texture_buffer_lut_");
+#else
     ReplaceAll("samplerBuffer", "sampler2D");
+#endif
     ReplaceAll("precision highp uimage2D;", "");
     ReplaceAll("#define fma_safe(x, y, z) fma(x, y, z)", "#define fma_safe(x, y, z) ((x) * (y) + (z))");
     ReplaceAll("texelFetch(texture_buffer_lut_", "CaraLUTFetch(texture_buffer_lut_");
@@ -108,6 +127,9 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
         }
     }
 
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    if (result != GL_TRUE && shader_id) { glDeleteShader(shader_id); shader_id=0; }
+#endif
     return shader_id;
 }
 

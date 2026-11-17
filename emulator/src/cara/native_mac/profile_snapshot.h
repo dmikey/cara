@@ -1,3 +1,11 @@
+#include "cara/native_mac/profile_gpu_boundary.h"
+#include "video_core/command_processor.h"
+#include "cara/native_mac/diagnostic_clock.h"
+#include "video_core/lut_effective_change.h"
+#include "video_core/renderer_opengl/gl_software_batch_policy.h"
+#include "video_core/renderer_opengl/gl_rasterizer.h"
+#include "video_core/video_core.h"
+#include "video_core/renderer_opengl/gl_effect_family_ablation.h"
 // Copyright 2026 Cara contributors. Licensed under GPL-2.0-or-later.
 // Opt-in developer snapshots. No GPU readback, RAM payload, counter reset or timing mutation.
 #pragma once
@@ -8,19 +16,37 @@
 #include <fstream>
 #include <iomanip>
 #include "common/frame_timing.h"
+#include "cara/native_mac/script_only_input.h"
 #include "core/arm/fastinterp/fastinterp.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/hle/service/hid/hid.h"
 #include "core/savestate.h"
 #include "core/settings.h"
+#include "video_core/renderer_opengl/gl_packed_vertex_padding.h"
+#include "video_core/renderer_opengl/gl_fragment_lighting_ablation.h"
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#include "video_core/renderer_opengl/gl_index_payload_reuse.h"
+#include "common/host_render_queue.h"
 
-inline void WriteNativeProfileSnapshot(const std::string& stem, u32 frame) {
+inline void WriteNativeProfileSnapshot(const std::string& stem, u32 frame, bool terminal_benchmark_boundary=false) {
     const char* enabled = std::getenv("CARA_NATIVE_PROFILE_SNAPSHOT");
     const char* diagnostics = std::getenv("CARA_NATIVE_DIAGNOSTICS");
     if (!diagnostics || std::strcmp(diagnostics, "1") != 0 ||
         !enabled || std::strcmp(enabled, "1") != 0)
         return;
+    // Benchmark boundaries include every preceding host command, so a growing
+    // queue cannot masquerade as faster rendering. This is not glFinish.
+    OpenGL::CommandQueue::Drain();
+    const auto exact_flag=[](const char* name){const char* v=std::getenv(name);return v&&std::strcmp(v,"1")==0;};
+    const bool gpu_requested=exact_flag("CARA_NATIVE_PROFILE_GPU_COMPLETE");
+    const bool gpu_complete=Cara::NativeProfile::CompleteGPU(gpu_requested,true,
+        exact_flag("CARA_NATIVE_BENCHMARK"),terminal_benchmark_boundary,
+        {glad_glFenceSync,glad_glClientWaitSync,glad_glDeleteSync,&OpenGL::CommandQueue::Drain});
+    const auto worker_cpu=OpenGL::CommandQueue::ReadWorkerCPUForProfile();
+    timespec process_cpu{};
+    if(clock_gettime(CLOCK_PROCESS_CPUTIME_ID,&process_cpu))throw std::runtime_error("Process CPU profile clock failed");
+    const auto process_cpu_ns=std::uint64_t(process_cpu.tv_sec)*1000000000ull+std::uint64_t(process_cpu.tv_nsec);
     auto& system = Core::System::GetInstance();
     std::ofstream out(stem + "-profile.json");
     timespec cpu{};
@@ -34,6 +60,10 @@ inline void WriteNativeProfileSnapshot(const std::string& stem, u32 frame) {
         out << u64(cpu.tv_sec) * 1000000000ULL + u64(cpu.tv_nsec);
     else
         out << "null";
+    out << ",\"process_cpu_ns\":" << process_cpu_ns
+        << ",\"worker_thread_cpu_ns\":" << worker_cpu
+        << ",\"gpu_complete_requested\":" << gpu_requested
+        << ",\"gpu_complete_boundary\":" << gpu_complete;
     const auto hid = Service::HID::GetModule(system);
     out << ",\"hid_pad_state_hex\":";
     if (hid)
@@ -43,9 +73,60 @@ inline void WriteNativeProfileSnapshot(const std::string& stem, u32 frame) {
     out << ",\"source_fingerprint\":\"" << Core::GetSaveStateBuildFingerprint() << "\""
         << ",\"timing_counter_mode\":\""
         << (Common::FrameTiming::counters.enabled ? "enabled" : "disabled") << "\"";
+    out << ",\"gl_command_queue_enabled\":" << OpenGL::CommandQueue::Enabled()
+        << ",\"gl_queue_native_map_upload_requested\":" << OpenGL::CommandQueue::NativeMapUploadRequested()
+        << ",\"gl_queue_native_map_upload_active\":" << OpenGL::CommandQueue::NativeMapUploadActive();
+    const auto unchecked_blit=OpenGL::CommandQueue::GetUncheckedBlitProducerStats();
+    out << ",\"unchecked_blit_producer\":{\"requested\":" << unchecked_blit.requested
+        << ",\"gate_active\":" << unchecked_blit.active
+        << ",\"blit_commands_recorded\":" << unchecked_blit.blit_commands_recorded << "}";
+    if (auto* queue = OpenGL::CommandQueue::Queue()) {
+        const auto q=queue->GetStats();const auto r=OpenGL::CommandQueue::SnapshotStats();
+        out << ",\"gl_command_queue\":{\"immutable_query_memoization\":false,\"worker_thread_cpu_ns\":" << worker_cpu
+            << ",\"epoch\":" << q.epoch
+            << ",\"submissions\":" << q.submissions << ",\"completions\":" << q.completions
+            << ",\"errors\":" << q.errors << ",\"blocked_submissions\":" << q.blocked_submissions
+            << ",\"high_water_batches\":" << q.high_water_jobs
+            << ",\"high_water_payload_bytes\":" << q.high_water_bytes
+            << ",\"live_batches\":" << q.live_jobs << ",\"live_bytes\":" << q.live_bytes
+            << ",\"recorded_gl_commands\":" << r.recorded_commands
+            << ",\"submitted_gl_batches\":" << r.submitted_batches
+            << ",\"synchronous_calls\":" << r.synchronous_calls
+            << ",\"texture_owned_uploads\":" << r.texture_owned_uploads
+            << ",\"texture_pointer_rpcs\":" << r.texture_pointer_rpcs
+            << ",\"owned_payload_bytes\":" << r.owned_payload_bytes
+            << ",\"uniform_location_rpcs\":" << r.uniform_location_rpcs
+            << ",\"uniform_location_cache_hits\":" << r.uniform_location_cache_hits
+            << ",\"attrib_location_cache_hits\":" << r.attrib_location_cache_hits
+            << ",\"uniform_block_index_cache_hits\":" << r.uniform_block_index_cache_hits
+            << ",\"worker_rejected_calls\":" << r.worker_rejected_calls
+            << ",\"transaction_sync_calls\":" << r.transaction_sync_calls
+            << ",\"transaction_state_fallbacks\":" << r.transaction_state_fallbacks
+            << ",\"transaction_lut_calls\":" << r.transaction_lut_calls
+            << ",\"transaction_inline_calls\":" << r.transaction_inline_calls
+            << ",\"owned_unmap_error_queries\":" << r.owned_unmap_error_queries
+            << ",\"owned_native_map_uploads\":" << r.owned_native_map_uploads
+            << ",\"owned_budget_live\":" << r.owned_budget_live
+            << ",\"owned_budget_high\":" << r.owned_budget_high
+            << ",\"rpc_by_api\":{";
+        for (std::size_t i=0;i<OpenGL::CommandQueue::RpcApiCount;++i) {
+            out << (i ? "," : "") << '\"'
+                << OpenGL::CommandQueue::RpcApiName(static_cast<OpenGL::CommandQueue::RpcApi>(i))
+                << "\":" << r.rpc_by_api[i];
+        }
+        out << "}}";
+        out << ",\"gl_transaction_attribution\":";
+        OpenGL::TransactionAttribution::WriteJSON(out,OpenGL::CommandQueue::GetTransactionAttribution());
+    }
+    out << ",\"packed_padding_only_zero\":" << OpenGL::PackedVertexPaddingOnlyEnabled();
+    out << ",\"fragment_lighting_ablation\":" << OpenGL::FragmentLightingAblationEnabled();
     out << ",\"is_new_3ds\":" << Settings::values.is_new_3ds
         << ",\"core_downcount_hack_setting\":" << Settings::values.core_downcount_hack
-        << ",\"guest_cpu_requested_percent\":100,\"timers\":[";
+        << ",\"guest_cpu_requested_percent\":" << Cara::NativeDiagnosticClock::RequestedPercent()
+        << ",\"guest_cpu_effective_percent\":" << Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())
+        << ",\"diagnostic_clock\":";
+    Cara::NativeDiagnosticClock::WriteJSON(out,system.CoreTiming(),system.GetNumCores());
+    out << ",\"timers\":[";
     for (u32 i = 0; i < system.GetNumCores(); ++i) {
         const auto timer = system.CoreTiming().GetTimer(i);
         out << (i ? "," : "") << "{\"core\":" << i
@@ -55,8 +136,22 @@ inline void WriteNativeProfileSnapshot(const std::string& stem, u32 frame) {
             << ",\"ticks_divisor_before_clock_scale\":"
             << (u64(1) << timer->GetDowncountHackForDiagnostics()) << '}';
     }
+    out << ']';
+    namespace E=OpenGL::EffectFamilyAblation;
+    out << ",\"particle_family_ablation\":" << E::ParticleEnabled()
+        << ",\"composite_pass_ablation\":" << E::CompositeEnabled()
+        << ",\"ray_candidate_ablation\":" << E::RayEnabled()
+        << ",\"effect_family_host_counts\":{\"particle_candidates\":" << E::counts.particle_host_candidates
+        << ",\"composite_candidates\":" << E::counts.composite_host_candidates
+        << ",\"particle_skips\":" << E::counts.particle_host_skips
+        << ",\"composite_skips\":" << E::counts.composite_host_skips
+        << ",\"particle_vertices_skipped\":" << E::counts.particle_host_vertices_skipped
+        << ",\"composite_vertices_skipped\":" << E::counts.composite_host_vertices_skipped
+        << ",\"ray_candidates\":" << E::counts.ray_host_candidates
+        << ",\"ray_skips\":" << E::counts.ray_host_skips
+        << ",\"ray_vertices_skipped\":" << E::counts.ray_host_vertices_skipped << '}';
     const auto& c = Common::FrameTiming::counters;
-    out << "],\"current_timer_ticks\":" << system.CoreTiming().GetTicks()
+    out << ",\"current_timer_ticks\":" << system.CoreTiming().GetTicks()
         << ",\"global_ticks\":" << system.CoreTiming().GetGlobalTicks()
         << ",\"candidate_requests\":{\"vldr_pairs\":";
     const auto flag = [](const char* name) {
@@ -65,8 +160,12 @@ inline void WriteNativeProfileSnapshot(const std::string& stem, u32 frame) {
     };
     out << flag("CARA_FASTINTERP_VLDR_PAIRS")
         << ",\"mac_depth_reinterpret\":" << flag("CARA_MAC_GPU_DEPTH_REINTERPRET")
+        << ",\"tight_framebuffer_backing\":" << flag("CARA_TIGHT_FRAMEBUFFER_BACKING")
         << "},\"diagnostic_controls\":{\"enabled\":true,\"snapshot\":true,\"capture_readback\":false"
         << ",\"benchmark_requested\":" << flag("CARA_NATIVE_BENCHMARK")
+        << ",\"script_only_input\":" << Cara::NativeScriptOnlyInput::Enabled()
+        << ",\"ignored_physical_event_count\":"
+        << Cara::NativeScriptOnlyInput::ignored_physical_event_count
         << ",\"circle_script_requested\":" << (std::getenv("CARA_NATIVE_CIRCLE_SEGMENTS") != nullptr)
         << ",\"a_script_requested\":" << (std::getenv("CARA_NATIVE_PRESS_A_FRAMES") != nullptr)
         << ",\"start_script_requested\":" << (std::getenv("CARA_NATIVE_PRESS_START_FRAMES") != nullptr)
@@ -250,7 +349,38 @@ inline void WriteNativeProfileSnapshot(const std::string& stem, u32 frame) {
         else
             out << "{\"core\":" << i << ",\"backend\":\"non-FastInterp\"}";
     }
-    out << "]";
+    out << "],\"software_batching\":";
+    OpenGL::SoftwareBatching::WriteJSON(out);
+    out << ",\"vertex_index_identity_reuse\":";
+    OpenGL::IndexPayloadReuse::WriteJSON(out);
+    out << ",\"pica_shader_stream_batch\":";
+    Pica::CommandProcessor::WriteShaderStreamBatchJSON(out);
+    if (auto* rasterizer=dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer())) {
+        const auto& nb=rasterizer->NativeNearestBorrowCounters();
+        out << ",\"native_nearest_borrow\":{\"enabled\":"
+            << (rasterizer->NativeNearestBorrowEnabled()?"true":"false")
+            << ",\"extension_and_entrypoint_available\":" << (rasterizer->NativeNearestBorrowAvailable()?"true":"false")
+            << ",\"counters_available\":" << (rasterizer->NativeNearestBorrowEnabled()?"true":"false")
+            << ",\"attempts\":" << nb.attempts << ",\"prepared_rejections\":" << nb.prepared_rejections
+            << ",\"state_rejections\":" << nb.state_rejections << ",\"plan_rejections\":" << nb.plan_rejections
+            << ",\"cache_rejections\":" << nb.cache_rejections << ",\"late_rejections\":" << nb.late_rejections
+            << ",\"baseline_restarts\":" << nb.baseline_restarts << ",\"borrowed_draws\":" << nb.borrowed_draws
+            << ",\"barriers\":" << nb.barriers << '}';
+        out << ",\"native_copytex_surface_copy_calls\":" << rasterizer->NativeCopyTexSurfaceCopyCalls()
+            << ",\"native_shader_surface_copy_calls\":" << rasterizer->NativeShaderSurfaceCopyCalls();
+    }
+    out << ",\"old3ds_syscore\":";
+    system.Kernel().WriteOld3dsSyscoreJSON(out);
+    out << ",\"lut_effective_change\":{\"enabled_requested\":"
+        << (std::getenv("CARA_LUT_EFFECTIVE_CHANGE") && std::strcmp(std::getenv("CARA_LUT_EFFECTIVE_CHANGE"),"1")==0 ? "true":"false")
+        << ",\"profile_requested\":"
+        << (std::getenv("CARA_LUT_EFFECTIVE_CHANGE_PROFILE") && std::strcmp(std::getenv("CARA_LUT_EFFECTIVE_CHANGE_PROFILE"),"1")==0 ? "true":"false")
+        << ",\"tables\":[";
+    const auto lut_counts=Cara::LutEffectiveChange::ReadCounters();
+    for(std::size_t i=0;i<lut_counts.size();++i){const auto& c=lut_counts[i];
+        if(i)out<<',';out<<"{\"kind\":"<<i<<",\"writes\":"<<c.writes<<",\"changed\":"<<c.changed
+            <<",\"notifications\":"<<c.notifications<<",\"invalid_targets\":"<<c.invalid_targets<<'}';}
+    out<<"]}";
     timespec end_cpu{};
     const bool end_cpu_ok = clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end_cpu) == 0;
     const auto end_wall = std::chrono::steady_clock::now().time_since_epoch();

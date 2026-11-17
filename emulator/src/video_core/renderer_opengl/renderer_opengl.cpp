@@ -947,7 +947,13 @@ VideoCore::ResultStatus RendererOpenGL::Init() {
         return VideoCore::ResultStatus::ErrorGenericDrivers;
     }
 
-#ifdef CARA_IOS_GLES
+#if defined(CARA_MAC_ATLAS_PIPELINE)
+    GLint native_major{}, native_minor{};
+    glGetIntegerv(GL_MAJOR_VERSION, &native_major);
+    glGetIntegerv(GL_MINOR_VERSION, &native_minor);
+    if (GLES || native_major < 4 || (native_major == 4 && native_minor < 1)) {
+        LOG_ERROR(Render_OpenGL,"Mac atlas prototype requires a native OpenGL4.1 context, not ES");
+#elif defined(CARA_IOS_GLES)
     if (!GLAD_GL_ES_VERSION_3_0) {
 #else
     if (!(GLAD_GL_VERSION_3_3 || GLAD_GL_ES_VERSION_3_1)) {
@@ -955,6 +961,15 @@ VideoCore::ResultStatus RendererOpenGL::Init() {
         return VideoCore::ResultStatus::ErrorBelowGL33;
     }
 
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    // Rasterizer recomputes this exact capability conjunction. Do not allow an
+    // unvalidated image/shadow path to enter this GL4.1-only prototype.
+    if ((GLAD_GL_ARB_shader_image_load_store && GLAD_GL_ARB_shader_image_size &&
+         GLAD_GL_ARB_framebuffer_no_attachments) || Settings::values.allow_shadow) {
+        LOG_ERROR(Render_OpenGL,"Mac atlas prototype does not support shadow/image paths");
+        return VideoCore::ResultStatus::ErrorGenericDrivers;
+    }
+#endif
     InitOpenGLObjects();
 
     return VideoCore::ResultStatus::Success;

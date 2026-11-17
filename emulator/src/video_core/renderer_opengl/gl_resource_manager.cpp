@@ -107,7 +107,8 @@ void OGLProgram::Create(GLenum format, const std::vector<GLbyte>& binary) {
     }
 }
 
-void OGLProgram::GetProgramBinary(GLenum& format, std::vector<GLbyte>& binary) const {
+void OGLProgram::GetProgramBinary(GLenum& format, std::vector<GLbyte>& binary,
+                                  std::size_t maximum_bytes) const {
     if (handle == 0) {
         LOG_DEBUG(Render_OpenGL, "OGLProgram GetProgramBinary failed: handle error!");
         return;
@@ -115,7 +116,8 @@ void OGLProgram::GetProgramBinary(GLenum& format, std::vector<GLbyte>& binary) c
 
     GLint program_size = 0;
     glGetProgramiv(handle, GL_PROGRAM_BINARY_LENGTH, &program_size);
-    if (program_size == 0) {
+    if (program_size <= 0 ||
+        (maximum_bytes != 0 && static_cast<std::size_t>(program_size) > maximum_bytes)) {
         LOG_DEBUG(Render_OpenGL, "OGLProgram GetProgramBinary failed: program_size error!");
         return;
     }

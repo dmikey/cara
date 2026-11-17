@@ -5,29 +5,33 @@ from collections import Counter
 import csv
 import io
 import json
+import re
 from pathlib import Path
 
 FIELDS = ('sequence', 'frame', 'submission', 'timer0_ticks', 'current_ticks', 'global_ticks',
           'kind', 'thread', 'object', 'core', 'a', 'b', 'c', 'd')
 KINDS = ('VBlank', 'GXBegin', 'GXEnd', 'IRQRequest', 'Relay', 'EventSignal', 'EventAcquire',
          'EventClear', 'WaitReady', 'WaitPoll', 'WaitBlock', 'WaitObject', 'Wake', 'Run',
-         'Swap', 'Binding', 'PicaIRQ', 'Draw', 'DrawState', 'DrawInput', 'HIDUpdate', 'SleepRequest')
+         'Swap', 'Binding', 'PicaIRQ', 'Draw', 'DrawState', 'DrawInput', 'HIDUpdate', 'SleepRequest', 'QueueState')
 
 
 def read_trace(text):
     metadata, lines = {}, []
-    version = False
+    version = None
     for line in text.splitlines():
         if line.startswith('#'):
             comment = line[1:].strip()
-            if comment.startswith('cara_guest_gpu_trace_v1,'):
-                version = True
-            if comment.startswith(('cara_guest_gpu_trace_v1,', 'foreign_events_dropped=')):
+            header = re.match(r'cara_guest_gpu_trace_v(\d+),', comment)
+            if comment.startswith('cara_guest_gpu_trace_'):
+                if not header or header[1] not in ('1', '2') or version is not None:
+                    raise ValueError('unknown or duplicate trace version')
+                version = int(header[1])
+            if header or comment.startswith('foreign_events_dropped='):
                 for item in comment.split(','):
                     if '=' in item:
                         key, value = item.split('=', 1)
-                        if key in metadata:
-                            raise ValueError(f'duplicate metadata {key}')
+                        if key == 'schema_version' or key in metadata:
+                            raise ValueError(f'duplicate or reserved metadata {key}')
                         try:
                             metadata[key] = int(value)
                         except ValueError as error:
@@ -36,6 +40,8 @@ def read_trace(text):
             lines.append(line)
     if not version:
         raise ValueError('missing supported trace version')
+    if version == 2:
+        metadata['schema_version'] = 2
     reader = csv.DictReader(io.StringIO('\n'.join(lines)))
     if tuple(reader.fieldnames or ()) != FIELDS:
         raise ValueError('unexpected CSV columns')
@@ -52,6 +58,9 @@ def read_trace(text):
 
 
 def validate(metadata, rows, allow_partial):
+    version = metadata.get('schema_version', 1)
+    if version not in (1, 2):
+        raise ValueError('unsupported schema version')
     required = ('start_frame', 'duration_vblanks', 'truncated', 'complete', 'records',
                 'foreign_events_dropped')
     if any(key not in metadata for key in required):
@@ -73,7 +82,7 @@ def validate(metadata, rows, allow_partial):
     boundaries, last_core = [], {}
     last_timer0 = last_global = -1
     for index, row in enumerate(rows):
-        if row['sequence'] != index or not 0 <= row['kind'] < len(KINDS):
+        if row['sequence'] != index or not 0 <= row['kind'] < (22 if version == 1 else len(KINDS)):
             raise ValueError(f'invalid sequence or kind at record {index}')
         if row['core'] not in range(4) or row['frame'] not in expected:
             raise ValueError(f'invalid domain or frame at record {index}')
@@ -158,6 +167,96 @@ def draw_summary(metadata, rows, example_limit):
                 repeated_captured_state_groups=sum(item['count'] > 1 for item in groups.values()),
                 largest_captured_state_groups=sorted(groups.values(), key=lambda item: -item['count'])[:example_limit],
                 limitation='Equal captured fields are candidates for inspection, never duplicate proof. Uniforms, viewport/scissor, vertex/texture contents and content identity are not captured. Shader generations are capture-local observed changes, not cross-run identities.')
+
+
+def queue_summary(rows, allow_partial, example_limit):
+    """Join raw host-observed snapshots; no hardware busy/ready interpretation."""
+    phases = ('batch_entry', 'before_execute', 'after_execute', 'before_clear', 'after_clear')
+    no_slot = 0xffffffff
+    batches, pending, commands, complete_batches = {}, {}, [], []
+    incomplete, phase_counts = [], Counter()
+    def fail(message):
+        if not allow_partial:
+            raise ValueError(message)
+        incomplete.append(message)
+    def raw(row):
+        return dict(sequence=row['sequence'], submission=row['submission'], frame=row['frame'],
+                    caller_thread=row['thread'], gsp_recipient=row['object'],
+                    phase=phases[row['a']], raw_header=row['b'], chosen_slot=row['c'],
+                    raw_command_word=row['d'], command_word_present=row['c'] != no_slot)
+    for index, row in enumerate(rows):
+        if row['kind'] != 22:
+            continue
+        phase, header, slot, word = (row[key] for key in ('a', 'b', 'c', 'd'))
+        if row['object'] not in range(4):
+            raise ValueError('invalid QueueState GSP recipient')
+        if phase not in range(5) or header > 0xffffffff or word > 0xffffffff:
+            raise ValueError('invalid raw QueueState phase/header/command word')
+        is_command = phase in (1, 2)
+        if (is_command and not 0 <= slot < 15) or (not is_command and (slot != no_slot or word != 0)):
+            raise ValueError('invalid QueueState chosen slot or absent-word sentinel')
+        phase_counts[phases[phase]] += 1
+        key = (row['thread'], row['object'])
+        if phase == 0:
+            if key in batches:
+                fail('nested QueueState batch entry')
+            batches[key] = dict(entry=raw(row), command_submissions=[], before_clear=None)
+            continue
+        if is_command:
+            previous = rows[index - 1] if index else {}
+            expected_kind = 1 if phase == 1 else 2
+            same = ('frame', 'submission', 'thread', 'object', 'core',
+                    'timer0_ticks', 'current_ticks', 'global_ticks')
+            if previous.get('kind') != expected_kind or any(previous.get(k) != row[k] for k in same):
+                raise ValueError('QueueState command snapshot is not adjacent to matching GX boundary')
+            if phase == 1 and (previous['b'] != header or previous['c'] >> 32 != slot or
+                               previous['a'] != word & 255):
+                raise ValueError('QueueState before snapshot disagrees with GXBegin raw fields')
+            if phase == 2 and previous['d'] != header:
+                raise ValueError('QueueState after header disagrees with GXEnd')
+        batch = batches.get(key)
+        if batch is None:
+            fail('QueueState phase without batch entry (capture boundary may cut a batch)')
+        sid = row['submission']
+        if phase == 1:
+            if sid in pending or (batch and batch['before_clear'] is not None):
+                raise ValueError('duplicate or post-clear QueueState before_execute')
+            pending[sid] = row
+        elif phase == 2:
+            before = pending.pop(sid, None)
+            if before is None:
+                fail('QueueState after_execute without before_execute')
+                continue
+            if (before['thread'], before['object'], before['c']) != (row['thread'], row['object'], slot):
+                raise ValueError('QueueState before/after command identity mismatch')
+            commands.append(dict(submission=sid, chosen_slot=slot, caller_thread=row['thread'],
+                gsp_recipient=row['object'], before=raw(before), after=raw(row),
+                raw_header_changed_bits=before['b'] ^ header,
+                raw_command_word_changed_bits=before['d'] ^ word))
+            if batch:
+                batch['command_submissions'].append(sid)
+        elif phase == 3:
+            if batch:
+                if batch['before_clear'] is not None or any(
+                        (v['thread'], v['object']) == key for v in pending.values()):
+                    raise ValueError('duplicate clear or unpaired command before QueueState clear')
+                batch['before_clear'] = raw(row)
+        elif phase == 4:
+            if not batch or batch['before_clear'] is None:
+                fail('QueueState after_clear without before_clear')
+                continue
+            batch['after_clear'] = raw(row)
+            batch['raw_clear_changed_bits'] = batch['before_clear']['raw_header'] ^ header
+            complete_batches.append(batch)
+            del batches[key]
+    if batches or pending:
+        fail('unmatched QueueState batch/command boundaries')
+    if {item['submission'] for item in commands} != {row['submission'] for row in rows if row['kind'] == 1}:
+        fail('GX commands missing QueueState before/after phase pairs')
+    return dict(schema_version=2, phases=dict(phase_counts), completed_batches=len(complete_batches),
+                command_phase_pairs=len(commands), commands=commands, batches=complete_batches,
+                incomplete_observations=incomplete,
+                limitation='Headers and first command words are raw observed u32 values; high bits are not labeled busy or ready. Chosen slots are actual host-selected slots, not inferred ring positions. Snapshots do not establish hardware queue correctness or new guest work.')
 
 
 def analyze(metadata, rows, allow_partial=False, example_limit=20):
@@ -310,7 +409,7 @@ def analyze(metadata, rows, allow_partial=False, example_limit=20):
         if not interval['counters_available']:
             interval['draws'] = interval['gpu_vertices'] = None
     pairs = [pair for pair in irq_pairs if pair['irq'] in (4, 5)]
-    return dict(draw_passes=draws,
+    result = dict(draw_passes=draws,
                 hid_updates=sum(row['kind'] == 20 for row in rows),
                 sleep_requests=sum(row['kind'] == 21 for row in rows),
                 capture=dict(metadata, usable_as_complete_capture=not problems,
@@ -337,6 +436,13 @@ def analyze(metadata, rows, allow_partial=False, example_limit=20):
                                 'Next GX and subsequent list are temporal observations, not proof of freshly produced work. Pointer reuse is not command-content equivalence; queued slots may predate the wake.',
                                 'Compare list/draw/vertex volume between swaps and VBlanks with matched game progress; swaps every refresh do not establish equivalent work.',
                                 'GPU vertex totals exclude CPU-path vertices. No cross-timer-domain deltas are calculated.'])
+
+    if metadata.get('schema_version', 1) == 2:
+        result['queue_state'] = queue_summary(rows, allow_partial, example_limit)
+        if result['queue_state']['incomplete_observations']:
+            result['capture']['usable_as_complete_capture'] = False
+            result['capture']['limitations'].extend(result['queue_state']['incomplete_observations'])
+    return result
 
 
 def main():

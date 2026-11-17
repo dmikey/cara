@@ -8,6 +8,8 @@
 #include <cstddef>
 #include <cstring>
 #include <memory>
+#include <optional>
+#include "video_core/renderer_opengl/gl_nearest_borrow_plan.h"
 #include <vector>
 #include <glad/glad.h>
 #include "common/bit_field.h"
@@ -28,10 +30,13 @@
 #include "video_core/renderer_opengl/gl_vertex_source_map.h"
 #include "video_core/renderer_opengl/gl_vertex_index_cache.h"
 #include "video_core/renderer_opengl/gl_vertex_upload_bank.h"
+#include "video_core/renderer_opengl/gl_packed_pool_observer.h"
+#include "video_core/renderer_opengl/gl_shared_vertex_shadow.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_stream_buffer.h"
 #include "video_core/renderer_opengl/pica_to_gl.h"
 #include "video_core/shader/shader.h"
+#include "video_core/renderer_opengl/gl_software_batch_policy.h"
 
 namespace OpenGL {
 
@@ -41,11 +46,29 @@ public:
     RasterizerOpenGL();
     ~RasterizerOpenGL() override;
     bool RunUniformReuseSelfTest(std::string& error);
+    bool RunSoftwareBatchVisibilitySelfTest(std::string& error);
+    bool RunLUTEffectiveChangeSelfTest(std::string& error);
     bool RunSurfaceCoherenceSelfTest(std::string& error) { return res_cache.RunSmallWriteSelfTest(error); }
+    bool RunNativeRGBA8RemapSelfTest(std::string& error) { return res_cache.RunNativeRGBA8RemapSelfTest(error); }
+    bool RunNativeShaderCopySelfTest(std::string& error) { return res_cache.RunNativeShaderCopySelfTest(error); }
+    bool RunNativeRequiredCopySelfTest(std::string& error) { return res_cache.RunNativeRequiredCopySelfTest(error); }
+    struct NativeNearestBorrowStats {
+        u64 attempts=0, prepared_rejections=0, state_rejections=0, plan_rejections=0,
+            cache_rejections=0, late_rejections=0, baseline_restarts=0, borrowed_draws=0, barriers=0;
+    };
+    static bool NativeNearestBorrowEnabled();
+    const NativeNearestBorrowStats& NativeNearestBorrowCounters() const { return native_borrow_stats; }
+    bool NativeNearestBorrowAvailable() const { return GLAD_GL_NV_texture_barrier && glTextureBarrierNV; }
+    u64 NativeCopyTexSurfaceCopyCalls() const { return res_cache.NativeCopyTexSurfaceCopyCalls(); }
+    u64 NativeShaderSurfaceCopyCalls() const { return res_cache.NativeShaderSurfaceCopyCalls(); }
 
     void AddTriangle(const Pica::Shader::OutputVertex& v0, const Pica::Shader::OutputVertex& v1,
                      const Pica::Shader::OutputVertex& v2) override;
     void DrawTriangles() override;
+    void BeginPicaCommandList() override;
+    void PrePicaRegisterWrite(u32 id, u32 value, u32 mask) override;
+    void EndPicaCommandList() override;
+    void FlushDeferredDraws() override;
     void NotifyPicaRegisterChanged(u32 id) override;
     void FlushAll() override;
     void FlushRegion(PAddr addr, u32 size) override;
@@ -76,6 +99,11 @@ private:
         /// Syncs the sampler object with the config, updating any necessary state.
         void SyncWithConfig(const TextureConfig& config);
 
+        bool NativeNearestCompatible() const {
+            return mag_filter==TextureConfig::Nearest && min_filter==TextureConfig::Nearest &&
+                mip_filter==TextureConfig::Nearest && wrap_s==TextureConfig::ClampToEdge &&
+                wrap_t==TextureConfig::ClampToEdge && lod_min==0 && lod_max==0 && lod_bias==0;
+        }
     private:
         TextureConfig::TextureFilter mag_filter;
         TextureConfig::TextureFilter min_filter;
@@ -252,6 +280,19 @@ private:
 
     /// Generic draw function for DrawTriangles and AccelerateDrawBatch
     bool Draw(bool accelerate, bool is_indexed);
+    void TraceSoftwareBatchVisibilityFBO(const char* stage,GLuint selected_color=0,GLuint selected_depth=0);
+    std::uint64_t software_visibility_oracle_trace_sequence=0;
+    u32 software_visibility_first_gl_error=0,software_visibility_first_query_error=0;
+    void FlushSoftwareBatch(SoftwareBatching::Reason reason, bool plan_boundary=true);
+    bool SoftwareBatchResourcesSafe(bool include_vertex_inputs, bool indexed);
+    SoftwareBatching::Planner software_batch_planner;
+    // Unknown callers remain conservative; prehooks record the request mode.
+    bool software_batch_input_guard_required=true,software_batch_input_indexed=true;
+    SoftwareBatching::FramebufferVisibility software_framebuffer_visibility;
+    bool software_census_submission_succeeded=false;
+    bool software_batch_flushing=false,software_batch_draw_safe=false,software_has_deferred=false;
+    bool software_census_after_draw=false;
+    std::uint64_t software_vertices_since_request=0,software_completed_requests=0;
 
     /// Internal implementation for AccelerateDrawBatch
     bool AccelerateDrawBatchInternal(bool is_indexed);
@@ -269,6 +310,8 @@ private:
     void SetupVertexArray(u8* array_ptr, GLintptr buffer_offset, GLuint vs_input_index_min,
                           GLuint vs_input_index_max);
 
+    NativeNearestBorrowStats native_borrow_stats{};
+
     /// Setup vertex shader for AccelerateDrawBatch
     bool SetupVertexShader();
 
@@ -276,6 +319,14 @@ private:
     bool SetupGeometryShader();
 #ifdef CARA_IOS_GLES
     bool PrepareIOSVertices(bool is_indexed);
+    bool CaptureNativeNearestBorrow(bool indexed);
+    bool NativeNearestBorrowDrawStateSafe() const;
+    bool BeforeNativeNearestBorrowDraw();
+    u64 native_borrow_input_epoch=0, native_borrow_pica_epoch=0, native_borrow_capture_input_epoch=0, native_borrow_capture_pica_epoch=0;
+    NearestBorrow::Inputs native_borrow_inputs{};
+    bool native_borrow_prepared=false, native_borrow_fragment_selected=false, native_borrow_restart=false;
+    std::optional<RasterizerCacheOpenGL::NearestBorrowLease> native_borrow_lease;
+
     OGLTexture ios_vertex_fallback_texture;
     OGLTexture ios_vertex_index_fallback_texture;
     IOSVertexSourceMap ios_vertex_source_map;
@@ -297,6 +348,8 @@ private:
     std::unordered_map<GLuint,IOSLayoutUniform> ios_layout_uniforms;
     std::array<std::array<GLint,4>,16> ios_packed_layout{};
     bool PrepareIOSPackedVertices(const IOSVertexInputLayout& layout);
+    PackedPoolObserver::Token packed_pool_observation;
+    void FinishPackedPoolObservation();
     u32 ios_vertex_input_records = 0;
     GLint ios_vertex_max_texture_size = 0;
     struct IOSVertexUpload {
@@ -305,8 +358,8 @@ private:
         OGLBuffer elements;
         // Exact CPU shadows permit skipping writes without relying on RAM dirty
         // tracking or hash collision assumptions. Released with the pool entry.
-        std::vector<u8> input_shadow;
-        std::vector<u8> index_shadow;
+        SharedVertexShadow input_shadow;
+        IndexPayloadReuse::Shadow index_shadow;
         std::vector<u8> elements_shadow;
         unsigned rows = 0;
     };
@@ -317,7 +370,7 @@ private:
     size_t ios_vertex_upload_index = 0;
     std::vector<u32> ios_triangle_indices;
     static_assert(IOS_VERTEX_INPUT_WIDTH == 128, "Index cache row alignment must match the shader");
-    IOSVertexIndexCache ios_vertex_index_cache;
+    IOSVertexIndexCache ios_vertex_index_cache{32 * 1024 * 1024, 2048, IndexPayloadReuse::Enabled()};
     const IOSVertexIndexCache::Data* ios_cached_index_data = nullptr;
     const std::vector<u32>& IOSTriangles() const {
         return ios_cached_index_data ? ios_cached_index_data->triangles : ios_triangle_indices;
@@ -327,6 +380,16 @@ private:
             ios_cached_index_data->packed : ios_vertex_input_indices;
     }
     std::vector<GLvec4> ios_vertex_inputs;
+    // Immutable CPU snapshot only; never reserves a GPU upload-pool owner.
+    std::shared_ptr<const std::vector<u8>> ios_packed_snapshot_lease;
+    const u8* IOSVertexInputData() const {
+        return ios_packed_snapshot_lease ? ios_packed_snapshot_lease->data() :
+            reinterpret_cast<const u8*>(ios_vertex_inputs.data());
+    }
+    size_t IOSVertexInputBytes() const {
+        return ios_packed_snapshot_lease ? ios_packed_snapshot_lease->size() :
+            ios_vertex_inputs.size()*sizeof(GLvec4);
+    }
 #endif
 
     OpenGLState state;
@@ -372,7 +435,17 @@ private:
     OGLVertexArray hw_vao; // VAO for hardware shader / accelerate draw
     std::array<bool, 16> hw_vao_enabled_attributes{};
 
+    // A GLuint may be reused after Surface destruction. Weak control-block identity
+    // distinguishes allocation lifetimes without retaining cache surfaces/textures.
+    static bool SameFramebufferSurface(const std::weak_ptr<CachedSurface>& previous,
+                                       const Surface& surface) {
+        return !previous.owner_before(surface) && !surface.owner_before(previous);
+    }
+    void DiscardExpiredFramebufferAttachments(); // framebuffer must already be bound
     struct {
+        std::weak_ptr<CachedSurface> color_surface;
+        std::weak_ptr<CachedSurface> depth_surface;
+        bool depth_stencil;
         GLuint color_attachment;
         GLuint depth_attachment;
         u32 color_width;

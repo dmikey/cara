@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_driver_transactions.h"
 // Copyright 2020 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
@@ -25,7 +26,7 @@ static constexpr const char* depth_shader_precision="";
 #endif
 // GLES 3.0 samples the depth component of D24S8 but cannot sample stencil.
 // Recover stencil using read-only fixed-function tests, never a feedback loop.
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
 static bool MacGPUReinterpretEnabled() {
     static const bool enabled=[] {
         const char* value=std::getenv("CARA_MAC_GPU_DEPTH_REINTERPRET");
@@ -142,6 +143,10 @@ void main(){
     }
     bool EncodeDepthChecked(GLuint src,PixelFormat format,const Common::Rectangle<u32>& sr,
                             GLuint dst,const Common::Rectangle<u32>& dr,u32 width,u32 height) override {
+        if (const auto* bridge=DriverTransactions::Pending())
+            return bridge->sync_bool(DriverTransactions::Kind::DepthEncode,[&] {
+                return EncodeDepthChecked(src,format,sr,dst,dr,width,height);
+            });
         if(format!=PixelFormat::D16&&format!=PixelFormat::D24&&format!=PixelFormat::D24S8)return false;
         if (!src || !dst || src==dst || !width || !height || sr.right>width || sr.top>height ||
             sr.right<=sr.left || sr.top<=sr.bottom || dr.right<=dr.left || dr.top<=dr.bottom)
@@ -152,7 +157,7 @@ void main(){
         if(!linked)return false;
         glGetProgramiv(stencil_program.handle,GL_LINK_STATUS,&linked);if(!linked)return false;
         const auto previous=OpenGLState::GetCurState();
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
         DesktopDepthRasterState desktop_raster;
 #endif
         GLint active=0,unpack=0,read_framebuffer=0,draw_framebuffer=0;
@@ -256,6 +261,10 @@ void main(){
     bool UploadDepthChecked(GLuint target,PixelFormat format,const Common::Rectangle<u32>& rect,
                             const u8* canonical,size_t canonical_bytes,u32 stride_pixels,
                             u32 width,u32 height) override {
+        if (const auto* bridge=DriverTransactions::Pending())
+            return bridge->sync_bool(DriverTransactions::Kind::DepthUpload,[&] {
+                return UploadDepthChecked(target,format,rect,canonical,canonical_bytes,stride_pixels,width,height);
+            });
         if(format!=PixelFormat::D16&&format!=PixelFormat::D24&&format!=PixelFormat::D24S8)return false;
         if(!target||!canonical||!width||!height||rect.right>width||rect.top>height||
            rect.right<=rect.left||rect.top<=rect.bottom||stride_pixels<rect.GetWidth()||
@@ -267,7 +276,7 @@ void main(){
         GLint linked=0;glGetProgramiv(upload_depth_program.handle,GL_LINK_STATUS,&linked);if(!linked)return false;
         glGetProgramiv(upload_stencil_program.handle,GL_LINK_STATUS,&linked);if(!linked)return false;
         const auto previous=OpenGLState::GetCurState();
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
         DesktopDepthRasterState desktop_raster;
 #endif
         GLint active=0,unpack=0,read_fb=0,draw_fb=0;
@@ -355,12 +364,12 @@ private:
     GLint bit_location=-1,maximum_depth_location=-1;u32 scratch_width=0,scratch_height=0;
 };
 bool RunDepthReinterpretSelfTest(std::string& error) {
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
     if(!MacGPUReinterpretEnabled()){error="Mac depth oracle requires CARA_MAC_GPU_DEPTH_REINTERPRET=1";return false;}
 #endif
     if(glGetError()!=GL_NO_ERROR){error="depth oracle preexisting GL error";return false;}
     const auto previous=OpenGLState::GetCurState();
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
     DesktopDepthRasterState desktop_raster;
 #endif
     GLint active=0,pack=0,unpack=0,entry_read_framebuffer=0,entry_draw_framebuffer=0;
@@ -513,7 +522,7 @@ void main(){gl_FragDepth=wanted;color=vec4(0);}
         constexpr const char* cap_labels[]={"BLEND","DEPTH_TEST","STENCIL_TEST","SCISSOR_TEST","CULL_FACE",
             "DITHER","RASTERIZER_DISCARD","SAMPLE_ALPHA_TO_COVERAGE","SAMPLE_COVERAGE","POLYGON_OFFSET_FILL"};
         for(unsigned i=0;i<std::size(caps);++i)result.emplace_back(cap_labels[i],glIsEnabled(caps[i]));
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
         GLint logic=0;glGetIntegerv(GL_LOGIC_OP_MODE,&logic);result.emplace_back("LOGIC_OP_MODE",logic);
         result.emplace_back("COLOR_LOGIC_OP",glIsEnabled(GL_COLOR_LOGIC_OP));
         result.emplace_back("CLIP_DISTANCE0",glIsEnabled(GL_CLIP_DISTANCE0));
@@ -573,7 +582,7 @@ void main(){gl_FragDepth=wanted;color=vec4(0);}
         // Real startup context can have a raw read binding different from the
         // cached value. The checked API must restore both actual binding/cache.
         glBindFramebuffer(GL_READ_FRAMEBUFFER,readback.handle);
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
         glEnable(GL_COLOR_LOGIC_OP);glLogicOp(GL_XOR);
         glEnable(GL_CLIP_DISTANCE0);glEnable(GL_CLIP_DISTANCE1);
 #endif
@@ -657,7 +666,7 @@ void main(){gl_FragDepth=wanted;color=vec4(0);}
     std::vector<u32> d16(256*256);
     for(u32 i=0;i<d16.size();++i)d16[i]=i<<8;
     if(!verify(256,256,260,260,d16,{0,256,256,0},{2,258,258,2},true,PixelFormat::D16))return false;
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
     if(!CompareNativeDepthUploadWithPBO(error))return false;
 #endif
     return true;
@@ -997,7 +1006,7 @@ private:
     GLint d24s8_abgr_viewport_u_id;
 };
 
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
 // Compare the actual desktop upload/legacy-PBO route with the candidate. The
 // exhaustive oracle above uses fragment-written depth to guarantee exact seeds;
 // this independent check also covers the driver's native integer upload path.
@@ -1209,7 +1218,7 @@ FormatReinterpreterOpenGL::FormatReinterpreterOpenGL() {
     return;
 #endif
     std::string_view vendor{reinterpret_cast<const char*>(glGetString(GL_VENDOR))};
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
     if (MacGPUReinterpretEnabled()) {
         reinterpreters.emplace_back(PixelFormat::RGBA8,PixelFormat::D24S8,
                                     std::make_unique<GLESDepthStencilToRGBA8>());
@@ -1244,7 +1253,7 @@ FormatReinterpreterOpenGL::~FormatReinterpreterOpenGL() = default;
 bool FormatReinterpreterOpenGL::EncodeDepthChecked(GLuint src,PixelFormat format,
     const Common::Rectangle<u32>& sr,GLuint dst,const Common::Rectangle<u32>& dr,u32 width,u32 height) {
 #if defined(CARA_IOS_GLES) || defined(__APPLE__)
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
     if(!MacGPUReinterpretEnabled())return false;
 #endif
     if(!depth_encoder)depth_encoder=std::make_unique<GLESDepthStencilToRGBA8>();
@@ -1257,7 +1266,7 @@ bool FormatReinterpreterOpenGL::EncodeDepthChecked(GLuint src,PixelFormat format
 bool FormatReinterpreterOpenGL::UploadDepthChecked(GLuint target,PixelFormat format,
     const Common::Rectangle<u32>& rect,const u8* canonical,size_t bytes,u32 stride,u32 width,u32 height) {
 #if defined(CARA_IOS_GLES) || defined(__APPLE__)
-#if defined(__APPLE__) && !defined(CARA_IOS_GLES)
+#if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
     if(!MacGPUReinterpretEnabled())return false;
 #endif
     if(!depth_encoder)depth_encoder=std::make_unique<GLESDepthStencilToRGBA8>();

@@ -67,3 +67,6 @@ builds or other games.
 
 See [validation](validation.md) for additional tests, measurement constraints,
 and optimization work.
+
+
+The [November 17 M1 integration](m1-performance-integration-2026-11-17.md) records the checked-remap result, source-cache limits, closed shader-sharing comparison and default-OFF research policy.

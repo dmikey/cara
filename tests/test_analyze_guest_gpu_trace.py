@@ -169,5 +169,109 @@ class GuestGPUTraceTests(unittest.TestCase):
             TRACE.read_trace(text.replace('records=240', 'records=bad'))
 
 
+def queue_fixture():
+    rows = []
+    def add(kind, sid=0, **fields):
+        row = dict.fromkeys(TRACE.FIELDS, 0)
+        row.update(sequence=len(rows), frame=0, submission=sid,
+                   timer0_ticks=100, current_ticks=100, global_ticks=100,
+                   kind=TRACE.KINDS.index(kind), thread=11, object=2)
+        row.update(fields);rows.append(row)
+    def snapshot(phase, header, slot=0xffffffff, word=0, sid=0):
+        add('QueueState',sid,a=phase,b=header,c=slot,d=word)
+    add('VBlank')
+    snapshot(0,0xfedc020e)
+    add('GXBegin',1,a=1,b=0xfedc020e,c=2)
+    snapshot(1,0xfedc020e,0,0x80ff0001,1)
+    add('GXEnd',1,c=1,d=0xfedc0100)
+    snapshot(2,0xfedc0100,0,0x81ff0001,1)
+    add('GXBegin',2,a=5,b=0xfedc0100,c=(1<<32)|2)
+    snapshot(1,0xfedc0100,1,0xbbccdd05,2)
+    add('GXEnd',2,c=1,d=0xfedc0101)
+    snapshot(2,0xfedc0101,1,0xaaccdd05,2)
+    snapshot(3,0xfedc0101,sid=2)
+    snapshot(4,0xfedc0001,sid=2)
+    return dict(schema_version=2,start_frame=0,duration_vblanks=1,records=len(rows),
+                complete=1,truncated=0,foreign_events_dropped=0),rows
+
+
+def csv_fixture(metadata,rows,version):
+    return '# foreign_events_dropped=0\n# cara_guest_gpu_trace_v'+str(version)+','+','.join(
+        f'{k}={v}' for k,v in metadata.items() if k not in ('schema_version','foreign_events_dropped'))+'\n'+','.join(
+        TRACE.FIELDS)+'\n'+'\n'.join(','.join(str(r[k]) for k in TRACE.FIELDS) for r in rows)+'\n'
+
+
+class QueueStateV2Tests(unittest.TestCase):
+    def test_raw_header_command_words_multi_command_wrap_and_changed_high_bits(self):
+        result=TRACE.analyze(*TRACE.read_trace(csv_fixture(*queue_fixture(),2)))
+        queue=result['queue_state']
+        self.assertEqual(queue['completed_batches'],1)
+        self.assertEqual(queue['command_phase_pairs'],2)
+        first,second=queue['commands']
+        self.assertEqual(first['before']['raw_header'],0xfedc020e)
+        self.assertEqual(first['after']['raw_header'],0xfedc0100)
+        self.assertEqual(first['before']['raw_command_word'],0x80ff0001)
+        self.assertEqual(first['after']['raw_command_word'],0x81ff0001)
+        self.assertEqual(first['raw_command_word_changed_bits'],0x01000000)
+        self.assertEqual(second['chosen_slot'],1)
+        self.assertEqual(second['caller_thread'],11)
+        self.assertEqual(second['gsp_recipient'],2)
+        self.assertEqual(queue['batches'][0]['raw_clear_changed_bits'],0x100)
+        self.assertIn('not labeled busy',queue['limitation'])
+        self.assertNotIn('busy',first['before'])
+
+    def test_version1_rejects_new_kind_unknown_versions_and_reserved_version_metadata(self):
+        metadata,rows=queue_fixture()
+        with self.assertRaises(ValueError):
+            TRACE.analyze(*TRACE.read_trace(csv_fixture(metadata,rows,1)))
+        for version in (0,3,99):
+            with self.assertRaisesRegex(ValueError,'version'):
+                TRACE.read_trace(csv_fixture(metadata,rows,version))
+        text=csv_fixture(metadata,rows,2)
+        for bad in (text.replace('start_frame=0','schema_version=1,start_frame=0'),
+                    '# cara_guest_gpu_trace_v1,records=0\n'+text):
+            with self.assertRaises(ValueError):TRACE.read_trace(bad)
+
+    def test_missing_command_or_batch_phase_rejected_and_partial_explicit(self):
+        for removed in (1,3,5,10,11):
+            metadata,rows=queue_fixture();del rows[removed]
+            for i,r in enumerate(rows):r['sequence']=i
+            metadata['records']=len(rows)
+            with self.assertRaises(ValueError):TRACE.analyze(metadata,rows)
+        metadata,rows=queue_fixture();rows.pop();metadata['records']=len(rows)
+        result=TRACE.analyze(metadata,rows,allow_partial=True)
+        self.assertFalse(result['capture']['usable_as_complete_capture'])
+        self.assertTrue(result['queue_state']['incomplete_observations'])
+
+    def test_removing_both_command_snapshots_is_not_silently_accepted(self):
+        metadata,rows=queue_fixture();rows=[row for i,row in enumerate(rows) if i not in (3,5)]
+        for i,row in enumerate(rows):row['sequence']=i
+        metadata['records']=len(rows)
+        with self.assertRaisesRegex(ValueError,'missing QueueState'):
+            TRACE.analyze(metadata,rows)
+
+    def test_phase_identity_adjacent_timestamp_raw_width_and_slot_boundaries(self):
+        changes=[(3,dict(a=5)),(3,dict(b=1<<32)),(3,dict(d=1<<32)),
+                 (3,dict(c=15)),(5,dict(submission=99)),(5,dict(c=1)),
+                 (3,dict(current_ticks=101,timer0_ticks=101)),(10,dict(c=0)),
+                 (10,dict(d=1)),(5,dict(b=5))]
+        for index,fields in changes:
+            metadata,rows=queue_fixture();rows[index].update(fields)
+            with self.assertRaises(ValueError):TRACE.analyze(metadata,rows)
+        metadata,rows=queue_fixture()
+        rows[6]['c']=(14<<32)|2;rows[7]['c']=rows[9]['c']=14
+        self.assertEqual(TRACE.analyze(metadata,rows)['queue_state']['commands'][1]['chosen_slot'],14)
+
+    def test_empty_batch_retains_raw_header_and_absent_command_sentinel(self):
+        metadata,rows=queue_fixture();rows=[rows[i] for i in (0,1,10,11)]
+        for i,r in enumerate(rows):r['sequence']=i
+        metadata['records']=len(rows)
+        queue=TRACE.analyze(metadata,rows)['queue_state']
+        self.assertEqual(queue['completed_batches'],1)
+        self.assertEqual(queue['command_phase_pairs'],0)
+        self.assertEqual(queue['batches'][0]['entry']['chosen_slot'],0xffffffff)
+        self.assertFalse(queue['batches'][0]['entry']['command_word_present'])
+
+
 if __name__ == '__main__':
     unittest.main()

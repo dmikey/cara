@@ -19,8 +19,10 @@ struct Entry {
 };
 static auto eligible=[](const Entry& e) { return e.rows==4 && e.format==2 && e.live; };
 static Result Search(const std::vector<Entry>& p, std::size_t first,
-                     const Entry& wanted, std::size_t limit=32) {
-    return Find(p,first,limit,wanted.input_shadow.data(),wanted.input_shadow.size(),
+                     const Entry& wanted, std::size_t limit=32, bool self_equal=false) {
+    return self_equal ? FindWithInputSelfEquality(p,first,limit,wanted.input_shadow.data(),wanted.input_shadow.size(),
+                wanted.index_shadow.data(),wanted.index_shadow.size(),eligible) :
+                Find(p,first,limit,wanted.input_shadow.data(),wanted.input_shadow.size(),
                 wanted.index_shadow.data(),wanted.index_shadow.size(),eligible);
 }
 static Entry Make(unsigned id) {
@@ -119,6 +121,44 @@ int main() {
         REQUIRE(result.input_equal==(length!=0));
         REQUIRE(result.index_equal==(length!=0)); ++cases;
     }
+    // Self identity is exact only after original nonzero/equal-extent guards.
+    for (std::size_t length : {0u,1u,15u,16u,17u,64u,4096u}) {
+        std::vector<std::uint8_t> bytes(length,0x6b),copy=bytes;
+        for(bool edges:{false,true}) {
+            std::size_t full=0;
+            REQUIRE(EqualInputSelf(bytes,bytes.data(),length,full,edges)==(length!=0));
+            REQUIRE(full==0);
+            REQUIRE(!EqualInputSelf(bytes,bytes.data(),length+1,full,edges));
+            REQUIRE(full==0);
+            REQUIRE(EqualInputSelf(bytes,copy.data(),length,full,edges)==(length!=0));
+            REQUIRE(full==(length?1:0));
+            if(length>32) {
+                copy[length/2]^=1;full=0;
+                REQUIRE(!EqualInputSelf(bytes,copy.data(),length,full,edges));
+                REQUIRE(full==1);copy[length/2]^=1;
+            }
+        }
+        ++cases;
+    }
+    // Identity never bypasses resource/format eligibility or independent indices.
+    pool={Make(7)};
+    auto index_copy=pool[0].index_shadow;
+    const auto alias_find=[&](bool enabled) {
+        return enabled ? FindWithInputSelfEquality(pool,0,32,pool[0].input_shadow.data(),pool[0].input_shadow.size(),
+                    index_copy.data(),index_copy.size(),eligible) :
+                    Find(pool,0,32,pool[0].input_shadow.data(),pool[0].input_shadow.size(),
+                    index_copy.data(),index_copy.size(),eligible);
+    };
+    auto alias_off=alias_find(false),alias_on=alias_find(true);
+    REQUIRE(alias_off.input_equal && alias_on.input_equal && alias_off.index_equal && alias_on.index_equal);
+    REQUIRE(alias_off.selected==alias_on.selected && alias_off.candidates==alias_on.candidates);
+    REQUIRE(alias_off.full_comparisons==2 && alias_on.full_comparisons==1);
+    index_copy[20]^=1;alias_off=alias_find(false);alias_on=alias_find(true);
+    REQUIRE(alias_on.input_equal && !alias_on.index_equal && !alias_off.index_equal);
+    REQUIRE(alias_off.full_comparisons==2 && alias_on.full_comparisons==1);
+    pool[0].live=false;alias_on=alias_find(true);
+    REQUIRE(alias_on.candidates==0 && !alias_on.input_equal && !alias_on.index_equal && alias_on.full_comparisons==0);
+    ++cases;
     for (unsigned trial=0;trial<20000;++trial) {
         Entry target=Make(rng()%8);
         target.input_shadow.resize(rng()%257);target.index_shadow.resize(rng()%129);
@@ -140,6 +180,10 @@ int main() {
         const auto actual=Search(pool,first,target,limit), expected=Reference(pool,first,target,limit);
         REQUIRE(actual.selected==expected.selected && actual.candidates==expected.candidates &&
                 actual.input_equal==expected.input_equal && actual.index_equal==expected.index_equal);
+        const auto enabled=Search(pool,first,target,limit,true);
+        REQUIRE(enabled.selected==expected.selected && enabled.candidates==expected.candidates &&
+                enabled.input_equal==expected.input_equal && enabled.index_equal==expected.index_equal);
+        REQUIRE(enabled.full_comparisons==actual.full_comparisons); // Distinct live allocations.
         REQUIRE(pool==before);++cases;
     }
     std::cout << "vertex order reuse: " << cases << " cases passed\n";

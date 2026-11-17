@@ -1,3 +1,5 @@
+#include "gl_native_quaternion_geometry.h"
+#include "gl_shader_suffix_sharing.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2015 Citra Emulator Project
 // Licensed under GPLv2 or any later version
@@ -5,8 +7,11 @@
 
 #include <array>
 #include <cstddef>
+#include <cstring>
+#include <type_traits>
 #include <cstdlib>
 #include <string_view>
+#include <stdexcept>
 #include <fmt/format.h>
 #include "common/assert.h"
 #include "common/bit_field.h"
@@ -80,6 +85,8 @@ layout (std140) uniform shader_data {
 #ifdef CARA_IOS_GLES
     "    vec4 cara_viewport;\n"
 #endif
+    "    ivec4 cara_tex0_view;\n"
+    "    ivec4 cara_tex0_crop;\n"
 R"(};
 
 layout (std140) uniform shader_light_data {
@@ -102,14 +109,16 @@ static bool s_use_texcolor0;
 static bool s_use_texcolor1;
 static bool s_use_texcolor2;
 
-static std::string GetVertexInterfaceDeclaration(bool is_output, bool separable_shader) {
+static std::string GetVertexInterfaceDeclaration(bool is_output, bool separable_shader,
+                                                 std::string_view prefix = {}) {
     std::string out;
 
     const auto append_variable = [&](std::string_view var, int location) {
         if (separable_shader) {
             out += fmt::format("layout (location={}) ", location);
         }
-        out += fmt::format("{}{};\n", is_output ? "out " : "in ", var);
+        if (prefix.empty()) out += fmt::format("{}{};\n", is_output ? "out " : "in ", var);
+        else {const auto split=var.find(' ');out += fmt::format("{}{} {}{};\n",is_output?"out ":"in ",var.substr(0,split),prefix,var.substr(split+1));}
     };
 
     append_variable("vec4 primary_color", ATTRIBUTE_COLOR);
@@ -133,10 +142,23 @@ out gl_PerVertex {
     return out;
 }
 
-PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs) {
+bool PicaFSConfig::SupportsNativeNearestBorrow(const Pica::Regs& regs) {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    return !GLES && regs.texturing.texture0.type == TexturingRegs::TextureConfig::Texture2D;
+#else
+    return false;
+#endif
+}
+
+PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs,
+                                       bool native_nearest_borrow_tex0) {
+    if (native_nearest_borrow_tex0 && !SupportsNativeNearestBorrow(regs)) {
+        throw std::invalid_argument("native nearest borrow requires native texture2D");
+    }
     PicaFSConfig res{};
 
     auto& state = res.state;
+    state.native_nearest_borrow_tex0 = native_nearest_borrow_tex0;
 
     state.scissor_test_mode = regs.rasterizer.scissor_test.mode;
 
@@ -283,6 +305,10 @@ PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs) {
 }
 
 void PicaShaderConfigCommon::Init(const Pica::ShaderRegs& regs, Pica::Shader::ShaderSetup& setup) {
+    // The complete object is hashed as a cache key, including ABI padding.
+    static_assert(std::is_trivially_copyable_v<PicaShaderConfigCommon>);
+    static_assert(std::is_standard_layout_v<PicaShaderConfigCommon>);
+    std::memset(this, 0, sizeof(*this));
     program_hash = setup.GetProgramCodeHash();
     swizzle_hash = setup.GetSwizzleDataHash();
     main_offset = regs.main_offset;
@@ -1444,6 +1470,15 @@ vec4 shadowTextureCube(vec2 uv, float w) {
 
 std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader) {
     const auto& state = config.state;
+    if (state.native_nearest_borrow_tex0) {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        if (GLES || state.texture0_type != TexturingRegs::TextureConfig::Texture2D) {
+            throw std::invalid_argument("invalid native nearest borrow shader key");
+        }
+#else
+        throw std::invalid_argument("native nearest borrow is unavailable on this backend");
+#endif
+    }
     std::string out;
     bool shadow_rendering = false;
     bool shader_logic_ops = false;
@@ -1641,8 +1676,21 @@ vec4 secondary_fragment_color = vec4(0.0);
         WriteLighting(lighting_codes, config);
 
     if (s_use_texcolor0) {
-        out += "vec4 texcolor0 = textureLod(tex0, texcoord0, getLod(texcoord0 * "
-               "vec2(textureSize(tex0, 0))));\n";
+        if (state.native_nearest_borrow_tex0) {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+            // Both actual and helper invocations read only the certified logical crop.
+            // There is deliberately no parent textureLod branch in this program variant.
+            out += "ivec2 cara_tex0_index = ivec2(floor(texcoord0 * vec2(cara_tex0_view.zw)));\n"
+                   "cara_tex0_index = clamp(cara_tex0_index, ivec2(0), cara_tex0_view.zw - ivec2(1));\n"
+                   "cara_tex0_index = clamp(cara_tex0_index, cara_tex0_crop.xy, cara_tex0_crop.zw - ivec2(1));\n"
+                   "vec4 texcolor0 = texelFetch(tex0, cara_tex0_index + cara_tex0_view.xy, 0);\n";
+#else
+            throw std::invalid_argument("native nearest borrow is unavailable on this backend");
+#endif
+        } else {
+            out += "vec4 texcolor0 = textureLod(tex0, texcoord0, getLod(texcoord0 * "
+                   "vec2(textureSize(tex0, 0))));\n";
+        }
     }
     if (s_use_texcolor1) {
         out += "vec4 texcolor1 = textureLod(tex1, texcoord1, getLod(texcoord1 * "
@@ -1846,8 +1894,14 @@ void main() {
 
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
                                  bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs,
-                                 bool ios_source_optimizations) {
+                                 bool ios_source_optimizations, bool native_quaternion_geometry,
+                                 bool native_isolated_dispatch, bool native_suffix_sharing) {
     std::string out;
+    if (native_isolated_dispatch && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
+    if (native_quaternion_geometry && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
+#ifndef CARA_MAC_ATLAS_PIPELINE
+    if(native_quaternion_geometry || native_isolated_dispatch) return {};
+#endif
     if (ios_output && ios_indexed_inputs==5) {
         out=GetVertexInterfaceDeclaration(true,false);
         out+=R"(
@@ -1874,8 +1928,12 @@ void main() {
     vec4 uv2w=cara_output(vertex,4);
     texcoord2=uv2w.xy; texcoord0_w=uv2w.z;
     view=cara_output(vertex,5).xyz;
-}
 )";
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        out+="gl_ClipDistance[0]=cara_output(vertex,4).w;\n"
+             "gl_ClipDistance[1]=cara_output(vertex,5).w;\n";
+#endif
+        out+="}\n";
         return out;
     }
     if (separable_shader) {
@@ -1901,7 +1959,7 @@ void main() {
 
     auto program_source_opt = ShaderDecompiler::DecompileProgram(
         setup.program_code, setup.swizzle_data, config.state.main_offset, get_input_reg,
-        get_output_reg, config.state.sanitize_mul);
+        get_output_reg, config.state.sanitize_mul, native_isolated_dispatch);
 
     if (!program_source_opt)
         return {};
@@ -1935,6 +1993,7 @@ layout (std140) uniform vs_config {
         // then fold the fixed output mapping into this vertex program. Re-evaluating
         // vertex zero preserves the per-triangle quaternion sign rule exactly.
         const auto& fixed = ios_output->state;
+        const auto varying = [&](std::string_view name) {return std::string(native_quaternion_geometry?"vs_":"")+std::string(name);};
         const auto semantic = [&](VSOutputAttributes::Semantic slot) -> std::string {
             const auto& map = fixed.semantic_maps[static_cast<u32>(slot)];
             if (map.attribute_index >= config.state.num_outputs) return "0.0";
@@ -1955,7 +2014,7 @@ layout (std140) uniform vs_config {
         // its control flow, while exposing dead work to the host GLSL compiler.
         std::string quaternion_program;
         const char* slice_env=std::getenv("CARA_GPU_QUATERNION_SLICE");
-        if (ios_source_optimizations && ios_indexed_inputs<3 && slice_env && std::string_view(slice_env)=="1") {
+        if (!native_quaternion_geometry && ios_source_optimizations && ios_indexed_inputs<3 && slice_env && std::string_view(slice_env)=="1") {
             std::array<bool,16> quaternion_attributes{};
             for (auto slot : {VSOutputAttributes::QUATERNION_X,VSOutputAttributes::QUATERNION_Y,
                               VSOutputAttributes::QUATERNION_Z,VSOutputAttributes::QUATERNION_W}) {
@@ -1969,7 +2028,7 @@ layout (std140) uniform vs_config {
                 return {};
             };
             auto sliced=ShaderDecompiler::DecompileProgram(setup.program_code,setup.swizzle_data,
-                config.state.main_offset,get_input_reg,quat_output,config.state.sanitize_mul);
+                config.state.main_offset,get_input_reg,quat_output,config.state.sanitize_mul,native_isolated_dispatch);
             if (sliced) {
                 quaternion_program=std::move(sliced->code);
 #ifdef CARA_IOS_GLES
@@ -1996,7 +2055,7 @@ layout (std140) uniform vs_config {
                 }
             }
         }
-        out += GetVertexInterfaceDeclaration(true, false);
+        out += GetVertexInterfaceDeclaration(true, false, native_quaternion_geometry?"vs_":"");
         if (ios_indexed_inputs==4)
             for (unsigned field=0;field<6;++field)
                 out+=fmt::format("out highp vec4 cara_feedback{};\n",field);
@@ -2042,7 +2101,8 @@ layout (std140) uniform vs_config {
                 out += fmt::format("vs_out_attr{}=vec4(0.0,0.0,0.0,1.0);\n",i);
             out += "cara_quat_exec_shader();\n}\n";
         }
-        out += "void main() {\nvec4 first_quat=vec4(0.0);\n";
+        out += "void main() {\n";
+        if (!native_quaternion_geometry) out += "vec4 first_quat=vec4(0.0);\n";
         if (ios_indexed_inputs == 6) {
             // gl_VertexID now names an ordered pair, never a triangle slot.
             // The original triangle-first source is supplied explicitly.
@@ -2051,29 +2111,50 @@ layout (std140) uniform vs_config {
             out += "cara_run_vertex(int(pair_id.x)); normquat=" + quaternion + ";\n";
             out += "if(pair_id.x!=pair_id.y && dot(first_quat,normquat)<0.0) normquat=-normquat;\n";
         } else {
-        if (ios_indexed_inputs<3) out += "if (gl_VertexID % 3 != 0) { " +
+        if (ios_indexed_inputs<3 && !native_quaternion_geometry) out += "if (gl_VertexID % 3 != 0) { " +
             std::string(quaternion_program.empty()?"cara_run_vertex":"cara_run_quaternion")+
             "(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
-        out += "cara_run_vertex(gl_VertexID);\nnormquat = " + quaternion + ";\n";
-        if (ios_indexed_inputs<3) out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
+        out += "cara_run_vertex(gl_VertexID);\n"+varying("normquat")+" = " + quaternion + ";\n";
+        if (ios_indexed_inputs<3 && !native_quaternion_geometry) out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
         }
         out += "gl_Position = " + vector("vec4", {VSOutputAttributes::POSITION_X, VSOutputAttributes::POSITION_Y,
             VSOutputAttributes::POSITION_Z, VSOutputAttributes::POSITION_W}) + ";\n";
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        // Native GL clip state remains active. Planes use original PICA space,
+        // before the atlas path changes depth range or snaps viewport position.
+        out += "gl_ClipDistance[0] = -gl_Position.z;\n";
+        out += "gl_ClipDistance[1] = dot(clip_coef, gl_Position);\n";
+#endif
         // Map PICA's [-w, 0] clip range onto GLES' [-w, w] range.
         out += "gl_Position.z = 2.0 * gl_Position.z + gl_Position.w;\n";
         out += NativeVertexSnapCode();
-        out += "primary_color = min(abs(" + vector("vec4", {VSOutputAttributes::COLOR_R, VSOutputAttributes::COLOR_G,
+        out += varying("primary_color")+" = min(abs(" + vector("vec4", {VSOutputAttributes::COLOR_R, VSOutputAttributes::COLOR_G,
             VSOutputAttributes::COLOR_B, VSOutputAttributes::COLOR_A}) + "), vec4(1.0));\n";
-        out += "texcoord0 = " + vector("vec2", {VSOutputAttributes::TEXCOORD0_U, VSOutputAttributes::TEXCOORD0_V}) + ";\n";
-        out += "texcoord1 = " + vector("vec2", {VSOutputAttributes::TEXCOORD1_U, VSOutputAttributes::TEXCOORD1_V}) + ";\n";
-        out += "texcoord2 = " + vector("vec2", {VSOutputAttributes::TEXCOORD2_U, VSOutputAttributes::TEXCOORD2_V}) + ";\n";
-        out += "texcoord0_w = " + semantic(VSOutputAttributes::TEXCOORD0_W) + ";\n";
-        out += "view = " + vector("vec3", {VSOutputAttributes::VIEW_X, VSOutputAttributes::VIEW_Y, VSOutputAttributes::VIEW_Z}) + ";\n";
+        out += varying("texcoord0")+" = " + vector("vec2", {VSOutputAttributes::TEXCOORD0_U, VSOutputAttributes::TEXCOORD0_V}) + ";\n";
+        out += varying("texcoord1")+" = " + vector("vec2", {VSOutputAttributes::TEXCOORD1_U, VSOutputAttributes::TEXCOORD1_V}) + ";\n";
+        out += varying("texcoord2")+" = " + vector("vec2", {VSOutputAttributes::TEXCOORD2_U, VSOutputAttributes::TEXCOORD2_V}) + ";\n";
+        out += varying("texcoord0_w")+" = " + semantic(VSOutputAttributes::TEXCOORD0_W) + ";\n";
+        out += varying("view")+" = " + vector("vec3", {VSOutputAttributes::VIEW_X, VSOutputAttributes::VIEW_Y, VSOutputAttributes::VIEW_Z}) + ";\n";
         if (ios_indexed_inputs==4)
             out+="cara_feedback0=gl_Position; cara_feedback1=normquat; cara_feedback2=primary_color;\n"
+#ifdef CARA_MAC_ATLAS_PIPELINE
+                 // Spare components preserve original planes through this
+                 // draw's feedback texture without changing its six-vec4 ABI.
+                 "cara_feedback3=vec4(texcoord0,texcoord1); cara_feedback4=vec4(texcoord2,texcoord0_w,gl_ClipDistance[0]);\n"
+                 "cara_feedback5=vec4(view,gl_ClipDistance[1]);\n";
+#else
                  "cara_feedback3=vec4(texcoord0,texcoord1); cara_feedback4=vec4(texcoord2,texcoord0_w,0.0);\n"
                  "cara_feedback5=vec4(view,0.0);\n";
+#endif
         out+="}\n";
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        // Full source and input observation already generated; retain original
+        // reference + actual vertex paths. Unsupported subsets return unchanged.
+        if (native_suffix_sharing && native_isolated_dispatch && !native_quaternion_geometry &&
+            !separable_shader && ios_indexed_inputs < 3) {
+            return ShaderSuffixSharing::Apply(out);
+        }
+#endif
         return out;
     }
 
@@ -2174,6 +2255,8 @@ void EmitPrim(Vertex vtx0, Vertex vtx1, Vertex vtx2) {
 
     return out;
 };
+
+std::string GenerateNativeQuaternionGeometryShader() { return NativeQuaternionGeometry::Source(); }
 
 std::string GenerateFixedGeometryShader(const PicaFixedGSConfig& config, bool separable_shader) {
     std::string out;

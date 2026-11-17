@@ -352,6 +352,7 @@ FlagEffects ClassifyFlagEffects(const DecodedInst& inst) {
     case Opcode::StrB:
     case Opcode::StrH:
     case Opcode::LdrImm:
+    case Opcode::LdrSpImm:
     case Opcode::StrImm:
     case Opcode::LdrBImm:
     case Opcode::StrBImm:
@@ -1306,7 +1307,7 @@ bool ARM_FastInterp::TryFuseThumb(DecodedInst& inst, u32 pc) {
     return false;
 }
 
-void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
+void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc, CurrentDecodeABI) {
     block->SetThumb(state_.thumb_mode);
     block->inst_count = 0; // Reset before decoding (critical for re-decode on mode change)
     block->chain_target = nullptr;
@@ -1655,6 +1656,58 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc) {
             }
         }
     }
+
+    // Retained-slot ordered-copy quickening. Existing semantic LdrImm/StrImm
+    // classes already prove ARM P=1/W=0/word/non-PC; no extra guest code reads.
+    if (ldr_str_four_pairs_ && !is_thumb) {
+        for (unsigned slot = 0; slot + 7 < block->inst_count; ++slot) {
+            auto* first = &block->instructions[slot];
+            if (first[0].GetOpcode() != Opcode::LdrImm ||
+                first[1].GetOpcode() != Opcode::StrImm) continue;
+            const unsigned src = first[0].ls.rn, dst = first[1].ls.rn;
+            bool match = src < 15 && dst < 15;
+            for (unsigned pair = 0; pair < 4 && match; ++pair) {
+                const auto& load = first[pair * 2];
+                const auto& store = first[pair * 2 + 1];
+                match = load.GetOpcode() == Opcode::LdrImm &&
+                    store.GetOpcode() == Opcode::StrImm && load.cond == 0xE &&
+                    store.cond == 0xE && load.inst_size == 4 && store.inst_size == 4 &&
+                    load.rd == store.rd && load.rd < 15 && load.rd != dst &&
+                    (pair == 3 || load.rd != src) && load.ls.rn == src &&
+                    store.ls.rn == dst && load.ls.mode == AddrMode::Offset &&
+                    store.ls.mode == AddrMode::Offset && load.ls.rm == 0xFF &&
+                    store.ls.rm == 0xFF &&
+                    static_cast<s64>(load.ls.offset) == static_cast<s64>(first[0].ls.offset) + pair * 4 &&
+                    static_cast<s64>(store.ls.offset) == static_cast<s64>(first[1].ls.offset) + pair * 4;
+            }
+            if (match) { first[0].SetOpcode(Opcode::LdrStrFourPairsImm); slot += 7; }
+        }
+    }
+
+    // Retain both original slots/ticks and the original CMP operand ordering.
+    // No code fetch, arithmetic substitution, source-range or budget change.
+    if (add_cmp_reg_ && !is_thumb) {
+        for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
+            auto& add = block->instructions[slot];
+            const auto& compare = block->instructions[slot + 1];
+            if ((add.GetOpcode() == Opcode::Add || add.GetOpcode() == Opcode::AddImm) &&
+                add.cond == 0xE && add.inst_size == 4 && add.rd < 15 &&
+                add.dp.rn < 15 && add.dp.rm == 0xFF &&
+                compare.GetOpcode() == Opcode::FusedCmpRegBcc && compare.cond == 0xE &&
+                compare.inst_size == 8 && compare.fused.combined_size == 8 &&
+                compare.fused.rn < 15 && compare.fused.rm < 15 &&
+                compare.fused.branch_cond < 14 &&
+                (compare.fused.rn == add.rd || compare.fused.rm == add.rd)) {
+                add.SetOpcode(Opcode::AddCmpRegBcc);
+                ++slot;
+            }
+        }
+    }
+
+    // Last single-instruction quickening: preserve every slot, raw tick cost,
+    // size, boundary, memory callback and existing fusion priority.
+    if (ldr_sp_static_ && !is_thumb)
+        for (u16 i=0;i<block->inst_count;++i) QuickenLdrSpStatic(block->instructions[i], false);
 
     // Append the EndBlock terminator. Every block gets one - conditional
     // block-enders (Bcc, fused not-taken paths, conditional Bx, ...) DISPATCH on

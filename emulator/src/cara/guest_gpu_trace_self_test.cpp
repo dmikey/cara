@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "cara/guest_gpu_trace.h"
 #include <cstdio>
+#include <cstring>
 #include <thread>
 #include <iostream>
 #include <sstream>
@@ -29,13 +30,37 @@ int main() {
     Require(out.str().find("truncated=1,complete=1,records=2") != std::string::npos);
     Require(out.str().find("0,4,8,100,97,102,1,3,5,1,6,7,8,9\n") != std::string::npos);
     Require(out.str().find("1,4,8,90,97,102,1,3,5,1,6,7,8,9\n") != std::string::npos);
+    Require(out.str().find("cara_guest_gpu_trace_v2,") != std::string::npos);
+    const std::array<std::uint8_t, 4> command_bytes{{0x01, 0x45, 0x23, 0xf1}};
+    std::uint32_t raw_word = 0;
+    std::memcpy(&raw_word, command_bytes.data(), sizeof(raw_word));
+    Require(raw_word == 0xf1234501u);
+    Buffer<2> queue;
+    const auto before = QueueStateRecord(record, QueuePhase::BeforeExecute, 0xdead020e,
+                                         0, raw_word);
+    const auto after = QueueStateRecord(record, QueuePhase::AfterExecute, 0x80000100,
+                                        0, 0x81234501);
+    Require(queue.Push(before) && queue.Push(after));
+    Require(queue.records[0].kind == 22 && queue.records[0].a == 1 &&
+            queue.records[0].b == 0xdead020e && queue.records[0].c == 0 &&
+            queue.records[0].d == 0xf1234501);
+    Require(queue.records[1].b == 0x80000100 && queue.records[1].d == 0x81234501);
+    Require(queue.records[0].timer0_ticks == record.timer0_ticks &&
+            queue.records[0].current_ticks == record.current_ticks &&
+            queue.records[0].thread == record.thread && queue.records[0].object == record.object);
+    Require(!queue.Push(before) && queue.truncated);
+    const auto absent = QueueStateRecord(record, QueuePhase::AfterClear, 0xffff000e,
+                                         NoCommandSlot, 0);
+    Require(absent.a == 4 && absent.c == 0xffffffffu && absent.d == 0);
     data.size=0; data.truncated=false;
     Require(data.Push(record) && data.records[0].sequence==0);
     FakeTiming timing;
     unsetenv("CARA_GPU_TRACE");
     Arm("/private/tmp/cara-guest-gpu-trace-test.csv");
     Emit(timing, Kind::Run); VBlank(timing);
-    Require(timing.clock_reads == 0 && !Enabled());
+    const auto disabled_size = buffer.size;
+    QueueStateAtLast(QueuePhase::BeforeExecute, 0xffffffffu, 14, 0xffffffffu);
+    Require(timing.clock_reads == 0 && !Enabled() && buffer.size == disabled_size);
     setenv("CARA_GPU_TRACE", "1", 1);
     setenv("CARA_GPU_TRACE_START_FRAME", "2", 1);
     Arm("/private/tmp/cara-guest-gpu-trace-test.csv");
@@ -45,6 +70,12 @@ int main() {
     Require(Enabled() && frame == 2 && buffer.size == 1);
     Emit(timing, Kind::Run);
     Require(buffer.records[1].frame == 2);
+    const auto queue_reads = timing.clock_reads;
+    const auto queue_size = buffer.size;
+    QueueStateAtLast(QueuePhase::BeforeExecute, 0xf123020e, 14, 0xdeadbe01);
+    Require(timing.clock_reads == queue_reads && buffer.size == queue_size + 1 &&
+            buffer.records[queue_size].d == 0xdeadbe01);
+    --buffer.size; // Keep the independent existing capture-boundary expectations below.
     const auto reads = timing.clock_reads;
     std::thread foreign([&] { Emit(timing, Kind::Run); }); foreign.join();
     Require(timing.clock_reads == reads && foreign_events == 1 && buffer.size == 2);

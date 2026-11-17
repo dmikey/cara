@@ -9,6 +9,34 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  native-atlas:
+    name: macOS atlas render queue / compile and CPU checks / no JIT
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native dependencies and pinned build tools
+        run: |
+          brew install sdl2 libpng
+          python3 -m venv work/tools
+          work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+      - name: Compile the opt-in atlas path and audit no-JIT linkage
+        run: python3 tools/build_mac_sdl.py --atlas --build-dir work/build-native-atlas --jobs 2
+      - name: Check source policy, reader compilation and preserved save relocation
+        run: |
+          cmake --build work/build-native-atlas --target cara-shader-suffix-sharing-self-test cara-gl-host-latency-reader cara-save-archive-relocation-self-test -j2
+          work/build-native-atlas/bin/cara-shader-suffix-sharing-self-test
+          python3 tests/save_archive_relocation_test.py work/build-native-atlas/bin/cara-save-archive-relocation-self-test work/build-native-atlas/relocation-fixtures
+          python3 -m unittest discover -s tests -p test_gl_host_latency_summary.py
+      - name: Retain compile audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-atlas-compile-audit
+          path: |
+            work/build-native-atlas/native-no-jit-audit.json
+            work/build-native-atlas/configure-command.json
   native-sdl:
     name: macOS SDL developer host / compile only / no JIT
     runs-on: macos-15
@@ -34,6 +62,11 @@ jobs:
           python3 tools/test_native_relay_runner.py
       - name: Compile native GPU correctness harnesses without running a GUI
         run: cmake --build work/build-mac-sdl --target cara-mac-depth-self-test cara-mac-lut-self-test cara-mac-blit-state-self-test cara-surface-copy-interval-self-test cara-fastinterp-decoded-record-self-test -j2
+      - name: Check conservative native shader source sharing without a GPU
+        run: |
+          cmake --build work/build-mac-sdl --target cara-shader-suffix-sharing-self-test cara-gl-observer-stub-self-test -j2
+          work/build-mac-sdl/bin/cara-shader-suffix-sharing-self-test
+          work/build-mac-sdl/bin/cara-gl-observer-stub-self-test "$RUNNER_TEMP/cara-no-journal"
       - name: Check real surface-copy interval selection without a GPU context
         run: work/build-mac-sdl/bin/cara-surface-copy-interval-self-test
       - name: Check the default native decoded layout without a GUI

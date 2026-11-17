@@ -31,6 +31,10 @@ add_library(video_core STATIC
     renderer_opengl/gl_rasterizer.h
     renderer_opengl/gl_rasterizer_cache.cpp
     renderer_opengl/gl_surface_coherence_self_test.cpp
+    renderer_opengl/gl_software_batch_visibility_self_test.cpp
+    renderer_opengl/gl_lut_effective_change_self_test.cpp
+    renderer_opengl/gl_native_remap_self_test.cpp
+    renderer_opengl/gl_native_required_copy_self_test.cpp
     renderer_opengl/gl_surface_remap.cpp
     renderer_opengl/gl_surface_remap.h
     renderer_opengl/gl_rasterizer_cache.h
@@ -45,7 +49,13 @@ add_library(video_core STATIC
     renderer_opengl/gl_shader_util.cpp
     renderer_opengl/gl_shader_util.h
     renderer_opengl/gl_state.cpp
+    renderer_opengl/gl_host_scissor.h
     renderer_opengl/gl_state.h
+    renderer_opengl/gl_command_queue.cpp
+    renderer_opengl/gl_pipeline_capture.h
+    renderer_opengl/gl_host_latency.h
+    renderer_opengl/gl_command_queue.h
+    renderer_opengl/gl_driver_transactions.h
     renderer_opengl/gl_stream_buffer.cpp
     renderer_opengl/gl_stream_buffer.h
     renderer_opengl/gl_surface_params.cpp
@@ -89,6 +99,15 @@ add_library(video_core STATIC
     video_core.h
 )
 
+# The file-backed observers belong only to the explicit native atlas lab path.
+# Other products retain unavailable/no-op observers and no journal mmap linkage.
+if (CARA_MAC_ATLAS_PIPELINE)
+    target_sources(video_core PRIVATE renderer_opengl/gl_pipeline_capture.cpp
+        renderer_opengl/gl_host_latency.cpp)
+else()
+    target_sources(video_core PRIVATE renderer_opengl/gl_observer_stubs.cpp)
+endif()
+
 if(CARA_ENABLE_JIT AND ARCHITECTURE_x86_64)
     target_sources(video_core
         PRIVATE
@@ -121,6 +140,9 @@ file(GLOB CARA_SHADER_CACHE_INPUTS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_resource_manager*"
     "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/ios_pipeline_cache.h")
 set(CARA_SHADER_CACHE_SIGNATURE "cara-ios-pipeline-v1")
+if (CARA_MAC_ATLAS_PIPELINE)
+    string(APPEND CARA_SHADER_CACHE_SIGNATURE ";native-mac-atlas-gl41-v1")
+endif()
 foreach(INPUT IN LISTS CARA_SHADER_CACHE_INPUTS)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${INPUT}")
     file(SHA256 "${INPUT}" INPUT_HASH)
