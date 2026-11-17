@@ -7,6 +7,10 @@
 #include "cara/native_mac/controller_play_test.h"
 #include "cara/native_mac/mac_preferences.h"
 #include "core/core.h"
+#include "core/arm/fastinterp/fastinterp.h"
+#ifdef CARA_MAC_CPU_JIT
+#include "core/arm/dynarmic/arm_dynarmic.h"
+#endif
 #include "core/hle/service/hid/hid.h"
 #include "core/settings.h"
 #include "input_common/main.h"
@@ -19,6 +23,13 @@ unsigned Run(Core::System& system) {
     std::array<ARM_Interface*,4> cpus{};for(unsigned i=0;i<4;++i)cpus[i]=&system.GetCore(i);
     const bool cpu_jit=Settings::values.use_cpu_jit;
     std::array<double,4> clocks{};for(unsigned i=0;i<4;++i)clocks[i]=system.CoreTiming().GetTimer(i)->GetClockScaleForDiagnostics();
+    for(unsigned i=0;i<4;++i) {
+#ifdef CARA_MAC_CPU_JIT
+        if(cpu_jit)require(dynamic_cast<ARM_Dynarmic*>(&system.GetCore(i))!=nullptr,"Requested JIT is not the actual CPU factory");
+        else
+#endif
+        require(dynamic_cast<Core::FastInterp::ARM_FastInterp*>(&system.GetCore(i))!=nullptr,"Expected actual FastInterp CPU");
+    }
     const auto sink=Settings::values.sink_id;
     const auto original=Settings::values.current_input_profile;
     const int index=SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER,2,2,1);

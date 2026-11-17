@@ -57,7 +57,6 @@ void Apply() {
 
         ReloadInputDevices(system);
 
-        auto sm = system.ServiceManager();
         auto cam = Service::CAM::GetModule(system);
         if (cam) {
             cam->ReloadCameraDevices();

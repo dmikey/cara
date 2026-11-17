@@ -355,7 +355,7 @@ static int RunNativeMain(int argc, char** argv) {
         if(controller_fixture) {
             const auto checks=Cara::ControllerPlayTest::Run(system);
             std::ofstream report(directory+"native-controller-play-test.json");
-            report<<"{\"passed\":true,\"checks\":"<<checks<<",\"actual_live_hid\":true,\"same_running_core_rebind\":true,\"arrows\":true,\"cpu_and_four_timers_unchanged\":true,\"authored_guest_run\":true,\"commercial_game_loaded\":false}\n";
+            report<<"{\"passed\":true,\"checks\":"<<checks<<",\"cpu_jit_active\":"<<(Settings::values.use_cpu_jit?"true":"false")<<",\"actual_live_hid\":true,\"same_running_core_rebind\":true,\"arrows\":true,\"cpu_objects_and_four_timer_scales_unchanged\":true,\"authored_guest_run\":true,\"commercial_game_loaded\":false}\n";
             report.flush();finish_query_census();close_core();return report&&!shutdown_failed?0:4;
         }
 #ifdef CARA_MAC_CPU_JIT

@@ -1,8 +1,14 @@
 name: Release packages
 on:
+  push:
+    branches: [main]
   pull_request:
     paths:
       - '.github/workflows/release.yml'
+      - 'emulator/**'
+      - 'tools/build.py'
+      - 'tools/build_mac_sdl.py'
+      - 'tools/audit_no_jit.py'
       - 'tools/package_*.py'
       - 'tools/mac_bundle.py'
       - 'tools/mac_app_launcher.mm'
@@ -23,14 +29,26 @@ concurrency:
   group: release-packages-${{ github.event.release.tag_name || inputs.release_tag || github.ref }}
   cancel-in-progress: false
 jobs:
+  source:
+    name: Pin one source commit for both binaries
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.event.release.tag_name || github.sha }}
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   mac:
+    needs: source
     name: Self-contained macOS arm64 / optional CPU JIT included
     runs-on: macos-15
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.event.release.tag_name || github.sha }}
+          ref: ${{ needs.source.outputs.sha }}
       - name: Install build-only dependencies
         run: |
           brew install sdl2 libpng sdl3
@@ -59,13 +77,14 @@ jobs:
           path: dist/*
           if-no-files-found: error
   ios:
+    needs: source
     name: iOS arm64 GLES3 / unsigned IPA / no JIT
     runs-on: macos-15
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.event.release.tag_name || github.sha }}
+          ref: ${{ needs.source.outputs.sha }}
       - name: Install pinned build tools
         run: |
           python3 -m venv work/tools
@@ -87,7 +106,7 @@ jobs:
           if-no-files-found: error
   publish:
     name: Attach audited binaries to the existing release
-    needs: [mac, ios]
+    needs: [source, mac, ios]
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     runs-on: ubuntu-latest
     permissions:
@@ -102,10 +121,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           test -f dist/Cara-macOS-arm64-JIT.zip
           test -f dist/Cara-iOS-arm64-GLES3-unsigned.ipa
+          python3 - <<'PYCODE'
+          import json, os
+          for path in ('dist/mac-build.json', 'dist/Cara-iOS-arm64-GLES3-unsigned.ipa.json'):
+              assert json.load(open(path))['source_revision'] == os.environ['EXPECTED_SHA'], 'Source mismatch: ' + path
+          PYCODE
           (cd dist && sha256sum -- * > ../SHA256SUMS.txt)
           case "$RELEASE_TAG" in ""|-*) echo "Invalid release tag" >&2; exit 1;; esac
           git check-ref-format "refs/tags/$RELEASE_TAG"

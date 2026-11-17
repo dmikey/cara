@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import plistlib
 import stat
+import subprocess
 import zipfile
 
 
@@ -54,7 +55,11 @@ def main():
     parser.add_argument('--audit', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(package(args.app, args.audit, args.output), indent=2))
+    receipt=package(args.app, args.audit, args.output)
+    receipt['source_revision']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=Path(__file__).resolve().parents[1],text=True).strip()
+    receipt['source_url']='https://github.com/dmikey/cara'
+    args.output.with_suffix('.ipa.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    print(json.dumps(receipt, indent=2))
 
 
 if __name__ == '__main__':
