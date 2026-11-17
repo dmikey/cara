@@ -268,9 +268,80 @@ handle_StrH: {
 // Specialized immediate-offset load/store (decode guarantees: offset mode,
 // immediate offset, rd != 15, rn != 15)
 
+// One guard for two 16-byte extents, followed by the original EIGHT ordered
+// scalar memory operations. Never load-four/store-four or memcpy the region.
+handle_LdrStrFourPairsImm: {
+    CHECK_COND(LdrStrFourPairsImm);
+    const u32 read_address = state_.regs[inst[0].ls.rn] + inst[0].ls.offset;
+    const u32 write_address = state_.regs[inst[1].ls.rn] + inst[1].ls.offset;
+    const auto ro = read_address & FASTINTERP_PAGE_MASK;
+    const auto wo = write_address & FASTINTERP_PAGE_MASK;
+    const auto* read_page = local_page_ptrs[read_address >> FASTINTERP_PAGE_BITS];
+    auto* write_page = local_page_ptrs[write_address >> FASTINTERP_PAGE_BITS];
+    u64 ticks = 0;
+    for (unsigned i = 0; i < 8; ++i) ticks += inst[i].ticks;
+    const s64 budget = timer->GetDowncount();
+    const bool direct = !stepping_ && !halted_ && budget > 0 &&
+        executed <= static_cast<u64>(budget) && ticks <= static_cast<u64>(budget) - executed &&
+        page_table_ && page_table_->attributes[read_address >> FASTINTERP_PAGE_BITS] == Memory::PageType::Memory &&
+        page_table_->attributes[write_address >> FASTINTERP_PAGE_BITS] == Memory::PageType::Memory &&
+        read_page && write_page && !(read_address & 3) && !(write_address & 3) &&
+        ro <= FASTINTERP_PAGE_MASK - 15 && wo <= FASTINTERP_PAGE_MASK - 15;
+    if (direct) {
+        const auto* read_ptr = read_page + ro;
+        auto* write_ptr = write_page + wo;
+        const auto disjoint = [](const void* ptr, std::size_t bytes,
+                                 const void* object, std::size_t object_bytes) {
+            const auto p = reinterpret_cast<std::uintptr_t>(ptr);
+            const auto q = reinterpret_cast<std::uintptr_t>(object);
+            const auto max = std::numeric_limits<std::uintptr_t>::max();
+            return p <= max - bytes && q <= max - object_bytes &&
+                   (p + bytes <= q || q + object_bytes <= p);
+        };
+        const auto safe = [&](const void* ptr) {
+            return disjoint(ptr,16,this,sizeof(*this)) &&
+                disjoint(ptr,16,block,sizeof(*block)) &&
+                disjoint(ptr,16,page_table_.get(),sizeof(*page_table_)) &&
+                disjoint(ptr,16,local_page_ptrs,
+                         (std::size_t(1) << (32 - FASTINTERP_PAGE_BITS)) * sizeof(*local_page_ptrs));
+        };
+        // Current guest-code page aliases also decline, including another VA
+        // mapped onto the same host code bytes. Original scalar handler remains
+        // responsible for all tracked/coherent/MMIO/invalidation paths.
+        const auto* code_page = local_page_ptrs[GET_PC() >> FASTINTERP_PAGE_BITS];
+        if (safe(read_ptr) && safe(write_ptr) &&
+            code_page && (GET_PC() & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 31 &&
+            disjoint(write_ptr,16,code_page,std::size_t(1) << FASTINTERP_PAGE_BITS)) {
+            if (ldr_str_four_pairs_census_) ++ldr_str_four_pairs_fused_;
+            for (unsigned pair = 0; pair < 4; ++pair) {
+                std::memcpy(&state_.regs[inst->rd], read_ptr + pair * 4, 4);
+                executed += inst->ticks;
+                SET_PC(GET_PC() + inst->inst_size);
+                ++inst;
+                std::memcpy(write_ptr + pair * 4, &state_.regs[inst->rd], 4);
+                executed += inst->ticks;
+                SET_PC(GET_PC() + inst->inst_size);
+                ++inst;
+            }
+            --inst; // DISPATCH advances to the first unconsumed retained slot.
+            DISPATCH();
+        }
+    }
+    if (ldr_str_four_pairs_census_) ++ldr_str_four_pairs_fallback_;
+    goto handle_LdrImm_al; // no architectural effect has occurred yet
+}
+
 handle_LdrImm: {
     CHECK_COND(LdrImm);
     MEM_READ32(state_.regs[inst->ls.rn] + inst->ls.offset, state_.regs[inst->rd]);
+    ADVANCE_AND_DISPATCH();
+}
+
+// Decoder-proven ARM AL immediate offset, no writeback, SP base, non-PC dest.
+// Keep the original memory macro and constituent bookkeeping unchanged.
+handle_LdrSpImm: {
+    CHECK_COND(LdrSpImm);
+    MEM_READ32(state_.regs[13] + inst->ls.offset, state_.regs[inst->rd]);
     ADVANCE_AND_DISPATCH();
 }
 

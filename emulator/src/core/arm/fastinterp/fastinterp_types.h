@@ -508,6 +508,12 @@ enum class Opcode : u16 {
 
     VldrPairS, // AL single loads; original second slot and per-instruction ticks retained.
 
+    LdrSpImm, // Opt-in ARM AL wordload: constant SP base, original scalar memory/ticks.
+
+    LdrStrFourPairsImm, // Eight original AL word accesses, retained slots/ticks.
+
+    AddCmpRegBcc, // Ordered ADD-immediate then original retained register-CMP/Bcc.
+
     OpcodeCount
 };
 

@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_driver_transactions.h"
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #ifdef CARA_IOS_GLES
@@ -23,6 +24,9 @@ void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
 }
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes) {
+    if (const auto* bridge=DriverTransactions::Pending()) {
+        bridge->lut(&UploadIOSLUT,texture,unit,format,offset,data,bytes);return;
+    }
     if (!bytes) return;
     const unsigned stride = format == GL_RG ? 8 : 16;
     if ((format != GL_RG && format != GL_RGBA) || !data || offset % stride || bytes % stride) {

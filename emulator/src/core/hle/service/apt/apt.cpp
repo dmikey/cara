@@ -15,6 +15,8 @@
 #include "core/file_sys/file_backend.h"
 #include "core/hle/applets/applet.h"
 #include "core/hle/kernel/mutex.h"
+#include "core/hle/kernel/errors.h"
+#include "core/hle/kernel/kernel.h"
 #include "core/hle/kernel/shared_memory.h"
 #include "core/hle/romfs.h"
 #include "core/hle/service/apt/applet_manager.h"
@@ -586,7 +588,20 @@ void Module::APTInterface::AppletUtility(Kernel::HLERequestContext& ctx) {
 void Module::APTInterface::SetAppCpuTimeLimit(Kernel::HLERequestContext& ctx) {
     IPC::RequestParser rp(ctx, 0x4F, 2, 0); // 0x4F0080
     u32 value = rp.Pop<u32>();
-    apt->cpu_percent = rp.Pop<u32>();
+    const u32 percent = rp.Pop<u32>();
+    auto& kernel = apt->system.Kernel();
+    if (kernel.Old3dsSyscoreRequested() && kernel.Old3dsSyscoreSupported()) {
+        IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);
+        if (value != 1 || !kernel.SetOld3dsSyscoreLimit(percent)) {
+            // PM's documented out-of-range result, rather than silently granting CPU.
+            rb.Push(ResultCode{0xD8E05BF4});
+            return;
+        }
+        apt->cpu_percent = percent;
+        rb.Push(RESULT_SUCCESS);
+        return;
+    }
+    apt->cpu_percent = percent;
 
     if (value != 1) {
         LOG_ERROR(Service_APT, "This value should be one, but is actually {}!", value);

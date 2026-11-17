@@ -132,5 +132,113 @@ void Run() {
     Require(fill_hits>0 && misses>0,"fill winner or no-match path unexercised");
 }
 }
-int main(){try{Run();std::cout<<"PASS checks="<<checks<<" queries="<<queries<<" hits="<<hits
+void FramebufferCandidates() {
+    using namespace OpenGL;
+    SurfaceParams q{};q.addr=0x2000;q.width=q.stride=16;q.height=16;
+    q.is_tiled=true;q.pixel_format=PixelFormat::RGBA8;q.res_scale=1;q.UpdateParams();
+    auto larger=q;larger.addr-=q.size;larger.height=32;larger.UpdateParams();
+    auto parent=Source(larger,0,false);parent->registered=true;
+    auto view=Source(q,4,false);view->registered=true;
+    SurfaceCache cache;cache.add({parent->GetInterval(),SurfaceSet{parent}});cache.add({view->GetInterval(),SurfaceSet{view}});
+    SurfaceSet pending;FramebufferCandidateVisits visits;
+    Require(FindMatch<MatchFlags::SubRect|MatchFlags::Invalid>(cache,q,ScaleMatch::Exact)==parent,
+            "legacy framebuffer must prefer valid parent");
+    const auto before=view->invalid_regions;
+    Require(FindTightFramebufferCandidate(cache,q,pending,visits)==view,
+            "proposal must prefer fit before validity");
+    Require(view->invalid_regions==before,"census changed invalid regions");
+    Require(parent->registered && view->registered && pending.empty(),"census mutated lifetime state");
+    for(unsigned guard=0;guard<6;++guard) {
+        view->registered=true;view->custom_tex_info=nullptr;view->res_scale=1;
+        view->is_tiled=true;view->type=SurfaceType::Color;pending.clear();
+        if(guard==0)view->registered=false;
+        if(guard==1)view->custom_tex_info=reinterpret_cast<const Core::CustomTexInfo*>(1);
+        if(guard==2)view->res_scale=2;
+        if(guard==3)view->is_tiled=false;
+        if(guard==4)view->type=SurfaceType::Texture;
+        if(guard==5)pending.insert(view);
+        FramebufferCandidateVisits ignored;
+        Require(FindTightFramebufferCandidate(cache,q,pending,ignored)==parent,"candidate guard failed");
+    }
+    view->registered=true;view->custom_tex_info=nullptr;view->res_scale=1;
+    view->is_tiled=true;view->type=SurfaceType::Color;pending.clear();
+    auto half=q;half.height=8;half.UpdateParams();auto narrow=Source(half,0,false);narrow->registered=true;
+    SurfaceCache only_half;only_half.add({parent->GetInterval(),SurfaceSet{parent}});
+    only_half.add({narrow->GetInterval(),SurfaceSet{narrow}});
+    FramebufferCandidateVisits ignored;
+    Require(FindTightFramebufferCandidate(only_half,q,pending,ignored)==parent,
+            "viewport-only containment cannot satisfy full framebuffer request");
+    // An ineligible half-size object splits the interval map: visits are not unique candidates.
+    narrow->registered=false;cache.add({narrow->GetInterval(),SurfaceSet{narrow}});
+    FramebufferCandidateVisits duplicated;
+    Require(FindTightFramebufferCandidate(cache,q,pending,duplicated)==view,"split-map changed proposal");
+    Require(duplicated.visited==5 && duplicated.compatible==4,"candidate visits were mistaken for unique objects");
+    auto wrong=q;wrong.pixel_format=PixelFormat::RGB8;wrong.UpdateParams();FramebufferCandidateVisits no_scan;
+    Require(!FindTightFramebufferCandidate(cache,wrong,pending,no_scan) && no_scan.visited==0,
+            "non-RGBA8 query entered census");
+}
+
+void TightFramebufferGuards() {
+    using namespace OpenGL;
+    SurfaceParams q{};q.addr=0x8000;q.width=q.stride=16;q.height=16;
+    q.is_tiled=true;q.res_scale=1;q.pixel_format=PixelFormat::RGBA8;q.UpdateParams();
+    auto p=q;p.addr-=q.size;p.height*=2;p.UpdateParams();
+    auto parent=Source(p,0,false), view=Source(q,4,false);
+    parent->registered=view->registered=true;
+    SurfaceCache cache;cache.add({parent->GetInterval(),SurfaceSet{parent}});
+    cache.add({view->GetInterval(),SurfaceSet{view}});SurfaceSet pending;
+    auto rect=parent->GetScaledSubRect(q);auto shifted=rect;shifted.bottom+=1;
+    Require(view->GetScaledSubRect(q)==rect,"fixture lacks equal attachment coordinates");
+    Pica::TexturingRegs regs{};
+    const auto choose=[&](bool shadow=false,const Surface& depth=nullptr) {
+        return SelectTightFramebufferBacking(cache,q,pending,parent,depth,rect,rect,shadow,regs.GetTextures());
+    };
+    const auto invalid=view->invalid_regions;
+    Require(choose()==view,"invalid tight view not selected before normal validation");
+    Require(view->invalid_regions==invalid,"selector must not validate or mutate the view");
+    Require(choose(true)==parent,"shadow framebuffer entered experiment");
+    Require(choose(false,parent)==view,"matching depth rectangle rejected");
+    Require(SelectTightFramebufferBacking(cache,q,pending,parent,parent,rect,shifted,false,regs.GetTextures())==parent,
+            "different depth coordinates accepted");
+    Require(SelectTightFramebufferBacking(cache,q,pending,parent,nullptr,shifted,shifted,false,regs.GetTextures())==parent,
+            "different color coordinates accepted");
+    pending.insert(view);Require(choose()==parent,"pending removal accepted");pending.clear();
+    view->max_level=1;Require(choose()==parent,"mipped candidate accepted");view->max_level=0;
+    parent->registered=false;Require(choose()==parent,"unregistered legacy replaced");parent->registered=true;
+    auto overlapping=p;overlapping.height=24;overlapping.addr=q.addr-q.size/2;overlapping.UpdateParams();
+    auto overlap_parent=Source(overlapping,0,false);overlap_parent->registered=true;
+    SurfaceCache overlap_cache;overlap_cache.add({overlap_parent->GetInterval(),SurfaceSet{overlap_parent}});
+    overlap_cache.add({view->GetInterval(),SurfaceSet{view}});
+    auto overlap_rect=overlap_parent->GetScaledSubRect(q);
+    Require(overlap_rect==view->GetScaledSubRect(q),"overlap witness lacks matching coordinates");
+    Require(SelectTightFramebufferBacking(overlap_cache,q,pending,overlap_parent,nullptr,
+        overlap_rect,overlap_rect,false,regs.GetTextures())==overlap_parent,
+        "partially overlapping padded views entered partitioned experiment");
+    for(unsigned unit=0;unit<3;++unit) {
+        for(unsigned guard=0;guard<9;++guard) {
+            regs={};
+            if(unit==0)regs.main_config.texture0_enable.Assign(1);
+            if(unit==1)regs.main_config.texture1_enable.Assign(1);
+            if(unit==2)regs.main_config.texture2_enable.Assign(1);
+            auto& t=unit==0?regs.texture0:unit==1?regs.texture1:regs.texture2;
+            t.width.Assign(16);t.height.Assign(16);t.address.Assign((q.addr+0x10000)/8);
+            if(guard==0)t.address.Assign(q.addr/8);
+            if(guard==1)t.lod.max_level.Assign(1);
+            if(guard==2)t.width.Assign(0);
+            if(guard==3)t.height.Assign(7);
+            if(guard==4)t.address.Assign(0);
+            if(guard==5) {
+                if(unit==0)regs.texture0_format.Assign(static_cast<Pica::TexturingRegs::TextureFormat>(14));
+                if(unit==1)regs.texture1_format.Assign(static_cast<Pica::TexturingRegs::TextureFormat>(14));
+                if(unit==2)regs.texture2_format.Assign(static_cast<Pica::TexturingRegs::TextureFormat>(14));
+            }
+            if(guard==6)t.type.Assign(Pica::TexturingRegs::TextureConfig::Shadow2D);
+            if(guard==7)t.type.Assign(Pica::TexturingRegs::TextureConfig::TextureCube);
+            const bool accepted=guard==8 || (unit!=0 && (guard==6 || guard==7));
+            Require(choose()==(accepted?view:parent),"ordinary/special/feedback sampler guard disagreed");
+        }
+    }
+}
+
+int main(){try{Run();FramebufferCandidates();TightFramebufferGuards();std::cout<<"PASS checks="<<checks<<" queries="<<queries<<" hits="<<hits
     <<" fill_hits="<<fill_hits<<" misses="<<misses<<"\n";}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

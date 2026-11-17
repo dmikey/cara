@@ -5,9 +5,8 @@
 #pragma once
 
 #include <tuple>
-#ifdef CARA_IOS_GLES
 #include <vector>
-#endif
+#include <memory>
 #include <glad/glad.h>
 #include "common/common_types.h"
 #include "video_core/renderer_opengl/gl_resource_manager.h"
@@ -47,6 +46,12 @@ private:
     GLenum gl_target;
     GLenum gl_target_invalidate_hack;
 
+    // CPU-owned upload reservation in command-queue mode. Never a driver map.
+    std::vector<u8> queued_staging;
+    std::shared_ptr<void> queued_budget;
+    bool queued_native_map=false;
+    GLsizeiptr queued_reserved = 0;
+    bool queued_orphan = false;
     bool explicit_flush = true;
     GLintptr buffer_pos = 0;
     GLsizeiptr buffer_size = 0;

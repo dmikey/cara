@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 #include <utility>
+#include "gl_index_payload_reuse.h"
 
 namespace OpenGL {
 
@@ -31,6 +32,7 @@ public:
         std::uint32_t lru16_vs_runs = 0, lru32_vs_runs = 0;
     };
     struct Data {
+        IndexPayloadReuse::Identity identity;
         std::vector<std::uint8_t> source;
         std::vector<std::uint32_t> triangles;
         std::vector<std::uint16_t> packed;
@@ -49,8 +51,9 @@ public:
     };
 
     explicit IOSVertexIndexCache(std::size_t budget = 32 * 1024 * 1024,
-                                 std::size_t maximum_entries = 2048)
-        : budget_bytes(budget), entry_limit(maximum_entries) {}
+                                 std::size_t maximum_entries = 2048,
+                                 bool index_identities = false)
+        : budget_bytes(budget), entry_limit(maximum_entries), identities(index_identities) {}
 
     IOSVertexIndexCache(const IOSVertexIndexCache&) = delete;
     IOSVertexIndexCache& operator=(const IOSVertexIndexCache&) = delete;
@@ -158,6 +161,7 @@ public:
             triangles = std::move(data.triangles);
             return nullptr;
         }
+        data.identity = identities.Issue();
         const auto previous = entries.find(key);
         if (previous != entries.end()) Erase(previous);
         while (!recent.empty() &&
@@ -167,6 +171,14 @@ public:
         auto inserted = entries.emplace(key, Entry{std::move(data), recent.begin()}).first;
         used_bytes += bytes;
         return &inserted->second.data;
+    }
+
+    // Called only at an opt-in full renderer synchronization/reset boundary.
+    // Fresh owner incarnation invalidates ALL outstanding bank identities, while
+    // retaining the original source bytes/cache entries for normal Find checks.
+    void ResetIdentities() {
+        identities.Reset();
+        for (auto& entry : entries) entry.second.data.identity = identities.Issue();
     }
 
     std::size_t Bytes() const { return used_bytes; }
@@ -192,6 +204,7 @@ private:
         entries.erase(entry);
     }
     const std::size_t budget_bytes, entry_limit;
+    IndexPayloadReuse::Issuer identities;
     std::size_t used_bytes{};
     std::list<Key> recent;
     Entries entries;

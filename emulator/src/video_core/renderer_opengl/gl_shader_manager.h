@@ -11,6 +11,7 @@
 #include "video_core/renderer_opengl/gl_resource_manager.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_state.h"
+#include "video_core/renderer_opengl/gl_vertex_provenance.h"
 #include "video_core/renderer_opengl/pica_to_gl.h"
 
 namespace OpenGL {
@@ -59,6 +60,9 @@ struct UniformData {
 #ifdef CARA_IOS_GLES
     alignas(16) GLvec4 cara_viewport;
 #endif
+    // GL lower-left owner origin/logical size, then half-open logical read crop.
+    alignas(16) GLivec4 cara_tex0_view{};
+    alignas(16) GLivec4 cara_tex0_crop{};
 };
 
 struct UniformLightData {
@@ -71,11 +75,19 @@ struct UniformLightData {
 
 static_assert(
 #ifdef CARA_IOS_GLES
-    sizeof(UniformData) == 0x100,
+    sizeof(UniformData) == 0x120,
 #else
-    sizeof(UniformData) == 0xF0,
+    sizeof(UniformData) == 0x110,
 #endif
     "The size of the UniformData structure has changed, update the structure in the shader");
+#ifdef CARA_IOS_GLES
+static_assert(offsetof(UniformData, cara_tex0_view) == 0x100);
+static_assert(offsetof(UniformData, cara_tex0_crop) == 0x110);
+#else
+static_assert(offsetof(UniformData, cara_tex0_view) == 0xF0);
+static_assert(offsetof(UniformData, cara_tex0_crop) == 0x100);
+#endif
+static_assert(sizeof(GLivec4) == 16);
 static_assert(sizeof(UniformData) < 0x4000,
               "UniformData structure must be less than 16kb as per the OpenGL spec");
 static_assert(
@@ -120,13 +132,17 @@ public:
 
     void UseTrivialGeometryShader();
 
-    void UseFragmentShader(const Pica::Regs& regs);
+    // False leaves the selected fragment stage untouched; caller must restore baseline resources.
+    bool UseFragmentShader(const Pica::Regs& regs, bool native_nearest_borrow_tex0 = false);
 
 #ifdef CARA_IOS_GLES
     u16 GetIOSVertexInputReadMask(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup);
     GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
                                        u16 ios_input_mask = 0xffff);
 #endif
+    static bool VertexProvenanceEnabled() { return VertexProvenance::Enabled(); }
+    void ObserveBoundVertexProgram(GLuint expected_program, unsigned input_mode);
+
     void ApplyTo(OpenGLState& state);
 
 private:

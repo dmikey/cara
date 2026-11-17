@@ -614,3 +614,18 @@ handle_ThumbUnrolledCmpLoop: {
     SET_PC(GET_PC() + inst->fused.combined_size);
     DISPATCH();
 }
+
+// Direct tail transfer, not a new arithmetic fusion. The original ADD charges
+// its own ticks/PC before the original register-CMP handler observes state.
+handle_AddCmpRegBccCounted: {
+    ++add_cmp_reg_executed_;
+    goto handle_AddCmpRegBcc;
+}
+handle_AddCmpRegBcc: {
+    state_.regs[inst->rd] = state_.regs[inst->dp.rn] + inst->dp.imm;
+    executed += inst->ticks;
+    SET_PC(GET_PC() + inst->inst_size);
+    KEEP_PAGE_TABLE_REGISTER();
+    ++inst;
+    goto handle_FusedCmpRegBcc;
+}

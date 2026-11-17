@@ -1,3 +1,5 @@
+#include "cara/native_mac/native_command_policy.h"
+#include "cara/native_mac/diagnostic_clock.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2016 Citra Emulator Project
 // Licensed under GPLv2 or any later version
@@ -13,6 +15,8 @@
 #include <string>
 #include "cara/lodepng_image_interface.h"
 #include "common/color.h"
+#include "common/host_render_queue.h"
+#include "video_core/renderer_opengl/gl_command_queue.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
 #include "core/arm/arm_interface.h"
@@ -28,6 +32,7 @@
 #include "cara/native_mac/touch_command.h"
 #include "cara/native_mac/profile_snapshot.h"
 #include "cara/native_mac/benchmark_controls.h"
+#include "cara/native_mac/script_only_input.h"
 #include "common/logging/log.h"
 #include "common/scm_rev.h"
 #include "core/3ds.h"
@@ -112,6 +117,7 @@ bool EmuWindow_SDL2::IsOpen() const {
 }
 
 void EmuWindow_SDL2::OnResize() {
+    ValidateDiagnosticGeometry("resize", true);
     int width, height;
     SDL_GL_GetDrawableSize(render_window, &width, &height);
     UpdateFramebufferLayout(width, height);
@@ -138,7 +144,72 @@ void EmuWindow_SDL2::Fullscreen() {
     SDL_MaximizeWindow(render_window);
 }
 
+namespace {
+bool NativeWindowFlag(const char* name) {
+    const char* value = std::getenv(name);
+    return value && std::string(value) == "1";
+}
+int NativeExpectedDrawable(const char* name) {
+    const char* value = std::getenv(name);
+    if (!value || !*value)
+        throw std::runtime_error("Locked native benchmark requires expected drawable dimensions");
+    unsigned parsed = 0;
+    for (const char* p = value; *p; ++p) {
+        if (*p < '0' || *p > '9' || parsed > 16384)
+            throw std::runtime_error("Invalid expected native drawable dimension");
+        parsed = parsed * 10 + unsigned(*p - '0');
+    }
+    if (!parsed || parsed > 16384)
+        throw std::runtime_error("Invalid expected native drawable dimension");
+    return static_cast<int>(parsed);
+}
+} // namespace
+
+void EmuWindow_SDL2::ValidateDiagnosticGeometry(const char* boundary, bool record) const {
+    if (!diagnostic_window_locked)
+        return;
+    int width = 0, height = 0, drawable_width = 0, drawable_height = 0;
+    SDL_GetWindowSize(render_window, &width, &height);
+    SDL_GL_GetDrawableSize(render_window, &drawable_width, &drawable_height);
+    const auto flags = SDL_GetWindowFlags(render_window);
+    const bool valid = width == 400 && height == 480 &&
+        drawable_width == diagnostic_drawable_width &&
+        drawable_height == diagnostic_drawable_height &&
+        !(flags & (SDL_WINDOW_RESIZABLE | SDL_WINDOW_FULLSCREEN |
+                   SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED)) &&
+        (flags & SDL_WINDOW_SHOWN);
+    if (record || !valid) {
+        const auto path = FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
+                          "native-geometry-" + boundary + ".json";
+        std::ofstream out(path);
+        out << "{\"locked\":true,\"valid\":" << (valid ? "true" : "false")
+            << ",\"logical_width\":" << width << ",\"logical_height\":" << height
+            << ",\"drawable_width\":" << drawable_width
+            << ",\"drawable_height\":" << drawable_height
+            << ",\"expected_drawable_width\":" << diagnostic_drawable_width
+            << ",\"expected_drawable_height\":" << diagnostic_drawable_height
+            << ",\"sdl_window_flags\":" << flags << "}\n";
+        out.close();
+        if (!out)
+            throw std::runtime_error("Cannot write native benchmark geometry receipt");
+    }
+    if (!valid)
+        throw std::runtime_error("Native benchmark window/drawable geometry changed or mismatched");
+}
+
 EmuWindow_SDL2::EmuWindow_SDL2(bool fullscreen) {
+    diagnostic_window_locked = NativeWindowFlag("CARA_NATIVE_LOCK_WINDOW");
+    if (diagnostic_window_locked) {
+        if (!NativeWindowFlag("CARA_NATIVE_DIAGNOSTICS") ||
+            !NativeWindowFlag("CARA_NATIVE_BENCHMARK") || fullscreen)
+            throw std::runtime_error("Native window lock requires diagnostic windowed benchmark mode");
+        diagnostic_drawable_width = NativeExpectedDrawable("CARA_NATIVE_EXPECT_DRAWABLE_WIDTH");
+        diagnostic_drawable_height = NativeExpectedDrawable("CARA_NATIVE_EXPECT_DRAWABLE_HEIGHT");
+    }
+    if (Cara::NativeScriptOnlyInput::Enabled()) {
+        SDL_SetHint("SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN", "1");
+        SDL_SetHint("SDL_WINDOW_ACTIVATE_WHEN_SHOWN", "0");
+    }
     // Initialize the window
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) < 0) {
         LOG_CRITICAL(Frontend, "Failed to initialize SDL2! Exiting...");
@@ -163,18 +234,26 @@ EmuWindow_SDL2::EmuWindow_SDL2(bool fullscreen) {
     SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
-    std::string window_title = fmt::format("Cara {} | {}-{}", Common::g_build_fullname,
-                                           Common::g_scm_branch, Common::g_scm_desc);
+    const std::string window_title = Cara::NativeScriptOnlyInput::Enabled()
+        ? "TEST | Cara | Starting" : "Cara | Starting";
     render_window =
         SDL_CreateWindow(window_title.c_str(),
                          SDL_WINDOWPOS_UNDEFINED, // x position
                          SDL_WINDOWPOS_UNDEFINED, // y position
                          Core::kScreenTopWidth, Core::kScreenTopHeight + Core::kScreenBottomHeight,
-                         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+                         SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI |
+                             (diagnostic_window_locked ? 0u : SDL_WINDOW_RESIZABLE));
 
     if (render_window == nullptr) {
         LOG_CRITICAL(Frontend, "Failed to create SDL2 window: {}", SDL_GetError());
         exit(1);
+    }
+
+    if (diagnostic_window_locked) {
+        SDL_SetWindowMinimumSize(render_window, 400, 480);
+        SDL_SetWindowMaximumSize(render_window, 400, 480);
+        SDL_SetWindowResizable(render_window, SDL_FALSE);
+        SDL_SetWindowSize(render_window, 400, 480);
     }
 
     if (fullscreen) {
@@ -204,12 +283,95 @@ EmuWindow_SDL2::EmuWindow_SDL2(bool fullscreen) {
     OnResize();
     OnMinimalClientAreaChangeRequest({400, 480});
     SDL_PumpEvents();
+    ValidateDiagnosticGeometry("startup", true);
     LOG_INFO(Frontend, "Cara Version: {} | {}-{}", Common::g_build_fullname, Common::g_scm_branch,
              Common::g_scm_desc);
     Settings::LogSettings();
 }
 
+void EmuWindow_SDL2::StartCommandQueue() {
+    if (NativeWindowFlag("CARA_GL_COMMAND_QUEUE")) {
+        for(const char* conflict:{"CARA_GL_QUEUE_SELF_TEST","CARA_GL_QUERY_CACHE_SELF_TEST","CARA_GL_QUEUE_COHERENCE_TEST","CARA_TEXTURE_COPY_TRACE","CARA_GPU_VERTEX_PROVENANCE","CARA_GPU_QUATERNION_SLICE","CARA_NATIVE_CPU_CATEGORY_PROFILE","CARA_GPU_TRACE","CARA_GPU_TRACE_COMMAND_ORIGINS","CARA_GPU_TRACE_RECORD_SNAPSHOTS","CARA_GPU_TRACE_WAIT_ORIGINS","CARA_SURFACE_VALIDATION_COPY_TRACE","CARA_SURFACE_VALIDATION_COPY_JOIN","CARA_QUAD_UV_INPUT_CENSUS","CARA_QUAD_UV_PLAN_CENSUS","CARA_NATIVE_GL_QUERY_CENSUS","CARA_PICA_COMMAND_PROFILE","CARA_NATIVE_TIMING_COUNTERS","CARA_PHASE_CPU_TIMING","CARA_CPU_CATEGORY_TIMING","CARA_TEXTURE_ACQUISITION_PROFILE","CARA_DRAW_COST_PROFILE","CARA_RENDER_BOOKKEEPING_PROFILE"})
+            if(NativeWindowFlag(conflict))throw std::runtime_error(std::string("GL transactions conflict with diagnostic: ")+conflict);
+        if (Settings::values.use_present_thread)
+            throw std::runtime_error("The GL command queue requires one presentation context");
+        // Startup-only raw query on the still-current producer context. A token
+        // cannot distinguish nested driver callbacks from the transaction body.
+        if(GLAD_GL_AMD_debug_output)
+            throw std::runtime_error("GL transactions reject unqueryable AMD debug callbacks");
+        if(GLAD_GL_KHR_debug || GLAD_GL_ARB_debug_output || GLAD_GL_ES_VERSION_3_2) {
+            void* callback=reinterpret_cast<void*>(std::uintptr_t(1));
+            if(glad_glGetPointerv)glad_glGetPointerv(GL_DEBUG_CALLBACK_FUNCTION,&callback);
+            else if(glad_glGetPointervKHR)glad_glGetPointervKHR(GL_DEBUG_CALLBACK_FUNCTION_KHR,&callback);
+            else throw std::runtime_error("Cannot inspect current GL debug callback");
+            if(callback)throw std::runtime_error("GL transactions reject installed GL debug callbacks");
+        }
+        if (SDL_GL_MakeCurrent(render_window, nullptr) != 0)
+            throw std::runtime_error("Cannot release GL context to the render worker");
+        try {
+            render_queue = std::make_unique<Common::HostRenderQueue>(128, 8 * 1024 * 1024,
+                [this] {
+                    if (SDL_GL_MakeCurrent(render_window, window_context) != 0)
+                        throw std::runtime_error("Cannot acquire GL context on the render worker");
+                },
+                [this] { SDL_GL_MakeCurrent(render_window, nullptr); });
+            OpenGL::CommandQueue::Install(*render_queue);
+        } catch (...) {
+            const auto failure=std::current_exception();
+            try { OpenGL::CommandQueue::Uninstall(); } catch (...) {}
+            if (render_queue) { try { render_queue->Stop(); } catch (...) {} render_queue.reset(); }
+            SDL_GL_MakeCurrent(render_window, window_context);
+            std::rethrow_exception(failure);
+        }
+        LOG_INFO(Render_OpenGL, "Owned GL command queue enabled: 128 batches, 8 MiB in flight");
+    }
+}
+
+bool EmuWindow_SDL2::PrepareForCoreShutdown() noexcept {
+    if (!render_queue) return !render_queue_failed;
+    try { OpenGL::CommandQueue::Drain(); return !render_queue_failed; }
+    catch (const std::exception& error) {
+        LOG_ERROR(Render_OpenGL, "Render worker failed; reclaiming context for cleanup: {}", error.what());
+    } catch (...) {
+        LOG_ERROR(Render_OpenGL, "Render worker failed; reclaiming context for cleanup");
+    }
+    render_queue_failed = true;
+    // A poisoned queue rejects deletion commands too. Join it and restore raw
+    // entrypoints BEFORE noexcept GL resource destructors run on the core owner.
+    try { OpenGL::CommandQueue::Uninstall(); } catch (...) {}
+    try { render_queue->Stop(); } catch (...) {} // Stop joins even on poison.
+    const auto ended = render_queue->GetStats();
+    render_queue.reset();
+    SDL_GL_MakeCurrent(render_window, window_context);
+    const bool current = IsOwnedContextCurrent();
+    try {
+        std::ofstream receipt(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
+                              "native-gl-queue-recovery.json");
+        receipt << "{\"worker_joined\":" << (!ended.worker_running ? "true":"false")
+                << ",\"raw_entrypoints_restored\":" << (!OpenGL::CommandQueue::Enabled()?"true":"false")
+                << ",\"context_reacquired\":" << (current?"true":"false") << "}\n";
+    } catch (...) {}
+    if (!current) LOG_CRITICAL(Render_OpenGL, "Failed to reacquire GL context for cleanup");
+    return false;
+}
+
+bool EmuWindow_SDL2::StopCommandQueue() noexcept {
+    if(!render_queue)return !render_queue_failed;
+    try{OpenGL::CommandQueue::Drain();}catch(...){render_queue_failed=true;}
+    try{OpenGL::CommandQueue::Uninstall();}catch(...){render_queue_failed=true;}
+    try{render_queue->Stop();}catch(...){render_queue_failed=true;}
+    render_queue.reset();
+    SDL_GL_MakeCurrent(render_window,window_context);
+    if(!IsOwnedContextCurrent())render_queue_failed=true;
+    return !render_queue_failed;
+}
+
+bool EmuWindow_SDL2::IsOwnedContextCurrent() const noexcept {
+    return window_context!=nullptr && SDL_GL_GetCurrentContext()==window_context;
+}
+
 EmuWindow_SDL2::~EmuWindow_SDL2() {
+    StopCommandQueue();
     TouchReleased();
     Network::Shutdown();
     InputCommon::Shutdown();
@@ -219,7 +381,13 @@ EmuWindow_SDL2::~EmuWindow_SDL2() {
     SDL_Quit();
 }
 void EmuWindow_SDL2::SwapBuffers() {
-    SDL_GL_SwapWindow(render_window);
+    if (render_queue) {
+        OpenGL::CommandQueue::Flush();
+        auto* window = render_window;
+        render_queue->Submit([window] { SDL_GL_SwapWindow(window); });
+    } else {
+        SDL_GL_SwapWindow(render_window);
+    }
 }
 
 static std::vector<u32> NativeFrameList(const char* name) {
@@ -261,6 +429,7 @@ bool EmuWindow_SDL2::TakeBenchmarkStop() {
     return stop;
 }
 void EmuWindow_SDL2::BeginBenchmark() {
+    ValidateDiagnosticGeometry("origin", true);
     benchmark_warmup = NativeFrameOption("CARA_NATIVE_BENCHMARK_WARMUP", 300);
     benchmark_end = NativeFrameOption("CARA_NATIVE_BENCHMARK_FRAMES", 1200);
     if (benchmark_warmup >= benchmark_end)
@@ -319,15 +488,17 @@ void EmuWindow_SDL2::NativeFrameDiagnostics() {
         static bool wrote_begin = false, wrote_end = false;
         if (!wrote_begin && relative >= benchmark_warmup) {
             wrote_begin = true;
+            ValidateDiagnosticGeometry("before", true);
             WriteNativeProfileSnapshot(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
                                            "native-benchmark-before",
-                                       completed);
+                                       completed,true);
         }
         if (!wrote_end && relative >= benchmark_end) {
             wrote_end = true;
+            ValidateDiagnosticGeometry("after", true);
             WriteNativeProfileSnapshot(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) +
                                            "native-benchmark-after",
-                                       completed);
+                                       completed,true);
             benchmark_capture_pending = true;
         }
     }
@@ -363,7 +534,8 @@ void EmuWindow_SDL2::NativeFrameDiagnostics() {
     const bool final_benchmark_capture = benchmark_capture_pending;
     bool requested_capture = final_benchmark_capture;
     benchmark_capture_pending = false;
-    if (completed % 30 == 0) {
+    static const bool developer_commands = NativeMac::DeveloperCommands::EnabledFromEnvironment();
+    if (developer_commands && completed % 30 == 0) {
         const auto request =
             FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "native-command.txt";
         std::ifstream input(request);
@@ -510,7 +682,10 @@ void EmuWindow_SDL2::NativeFrameDiagnostics() {
             << (Settings::values.init_clock == Settings::InitClock::FixedTime ? "true" : "false")
             << ",\"rtc_init_epoch\":" << Settings::values.init_time
             << ",\"nonblack_pixels\":" << colored << ",\"png_written\":" << (png ? "true" : "false")
-            << ",\"guest_cpu_percent\":100,\"audio\":\"sdl2\",\"instrumented\":true"
+            << ",\"guest_cpu_percent\":" << Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())
+            << ",\"diagnostic_clock\":";
+        Cara::NativeDiagnosticClock::WriteJSON(out,system.CoreTiming(),system.GetNumCores());
+        out << ",\"audio\":\"sdl2\",\"instrumented\":true"
             << ",\"timing_counters_enabled\":" << (counters.enabled ? "true" : "false")
             << ",\"capture_readback\":true,\"pcs\":[";
         for (unsigned i = 0; i < 4; ++i)
@@ -524,11 +699,14 @@ void EmuWindow_SDL2::NativeFrameDiagnostics() {
 }
 
 void EmuWindow_SDL2::PollEvents() {
+    ValidateDiagnosticGeometry("poll");
     NativeFrameDiagnostics();
     SDL_Event event;
 
     // SDL_PollEvent returns 0 when there are no more events in the event queue
     while (SDL_PollEvent(&event)) {
+        if (Cara::NativeScriptOnlyInput::Ignore(event.type))
+            continue;
         switch (event.type) {
         case SDL_WINDOWEVENT:
             switch (event.window.event) {
@@ -540,7 +718,10 @@ void EmuWindow_SDL2::PollEvents() {
                 OnResize();
                 break;
             case SDL_WINDOWEVENT_FOCUS_LOST:
-                TouchReleased(); diagnostic_touch=false;
+                if (Cara::NativeScriptOnlyInput::ReleaseTouchOnFocusLost(
+                        Cara::NativeScriptOnlyInput::Enabled())) {
+                    TouchReleased(); diagnostic_touch=false;
+                }
                 break;
             case SDL_WINDOWEVENT_CLOSE:
                 TouchReleased(); diagnostic_touch=false;
@@ -586,22 +767,28 @@ void EmuWindow_SDL2::PollEvents() {
     const u32 current_time = SDL_GetTicks();
     if (current_time > last_time + 2000) {
         const auto results = Core::System::GetInstance().GetAndResetPerfStats();
-        const auto title = fmt::format(
-            "Cara {} | {}-{} | FPS: {:.0f} ({:.0%})", Common::g_build_fullname,
-            Common::g_scm_branch, Common::g_scm_desc, results.game_fps, results.emulation_speed);
+        const auto title = fmt::format("{}{:.0f} FPS | {:.0%} speed | Cara",
+                                       Cara::NativeScriptOnlyInput::Enabled() ? "TEST | " : "",
+                                       results.game_fps, results.emulation_speed);
         SDL_SetWindowTitle(render_window, title.c_str());
         last_time = current_time;
     }
 }
 
 void EmuWindow_SDL2::MakeCurrent() {
+    if (render_queue) return; // Context remains on its sole GL owner.
     SDL_GL_MakeCurrent(render_window, window_context);
 }
 
 void EmuWindow_SDL2::DoneCurrent() {
+    if (render_queue) { OpenGL::CommandQueue::Drain(); return; }
     SDL_GL_MakeCurrent(render_window, nullptr);
 }
 
 void EmuWindow_SDL2::OnMinimalClientAreaChangeRequest(std::pair<u32, u32> minimal_size) {
+    if (diagnostic_window_locked) {
+        SDL_SetWindowMinimumSize(render_window, 400, 480);
+        return;
+    }
     SDL_SetWindowMinimumSize(render_window, minimal_size.first, minimal_size.second);
 }

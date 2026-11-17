@@ -56,3 +56,9 @@ Cara relay WebSocket transport
 github.com/coder/websocket v1.8.15: Copyright (c) 2025 Coder, ISC license.
 The full dependency notice is retained in tools/network-relay/THIRD_PARTY_NOTICES.txt.
 https://github.com/coder/websocket
+
+2026-11-17 Cara integration: native Mac atlas/render-worker queue and owned uploads,
+checked GPU remapping, shader source cache, conservative diagnostic suffix sharing,
+source/host-span capture and attribution, developer game menu and CPU-only tests.
+Derived emulator changes retain the existing Citra/MMJ GPL notices. Experimental
+paths remain explicit opt-ins; these changes do not authorize omitted GPU work.

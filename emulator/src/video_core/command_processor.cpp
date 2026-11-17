@@ -7,6 +7,7 @@
 #include "cara/pica_submission_probe.h"
 #include "cara/guest_gpu_trace.h"
 #include "video_core/pica_shader_packet_profile.h"
+#include "video_core/lut_effective_change.h"
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -16,7 +17,13 @@
 #include <unordered_set>
 #include <memory>
 #include <utility>
+#include <ostream>
+#include <sstream>
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/serialization/array_wrapper.hpp>
+#include <limits>
 #include "common/assert.h"
+#include "common/scope_exit.h"
 #include "common/frame_timing.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
@@ -58,6 +65,22 @@ static bool RepeatStateEnabled() {
 static bool CommandProfileEnabled() {
     static const bool enabled = [] {
         const char* value = std::getenv("CARA_PICA_COMMAND_PROFILE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+static bool EffectiveLutChangeEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_LUT_EFFECTIVE_CHANGE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+static bool EffectiveLutChangeProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_LUT_EFFECTIVE_CHANGE_PROFILE");
         return value && std::strcmp(value, "1") == 0;
     }();
     return enabled;
@@ -236,6 +259,73 @@ static void WriteShaderWord(Shader::ShaderSetup& setup, u32 offset, u32 value, b
     }
 }
 
+static bool PostIRQProfileEnabled();
+static void WriteShaderWord(Shader::ShaderSetup&,u32,u32,bool);
+// Narrow extra-word stream dispatch adapted from the batching concept in
+// Azahar PR2318, c688076ac96491bd0d390fc8e6d8325fd3fb420f,
+// authored by PabloMK7 and Wunkolo. Cara keeps ordered per-word operations;
+// it does not import deferred renderer dirtiness or unchanged-word suppression.
+static bool ShaderStreamBatchEnabled() {
+    static const bool enabled=[] {
+        const char* value=std::getenv("CARA_PICA_SHADER_STREAM_BATCH");
+        return value && std::strcmp(value,"1")==0;
+    }();
+    return enabled;
+}
+struct ShaderStreamBatchStats { u64 packets=0, words=0, mirrored_words=0; };
+static ShaderStreamBatchStats shader_stream_batch_stats;
+
+// Only stable VS program/swizzle ports are admitted. The scalar header has
+// ALREADY executed. No read-ahead, cursor pre-advance, memory copy or range dirty
+// coalescing: the observer-free fast loop performs the same ordered stores.
+struct ShaderStreamNoObserver { void operator()(u32) const {} };
+template<typename Step=ShaderStreamNoObserver>
+static bool TryShaderStreamExtras(u32 id,u32 count,u32 mask,bool grouped,
+                                 VideoCore::RasterizerInterface* hooks,bool origins,
+                                 bool count_runtime=true,Step step={}) {
+    if(!count || grouped || mask!=15)return false;
+    const bool program=id>=PICA_REG_INDEX(vs.program.set_word[0]) && id<=PICA_REG_INDEX(vs.program.set_word[7]);
+    const bool swizzle=id>=PICA_REG_INDEX(vs.swizzle_patterns.set_word[0]) && id<=PICA_REG_INDEX(vs.swizzle_patterns.set_word[7]);
+    if(!program && !swizzle)return false;
+    if(hooks || origins || g_debug_context || RepeatStateEnabled() || CommandProfileEnabled() ||
+       PostIRQProfileEnabled() || Cara::GuestGPUTrace::active.load(std::memory_order_relaxed) || Cara::ExperimentalP3DCompletionEnabled())return false;
+    auto& offset=program ? g_state.regs.vs.program.offset : g_state.regs.vs.swizzle_patterns.offset;
+    const u32 capacity=program ? 512 : u32(g_state.vs.swizzle_data.size());
+    if(offset>capacity || count>capacity-offset)return false;
+    // Header/current cursor can have changed after the scalar header. Preserve
+    // legacy truncated/unaligned/capacity-crossing behavior by declining before
+    // any read or store, then use the original scalar loop unchanged.
+    const auto head=reinterpret_cast<std::uintptr_t>(g_state.cmd_list.head_ptr);
+    const auto current=reinterpret_cast<std::uintptr_t>(g_state.cmd_list.current_ptr);
+    if(!head || head%alignof(u32) || current%alignof(u32) ||
+       current<head || (current-head)%sizeof(u32))return false;
+    if(count>(std::numeric_limits<std::uintptr_t>::max()-current)/sizeof(u32))return false;
+    const auto used=(current-head)/sizeof(u32);
+    if(used>g_state.cmd_list.length || count>g_state.cmd_list.length-used)return false;
+    const bool mirror=!g_state.regs.pipeline.gs_unit_exclusive_configuration;
+    // Raw payloads, including signed-zero/NaN words, retain their exact bits.
+    // Full-mask port store, shader store, mirror, dirty marks and offset advance
+    // happen for EACH logical write in their original order.
+    for(u32 i=0;i<count;++i) {
+        const u32 value=*g_state.cmd_list.current_ptr++;
+        g_state.regs.reg_array[id]=value;
+        WriteShaderWord(g_state.vs,offset,value,swizzle);
+        if(mirror)WriteShaderWord(g_state.gs,offset,value,swizzle);
+        ++offset;step(i);
+    }
+    if(count_runtime){++shader_stream_batch_stats.packets;shader_stream_batch_stats.words+=count;
+        if(mirror)shader_stream_batch_stats.mirrored_words+=count;}
+    return true;
+}
+
+void WriteShaderStreamBatchJSON(std::ostream& out) {
+    out<<"{\"enabled\":"<<(ShaderStreamBatchEnabled()?"true":"false")
+       <<",\"counters_available\":"<<(ShaderStreamBatchEnabled()?"true":"false")
+       <<",\"packets\":"<<shader_stream_batch_stats.packets
+       <<",\"extra_words\":"<<shader_stream_batch_stats.words
+       <<",\"mirrored_extra_words\":"<<shader_stream_batch_stats.mirrored_words<<'}';
+}
+
 static const char* GetShaderSetupTypeName(Shader::ShaderSetup& setup) {
     if (&setup == &g_state.vs) {
         return "vertex shader";
@@ -315,7 +405,120 @@ static bool PostIRQProfileEnabled() {
 }
 static Cara::PicaSubmissionProbe post_irq_submission;
 
-static void WritePicaReg(u32 id, u32 value, u32 mask) {
+// Keep software-only vertex/shader scratch off every register-write frame.
+// Retain the exact fallback algorithm and its scope through DrawTriangles.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void ExecuteSoftwareDraw(bool is_indexed, [[maybe_unused]] bool accelerate_draw) {
+    auto& regs = g_state.regs;
+    [[maybe_unused]] auto& primitive_assembler = g_state.primitive_assembler;
+#ifdef CARA_IOS_GLES
+        ++Common::FrameTiming::counters.cpu_vertex_draws;
+        static const bool trace_fallback=std::getenv("CARA_VERTEX_FALLBACK_TRACE")!=nullptr;
+        if (trace_fallback) {
+            static std::unordered_set<u64> reported;
+            const u32 count=regs.pipeline.num_vertices;
+            const u32 topology=static_cast<u32>(primitive_assembler.GetTopology());
+            const u32 gs=static_cast<u32>(regs.pipeline.use_gs.Value());
+            const u64 key=u64(count)|(u64(topology)<<32)|(u64(gs)<<36)|(u64(accelerate_draw)<<40);
+            if (reported.size()<64 && reported.insert(key).second)
+                LOG_INFO(Render_OpenGL,"CPU vertex fallback: vertices={} topology={} gs={} attempted={} assembler_empty={}",
+                         count,topology,gs,accelerate_draw,primitive_assembler.IsEmpty());
+        }
+#endif
+        // Processes information about internal vertex attributes to figure out how a vertex is
+        // loaded.
+        // Later, these can be compiled and cached.
+        const u32 base_address = regs.pipeline.vertex_attributes.GetPhysicalBaseAddress();
+        VertexLoader loader(regs.pipeline);
+        Shader::OutputVertex::ValidateSemantics(regs.rasterizer);
+
+        // Load vertices
+        const auto& index_info = regs.pipeline.index_array;
+        const u8* index_address_8 =
+            VideoCore::Memory()->GetPhysicalPointer(base_address + index_info.offset);
+        const u16* index_address_16 = reinterpret_cast<const u16*>(index_address_8);
+        bool index_u16 = index_info.format != 0;
+
+        DebugUtils::MemoryAccessTracker memory_accesses;
+        Shader::AttributeBuffer vs_output;
+        auto* shader_engine = Shader::GetEngine();
+        Shader::UnitState shader_unit;
+
+        shader_engine->SetupBatch(g_state.vs, regs.vs.main_offset);
+
+        g_state.geometry_pipeline.Reconfigure();
+        g_state.geometry_pipeline.Setup(shader_engine);
+
+        if (is_indexed) {
+            // Simple circular-replacement vertex cache
+            // The size has been tuned for optimal balance between hit-rate and the cost of lookup
+            const u32 VERTEX_CACHE_SIZE = 32;
+            std::array<bool, VERTEX_CACHE_SIZE> vertex_cache_valid{};
+            std::array<u16, VERTEX_CACHE_SIZE> vertex_cache_ids;
+            std::array<Shader::AttributeBuffer, VERTEX_CACHE_SIZE> vertex_cache;
+            u32 vertex_cache_pos = 0;
+            u32 cache_lookup_limit = std::min(VERTEX_CACHE_SIZE, regs.pipeline.num_vertices - 1);
+
+            for (u32 index = 0; index < regs.pipeline.num_vertices; ++index) {
+                // Indexed rendering doesn't use the start offset
+                u32 vertex = index_u16 ? index_address_16[index] : index_address_8[index];
+
+                if (g_state.geometry_pipeline.NeedIndexInput()) {
+                    g_state.geometry_pipeline.SubmitIndex(vertex);
+                    continue;
+                }
+
+                bool vertex_cache_hit = false;
+                for (u32 i = 0; i < cache_lookup_limit; ++i) {
+                    if (vertex_cache_valid[i] && vertex == vertex_cache_ids[i]) {
+                        vs_output = vertex_cache[i];
+                        vertex_cache_hit = true;
+                        break;
+                    }
+                }
+
+                if (!vertex_cache_hit) {
+                    // Initialize data for the current vertex
+                    Shader::AttributeBuffer input;
+                    loader.LoadVertex(base_address, index, vertex, input, memory_accesses);
+                    shader_unit.LoadInput(regs.vs, input);
+                    shader_engine->Run(g_state.vs, shader_unit);
+                    shader_unit.WriteOutput(regs.vs, vs_output);
+
+                    vertex_cache[vertex_cache_pos] = vs_output;
+                    vertex_cache_valid[vertex_cache_pos] = true;
+                    vertex_cache_ids[vertex_cache_pos] = vertex;
+                    vertex_cache_pos = (vertex_cache_pos + 1) % VERTEX_CACHE_SIZE;
+                }
+
+                // Send to geometry pipeline
+                g_state.geometry_pipeline.SubmitVertex(vs_output);
+            }
+        } else {
+            for (u32 index = 0; index < regs.pipeline.num_vertices; ++index) {
+                // Indexed rendering doesn't use the start offset
+                u32 vertex = index + regs.pipeline.vertex_offset;
+
+                // Initialize data for the current vertex
+                Shader::AttributeBuffer input;
+                loader.LoadVertex(base_address, index, vertex, input, memory_accesses);
+                shader_unit.LoadInput(regs.vs, input);
+                shader_engine->Run(g_state.vs, shader_unit);
+                shader_unit.WriteOutput(regs.vs, vs_output);
+
+                // Send to geometry pipeline
+                g_state.geometry_pipeline.SubmitVertex(vs_output);
+            }
+        }
+
+        VideoCore::Rasterizer()->DrawTriangles();
+}
+
+static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInterface* command_hooks) {
     auto& regs = g_state.regs;
 
     if (id >= Regs::NUM_REGS) {
@@ -339,6 +542,9 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
         ++command_profile.writes;
         ++command_profile.registers[id];
     }
+    // The feature-off path is only a predictable null branch. Capability was
+    // sampled once before this logical list; no per-write backend lookup/call.
+    if (command_hooks) command_hooks->PrePicaRegisterWrite(id, value, mask);
     const u32 old_value = regs.reg_array[id];
     const u32 write_mask = expand_bits_to_bytes[mask];
     regs.reg_array[id] = (old_value & ~write_mask) | (value & write_mask);
@@ -477,17 +683,22 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     case PICA_REG_INDEX(pipeline.command_buffer.trigger[1]): {
         unsigned index =
             static_cast<unsigned>(id - PICA_REG_INDEX(pipeline.command_buffer.trigger[0]));
-        u32* head_ptr = (u32*)VideoCore::Memory()->GetPhysicalPointer(
-            regs.pipeline.command_buffer.GetPhysicalAddress(index));
+        const auto redirected_base = regs.pipeline.command_buffer.GetPhysicalAddress(index);
+        u32* head_ptr = (u32*)VideoCore::Memory()->GetPhysicalPointer(redirected_base);
         g_state.cmd_list.head_ptr = g_state.cmd_list.current_ptr = head_ptr;
         g_state.cmd_list.length = regs.pipeline.command_buffer.GetSize(index) / sizeof(u32);
+        if (Cara::GuestGPUTrace::IsOwner() && Cara::GuestGPUTrace::command_origins_enabled)
+            Cara::GuestGPUTrace::RedirectCommandOrigin(
+                redirected_base, g_state.cmd_list.length, head_ptr);
         break;
     }
 
     // It seems like these trigger vertex rendering
     case PICA_REG_INDEX(pipeline.trigger_draw):
     case PICA_REG_INDEX(pipeline.trigger_draw_indexed): {
+        Cara::GuestGPUTrace::Join::Scope validation_copy_draw_scope;
         if (Cara::GuestGPUTrace::ReserveDrawRecords()) {
+            const auto draw_anchor = Cara::GuestGPUTrace::buffer.size;
             auto& timing = Core::System::GetInstance().CoreTiming();
             const auto& fb = regs.framebuffer.framebuffer;
             const auto& pipe = regs.pipeline;
@@ -520,6 +731,16 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
                 u64(pipe.vertex_offset) | (u64(regs.reg_array[PICA_REG_INDEX(texturing.main_config)]) << 32),
                 (u64(tex.texture0.GetPhysicalAddress()) << 32) | tex.texture1.GetPhysicalAddress(),
                 u64(tex.texture2.GetPhysicalAddress()) | (texture_formats << 32));
+            if (Cara::GuestGPUTrace::validation_copy_join_enabled &&
+                Cara::GuestGPUTrace::active.load(std::memory_order_relaxed) &&
+                Cara::GuestGPUTrace::buffer.size == draw_anchor + 3) {
+                validation_copy_draw_scope.Set(Cara::GuestGPUTrace::Join::state.Draw(
+                    Cara::GuestGPUTrace::owner_generation.load(std::memory_order_relaxed),
+                    Cara::GuestGPUTrace::buffer.records[draw_anchor],
+                    Cara::GuestGPUTrace::have_execution_context,
+                    Cara::GuestGPUTrace::execution_thread,Cara::GuestGPUTrace::execution_core));
+            }
+            Cara::GuestGPUTrace::AppendCommandOrigin(draw_anchor);
         }
         if (Cara::ExperimentalP3DCompletionEnabled())
             g_state.experimental_p3d_work.Draw(regs.pipeline.num_vertices,
@@ -560,107 +781,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
             break;
         }
 
-#ifdef CARA_IOS_GLES
-        ++Common::FrameTiming::counters.cpu_vertex_draws;
-        static const bool trace_fallback=std::getenv("CARA_VERTEX_FALLBACK_TRACE")!=nullptr;
-        if (trace_fallback) {
-            static std::unordered_set<u64> reported;
-            const u32 count=regs.pipeline.num_vertices;
-            const u32 topology=static_cast<u32>(primitive_assembler.GetTopology());
-            const u32 gs=static_cast<u32>(regs.pipeline.use_gs.Value());
-            const u64 key=u64(count)|(u64(topology)<<32)|(u64(gs)<<36)|(u64(accelerate_draw)<<40);
-            if (reported.size()<64 && reported.insert(key).second)
-                LOG_INFO(Render_OpenGL,"CPU vertex fallback: vertices={} topology={} gs={} attempted={} assembler_empty={}",
-                         count,topology,gs,accelerate_draw,primitive_assembler.IsEmpty());
-        }
-#endif
-        // Processes information about internal vertex attributes to figure out how a vertex is
-        // loaded.
-        // Later, these can be compiled and cached.
-        const u32 base_address = regs.pipeline.vertex_attributes.GetPhysicalBaseAddress();
-        VertexLoader loader(regs.pipeline);
-        Shader::OutputVertex::ValidateSemantics(regs.rasterizer);
-
-        // Load vertices
-        const auto& index_info = regs.pipeline.index_array;
-        const u8* index_address_8 =
-            VideoCore::Memory()->GetPhysicalPointer(base_address + index_info.offset);
-        const u16* index_address_16 = reinterpret_cast<const u16*>(index_address_8);
-        bool index_u16 = index_info.format != 0;
-
-        DebugUtils::MemoryAccessTracker memory_accesses;
-        Shader::AttributeBuffer vs_output;
-        auto* shader_engine = Shader::GetEngine();
-        Shader::UnitState shader_unit;
-
-        shader_engine->SetupBatch(g_state.vs, regs.vs.main_offset);
-
-        g_state.geometry_pipeline.Reconfigure();
-        g_state.geometry_pipeline.Setup(shader_engine);
-
-        if (is_indexed) {
-            // Simple circular-replacement vertex cache
-            // The size has been tuned for optimal balance between hit-rate and the cost of lookup
-            const u32 VERTEX_CACHE_SIZE = 32;
-            std::array<bool, VERTEX_CACHE_SIZE> vertex_cache_valid{};
-            std::array<u16, VERTEX_CACHE_SIZE> vertex_cache_ids;
-            std::array<Shader::AttributeBuffer, VERTEX_CACHE_SIZE> vertex_cache;
-            u32 vertex_cache_pos = 0;
-            u32 cache_lookup_limit = std::min(VERTEX_CACHE_SIZE, regs.pipeline.num_vertices - 1);
-
-            for (u32 index = 0; index < regs.pipeline.num_vertices; ++index) {
-                // Indexed rendering doesn't use the start offset
-                u32 vertex = index_u16 ? index_address_16[index] : index_address_8[index];
-
-                if (g_state.geometry_pipeline.NeedIndexInput()) {
-                    g_state.geometry_pipeline.SubmitIndex(vertex);
-                    continue;
-                }
-
-                bool vertex_cache_hit = false;
-                for (u32 i = 0; i < cache_lookup_limit; ++i) {
-                    if (vertex_cache_valid[i] && vertex == vertex_cache_ids[i]) {
-                        vs_output = vertex_cache[i];
-                        vertex_cache_hit = true;
-                        break;
-                    }
-                }
-
-                if (!vertex_cache_hit) {
-                    // Initialize data for the current vertex
-                    Shader::AttributeBuffer input;
-                    loader.LoadVertex(base_address, index, vertex, input, memory_accesses);
-                    shader_unit.LoadInput(regs.vs, input);
-                    shader_engine->Run(g_state.vs, shader_unit);
-                    shader_unit.WriteOutput(regs.vs, vs_output);
-
-                    vertex_cache[vertex_cache_pos] = vs_output;
-                    vertex_cache_valid[vertex_cache_pos] = true;
-                    vertex_cache_ids[vertex_cache_pos] = vertex;
-                    vertex_cache_pos = (vertex_cache_pos + 1) % VERTEX_CACHE_SIZE;
-                }
-
-                // Send to geometry pipeline
-                g_state.geometry_pipeline.SubmitVertex(vs_output);
-            }
-        } else {
-            for (u32 index = 0; index < regs.pipeline.num_vertices; ++index) {
-                // Indexed rendering doesn't use the start offset
-                u32 vertex = index + regs.pipeline.vertex_offset;
-
-                // Initialize data for the current vertex
-                Shader::AttributeBuffer input;
-                loader.LoadVertex(base_address, index, vertex, input, memory_accesses);
-                shader_unit.LoadInput(regs.vs, input);
-                shader_engine->Run(g_state.vs, shader_unit);
-                shader_unit.WriteOutput(regs.vs, vs_output);
-
-                // Send to geometry pipeline
-                g_state.geometry_pipeline.SubmitVertex(vs_output);
-            }
-        }
-
-        VideoCore::Rasterizer()->DrawTriangles();
+        ExecuteSoftwareDraw(is_indexed, accelerate_draw);
         break;
     }
 
@@ -811,9 +932,13 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     case PICA_REG_INDEX(lighting.lut_data[7]): {
         auto& lut_config = regs.lighting.lut_config;
         ASSERT_MSG(lut_config.index < 256, "lut_config.index exceeded maximum value of 255!");
-        g_state.lighting.luts[lut_config.type][lut_config.index].raw = value;
+        const bool observe = EffectiveLutChangeProfileEnabled();
+        const auto decision = Cara::LutEffectiveChange::StoreRaw(
+            g_state.lighting.luts[lut_config.type][lut_config.index].raw, value,
+            EffectiveLutChangeEnabled(), observe);
         lut_config.index.Assign(lut_config.index + 1);
-        VideoCore::Rasterizer()->SyncLightingLutData();
+        if (decision.notify) VideoCore::Rasterizer()->SyncLightingLutData();
+        if (observe) Cara::LutEffectiveChange::Record(Cara::LutEffectiveChange::Kind::Lighting, decision);
         break;
     }
 
@@ -825,9 +950,13 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     case PICA_REG_INDEX(texturing.fog_lut_data[5]):
     case PICA_REG_INDEX(texturing.fog_lut_data[6]):
     case PICA_REG_INDEX(texturing.fog_lut_data[7]): {
-        g_state.fog.lut[regs.texturing.fog_lut_offset % 128].raw = value;
+        const bool observe = EffectiveLutChangeProfileEnabled();
+        const auto decision = Cara::LutEffectiveChange::StoreRaw(
+            g_state.fog.lut[regs.texturing.fog_lut_offset % 128].raw, value,
+            EffectiveLutChangeEnabled(), observe);
         regs.texturing.fog_lut_offset.Assign(regs.texturing.fog_lut_offset + 1);
-        VideoCore::Rasterizer()->SyncFogLutData();
+        if (decision.notify) VideoCore::Rasterizer()->SyncFogLutData();
+        if (observe) Cara::LutEffectiveChange::Record(Cara::LutEffectiveChange::Kind::Fog, decision);
         break;
     }
 
@@ -841,25 +970,34 @@ static void WritePicaReg(u32 id, u32 value, u32 mask) {
     case PICA_REG_INDEX(texturing.proctex_lut_data[7]): {
         auto& index = regs.texturing.proctex_lut_config.index;
         auto& pt = g_state.proctex;
+        const bool observe = EffectiveLutChangeProfileEnabled();
+        const bool effective = EffectiveLutChangeEnabled();
+        auto decision = Cara::LutEffectiveChange::InvalidTarget();
         switch (regs.texturing.proctex_lut_config.ref_table.Value()) {
         case TexturingRegs::ProcTexLutTable::Noise:
-            pt.noise_table[index % pt.noise_table.size()].raw = value;
+            decision = Cara::LutEffectiveChange::StoreRaw(
+                pt.noise_table[index % pt.noise_table.size()].raw, value, effective, observe);
             break;
         case TexturingRegs::ProcTexLutTable::ColorMap:
-            pt.color_map_table[index % pt.color_map_table.size()].raw = value;
+            decision = Cara::LutEffectiveChange::StoreRaw(
+                pt.color_map_table[index % pt.color_map_table.size()].raw, value, effective, observe);
             break;
         case TexturingRegs::ProcTexLutTable::AlphaMap:
-            pt.alpha_map_table[index % pt.alpha_map_table.size()].raw = value;
+            decision = Cara::LutEffectiveChange::StoreRaw(
+                pt.alpha_map_table[index % pt.alpha_map_table.size()].raw, value, effective, observe);
             break;
         case TexturingRegs::ProcTexLutTable::Color:
-            pt.color_table[index % pt.color_table.size()].raw = value;
+            decision = Cara::LutEffectiveChange::StoreRaw(
+                pt.color_table[index % pt.color_table.size()].raw, value, effective, observe);
             break;
         case TexturingRegs::ProcTexLutTable::ColorDiff:
-            pt.color_diff_table[index % pt.color_diff_table.size()].raw = value;
+            decision = Cara::LutEffectiveChange::StoreRaw(
+                pt.color_diff_table[index % pt.color_diff_table.size()].raw, value, effective, observe);
             break;
         }
         index.Assign(index + 1);
-        VideoCore::Rasterizer()->SyncProcTexLutData();
+        if (decision.notify) VideoCore::Rasterizer()->SyncProcTexLutData();
+        if (observe) Cara::LutEffectiveChange::Record(Cara::LutEffectiveChange::Kind::ProcTex, decision);
         break;
     }
     default: {
@@ -898,7 +1036,23 @@ void ProcessCommandList(PAddr list, u32 size) {
     g_state.cmd_list.head_ptr = g_state.cmd_list.current_ptr = buffer;
     g_state.cmd_list.length = size / sizeof(u32);
 
+    Cara::GuestGPUTrace::CommandOriginFrame* origin_scope = nullptr;
+    if (Cara::GuestGPUTrace::CommandOriginsTracking())
+        origin_scope = Cara::GuestGPUTrace::BeginCommandOrigin(list, g_state.cmd_list.length, buffer);
+    SCOPE_EXIT({ if (origin_scope) Cara::GuestGPUTrace::EndCommandOrigin(origin_scope); });
+
+    auto* command_rasterizer = VideoCore::Rasterizer();
+    auto* command_hooks = command_rasterizer->PicaWriteHooksActive() ? command_rasterizer : nullptr;
+    if (command_hooks) command_hooks->BeginPicaCommandList();
+    bool command_list_ended = false;
+    // Preserve the original error if rendering itself fails while unwinding.
+    SCOPE_EXIT({
+        if (!command_list_ended) {
+            try { if (command_hooks) command_hooks->EndPicaCommandList(); } catch (...) {}
+        }
+    });
     const bool collect_shader_packets = CommandProfileEnabled();
+    const bool batch_shader_streams = ShaderStreamBatchEnabled();
     while (g_state.cmd_list.current_ptr < g_state.cmd_list.head_ptr + g_state.cmd_list.length) {
         // Align read pointer to 8 bytes
         g_state.cmd_list.current_ptr +=
@@ -909,7 +1063,14 @@ void ProcessCommandList(PAddr list, u32 size) {
         const u32 group_factor = header.group_commands;
         u32 cmd_id = header.cmd_id;
 
-        WritePicaReg(cmd_id, value, header.parameter_mask);
+        if (origin_scope) {
+            Cara::GuestGPUTrace::ObserveCommandHeader(origin_scope, g_state.cmd_list.head_ptr,
+                g_state.cmd_list.current_ptr, g_state.cmd_list.length,
+                header.extra_data_length, cmd_id, bool(group_factor));
+            Cara::GuestGPUTrace::ObserveCommandParameter(origin_scope, g_state.cmd_list.head_ptr,
+                g_state.cmd_list.current_ptr, g_state.cmd_list.length, 0, cmd_id, true);
+        }
+        WritePicaReg(cmd_id, value, header.parameter_mask, command_hooks);
         // Observe only metadata AFTER the original scalar header. In particular,
         // never read ahead, move the cursor, or reject legacy truncated packets.
         if (collect_shader_packets) {
@@ -927,11 +1088,21 @@ void ProcessCommandList(PAddr list, u32 size) {
                     header.parameter_mask, !g_state.regs.pipeline.gs_unit_exclusive_configuration});
             }
         }
+        if (batch_shader_streams &&
+            TryShaderStreamExtras(cmd_id,header.extra_data_length,header.parameter_mask,
+                                  bool(group_factor),command_hooks,origin_scope!=nullptr)) continue;
         for (u32 i = 0; i < header.extra_data_length; ++i) {
             cmd_id += group_factor;
-            WritePicaReg(cmd_id, *g_state.cmd_list.current_ptr++, header.parameter_mask);
+            // Exactly the original one guest read, at the same point before WritePicaReg.
+            const u32 extra_value = *g_state.cmd_list.current_ptr++;
+            if (origin_scope)
+                Cara::GuestGPUTrace::ObserveCommandParameter(origin_scope, g_state.cmd_list.head_ptr,
+                    g_state.cmd_list.current_ptr, g_state.cmd_list.length, i + 1, cmd_id, false);
+            WritePicaReg(cmd_id, extra_value, header.parameter_mask, command_hooks);
         }
     }
+    command_list_ended = true;
+    if (command_hooks) command_hooks->EndPicaCommandList();
     if (PostIRQProfileEnabled()) {
         auto& counters = Common::FrameTiming::counters;
         counters.pica_post_irq_submissions += post_irq_submission.saw_irq;
@@ -946,5 +1117,7 @@ void ProcessCommandList(PAddr list, u32 size) {
                      counters.pica_post_irq_jumps, counters.pica_first_irq_remaining_words);
     }
 }
+
+#include "video_core/pica_shader_stream_batch_self_test.inc"
 
 } // namespace Pica::CommandProcessor

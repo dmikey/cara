@@ -50,6 +50,8 @@ struct PicaFSConfigState {
     Pica::RasterizerRegs::ScissorMode scissor_test_mode;
     Pica::TexturingRegs::TextureConfig::TextureType texture0_type;
     bool texture2_use_coord1;
+    // Explicit native diagnostic key; never aliases a normal texture0 program.
+    bool native_nearest_borrow_tex0 = false;
     std::array<TevStageConfigRaw, 6> tev_stages;
     u8 combiner_buffer_input;
 
@@ -129,7 +131,10 @@ struct PicaFSConfigState {
  */
 struct PicaFSConfig {
     /// Construct a PicaFSConfig with the given Pica register configuration.
-    static PicaFSConfig BuildFromRegs(const Pica::Regs& regs);
+    // Unsupported explicit borrow requests fail; callers must restart with a real texture copy.
+    static bool SupportsNativeNearestBorrow(const Pica::Regs& regs);
+    static PicaFSConfig BuildFromRegs(const Pica::Regs& regs,
+                                      bool native_nearest_borrow_tex0 = false);
 
     bool TevStageUpdatesCombinerBufferColor(unsigned stage_index) const {
         return (stage_index < 4) && (state.combiner_buffer_input & (1 << stage_index));
@@ -212,12 +217,17 @@ std::string GenerateTrivialVertexShader(bool separable_shader);
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
                                  bool separable_shader, const PicaFixedGSConfig* ios_output = nullptr,
                                  u16 ios_input_mask = 0xffff, unsigned ios_indexed_inputs = false,
-                                 bool ios_source_optimizations = true);
+                                 bool ios_source_optimizations = true,
+                                 bool native_quaternion_geometry = false,
+                                 bool native_isolated_dispatch = false,
+                                 bool native_suffix_sharing = false);
 
 /*
  * Generates the GLSL fixed geometry shader program source code for non-GS PICA pipeline
  * @returns String of the shader source code
  */
+std::string GenerateNativeQuaternionGeometryShader();
+
 std::string GenerateFixedGeometryShader(const PicaFixedGSConfig& config, bool separable_shader);
 
 /**

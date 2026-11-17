@@ -13,6 +13,8 @@
 #include "video_core/renderer_software.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_vars.h"
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#include "common/host_render_queue.h"
 #include "video_core/renderer_opengl/renderer_opengl.h"
 #include "video_core/swrasterizer/swrasterizer.h"
 #include "video_core/video_core.h"
@@ -59,6 +61,10 @@ static void ApplySetting() {
 
 /// Initialize the video core
 ResultStatus Init(Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
+    // A recreated video session cannot inherit unfinished GL work from a prior
+    // save-state epoch. No virtual time or guest event is changed by this wait.
+    OpenGL::CommandQueue::Drain();
+    if (auto* queue = OpenGL::CommandQueue::Queue()) queue->EpochReset();
     g_memory = &memory;
     Pica::Init();
 
@@ -142,9 +148,12 @@ void SetBackgroundImage(u32* pixels, u32 width, u32 height) {
 
 /// Shutdown the video core
 void Shutdown() {
+    if (g_rasterizer) g_rasterizer->FlushDeferredDraws();
+    OpenGL::CommandQueue::Drain();
     Pica::Shutdown();
     g_rasterizer.reset();
     g_renderer.reset();
+    OpenGL::CommandQueue::Drain();
     g_memory = nullptr;
 }
 
@@ -152,6 +161,8 @@ void Shutdown() {
 
 namespace VideoCore {
 template <class Archive> void serialize(Archive& ar, const unsigned int) {
+    if (g_rasterizer) g_rasterizer->FlushDeferredDraws();
+    OpenGL::CommandQueue::Drain();
     ar& Pica::g_state;
     if (Archive::is_loading::value) {
         g_setting_update = true;

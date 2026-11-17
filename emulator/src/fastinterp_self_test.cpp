@@ -1,3 +1,4 @@
+#include "video_core/command_processor.h"
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <array>
 #include <bit>
@@ -35,6 +36,9 @@ struct DecodeRecordSelfTestAccess {
     static MemoryRef VfpBacking(ARM_FastInterp& cpu) { return TestMemory(cpu.state_.vfp_regs); }
     static unsigned CacheCapacity(const ARM_FastInterp& cpu) {return cpu.cache_.Capacity();}
     static void ConfigureSecondary(ARM_FastInterp& cpu,bool enabled) {cpu.secondary_link_=enabled;cpu.cache_.SetProfiling(true);cpu.ClearInstructionCache();}
+    static void ConfigureBLRunChain(ARM_FastInterp& cpu, bool enabled) {
+        cpu.chain_budget_ = enabled; cpu.ClearInstructionCache();
+    }
     static void ConfigureAlDispatch(ARM_FastInterp& cpu, bool enabled) {
         cpu.al_dispatch_ = enabled; cpu.ClearInstructionCache();
     }
@@ -83,6 +87,7 @@ struct DecodeRecordSelfTestAccess {
 #include "fastinterp_secondary_link_self_test.h"
 #include "fastinterp_capacity_self_test.h"
 #include "fastinterp_blx_link_self_test.h"
+#include "fastinterp_bl_run_self_test.h"
 #include "fastinterp_pc_boundary_self_test.h"
 #include "fastinterp_short_vector_self_test.h"
 #include "fastinterp_vldr_pair_self_test.h"
@@ -118,6 +123,11 @@ static int VerifyDecodedMetadata(Core::System& system) {
 }
 
 int main() {
+    if(std::getenv("CARA_PICA_SHADER_STREAM_SELF_TEST")) {
+        std::string result;
+        const bool ok=Pica::CommandProcessor::RunShaderStreamBatchSelfTest(result);
+        std::cout<<result<<"\n";return ok?0:1;
+    }
     Memory::MemorySystem memory;
     Core::Timing timing;
     auto& system = Core::System::GetInstance();
@@ -129,6 +139,8 @@ int main() {
         return VerifyFastInterpShortVectors(system);
     if (std::getenv("CARA_FASTINTERP_PC_BOUNDARY_TEST"))
         return VerifyFastInterpPCBoundary(system);
+    if (std::getenv("CARA_FASTINTERP_BL_RUN_TEST"))
+        return VerifyFastInterpImmediateBLRun(system);
     if (std::getenv("CARA_FASTINTERP_BLX_LINK_TEST"))
         return VerifyFastInterpBlxLink(system);
     if (std::getenv("CARA_FASTINTERP_CAPACITY_TEST"))

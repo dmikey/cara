@@ -3,6 +3,9 @@
 // Refer to the license.txt file included.
 
 #pragma once
+
+#include <ostream>
+#include "core/hle/kernel/old3ds_syscore_policy.h"
 #include <boost/serialization/access.hpp>
 
 #include <array>
@@ -31,6 +34,7 @@ class MemorySystem;
 
 namespace Core {
 class Timing;
+struct TimingEventType;
 }
 
 namespace IPCDebugger {
@@ -88,6 +92,18 @@ public:
     explicit KernelSystem(Memory::MemorySystem& memory, Core::Timing& timing, u32 system_mode,
                           u8 n3ds_mode);
     ~KernelSystem();
+
+    // Diagnostic only. Storage still has four contexts for state ABI compatibility;
+    // only contexts/timers 0 and 1 execute in flagged Old3DS mode.
+    bool Old3dsSyscoreRequested() const;
+    bool Old3dsSyscoreEnabled() const {
+        return Old3dsSyscoreRequested() && old3ds_syscore.Supported();
+    }
+    void WriteOld3dsSyscoreJSON(std::ostream& out) const;
+    bool Old3dsSyscoreSupported() const { return old3ds_syscore.Supported(); }
+    bool Old3dsSyscoreMayCreate() const { return old3ds_syscore.percent != 0; }
+    void ConfigureOld3dsSyscore(u16 descriptor);
+    bool SetOld3dsSyscoreLimit(u32 percent);
 
     using PortPair = std::pair<std::shared_ptr<ServerPort>, std::shared_ptr<ClientPort>>;
     using SessionPair = std::pair<std::shared_ptr<ServerSession>, std::shared_ptr<ClientSession>>;
@@ -270,6 +286,11 @@ public:
     Core::Timing& timing;
 
 private:
+    Old3dsSyscore::Policy old3ds_syscore;
+    Core::TimingEventType* old3ds_syscore_event = nullptr;
+    u64 syscore_run_calls = 0, syscore_execute_calls = 0, syscore_idle_calls = 0;
+    u64 syscore_executed_ticks = 0, syscore_idled_ticks = 0;
+    void ScheduleOld3dsSyscoreBoundary();
     void MemoryInit(u32 mem_type, u8 n3ds_mode);
     void SetCurrentProcess(const std::shared_ptr<Process>& process);
 

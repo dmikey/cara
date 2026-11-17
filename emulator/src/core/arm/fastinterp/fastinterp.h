@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <ostream>
 #include "core/arm/arm_interface.h"
@@ -25,6 +26,20 @@ class SVCContext;
 }
 
 namespace Core::FastInterp {
+
+// Encode decoder/executor record ABI in the link symbol, not a runtime branch.
+// A stale decode TU with another opcode count/layout cannot satisfy this call.
+// Compact dispatch is a bitfield in the first word, so offsetof is not legal.
+// Its zero offset is part of that explicitly selected layout; dp remains at4.
+template <std::size_t OpcodeCount, std::size_t RecordBytes, std::size_t DispatchOffset>
+struct DecodeABITag {};
+#if CARA_FASTINTERP_COMPACT_DECODED
+using CurrentDecodeABI = DecodeABITag<static_cast<std::size_t>(Opcode::OpcodeCount),
+                                     sizeof(DecodedInst), 0>;
+#else
+using CurrentDecodeABI = DecodeABITag<static_cast<std::size_t>(Opcode::OpcodeCount),
+                                     sizeof(DecodedInst), offsetof(DecodedInst, dispatch_index)>;
+#endif
 
 class ARM_FastInterp final : public ARM_Interface {
 public:
@@ -70,7 +85,7 @@ private:
     u64 ExecuteBlock(BasicBlock* block);
 
     /// Decode a basic block into a pre-allocated block
-    void DecodeBlockInto(BasicBlock* block, u32 pc);
+    void DecodeBlockInto(BasicBlock* block, u32 pc, CurrentDecodeABI = {});
 
     /// Fuse the just-decoded compare/test at pc with a following conditional
     /// branch (ARM also fuses ADD+CMP+Bcc). On success, rewrites inst into a
@@ -100,6 +115,14 @@ private:
     bool CheckCondition(u8 cond);
 
     void PrepareDispatch(DecodedInst& inst) const {
+        // This experimental opcode is admitted only for unconditional ARM ADD.
+        // Its two existing table slots select counted/quiet entries at decode,
+        // independent of ordinary guarded/AL policy. No execution-time probe.
+        if (inst.GetOpcode() == Opcode::AddCmpRegBcc) {
+            inst.dispatch_index = static_cast<u16>(Opcode::AddCmpRegBcc) +
+                (add_cmp_reg_census_ ? 0 : static_cast<u16>(Opcode::OpcodeCount));
+            return;
+        }
         inst.dispatch_index = static_cast<u16>(inst.GetOpcode()) +
             ((al_dispatch_ && inst.cond == 0xE) ? static_cast<u16>(Opcode::OpcodeCount) : 0);
     }
@@ -159,8 +182,15 @@ private:
     bool chain_budget_{false};
     bool precise_block_end_{true};
     bool al_dispatch_{false};
+    bool add_cmp_reg_{false}, add_cmp_reg_census_{false};
+    u64 add_cmp_reg_executed_{};
+    bool ldr_sp_static_{false};
+    bool ldr_str_four_pairs_{false};
+    bool ldr_str_four_pairs_census_{false};
+    u64 ldr_str_four_pairs_fused_{}, ldr_str_four_pairs_fallback_{};
     bool secondary_link_{false};
     static bool AluPairsEnabled();
+    void QuickenLdrSpStatic(DecodedInst& inst, bool is_thumb) const;
     u64 cache_mode_redecodes_{};
     u64 cache_page_table_changes_{};
 

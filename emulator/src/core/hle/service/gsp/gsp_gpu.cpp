@@ -5,6 +5,7 @@
 
 #include "cara/guest_gpu_trace.h"
 #include <vector>
+#include <cstring>
 #include "common/archives.h"
 #include "common/bit_field.h"
 #include "common/frame_timing.h"
@@ -686,12 +687,23 @@ void GSP_GPU::TriggerCmdReqQueue(Kernel::HLERequestContext& ctx) {
 
     for (u32 thread_id = 0; thread_id < MaxGSPThreads; ++thread_id) {
         CommandBuffer& command_buffer = *reinterpret_cast<CommandBuffer*>(GetCommandBuffer(shared_memory, thread_id));
+        const bool trace_batch = Cara::GuestGPUTrace::Enabled();
+        u32 batch_caller = 0;
+        if (trace_batch) {
+            auto* current = system.Kernel().GetCurrentThreadManager().GetCurrentThread();
+            batch_caller = current ? current->GetThreadId() : 0;
+            Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::QueueState,
+                batch_caller, thread_id, static_cast<u32>(Cara::GuestGPUTrace::QueuePhase::BatchEntry),
+                command_buffer.hex, Cara::GuestGPUTrace::NoCommandSlot, 0);
+        }
         // Iterate through each command...
         for (u32 i = 0; i < command_buffer.number_commands; ++i) {
             // Decode and execute command
             const bool trace = Cara::GuestGPUTrace::Enabled();
             u64 before_draws = 0, before_vertices = 0;
             u32 caller = 0;
+            std::size_t trace_begin = 0;
+            Cara::GuestGPUTrace::Join::Scope validation_copy_gx_scope;
             if (trace) {
                 ++Cara::GuestGPUTrace::submission;
                 auto* current = system.Kernel().GetCurrentThreadManager().GetCurrentThread();
@@ -699,20 +711,46 @@ void GSP_GPU::TriggerCmdReqQueue(Kernel::HLERequestContext& ctx) {
                 before_draws = Common::FrameTiming::counters.gpu_vertex_draws + Common::FrameTiming::counters.cpu_vertex_draws;
                 before_vertices = Common::FrameTiming::counters.gpu_vertices;
                 const auto& cmd = command_buffer.commands[i];
+                trace_begin = Cara::GuestGPUTrace::buffer.size;
                 Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::GXBegin,
                     caller, thread_id, static_cast<u32>(cmd.id.Value()), command_buffer.hex,
                     (u64(i) << 32) | u32(active_thread_id),
                     (u64(cmd.submit_gpu_cmdlist.address) << 32) | cmd.submit_gpu_cmdlist.size);
+                u32 raw_command_word;
+                std::memcpy(&raw_command_word, &cmd, sizeof(raw_command_word));
+                Cara::GuestGPUTrace::QueueStateAtLast(Cara::GuestGPUTrace::QueuePhase::BeforeExecute,
+                    command_buffer.hex, i, raw_command_word);
+            }
+            if (Cara::GuestGPUTrace::validation_copy_join_enabled && trace &&
+                Cara::GuestGPUTrace::active.load(std::memory_order_relaxed) &&
+                Cara::GuestGPUTrace::IsOwner() && Cara::GuestGPUTrace::buffer.size > trace_begin) {
+                validation_copy_gx_scope.Set(Cara::GuestGPUTrace::Join::state.GX(
+                    Cara::GuestGPUTrace::owner_generation.load(std::memory_order_relaxed),
+                    Cara::GuestGPUTrace::buffer.records[trace_begin],
+                    Cara::GuestGPUTrace::have_execution_context,
+                    Cara::GuestGPUTrace::execution_thread,Cara::GuestGPUTrace::execution_core));
             }
             ExecuteCommand(command_buffer.commands[i]);
-            if (trace) Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::GXEnd,
-                caller, thread_id, Common::FrameTiming::counters.gpu_vertex_draws +
-                    Common::FrameTiming::counters.cpu_vertex_draws - before_draws,
-                Common::FrameTiming::counters.gpu_vertices - before_vertices,
-                Common::FrameTiming::counters.enabled, command_buffer.hex);
+            if (trace) {
+                Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::GXEnd,
+                    caller, thread_id, Common::FrameTiming::counters.gpu_vertex_draws +
+                        Common::FrameTiming::counters.cpu_vertex_draws - before_draws,
+                    Common::FrameTiming::counters.gpu_vertices - before_vertices,
+                    Common::FrameTiming::counters.enabled, command_buffer.hex);
+                u32 raw_command_word;
+                std::memcpy(&raw_command_word, &command_buffer.commands[i], sizeof(raw_command_word));
+                Cara::GuestGPUTrace::QueueStateAtLast(Cara::GuestGPUTrace::QueuePhase::AfterExecute,
+                    command_buffer.hex, i, raw_command_word);
+            }
         }
+        if (trace_batch) Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::QueueState,
+            batch_caller, thread_id, static_cast<u32>(Cara::GuestGPUTrace::QueuePhase::BeforeClear),
+            command_buffer.hex, Cara::GuestGPUTrace::NoCommandSlot, 0);
         // Indicates that command has completed
         command_buffer.number_commands.Assign(0);
+        if (trace_batch) Cara::GuestGPUTrace::Emit(system.CoreTiming(), Cara::GuestGPUTrace::Kind::QueueState,
+            batch_caller, thread_id, static_cast<u32>(Cara::GuestGPUTrace::QueuePhase::AfterClear),
+            command_buffer.hex, Cara::GuestGPUTrace::NoCommandSlot, 0);
     }
 
     IPC::RequestBuilder rb = rp.MakeBuilder(1, 0);

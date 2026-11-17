@@ -5,6 +5,8 @@
 #pragma once
 
 #include <array>
+#include <optional>
+#include <span>
 #include <list>
 #include <memory>
 #include <set>
@@ -28,6 +30,8 @@
 #include "core/custom_tex_cache.h"
 #include "video_core/renderer_opengl/gl_resource_manager.h"
 #include "video_core/renderer_opengl/gl_surface_params.h"
+#include "video_core/renderer_opengl/gl_nearest_borrow_plan.h"
+#include "video_core/renderer_opengl/gl_surface_invalidation_context.h"
 #include "video_core/texture/texture_decode.h"
 
 namespace OpenGL {
@@ -213,12 +217,16 @@ struct CachedTextureCube {
 };
 
 class RasterizerCacheOpenGL : NonCopyable {
+    friend struct SoftwareBatchVisibilityTestAccess;
 public:
     RasterizerCacheOpenGL();
     ~RasterizerCacheOpenGL();
 
     // ROM-free GPU/cache oracle; invoke before guest execution on an unused scratch page.
     bool RunSmallWriteSelfTest(std::string& error);
+    bool RunNativeRGBA8RemapSelfTest(std::string& error);
+    bool RunNativeShaderCopySelfTest(std::string& error); // compatibility alias
+    bool RunNativeRequiredCopySelfTest(std::string& error);
     bool RunTextureLookupSelfTest(std::string& error);
     bool RunDepthCPUCoherenceSelfTest(std::string& error);
 
@@ -229,6 +237,16 @@ public:
     /// Copy one surface's region to another
     void CopySurface(const Surface& src_surface, const Surface& dst_surface,
                      SurfaceInterval copy_interval);
+
+    // Diagnostic count of successful alternate CopySurface backend calls only.
+    // Separate from alias-remap totals; no guest-state or resource ownership meaning.
+    u64 NativeShaderSurfaceCopyCalls() const { return native_shader_surface_copy_calls; }
+    u64 NativeCopyTexSurfaceCopyCalls() const { return native_copytex_surface_copy_calls; }
+
+    // Bounded diagnostic observations only; no lifetime extension or GL query.
+    bool ValidationCopyTracePresent() const { return validation_copy_trace != nullptr; }
+    void ClearValidationCopyDrawAttachments();
+    void RecordValidationCopyDrawAttachments(const Surface& color, const Surface& depth);
 
     /// Load a texture from 3DS memory to OpenGL and cache it (if not already cached)
     Surface GetSurface(const SurfaceParams& params, ScaleMatch match_res_scale,
@@ -243,8 +261,40 @@ public:
     Surface GetTextureSurface(const Pica::TexturingRegs::FullTextureConfig& config);
     Surface GetTextureSurface(const Pica::Texture::TextureInfo& info, u32 max_level = 0);
 
+    // Experimental draw-local lease only. Neither API acquires/validates a texture
+    // nor changes logical destination validity. Caller owns opt-in/shader/NV gates.
+    struct NearestBorrowLease {
+        Surface owner;
+        GLuint handle=0;
+        SurfaceParams owner_params{}, logical_params{};
+        Pica::Texture::TextureInfo info{};
+        SurfaceInterval read_interval{};
+        NearestBorrow::Rect read_rect{}, write_rect{}, logical_read{};
+        std::array<s32,4> view{}, crop{};
+        u64 registration_generation=0;
+    };
+    std::optional<NearestBorrowLease> DescribeNearestBorrow(
+        const Surface& intended_color, const Pica::Texture::TextureInfo& info, u32 max_level,
+        NearestBorrow::Rect logical_read, NearestBorrow::Rect conservative_write) const;
+    bool RevalidateNearestBorrow(const NearestBorrowLease& lease, const Surface& current_color,
+        GLuint current_color_attachment, GLuint unit0_binding,
+        std::span<const GLuint> other_sampled_handles, bool aliases_complete) const;
+
+    // Pure cache-state body shared with ROM/GL-free original-data fixtures. Uses
+    // actual SurfaceParams and CachedSurface interval validity, never mock callbacks.
+    static std::optional<NearestBorrowLease> DescribeNearestBorrowState(
+        const Surface& intended_color, const Pica::Texture::TextureInfo& info, u32 max_level,
+        NearestBorrow::Rect logical_read, NearestBorrow::Rect conservative_write,
+        bool pending_removal, u64 registration_generation);
+    static bool RevalidateNearestBorrowState(const NearestBorrowLease& lease,
+        const Surface& current_color, GLuint current_color_attachment, GLuint unit0_binding,
+        std::span<const GLuint> other_sampled_handles, bool aliases_complete,
+        bool pending_removal, u64 registration_generation);
+
     /// Get a texture cube based on the texture configuration
     const CachedTextureCube& GetTextureCube(const TextureCubeConfig& config);
+
+    GLuint GetTextureCopyHandle(const Surface& surface);
 
     /// Get the color and depth surfaces based on the framebuffer configuration
     SurfaceSurfaceRect_Tuple GetFramebufferSurfaces(bool using_color_fb, bool using_depth_fb,
@@ -260,7 +310,10 @@ public:
     void FlushRegion(PAddr addr, u32 size, const Surface& flush_surface = nullptr);
 
     /// Mark region as being invalidated by region_owner (nullptr if 3DS memory)
-    void InvalidateRegion(PAddr addr, u32 size, const Surface& region_owner);
+    bool ValidationCopyTracingEnabled() const { return validation_copy_trace != nullptr; }
+    void InvalidateRegion(PAddr addr, u32 size, const Surface& region_owner,
+                          SurfaceInvalidationOrigin origin = SurfaceInvalidationOrigin::Unknown,
+                          const SurfaceInvalidationContext* context = nullptr);
 
     /// Flush all cached resources tracked by this cache manager
     void FlushAll();
@@ -273,6 +326,9 @@ public:
     void SetScaleFactor(u16 scale);
 
 private:
+    void ObserveFramebufferSelection(const SurfaceParams& original, const SurfaceParams& effective,
+        const Surface& legacy, const Surface& depth, const Common::Rectangle<u32>& color_rect,
+        const Common::Rectangle<u32>& depth_rect, SurfaceInterval viewport, bool depth_requested);
     void DuplicateSurface(const Surface& src_surface, const Surface& dest_surface);
 
     /// Update surface's texture for given region when necessary
@@ -344,8 +400,11 @@ private:
     }
     bool trace_flushes = false;
     bool retain_small_cpu_writes = false;
+    bool tight_framebuffer_backing = false;
     bool gpu_surface_remap = false;
     std::unique_ptr<SurfaceRemapper> surface_remapper;
+    u64 native_shader_surface_copy_calls = 0;
+    u64 native_copytex_surface_copy_calls = 0;
     bool TryRemapSurface(const Surface& destination, const SurfaceParams& params,
                          SurfaceInterval* remapped_interval = nullptr,
                          const SurfaceInterval* requested_interval = nullptr);

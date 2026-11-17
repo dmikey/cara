@@ -74,6 +74,17 @@ static const std::array<std::array<int, 5>, Settings::NativeAnalog::NumAnalogs> 
 }};
 
 void Config::ReadValues() {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    // Same conservative atlas/upload preset as the iOS shell; explicit overrides survive.
+    for (const auto& value : {std::pair{"CARA_GPU_INDEXED_INPUTS","1"},
+         {"CARA_GPU_PACKED_INPUTS","1"}, {"CARA_GPU_SURFACE_REMAP","1"},
+         {"CARA_GPU_DEPTH_REINTERPRET","1"}, {"CARA_MAC_GPU_DEPTH_REINTERPRET","1"},
+         {"CARA_VS_UNIFORM_REUSE","1"}, {"CARA_GL_STATE_REUSE","1"},
+         {"CARA_VERTEX_UPLOAD_BANK_MIB","80"}, {"CARA_VERTEX_UPLOAD_REUSE","1"},
+         {"CARA_VERTEX_UPLOAD_ORDER_REUSE","1"}, {"CARA_VERTEX_INDEX_CACHE","1"}})
+        if (!std::getenv(value.first)) setenv(value.first,value.second,0);
+    // CARA_RAW_DEPTH and CARA_UNSNAPPED_VERTICES remain absent by default.
+#endif
     // Controls
     // TODO: add multiple input profile support
     for (int i = 0; i < Settings::NativeButton::NumButtons; ++i) {
@@ -116,6 +127,11 @@ void Config::ReadValues() {
     v.use_gles = false;
     v.use_hw_renderer = sdl2_config->GetBoolean("Renderer", "use_hw_renderer", false);
     v.use_hw_shader = sdl2_config->GetBoolean("Renderer", "use_hw_shader", false);
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    // This explicitly selected developer binary exercises the hardware atlas path.
+    v.use_hw_renderer=true; v.use_hw_shader=true; v.use_separable_shader=false;
+    v.allow_shadow=false; v.disable_clip_coef=false;
+#endif
     v.resolution_factor = 1;
     v.use_frame_limit = true;
     v.frame_limit = 100;
@@ -139,6 +155,14 @@ void Config::ReadValues() {
     v.use_virtual_sd = true;
     v.region_value = Settings::REGION_VALUE_AUTO_SELECT;
     const auto* diagnostic = std::getenv("CARA_NATIVE_DIAGNOSTICS");
+    // Explicit opt-in for ordinary play or matched diagnostic cache regressions.
+    // Absent mode retains the existing cache-disabled diagnostic/default policy.
+    if (const char* cache = std::getenv("CARA_NATIVE_SHADER_CACHE")) {
+        const std::string request(cache);
+        if (request != "0" && request != "1")
+            throw std::runtime_error("CARA_NATIVE_SHADER_CACHE must be 0 or 1");
+        v.use_shader_cache = request == "1";
+    }
     v.init_clock = diagnostic && std::string(diagnostic) == "1" ? Settings::InitClock::FixedTime
                                                                 : Settings::InitClock::SystemTime;
     v.init_time = 946684801;

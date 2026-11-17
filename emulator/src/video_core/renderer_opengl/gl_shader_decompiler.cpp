@@ -261,10 +261,11 @@ public:
                   const Pica::Shader::ProgramCode& program_code,
                   const Pica::Shader::SwizzleData& swizzle_data, u32 main_offset,
                   const RegGetter& inputreg_getter, const RegGetter& outputreg_getter,
-                  u8 sanitize_mul)
+                  u8 sanitize_mul, bool isolated_dispatch)
         : subroutines(subroutines), program_code(program_code), swizzle_data(swizzle_data),
           main_offset(main_offset), inputreg_getter(inputreg_getter),
-          outputreg_getter(outputreg_getter), sanitize_mul(sanitize_mul) {
+          outputreg_getter(outputreg_getter), sanitize_mul(sanitize_mul),
+          isolated_dispatch(isolated_dispatch) {
 
         Generate();
     }
@@ -863,16 +864,23 @@ float rsq_safe(float x) {
 #if defined(CARA_IOS_GLES) || defined(__APPLE__)
                 // Apple's GLES and desktop GL linkers crash on some switch/fallthrough trees.
                 // A single-iteration loop preserves switch breaks and case fallthrough.
-                shader.AddLine("do {");
-                shader.AddLine("bool cara_case_active = false;");
+                if (!isolated_dispatch) {
+                    shader.AddLine("do {");
+                    shader.AddLine("bool cara_case_active = false;");
+                }
 #else
                 shader.AddLine("switch (jmp_to) {");
 #endif
 
                 for (auto label : labels) {
 #if defined(CARA_IOS_GLES) || defined(__APPLE__)
-                    shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) cara_case_active = true;");
-                    shader.AddLine("if (cara_case_active) {");
+                    if (isolated_dispatch) {
+                        shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) {");
+                        shader.AddLine("do {");
+                    } else {
+                        shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) cara_case_active = true;");
+                        shader.AddLine("if (cara_case_active) {");
+                    }
 #else
                     shader.AddLine("case " + std::to_string(label) + "u: {");
 #endif
@@ -888,13 +896,24 @@ float rsq_safe(float x) {
                         labels.emplace(compile_end);
                     }
 
+#if defined(CARA_IOS_GLES) || defined(__APPLE__)
+                    if (isolated_dispatch) {
+                        // INSIDE local do: a taken existing JMP break skips fallthrough.
+                        // Existing nested PICA loops remain the nearest targets of their breaks.
+                        const auto fallthrough_it = labels.upper_bound(label);
+                        const u32 fallthrough = fallthrough_it == labels.end() ? 0xffffffffu : *fallthrough_it;
+                        shader.AddLine("jmp_to = " + std::to_string(fallthrough) + "u;");
+                        shader.AddLine("} while (false);");
+                        shader.AddLine("continue;");
+                    }
+#endif
                     --shader.scope;
                     shader.AddLine("}");
                 }
 
 #if defined(CARA_IOS_GLES) || defined(__APPLE__)
                 shader.AddLine("return false;");
-                shader.AddLine("} while (false);");
+                if (!isolated_dispatch) shader.AddLine("} while (false);");
 #else
                 shader.AddLine("default: return false;");
                 shader.AddLine("}");
@@ -921,6 +940,7 @@ private:
     const RegGetter& inputreg_getter;
     const RegGetter& outputreg_getter;
     const u8 sanitize_mul;
+    const bool isolated_dispatch;
 
     ShaderWriter shader;
 };
@@ -941,7 +961,8 @@ bool exec_shader();
 std::optional<ProgramResult> DecompileProgram(const Pica::Shader::ProgramCode& program_code,
                                               const Pica::Shader::SwizzleData& swizzle_data,
                                               u32 main_offset, const RegGetter& inputreg_getter,
-                                              const RegGetter& outputreg_getter, u8 sanitize_mul) {
+                                              const RegGetter& outputreg_getter, u8 sanitize_mul,
+                                              bool isolated_dispatch) {
 
     try {
         auto subroutines = ControlFlowAnalyzer(program_code, main_offset).MoveSubroutines();
@@ -953,7 +974,7 @@ std::optional<ProgramResult> DecompileProgram(const Pica::Shader::ProgramCode& p
             return inputreg_getter(index);
         };
         GLSLGenerator generator(subroutines, program_code, swizzle_data, main_offset,
-                                observe_input, outputreg_getter, sanitize_mul);
+                                observe_input, outputreg_getter, sanitize_mul, isolated_dispatch);
         auto code = generator.MoveShaderCode();
         return {ProgramResult{std::move(code), unknown_input ? u16{0xffff} : input_mask}};
     } catch (const DecompileFail& exception) {

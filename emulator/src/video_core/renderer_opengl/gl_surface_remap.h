@@ -18,11 +18,13 @@ public:
     // destination surface itself may extend beyond it.
     bool RemapBytes(GLuint source_texture, const SurfaceParams& source,
                     GLuint destination_texture, const SurfaceParams& destination,
-                    const Common::Rectangle<u32>& destination_rect);
+                    const Common::Rectangle<u32>& destination_rect,
+                    bool native_rgba8 = false);
 
     bool RemapRGBA8(GLuint source_texture, const SurfaceParams& source,
                    GLuint destination_texture, const SurfaceParams& destination,
-                   const Common::Rectangle<u32>& destination_rect);
+                   const Common::Rectangle<u32>& destination_rect,
+                    bool native_rgba8 = false);
 
 private:
     bool Initialize();
@@ -34,6 +36,7 @@ private:
     GLint destination_layout_location = -1;
     GLint byte_offset_location = -1;
     GLint bytes_per_pixel_location = -1;
+    GLint native_reverse_location = -1;
 };
 
 } // namespace OpenGL

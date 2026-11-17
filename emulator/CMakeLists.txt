@@ -81,10 +81,26 @@ if (CARA_SOFTWARE_PRESENTATION)
     add_definitions(-DCARA_SOFTWARE_PRESENTATION=1)
 endif()
 
+# Developer-only reuse of the atlas vertex path through a real native GL4.1 context.
+# This alias changes shared layouts, so it must apply to every translation unit.
+option(CARA_MAC_ATLAS_PIPELINE "Prototype atlas vertex pipeline on native macOS OpenGL4.1" OFF)
+if (CARA_MAC_ATLAS_PIPELINE)
+    if (NOT APPLE OR ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS" OR NOT CARA_MAC_SDL_DEV_HOST)
+        message(FATAL_ERROR "Mac atlas prototype requires native Apple CARA_MAC_SDL_DEV_HOST")
+    endif()
+    if (CARA_SOFTWARE_PRESENTATION)
+        message(FATAL_ERROR "Mac atlas prototype requires hardware presentation")
+    endif()
+    add_definitions(-DCARA_MAC_ATLAS_PIPELINE=1 -DCARA_IOS_GLES=1)
+endif()
+
 # Private storage-density prototype; src configures a shared layout header.
 option(CARA_FASTINTERP_COMPACT_DECODED "Prototype 16-byte interpreter decoded records" OFF)
 
 option(CARA_ENABLE_JIT "Build CPU and host shader JIT backends" OFF)
+if (CARA_MAC_ATLAS_PIPELINE AND CARA_ENABLE_JIT)
+    message(FATAL_ERROR "Mac atlas prototype requires CARA_ENABLE_JIT=OFF")
+endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(CARA_ENABLE_JIT OFF CACHE BOOL "Build CPU and host shader JIT backends" FORCE)
 endif()

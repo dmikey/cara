@@ -523,6 +523,7 @@ file(GLOB_RECURSE CARA_STATE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/core/*.inc"
     "${CMAKE_SOURCE_DIR}/src/audio_core/*.cpp" "${CMAKE_SOURCE_DIR}/src/audio_core/*.h"
     "${CMAKE_SOURCE_DIR}/src/video_core/*.cpp" "${CMAKE_SOURCE_DIR}/src/video_core/*.h"
+    "${CMAKE_SOURCE_DIR}/src/video_core/*.inc"
     "${CMAKE_SOURCE_DIR}/src/common/*.cpp" "${CMAKE_SOURCE_DIR}/src/common/*.h"
     "${CMAKE_SOURCE_DIR}/src/network/*.cpp" "${CMAKE_SOURCE_DIR}/src/network/*.h")
 # Build dates and branch names do not change the serialized engine layout.
@@ -530,6 +531,9 @@ list(FILTER CARA_STATE_SOURCES EXCLUDE REGEX "/common/scm_rev\\.cpp$")
 list(SORT CARA_STATE_SOURCES)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CARA_STATE_SOURCES})
 set(CARA_STATE_SIGNATURE "cara-state-1;${CMAKE_SYSTEM_NAME};${CMAKE_CXX_COMPILER_ID};${CMAKE_CXX_COMPILER_VERSION};${CMAKE_OSX_ARCHITECTURES};${CMAKE_SYSTEM_PROCESSOR};${CMAKE_SIZEOF_VOID_P}")
+if (CARA_MAC_ATLAS_PIPELINE)
+    string(APPEND CARA_STATE_SIGNATURE ";native-mac-atlas-gl41-v1")
+endif()
 foreach(CARA_STATE_SOURCE IN LISTS CARA_STATE_SOURCES)
     file(SHA256 "${CARA_STATE_SOURCE}" CARA_STATE_FILE_HASH)
     string(APPEND CARA_STATE_SIGNATURE ";${CARA_STATE_FILE_HASH}")

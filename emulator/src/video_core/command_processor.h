@@ -5,6 +5,8 @@
 #pragma once
 
 #include <type_traits>
+#include <iosfwd>
+#include <string>
 #include "common/bit_field.h"
 #include "common/common_types.h"
 
@@ -34,5 +36,7 @@ static_assert(sizeof(CommandHeader) == sizeof(u32), "CommandHeader has incorrect
 
 void ProcessCommandList(PAddr list, u32 size);
 u64 TakeExperimentalP3DNanoseconds();
+void WriteShaderStreamBatchJSON(std::ostream& out);
+bool RunShaderStreamBatchSelfTest(std::string& result);
 
 } // namespace Pica::CommandProcessor

@@ -134,6 +134,15 @@ ResultStatus AppLoader_NCCH::LoadExec(std::shared_ptr<Kernel::Process>& process)
                 static_cast<Kernel::ResourceLimitCategory>(
                     overlay_ncch->exheader_header.arm11_system_local_caps.resource_limit_category));
 
+        // PM normally applies the CPU-time descriptor before application launch.
+        const auto& cpu_descriptor = overlay_ncch->exheader_header.arm11_system_local_caps
+                                         .resource_limit_descriptor[0];
+        if (process->resource_limit == Core::System::GetInstance().Kernel().ResourceLimit()
+                                           .GetForCategory(Kernel::ResourceLimitCategory::APPLICATION)) {
+            Core::System::GetInstance().Kernel().ConfigureOld3dsSyscore(
+                static_cast<u16>(cpu_descriptor[0]) | (static_cast<u16>(cpu_descriptor[1]) << 8));
+        }
+
         // Set the default CPU core for this process
         process->ideal_processor =
             overlay_ncch->exheader_header.arm11_system_local_caps.ideal_processor;

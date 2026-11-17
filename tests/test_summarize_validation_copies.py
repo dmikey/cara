@@ -59,7 +59,75 @@ def fixture():
                     dict(fill=False, src=SUMMARY.layout(c['src']), dst=SUMMARY.layout(c['dst']), totals=total([c]))])
 
 
+def fixture_v2():
+    report = fixture()
+    report['schema_version'] = 2
+    report['unknown_gpu_owner_events'] = 1
+    draw = dict(mode=3, scale=1, shadow=False, color_write=True, depth_write=False,
+                has_stencil=False, stencil_test=False, depth_test=False, depth_mask=False,
+                depth_surface_write=False, damage_narrowing_active=False,
+                color_mask=15, stencil_mask=0, viewport_damage=[0, 0, 8, 8],
+                actual_damage=[0, 0, 8, 8], shader_scissor=[16, 16, 20, 20])
+    for event in report['details']:
+        for side in ('src', 'dst'):
+            s = event[side]
+            observed = dict(serial=1, frame=299, range=[4096, 4160], origin=2,
+                            gpu_owner=True, owner_allocation_id=1, owner=copy.deepcopy(s),
+                            draw=copy.deepcopy(draw))
+            s['last_invalidation_event'] = copy.deepcopy(observed)
+            s['last_owner_write'] = copy.deepcopy(observed)
+    row = dict(origin=2, eligibility=6, gpu_owner=True,
+               owner_layout=SUMMARY.layout(report['details'][0]['src']),
+               totals=dict(calls=1, actual_interval_bytes=256, hypothetical_interval_bytes=0,
+                           hypothetical_reduction_bytes=256, integer_saturations=0))
+    cpu = dict(origin=1, eligibility=0, gpu_owner=False, owner_layout=None,
+               totals=dict(calls=1, actual_interval_bytes=8, hypothetical_interval_bytes=8,
+                           hypothetical_reduction_bytes=0, integer_saturations=0))
+    overflow = dict(calls=1, actual_interval_bytes=128, hypothetical_interval_bytes=128,
+                    hypothetical_reduction_bytes=0, integer_saturations=0)
+    total = {k: row['totals'][k] + cpu['totals'][k] + overflow[k] for k in SUMMARY.DAMAGE_FIELDS}
+    report['hypothetical_damage'] = dict(
+        scope='top_level_invalidation_logical_intervals_not_copy_traffic',
+        totals=total, overflow=overflow, buckets=[row, cpu], actual_min_frame=300, actual_max_frame=300)
+    return report
+
+
 class CopySummaryTests(unittest.TestCase):
+    def test_v1_and_v2_keep_copy_and_hypothetical_denominators_separate(self):
+        self.assertNotIn('hypothetical_damage', SUMMARY.summarize(fixture()))
+        result = SUMMARY.summarize(fixture_v2())
+        self.assertEqual(result['totals']['calls'], 4)
+        self.assertEqual(result['hypothetical_damage']['totals']['calls'], 3)
+        self.assertEqual(result['hypothetical_damage']['totals']['hypothetical_reduction_bytes'], 256)
+        self.assertIn('not copied bytes', result['hypothetical_damage']['limitation'])
+        self.assertFalse(result['chronological_details']['unbiased_sample'])
+
+    def test_v2_rejects_bad_owner_serial_draw_and_missing_provenance(self):
+        for mutation in ('missing', 'serial', 'owner', 'origin', 'draw'):
+            report = fixture_v2()
+            s = report['details'][0]['src']
+            if mutation == 'missing': del s['last_owner_write']
+            elif mutation == 'serial': s['last_invalidation_event']['serial'] = 2
+            elif mutation == 'owner': s['last_owner_write']['owner_allocation_id'] = 2
+            elif mutation == 'origin': s['last_owner_write']['origin'] = 1
+            else: s['last_owner_write']['draw']['depth_mask'] = 1
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                SUMMARY.summarize(report)
+
+    def test_v2_hypothetical_bucket_overflow_saturation_and_eligibility(self):
+        for mutation in ('arithmetic', 'counter', 'capacity', 'saturated', 'ineligible', 'cpu', 'duplicate'):
+            report = fixture_v2()
+            ledger = report['hypothetical_damage']
+            if mutation == 'arithmetic': ledger['totals']['hypothetical_interval_bytes'] += 1
+            elif mutation == 'counter': ledger['totals']['calls'] += 1
+            elif mutation == 'capacity': ledger['buckets'].pop()
+            elif mutation == 'saturated': ledger['totals']['integer_saturations'] = 1
+            elif mutation == 'ineligible': ledger['buckets'][0]['eligibility'] = 7
+            elif mutation == 'cpu': ledger['buckets'][1]['origin'] = 2
+            else: ledger['buckets'][1] = copy.deepcopy(ledger['buckets'][0])
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                SUMMARY.summarize(report)
+
     def test_whole_window_ranking_keeps_overflow_and_clock_failures(self):
         result = SUMMARY.summarize(fixture())
         self.assertEqual(result['totals']['calls'], 4)
@@ -122,7 +190,7 @@ class CopySummaryTests(unittest.TestCase):
                 SUMMARY.summarize(report)
 
     def test_schema_capacities_and_duplicate_layouts_are_rejected(self):
-        for key, value in [('schema_version', True), ('schema_version', 2), ('detail_capacity', 0),
+        for key, value in [('schema_version', True), ('schema_version', 3), ('detail_capacity', 0),
                            ('common_counters_required', True), ('frame_clock', 'common'),
                            ('actual_min_frame', None), ('bucket_capacity', 1)]:
             report = fixture()

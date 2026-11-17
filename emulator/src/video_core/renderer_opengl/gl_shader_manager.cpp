@@ -1,3 +1,7 @@
+#include "gl_shader_suffix_sharing.h"
+#include "gl_native_quaternion_geometry.h"
+#include "video_core/renderer_opengl/gl_vars.h"
+#include <stdexcept>
 // Modified for Cara on 2026-11-13; see NOTICE for attribution.
 // Copyright 2018 Citra Emulator Project
 // Licensed under GPLv2 or any later version
@@ -7,6 +11,8 @@
 #include "video_core/renderer_opengl/gl_vertex_input_usage.h"
 #include "video_core/renderer_opengl/gl_shader_decompiler.h"
 #include <algorithm>
+#include <atomic>
+#include <sstream>
 #include <cstdlib>
 #include <chrono>
 #include <fstream>
@@ -19,6 +25,7 @@
 #include <unordered_set>
 #include "core/cache_file.h"
 #include "core/settings.h"
+#include "video_core/renderer_opengl/gl_fragment_lighting_ablation.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
 
@@ -135,6 +142,8 @@ public:
     }
 
     bool IsValid() const { return deferred_type || (separable ? program.handle : shader.handle); }
+    // Diagnostics must never compile a deferred stage merely to inspect it.
+    GLuint DiagnosticShaderHandle() const { return separable || deferred_type ? 0 : shader.handle; }
     const std::string& GetSource() const { return source; }
     u64 GetSourceDigest() const { return source_digest; }
     GLuint GetHandle() {
@@ -165,18 +174,68 @@ private:
 
 class ShaderProgramManager::Impl {
 public:
+    void ConfigureNativeShaderDispatch() {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        const char* flag=std::getenv("CARA_NATIVE_ISOLATED_SHADER_DISPATCH");
+        if(!flag || std::strcmp(flag,"1")!=0) return;
+        GLint major=0,minor=0;
+        if(!GLES && !separable) {
+            glGetIntegerv(GL_MAJOR_VERSION,&major);glGetIntegerv(GL_MINOR_VERSION,&minor);
+        }
+        native_dispatch_enabled=!GLES && !separable && (major>4 || (major==4 && minor>=1));
+        if(!native_dispatch_enabled) {
+            LOG_WARNING(Render_OpenGL,"Native isolated PICA dispatch requested but unsupported; retaining existing GPU route");
+            return;
+        }
+        LOG_INFO(Render_OpenGL,"Native isolated PICA shader dispatch enabled; independent geometry selection, all GPU block bodies retained");
+#endif
+    }
+
+    void ConfigureNativeQuaternionGeometry() {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        const char* flag=std::getenv("CARA_NATIVE_TRIANGLE_QUATERNION_GEOMETRY");
+        if(!flag || std::strcmp(flag,"1")!=0) return;
+        NativeQuaternionGeometry::Limits c;
+        if(!GLES && !separable) {
+            glGetIntegerv(GL_MAJOR_VERSION,&c.major);glGetIntegerv(GL_MINOR_VERSION,&c.minor);
+            glGetIntegerv(GL_MAX_GEOMETRY_OUTPUT_VERTICES,&c.vertices);
+            glGetIntegerv(GL_MAX_GEOMETRY_INPUT_COMPONENTS,&c.input);
+            glGetIntegerv(GL_MAX_GEOMETRY_OUTPUT_COMPONENTS,&c.output);
+            glGetIntegerv(GL_MAX_GEOMETRY_TOTAL_OUTPUT_COMPONENTS,&c.total);
+            glGetIntegerv(GL_MAX_CLIP_DISTANCES,&c.clips);
+            glGetIntegerv(GL_MAX_VERTEX_OUTPUT_COMPONENTS,&c.vertex_output);
+        }
+        native_geometry_enabled=NativeQuaternionGeometry::Supported(!GLES,separable,c);
+        if(!native_geometry_enabled) {
+            LOG_WARNING(Render_OpenGL,"Native quaternion geometry requested but unsupported; retaining existing GPU route");
+            return;
+        }
+        const auto source=GenerateNativeQuaternionGeometryShader();
+        native_geometry_shader.Create(source,GL_GEOMETRY_SHADER,Common::ComputeHash64(source.data(),source.size()));
+        if(!native_geometry_shader.IsValid()) throw std::runtime_error("Native quaternion geometry shader compilation failed; no CPU fallback");
+        LOG_INFO(Render_OpenGL,"Native quaternion geometry enabled: GL {}.{}, GS vertices {}, input {}, output {}, total {}, clips {}; GPU vertex-once/triangle sign route",c.major,c.minor,c.vertices,c.input,c.output,c.total,c.clips);
+#endif
+    }
+
     explicit Impl(bool separable)
         : separable(separable), trivial_vertex_shader(separable),
-          trivial_geometry_shader(separable) {
+          trivial_geometry_shader(separable), native_geometry_shader(separable) {
+        ConfigureNativeShaderDispatch();
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        // Immutable per manager, sampled before any cache load. Ordinary launches OFF.
+        suffix_sharing_policy = ShaderSuffixSharing::Requested(
+            std::getenv("CARA_NATIVE_SHADER_SUFFIX_SHARING"), std::getenv("CARA_NATIVE_DIAGNOSTICS"));
+#endif
+        ConfigureNativeQuaternionGeometry();
         if (separable) {
             pipeline.Create();
         }
 #ifdef CARA_IOS_GLES
-        else if (Settings::values.use_shader_cache) {
+        else if (NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
             LoadIOSPipelines();
         }
 #else
-        else if (Settings::values.use_shader_cache) {
+        else if (NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
             u64 size = LoadProgramCache();
             if (size > 0) {
                 std::string log{"Load Shader Cache"};
@@ -189,12 +248,35 @@ public:
             }
         }
 #endif
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        if (VertexProvenance::Enabled()) {
+            static std::atomic<u64> next_session{1};
+            vertex_provenance=std::make_unique<VertexProvenance::Ledger<>>(next_session.fetch_add(1));
+        }
+#endif
         const auto trivial = GenerateTrivialVertexShader(separable);
         trivial_vertex_shader.Create(trivial, GL_VERTEX_SHADER, 0, CanDeferIOSStage(trivial));
     }
 
     ~Impl() {
-        if (!separable && Settings::values.use_shader_cache) {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        if (vertex_provenance) {
+            for(std::size_t i=0;i<vertex_provenance->size;++i) {
+                std::ostringstream row;
+                VertexProvenance::WriteRecord(row,"program_final",vertex_provenance->session,
+                                               vertex_provenance->records[i]);
+                LOG_INFO(Render_OpenGL,"CARA_VERTEX_PROVENANCE {}",row.str());
+            }
+            u64 unknown=0;
+            for(std::size_t i=0;i<vertex_provenance->size;++i)
+                if(!vertex_provenance->records[i].verified)unknown+=vertex_provenance->records[i].draw_attempts;
+            LOG_INFO(Render_OpenGL,
+                "CARA_VERTEX_PROVENANCE {{\"event\":\"summary\",\"session\":{},\"program_records\":{},\"capacity\":256,\"draw_attempts\":{},\"unknown_draw_attempts\":{},\"overflow_draw_attempts\":{},\"truncated\":{}}}",
+                vertex_provenance->session,vertex_provenance->size,vertex_provenance->total_draw_attempts,
+                unknown,vertex_provenance->overflow_draw_attempts,vertex_provenance->overflow_draw_attempts?"true":"false");
+        }
+#endif
+        if (!separable && NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
 #ifdef CARA_IOS_GLES
             SaveIOSPipelines();
 #else
@@ -228,6 +310,14 @@ public:
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
                                      unsigned ios_indexed_inputs, u16 selected_input_mask) {
         bool result = false;
+        const bool native_geometry = NativeQuaternionGeometry::Selected(native_geometry_enabled,ios_indexed_inputs) &&
+            regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No;
+        native_geometry_selected=native_geometry;
+        const bool native_dispatch = NativeQuaternionGeometry::Selected(native_dispatch_enabled,ios_indexed_inputs) &&
+            regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No;
+        native_dispatch_selected=native_dispatch;
+        const bool native_suffix_sharing = suffix_sharing_policy && native_dispatch && !native_geometry &&
+            !GLES && !separable && ios_indexed_inputs < 3;
         const PicaVSConfig key(regs, setup);
         u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
 #ifdef CARA_IOS_GLES
@@ -237,16 +327,27 @@ public:
         key_hash ^= Common::ComputeHash64(&ios_indexed_inputs, sizeof(ios_indexed_inputs));
         // Output semantics are part of a fused ES vertex program, not a separate GS.
         key_hash ^= Common::ComputeHash64(&ios_output, sizeof(ios_output));
-        if (failed_ios_vertex_shaders.count(key_hash)) return false;
+        if(native_geometry) {const u32 option=NativeQuaternionGeometry::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
+        if(native_dispatch) {const u32 option=0x4e494431;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
+        if(native_suffix_sharing) {const u32 option=ShaderSuffixSharing::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
+        if (failed_ios_vertex_shaders.count(key_hash)) {native_geometry_selected=false;native_dispatch_selected=false;return false;}
 #endif
         const auto iter_ref = shaders_ref.find(key_hash);
         if (iter_ref == shaders_ref.end()) {
             std::string vs_code = GenerateVertexShader(setup, key, separable
 #ifdef CARA_IOS_GLES
-                , &ios_output, ios_input_mask, ios_indexed_inputs
+                , &ios_output, ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch, native_suffix_sharing
 #endif
             );
             if (vs_code.empty()) {
+#ifdef CARA_IOS_GLES
+                if(native_geometry || native_dispatch) {
+                    const auto ordinary=GenerateVertexShader(setup,key,separable,&ios_output,ios_input_mask,ios_indexed_inputs,true,false);
+                    if(!ordinary.empty()) throw std::runtime_error("Native shader route vertex source generation failed; no CPU fallback");
+                    native_geometry_selected=false;
+                    native_dispatch_selected=false; // Same preexisting unsupported PICA source.
+                }
+#endif
                 LOG_WARNING(Render_OpenGL, "generate programmable vertex shader failed!");
                 current_shaders.vs = nullptr;
             } else {
@@ -256,7 +357,7 @@ public:
                 const char* force_retry = std::getenv("CARA_GPU_TEST_SHADER_RETRY");
                 if (force_retry && std::strcmp(force_retry, "1") == 0) {
                     const auto baseline = GenerateVertexShader(setup, key, separable,
-                        &ios_output, ios_input_mask, ios_indexed_inputs, false);
+                        &ios_output, ios_input_mask, ios_indexed_inputs, false, native_geometry, native_dispatch, native_suffix_sharing);
                     if (baseline != vs_code)
                         vs_code += "\n#error Cara optional shader retry test\n";
                 }
@@ -265,7 +366,7 @@ public:
 #ifdef CARA_IOS_GLES
                 if (!current_shaders.vs) {
                     auto baseline = GenerateVertexShader(setup, key, separable,
-                        &ios_output, ios_input_mask, ios_indexed_inputs, false);
+                        &ios_output, ios_input_mask, ios_indexed_inputs, false, native_geometry, native_dispatch, native_suffix_sharing);
                     if (!baseline.empty() && baseline != vs_code) {
                         LOG_WARNING(Render_OpenGL,
                             "Optional vertex optimization failed; retrying baseline GPU shader");
@@ -274,6 +375,7 @@ public:
                     }
                 }
 #endif
+                if((native_geometry || native_dispatch) && !current_shaders.vs) throw std::runtime_error("Native shader route vertex compilation failed; no CPU fallback");
                 if (current_shaders.vs) {
                     shaders_ref[key_hash] = current_shaders.vs;
                     vertex_cache.emplace(current_shaders.vs->GetHash(), std::move(vs_code));
@@ -302,8 +404,13 @@ public:
         current_shaders.gs = &cached_shader;
     }
 
-    void UseFragmentShader(const Pica::Regs& regs) {
-        const auto key = PicaFSConfig::BuildFromRegs(regs);
+    void UseFragmentShader(const Pica::Regs& regs, bool native_nearest_borrow_tex0) {
+        auto key = PicaFSConfig::BuildFromRegs(regs, native_nearest_borrow_tex0);
+        // Diagnostic feature ablation only: preserve guest registers and all other FS state.
+        // Existing unlit generation leaves fragment colors zero; alpha coverage may change.
+        if (FragmentLightingAblationEnabled()) {
+            key.state.lighting.enable = false;
+        }
         const u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
         auto iter_ref = shaders_ref.find(key_hash);
         if (iter_ref == shaders_ref.end()) {
@@ -318,17 +425,65 @@ public:
         }
     }
 
+    void ObserveBoundVertexProgram(GLuint expected_program, unsigned input_mode) {
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        if (!vertex_provenance) return;
+        const auto* stage=current_shaders.vs;
+        const GLuint managed=stage?stage->DiagnosticShaderHandle():0;
+        bool first=false;
+        auto* record=vertex_provenance->Observe(expected_program,managed,stage?stage->GetHash():0,
+            input_mode,[&](VertexProvenance::Record& row) {
+                if(separable || !managed || !expected_program){row.reason="unsupported_or_missing_program";return;}
+                GLint current=0;glGetIntegerv(GL_CURRENT_PROGRAM,&current);row.current_program=GLuint(current);
+                if(row.current_program!=expected_program){row.reason="current_program_mismatch";return;}
+                GLint linked=0;glGetProgramiv(expected_program,GL_LINK_STATUS,&linked);row.linked=linked==GL_TRUE;
+                if(!row.linked){row.reason="program_not_linked";return;}
+                GLint count=0;glGetProgramiv(expected_program,GL_ATTACHED_SHADERS,&count);
+                if(count<1 || count>8){row.reason="attached_shader_count_unavailable";return;}
+                std::array<GLuint,8> attached{};GLsizei actual_count=0;
+                glGetAttachedShaders(expected_program,attached.size(),&actual_count,attached.data());
+                if(actual_count!=count){row.reason="attached_shader_count_mismatch";return;}
+                unsigned vertex_count=0;
+                for(GLsizei i=0;i<actual_count;++i){GLint type=0;glGetShaderiv(attached[i],GL_SHADER_TYPE,&type);
+                    if(type==GL_VERTEX_SHADER){row.actual_vs=attached[i];++vertex_count;}}
+                if(vertex_count!=1 || row.actual_vs!=managed){row.reason="managed_vertex_shader_mismatch";return;}
+                GLint compiled=0;glGetShaderiv(row.actual_vs,GL_COMPILE_STATUS,&compiled);row.compiled=compiled==GL_TRUE;
+                if(!row.compiled){row.reason="vertex_not_compiled";return;}
+                GLint length=0;glGetShaderiv(row.actual_vs,GL_SHADER_SOURCE_LENGTH,&length);
+                if(length<2 || length>1024*1024){row.reason="source_length_unavailable";return;}
+                try {
+                    std::vector<char> source(static_cast<std::size_t>(length));GLsizei written=0;
+                    glGetShaderSource(row.actual_vs,length,&written,source.data());
+                    if(written<=0 || written>=length){row.reason="source_length_mismatch";return;}
+                    row.source_bytes=written;row.actual_source_hash=Common::ComputeHash64(source.data(),written);
+                    row.decoder=VertexProvenance::Classify(std::string_view(source.data(),written));
+                    if(row.decoder==VertexProvenance::Decoder::Ambiguous){row.reason="ambiguous_decoder_markers";return;}
+                    row.verified=true;row.reason="ok";
+                } catch(const std::exception&) {row.reason="source_capture_allocation_failed";}
+            },first);
+        if(first && record){std::ostringstream row;
+            VertexProvenance::WriteRecord(row,"program_first_use",vertex_provenance->session,*record);
+            LOG_INFO(Render_OpenGL,"CARA_VERTEX_PROVENANCE {}",row.str());}
+        if(!record && !vertex_provenance_overflow_reported){vertex_provenance_overflow_reported=true;
+            LOG_INFO(Render_OpenGL,"CARA_VERTEX_PROVENANCE {{\"event\":\"overflow\",\"session\":{},\"capacity\":256,\"unknown_remaining\":true}}",vertex_provenance->session);}
+#endif
+    }
+
     void UseTrivialVertexShader() {
+        native_geometry_selected=false;
+        native_dispatch_selected=false;
         current_shaders.vs = &trivial_vertex_shader;
     }
 
     void UseTrivialGeometryShader() {
-        current_shaders.gs = &trivial_geometry_shader;
+        current_shaders.gs = native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
     }
 
     void ApplyTo(OpenGLState& state) {
+        // Also covers a programmable-mode change during feedback fallback.
+        if(native_geometry_enabled) current_shaders.gs=native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
 #ifdef CARA_IOS_GLES
-        if (!separable && Settings::values.use_shader_cache) {
+        if (!separable && NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
             ApplyIOSPipeline(state);
             return;
         }
@@ -351,6 +506,7 @@ public:
             u64 hash = Common::ComputeHash64(bundle.data(), bundle.size() * sizeof(u64));
 #ifdef CARA_IOS_GLES
             if (failed_ios_programs.count(hash)) {
+                if(native_geometry_selected || native_dispatch_selected) throw std::runtime_error("Native shader route program previously failed; no CPU fallback");
                 state.draw.shader_program = 0;
                 state.draw.program_pipeline = 0;
                 return;
@@ -364,7 +520,7 @@ public:
                     SetShaderSamplerBindings(cached_program.handle);
                 }
 #ifdef CARA_IOS_GLES
-                else { failed_ios_programs.insert(hash); }
+                else { if(native_geometry_selected || native_dispatch_selected) throw std::runtime_error("Native shader route program link failed; no CPU fallback"); failed_ios_programs.insert(hash); }
 #endif
             }
             state.draw.shader_program = cached_program.handle;
@@ -428,7 +584,7 @@ public:
 
     bool CanDeferIOSStage(const std::string& source) const {
 #ifdef CARA_IOS_GLES
-        if (Settings::values.use_shader_cache) {
+        if (NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
             for (std::size_t i = 0; i < ios_entries.size(); ++i) {
                 const auto& e = ios_entries[i];
                 const auto p = program_cache.find(ios_entry_keys[i]);
@@ -441,7 +597,19 @@ public:
     }
 #ifdef CARA_IOS_GLES
     std::string IOSIdentity() {
-        std::string identity = CARA_SHADER_CACHE_SIGNATURE;
+        // Explicit key/UBO schema identity, independent of a possibly empty prototype SCM string.
+        std::string identity = std::string(CARA_SHADER_CACHE_SIGNATURE) +
+                               "\nnative-nearest-borrow-tex0-key1-common-ubo2";
+        // Reject a different generator route before compiling any saved source.
+        identity += "\ntwo-stage-store-v2";
+#ifdef CARA_MAC_ATLAS_PIPELINE
+        identity += "\nbackend=native-mac-atlas-gl41";
+#else
+        identity += "\nbackend=ios-gles";
+#endif
+        identity += native_geometry_enabled ? "\ngeometry=1" : "\ngeometry=0";
+        identity += native_dispatch_enabled ? "\nisolated-dispatch=1" : "\nisolated-dispatch=0";
+        identity += suffix_sharing_policy ? "\nsuffix-sharing-policy-v1=1" : "\nsuffix-sharing-policy-v1=0";
         for (GLenum key : {GL_VENDOR, GL_RENDERER, GL_VERSION, GL_SHADING_LANGUAGE_VERSION}) {
             const auto value = glGetString(key);
             identity += "\n";
@@ -480,6 +648,15 @@ public:
             !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries)) return;
         const auto start = std::chrono::steady_clock::now();
         unsigned binary_hits = 0, source_links = 0;
+        // A stage shared by several saved programs needs compiling only once.
+        // Keys compare the complete source; separate maps retain stage type.
+        // Lifetime ends after all saved programs have linked on this GL thread.
+        std::unordered_map<std::string, OGLShader> prewarm_vertices, prewarm_fragments;
+        const auto stage = [](auto& stages, const std::string& source, GLenum type) {
+            auto [it, inserted] = stages.try_emplace(source);
+            if (inserted) it->second.Create(source.c_str(), type);
+            return it->second.handle;
+        };
         for (auto& e : ios_entries) {
             ios_bytes += e.vertex.size() + e.fragment.size() + e.binary.size() + 16;
             const auto key = IOSPipelineCache::Key(e.vertex, e.fragment);
@@ -493,10 +670,9 @@ public:
             }
             if (!p.handle) {
                 // Same GL/context thread as ordinary compilation. No background GL context.
-                OGLShader vs, fs;
-                vs.Create(e.vertex.c_str(), GL_VERTEX_SHADER);
-                fs.Create(e.fragment.c_str(), GL_FRAGMENT_SHADER);
-                if (vs.handle && fs.handle) p.Create(false, {vs.handle, fs.handle});
+                const auto vs = stage(prewarm_vertices, e.vertex, GL_VERTEX_SHADER);
+                const auto fs = stage(prewarm_fragments, e.fragment, GL_FRAGMENT_SHADER);
+                if (vs && fs) p.Create(false, {vs, fs});
                 if (p.handle) ++source_links;
                 e.binary.clear(); e.format = 0;
             }
@@ -557,7 +733,7 @@ public:
                 if (!ios_formats.empty()) {
                     GLenum format = 0;
                     std::vector<GLbyte> binary;
-                    p.GetProgramBinary(format, binary);
+                    p.GetProgramBinary(format, binary, IOSPipelineCache::MaxBinary);
                     if (binary.size() <= IOSPipelineCache::MaxBinary &&
                         std::find(ios_formats.begin(), ios_formats.end(), static_cast<GLint>(format)) != ios_formats.end()) {
                         entry.format = format;
@@ -575,6 +751,8 @@ public:
                 }
             }
         }
+        if (!p.handle && (native_geometry_selected || native_dispatch_selected))
+            throw std::runtime_error("Native shader route cached program failed; no CPU fallback");
         // Checkpoint only after a quiet interval, keeping disk writes out of compile bursts.
         if (ios_dirty && std::chrono::steady_clock::now() - ios_last_miss > std::chrono::seconds(2))
             SaveIOSPipelines();
@@ -609,9 +787,9 @@ public:
 #if defined(__APPLE__) && !defined(CARA_IOS_GLES)
     // Desktop Apple GL now lowers switch dispatch like the GLES generator. Never
     // reload older switch-based source from the persistent program cache.
-    static constexpr u32 PROGRAM_CACHE_VERSION = 0xA;
+    static constexpr u32 PROGRAM_CACHE_VERSION = 0xC;
 #else
-    static constexpr u32 PROGRAM_CACHE_VERSION = 0x9;
+    static constexpr u32 PROGRAM_CACHE_VERSION = 0xB;
 #endif
 
     static std::string GetCacheFile() {
@@ -768,6 +946,11 @@ public:
 
 private:
     bool separable;
+    bool native_geometry_enabled=false;
+    bool native_dispatch_enabled=false;
+    bool suffix_sharing_policy=false;
+    bool native_geometry_selected=false;
+    bool native_dispatch_selected=false;
 
     struct {
         OGLShaderStage* vs;
@@ -788,6 +971,7 @@ private:
 
     OGLShaderStage trivial_vertex_shader;
     OGLShaderStage trivial_geometry_shader;
+    OGLShaderStage native_geometry_shader;
     std::unordered_map<u64, OGLShaderStage*> shaders_ref;
 #ifdef CARA_IOS_GLES
     struct IOSStagePair { u64 key = 0; OGLProgram* program = nullptr; };
@@ -806,6 +990,10 @@ private:
     OGLShader feedback_fragment;
     std::unordered_set<u64> failed_ios_vertex_shaders;
     std::unordered_set<u64> failed_ios_programs;
+#endif
+#ifdef CARA_MAC_ATLAS_PIPELINE
+    std::unique_ptr<VertexProvenance::Ledger<>> vertex_provenance;
+    bool vertex_provenance_overflow_reported=false;
 #endif
     std::unordered_map<u64, OGLShaderStage> shaders;
 
@@ -835,8 +1023,13 @@ void ShaderProgramManager::UseTrivialGeometryShader() {
     impl->UseTrivialGeometryShader();
 }
 
-void ShaderProgramManager::UseFragmentShader(const Pica::Regs& regs) {
-    impl->UseFragmentShader(regs);
+bool ShaderProgramManager::UseFragmentShader(const Pica::Regs& regs,
+                                            bool native_nearest_borrow_tex0) {
+    if (native_nearest_borrow_tex0 && !PicaFSConfig::SupportsNativeNearestBorrow(regs)) {
+        return false;
+    }
+    impl->UseFragmentShader(regs, native_nearest_borrow_tex0);
+    return true;
 }
 
 #ifdef CARA_IOS_GLES
@@ -850,6 +1043,10 @@ GLuint ShaderProgramManager::GetIOSVertexFeedbackProgram(const Pica::Regs& regs,
     return impl->GetIOSVertexFeedbackProgram(regs,setup,ios_input_mask);
 }
 #endif
+
+void ShaderProgramManager::ObserveBoundVertexProgram(GLuint expected_program, unsigned input_mode) {
+    impl->ObserveBoundVertexProgram(expected_program,input_mode);
+}
 
 void ShaderProgramManager::ApplyTo(OpenGLState& state) {
     impl->ApplyTo(state);

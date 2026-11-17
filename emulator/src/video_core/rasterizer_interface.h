@@ -29,6 +29,17 @@ public:
     /// Draw the current batch of triangles
     virtual void DrawTriangles() = 0;
 
+    // Immutable per-rasterizer capability, sampled once per logical PICA list.
+    // Other backends stay inactive without depending on any OpenGL flags.
+    bool PicaWriteHooksActive() const noexcept { return pica_write_hooks_active_; }
+
+    // Hook BEFORE backing registers or special port side effects are modified.
+    virtual void BeginPicaCommandList() {}
+    virtual void PrePicaRegisterWrite(u32 id, u32 value, u32 mask) {}
+    virtual void EndPicaCommandList() {}
+    // Explicit visibility/lifecycle fence, before PICA state is reset/restored.
+    virtual void FlushDeferredDraws() {}
+
     /// Notify rasterizer that the specified PICA register has been changed
     virtual void NotifyPicaRegisterChanged(u32 id) = 0;
 
@@ -80,5 +91,11 @@ public:
     /// Handle any config changes, this gets propogated to the backend
     virtual void CheckForConfigChanges() {}
     virtual void OnFrameUpdate() {}
+
+protected:
+    void SetPicaWriteHooksActive(bool active) noexcept { pica_write_hooks_active_ = active; }
+
+private:
+    bool pica_write_hooks_active_ = false;
 };
 } // namespace VideoCore

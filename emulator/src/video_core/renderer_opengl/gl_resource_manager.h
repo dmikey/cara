@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <utility>
 #include <vector>
 #include <glad/glad.h>
@@ -142,7 +143,8 @@ public:
 
     /// binary program
     void Create(GLenum format, const std::vector<GLbyte>& binary);
-    void GetProgramBinary(GLenum& format, std::vector<GLbyte>& binary) const;
+    void GetProgramBinary(GLenum& format, std::vector<GLbyte>& binary,
+                          std::size_t maximum_bytes = 0) const;
 };
 
 class OGLPipeline : private NonCopyable {

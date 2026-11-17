@@ -1,9 +1,12 @@
+#include "video_core/renderer_opengl/gl_driver_transactions.h"
 // Copyright 2026 Cara contributors
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
 #include <limits>
 #include "common/scope_exit.h"
+#include "video_core/renderer_opengl/gl_native_rgba8_remap.h"
+#include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_surface_remap.h"
 
@@ -26,6 +29,7 @@ uniform highp ivec4 source_layout;
 uniform highp ivec4 destination_layout;
 uniform highp int byte_offset;
 uniform highp ivec2 bytes_per_pixel;
+uniform highp int native_reverse;
 out highp vec4 color;
 
 int interleave(int x, int y) {
@@ -76,6 +80,7 @@ void main() {
             source = ivec2(source_pixel % source_layout.z, source_pixel / source_layout.z);
         }
         color = texelFetch(source_texture, source, 0);
+        if (native_reverse != 0) color = color.abgr;
     } else if (bytes_per_pixel.y == 4) {
         color = vec4(guest_byte(offset + 3), guest_byte(offset + 2),
                      guest_byte(offset + 1), guest_byte(offset));
@@ -96,21 +101,34 @@ void main() {
     destination_layout_location = glGetUniformLocation(program.handle, "destination_layout");
     byte_offset_location = glGetUniformLocation(program.handle, "byte_offset");
     bytes_per_pixel_location = glGetUniformLocation(program.handle, "bytes_per_pixel");
+    native_reverse_location = glGetUniformLocation(program.handle, "native_reverse");
     OpenGLState::BindShaderProgram(previous);
     return true;
 }
 
 bool SurfaceRemapper::RemapRGBA8(GLuint source_texture, const SurfaceParams& source,
                                GLuint destination_texture, const SurfaceParams& destination,
-                               const Common::Rectangle<u32>& rectangle) {
+                               const Common::Rectangle<u32>& rectangle, bool native_rgba8) {
     if (source.pixel_format != SurfaceParams::PixelFormat::RGBA8 ||
         destination.pixel_format != SurfaceParams::PixelFormat::RGBA8) return false;
-    return RemapBytes(source_texture, source, destination_texture, destination, rectangle);
+    return RemapBytes(source_texture, source, destination_texture, destination, rectangle, native_rgba8);
 }
 
 bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& source,
                                GLuint destination_texture, const SurfaceParams& destination,
-                               const Common::Rectangle<u32>& rectangle) {
+                               const Common::Rectangle<u32>& rectangle, bool native_rgba8) {
+    if (const auto* bridge=DriverTransactions::Pending())
+        return bridge->sync_bool(DriverTransactions::Kind::Remap,[&] {
+            return RemapBytes(source_texture,source,destination_texture,destination,rectangle,native_rgba8);
+        });
+    const auto native_encoding = PlanNativeRGBA8RemapEncoding(
+        source.pixel_format == SurfaceParams::PixelFormat::RGBA8,
+        destination.pixel_format == SurfaceParams::PixelFormat::RGBA8,
+        source.addr, destination.addr, source.is_tiled, destination.is_tiled);
+    if ((!GLES && (!native_rgba8 || !native_encoding.supported ||
+                   source.type != SurfaceParams::SurfaceType::Color ||
+                   destination.type != SurfaceParams::SurfaceType::Color)) || (GLES && native_rgba8))
+        return false;
     const auto supported = [](const SurfaceParams& surface) {
         return (surface.pixel_format == SurfaceParams::PixelFormat::RGBA8 ||
                 surface.pixel_format == SurfaceParams::PixelFormat::RGB8) &&
@@ -178,6 +196,7 @@ bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& sou
     glUniform1i(byte_offset_location, static_cast<GLint>(byte_offset));
     glUniform2i(bytes_per_pixel_location, source.GetFormatBpp() / 8,
                 destination.GetFormatBpp() / 8);
+    glUniform1i(native_reverse_location, !GLES && native_encoding.reverse_components);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     return glGetError() == GL_NO_ERROR;
 }

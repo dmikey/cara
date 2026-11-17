@@ -1,3 +1,4 @@
+#include "cara/texture_copy_trace.h"
 #include "cara/guest_gpu_trace.h"
 #include "cara/p3d_completion.h"
 // Copyright 2014 Citra Emulator Project
@@ -304,23 +305,33 @@ static void TextureCopy(const Regs::DisplayTransferConfig& config) {
     const PAddr src_addr = config.GetPhysicalInputAddress();
     const PAddr dst_addr = config.GetPhysicalOutputAddress();
 
+    namespace Trace = Cara::TextureCopyTrace;
+    Trace::Request trace({src_addr, dst_addr, config.texture_copy.size,
+        Common::AlignDown(config.texture_copy.size, 16), config.texture_copy.input_width * 16,
+        config.texture_copy.input_gap * 16, config.texture_copy.output_width * 16,
+        config.texture_copy.output_gap * 16, config.flags});
     u8* src_pointer = g_memory->GetPhysicalPointer(src_addr);
     if (!src_pointer) {
+        Trace::SetReason(Trace::Reason::InvalidSource);
         LOG_CRITICAL(HW_GPU, "invalid input address {:#010X}", src_addr);
         return;
     }
 
     u8* dst_pointer = g_memory->GetPhysicalPointer(dst_addr);
     if (!dst_pointer) {
+        Trace::SetReason(Trace::Reason::InvalidDestination);
         LOG_CRITICAL(HW_GPU, "invalid output address {:#010X}", dst_addr);
         return;
     }
 
-    if (VideoCore::Rasterizer()->AccelerateTextureCopy(config))
-        return;
+    {
+        Trace::Scope phase(Trace::Phase::Acceleration);
+        if (VideoCore::Rasterizer()->AccelerateTextureCopy(config)) return;
+    }
 
     u32 remaining_size = Common::AlignDown(config.texture_copy.size, 16);
     if (remaining_size == 0) {
+        Trace::SetReason(Trace::Reason::ZeroSize);
         LOG_CRITICAL(HW_GPU, "zero size. Real hardware freezes on this.");
         return;
     }
@@ -334,26 +345,40 @@ static void TextureCopy(const Regs::DisplayTransferConfig& config) {
     u32 output_width = output_gap == 0 ? remaining_size : config.texture_copy.output_width * 16;
 
     if (input_width == 0) {
+        Trace::SetReason(Trace::Reason::InputWidth);
         LOG_CRITICAL(HW_GPU, "zero input width. Real hardware freezes on this.");
         return;
     }
 
     if (output_width == 0) {
+        Trace::SetReason(Trace::Reason::OutputWidth);
         LOG_CRITICAL(HW_GPU, "zero output width. Real hardware freezes on this.");
         return;
     }
 
     std::size_t contiguous_input_size =
         config.texture_copy.size / input_width * (input_width + input_gap);
-    Memory::RasterizerFlushRegion(config.GetPhysicalInputAddress(),
-                                  static_cast<u32>(contiguous_input_size));
+    if (Trace::current) Trace::current->source_flush_bytes = contiguous_input_size;
+    {
+        Trace::Scope phase(Trace::Phase::SourceCoherence);
+        Memory::RasterizerFlushRegion(config.GetPhysicalInputAddress(),
+                                      static_cast<u32>(contiguous_input_size));
+    }
 
     std::size_t contiguous_output_size =
         config.texture_copy.size / output_width * (output_width + output_gap);
     // Only need to flush output if it has a gap
     const auto FlushInvalidate_fn = (output_gap != 0) ? Memory::RasterizerFlushAndInvalidateRegion
                                                       : Memory::RasterizerInvalidateRegion;
-    FlushInvalidate_fn(config.GetPhysicalOutputAddress(), static_cast<u32>(contiguous_output_size));
+    if (Trace::current) {
+        Trace::current->destination_flush_bytes = contiguous_output_size;
+        Trace::current->destination_flush_mode = output_gap != 0 ? 2 : 1;
+    }
+    {
+        Trace::Scope phase(Trace::Phase::DestinationCoherence);
+        FlushInvalidate_fn(config.GetPhysicalOutputAddress(), static_cast<u32>(contiguous_output_size));
+    }
+    Trace::Scope copy_phase(Trace::Phase::CPUCopy);
 
     u32 remaining_input = input_width;
     u32 remaining_output = output_width;
@@ -361,6 +386,7 @@ static void TextureCopy(const Regs::DisplayTransferConfig& config) {
         u32 copy_size = std::min({remaining_input, remaining_output, remaining_size});
 
         std::memcpy(dst_pointer, src_pointer, copy_size);
+        if (Trace::current) Trace::current->copied_bytes += copy_size;
         src_pointer += copy_size;
         dst_pointer += copy_size;
 
@@ -497,6 +523,7 @@ template void Write<u8>(u32 addr, const u8 data);
 
 /// Update hardware
 static void VBlankCallback(u64 userdata, s64 cycles_late) {
+    Cara::TextureCopyTrace::VBlank();
     Cara::GuestGPUTrace::VBlank(Core::System::GetInstance().CoreTiming());
     VideoCore::Renderer()->SwapBuffers();
 
