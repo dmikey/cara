@@ -9,7 +9,7 @@ Open Cara to choose a game. Opening the app does not start a previous game or re
 - The compatibility interpreter.
 - Keyboard and controller bindings for the game buttons, Circle Pad and C-stick. Select an action and choose **Change binding**. For a controller stick, move right and then down. Escape cancels capture. Save keeps the settings; Cancel leaves the file unchanged.
 
-Changes apply when the next game is opened. Opening Settings during a game does not replace its running CPU or input devices. Guest CPU speed stays at 100%, sound stays enabled, and the hardware renderer retains its complete reference and actual vertex work. CPU JIT is independent of shader JIT, which remains disabled in this Mac product.
+Saving control mappings queues a reload at the game’s next normal input update, so the current game uses the new controls. CPU engine changes apply when the next game is opened; saving Settings does not replace a running CPU. Guest CPU speed stays at 100%, sound stays enabled, and the hardware renderer retains its complete reference and actual vertex work. CPU JIT is independent of shader JIT, which remains disabled in this Mac product.
 
 Settings live in `config/sdl2-config.ini` inside the app's game data directory. Editing CPU and input choices preserves the other sections. A packaged local app uses `~/Library/Application Support/Cara` unless packaged with an explicit data directory. Game saves are separate from CPU-specific save states. State headers continue to reject another backend or incompatible engine build; the app never rewrites state headers to make them load.
 

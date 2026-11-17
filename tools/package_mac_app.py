@@ -30,6 +30,8 @@ def main():
     audit = json.loads((build / audit_name).read_text())
     if audit.get('binary_sha256') != hashlib.sha256((build / 'bin/cara').read_bytes()).hexdigest():
         parser.error('Build binary differs from its audit')
+    if audit.get('jit_enabled') is not cpu_jit or audit.get('shader_jit_enabled') is not False:
+        parser.error('Build audit does not match the requested CPU-only JIT policy')
     if audit.get('forbidden_objects') or audit.get('forbidden_symbols'):
         parser.error('Build audit failed')
     contents = output / 'Contents'
@@ -43,7 +45,7 @@ def main():
     dependencies = bundle(binary, contents / 'Frameworks', args.sdl3_library)
     launcher = macos / 'Cara'
     subprocess.run(['/usr/bin/xcrun', 'clang++', '-std=c++20', '-arch', 'arm64', '-mmacosx-version-min=13.0',
-                    '-fobjc-arc', str(ROOT / 'tools/mac_app_launcher.mm'), '-framework', 'AppKit', '-o', str(launcher)], check=True)
+                    '-fobjc-arc', str(ROOT / 'tools/mac_app_launcher.mm'), '-framework', 'AppKit', '-framework', 'Foundation', '-o', str(launcher)], check=True)
     licenses = resources / 'Licenses'
     licenses.mkdir()
     for name in ('LICENSE', 'NOTICE'):

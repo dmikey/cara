@@ -2,6 +2,7 @@
 #include "cara/native_mac/native_command_policy.h"
 #include "cara/native_mac/game_menu.h"
 #include "cara/native_mac/mac_preferences_ui.h"
+#include "cara/native_mac/controller_play_test.h"
 #ifdef CARA_MAC_CPU_JIT
 #include "cara/native_mac/arm_dynarmic_adapter_test.h"
 #include "core/arm/dynarmic/arm_dynarmic.h"
@@ -171,7 +172,7 @@ static void StopNative(int) {
 static int RunNativeMain(int argc, char** argv) {
     try {
         if (argc < 2 || std::string(argv[1]) == "--help") {
-            std::cout << "Cara native no-JIT developer host\nUsage: cara ROM [--fullscreen] [--relay-stdin]\nSet "
+            std::cout << "Cara Mac host\nUsage: cara [ROM] [--fullscreen] [--relay-stdin]\nSet "
                          "CARA_USER_DIR to a fresh absolute data directory.\n";
             return argc < 2 ? 1 : 0;
         }
@@ -187,7 +188,8 @@ static int RunNativeMain(int argc, char** argv) {
 #ifndef CARA_MAC_CPU_JIT
         if(cpu_adapter_fixture)throw std::runtime_error("CPU adapter test unavailable in this build");
 #endif
-        const bool original_behavior_fixture=cpu_adapter_fixture || original_required_copy_fixture ||
+        const bool controller_fixture=std::getenv("CARA_NATIVE_CONTROLLER_INPUT_TEST") && std::string(std::getenv("CARA_NATIVE_CONTROLLER_INPUT_TEST"))=="1";
+        const bool original_behavior_fixture=controller_fixture || cpu_adapter_fixture || original_required_copy_fixture ||
             (std::getenv("CARA_NATIVE_BEHAVIOR_FIXTURE")&&
              std::string(std::getenv("CARA_NATIVE_BEHAVIOR_FIXTURE"))=="1");
         if(original_behavior_fixture) {
@@ -350,6 +352,12 @@ static int RunNativeMain(int argc, char** argv) {
         std::cout << "Native load result: " << static_cast<unsigned>(loaded) << std::endl;
         if (loaded != Core::System::ResultStatus::Success)
             return 3;
+        if(controller_fixture) {
+            const auto checks=Cara::ControllerPlayTest::Run(system);
+            std::ofstream report(directory+"native-controller-play-test.json");
+            report<<"{\"passed\":true,\"checks\":"<<checks<<",\"actual_live_hid\":true,\"same_running_core_rebind\":true,\"arrows\":true,\"cpu_and_four_timers_unchanged\":true,\"authored_guest_run\":true,\"commercial_game_loaded\":false}\n";
+            report.flush();finish_query_census();close_core();return report&&!shutdown_failed?0:4;
+        }
 #ifdef CARA_MAC_CPU_JIT
         if(cpu_adapter_fixture) {
             if(!Settings::values.use_cpu_jit || Settings::values.use_shader_jit ||

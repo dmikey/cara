@@ -107,5 +107,7 @@ jobs:
           test -f dist/Cara-macOS-arm64-JIT.zip
           test -f dist/Cara-iOS-arm64-GLES3-unsigned.ipa
           (cd dist && sha256sum -- * > ../SHA256SUMS.txt)
+          case "$RELEASE_TAG" in ""|-*) echo "Invalid release tag" >&2; exit 1;; esac
+          git check-ref-format "refs/tags/$RELEASE_TAG"
           gh release view "$RELEASE_TAG" >/dev/null
           gh release upload "$RELEASE_TAG" dist/* SHA256SUMS.txt --clobber

@@ -7,6 +7,8 @@ if (CARA_MAC_SDL_DEV_HOST)
         message(FATAL_ERROR "CARA_MAC_SDL_DEV_HOST requires native macOS")
     endif()
     add_executable(cara
+        native_mac/controller_play_test.cpp
+        native_mac/controller_play_test.h
         native_mac/main.cpp
         native_mac/mac_preferences_ui.mm
         native_mac/mac_preferences_ui.h

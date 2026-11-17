@@ -28,6 +28,13 @@ int main() {
     bool rejected = false;
     try { model.Serialize(false); } catch (const std::invalid_argument&) { rejected = true; }
     assert(rejected);
+    Settings::InputProfile current;
+    current.name="Keep my profile";current.motion_device="motion-custom";
+    current.touch_device="touch-custom";current.udp_input_address="127.0.0.2";
+    auto controls=model.Controls(current);
+    assert(controls.buttons[Settings::NativeButton::A]==Keyboard(SDL_SCANCODE_Q));
+    assert(controls.name==current.name && controls.motion_device==current.motion_device);
+    assert(controls.touch_device==current.touch_device && controls.udp_input_address==current.udp_input_address);
     const auto written = model.Serialize(true);
     Model restored(written);
     assert(restored.backend == "jit");

@@ -8,6 +8,7 @@
 #include <vector>
 #include <SDL_scancode.h>
 #include "common/param_package.h"
+#include "core/settings.h"
 namespace Cara::MacPreferences {
 inline std::string Trim(std::string s) { const auto a=s.find_first_not_of(" \t\r");if(a==s.npos)return {};return s.substr(a,s.find_last_not_of(" \t\r")-a+1); }
 class Ini {
@@ -75,6 +76,15 @@ struct Model {
    a.use_controller=p.Get("engine","")=="sdl";a.controller=a.use_controller?p.Serialize():"";
    if(p.Get("engine","")=="analog_from_button"){a.keyboard_package=p.Serialize();const char* names[]={"up","down","left","right"};for(unsigned d=0;d<4;++d)a.directions[d]=p.Get(names[d],a.directions[d]);}
   }
+ }
+ Settings::InputProfile Controls(const Settings::InputProfile& current)const {
+  auto profile=current;
+  for(const auto& b:buttons)for(std::size_t i=0;i<Settings::NativeButton::mapping.size();++i)
+   if(b.key==Settings::NativeButton::mapping[i])profile.buttons[i]=b.value;
+  Ini saved(Serialize(true));
+  for(unsigned i=0;i<Settings::NativeAnalog::NumAnalogs;++i)
+   profile.analogs[i]=saved.Get("Controls",Settings::NativeAnalog::mapping[i],profile.analogs[i]);
+  return profile;
  }
  std::string Serialize(bool jit)const{ValidateBackend(backend,jit);Ini ini(original);ini.Set("Core","cpu_backend",backend);
   for(const auto& b:buttons)ini.Set("Controls",b.key,b.value);
