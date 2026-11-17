@@ -6,6 +6,7 @@
 #pragma once
 
 #include <memory>
+#include "cara/native_mac/keyboard_latch.h"
 #include <utility>
 #include "core/frontend/emu_window.h"
 
@@ -25,6 +26,7 @@ public:
         Load,
     };
     StateCommand TakeStateCommand();
+    void StateCompleted(bool saved, unsigned slot);
     bool TakeBenchmarkStop();
     void BeginBenchmark();
     // Drain normal work, or join/reclaim a failed context before core teardown.
@@ -85,6 +87,8 @@ private:
 
     /// Called when a configuration change affects the minimal size of the window
     void OnMinimalClientAreaChangeRequest(std::pair<u32, u32> minimal_size);
+
+    Cara::KeyboardLatch keyboard_latch;
 
     /// Is the window still open?
     bool is_open = true;

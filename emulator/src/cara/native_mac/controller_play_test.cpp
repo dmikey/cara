@@ -5,6 +5,8 @@
 #include <chrono>
 #include <stdexcept>
 #include "cara/native_mac/controller_play_test.h"
+#include "cara/native_mac/keyboard_latch.h"
+#include "cara/native_mac/game_menu.h"
 #include "cara/native_mac/mac_preferences.h"
 #include "core/core.h"
 #include "core/arm/fastinterp/fastinterp.h"
@@ -86,9 +88,45 @@ unsigned Run(Core::System& system) {
     await([](const auto& pad){return pad.up && pad.circle_up;});
     InputCommon::GetKeyboard()->ReleaseKey(SDL_SCANCODE_UP);
     await([](const auto& pad){return !pad.up && !pad.circle_up;});
+    // A physical release missed while rendering/loading must clear the guest latch.
+    KeyboardLatch latch;
+    std::array<unsigned char, SDL_NUM_SCANCODES> physical{};
+    latch.Event(*InputCommon::GetKeyboard(), SDL_SCANCODE_UP, true);
+    await([](const auto& pad){return pad.up && pad.circle_up;});
+    physical[SDL_SCANCODE_UP] = 1;
+    latch.Reconcile(*InputCommon::GetKeyboard(), physical.data(), physical.size());
+    const auto held_tick = system.CoreTiming().GetTicks();
+    await([&](const auto& pad){return system.CoreTiming().GetTicks()>held_tick+4000000 && pad.up && pad.circle_up;});
+    physical[SDL_SCANCODE_UP] = 0; // deliberately no key-up event
+    latch.Reconcile(*InputCommon::GetKeyboard(), physical.data(), physical.size());
+    await([](const auto& pad){return !pad.up && !pad.circle_up;});
+    latch.Event(*InputCommon::GetKeyboard(), SDL_SCANCODE_UP, true);
+    await([](const auto& pad){return pad.up && pad.circle_up;});
+    latch.Release(*InputCommon::GetKeyboard());
+    await([](const auto& pad){return !pad.up && !pad.circle_up;});
     require(Settings::values.use_cpu_jit==cpu_jit,"Control Save changed the CPU backend setting");
     require(Settings::values.sink_id==sink,"Control Save changed sound");
     for(unsigned i=0;i<4;++i){require(&system.GetCore(i)==cpus[i],"Control Save replaced a running CPU");require(system.CoreTiming().GetTimer(i)->GetClockScaleForDiagnostics()==clocks[i] && clocks[i]==1.0,"A guest timer changed from 100 percent");}
+    using namespace NativeGameMenu;
+    require(!RequestState(StateAction::Save, 0) && !RequestState(StateAction::Load, 11), "Invalid state slot accepted");
+    require(RequestState(StateAction::Save, 10), "Save menu request failed");
+    require(!RequestState(StateAction::Load, 1), "Pending state request replaced");
+    const auto save = TakeStateRequest();
+    require(save.action == StateAction::Save && save.slot == 10, "Save menu slot lost");
+    require(TakeStateRequest().action == StateAction::None, "State request repeated");
+    const auto saved_ticks = system.CoreTiming().GetTicks();
+    system.SaveState(save.slot);
+    settle_reload();
+    require(RequestState(StateAction::Load, 10), "Load menu request failed");
+    const auto load = TakeStateRequest();
+    // Restore replaces the service graph. Do not keep an old HID shared-memory
+    // owner alive across kernel teardown (ordinary menu dispatch holds none).
+    hid.reset();
+    system.LoadState(load.slot);
+    hid = Service::HID::GetModule(system);
+    require(bool(hid), "Restored HID service missing");
+    require(system.CoreTiming().GetTicks() == saved_ticks, "Menu-selected state did not restore guest ticks");
+    require(TakeStateRequest().action == StateAction::None, "Load request repeated");
     Settings::ApplyInputProfile(original);
     return checks;
 }
