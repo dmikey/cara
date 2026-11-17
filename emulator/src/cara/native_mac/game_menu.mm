@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <string>
 #include "cara/native_mac/game_menu.h"
+#include "cara/native_mac/mac_preferences_ui.h"
 
 namespace {
 std::string requested_rom;
@@ -11,11 +12,13 @@ bool closing_for_open = false;
 
 @interface CaraGameMenuActions : NSObject
 - (void)openROM:(id)sender;
+- (void)preferences:(id)sender;
 @end
 
 @implementation CaraGameMenuActions
 - (void)openROM:(id)sender {
     (void)sender;
+    if (Cara::MacUI::HandleStartupOpen()) return;
     if (closing_for_open)
         return;
     NSOpenPanel* panel = [NSOpenPanel openPanel];
@@ -44,6 +47,7 @@ bool closing_for_open = false;
         [alert release];
     }
 }
+- (void)preferences:(id)sender { (void)sender; Cara::MacUI::ShowPreferences(); }
 @end
 
 namespace Cara::NativeGameMenu {
@@ -52,13 +56,21 @@ void Install() {
     if (!main_menu)
         return;
     static CaraGameMenuActions* actions = [[CaraGameMenuActions alloc] init];
+    NSMenu* app = [main_menu itemAtIndex:0].submenu;
+    if (app && ![app itemWithTag:7101]) {
+        NSMenuItem* preferences = [[[NSMenuItem alloc] initWithTitle:@"Settings…" action:@selector(preferences:) keyEquivalent:@","] autorelease];
+        preferences.target=actions; preferences.tag=7101;
+        [app insertItem:preferences atIndex:MIN((NSInteger)2,app.numberOfItems)];
+    }
+    if ([main_menu itemWithTag:7102]) return;
+
     NSMenuItem* root = [[NSMenuItem alloc] initWithTitle:@"File" action:nil keyEquivalent:@""];
     NSMenu* file = [[NSMenu alloc] initWithTitle:@"File"];
     NSMenuItem* open = [[NSMenuItem alloc] initWithTitle:@"Open…" action:@selector(openROM:)
                                          keyEquivalent:@"o"];
     open.target = actions;
     [file addItem:open];
-    root.submenu = file;
+    root.submenu = file; root.tag=7102;
     [main_menu insertItem:root atIndex:MIN((NSInteger)1, main_menu.numberOfItems)];
     [open release];
     [file release];

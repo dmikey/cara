@@ -8,6 +8,9 @@ if (CARA_MAC_SDL_DEV_HOST)
     endif()
     add_executable(cara
         native_mac/main.cpp
+        native_mac/mac_preferences_ui.mm
+        native_mac/mac_preferences_ui.h
+        native_mac/mac_preferences.h
         native_mac/game_menu.mm
         native_mac/game_menu.h
         native_mac/native_command_policy.h
@@ -48,10 +51,18 @@ create_target_directory_groups(cara)
 target_link_libraries(cara PRIVATE common core input_common network)
 target_link_libraries(cara PRIVATE inih glad)
 if (CARA_MAC_SDL_DEV_HOST)
+    if(CARA_MAC_CPU_JIT)
+        target_sources(cara PRIVATE native_mac/arm_dynarmic_adapter_test.cpp)
+        target_link_libraries(cara PRIVATE dynarmic)
+    endif()
+    add_executable(cara-mac-preferences-self-test "${PROJECT_SOURCE_DIR}/../tests/mac_preferences_test.cpp")
+    target_include_directories(cara-mac-preferences-self-test PRIVATE "${PROJECT_SOURCE_DIR}/src" ${SDL2_INCLUDE_DIR})
+    target_compile_options(cara-mac-preferences-self-test PRIVATE -UNDEBUG)
+    target_link_libraries(cara-mac-preferences-self-test PRIVATE common)
     enable_language(OBJCXX)
     set_target_properties(cara PROPERTIES OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
     set_source_files_properties(native_mac/relay_config.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
-    set_source_files_properties(native_mac/game_menu.mm PROPERTIES COMPILE_FLAGS "-fno-objc-arc")
+    set_source_files_properties(native_mac/game_menu.mm native_mac/mac_preferences_ui.mm PROPERTIES COMPILE_FLAGS "-fno-objc-arc")
     target_link_libraries(cara PRIVATE "-framework AppKit")
     find_package(PNG REQUIRED)
     target_link_libraries(cara PRIVATE PNG::PNG nihstro-headers)
