@@ -39,3 +39,5 @@ The isolated campaign retained actual component, full-engine build, no-JIT objec
 `cara-shader-suffix-sharing-self-test` runs authored positive and conservative rejection cases without a GL context or captured game code. Existing source-cache, index/range, interval, interpreter and save-relocation checks remain applicable. Diagnostic observers and benchmark runners are not ordinary product UI.
 
 Build `cara-gl-host-latency-reader` for the acquire-load journal reader. `tools/gl_host_latency_summary.py` supplies the strict post-exit raw/header/histogram validator and predeclared decision screen. `tests/test_gl_host_latency_summary.py` uses synthetic journals only; it does not manufacture real-driver performance evidence.
+
+File-backed pipeline and latency observers are compiled only in the explicit native atlas build. Other products link unavailable/no-op implementations, even if those environment variables are set; no diagnostic mmap is added to ordinary or iOS binaries. The unavailable-path CPU fixture exercises every public observer method and verifies no directory is created.

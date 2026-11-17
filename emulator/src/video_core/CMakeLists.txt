@@ -52,9 +52,7 @@ add_library(video_core STATIC
     renderer_opengl/gl_host_scissor.h
     renderer_opengl/gl_state.h
     renderer_opengl/gl_command_queue.cpp
-    renderer_opengl/gl_pipeline_capture.cpp
     renderer_opengl/gl_pipeline_capture.h
-    renderer_opengl/gl_host_latency.cpp
     renderer_opengl/gl_host_latency.h
     renderer_opengl/gl_command_queue.h
     renderer_opengl/gl_driver_transactions.h
@@ -100,6 +98,15 @@ add_library(video_core STATIC
     video_core.cpp
     video_core.h
 )
+
+# The file-backed observers belong only to the explicit native atlas lab path.
+# Other products retain unavailable/no-op observers and no journal mmap linkage.
+if (CARA_MAC_ATLAS_PIPELINE)
+    target_sources(video_core PRIVATE renderer_opengl/gl_pipeline_capture.cpp
+        renderer_opengl/gl_host_latency.cpp)
+else()
+    target_sources(video_core PRIVATE renderer_opengl/gl_observer_stubs.cpp)
+endif()
 
 if(CARA_ENABLE_JIT AND ARCHITECTURE_x86_64)
     target_sources(video_core

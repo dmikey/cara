@@ -64,8 +64,9 @@ jobs:
         run: cmake --build work/build-mac-sdl --target cara-mac-depth-self-test cara-mac-lut-self-test cara-mac-blit-state-self-test cara-surface-copy-interval-self-test cara-fastinterp-decoded-record-self-test -j2
       - name: Check conservative native shader source sharing without a GPU
         run: |
-          cmake --build work/build-mac-sdl --target cara-shader-suffix-sharing-self-test -j2
+          cmake --build work/build-mac-sdl --target cara-shader-suffix-sharing-self-test cara-gl-observer-stub-self-test -j2
           work/build-mac-sdl/bin/cara-shader-suffix-sharing-self-test
+          work/build-mac-sdl/bin/cara-gl-observer-stub-self-test "$RUNNER_TEMP/cara-no-journal"
       - name: Check real surface-copy interval selection without a GPU context
         run: work/build-mac-sdl/bin/cara-surface-copy-interval-self-test
       - name: Check the default native decoded layout without a GUI

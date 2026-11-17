@@ -410,3 +410,11 @@ if (UNIX AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         "${PROJECT_SOURCE_DIR}/../tools/read_gl_host_latency.cpp")
     target_include_directories(cara-gl-host-latency-reader PRIVATE "${PROJECT_SOURCE_DIR}/src")
 endif()
+
+if (UNIX AND NOT CARA_MAC_ATLAS_PIPELINE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-gl-observer-stub-self-test EXCLUDE_FROM_ALL
+        "${PROJECT_SOURCE_DIR}/../tests/gl_observer_stub_test.cpp"
+        video_core/renderer_opengl/gl_observer_stubs.cpp)
+    target_include_directories(cara-gl-observer-stub-self-test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_compile_options(cara-gl-observer-stub-self-test PRIVATE -UNDEBUG)
+endif()
