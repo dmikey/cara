@@ -68,15 +68,13 @@ unsigned Run(Core::System& system) {
         const auto origin=system.CoreTiming().GetTicks();
         await([&](const auto&){return system.CoreTiming().GetTicks()>origin+4000000;});
     };
-    settle_reload();
-    SDL_JoystickSetVirtualAxis(joystick,0,0);SDL_JoystickSetVirtualAxis(joystick,1,0);pump();
-    SDL_JoystickSetVirtualAxis(joystick,0,26000);SDL_JoystickSetVirtualAxis(joystick,1,26000);
+    // Held stick/button state must survive device creation at the next HID tick.
     SDL_JoystickSetVirtualButton(joystick,0,1);pump();
     await([](const auto& pad){return pad.a && pad.circle_right && pad.circle_down;});
     SDL_JoystickSetVirtualButton(joystick,0,0);SDL_JoystickSetVirtualAxis(joystick,0,0);SDL_JoystickSetVirtualAxis(joystick,1,0);pump();
     await([](const auto& pad){return !pad.a && !pad.circle_right && !pad.circle_down;});
     // Rebind A during the SAME running core; no ROM reopen or CPU replacement.
-    model.buttons[0].value=capture(1);Settings::ApplyInputProfile(model.Controls(original));settle_reload();
+    model.buttons[0].value=capture(1);Settings::ApplyInputProfile(model.Controls(original));
     SDL_JoystickSetVirtualButton(joystick,1,1);pump();await([](const auto& pad){return bool(pad.a);});
     SDL_JoystickSetVirtualButton(joystick,1,0);pump();await([](const auto& pad){return !pad.a;});
     const auto before=system.CoreTiming().GetTicks();SDL_JoystickSetVirtualButton(joystick,0,1);pump();

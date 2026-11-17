@@ -59,6 +59,32 @@ public:
         state.buttons[button] = value;
     }
 
+    void InitButton(int button) { std::lock_guard lock{mutex}; state.buttons.try_emplace(button, false); }
+    void InitAxis(int axis) { std::lock_guard lock{mutex}; state.axes.try_emplace(axis, 0); }
+    void InitHat(int hat) { std::lock_guard lock{mutex}; state.hats.try_emplace(hat, SDL_HAT_CENTERED); }
+
+    void RefreshState() {
+        std::shared_ptr<SDL_Joystick> device;
+        { std::lock_guard lock{mutex}; device=sdl_joystick; }
+        // Match SDL's callback lock order; RAII also releases the lock on allocation failure.
+        struct Lock { Lock(){SDL_LockJoysticks();} ~Lock(){SDL_UnlockJoysticks();} } joystick_lock;
+        const bool attached=device && SDL_JoystickGetAttached(device.get());
+        std::vector<Uint8> buttons(attached?std::max(0,SDL_JoystickNumButtons(device.get())):0);
+        std::vector<Sint16> axes(attached?std::max(0,SDL_JoystickNumAxes(device.get())):0);
+        std::vector<Uint8> hats(attached?std::max(0,SDL_JoystickNumHats(device.get())):0);
+        for(unsigned i=0;i<buttons.size();++i)buttons[i]=SDL_JoystickGetButton(device.get(),i);
+        for(unsigned i=0;i<axes.size();++i)axes[i]=SDL_JoystickGetAxis(device.get(),i);
+        for(unsigned i=0;i<hats.size();++i)hats[i]=SDL_JoystickGetHat(device.get(),i);
+        std::lock_guard lock{mutex};
+        if(sdl_joystick!=device)return;
+        for(auto& [key,value]:state.buttons)value=false;
+        for(auto& [key,value]:state.axes)value=0;
+        for(auto& [key,value]:state.hats)value=SDL_HAT_CENTERED;
+        for(unsigned i=0;i<buttons.size();++i)state.buttons[i]=buttons[i]!=0;
+        for(unsigned i=0;i<axes.size();++i)state.axes[i]=axes[i];
+        for(unsigned i=0;i<hats.size();++i)state.hats[i]=hats[i];
+    }
+
     bool GetButton(int button) const {
         std::lock_guard lock{mutex};
         return state.buttons.at(button);
@@ -275,6 +301,13 @@ void SDLState::HandleGameControllerEvent(const SDL_Event& event) {
     }
 }
 
+void SDLState::RefreshJoysticks() {
+    std::vector<std::shared_ptr<SDLJoystick>> devices;
+    { std::lock_guard lock{joystick_map_mutex};
+      for(const auto& [guid,list]:joystick_map)devices.insert(devices.end(),list.begin(),list.end()); }
+    for(const auto& device:devices)device->RefreshState();
+}
+
 void SDLState::CloseJoysticks() {
     std::lock_guard lock{joystick_map_mutex};
     joystick_map.clear();
@@ -395,7 +428,7 @@ public:
                 direction = 0;
             }
             // This is necessary so accessing GetHat with hat won't crash
-            joystick->SetHat(hat, SDL_HAT_CENTERED);
+            joystick->InitHat(hat);
             return std::make_unique<SDLDirectionButton>(joystick, hat, direction);
         }
 
@@ -413,13 +446,13 @@ public:
                 LOG_ERROR(Input, "Unknown direction {}", direction_name);
             }
             // This is necessary so accessing GetAxis with axis won't crash
-            joystick->SetAxis(axis, 0);
+            joystick->InitAxis(axis);
             return std::make_unique<SDLAxisButton>(joystick, axis, threshold, trigger_if_greater);
         }
 
         const int button = params.Get("button", 0);
         // This is necessary so accessing GetButton with button won't crash
-        joystick->SetButton(button, false);
+        joystick->InitButton(button);
         return std::make_unique<SDLButton>(joystick, button);
     }
 
@@ -449,8 +482,8 @@ public:
         auto joystick = state.GetSDLJoystickByGUID(guid, port);
 
         // This is necessary so accessing GetAxis with axis_x and axis_y won't crash
-        joystick->SetAxis(axis_x, 0);
-        joystick->SetAxis(axis_y, 0);
+        joystick->InitAxis(axis_x);
+        joystick->InitAxis(axis_y);
         return std::make_unique<SDLAnalog>(joystick, axis_x, axis_y, deadzone);
     }
 
@@ -572,6 +605,7 @@ public:
 
     void Stop() override {
         state.polling = false;
+        state.RefreshJoysticks();
     }
 
 protected:
