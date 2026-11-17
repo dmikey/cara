@@ -1,5 +1,12 @@
+#include <SDL.h>
 #include "cara/native_mac/native_command_policy.h"
 #include "cara/native_mac/game_menu.h"
+#include "cara/native_mac/mac_preferences_ui.h"
+#ifdef CARA_MAC_CPU_JIT
+#include "cara/native_mac/arm_dynarmic_adapter_test.h"
+#include "core/arm/dynarmic/arm_dynarmic.h"
+#endif
+#include "input_common/main.h"
 #include "video_core/renderer_opengl/gl_command_queue.h"
 #include "cara/native_mac/diagnostic_clock.h"
 #include <atomic>
@@ -175,7 +182,12 @@ static int RunNativeMain(int argc, char** argv) {
             std::string(std::getenv("CARA_NATIVE_UNCHECKED_BLIT_INTEGRATION_TEST"))=="1";
         const bool original_required_copy_fixture=required_copy_integration ||std::getenv("CARA_NATIVE_REQUIRED_COPY_COUNTERS_OFF_TEST")&&
             std::string(std::getenv("CARA_NATIVE_REQUIRED_COPY_COUNTERS_OFF_TEST"))=="1";
-        const bool original_behavior_fixture=original_required_copy_fixture ||
+        const bool cpu_adapter_fixture=std::getenv("CARA_NATIVE_CPU_ADAPTER_TEST") &&
+            std::string(std::getenv("CARA_NATIVE_CPU_ADAPTER_TEST"))=="1";
+#ifndef CARA_MAC_CPU_JIT
+        if(cpu_adapter_fixture)throw std::runtime_error("CPU adapter test unavailable in this build");
+#endif
+        const bool original_behavior_fixture=cpu_adapter_fixture || original_required_copy_fixture ||
             (std::getenv("CARA_NATIVE_BEHAVIOR_FIXTURE")&&
              std::string(std::getenv("CARA_NATIVE_BEHAVIOR_FIXTURE"))=="1");
         if(original_behavior_fixture) {
@@ -338,6 +350,27 @@ static int RunNativeMain(int argc, char** argv) {
         std::cout << "Native load result: " << static_cast<unsigned>(loaded) << std::endl;
         if (loaded != Core::System::ResultStatus::Success)
             return 3;
+#ifdef CARA_MAC_CPU_JIT
+        if(cpu_adapter_fixture) {
+            if(!Settings::values.use_cpu_jit || Settings::values.use_shader_jit ||
+               Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())!=100)
+                throw std::runtime_error("CPU test requires JIT/100% clock and shader JIT off");
+            for(unsigned i=0;i<4;++i)if(!dynamic_cast<ARM_Dynarmic*>(&system.GetCore(i)))
+                throw std::runtime_error("CPU factory did not select Dynarmic");
+            const auto* queue=std::getenv("CARA_GL_COMMAND_QUEUE");
+            if(queue && std::string(queue)=="1")throw std::runtime_error("CPU fixture requires queue off");
+            auto test=Cara::CPUJitTest::RunActualAdapterTest(system);
+            Cara::CPUJitTest::RunFactorySystemArchiveTest(system,test);
+            const bool passed=test.adapter_state&&test.mmio&&test.monitor&&test.full_system_archive;
+            std::ofstream report(directory+"native-cpu-adapter-test.json");
+            report<<"{\"passed\":"<<(passed?"true":"false")<<",\"checks\":"<<test.checks
+                  <<",\"full_system_archive\":"<<(test.full_system_archive?"true":"false")
+                  <<",\"game_guest_run\":false,\"cpu_backend\":2,\"shader_jit\":false,\"fingerprint\":"
+                  <<NativeOracleJSONQuote(Core::GetSaveStateBuildFingerprint())<<"}\n";
+            report.flush();finish_query_census();close_core();
+            return passed&&report&&!shutdown_failed?0:4;
+        }
+#endif
         if(original_behavior_fixture) {
             if(Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())!=100)
                 throw std::runtime_error("original behavior fixture requires 100 percent guest CPU clock");
@@ -581,6 +614,31 @@ int main(int argc, char** argv) {
     // Avoid worker-to-AppKit synchronous dispatch while main waits on the render queue.
     // An explicit launcher override survives; guest timing and GL work are unchanged.
     setenv("SDL_MAC_OPENGL_ASYNC_DISPATCH", "1", 0);
+    // A normal launch is a chooser, not a hardcoded game or automatic restore.
+    const bool ui_test=argc>1 && std::string(argv[1])=="--mac-ui-self-test";
+    std::string chosen;
+    char* startup_args[]={argv[0],nullptr,nullptr};
+    if (argc<2 || ui_test) {
+        if (!std::getenv("CARA_USER_DIR")) {
+            const char* home=std::getenv("HOME");
+            if(!home)return 2;
+            const auto user=std::string(home)+"/Library/Application Support/Cara";
+            setenv("CARA_USER_DIR",user.c_str(),0);
+        }
+        try {
+            std::string user=std::getenv("CARA_USER_DIR");
+            if(user.empty()||user.front()!='/')throw std::runtime_error("Invalid Cara data directory");
+            if(user.back()!='/')user+='/';FileUtil::SetUserPath(user);
+            NativeCPUDefaults();Config startup_config;
+            if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_JOYSTICK|SDL_INIT_GAMECONTROLLER)!=0)
+                throw std::runtime_error(SDL_GetError());
+            InputCommon::Init();
+            if(ui_test){const int code=argc==3?Cara::MacUI::SelfTest(argv[2]):2;InputCommon::Shutdown();SDL_Quit();return code;}
+            chosen=Cara::MacUI::Welcome();
+            if(chosen.empty()){InputCommon::Shutdown();SDL_Quit();return 0;}
+            startup_args[1]=chosen.data();argc=2;argv=startup_args;
+        } catch(const std::exception& e){InputCommon::Shutdown();SDL_Quit();std::cerr<<"Cara startup failed: "<<e.what()<<'\n';return 2;}
+    }
     const int result = RunNativeMain(argc, argv);
     if (result != 0)
         return result;

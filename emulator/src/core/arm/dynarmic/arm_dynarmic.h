@@ -6,7 +6,9 @@
 
 #include <map>
 #include <memory>
-#include <dynarmic/A32/a32.h>
+#include <iosfwd>
+#include "core/arm/dynarmic/arm_dynarmic_register_state.h"
+#include <dynarmic/interface/A32/a32.h>
 #include "common/common_types.h"
 #include "core/arm/arm_interface.h"
 #include "core/arm/dynarmic/arm_dynarmic_cp15.h"
@@ -51,11 +53,14 @@ public:
 
     void ClearInstructionCache() override;
     void InvalidateCacheRange(u32 start_address, std::size_t length) override;
-    void SetPageTable(Memory::PageTable* page_table) override;
+    void SetPageTable(const std::shared_ptr<Memory::PageTable>& page_table) override;
     void PurgeState() override;
+#ifdef CARA_MAC_CPU_JIT
+    void WriteDiagnosticJSON(std::ostream& out) const;
+#endif
 
 protected:
-    Memory::PageTable* GetPageTable() const override;
+    std::shared_ptr<Memory::PageTable> GetPageTable() const override;
 
 private:
     void ServeBreak();
@@ -66,10 +71,14 @@ private:
     std::unique_ptr<DynarmicUserCallbacks> cb;
     std::unique_ptr<Dynarmic::A32::Jit> MakeJit();
 
+    DynarmicRegisterState register_state;
+#ifdef CARA_MAC_CPU_JIT
+    u64 diagnostic_run_calls=0,diagnostic_step_calls=0,diagnostic_svc_calls=0,diagnostic_ticks_charged=0;
+#endif
     u32 fpexc = 0;
     CP15State cp15_state;
 
     Dynarmic::A32::Jit* jit = nullptr;
-    Memory::PageTable* current_page_table = nullptr;
-    std::map<Memory::PageTable*, std::unique_ptr<Dynarmic::A32::Jit>> jits;
+    std::shared_ptr<Memory::PageTable> current_page_table;
+    std::map<std::shared_ptr<Memory::PageTable>, std::unique_ptr<Dynarmic::A32::Jit>> jits;
 };

@@ -631,7 +631,7 @@ public:
         }
         Common::ParamPackage params;
         if (analog_xaxis != -1 && analog_yaxis != -1) {
-            auto joystick = state.GetSDLJoystickBySDLID(event.jaxis.which);
+            auto joystick = state.GetSDLJoystickBySDLID(analog_axes_joystick);
             params.Set("engine", "sdl");
             params.Set("port", joystick->GetPort());
             params.Set("guid", joystick->GetGUID());

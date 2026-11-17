@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the separate native macOS SDL developer host; leave probe defaults alone."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,10 +18,14 @@ def audit(build):
     if 'CARA_MAC_SDL_DEV_HOST:BOOL=ON' not in cache:
         raise RuntimeError('Explicit native Mac frontend must be selected')
     if 'CARA_ENABLE_JIT:BOOL=OFF' not in cache:
-        raise RuntimeError('JIT must be disabled')
+        raise RuntimeError('Global CPU/shader JIT flag must stay disabled')
+    cpu_jit = 'CARA_MAC_CPU_JIT:BOOL=ON' in cache
     graph = (build / 'build.ninja').read_text()
-    forbidden_objects = [name for name in ('arm/dynarmic/arm_dynarmic.cpp.o',
-                         'shader/shader_jit_x64.cpp.o') if name in graph]
+    forbidden_objects = [name for name in ('shader/shader_jit_x64.cpp.o',) if name in graph]
+    if not cpu_jit and 'arm/dynarmic/arm_dynarmic.cpp.o' in graph:
+        forbidden_objects.append('arm/dynarmic/arm_dynarmic.cpp.o')
+    if cpu_jit and 'arm/dynarmic/arm_dynarmic.cpp.o' not in graph:
+        raise RuntimeError('Requested CPU JIT object missing')
     binary = build / 'bin/cara'
     symbols = subprocess.check_output(['nm', str(binary)], text=True)
     # Atlas diagnostics map two file-backed journals as RW, never executable.
@@ -39,17 +44,20 @@ def audit(build):
                 raise RuntimeError('Unreviewed memory mapping in ' + name)
             journal_maps.append(name)
     forbidden_symbols = [line for line in symbols.splitlines()
-                         if re.search(r'ARM_Dynarmic|JitX64Engine| _mprotect$| _vm_protect$', line)
-                         or (not atlas and re.search(r' _mmap$', line))]
+                         if re.search(r'JitX64Engine', line)
+                         or (not cpu_jit and (re.search(r'ARM_Dynarmic| _mprotect$| _vm_protect$', line)
+                         or (not atlas and re.search(r' _mmap$', line))))]
+    if cpu_jit and not any('ARM_Dynarmic' in line for line in symbols.splitlines()):
+        raise RuntimeError('Requested CPU JIT symbols missing')
     if forbidden_objects or forbidden_symbols:
         raise RuntimeError('Excluded JIT facilities found: ' + repr(forbidden_objects + forbidden_symbols))
     # SDL2/SDL3 and libpng are expected dynamic developer dependencies. This is
     # deliberately separate from the system-libraries-only iOS product audit.
-    report = dict(platform='mac-sdl', jit_enabled=False, forbidden_objects=forbidden_objects,
+    report = dict(binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), platform='mac-sdl', jit_enabled=cpu_jit, shader_jit_enabled=False, default_cpu='fastinterp', forbidden_objects=forbidden_objects,
                   forbidden_symbols=forbidden_symbols,
                   non_executable_journal_maps=journal_maps,
                   linkage=subprocess.check_output(['otool', '-L', str(binary)], text=True))
-    (build / 'native-no-jit-audit.json').write_text(json.dumps(report, indent=2) + '\n')
+    (build / ('native-cpu-jit-audit.json' if cpu_jit else 'native-no-jit-audit.json')).write_text(json.dumps(report, indent=2) + '\n')
 
 
 def main():
@@ -60,6 +68,7 @@ def main():
     parser.add_argument('--sdl-prefix', type=Path)
     parser.add_argument('--prefix-path', type=Path, help='Additional CMake dependency prefix, e.g. Homebrew')
     parser.add_argument('--jobs', type=int, choices=(1, 2), default=2)
+    parser.add_argument('--cpu-jit', action='store_true', help='Include the experimental M1 Dynarmic CPU backend; FastInterp remains default')
     parser.add_argument('--lto', action='store_true')
     parser.add_argument('--atlas', action='store_true', help='Build the explicit native GL4.1 atlas/render-queue developer path')
     parser.add_argument('--compact-decoded', action='store_true', help='Opt in to experimental 16-byte interpreter records')
@@ -96,7 +105,7 @@ def main():
                '-DCMAKE_MAKE_PROGRAM=' + args.ninja, '-DCMAKE_BUILD_TYPE=Release',
                '-DCMAKE_OSX_ARCHITECTURES=' + platform.machine(),
                '-DCMAKE_PREFIX_PATH=' + ';'.join(prefixes),
-               '-DCARA_ENABLE_JIT=OFF', '-DCARA_CPU_TARGET=generic',
+               '-DCARA_ENABLE_JIT=OFF', '-DCARA_MAC_CPU_JIT=' + ('ON' if args.cpu_jit else 'OFF'), '-DCARA_CPU_TARGET=generic',
                '-DCARA_ENABLE_LTO=' + ('ON' if args.lto else 'OFF'),
                '-DCARA_FASTINTERP_COMPACT_DECODED=' + ('ON' if args.compact_decoded else 'OFF'),
                '-DCARA_SOFTWARE_PRESENTATION=OFF', '-DCARA_INTERPRETER_GUEST_DEBUG=OFF',

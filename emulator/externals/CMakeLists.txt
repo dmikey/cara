@@ -11,6 +11,23 @@ target_include_directories(catch-single-include INTERFACE catch/single_include)
 # Crypto++
 add_subdirectory(cryptopp)
 
+# Optional Mac CPU backend uses only the reviewed, pinned local ARM64 dependency.
+if(CARA_MAC_CPU_JIT)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dynarmic/CMakeLists.txt")
+        message(FATAL_ERROR "CPU JIT requires the reviewed pinned local Dynarmic dependency")
+    endif()
+    set(FMT_INSTALL ON CACHE BOOL "Dynarmic export metadata" FORCE)
+    add_subdirectory(fmt)
+    add_library(fmt::fmt ALIAS fmt)
+    function(cara_add_native_cpu_jit)
+        set(ARCHITECTURE arm64)
+        set(DYNARMIC_FRONTENDS A32 CACHE STRING "3DS guest instruction set" FORCE)
+        set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
+        set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+        add_subdirectory(dynarmic)
+    endfunction()
+    cara_add_native_cpu_jit()
+else()
 # Dynarmic
 if (CARA_ENABLE_JIT AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
     if (ARCHITECTURE_x86_64)
@@ -25,6 +42,8 @@ endif()
 # libfmt
 add_subdirectory(fmt)
 add_library(fmt::fmt ALIAS fmt)
+
+endif()
 
 # getopt
 if (MSVC)

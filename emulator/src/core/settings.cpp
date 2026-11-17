@@ -20,8 +20,10 @@ namespace Settings {
 Values values{};
 
 void Apply() {
-#ifndef CARA_ENABLE_JIT
+#if !defined(CARA_ENABLE_JIT) && !defined(CARA_MAC_CPU_JIT)
     values.use_cpu_jit = false;
+#endif
+#ifndef CARA_ENABLE_JIT
     values.use_shader_jit = false;
 #endif
     auto& system = Core::System::GetInstance();

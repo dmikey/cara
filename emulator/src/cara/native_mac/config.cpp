@@ -12,6 +12,7 @@
 #include <SDL.h>
 #include <inih/cpp/INIReader.h>
 #include "cara/config.h"
+#include "cara/native_mac/mac_preferences.h"
 #include "cara/default_ini.h"
 #include "common/file_util.h"
 #include "common/logging/log.h"
@@ -120,7 +121,11 @@ void Config::ReadValues() {
                                                  InputCommon::CemuhookUDP::DEFAULT_PORT));
 
     auto& v = Settings::values;
-    v.use_cpu_jit = false;
+    const char* requested_backend=std::getenv("CARA_CPU_BACKEND");
+    const auto backend=sdl2_config->GetString("Core","cpu_backend",requested_backend?requested_backend:"fastinterp");
+    Cara::MacPreferences::ValidateBackend(backend,Cara::MacPreferences::JitAvailable());
+    v.use_cpu_jit = backend=="jit";
+    setenv("CARA_CPU_BACKEND",backend.c_str(),1);
     v.use_shader_jit = false;
     if (sdl2_config->GetInteger("Core", "cpu_clock_percentage", 100) != 100)
         throw std::runtime_error("Native developer host requires 100% guest clock");

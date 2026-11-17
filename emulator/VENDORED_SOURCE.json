@@ -99,6 +99,14 @@
       "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
       "bundled": true,
       "tag": "v1.5.7"
+    },
+    {
+      "name": "Dynarmic CPU-only optional backend",
+      "path": "externals/dynarmic",
+      "source": "https://github.com/azahar-emu/dynarmic.git",
+      "revision": "b3a92ab54dadd26a0c2a87d2677b80249d2e1a5a",
+      "bundled": true,
+      "note": "Recovered exact prepared M1 source with fmt6/ARM64 ABI/tick compatibility changes and MAP_FAILED correction; see docs/evidence/m1-dynarmic-source-manifest.json. Only explicit native Mac CPU-JIT builds link it."
     }
   ],
   "excluded_non_source": [
@@ -109,7 +117,6 @@
     "keys.tar.enc"
   ],
   "excluded_unused_dependencies": [
-    "externals/dynarmic",
     "externals/libressl"
   ],
   "note": "No-JIT iOS/macOS builds require no source fetch. Dependency licenses are retained at their source paths.",

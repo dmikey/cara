@@ -72,3 +72,9 @@ https://github.com/azahar-emu/azahar/pull/2318
 The optional Old3DS syscore diagnostic policy is original Cara code; its interface
 references are listed in old3ds_syscore_policy.h. It is not a port of external code
 and remains OFF by default with hardware edge behavior unverified.
+
+Optional Mac CPU JIT: Dynarmic (MerryMage and contributors), revision
+b3a92ab54dadd26a0c2a87d2677b80249d2e1a5a, with retained local fmt6, ARM64 ABI/tick
+and MAP_FAILED compatibility repairs. See emulator/externals/dynarmic/LICENSE.txt
+and bundled dependency licenses there, plus docs/evidence/m1-dynarmic-source-manifest.json.
+The original CPU adapter attribution is retained in emulator/src/core/arm/dynarmic.

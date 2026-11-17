@@ -20,6 +20,7 @@ static std::unique_ptr<CemuhookUDP::State> udp;
 static std::unique_ptr<SDL::State> sdl;
 
 void Init() {
+    if (keyboard) return; // Startup settings and the game share the same factories.
     keyboard = std::make_shared<Keyboard>();
     Input::RegisterFactory<Input::ButtonDevice>("keyboard", keyboard);
     Input::RegisterFactory<Input::AnalogDevice>("analog_from_button",
@@ -33,6 +34,7 @@ void Init() {
 }
 
 void Shutdown() {
+    if (!keyboard) return;
     Input::UnregisterFactory<Input::ButtonDevice>("keyboard");
     keyboard.reset();
     Input::UnregisterFactory<Input::AnalogDevice>("analog_from_button");
