@@ -568,30 +568,30 @@ static int RunNativeMain(int argc, char** argv) {
             if (category_profile && state_command != EmuWindow_SDL2::StateCommand::None)
                 throw std::runtime_error("Save/load during native category measurement is unsupported");
             try {
-            switch (state_command) {
-            case EmuWindow_SDL2::StateCommand::Save:
-                system.SaveState(state_slot);
-                record_state("save", state_slot);
-                if (menu_state.action != Cara::NativeGameMenu::StateAction::None) window.StateCompleted(true, state_slot);
-                WriteNativeProfileSnapshot(directory + "native-saved-state", VideoCore::GetCurrentFrame());
-                break;
-            case EmuWindow_SDL2::StateCommand::Load:
-                if (relay) relay->Disconnect();
-                flush_copy_trace(true);
-                flush_gpu_trace(true);
-                system.LoadState(state_slot);
-                Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
-                    Cara::NativeScriptOnlyInput::Enabled(),"runtime-state-load");
-                record_state("load", state_slot);
-                if (menu_state.action != Cara::NativeGameMenu::StateAction::None) window.StateCompleted(false, state_slot);
-                if (copy_trace_requested)
-                    Cara::TextureCopyTrace::Arm(directory + "native-texture-copy-trace.json");
-                if (gpu_trace_requested)
-                    Cara::GuestGPUTrace::Arm(directory + "native-gpu-trace.csv");
-                break;
-            case EmuWindow_SDL2::StateCommand::None:
-                break;
-            }
+                switch (state_command) {
+                case EmuWindow_SDL2::StateCommand::Save:
+                    system.SaveState(state_slot);
+                    record_state("save", state_slot);
+                    if (menu_state.action != Cara::NativeGameMenu::StateAction::None) window.StateCompleted(true, state_slot);
+                    WriteNativeProfileSnapshot(directory + "native-saved-state", VideoCore::GetCurrentFrame());
+                    break;
+                case EmuWindow_SDL2::StateCommand::Load:
+                    if (relay) relay->Disconnect();
+                    flush_copy_trace(true);
+                    flush_gpu_trace(true);
+                    system.LoadState(state_slot);
+                    Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
+                        Cara::NativeScriptOnlyInput::Enabled(),"runtime-state-load");
+                    record_state("load", state_slot);
+                    if (menu_state.action != Cara::NativeGameMenu::StateAction::None) window.StateCompleted(false, state_slot);
+                    if (copy_trace_requested)
+                        Cara::TextureCopyTrace::Arm(directory + "native-texture-copy-trace.json");
+                    if (gpu_trace_requested)
+                        Cara::GuestGPUTrace::Arm(directory + "native-gpu-trace.csv");
+                    break;
+                case EmuWindow_SDL2::StateCommand::None:
+                    break;
+                }
             } catch (const std::exception& error) {
                 if (menu_state.action == Cara::NativeGameMenu::StateAction::None) throw;
                 Cara::NativeGameMenu::StateFailure(error.what());

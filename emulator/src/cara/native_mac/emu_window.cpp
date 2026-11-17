@@ -420,7 +420,7 @@ EmuWindow_SDL2::StateCommand EmuWindow_SDL2::TakeStateCommand() {
     return command;
 }
 void EmuWindow_SDL2::StateCompleted(bool saved, unsigned slot) {
-    keyboard_latch.Release(*InputCommon::GetKeyboard());
+    if (!saved) keyboard_latch.Release(*InputCommon::GetKeyboard());
     const auto text = fmt::format("State {} — slot {} | Cara", saved ? "saved" : "loaded", slot);
     SDL_SetWindowTitle(render_window, text.c_str());
     last_time = SDL_GetTicks();
