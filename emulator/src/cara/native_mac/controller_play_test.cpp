@@ -119,7 +119,12 @@ unsigned Run(Core::System& system) {
     settle_reload();
     require(RequestState(StateAction::Load, 10), "Load menu request failed");
     const auto load = TakeStateRequest();
+    // Restore replaces the service graph. Do not keep an old HID shared-memory
+    // owner alive across kernel teardown (ordinary menu dispatch holds none).
+    hid.reset();
     system.LoadState(load.slot);
+    hid = Service::HID::GetModule(system);
+    require(bool(hid), "Restored HID service missing");
     require(system.CoreTiming().GetTicks() == saved_ticks, "Menu-selected state did not restore guest ticks");
     require(TakeStateRequest().action == StateAction::None, "Load request repeated");
     Settings::ApplyInputProfile(original);

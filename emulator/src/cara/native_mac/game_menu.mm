@@ -71,7 +71,7 @@ bool RequestState(StateAction action, unsigned slot) {
 StateRequest TakeStateRequest() { auto result = state_request; state_request = {}; return result; }
 void StateFailure(const std::string& message) {
     NSAlert* alert = [[[NSAlert alloc] init] autorelease];
-    alert.messageText = @"Save state unavailable";
+    alert.messageText = @"State operation failed";
     alert.informativeText = [NSString stringWithUTF8String:message.c_str()];
     [alert runModal];
 }
