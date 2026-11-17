@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fail if the linked product or build graph contains excluded JIT facilities."""
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -35,7 +36,7 @@ libraries = subprocess.check_output(['otool', '-L', str(binary)], text=True)
 for line in libraries.splitlines()[1:]:
     lib = line.strip().split(' (')[0]
     assert lib.startswith(('/System/Library/', '/usr/lib/')), 'Non-system dynamic dependency: ' + lib
-report = {'platform': args.platform, 'jit_enabled': False, 'software_presentation': args.renderer == 'software', 'renderer': args.renderer,
+report = {'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'platform': args.platform, 'jit_enabled': False, 'software_presentation': args.renderer == 'software', 'renderer': args.renderer,
           'forbidden_symbols': forbidden, 'linkage': 'static emulator; Apple system libraries dynamic'}
 (build / 'no-jit-audit.json').write_text(json.dumps(report, indent=2) + '\n')
 print(json.dumps(report, indent=2))

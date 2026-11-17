@@ -27,3 +27,13 @@ python3 tools/package_mac_app.py --build-dir /absolute/path/mac-build --output /
 ```
 
 Omit `--cpu-jit` for a build without Dynarmic. Its JIT menu item is unavailable. The packaging helper verifies the build audit, signs the local app, and grants the JIT entitlement only to a CPU JIT build. This is a local developer app using the installed SDL and libpng libraries, not a notarized redistributable release.
+
+## Release packages
+
+GitHub's **Release packages** workflow builds the arm64 Mac app with the optional experimental CPU JIT included and an unsigned arm64 iOS GLES3 IPA. The Mac app starts with FastInterp and uses arrow keys for the D-pad and Circle Pad defaults. Custom bindings remain intact.
+
+The Mac ZIP contains a native launcher, private copies of its non-system libraries (including SDL3 when using sdl2-compat), and their licenses. Python, Homebrew and Xcode are build-time tools only. The package audit checks every linked library, verifies signatures and executable hashes, and actually runs the native launcher/core with an empty home directory and a system-only PATH. The supported macOS minimum is calculated from the packaged binaries rather than assumed from the launcher.
+
+Publish a GitHub release from a tag containing this workflow to build and attach `Cara-macOS-arm64-JIT.zip`, `Cara-iOS-arm64-GLES3-unsigned.ipa`, audit reports and `SHA256SUMS.txt`. Both builds must pass before the upload job runs. A published prerelease follows the same flow. A manual run without `release_tag` produces Actions artifacts only; supplying an existing release tag builds that exact tag and updates only these generated assets. Tags predating the packaging tools must be replaced by a new release tag containing them. Existing Android and signed iOS assets are not renamed or deleted.
+
+There are no Apple distribution credentials configured. The Mac app is ad-hoc signed and is not notarized. The unsigned IPA needs signing with the user's own credentials or sideloading service; it is not an App Store or immediately installable distribution-signed IPA. This pipeline does not contact a physical iPad.

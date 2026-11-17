@@ -5,6 +5,13 @@
 
 int main() {
     using namespace Cara::MacPreferences;
+    Model blank("[Controls]\nbutton_up=\nbutton_down=\nbutton_left=\nbutton_right=\n");
+    for (const auto& b : blank.buttons) {
+        if (b.key == "button_up") assert(b.value == Keyboard(SDL_SCANCODE_UP));
+        if (b.key == "button_down") assert(b.value == Keyboard(SDL_SCANCODE_DOWN));
+        if (b.key == "button_left") assert(b.value == Keyboard(SDL_SCANCODE_LEFT));
+        if (b.key == "button_right") assert(b.value == Keyboard(SDL_SCANCODE_RIGHT));
+    }
     const std::string original =
         "; user's configuration\n[Core]\ncpu_clock_percentage = 100\n"
         "[Renderer]\nresolution_factor = 2\n[Storage]\nnand = /my saves/nand\n"
