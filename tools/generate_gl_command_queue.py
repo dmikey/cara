@@ -207,13 +207,13 @@ outputs={'gl_command_queue_generated.inc':generated,'gl_command_queue_api.h':api
 if a.check:
  for name,expected in outputs.items():
   actual=a.output/name
-  if not actual.is_file() or actual.read_text()!=expected:
+  if not actual.is_file() or actual.read_bytes()!=expected.encode():
    raise SystemExit('Generated GL command queue drift: '+str(actual))
  print(json.dumps(dict(covered=len(used),referenced=len(references),byte_exact=True)))
  raise SystemExit
 # --check never writes files. Generation is an explicit developer action.
 a.output.mkdir(parents=True,exist_ok=True)
-for name,value in outputs.items():(a.output/name).write_text(value)
+for name,value in outputs.items():(a.output/name).write_bytes(value.encode())
 manifest['query_cache']='Known-created program + actual LINK_STATUS true; location/attribute/block-name caches only. Invalidated on create/link/binary/delete; worker-wrapper calls fail closed; no active-block-data-size cache.'
 manifest['rpc_counters']='Fixed array per actual blocking API RPC; cache hits separate; includes oversize owned jobs and installation query.'
 manifest_path.write_text(json.dumps(manifest,indent=2)+'\n');print(json.dumps(dict(generated=len(used),policies={p:sum(x==p for x in policies.values()) for p in set(policies.values())})))
