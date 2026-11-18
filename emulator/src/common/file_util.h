@@ -11,6 +11,7 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>

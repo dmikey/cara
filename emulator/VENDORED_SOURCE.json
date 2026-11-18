@@ -88,7 +88,7 @@
       "bundled": true,
       "local_patches": [
         {
-          "description": "Include <stdexcept> directly in interpreter.h for Linux/libstdc++ builds; no DSP behavior change."
+          "description": "Include <stdexcept> and <utility> directly in interpreter.h for Linux/libstdc++ builds; no DSP behavior change."
         }
       ]
     },
