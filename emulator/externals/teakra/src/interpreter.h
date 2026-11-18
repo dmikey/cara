@@ -1,4 +1,6 @@
 #pragma once
+
+#include <stdexcept>
 #include <atomic>
 #include <exception>
 #include <tuple>
