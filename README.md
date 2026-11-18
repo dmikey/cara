@@ -131,6 +131,11 @@ bundled in the repository, with build tools and validation guides included.
 
 ## Build and contribute
 
+A Linux x86_64 OpenGL developer build is available through the
+[Linux OpenGL workflow](https://github.com/dmikey/cara/actions/workflows/linux-opengl.yml).
+It uses a command-line SDL frontend and FastInterp without JIT. See the
+[Linux build and runtime requirements](docs/build.md#linux-opengl).
+
 Start with the [build guide](docs/build.md). Reports should include the Cara
 revision, device, iOS version, game region, settings and steps to reproduce.
 For performance work, include comparable runs and correctness checks.

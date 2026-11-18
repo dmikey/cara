@@ -25,12 +25,17 @@ jobs:
       CCACHE_COMPILERCHECK: content
     steps:
       - uses: actions/checkout@v4
-      - name: Install SDL, PNG, Mesa and build tools
+      - name: Refresh Ubuntu package lists
+        timeout-minutes: 3
+        run: sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+      - name: Install SDL, PNG and Mesa
+        timeout-minutes: 10
+        run: sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang ccache libsdl2-dev libpng-dev libgl1-mesa-dev libgl1-mesa-dri xvfb xauth
+      - name: Install pinned CMake and Ninja
+        timeout-minutes: 3
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clang ccache libsdl2-dev libpng-dev libgl1-mesa-dev libgl1-mesa-dri mesa-utils xvfb xauth
           python3 -m venv work/tools
-          work/tools/bin/pip install cmake==3.31.10 ninja==1.13.2
+          work/tools/bin/pip --disable-pip-version-check install --timeout 30 --retries 2 cmake==3.31.10 ninja==1.13.2
           echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
       - uses: actions/cache/restore@v4
         id: compiler-cache
@@ -51,7 +56,7 @@ jobs:
             -DENABLE_WEB_SERVICE=OFF -DENABLE_CUBEB=OFF \
             -DENABLE_FFMPEG_AUDIO_DECODER=OFF -DENABLE_FFMPEG_VIDEO_DUMPER=OFF
       - name: Build Linux executable
-        run: cmake --build work/build-linux --target cara -j3
+        run: cmake --build work/build-linux --target cara -j3 -- -k0
       - name: Desktop OpenGL pixel and core smoke checks
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'

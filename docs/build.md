@@ -1,6 +1,6 @@
 # Building Cara
 
-Requires macOS, Xcode, Python 3, CMake 3.31.10, and Ninja 1.13.2.
+Apple builds require macOS, Xcode, Python 3, CMake 3.31.10, and Ninja 1.13.2.
 Emulator and dependency source is bundled in the repository.
 
 ```sh
