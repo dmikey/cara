@@ -5,13 +5,26 @@
 
 <img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
 
-**A new Nintendo 3DS emulator core and emulator shell for Apple hardware.**
+**A new Nintendo 3DS emulator core and emulator shell for macOS, iOS, Android and Linux.**
 
-Our goal is the smoothest 3DS experience on Apple hardware without CPU JIT.
-Cara brings a performance-first approach to emulation on iPhone and iPad:
-custom GPU rendering, efficient memory use, and gameplay without CPU JIT.
-Open source, with a native shell of its own and a reusable core designed for Delta
-integration.
+Cara brings a shared, performance-focused core to desktop and mobile hardware:
+GPU rendering, efficient memory use, and FastInterp execution without CPU JIT.
+Open source, with platform frontends of its own and a reusable core designed for
+Delta integration.
+
+## Platforms
+
+| Platform | Current frontend |
+|---|---|
+| **macOS** | Native desktop app and SDL development host. |
+| **iOS** | Native touch-first app for iPhone and iPad, without CPU JIT. |
+| **Android** | Native Android frontend with OpenGL ES rendering. |
+| **Linux** | SDL command-line frontend with desktop OpenGL. |
+
+**Platform stability and feature parity are still in progress.** Game
+compatibility, performance, controls, settings and save workflows vary across
+platforms. Features described for one frontend may not yet be available in the
+others. Our goal is a smooth, consistent experience across all four.
 
 ## Performance you can measure
 
@@ -47,14 +60,14 @@ for the measured runs, save/load checks, recent merged fixes and release status.
 
 | Focus | The Cara approach |
 |---|---|
-| **Built for Apple hardware** | Custom GPU rendering and native presentation for iPhone and iPad. |
+| **One core across four platforms** | Shared emulation work supports macOS, iOS, Android and Linux, with frontends suited to each platform. |
 | **More work on the GPU** | GPU vertex processing and packed-data decoding reduce work on the CPU. |
 | **Less repeated work** | Prepared-input reuse and fewer CPU/GPU transfers target the costs that slow gameplay down. |
 | **Memory-conscious design** | Bounded graphics caches and data reuse keep memory efficiency central to performance tuning. |
-| **Play without CPU JIT** | Cara extends Azahar FastInterp with static arithmetic fast paths, decoded-block caching and execution-budget fixes inside the signed app. |
-| **A core and a shell** | A reusable core developed for Delta integration, alongside Cara’s standalone iOS app. |
+| **Play without CPU JIT** | Cara extends Azahar FastInterp with static arithmetic fast paths, decoded-block caching and execution-budget fixes. |
+| **A core and a shell** | A reusable core developed for Delta integration, alongside Cara’s platform frontends. |
 
-## From Android performance work to Apple hardware
+## From Android performance work to a shared core
 
 **Citra MMJ**, weihuoya’s performance-focused Android fork, gave Cara a mobile
 rendering foundation to build on. We carry that work forward in three key areas:
@@ -72,11 +85,12 @@ rendering foundation to build on. We carry that work forward in three key areas:
 **Azahar FastInterp** supplies the interpreter foundation. Cara extends it with
 static arithmetic fast paths, faster instruction-timing lookup, and an eight-way
 decoded-block cache on iOS. Cara also fixes decode-record reuse and execution
-budgets across chained blocks. Guest CPU instructions remain interpreted inside
-the signed app, without runtime CPU code generation.
+budgets across chained blocks. In FastInterp mode, guest CPU instructions remain
+interpreted without runtime CPU code generation. Optional JIT support depends on
+the platform and build.
 
-Cara combines these execution changes with its Apple graphics pipeline, bounded
-memory and upload caches, a reusable core, and its own native shell.
+Cara combines these execution changes with its graphics pipeline, bounded
+memory and upload caches, a reusable core, and platform frontends.
 
 ## Faster by understanding the hardware
 
@@ -100,7 +114,7 @@ The stronger evidence comes from changing one mechanism at a time:
 | **Keep experiments accountable** | Staging only shader-used inputs removed 14% of configured input registers in a Stories comparison, but interleaved data kept payload bytes unchanged and there was no measured speed gain. The option stays off. [Results](docs/vertex-input-staging.md) |
 
 These research results describe the development builds recorded in each report.
-The target is full speed at **100% guest CPU with sound and no CPU JIT**. Some
+The no-JIT target is full speed at **100% guest CPU with sound**. Some
 Stories scenes still fall short. Underclocking can help playability, but it also
 changes how much work the guest produces; it cannot establish a full-clock gain.
 Hardware diagrams and register research guide the investigation, while matched
@@ -112,13 +126,15 @@ Explore the [architecture](docs/technology.md),
 
 ## Made for playing
 
+The iOS frontend currently brings these features together:
+
 - **Your games, through Files.** Open extracted game files from the file browser.
 - **Your controls.** Touch controls and customizable Delta-compatible skins.
 - **Your progress.** Per-game save-state slots and in-game save syncing through a selected iCloud Drive folder.
 - **Your experience.** GPU-accelerated graphics, native stereo audio, and an optional adaptive guest CPU clock for demanding scenes.
 
-The standalone Cara app is the playable build provided here. Delta core integration
-is a development target.
+Desktop and Android frontends are being brought toward the same experience.
+Delta core integration remains a development target.
 
 ## Open source, built in the open
 
@@ -137,7 +153,7 @@ It uses a command-line SDL frontend and FastInterp without JIT. See the
 [Linux build and runtime requirements](docs/build.md#linux-opengl).
 
 Start with the [build guide](docs/build.md). Reports should include the Cara
-revision, device, iOS version, game region, settings and steps to reproduce.
+revision, device, operating system and version, game region, settings and steps to reproduce.
 For performance work, include comparable runs and correctness checks.
 See [validation](docs/validation.md) and
 [existing issues](https://github.com/dmikey/cara/issues).
