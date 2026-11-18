@@ -164,7 +164,9 @@ void Configure() {
     const std::array keys{SDL_SCANCODE_A, SDL_SCANCODE_S, SDL_SCANCODE_Z, SDL_SCANCODE_X,
         SDL_SCANCODE_T, SDL_SCANCODE_G, SDL_SCANCODE_F, SDL_SCANCODE_H,
         SDL_SCANCODE_Q, SDL_SCANCODE_W, SDL_SCANCODE_RETURN, SDL_SCANCODE_BACKSPACE,
-        SDL_SCANCODE_O, SDL_SCANCODE_P, SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_B};
+        SDL_SCANCODE_O, SDL_SCANCODE_P, SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_B,
+        SDL_SCANCODE_UNKNOWN};
+    static_assert(keys.size() == Settings::NativeButton::NumButtons);
     for (unsigned i = 0; i < v.current_input_profile.buttons.size(); ++i)
         v.current_input_profile.buttons[i] = InputCommon::GenerateKeyboardParam(keys.at(i));
     v.current_input_profile.analogs[0] = InputCommon::GenerateAnalogParamFromKeys(
