@@ -1,16 +1,18 @@
 // Copyright 2026 Cara contributors. GPL-2.0-or-later.
-// Uses Cara's shared core and the SDL input conventions inherited from Citra.
+// Uses Cara's shared core; see NOTICE for the inherited SDL input conventions.
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <SDL.h>
 #include <glad/glad.h>
 #include "cara/lodepng_image_interface.h"
+#include "common/detached_tasks.h"
 #include "common/file_util.h"
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
@@ -121,6 +123,10 @@ struct SDLSession {
     }
     ~SDLSession() { SDL_Quit(); }
 };
+struct TaskSession {
+    Common::DetachedTasks tasks;
+    ~TaskSession() { tasks.WaitForAllTasks(); }
+};
 struct InputSession {
     InputSession() { InputCommon::Init(); }
     ~InputSession() { InputCommon::Shutdown(); }
@@ -207,6 +213,7 @@ int main(int argc, char** argv) {
         Log::SetGlobalFilter(filter);
         Log::AddBackend(std::make_unique<Log::ColorConsoleBackend>());
         SDLSession sdl;
+        TaskSession tasks;
         Configure();
         Window window(fullscreen);
         if (self_test) { window.SelfTest(); return 0; }
