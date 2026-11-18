@@ -23,6 +23,7 @@
 #include "core/settings.h"
 #include "input_common/main.h"
 #include "input_common/keyboard.h"
+#include "input_common/udp/client.h"
 #include "video_core/video_core.h"
 
 namespace {
@@ -174,6 +175,10 @@ void Configure() {
     v.current_input_profile.analogs[1] = InputCommon::GenerateAnalogParamFromKeys(
         SDL_SCANCODE_I, SDL_SCANCODE_K, SDL_SCANCODE_J, SDL_SCANCODE_L, SDL_SCANCODE_D, 0.5f);
     v.current_input_profile.touch_device = "engine:emu_window";
+    v.current_input_profile.motion_device =
+        "engine:motion_emu,update_period:100,sensitivity:0.01,tilt_clamp:90.0";
+    v.current_input_profile.udp_input_address = InputCommon::CemuhookUDP::DEFAULT_ADDR;
+    v.current_input_profile.udp_input_port = InputCommon::CemuhookUDP::DEFAULT_PORT;
     Settings::Apply();
 }
 }
