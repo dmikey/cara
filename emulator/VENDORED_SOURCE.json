@@ -85,7 +85,12 @@
       "path": "externals/teakra",
       "source": "https://github.com/wwylele/teakra.git",
       "revision": "e6ea0eae656c022d7878ffabc4e016b3e6f0c536",
-      "bundled": true
+      "bundled": true,
+      "local_patches": [
+        {
+          "description": "Include <stdexcept> and <utility> directly in interpreter.h for Linux/libstdc++ builds; no DSP behavior change."
+        }
+      ]
     },
     {
       "path": "externals/xbyak",

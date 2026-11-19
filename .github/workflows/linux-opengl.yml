@@ -1,0 +1,94 @@
+name: Linux OpenGL
+on:
+  push:
+    branches: [main, ci/linux-opengl]
+    paths: ['emulator/**', 'tools/prepare.py', 'tools/package_linux.py', 'tools/make_test_elf.py', '.github/workflows/linux-opengl.yml']
+  pull_request:
+    paths: ['emulator/**', 'tools/prepare.py', 'tools/package_linux.py', 'tools/make_test_elf.py', '.github/workflows/linux-opengl.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-opengl-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux:
+    name: Linux x86_64 / OpenGL / FastInterp
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CC: clang
+      CXX: clang++
+      CCACHE_DIR: ${{ github.workspace }}/work/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 1G
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refresh Ubuntu package lists
+        timeout-minutes: 3
+        run: sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+      - name: Install SDL, PNG and Mesa
+        timeout-minutes: 10
+        run: sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends clang ccache libsdl2-dev libpng-dev libgl1-mesa-dev libgl1-mesa-dri xvfb xauth
+      - name: Install pinned CMake and Ninja
+        timeout-minutes: 3
+        run: |
+          python3 -m venv work/tools
+          work/tools/bin/pip --disable-pip-version-check install --timeout 30 --retries 2 cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
+        with:
+          path: work/ccache
+          key: linux-opengl-clang-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: linux-opengl-clang-
+      - name: Validate bundled source
+        run: python3 tools/prepare.py
+      - name: Configure desktop OpenGL frontend
+        run: |
+          cmake -S emulator -B work/build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBOOST_ROOT="$PWD/emulator/externals/boost" -DBoost_NO_SYSTEM_PATHS=ON \
+            -DCARA_LINUX_SDL_HOST=ON -DENABLE_SDL2=ON -DENABLE_QT=OFF \
+            -DCARA_ENABLE_JIT=OFF -DCARA_SOFTWARE_PRESENTATION=OFF \
+            -DENABLE_WEB_SERVICE=OFF -DENABLE_CUBEB=OFF \
+            -DENABLE_FFMPEG_AUDIO_DECODER=OFF -DENABLE_FFMPEG_VIDEO_DUMPER=OFF
+      - name: Build Linux executable
+        run: cmake --build work/build-linux --target cara -j3 -- -k0
+      - name: Desktop OpenGL pixel and core smoke checks
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          SDL_AUDIODRIVER: dummy
+          CARA_USER_DIR: ${{ runner.temp }}/cara-linux-smoke
+        run: |
+          set -o pipefail
+          work/build-linux/bin/cara --help
+          work/build-linux/bin/cara --version
+          xvfb-run -a -s '-screen 0 1280x1024x24' work/build-linux/bin/cara --self-test | tee work/opengl-smoke.log
+          python3 tools/make_test_elf.py work/counter.elf
+          timeout 90s xvfb-run -a -s '-screen 0 1280x1024x24' work/build-linux/bin/cara --frames 4 work/counter.elf 2>&1 | tee work/core-smoke.log
+          grep -q 'Completed refreshes: 4' work/core-smoke.log
+      - name: Audit and package
+        run: python3 tools/package_linux.py --build-dir work/build-linux --output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cara-Linux-x86_64-OpenGL
+          if-no-files-found: error
+          path: dist/*
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-opengl-diagnostics
+          if-no-files-found: ignore
+          path: |
+            work/opengl-smoke.log
+            work/core-smoke.log
+            work/build-linux/CMakeCache.txt
+            work/build-linux/CMakeFiles/CMakeConfigureLog.yaml
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: work/ccache
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}

@@ -1,6 +1,7 @@
 # Modified for Cara on 2026-11-12; see NOTICE for attribution.
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/CMakeModules)
 
+option(CARA_LINUX_SDL_HOST "Build the native Linux OpenGL SDL frontend" OFF)
 option(CARA_MAC_SDL_DEV_HOST "Build the separate native macOS SDL developer frontend" OFF)
 if (CARA_MAC_SDL_DEV_HOST)
     if (NOT APPLE OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -33,6 +34,11 @@ if (CARA_MAC_SDL_DEV_HOST)
         default_ini.h
         lodepng_image_interface.h
     )
+elseif(CARA_LINUX_SDL_HOST)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CARA_ENABLE_JIT)
+        message(FATAL_ERROR "CARA_LINUX_SDL_HOST requires Linux and CARA_ENABLE_JIT=OFF")
+    endif()
+    add_executable(cara native_linux/main.cpp native_mac/image.cpp)
 else()
     add_executable(cara
         cara.cpp
@@ -81,6 +87,9 @@ if (CARA_MAC_SDL_DEV_HOST)
     target_include_directories(cara-native-touch-command-self-test PRIVATE "${PROJECT_SOURCE_DIR}/src")
     target_compile_options(cara-native-touch-command-self-test PRIVATE -UNDEBUG)
 
+elseif(CARA_LINUX_SDL_HOST)
+    find_package(PNG REQUIRED)
+    target_link_libraries(cara PRIVATE PNG::PNG)
 else()
     target_link_libraries(cara PRIVATE lodepng)
 endif()
