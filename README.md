@@ -5,12 +5,17 @@
 
 <img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
 
-**A new Nintendo 3DS emulator core and emulator shell for macOS, iOS, Android and Linux.**
+**Apple-first Nintendo 3DS emulator core and emulator shell.**
 
-Cara brings a shared, performance-focused core to desktop and mobile hardware:
-GPU rendering, efficient memory use, and FastInterp execution without CPU JIT.
-Open source, with platform frontends of its own and a reusable core designed for
-Delta integration.
+Cara builds a portable 3DS core for reuse in Delta alongside its own frontends
+for macOS, iOS, Android, and Linux. Apple hardware is the primary development
+and testing focus. On iPhone and iPad, Cara uses FastInterp to run games without
+CPU JIT.
+
+Cara aims to improve speed while preserving emulation correctness and
+stability. Guest behavior guides timing and compatibility decisions, and
+measurements on real hardware guide host-side choices. We prioritize engine
+fixes and check their effects on gameplay, rendering, and saves.
 
 ## Platforms
 
@@ -26,46 +31,20 @@ compatibility, performance, controls, settings and save workflows vary across
 platforms. Features described for one frontend may not yet be available in the
 others. Our goal is a smooth, consistent experience across all four.
 
-## Performance you can measure
+## Graphics
 
-In an earlier Xenoblade Chronicles 3D opening replay on an M4 iPad, Cara reached
-**99.5% emulation speed** using **758 MiB peak sampled memory**—about **40–45% less
-memory** than the two Azahar-based apps in the same comparison.
+| Backend | Role in Cara |
+| --- | --- |
+| **Metal** | The native graphics direction for Apple devices. A development renderer is being tested on Apple hardware. |
+| **OpenGL ES** | The established hardware-accelerated path on iOS and Android and a reference for renderer compatibility. |
+| **Vulkan** | Planned for broader cross-platform support. |
 
-| Build | Emulation speed | Peak sampled memory |
-|---|---:|---:|
-| **Cara GLES3** | **99.5%** | **758 MiB** |
-| Manic / Azahar | 97.4% | 1,373 MiB |
-| Azahar / MoltenVK | 84.6% | 1,261 MiB |
-
-All three completed the opening replay at native resolution, with sound enabled,
-CPU JIT disabled, and **100% guest CPU clock**. This is a whole-app comparison of
-one scene; performance and compatibility vary by game. See the
-[full results, build revision, and methodology](docs/performance.md).
-
-## Latest development: Luigi reaches near-full speed on M1
-
-Keeping a recurring graphics conversion on the GPU brought the tested Luigi’s
-Mansion: Dark Moon scene from **28.41 to 16.65 ms per refresh** on an M1 Mac—
-**41.4% less frame time**, near the test’s 60 Hz cap. The comparison kept
-**100% guest CPU, sound, normal graphics checks and no CPU or shader JIT**, with
-matching captured images and selected guest state. It eliminated two readbacks
-per refresh without dropping effects or changing guest timing.
-
-This result covers one M1 scene. A local Mac development build is installed for
-longer gameplay testing. See the [November development update](docs/updates/2026-11-16.md)
-for the measured runs, save/load checks, recent merged fixes and release status.
-
-## What makes Cara different
-
-| Focus | The Cara approach |
-|---|---|
-| **One core across four platforms** | Shared emulation work supports macOS, iOS, Android and Linux, with frontends suited to each platform. |
-| **More work on the GPU** | GPU vertex processing and packed-data decoding reduce work on the CPU. |
-| **Less repeated work** | Prepared-input reuse and fewer CPU/GPU transfers target the costs that slow gameplay down. |
-| **Memory-conscious design** | Bounded graphics caches and data reuse keep memory efficiency central to performance tuning. |
-| **Play without CPU JIT** | Cara extends Azahar FastInterp with static arithmetic fast paths, decoded-block caching and execution-budget fixes. |
-| **A core and a shell** | A reusable core developed for Delta integration, alongside Cara’s platform frontends. |
+Cara moves vertex processing and packed input decoding onto the GPU, keeps
+eligible surface conversions and presentation GPU-resident, and reuses prepared
+indices, uploads, and shader stages. Metal development builds also explore
+grouping compatible draws, reusing decoded textures and GPU fills, and loading
+translated shader caches off the draw thread. Surface ownership tracking
+preserves guest-visible data when rendering, copies, and CPU reads intersect.
 
 ## From Android performance work to a shared core
 
@@ -92,37 +71,22 @@ the platform and build.
 Cara combines these execution changes with its graphics pipeline, bounded
 memory and upload caches, a reusable core, and platform frontends.
 
-## Faster by understanding the hardware
+## FastInterp and handheld roadmap
 
-Cara’s progress has come from understanding more of the machine: how the guest
-CPU produces graphics commands, who owns each byte of shared memory, when work
-becomes visible, and how the host presents it. Changing the graphics API alone
-would leave that machinery to solve. Metal remains a future direction; the
-current work makes the engine underneath it better.
+FastInterp decodes guest instructions into reusable blocks and dispatches them
+to precompiled handlers. Block chaining, predecoded operands, and fast paths
+for mapped RAM and ARM condition flags reduce interpreter work. Cara integrates
+these changes with guest timing, save states, and memory-coherence checks for
+GPU-visible memory.
 
-The GLES3 results above demonstrate what this approach can deliver. They compare
-whole applications, so they do not isolate the performance of one graphics API.
-The stronger evidence comes from changing one mechanism at a time:
+FastInterp already handles guest ARM and Thumb instructions. The Rockchip
+handheld roadmap builds on that support by expanding Thumb correctness tests
+and tuning decoding, dispatch, and memory access for low-power ARM Linux
+devices. Rockchip devices are a development target.
 
-| Finding | What changed or what we learned |
-|---|---|
-| **Keep graphics data on the GPU** | GPU alias remapping lets compatible surfaces share GPU-resident data while preserving guest-visible bytes. An earlier physical M4 iPad Luigi laboratory replay fell from roughly 24.5 to 16.7 ms per refresh, eliminating six downloads per refresh with matching final pixels. [Results](docs/gpu-surface-aliases.md) |
-| **Preserve memory ownership** | Targeted cache cleanup and alias invalidation preserve coherence without flushing unrelated dirty surfaces. Partial writes, overlapping views and CPU reads need explicit correctness checks. [Residency research](docs/gpu-residency-prior-art.md) |
-| **Fix host pacing** | Bounded pacing recovered near-full speed in a matched Xenoblade replay while preserving guest event timing, draw counts and final pixels. [Results](docs/frame-pacing.md) |
-| **Follow the guest’s work** | Stories traces distinguish command submission, draw work, completion events and display refresh. Offline instruction inspection identified copying, visibility tests and a tick-poll pacing loop; their execution counts alone do not establish CPU cost or justify skipping them. [Trace findings](docs/stories-gpu-trace-2026-11-13.md) |
-| **Measure the waiting work** | A bounded Stories probe measured about 0.69 ms of instrumented CPU time per sampled refresh in the fine polling episode, including conversions and its tick query. It does not explain the whole slowdown; observer overhead remains in the figure and outside-interpreter scheduler cost is still unmeasured. [Findings](docs/stories-tick-poll-audit.md) |
-| **Keep experiments accountable** | Staging only shader-used inputs removed 14% of configured input registers in a Stories comparison, but interleaved data kept payload bytes unchanged and there was no measured speed gain. The option stays off. [Results](docs/vertex-input-staging.md) |
-
-These research results describe the development builds recorded in each report.
-The no-JIT target is full speed at **100% guest CPU with sound**. Some
-Stories scenes still fall short. Underclocking can help playability, but it also
-changes how much work the guest produces; it cannot establish a full-clock gain.
-Hardware diagrams and register research guide the investigation, while matched
-checkpoints, memory-coherence fixtures and pixel comparisons test each change.
-
-Explore the [architecture](docs/technology.md),
-[hardware evidence](docs/hardware-source-audit.md), and
-[research references](docs/research-references.md).
+See the [architecture](docs/technology.md), [FastInterp notes](docs/fastinterp.md),
+and [performance and validation results](docs/performance.md) for implementation
+details and benchmark methodology.
 
 ## Made for playing
 
