@@ -3,7 +3,7 @@
 [![Build](https://github.com/dmikey/cara/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/dmikey/cara/actions/workflows/build.yml?query=branch%3Amain)
 [![License: GPL v2 or later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
 
-<img src="emulator/src/ios/artwork/cara-orange.png" alt="Cara Cara orange icon" width="104" align="right">
+<img src="docs/artwork/cara-citrus.png" alt="Cara citrus app icon" width="104" align="right">
 
 **Apple-first Nintendo 3DS emulator core and emulator shell.**
 
