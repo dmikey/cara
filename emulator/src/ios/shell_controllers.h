@@ -3,7 +3,6 @@
 #import <UIKit/UIKit.h>
 #import "ios/library_store.h"
 
-NSDictionary* CaraReadGameArtwork(CaraLibraryGame* game);
 
 @interface CaraLibraryController : UIViewController
 @property(strong,nonatomic) CaraLibraryStore* store;

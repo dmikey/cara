@@ -51,7 +51,7 @@ static UIColor* CaraBackground() {
 
 // Read only the unencrypted icon section; never initialize or borrow the active
 // emulator, decrypt a game, or read the whole ROM just to decorate the library.
-NSDictionary* CaraReadGameArtwork(CaraLibraryGame* game) {
+static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     BOOL scoped=[game.url startAccessingSecurityScopedResource];
     @try {
         NSNumber* ubiquitous=nil; NSNumber* downloaded=nil;
@@ -252,7 +252,7 @@ NSDictionary* CaraReadGameArtwork(CaraLibraryGame* game) {
     NSString* key=[NSString stringWithFormat:@"%@-%@-%llu",game.url,game.modified,game.fileSize]; NSDictionary* cached=[artworkCache objectForKey:key]; if(cached) { apply(cached); return; }
     unsigned generation=artworkGeneration.load(); dispatch_async(artworkQueue,^{ @autoreleasepool {
         if(generation!=self->artworkGeneration.load()) return;
-        NSMutableDictionary* metadata=[(CaraReadGameArtwork(game)?:@{}) mutableCopy];
+        NSMutableDictionary* metadata=[(ReadGameArtwork(game)?:@{}) mutableCopy];
         if(!metadata[@"title"]) metadata[@"title"]=game.title;
         NSDictionary* embedded=[metadata copy];
         dispatch_async(dispatch_get_main_queue(),^{ if(generation==self->artworkGeneration.load()) apply(embedded); });

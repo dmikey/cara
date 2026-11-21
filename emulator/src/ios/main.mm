@@ -13,8 +13,6 @@
 #import "ios/skin_controls.h"
 #import "ios/action_layout.h"
 #import "ios/input_hub.h"
-#import "ios/home_screen.h"
-#import "ios/home_nand.h"
 #import "ios/feature_controllers.h"
 #include "audio_core/ios_sink.h"
 #ifdef CARA_PGO_GENERATE
@@ -70,7 +68,6 @@ extern "C" int __llvm_profile_write_file(void);
 #include "common/logging/backend.h"
 #include "common/logging/filter.h"
 #include "core/core.h"
-#include "core/hle/service/am/am.h"
 #include "core/loader/loader.h"
 #include "core/arm/fastinterp/fastinterp.h"
 #include "core/savestate.h"
@@ -263,6 +260,7 @@ public:
     unsigned frames = 0;
     // Emulation-thread policy, independent of guest CPU underclocking.
     Cara::PresentationGuard presentation_guard;
+    std::atomic<bool> adaptiveFrameSkip{true};
     bool presentation_paced = true;
     unsigned presentation_speed = 100;
     u64 presentation_submissions = 0;
@@ -409,7 +407,7 @@ public:
     void SwapBuffers() override {
 #ifdef CARA_IOS_GLES
         if (drawable_framebuffer) {
-            if (presentation_guard.Admit(displayLinkSequence.load(std::memory_order_relaxed))) {
+            if (presentation_guard.Admit(displayLinkSequence.load(std::memory_order_relaxed), adaptiveFrameSkip.load())) {
             CGRect destinations[2]; int desired_width,desired_height;
             {
                 std::lock_guard<std::mutex> lock(display_mutex);
@@ -495,6 +493,20 @@ static BOOL CaraCanTuneEmulation() {
 }
 static NSDictionary* CaraGameOverrides;
 static id CaraEmulationValue(NSString* key) { return CaraGameOverrides[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; }
+static bool CaraAdaptiveFrameSkipAvailable() {
+#ifndef CARA_IOS_GLES
+    return false;
+#else
+    return ![CaraEmulationValue(@"playMode") isEqual:@"accuracy"] &&
+        !std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_CAPTURE_FRAMES") &&
+        !std::getenv("CARA_CAPTURE_BURST_START") && !std::getenv("CARA_GPU_WAIT_TIMING") &&
+        !std::getenv("CARA_PROFILE_NO_ADAPTIVE_PRESENTATION");
+#endif
+}
+static bool CaraAdaptiveFrameSkipEnabled() {
+    NSNumber* stored = [NSUserDefaults.standardUserDefaults objectForKey:@"adaptiveFrameSkipEnabled"];
+    return CaraAdaptiveFrameSkipAvailable() && (!stored || stored.boolValue);
+}
 static Cara::PlayPolicy CaraSavedPlayPolicy() {
     const NSInteger saved=[CaraEmulationValue(@"maximumSpeedPercent") integerValue];
     const unsigned maximum=saved>=50 && saved<=200?unsigned(saved):100;
@@ -543,10 +555,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     CaraSkin* controllerLandscapeSkin;
     CaraStatsView* performanceHUD;
     CaraDeviceStatusView* deviceStatusHUD;
-    CaraHomeScreen* homeScreen;
-    BOOL pickingHomeGame;
-    BOOL pickingHomeNAND;
-    BOOL importingHomeNAND;
     CaraSessionIndicator* statusIndicator;
     NSString* pickingSkinOrientation;
     NSDictionary* currentRepresentation;
@@ -762,12 +770,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     inputHub=[[CaraInputHub alloc] initWithDefaults:NSUserDefaults.standardUserDefaults];
     inputHub.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick) {
         EmulatorController* controller=weakSelf; if (!controller) return;
-        if (controller->libraryVisible && controller->homeScreen && !controller->homeScreen.lowerScreen.hidden) {
-            if (!controller.presentedViewController && !controller->openingGame &&
-                !controller->importingHomeNAND && controller->backgroundAt==0)
-                [controller->homeScreen handleButtons:pressed circle:circle];
-            return;
-        }
+        if (controller->libraryVisible) return;
         // Scripted benchmarks own game inputs; the menu remains available.
         if (benchmarkInputLock && controller->running) return;
         static NSDictionary<NSString*,NSNumber*>* codes;
@@ -786,10 +789,10 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         if (controller->emuWindow) controller->emuWindow->touch=touch.x<0 ? -1 : int(unsigned(touch.x) | (unsigned(touch.y)<<16));
     };
     skinControls.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick,CGPoint touch) { EmulatorController* c=weakSelf; if(c) [c->inputHub updateSurface:@"skin" buttons:pressed circle:circle cstick:cstick touch:touch]; };
-    skinControls.menuPressed=^{ [weakSelf handleHomeButton]; };
+    skinControls.menuPressed=^{ [weakSelf showMenu]; };
     actionControls=[[CaraActionControls alloc] initWithFrame:CGRectZero]; [self.view addSubview:actionControls];
     actionControls.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick) { EmulatorController* c=weakSelf; if(c) [c->inputHub updateSurface:@"actions" buttons:pressed circle:circle cstick:cstick touch:CGPointMake(-1,-1)]; };
-    inputHub.commandChanged=^(NSString* command,BOOL down) { if (down && [command isEqual:@"menu"]) [weakSelf handleHomeButton]; };
+    inputHub.commandChanged=^(NSString* command,BOOL down) { if (down && [command isEqual:@"menu"]) [weakSelf showMenu]; };
     performanceHUD=[[CaraStatsView alloc] initWithFrame:CGRectZero]; [self.view addSubview:performanceHUD];
     if (!std::getenv("CARA_BENCHMARK_FRAMES")) {
         deviceStatusHUD=[CaraDeviceStatusView new];
@@ -801,7 +804,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     status.numberOfLines=2; status.userInteractionEnabled=NO; status.hidden=YES;
     statusIndicator=[CaraSessionIndicator new]; [self.view addSubview:statusIndicator];
     menuFallback=[UIButton buttonWithType:UIButtonTypeSystem]; menuFallback.configuration=[UIButtonConfiguration filledButtonConfiguration];
-    [menuFallback setTitle:@"Menu" forState:UIControlStateNormal]; [menuFallback addTarget:self action:@selector(handleHomeButton) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:menuFallback];
+    [menuFallback setTitle:@"Menu" forState:UIControlStateNormal]; [menuFallback addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:menuFallback];
     [self reloadSelectedSkins];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(background) name:UIApplicationWillResignActiveNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(foreground) name:UIApplicationDidBecomeActiveNotification object:nil];
@@ -811,8 +814,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSString* launchROM=[[NSUserDefaults.standardUserDefaults volatileDomainForName:NSArgumentDomain] objectForKey:@"rom"];
     if (!launchROM.length && !std::getenv("CARA_OPEN_RECENT") && !std::getenv("CARA_BENCHMARK_FRAMES")) {
         [self showLibrary];
-        if ([self usesCaraHome] && [NSUserDefaults.standardUserDefaults boolForKey:@"bootOriginalHome"])
-            [self bootOriginalHome];
     }
     if (!std::getenv("CARA_BENCHMARK_FRAMES")) {
         __weak EmulatorController* owner=self;
@@ -842,10 +843,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     skinArt.hidden=actionsEnabled; actionControls.hidden=!actionsEnabled;
     if (!rep) {
         menuFallback.frame=CGRectMake(24,48,120,44);
-        const CGRect safe=UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets);
-        const CGFloat half=CGRectGetHeight(safe)/2;
-        homeScreen.upperScreen.frame=CGRectMake(CGRectGetMinX(safe),CGRectGetMinY(safe),CGRectGetWidth(safe),half);
-        homeScreen.lowerScreen.frame=CGRectOffset(homeScreen.upperScreen.frame,0,half);
         deviceStatusHUD.hidden=YES;
         deviceStatusHUD.monitoring=NO;
         return;
@@ -876,8 +873,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     skinArt.frame=canvas; skinControls.frame=canvas; [skinControls setNeedsDisplay];
     const auto convert=[&](CGRect r) { return CGRectMake(canvas.origin.x+r.origin.x/mapping.width*canvas.size.width,canvas.origin.y+r.origin.y/mapping.height*canvas.size.height,r.size.width/mapping.width*canvas.size.width,r.size.height/mapping.height*canvas.size.height); };
     top.frame=convert(skinControls.upperScreen); bottom.frame=convert(skinControls.lowerScreen);
-    homeScreen.upperScreen.frame=top.frame;
-    homeScreen.lowerScreen.frame=bottom.frame;
 
     CGRect statsFrame=CaraSkinRect(rep[@"caraStatsFrame"]);
     if (statsFrame.size.width<=0 || statsFrame.size.height<=0) statsFrame=CGRectMake(52,50,430,102);
@@ -936,9 +931,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         }
     }
     const auto overlay=Cara::OverlayPolicy(state==Cara::SessionPresentation::Running,libraryVisible,menuVisible,backgroundAt>0,[self relayKeepsRunning]);
-    const BOOL homeInput=libraryVisible && homeScreen && !homeScreen.lowerScreen.hidden &&
-        !self.presentedViewController && !menuVisible && !openingGame && !importingHomeNAND && backgroundAt==0;
-    const BOOL acceptsInput=homeInput || overlay.accept_game_input;
+    const BOOL acceptsInput=overlay.accept_game_input;
     BOOL wasAcceptingInput=inputHub.active; inputHub.active=acceptsInput;
     if (wasAcceptingInput && !acceptsInput) [self resetSkinInput];
     actionControls.userInteractionEnabled=overlay.accept_game_input;
@@ -985,72 +978,10 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSURL* documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     libraryStore=[[CaraLibraryStore alloc] initWithDocuments:documents defaults:NSUserDefaults.standardUserDefaults];
 }
-- (BOOL)usesCaraHome {
-    return UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad &&
-        !std::getenv("CARA_BENCHMARK_FRAMES");
-}
-- (void)handleHomeButton {
-    if (self.presentedViewController || openingGame || importingHomeNAND) return;
-    if (![self usesCaraHome] || (libraryVisible && !homeScreen.lowerScreen.hidden && homeScreen)) {
-        [self showMenu];
-    } else {
-        [self showLibrary];
-    }
-}
-- (void)refreshLibrary {
-    if (libraryNavigation && !libraryNavigation.view.hidden) {
-        [libraryController reloadLibrary];
-    } else if (libraryVisible && homeScreen) {
-        __weak EmulatorController* owner=self;
-        [libraryStore scan:^(NSArray<CaraLibraryGame*>* entries,NSString* error) {
-            EmulatorController* controller=owner;
-            if (controller && controller->libraryVisible && !controller->homeScreen.lowerScreen.hidden)
-                [controller->homeScreen updateGames:entries detail:error canResume:controller->gameLoaded && !controller->stop];
-        }];
-    }
-}
-- (void)pauseForLibrary {
-    inputHub.active=NO;
-    libraryVisible=YES;
-    [self applyInterfacePausePolicy];
-    [self resetSkinInput];
-    buttons.Clear();
-    circleX=0; circleY=0; cstickX=0; cstickY=0;
-    if (emuWindow) emuWindow->touch=-1;
-}
 - (void)showLibrary {
     if (openingGame) return;
-    if (![self usesCaraHome]) { [self showLibraryBrowser]; return; }
     [self ensureLibrary];
-    [self pauseForLibrary];
-    if (!homeScreen) {
-        homeScreen=[CaraHomeScreen new];
-        __weak EmulatorController* owner=self;
-        homeScreen.play=^(NSURL* url) { [owner playHomeGame:url]; };
-        homeScreen.addGame=^{ [owner addHomeGame]; };
-        homeScreen.settings=^{ [owner showMenu]; };
-        homeScreen.resumeGame=^{ [owner hideLibrary]; };
-        [self.view addSubview:homeScreen.upperScreen];
-        [self.view addSubview:homeScreen.lowerScreen];
-    }
-    [libraryController suspendArtwork];
-    libraryNavigation.view.hidden=YES;
-    homeScreen.upperScreen.hidden=NO;
-    homeScreen.lowerScreen.hidden=NO;
-    [homeScreen resetInput];
-    [self.view bringSubviewToFront:homeScreen.upperScreen];
-    [self.view bringSubviewToFront:homeScreen.lowerScreen];
-    [self.view setNeedsLayout];
-    [self updateSessionPresentation];
-    [self refreshLibrary];
-    [self setNeedsStatusBarAppearanceUpdate];
-}
-- (void)showLibraryBrowser {
-    if (openingGame) return;
-    [self ensureLibrary];
-    homeScreen.upperScreen.hidden=YES;
-    homeScreen.lowerScreen.hidden=YES;
-    [homeScreen resetInput];
+
     if (!libraryController) {
         libraryController=[CaraLibraryController new]; libraryController.store=libraryStore;
         __weak EmulatorController* owner=self;
@@ -1079,9 +1010,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 - (void)hideLibrary {
     inputHub.active=NO;
     libraryVisible=NO;
-    homeScreen.upperScreen.hidden=YES;
-    homeScreen.lowerScreen.hidden=YES;
-    [homeScreen resetInput]; libraryNavigation.view.hidden=YES; [libraryController suspendArtwork];
+    libraryNavigation.view.hidden=YES; [libraryController suspendArtwork];
     [self resumeFromMenu]; [self setNeedsStatusBarAppearanceUpdate];
     if (@available(iOS 16.0,*)) [self setNeedsUpdateOfSupportedInterfaceOrientations];
 }
@@ -1168,9 +1097,17 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         @{@"title":@"Play mode",@"subtitle":accuracy?@"Accuracy · 100% guest CPU, 100% speed":@"Performance",@"symbol":@"speedometer"},
         @{@"title":@"Use fixed guest clock",@"subtitle":@"Turn off to let Cara adjust the guest clock automatically.",@"symbol":@"cpu",@"value":@(fixed),@"enabled":@(tuning),@"change":^(BOOL on) { [owner setEmulationPreference:@"fixedGuestClockEnabled" value:@(on) refresh:YES]; }},
         @{@"title":@"Guest clock",@"subtitle":@"25–200% · Normal guest clock: 100%.",@"enabled":@(tuning && fixed),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:std::clamp<NSInteger>([NSUserDefaults.standardUserDefaults integerForKey:@"fixedGuestClockPercent"],25,200))},@"sliderChange":^(double value) { [owner setEmulationPreference:@"fixedGuestClockPercent" value:@(std::lround(value)) refresh:NO]; }},
+        @{@"title":@"Adaptive Frame Skip",@"subtitle":@"Coalesce host display updates while preserving all guest draws and transfers.",
+          @"symbol":@"rectangle.on.rectangle",@"enabled":@(CaraAdaptiveFrameSkipAvailable()),
+          @"value":@(CaraAdaptiveFrameSkipEnabled()),@"change":^(BOOL on) {
+              EmulatorController* controller=owner;
+              if (!controller || !CaraAdaptiveFrameSkipAvailable()) return;
+              [NSUserDefaults.standardUserDefaults setBool:on forKey:@"adaptiveFrameSkipEnabled"];
+              if (controller->emuWindow) controller->emuWindow->adaptiveFrameSkip=CaraAdaptiveFrameSkipEnabled();
+          }},
         @{@"title":@"Limit game speed",@"subtitle":@"Turn off to run as fast as the device allows.",@"symbol":@"gauge.with.dots.needle.67percent",@"value":@(speedLimitEnabled.load()),@"enabled":@(tuning),@"change":^(BOOL on) { [owner setEmulationPreference:@"speedLimitEnabled" value:@(on) refresh:YES]; }},
         @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 100%.",@"enabled":@(tuning && speedLimitEnabled.load()),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(maximumSpeedLimit.load())},@"sliderChange":^(double value) { [owner setMaximumSpeedPercent:NSUInteger(std::lround(value))]; }},
-        action(@"Reset emulation tuning",@"arrow.counterclockwise",tuning,^{ EmulatorController* c=owner; if (!c) return; for (NSString* key in @[@"fixedGuestClockEnabled",@"fixedGuestClockPercent",@"speedLimitEnabled",@"maximumSpeedPercent"]) [NSUserDefaults.standardUserDefaults removeObjectForKey:key]; [c applySavedPlayPolicy]; [c updateSyncFeedback]; [c resumeFromMenu]; }),
+        action(@"Reset emulation tuning",@"arrow.counterclockwise",tuning,^{ EmulatorController* c=owner; if (!c) return; for (NSString* key in @[@"fixedGuestClockEnabled",@"fixedGuestClockPercent",@"speedLimitEnabled",@"maximumSpeedPercent",@"adaptiveFrameSkipEnabled"]) [NSUserDefaults.standardUserDefaults removeObjectForKey:key]; [c applySavedPlayPolicy]; [c updateSyncFeedback]; [c resumeFromMenu]; }),
     ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 100%. Choose Performance to adjust these controls.":@"Guest clock and game speed are separate controls. Changes take effect when you resume."}];
     for (NSString* orientation in @[@"Landscape",@"Portrait"]) {
         NSString* key=[@"controllerSkin" stringByAppendingString:orientation];
@@ -1207,23 +1144,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     }
     [sections addObject:@{@"title":@"Controllers",@"rows":controllerRows,
         @"footer":@"Pair a game controller in Settings. Controller skins are separate from touch skins."}];
-    if ([self usesCaraHome] && [settingsCategory isEqual:@"HOME Menu"]) {
-        CaraHomeNAND* nand=importingHomeNAND?nil:[CaraHomeNAND installedMenu];
-        NSMutableArray* rows=[NSMutableArray arrayWithObject:action(@"Import NAND folder…",@"externaldrive.badge.plus",available && !importingHomeNAND,^{ [owner chooseHomeNAND]; })];
-        [rows addObject:action(@"Open original 3DS HOME Menu",@"house",stopped && nand!=nil,^{ [owner bootOriginalHome]; })];
-        [rows addObject:@{@"title":@"Start in original 3DS HOME Menu",@"symbol":@"power",
-            @"enabled":@(nand!=nil),@"value":@([NSUserDefaults.standardUserDefaults boolForKey:@"bootOriginalHome"]),
-            @"change":^(BOOL value) { [NSUserDefaults.standardUserDefaults setBool:value forKey:@"bootOriginalHome"]; }}];
-        [sections addObject:@{@"title":@"HOME Menu",@"rows":rows,
-            @"footer":@"Cara Home opens by default. For the original menu, import an extracted, decrypted NAND folder from your own 3DS. The original menu reads Cara’s NAND. Cara Home still lists games from Files."}];
-    }
     return sections;
 }
 - (NSArray*)settingsForCategory:(NSString*)category {
     NSArray* all=[self settingsSections];
     if ([category isEqual:@"Library & iCloud"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [@[@"Game library",@"iCloud & Files"] containsObject:section[@"title"]]; }]];
     if ([category isEqual:@"Skins"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [section[@"title"] hasSuffix:@"skin"]; }]];
-    if ([category isEqual:@"HOME Menu"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"title == %@",category]];
     if ([category isEqual:@"Controllers"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [section[@"title"] isEqual:@"Controllers"]; }]];
     return all;
 }
@@ -1288,6 +1214,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 - (void)applySavedPlayPolicy {
     const auto policy=CaraSavedPlayPolicy();
     adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed; speedLimitEnabled=policy.limit_speed; adaptiveCPUDirty=true;
+    if (emuWindow) emuWindow->adaptiveFrameSkip=CaraAdaptiveFrameSkipEnabled();
     [NSUserDefaults.standardUserDefaults setBool:policy.adaptive forKey:@"adaptiveGuestCPU"];
     UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
     if ([navigation isKindOfClass:UINavigationController.class] && [navigation.viewControllers.firstObject isKindOfClass:CaraQuickSettingsController.class])
@@ -1345,7 +1272,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     }
 }
 - (void)showMenu {
-    if (openingGame || importingHomeNAND || self.presentedViewController) return;
+    if (openingGame || self.presentedViewController) return;
     [self ensureLibrary]; menuVisible=YES; [self applyInterfacePausePolicy]; [self resetSkinInput];
     [self updateSessionPresentation];
     CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"]?:@"performance";
@@ -1367,12 +1294,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [actions addObject:@{@"title":@"Local multiplayer",@"symbol":@"antenna.radiowaves.left.and.right",@"keepOpen":@YES,@"action":^{ [owner showNetworkSettings]; }}];
     [actions addObject:@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Skins"]; }}];
     [actions addObject:@{@"title":@"Controllers",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Controllers"]; }}];
-    if ([self usesCaraHome]) {
-        [actions addObject:@{@"title":@"HOME Menu",@"symbol":@"house",@"keepOpen":@YES,
-                             @"action":^{ [owner showSettingsCategory:@"HOME Menu"]; }}];
-        [actions addObject:@{@"title":@"Manage game library",@"symbol":@"square.grid.2x2",
-                             @"action":^{ [owner showLibraryBrowser]; }}];
-    }
     if (running) [actions addObject:@{@"title":@"Game library",@"symbol":@"square.grid.2x2",@"action":^{ [owner showLibrary]; }}];
     [actions addObject:@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Advanced"]; }}];
     quick.actions=actions; quick.finished=^{ [owner resumeFromMenu]; };
@@ -1406,7 +1327,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     menuVisible=self.presentedViewController && !self.presentedViewController.isBeingDismissed;
     [self applyInterfacePausePolicy];
     [saveSync refreshCloudStatus]; [stateSync refreshCloudStatus];
-    if (libraryVisible) [self refreshLibrary];
+    if (libraryVisible) [libraryController reloadLibrary];
 }
 - (void)openRecentGame {
     NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
@@ -1414,60 +1335,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSURL* url=recent?[NSURL URLByResolvingBookmarkData:recent options:NSURLBookmarkResolutionWithoutUI relativeToURL:nil bookmarkDataIsStale:&stale error:&error]:nil;
     if (url) [self openGameURL:url];
     else { status.text=@"Select the game again in Files."; [self resumeFromMenu]; }
-}
-- (void)chooseHomeNAND {
-    if (running || openingGame || importingHomeNAND || saveSync.busy || stateSync.busy || self.presentedViewController) return;
-    pickingHomeNAND=YES;
-    UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO];
-    picker.delegate=self;
-    [self presentViewController:picker animated:YES completion:nil];
-}
-- (void)importHomeNAND:(NSURL*)url {
-    if (worker.joinable()) worker.join();
-    importingHomeNAND=YES;
-    [self updateSessionPresentation];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
-        NSError* error=nil;
-        CaraHomeNAND* imported=[CaraHomeNAND importFolder:url error:&error];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self->importingHomeNAND=NO;
-            if (imported) {
-                [self shellError:@"NAND imported" message:@"Open the original 3DS HOME Menu from Settings → HOME Menu."];
-            } else {
-                [self shellError:@"Could not import NAND" message:error.localizedDescription?:@"Select your extracted, decrypted NAND folder."];
-            }
-        });
-    });
-}
-- (void)bootOriginalHome {
-    if (running || openingGame || importingHomeNAND || self.presentedViewController) return;
-    CaraHomeNAND* profile=[CaraHomeNAND installedMenu];
-    if (!profile) {
-        [NSUserDefaults.standardUserDefaults setBool:NO forKey:@"bootOriginalHome"];
-        [self shellError:@"Original HOME Menu unavailable" message:@"Import an extracted, decrypted NAND folder in HOME Menu settings."];
-        return;
-    }
-    if (worker.joinable()) worker.join();
-    if (gameScoped) [gameURL stopAccessingSecurityScopedResource];
-    gameURL=nil;
-    gameScoped=NO;
-    [self startROM:profile.menuURL homeNAND:profile];
-}
-- (void)originalHomeFailed {
-    [NSUserDefaults.standardUserDefaults setBool:NO forKey:@"bootOriginalHome"];
-    [self showLibrary];
-    if (!self.presentedViewController)
-        [self shellError:@"Original HOME Menu stopped" message:sessionFailure?:@"Cara could not start the imported system menu."];
-}
-- (void)playHomeGame:(NSURL*)url {
-    if (gameLoaded && !stop && [gameURL isEqual:url]) { [self hideLibrary]; return; }
-    [self openGameURL:url];
-}
-- (void)addHomeGame {
-    if (self.presentedViewController || openingGame || importingHomeNAND) return;
-    pickingHomeGame=YES;
-    pickingSkin=NO;
-    [self openROM];
 }
 - (void)openROM {
     UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:pickingSkin];
@@ -1505,26 +1372,10 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [NSUserDefaults.standardUserDefaults setObject:name forKey:SkinPreferenceKey(orientation,physicalController)];
     [self reloadSelectedSkins]; [self resumeFromMenu];
 }
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { pickingHomeGame=NO; pickingHomeNAND=NO; pickingSaveFolder=NO; pickingSkin=NO; pickingControllerSkin=NO; pickingROMsFolder=NO; pickingSkinOrientation=nil; [self resumeFromMenu]; }
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { pickingSaveFolder=NO; pickingSkin=NO; pickingControllerSkin=NO; pickingROMsFolder=NO; pickingSkinOrientation=nil; [self resumeFromMenu]; }
 - (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
     NSURL* url=urls.firstObject;
     if (!url) { [self documentPickerWasCancelled:picker]; return; }
-    if (pickingHomeGame) {
-        pickingHomeGame=NO;
-        NSError* error=nil;
-        if ([libraryStore rememberGame:url error:&error]) {
-            [self refreshLibrary];
-            [self resumeFromMenu];
-        } else {
-            [self shellError:@"Could not add game" message:error.localizedDescription?:@"Choose an extracted 3DS game in Files."];
-        }
-        return;
-    }
-    if (pickingHomeNAND) {
-        pickingHomeNAND=NO;
-        [self importHomeNAND:url];
-        return;
-    }
     if (pickingROMsFolder) {
         pickingROMsFolder=NO; [self ensureLibrary]; NSError* error=nil;
         if (![libraryStore chooseFolder:url error:&error]) { [self shellError:@"ROMs folder unavailable" message:error.localizedDescription]; return; }
@@ -1719,14 +1570,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[documents stringByAppendingPathComponent:@"skin-input-check.json"] atomically:YES];
 }
 - (void)startROM:(NSURL*)url {
-    [self startROM:url homeNAND:nil];
-}
-- (void)startROM:(NSURL*)url homeNAND:(CaraHomeNAND*)profile {
-    const bool originalHome=profile!=nil;
-    const unsigned region=profile.region;
-    const u64 homeTitleID=profile.titleID;
     [self hideLibrary];
-    NSString* requestedState=originalHome?nil:pendingLibraryState; pendingLibraryState=nil;
+    NSString* requestedState=pendingLibraryState; pendingLibraryState=nil;
     const unsigned session=++sessionGeneration;
     framePending[0]=false; framePending[1]=false;
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
@@ -1740,6 +1585,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     __weak EmulatorController* weakSelf = self;
     emuWindow.reset();
     emuWindow = std::make_unique<IOSWindow>();
+    emuWindow->adaptiveFrameSkip=CaraAdaptiveFrameSkipEnabled();
     [self viewDidLayoutSubviews];
     [self runSkinInputCheck];
 #ifdef CARA_IOS_GLES
@@ -1789,7 +1635,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     emuWindow->present = [weakSelf,session](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
-    worker = std::thread([self,rom,user,session,url,requestedState,originalHome,region,homeTitleID] {
+    worker = std::thread([self,rom,user,session,url,requestedState] {
         // Diagnostic only: requested QoS is not evidence of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
         const bool worker_interactive_qos = interactive_qos_env &&
@@ -1834,7 +1680,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             const char* pipeline_cache = std::getenv("CARA_IOS_PIPELINE_CACHE");
             s.use_shader_cache = pipeline_cache && std::strcmp(pipeline_cache, "1") == 0; // Experimental.
 #endif
-            s.use_virtual_sd = true; s.region_value = originalHome?region:Settings::REGION_VALUE_AUTO_SELECT;
+            s.use_virtual_sd = true; s.region_value = Settings::REGION_VALUE_AUTO_SELECT;
             s.resolution_factor = 1; s.use_frame_limit = false; // Frontend counts every presented vblank.
             s.frame_limit = u16(self->maximumSpeedLimit.load());
             const char* target_env = std::getenv("CARA_BENCHMARK_FRAMES");
@@ -1901,19 +1747,17 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 NSString* message = [NSString stringWithUTF8String:emuWindow->graphics_error.c_str()];
                 running = false;
                 emuWindow->ClearDisplay(); emuWindow->DoneCurrent();
-                dispatch_async(dispatch_get_main_queue(), ^{ if (self->sessionGeneration!=session) return; self->sessionFailure=[@"Graphics error · " stringByAppendingString:message]; [self updateSessionPresentation]; UIApplication.sharedApplication.idleTimerDisabled = NO; if (originalHome && !self->openingGame) [self originalHomeFailed]; });
+                dispatch_async(dispatch_get_main_queue(), ^{ if (self->sessionGeneration!=session) return; self->sessionFailure=[@"Graphics error · " stringByAppendingString:message]; [self updateSessionPresentation]; UIApplication.sharedApplication.idleTimerDisabled = NO; });
                 return;
             }
-            const std::string bootPath=originalHome?
-                Service::AM::GetTitleContentPath(Service::FS::MediaType::NAND,homeTitleID):rom;
-            auto result=bootPath==rom?system.Load(*emuWindow,bootPath):Core::System::ResultStatus::ErrorGetLoader;
+            auto result=system.Load(*emuWindow,rom);
             if(result==Core::System::ResultStatus::Success) {
                 NSString* titleID=[NSString stringWithFormat:@"%016llX",(unsigned long long)system.GetTitleID()];
                 NSData* hash=[NSData dataWithBytes:system.StateGameHash().data() length:32];
                 BOOL new3DS=Settings::values.is_new_3ds;
                 NSMutableString* identity=[NSMutableString stringWithString:@"homebrew-"]; for(auto byte:system.StateGameHash()) [identity appendFormat:@"%02X",byte];
                 NSString* stateID=system.GetTitleID()?titleID:identity;
-                if (!originalHome) dispatch_async(dispatch_get_main_queue(),^{ if(self->sessionGeneration==session) { NSMutableDictionary* metadata=[@{@"titleID":titleID,@"stateID":stateID,@"gameHash":hash,@"new3DS":@(new3DS)} mutableCopy]; NSDictionary* fileInfo=[url resourceValuesForKeys:@[NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil]; if(fileInfo[NSURLContentModificationDateKey]) metadata[@"romModified"]=fileInfo[NSURLContentModificationDateKey]; if(fileInfo[NSURLFileSizeKey]) metadata[@"romSize"]=fileInfo[NSURLFileSizeKey]; [self->libraryStore setMetadata:metadata forGame:url]; [self->libraryStore recordPlayed:url]; } });
+                dispatch_async(dispatch_get_main_queue(),^{ if(self->sessionGeneration==session) { NSMutableDictionary* metadata=[@{@"titleID":titleID,@"stateID":stateID,@"gameHash":hash,@"new3DS":@(new3DS)} mutableCopy]; NSDictionary* fileInfo=[url resourceValuesForKeys:@[NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil]; if(fileInfo[NSURLContentModificationDateKey]) metadata[@"romModified"]=fileInfo[NSURLContentModificationDateKey]; if(fileInfo[NSURLFileSizeKey]) metadata[@"romSize"]=fileInfo[NSURLFileSizeKey]; [self->libraryStore setMetadata:metadata forGame:url]; [self->libraryStore recordPlayed:url]; } });
                 if(requestedState.length) {
                     try {
                         if(![requestedState.lastPathComponent isEqual:requestedState] || ![requestedState hasPrefix:[stateID stringByAppendingString:@"."]] || ![requestedState hasSuffix:@".carastate"]) throw std::runtime_error("Invalid state location");
@@ -2743,9 +2587,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     self->sessionFailure = [NSString stringWithFormat:@"Stopped · Error %u",unsigned(result)];
                 [self updateSessionPresentation];
                 self->libraryController.canResume=NO;
-                if (originalHome && failed && !self->openingGame) {
-                    [self originalHomeFailed];
-                } else if (!target_frames && !self->openingGame) {
+                if (!target_frames && !self->openingGame) {
                     [self showLibrary];
                     if (failed && !self.presentedViewController) [self shellError:@"Game stopped" message:self->status.text];
                 }
