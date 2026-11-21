@@ -11,6 +11,15 @@ static NSString* ArtworkKey(NSURL* game) {
     NSMutableString* key=[NSMutableString new]; for(unsigned char byte : digest) [key appendFormat:@"%02x",byte]; return key;
 }
 static NSError* ArtworkError(NSString* message) { return [NSError errorWithDomain:@"CaraArtwork" code:1 userInfo:@{NSLocalizedDescriptionKey:message}]; }
+static NSString* ArtworkCategory(BOOL hero) { return hero?@"Named_Snaps":@"Named_Boxarts"; }
+static NSURL* ArtworkCatalogURL(NSString* category) {
+    return [NSURL URLWithString:[NSString stringWithFormat:@"https://thumbnails.libretro.com/Nintendo%%20-%%20Nintendo%%203DS/%@/",category]];
+}
+static BOOL ArtworkCatalogNameIsValid(NSString* name) {
+    return [name isKindOfClass:NSString.class] && name.length && [name.lastPathComponent isEqual:name] &&
+        [name.pathExtension.lowercaseString isEqual:@"png"] && ![name containsString:@".."] &&
+        ![name containsString:@":"];
+}
 static UIImage* ArtworkImage(NSData* data,NSUInteger maximum) {
     if(!data.length || data.length>CaraArtworkMaxBytes) return nil;
     CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)data,nullptr); if(!source) return nil;
@@ -49,7 +58,9 @@ static UIImage* ArtworkHero(UIImage* image) {
 }
 + (NSString*)normalizedTitle:(NSString*)title {
     NSString* stem=title.stringByDeletingPathExtension;
-    NSRegularExpression* brackets=[NSRegularExpression regularExpressionWithPattern:@"\\([^)]*\\)|\\[[^]]*\\]" options:0 error:nil];
+    static NSRegularExpression* brackets;
+    static dispatch_once_t once;
+    dispatch_once(&once,^{ brackets=[NSRegularExpression regularExpressionWithPattern:@"\\([^)]*\\)|\\[[^]]*\\]" options:0 error:nil]; });
     stem=[brackets stringByReplacingMatchesInString:stem options:0 range:NSMakeRange(0,stem.length) withTemplate:@""];
     stem=[stem stringByFoldingWithOptions:NSDiacriticInsensitiveSearch|NSCaseInsensitiveSearch locale:[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]];
     NSArray* words=[stem componentsSeparatedByCharactersInSet:NSCharacterSet.alphanumericCharacterSet.invertedSet];
@@ -85,7 +96,9 @@ static UIImage* ArtworkHero(UIImage* image) {
     NSURLSession* session=[NSURLSession sessionWithConfiguration:config];
     NSURLSessionDownloadTask* task=[session downloadTaskWithURL:url completionHandler:^(NSURL* file,NSURLResponse* response,NSError* error) {
         NSNumber* size=nil; [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
-        if(!error && [(NSHTTPURLResponse*)response statusCode]==200 && size.unsignedLongLongValue<=CaraArtworkMaxBytes)
+        if(!error && [response.URL.host isEqual:@"thumbnails.libretro.com"] &&
+            [response.URL.scheme isEqual:@"https"] && [(NSHTTPURLResponse*)response statusCode]==200 &&
+            size.unsignedLongLongValue<=CaraArtworkMaxBytes)
             result=[NSData dataWithContentsOfURL:file options:NSDataReadingMappedIfSafe error:nil];
         dispatch_semaphore_signal(done);
     }];
@@ -99,18 +112,38 @@ static UIImage* ArtworkHero(UIImage* image) {
     NSDate* date=[saved[@"date"] isKindOfClass:NSDate.class]?saved[@"date"]:NSDate.distantPast;
     if(-date.timeIntervalSinceNow<7*24*3600) { indexes[kind]=names?:@[]; return indexes[kind]; }
     if(indexAttempts[kind]) return names?:@[]; indexAttempts[kind]=@YES;
-    NSURL* url=[NSURL URLWithString:[NSString stringWithFormat:@"https://thumbnails.libretro.com/Nintendo%%20-%%20Nintendo%%203DS/%@/",kind]];
+    NSURL* url=ArtworkCatalogURL(kind);
     NSString* html=[[NSString alloc] initWithData:[self download:url] encoding:NSUTF8StringEncoding];
     if(html.length) {
         NSRegularExpression* regex=[NSRegularExpression regularExpressionWithPattern:@"href=\"([^\"]+\\.png)\"" options:NSRegularExpressionCaseInsensitive error:nil];
         NSMutableArray* parsed=[NSMutableArray new];
         for(NSTextCheckingResult* match in [regex matchesInString:html options:0 range:NSMakeRange(0,html.length)]) {
             NSString* name=[[html substringWithRange:[match rangeAtIndex:1]] stringByRemovingPercentEncoding];
-            if(name.length && [name.lastPathComponent isEqual:name] && ![name containsString:@".."] && ![name containsString:@":"]) [parsed addObject:name];
+            if(ArtworkCatalogNameIsValid(name)) [parsed addObject:name];
         }
         if(parsed.count) { names=parsed; [@{@"date":NSDate.date,@"names":names} writeToURL:path atomically:YES]; }
     }
     indexes[kind]=names?:@[]; return indexes[kind];
+}
+- (NSArray<NSString*>*)catalogNamesForHero:(BOOL)hero {
+    NSString* category=ArtworkCategory(hero);
+    // An explicit visit can retry an unavailable index from earlier in this session.
+    if (indexes[category] && ![indexes[category] count]) {
+        [indexes removeObjectForKey:category];
+        [indexAttempts removeObjectForKey:category];
+    }
+    NSMutableOrderedSet<NSString*>* unique=[NSMutableOrderedSet new];
+    for (NSString* name in [self index:category]) {
+        if (ArtworkCatalogNameIsValid(name)) [unique addObject:name];
+    }
+    return [unique.array sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+}
+- (UIImage*)catalogImageNamed:(NSString*)name hero:(BOOL)hero {
+    NSString* category=ArtworkCategory(hero);
+    if (!ArtworkCatalogNameIsValid(name) || ![[self index:category] containsObject:name]) return nil;
+    NSData* bytes=[self download:[ArtworkCatalogURL(category) URLByAppendingPathComponent:name]];
+    UIImage* image=ArtworkImage(bytes,hero?1920:1024);
+    return hero?ArtworkHero(image):image;
 }
 // Downloaded images are disposable; user overrides are never evicted.
 - (void)trimCache {
@@ -132,11 +165,10 @@ static UIImage* ArtworkHero(UIImage* image) {
         if(image) { result[kind]=image; continue; }
         NSString* attempt=[key stringByAppendingString:kind]; if([attemptedGames containsObject:attempt]) continue;
         [attemptedGames addObject:attempt];
-        NSString* category=[kind isEqual:@"hero"]?@"Named_Snaps":@"Named_Boxarts";
+        BOOL hero=[kind isEqual:@"hero"];
+        NSString* category=ArtworkCategory(hero);
         NSString* name=[CaraArtworkStore matchName:[self index:category] game:game title:title]; if(!name) continue;
-        NSURL* base=[NSURL URLWithString:[NSString stringWithFormat:@"https://thumbnails.libretro.com/Nintendo%%20-%%20Nintendo%%203DS/%@/",category]];
-        image=ArtworkImage([self download:[base URLByAppendingPathComponent:name]], [kind isEqual:@"hero"]?1920:1024);
-        if(image && [kind isEqual:@"hero"]) image=ArtworkHero(image);
+        image=[self catalogImageNamed:name hero:hero];
         if(image) { downloadedAny=YES; [UIImageJPEGRepresentation(image,.92) writeToURL:[self file:file game:game custom:NO] atomically:YES]; result[kind]=image; }
     }
     if(downloadedAny) [self trimCache];
@@ -149,7 +181,16 @@ static UIImage* ArtworkHero(UIImage* image) {
     if(scoped) [url stopAccessingSecurityScopedResource];
     UIImage* image=ArtworkImage(data,hero?1920:1024);
     if(!image) { if(error) *error=ArtworkError(@"Choose a supported image smaller than 12 MB and 100 megapixels."); return NO; }
-    return [UIImageJPEGRepresentation(image,.92) writeToURL:[self file:hero?@"hero.jpg":@"cover.jpg" game:game custom:YES] options:NSDataWritingAtomic error:error];
+    return [self saveArtworkImage:image forGame:game hero:hero error:error];
+}
+- (BOOL)saveArtworkImage:(UIImage*)image forGame:(NSURL*)game hero:(BOOL)hero error:(NSError**)error {
+    NSData* bytes=image?UIImageJPEGRepresentation(image,.92):nil;
+    if (!bytes.length) {
+        if(error) *error=ArtworkError(@"This image couldn’t be saved.");
+        return NO;
+    }
+    return [bytes writeToURL:[self file:hero?@"hero.jpg":@"cover.jpg" game:game custom:YES]
+        options:NSDataWritingAtomic error:error];
 }
 - (void)removeOverridesForGame:(NSURL*)game {
     for(NSString* file in @[@"cover.jpg",@"hero.jpg"]) [NSFileManager.defaultManager removeItemAtURL:[self file:file game:game custom:YES] error:nil];

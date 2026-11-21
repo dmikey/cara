@@ -54,6 +54,16 @@ int main() { @autoreleasepool {
     Check([[store metadataForGame:local][@"favorite"] boolValue] && [store metadataForGame:local][@"lastPlayed"],@"real per-game favorite and recent metadata");
     NSURL* save=[docs URLByAppendingPathComponent:@"cara/sdmc/save.dat"]; Put(save);
     NSURL* state=[docs URLByAppendingPathComponent:@"cara/states/example.carastate"]; Put(state);
+    NSData* romBefore=[NSData dataWithContentsOfURL:local];
+    [store setDisplayTitle:@"  My Game Collection Title\n" forGame:local];
+    store=[[CaraLibraryStore alloc] initWithDocuments:docs defaults:defaults];
+    Check([[store displayTitleOverrideForGame:local] isEqual:@"My Game Collection Title"],@"custom display title is trimmed and retained");
+    Check([[store metadataForGame:local][@"favorite"] boolValue] && [store metadataForGame:local][@"lastPlayed"],@"rename preserves metadata");
+    Check([[NSData dataWithContentsOfURL:local] isEqual:romBefore] &&
+        [NSFileManager.defaultManager fileExistsAtPath:save.path] &&
+        [NSFileManager.defaultManager fileExistsAtPath:state.path],@"renaming keeps the ROM path, bytes, saves, and states");
+    [store setDisplayTitle:@" \n " forGame:local];
+    Check(![store displayTitleOverrideForGame:local] && [[store metadataForGame:local][@"favorite"] boolValue],@"blank title clears only the display override");
     [store removeGame:local]; Check(Scan(store).count==3 && [NSFileManager.defaultManager fileExistsAtPath:local.path],@"removal hides scanned games without deleting ROM");
     store=[[CaraLibraryStore alloc] initWithDocuments:docs defaults:defaults]; Check(Scan(store).count==3,@"hidden games survive relaunch");
     Check([store rememberGame:local error:&error] && Scan(store).count==4,@"explicit re-add restores hidden file");
