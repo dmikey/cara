@@ -106,3 +106,36 @@ if (MSVC)
     include(CopyCaraSDLDeps)
     copy_cara_SDL_deps(cara)
 endif()
+
+if (CARA_PRIVATE_MAC_METAL_HOST)
+    if (NOT CARA_MAC_SDL_DEV_HOST OR NOT CARA_PRIVATE_METAL_DRAWS OR
+        NOT CARA_PRIVATE_METAL_TRANSFERS)
+        message(FATAL_ERROR "The native Mac Metal host requires the Mac SDL host and the Metal renderer")
+    endif()
+    add_executable(cara-metal-rom MACOSX_BUNDLE native_mac/metal_rom.mm native_mac/config.cpp)
+    target_link_libraries(cara-metal-rom PRIVATE common core video_core input_common inih glad
+        nihstro-headers SDL2 Threads::Threads "-framework Metal" "-framework QuartzCore"
+        "-framework Foundation")
+    set_target_properties(cara-metal-rom PROPERTIES
+        OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
+    target_compile_options(cara-metal-rom PRIVATE -fobjc-arc)
+    if (CARA_MAC_CPU_JIT)
+        target_link_libraries(cara-metal-rom PRIVATE dynarmic)
+    endif()
+
+    add_dependencies(cara-metal-rom cara-pica-metallib)
+    get_target_property(pica_library video_core CARA_PICA_METAL_LIBRARY)
+    get_target_property(scaled_crop_library video_core CARA_PICA_SCALED_CROP_LIBRARY)
+    set(metal_assets "${pica_library}" "${scaled_crop_library}")
+    if (CARA_PRIVATE_GATE_METAL_CATALOG)
+        list(APPEND metal_assets "${CARA_PRIVATE_GATE_METAL_CATALOG}/cara-gate.metallib")
+    endif()
+    foreach(asset IN LISTS metal_assets)
+        set_property(TARGET cara-metal-rom APPEND PROPERTY LINK_DEPENDS "${asset}")
+        add_custom_command(TARGET cara-metal-rom POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:cara-metal-rom>/Contents/Resources"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${asset}"
+                "$<TARGET_BUNDLE_DIR:cara-metal-rom>/Contents/Resources"
+            VERBATIM)
+    endforeach()
+endif()
