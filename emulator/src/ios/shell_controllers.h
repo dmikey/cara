@@ -7,7 +7,7 @@
 @interface CaraLibraryController : UIViewController
 @property(strong,nonatomic) CaraLibraryStore* store;
 @property(copy,nonatomic) void(^openGame)(NSURL*);
-@property(copy,nonatomic) void(^onlineRooms)(NSURL*);
+@property(copy,nonatomic) void(^onlineRooms)(NSURL*, UINavigationController*);
 // State rows contain title, subtitle, compatible, and filename; the engine validates again on load.
 @property(copy,nonatomic) NSArray<NSDictionary*>*(^statesForGame)(NSURL*);
 @property(copy,nonatomic) void(^startFromState)(NSURL*,NSString*);

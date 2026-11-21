@@ -462,9 +462,10 @@ static NSString* ArtworkCacheKey(CaraLibraryGame* game) {
     NSArray* states=self.statesForGame?self.statesForGame(game.url):@[]; NSDictionary* latest=nil; for(NSDictionary* record in states) if([record[@"compatible"] boolValue]) { latest=record; break; }
     if(!active && latest) { NSString* filename=latest[@"filename"]; [rows addObject:@{@"title":@"Resume latest state",@"sound":@"launch",@"symbol":@"play.fill",@"action":^{ if(owner.startFromState) owner.startFromState(game.url,filename); }}]; }
     [rows addObject:@{@"title":active||latest?@"Start from beginning":@"Start game",@"subtitle":@"Keeps in-game saves and save states.",@"sound":@"launch",@"symbol":@"play",@"action":^{ if(owner.openGame) owner.openGame(game.url); }}];
+    __weak CaraSettingsController* roomDetails=details;
     if (self.onlineRooms) [rows addObject:@{@"title":@"Online Rooms",@"symbol":@"globe",@"keepOpen":@YES,
         @"subtitle":active ? @"Create or browse rooms for this game." : @"Open this game to verify its hash and version.",
-        @"action":^{ if (owner.onlineRooms) owner.onlineRooms(game.url); }}];
+        @"action":^{ if (owner.onlineRooms) owner.onlineRooms(game.url, roomDetails.navigationController); }}];
     NSMutableArray* sections=[NSMutableArray arrayWithObject:@{@"title":@"GAME",@"rows":rows}]; NSMutableArray* stateRows=[NSMutableArray new];
     for(NSDictionary* record in states) { NSMutableDictionary* row=[@{@"title":record[@"title"]?:@"Save state",@"subtitle":record[@"subtitle"]?:@"",@"symbol":@"clock.arrow.circlepath",@"enabled":record[@"compatible"]?:@NO} mutableCopy]; if([record[@"compatible"] boolValue] && self.startFromState) { row[@"sound"]=@"launch"; row[@"action"]=^{ if(owner.startFromState) owner.startFromState(game.url,record[@"filename"]); }; } [stateRows addObject:row]; }
     if(!stateRows.count) [stateRows addObject:@{@"title":@"No save states on this device",@"subtitle":@"Create a state from the game menu. In-game saves are separate.",@"symbol":@"tray"}];

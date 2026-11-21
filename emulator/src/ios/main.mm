@@ -1141,7 +1141,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         libraryController.chooseFolder=^{ [owner chooseROMsFolder]; };
         libraryController.showSettings=^{ [owner showFullSettings]; };
         libraryController.statesForGame=^NSArray*(NSURL* url) { return [owner libraryStatesForGame:url]; };
-        libraryController.onlineRooms=^(NSURL* url) { [owner showOnlineRoomsForGame:url]; };
+        libraryController.onlineRooms=^(NSURL* url, UINavigationController* navigation) {
+            [owner showOnlineRoomsForGame:url navigation:navigation];
+        };
         libraryController.startFromState=^(NSURL* url,NSString* filename) { EmulatorController* c=owner; if(!c) return; c->pendingLibraryState=filename; [c openGameURL:url]; };
         libraryController.gameSettings=^(NSURL* url) { EmulatorController* c=owner; if (c) [c showGameSettings:url navigation:(UINavigationController*)c->libraryController.presentedViewController]; };
         libraryController.clearGameSettings=^(NSURL* url) { EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":@{},@"actionLayout":CaraNewActionLayout()} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { [c reloadActionLayout]; CaraGameOverrides=nil; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
@@ -1352,9 +1354,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
     if ([navigation isKindOfClass:UINavigationController.class]) [navigation pushViewController:settings animated:YES];
 }
-- (void)showOnlineRoomsForGame:(NSURL*)url {
-    UINavigationController* navigation=(UINavigationController*)libraryController.presentedViewController;
-    if (![navigation isKindOfClass:UINavigationController.class] || openingGame) return;
+- (void)showOnlineRoomsForGame:(NSURL*)url navigation:(UINavigationController*)navigation {
+    if (!navigation.topViewController.viewIfLoaded.window || openingGame) return;
     if (gameLoaded && running && !stop && [gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) {
         [self showOnlineRoomsInNavigation:navigation];
         return;
@@ -1373,7 +1374,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             [c openGameURL:url forOnlineRooms:YES];
         }];
     }]];
-    [navigation presentViewController:alert animated:YES completion:nil];
+    [navigation.topViewController presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)showOnlineRoomsInNavigation:(UINavigationController*)navigation {
