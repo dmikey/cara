@@ -31,6 +31,15 @@ compatibility, performance, controls, settings and save workflows vary across
 platforms. Features described for one frontend may not yet be available in the
 others. Our goal is a smooth, consistent experience across all four.
 
+On macOS, open **Cara → Settings** from the launcher or while a game is running.
+**Accuracy** locks the guest clock and game speed limit at 100%.
+**Performance** can adapt the guest clock under load, or you can set a fixed
+guest clock and a separate game speed limit. Adaptive Frame Skip coalesces
+host display updates while preserving guest rendering. Under **Display**,
+**Lossless 2×** and **Lossless 4×** center the screens at whole pixel multiples.
+Play and display settings apply when you save. CPU engine changes apply when
+you next open a game.
+
 ## Graphics
 
 | Backend | Role in Cara |

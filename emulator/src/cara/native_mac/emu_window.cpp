@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -112,11 +113,46 @@ bool EmuWindow_SDL2::IsOpen() const {
     return is_open;
 }
 
+void EmuWindow_SDL2::SetPresentationOptions(u32 output_scale, bool frame_skip) {
+    if (adaptive_frame_skip != frame_skip) {
+        adaptive_frame_skip = frame_skip;
+        presentation_guard.Reset();
+        if (frame_skip)
+            UpdateDisplayRefreshRate();
+    }
+    if (integer_output_scale != output_scale) {
+        integer_output_scale = output_scale;
+        presentation_guard.Reset();
+        OnResize();
+    }
+}
+
+void EmuWindow_SDL2::UpdateDisplayRefreshRate() {
+    SDL_DisplayMode mode{};
+    const auto display = SDL_GetWindowDisplayIndex(render_window);
+    const unsigned refresh = display >= 0 && SDL_GetCurrentDisplayMode(display, &mode) == 0 &&
+                                     mode.refresh_rate > 0 ? mode.refresh_rate : 60;
+    if (display_refresh_rate != refresh) {
+        display_refresh_rate = refresh;
+        presentation_guard.Reset();
+    }
+}
+
+bool EmuWindow_SDL2::ShouldPresentFrame() {
+    if (!adaptive_frame_skip)
+        return true;
+    using Tick = std::chrono::duration<double>;
+    const auto now = Tick(std::chrono::steady_clock::now().time_since_epoch()).count();
+    // SDL reports the display refresh rate on Mac, not display-link callbacks.
+    return presentation_guard.Admit(static_cast<std::uint64_t>(now * display_refresh_rate));
+}
+
 void EmuWindow_SDL2::OnResize() {
     ValidateDiagnosticGeometry("resize", true);
     int width, height;
     SDL_GL_GetDrawableSize(render_window, &width, &height);
-    UpdateFramebufferLayout(width, height);
+    if (width > 0 && height > 0)
+        UpdateFramebufferLayout(width, height);
 }
 
 void EmuWindow_SDL2::Fullscreen() {
@@ -262,8 +298,8 @@ EmuWindow_SDL2::EmuWindow_SDL2(bool fullscreen) {
         LOG_CRITICAL(Frontend, "Failed to create SDL2 GL context: {}", SDL_GetError());
         exit(1);
     }
-    // The independent core frame limiter remains at 100%. Display vsync is opt-in
-    // because Cocoa/SDL can block the first VBlank when no display ticks arrive.
+    // Display vsync is independent of the core limiter. Keep it opt-in because
+    // Cocoa/SDL can block the first VBlank when no display ticks arrive.
     const int swap_interval = Settings::values.vsync_enabled ? 1 : 0;
     if (SDL_GL_SetSwapInterval(swap_interval) != 0) {
         throw std::runtime_error(fmt::format("Failed to set native swap interval {}: {}",
@@ -719,6 +755,13 @@ void EmuWindow_SDL2::PollEvents() {
             case SDL_WINDOWEVENT_RESTORED:
             case SDL_WINDOWEVENT_MINIMIZED:
                 OnResize();
+                break;
+            case SDL_WINDOWEVENT_MOVED:
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            case SDL_WINDOWEVENT_DISPLAY_CHANGED:
+#endif
+                if (adaptive_frame_skip)
+                    UpdateDisplayRefreshRate();
                 break;
             case SDL_WINDOWEVENT_FOCUS_LOST:
                 if (!Cara::NativeScriptOnlyInput::Enabled())

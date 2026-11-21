@@ -18,6 +18,21 @@ int main() {
         "[Controls]\nbutton_a = engine:keyboard,code:4\n";
     Model model(original);
     assert(model.backend == "fastinterp");
+    assert(model.play.mode == Cara::PlayMode::Performance);
+    assert(model.play.Policy().adaptive && model.play.Policy().guest_clock == 100);
+    assert(model.play.Policy().limit_speed && model.play.Policy().maximum_speed == 100);
+    assert(model.play.SkipHostFrames() && model.play.display_scale == DisplayScale::Fit);
+    model.play.fixed_guest_clock = true;
+    model.play.guest_clock_percent = 145;
+    model.play.limit_speed = false;
+    model.play.maximum_speed_percent = 170;
+    model.play.display_scale = DisplayScale::Lossless4x;
+    assert(!model.play.Policy().adaptive && model.play.Policy().guest_clock == 145);
+    assert(!model.play.Policy().limit_speed && model.play.Policy().maximum_speed == 170);
+    model.play.mode = Cara::PlayMode::Accuracy;
+    assert(!model.play.Policy().adaptive && model.play.Policy().guest_clock == 100);
+    assert(model.play.Policy().limit_speed && model.play.Policy().maximum_speed == 100);
+    assert(!model.play.SkipHostFrames());
     model.buttons[0].value = Keyboard(SDL_SCANCODE_Q);
     model.analogs[0].directions[2] = Keyboard(SDL_SCANCODE_F);
     model.analogs[1].controller = Common::ParamPackage{
@@ -38,6 +53,14 @@ int main() {
     const auto written = model.Serialize(true);
     Model restored(written);
     assert(restored.backend == "jit");
+    assert(restored.play == model.play);
+    restored.play.mode = Cara::PlayMode::Performance;
+    assert(restored.play.Policy().guest_clock == 145 && !restored.play.Policy().limit_speed);
+    restored.play.mode = Cara::PlayMode::Accuracy;
+    auto invalid = PlaySettings::Read(Ini("[Play]\nguest_clock_percent=24\nmaximum_speed_percent=200x"
+                                          "\nlimit_speed=wrong\n[Renderer]\noutput_scale=16\n"));
+    assert(invalid.Policy().maximum_speed == 100 && invalid.guest_clock_percent == 100);
+    assert(invalid.limit_speed && invalid.display_scale == DisplayScale::Fit);
     assert(restored.buttons[0].value == Keyboard(SDL_SCANCODE_Q));
     assert(restored.analogs[0].directions[2] == Keyboard(SDL_SCANCODE_F));
     assert(restored.analogs[1].controller == model.analogs[1].controller);
@@ -67,5 +90,5 @@ int main() {
     Common::ParamPackage analog(modifier_saved.analogs[0].keyboard_package);
     assert(analog.Get("modifier", "") == Keyboard(SDL_SCANCODE_LSHIFT));
     assert(analog.Get("modifier_scale", "") == "0.25");
-    std::cout << "Mac settings persistence, backend gates and input packages passed\n";
+    std::cout << "Mac play and display settings, backend gates and input packages passed\n";
 }

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <SDL_scancode.h>
+#include "cara/native_mac/play_settings.h"
 #include "common/param_package.h"
 #include "core/settings.h"
 namespace Cara::MacPreferences {
@@ -55,10 +56,12 @@ struct Button {std::string key,label,value;int default_key;};
 struct Analog {std::string key,label,controller,keyboard_package;std::array<std::string,4> directions;bool use_controller=false;};
 struct Model {
  std::string backend="fastinterp",original;
+ PlaySettings play;
  std::vector<Button> buttons;
  std::array<Analog,2> analogs;
  explicit Model(const std::string& text={}):original(text){
   Ini ini(text);backend=ini.Get("Core","cpu_backend","fastinterp");
+  play=PlaySettings::Read(ini);
   const std::array<Button,15> defaults{{
    {"button_a","A","",SDL_SCANCODE_A},{"button_b","B","",SDL_SCANCODE_S},
    {"button_x","X","",SDL_SCANCODE_Z},{"button_y","Y","",SDL_SCANCODE_X},
@@ -87,6 +90,7 @@ struct Model {
   return profile;
  }
  std::string Serialize(bool jit)const{ValidateBackend(backend,jit);Ini ini(original);ini.Set("Core","cpu_backend",backend);
+  play.Write(ini);
   for(const auto& b:buttons)ini.Set("Controls",b.key,b.value);
   for(const auto& a:analogs){
    if(a.use_controller){ini.Set("Controls",a.key,a.controller);continue;}

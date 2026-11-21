@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <algorithm>
 #include <cmath>
 #include "common/assert.h"
 #include "core/3ds.h"
@@ -57,6 +58,26 @@ FramebufferLayout DefaultFrameLayout(u32 width, u32 height, bool swapped) {
         }
     }
     return res;
+}
+
+FramebufferLayout IntegerFrameLayout(u32 width, u32 height, bool swapped, u32 preferred_scale) {
+    constexpr auto native_width = Core::kScreenTopWidth;
+    constexpr auto native_height = Core::kScreenTopHeight + Core::kScreenBottomHeight;
+    const u32 scale = std::min({preferred_scale, width / native_width, height / native_height});
+    if (scale == 0) {
+        return DefaultFrameLayout(width, height, swapped);
+    }
+
+    const u32 scaled_width = native_width * scale;
+    const u32 scaled_height = native_height * scale;
+    const u32 left = (width - scaled_width) / 2;
+    const u32 top = (height - scaled_height) / 2;
+    auto layout = DefaultFrameLayout(scaled_width, scaled_height, swapped);
+    layout.top_screen = layout.top_screen.TranslateX(left).TranslateY(top);
+    layout.bottom_screen = layout.bottom_screen.TranslateX(left).TranslateY(top);
+    layout.width = width;
+    layout.height = height;
+    return layout;
 }
 
 FramebufferLayout SingleFrameLayout(u32 width, u32 height, bool swapped) {

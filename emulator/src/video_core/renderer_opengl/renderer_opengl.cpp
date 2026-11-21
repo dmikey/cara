@@ -11,6 +11,7 @@
 #include <queue>
 #include "common/bit_field.h"
 #include "common/logging/log.h"
+#include "core/3ds.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/frontend/emu_window.h"
@@ -357,6 +358,10 @@ RendererOpenGL::~RendererOpenGL() {
 
 /// Swap buffers (render frame)
 void RendererOpenGL::SwapBuffers() {
+    if (!VideoCore::g_screenshot_complete_callback && !render_window.ShouldPresentFrame()) {
+        VideoCore::FrameUpdate();
+        return;
+    }
     const auto& layout = render_window.GetFramebufferLayout();
     // Maintain the rasterizer's state as a priority
     OpenGLState prev_state = OpenGLState::GetCurState();
@@ -403,7 +408,7 @@ void RendererOpenGL::SwapBuffers() {
         RenderToMailbox(layout);
     } else {
         OpenGLState::BindDrawFramebuffer(render_window.GetDefaultFramebuffer());
-        DrawScreens(layout);
+        DrawScreens(layout, render_window.GetIntegerOutputScale() != 0);
         render_window.SwapBuffers();
     }
     prev_state.Apply();
@@ -857,8 +862,16 @@ void RendererOpenGL::ConfigureFramebufferTexture(TextureInfo& texture,
 /**
  * Draws the emulated screens to the emulator window.
  */
-void RendererOpenGL::DrawScreens(const Layout::FramebufferLayout& layout) {
-    OpenGLState::BindSampler(0, filter_sampler.handle);
+void RendererOpenGL::DrawScreens(const Layout::FramebufferLayout& layout, bool integer_output) {
+    integer_output = integer_output && layout.top_screen.GetWidth() >= Core::kScreenTopWidth;
+    if (integer_output && !nearest_output_sampler.handle) {
+        nearest_output_sampler.Create();
+        glSamplerParameteri(nearest_output_sampler.handle, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glSamplerParameteri(nearest_output_sampler.handle, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glSamplerParameteri(nearest_output_sampler.handle, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(nearest_output_sampler.handle, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    OpenGLState::BindSampler(0, integer_output ? nearest_output_sampler.handle : filter_sampler.handle);
 
     // Set projection matrix
     std::array<GLfloat, 3 * 2> ortho_matrix = MakeOrthographicMatrix(layout.width, layout.height);

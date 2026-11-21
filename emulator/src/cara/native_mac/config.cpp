@@ -140,8 +140,8 @@ void Config::ReadValues() {
     v.resolution_factor = 1;
     v.use_frame_limit = true;
     v.frame_limit = 100;
-    // The core already limits guest speed to 100%. Avoid display-link blocking
-    // when an SDL/Cocoa window is occluded or the host display is asleep.
+    // Ordinary play may override the core limiter. Keep display vsync opt-in
+    // so an occluded or sleeping SDL/Cocoa window does not block the emulator.
     const char* vsync = std::getenv("CARA_MAC_VSYNC");
     if (vsync && std::string(vsync) != "0" && std::string(vsync) != "1")
         throw std::runtime_error("CARA_MAC_VSYNC must be 0 or 1");
