@@ -185,7 +185,7 @@ public:
 
     void Stop() noexcept {
         failed = true;
-        UnregisterNativeMetalTextureCopyBatch(lane);
+        lane.Abort();
     }
 
 private:
@@ -277,6 +277,7 @@ public:
     bool TryPresent() override { return false; }
     void ResetPresent() override { retained = {}; }
     bool WriteCapture(const std::string& path) {
+        rasterizer.FlushDeferredDraws();
         ReportNativeMetalBindings(path);
         const auto& pixels = retained.capture;
         if (!pixels.buffer || !retained.commands || pixels.format != MTLPixelFormatBGRA8Unorm)

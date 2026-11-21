@@ -660,6 +660,20 @@ bool CloseGroupedMetalDraw(id<MTLCommandBuffer> command) {
     return FlushDeferredDraws(command) && CloseNativeColorPass(command);
 }
 
+void AbortGroupedMetalDraw(id<MTLCommandBuffer> command) noexcept {
+    if (!command)
+        return;
+    // Do not call CloseGroupedMetalDraw: that would execute deferred packets
+    // after the renderer has already rejected the draw which caused the fault.
+    if (open_pass && open_pass->command == command) {
+        [open_pass->encoder endEncoding];
+        open_pass.reset();
+    }
+    if (deferred.command == command)
+        deferred = {};
+    MetalDrawStageProfile::Cancel(command);
+}
+
 bool EncodeGroupedMetalDraw(id<MTLCommandBuffer> command, PicaMetalUploadArena& arena,
                            const TexturedMetalDraw& draw) {
     if (CanDeferDraw(command, draw)) {

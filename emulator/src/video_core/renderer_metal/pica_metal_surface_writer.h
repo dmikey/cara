@@ -4,8 +4,11 @@
 #import <Metal/Metal.h>
 
 #include <array>
+#include <atomic>
+#include <cstdlib>
 #include <functional>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include "video_core/renderer_metal/pica_metal_guest_writer.h"
 #include "video_core/renderer_metal/pica_metal_draw_group.h"
@@ -25,38 +28,100 @@ using MetalGuestExport = std::function<bool(id<MTLCommandQueue>, id<MTLResource>
 
 // Snapshot the exact earlier submissions on the ordered owning queue. A
 // later command succeeding is insufficient evidence for its predecessors.
+inline constexpr std::size_t MetalProducerMaxPredecessors = 32;
+
 struct MetalProducerPredecessors {
-    std::array<id<MTLCommandBuffer>, 8> commands{};
-    std::size_t count = 0;
+    using Commands = std::array<id<MTLCommandBuffer>, MetalProducerMaxPredecessors>;
+    using Validations = std::array<std::shared_ptr<const PicaMetalValidationReceipt>, MetalProducerMaxPredecessors>;
+
+    MetalProducerPredecessors(Commands commands_, Validations validations_, std::size_t count_)
+        : commands(std::move(commands_)), validations(std::move(validations_)), count(count_),
+          cache_completed(CacheCompleted()) {}
+    MetalProducerPredecessors(const MetalProducerPredecessors&) = delete;
+    MetalProducerPredecessors& operator=(const MetalProducerPredecessors&) = delete;
+
+    // Fully assembled before publication. Never clear these resources when
+    // caching success: concurrent readers and descendant writers retain them.
+    const Commands commands;
+    const Validations validations;
+    const std::size_t count;
 
     MetalGuestWriteStatus Status() const {
+        if (cache_completed) {
+            const auto known = terminal.load(std::memory_order_acquire);
+            if (known != MetalGuestWriteStatus::Pending)
+                return known;
+        }
         if (count > commands.size())
-            return MetalGuestWriteStatus::Failed;
+            return Remember(MetalGuestWriteStatus::Failed);
         bool pending = false;
         for (std::size_t i = 0; i < count; ++i) {
             const auto command = commands[i];
             const auto status = command.status;
             if (!command || status < MTLCommandBufferStatusCommitted ||
                 status == MTLCommandBufferStatusError || command.error)
-                return MetalGuestWriteStatus::Failed;
+                return Remember(MetalGuestWriteStatus::Failed);
             pending |= status != MTLCommandBufferStatusCompleted;
+            if (validations[i]) {
+                if (validations[i]->Command() != command)
+                    return Remember(MetalGuestWriteStatus::Failed);
+                const auto checked = validations[i]->Poll();
+                if (checked == PicaMetalCompletion::Failed)
+                    return Remember(MetalGuestWriteStatus::Failed);
+                pending |= checked == PicaMetalCompletion::Pending;
+            }
         }
-        return pending ? MetalGuestWriteStatus::Pending : MetalGuestWriteStatus::Complete;
+        return Remember(pending ? MetalGuestWriteStatus::Pending : MetalGuestWriteStatus::Complete);
     }
 
     bool Wait() const {
+        if (cache_completed) {
+            const auto known = terminal.load(std::memory_order_acquire);
+            if (known != MetalGuestWriteStatus::Pending)
+                return known == MetalGuestWriteStatus::Complete;
+        }
         if (count > commands.size())
-            return false;
+            return RememberFailure();
         for (std::size_t i = 0; i < count; ++i) {
             const auto command = commands[i];
             if (!command || command.status < MTLCommandBufferStatusCommitted)
-                return false;
+                return RememberFailure();
             [command waitUntilCompleted];
             if (command.status != MTLCommandBufferStatusCompleted || command.error)
-                return false;
+                return RememberFailure();
+            if (validations[i] && (validations[i]->Command() != command ||
+                                  validations[i]->Wait() != PicaMetalCompletion::Complete))
+                return RememberFailure();
         }
-        return true;
+        return Remember(MetalGuestWriteStatus::Complete) == MetalGuestWriteStatus::Complete;
     }
+
+private:
+    static bool CacheCompleted() {
+        static const bool enabled = [] {
+            const auto* value = std::getenv("CARA_METAL_CACHE_COMPLETED_PREDECESSORS");
+            return value && std::string_view(value) == "1";
+        }();
+        return enabled;
+    }
+    MetalGuestWriteStatus Remember(MetalGuestWriteStatus status) const {
+        // Pending observations never authorize a later shortcut. Completed
+        // command states and fully checked receipts are terminal; immutable
+        // snapshots cannot subsequently acquire another producer or receipt.
+        if (cache_completed && status != MetalGuestWriteStatus::Pending) {
+            auto expected = MetalGuestWriteStatus::Pending;
+            if (!terminal.compare_exchange_strong(expected, status, std::memory_order_acq_rel,
+                                                   std::memory_order_acquire))
+                return expected;
+        }
+        return status;
+    }
+    bool RememberFailure() const {
+        Remember(MetalGuestWriteStatus::Failed);
+        return false;
+    }
+    const bool cache_completed;
+    mutable std::atomic<MetalGuestWriteStatus> terminal{MetalGuestWriteStatus::Pending};
 };
 
 // Describes an exact, unscaled RGBA8 guest surface with no row padding.
@@ -76,10 +141,12 @@ public:
                        std::shared_ptr<const MetalProducerPredecessors> predecessors_ = {},
                        id<MTLBuffer> raw_guest_ = nil,
                        std::optional<MetalRgba8Layout> rgba8_ = {},
-                       std::optional<PicaGuestRange> packed_color_ = {})
+                       std::optional<PicaGuestRange> packed_color_ = {},
+                       std::shared_ptr<const PicaMetalValidationReceipt> validation_ = {})
         : resource(resource_), command(command_), generation(generation_), begin(begin_), end(end_),
           exporter(std::move(exporter_)), residency_revision(residency_revision_),
-          predecessors(std::move(predecessors_)), raw_guest(raw_guest_), rgba8(rgba8_), packed_color(packed_color_) {}
+          predecessors(std::move(predecessors_)), raw_guest(raw_guest_), rgba8(rgba8_), packed_color(packed_color_),
+          validation(std::move(validation_)) {}
 
     MetalGuestWriteStatus Status() const override {
         const auto state = command.status;
@@ -89,6 +156,15 @@ public:
         const auto before = predecessors ? predecessors->Status() : MetalGuestWriteStatus::Complete;
         if (before == MetalGuestWriteStatus::Failed)
             return before;
+        if (validation) {
+            if (validation->Command() != command)
+                return MetalGuestWriteStatus::Failed;
+            const auto checked = validation->Poll();
+            if (checked == PicaMetalCompletion::Failed)
+                return MetalGuestWriteStatus::Failed;
+            if (checked == PicaMetalCompletion::Pending)
+                return MetalGuestWriteStatus::Pending;
+        }
         return state == MTLCommandBufferStatusCompleted ? before : MetalGuestWriteStatus::Pending;
     }
 
@@ -118,7 +194,10 @@ public:
         if (!command || (predecessors && !predecessors->Wait()))
             return false;
         [command waitUntilCompleted];
-        return command.status == MTLCommandBufferStatusCompleted && !command.error;
+        const bool complete = command.status == MTLCommandBufferStatusCompleted && !command.error &&
+               (!validation || (validation->Command() == command &&
+                                validation->Wait() == PicaMetalCompletion::Complete));
+        return complete;
     }
 
     bool ExportGuestBytes(PAddr first, PAddr last, std::span<u8> output) const override {
@@ -139,6 +218,7 @@ private:
     const id<MTLBuffer> raw_guest;
     const std::optional<MetalRgba8Layout> rgba8;
     const std::optional<PicaGuestRange> packed_color;
+    const std::shared_ptr<const PicaMetalValidationReceipt> validation;
 };
 
 } // namespace Cara

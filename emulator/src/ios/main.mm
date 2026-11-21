@@ -2849,6 +2849,27 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         paced_frame=emuWindow->frames;
                     }
                 }
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                // A completed GPU command may still carry a failed checked
+                // transfer. Consume those receipts before reporting success,
+                // including ordinary user-initiated session shutdown.
+                if (emuWindow->native_metal_only) {
+                    try {
+                        if (auto* rasterizer = VideoCore::Rasterizer())
+                            rasterizer->FlushDeferredDraws();
+                        if (result == Core::System::ResultStatus::Success && target_frames &&
+                            std::getenv("CARA_BENCHMARK_CAPTURE") &&
+                            !Cara::WriteNativeMetalCapture(user))
+                            throw std::runtime_error("The selected Metal benchmark frame was not captured");
+                    } catch (const std::exception& error) {
+                        Cara::AbortNativeMetalRendering();
+                        if (emuWindow->graphics_error.empty())
+                            emuWindow->graphics_error = error.what();
+                        LOG_ERROR(Frontend, "Metal completion failed: {}", error.what());
+                        result = Core::System::ResultStatus::ErrorVideoCore;
+                    }
+                }
+#endif
                 if (target_frames) {
                     const double wall_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - benchmark_start).count();
                     const double pause_elapsed = std::chrono::duration<double>(paused_duration).count();
@@ -2894,11 +2915,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #ifdef CARA_IOS_GLES
                 // Capture only after measured work ends, before renderer destruction.
                 // Raw pixels avoid UIKit/display color conversion in replay comparisons.
-#ifdef CARA_PRIVATE_IOS_METAL_LCD
-                if (target_frames && std::getenv("CARA_BENCHMARK_CAPTURE") &&
-                    emuWindow->native_metal_only && !Cara::WriteNativeMetalCapture(user))
-                    LOG_ERROR(Frontend, "The selected Metal benchmark frame was not captured");
-#endif
                 if (target_frames && std::getenv("CARA_BENCHMARK_CAPTURE")
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
                     && !emuWindow->native_metal_only

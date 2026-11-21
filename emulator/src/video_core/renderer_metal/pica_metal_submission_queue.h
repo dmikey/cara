@@ -10,24 +10,28 @@ namespace Cara {
 // Tracks committed Metal work independently of the rasterizer's memory owner.
 class PicaMetalSubmissionQueue {
 public:
+    static constexpr std::size_t Capacity = 8;
+    static constexpr std::size_t MaxCapacity = 32;
     PicaMetalSubmissionQueue(id<MTLCommandQueue> queue, std::function<void()> reject_writes);
     void CheckThread() const;
     [[noreturn]] void Fail(const char* reason);
     void RejectWrites();
     void Retire(bool wait_for_oldest);
-    bool Full() const { return count == in_flight.size(); }
+    bool Full() const { return count == limit; }
     void Reserve();
     PicaMetalDrawTicket& Track(const PicaMetalDrawTicket& ticket);
     bool IsTrackedProducer(id<MTLCommandBuffer> command) const;
     std::shared_ptr<const MetalProducerPredecessors> Predecessors() const;
     void Drain();
+    void Abort() noexcept;
 
 private:
     const std::thread::id owner;
     const id<MTLCommandQueue> queue;
     const std::function<void()> reject_writes;
     // Wait for the oldest ticket when full. No guest work is discarded.
-    std::array<PicaMetalDrawTicket, 8> in_flight{};
+    const std::size_t limit;
+    std::array<PicaMetalDrawTicket, MaxCapacity> in_flight{};
     std::size_t first = 0;
     std::size_t count = 0;
     bool faulted = false;

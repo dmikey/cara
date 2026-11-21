@@ -71,6 +71,8 @@ public:
     bool ReadGuest(PAddr begin, std::span<u8> scratch, const MetalGuestAuthority::GuestReader& ram);
     void InvalidateGuest(PAddr begin, PAddr end);
     void Drain();
+    ~PicaMetalNativeDrawLane();
+    void Abort() noexcept;
 
 private:
     std::array<std::optional<MetalLCD::Screen>, 2> previous_lcd;
@@ -88,7 +90,8 @@ private:
     void PublishBytes(id<MTLCommandBuffer> command, id<MTLBuffer> buffer,
                       const MetalTransfer::Rows& rows);
     id<MTLTexture> ResolveRgba8(const MetalRgba8Layout& layout, u64* backing_generation = nullptr);
-    void Track(id<MTLCommandBuffer> command);
+    void Track(id<MTLCommandBuffer> command,
+               std::shared_ptr<const PicaMetalValidationReceipt> validation = {});
     void InvalidateAttachments(PicaGuestRange bytes, const PicaMetalSurfaceView* same_view = nullptr);
     const id<MTLCommandQueue> queue;
     const GuestWriteNotice write_notice;
