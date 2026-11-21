@@ -291,7 +291,7 @@ NSString* GameVersionLabel(NSString* version) {
             CaraOnlineRoomsController* c = owner;
             if (!c || !c->requestTask) return;
             c->requestTask = nil;
-            if (!c.viewIfLoaded.window) {
+            if (![c.navigationController.viewControllers containsObject:c]) {
                 c->directoryStatus = @"Choose Browse Rooms to look for players.";
                 [c.tableView reloadData];
                 return;
@@ -333,31 +333,63 @@ NSString* GameVersionLabel(NSString* version) {
 }
 
 - (void)promptForRoomName {
-    UIAlertController* alert = [UIAlertController alertControllerWithTitle:@"Create Room"
-        message:@"Players with this game hash and version can find and join the room."
-        preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField* field) {
-        field.placeholder = @"Room name";
-        field.text = @"Game room";
-        field.accessibilityIdentifier = @"cara.online.roomName";
-    }];
-    __weak CaraOnlineRoomsController* owner = self;
-    __weak UIAlertController* prompt = alert;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Create" style:UIAlertActionStyleDefault
-                                          handler:^(UIAlertAction* action) {
-        CaraOnlineRoomsController* c = owner;
-        if (!c) return;
-        NSString* name = [prompt.textFields.firstObject.text
-                           stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-        if (!name.length || [name lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 64) {
-            c->directoryStatus = @"Enter a room name up to 64 bytes.";
-            [c.tableView reloadData];
+    UIViewController* editor=[UIViewController new];
+    editor.title=@"Create Room";
+    editor.view.backgroundColor=UIColor.systemGroupedBackgroundColor;
+
+    UITextField* name=[UITextField new];
+    name.borderStyle=UITextBorderStyleRoundedRect;
+    name.placeholder=@"Room name";
+    name.text=@"Game room";
+    name.returnKeyType=UIReturnKeyGo;
+    name.accessibilityIdentifier=@"cara.online.roomName";
+    UILabel* details=[UILabel new];
+    details.text=@"Players with this game hash and version can find and join the room.";
+    details.font=[UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    details.adjustsFontForContentSizeCategory=YES;
+    details.textColor=UIColor.secondaryLabelColor;
+    details.numberOfLines=0;
+    UILabel* validation=[UILabel new];
+    validation.font=details.font;
+    validation.adjustsFontForContentSizeCategory=YES;
+    validation.textColor=UIColor.systemRedColor;
+    validation.numberOfLines=0;
+
+    UIStackView* form=[[UIStackView alloc] initWithArrangedSubviews:@[name,details,validation]];
+    form.axis=UILayoutConstraintAxisVertical;
+    form.spacing=12;
+    form.translatesAutoresizingMaskIntoConstraints=NO;
+    [editor.view addSubview:form];
+    UILayoutGuide* margins=editor.view.layoutMarginsGuide;
+    [NSLayoutConstraint activateConstraints:@[
+        [form.leadingAnchor constraintEqualToAnchor:margins.leadingAnchor],
+        [form.trailingAnchor constraintEqualToAnchor:margins.trailingAnchor],
+        [form.topAnchor constraintEqualToAnchor:margins.topAnchor constant:20],
+    ]];
+
+    __weak CaraOnlineRoomsController* owner=self;
+    __weak UIViewController* page=editor;
+    __weak UITextField* field=name;
+    void (^submit)(void)=^{
+        CaraOnlineRoomsController* c=owner;
+        UINavigationController* navigation=page.navigationController;
+        if (!c || !navigation || navigation.topViewController!=page || c->requestTask ||
+            c->connectedOrConnecting) return;
+        NSString* value=[field.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!value.length || [value lengthOfBytesUsingEncoding:NSUTF8StringEncoding]>64) {
+            validation.text=@"Enter a room name up to 64 bytes.";
             return;
         }
-        [c loadDirectory:name];
-    }]];
-    [self presentViewController:alert animated:YES completion:nil];
+        [field resignFirstResponder];
+        [navigation popViewControllerAnimated:YES];
+        [c loadDirectory:value];
+    };
+    editor.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc]
+        initWithPrimaryAction:[UIAction actionWithTitle:@"Create" image:nil identifier:nil
+        handler:^(UIAction*) { submit(); }]];
+    [name addAction:[UIAction actionWithHandler:^(UIAction*) { submit(); }]
+           forControlEvents:UIControlEventEditingDidEndOnExit];
+    [self.navigationController pushViewController:editor animated:YES];
 }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView*)tableView {
