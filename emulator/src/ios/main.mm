@@ -1135,7 +1135,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             }}];
         for (NSString* orientation in @[@"Portrait",@"Landscape"]) {
             NSString* selected=[preferences stringForKey:SkinPreferenceKey(orientation,YES)];
-            [controllerRows addObject:@{@"title":[orientation stringByAppendingString:@" controller skin"],
+            [controllerRows addObject:@{@"title":[NSString stringWithFormat:@"Controller Enabled Skin (%@)",orientation],
                 @"subtitle":selected?:@"Built-in",@"symbol":@"doc.badge.plus",
                 @"action":^{ [owner pickSkinForOrientation:orientation controller:YES]; }}];
             if (selected.length) [controllerRows addObject:action([NSString stringWithFormat:@"Reset %@ controller skin",orientation.lowercaseString],
