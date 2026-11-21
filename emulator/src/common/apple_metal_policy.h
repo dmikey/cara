@@ -58,6 +58,17 @@ inline constexpr const char* AppleMetalDefaultOptions[]{
         "CARA_METAL_BORROW_RAM_SNAPSHOT_COMPARE",
         "CARA_METAL_VERTEX_TEXTURE_ORDINAL_LOOKUP",
 };
+// Start with the device model on which the wider queue and queued depth
+// were measured together. Both modes remain available through overrides.
+inline bool AppleMetalWideSubmissionDevice() {
+    char model[32]{};
+    std::size_t size = sizeof(model);
+    constexpr std::string_view verified_model = "iPad16,3";
+    return sysctlbyname("hw.machine", model, &size, nullptr, 0) == 0 &&
+           size == verified_model.size() + 1 &&
+           std::string_view(model, size - 1) == verified_model;
+}
+
 inline bool ApplyAppleMetalDefaults(bool wider_upload_paging = false,
                                     std::uint64_t memory_bytes = ApplePhysicalMemoryBytes()) {
     for (const auto* option : AppleMetalDefaultOptions)
@@ -67,6 +78,10 @@ inline bool ApplyAppleMetalDefaults(bool wider_upload_paging = false,
     // original exact-byte fallback on lower-memory devices and honor overrides.
     if (memory_bytes >= 6ULL * 1024 * 1024 * 1024 &&
         setenv("CARA_METAL_CACHE_LARGE_TEXTURE_SNAPSHOTS", "1", 0) != 0)
+        return false;
+    if (AppleMetalWideSubmissionDevice() &&
+        (setenv("CARA_METAL_SUBMISSION_WINDOW", "32", 0) != 0 ||
+         setenv("CARA_METAL_QUEUE_PENDING_DEPTH_EXPORT", "1", 0) != 0))
         return false;
     const bool wider = wider_upload_paging || memory_bytes >= 6ULL * 1024 * 1024 * 1024;
     return !wider || setenv("CARA_METAL_EIGHT_UPLOAD_PAGES", "1", 0) == 0;
