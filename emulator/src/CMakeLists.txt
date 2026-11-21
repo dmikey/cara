@@ -313,6 +313,23 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(cara-ios PRIVATE ${CARA_MENU_SOUNDS} ios/MenuSounds/NOTICE)
     set_source_files_properties(${CARA_MENU_SOUNDS} ios/MenuSounds/NOTICE PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/MenuSounds")
     target_compile_options(cara-ios PRIVATE -fobjc-arc)
+    if (CARA_PRIVATE_IOS_METAL_LCD)
+        add_dependencies(cara-ios cara-pica-metallib)
+        get_target_property(CARA_IOS_PICA_METAL_LIBRARY video_core CARA_PICA_METAL_LIBRARY)
+        get_target_property(CARA_IOS_PICA_SCALED_CROP_LIBRARY video_core CARA_PICA_SCALED_CROP_LIBRARY)
+        if (NOT CARA_IOS_PICA_METAL_LIBRARY OR NOT CARA_IOS_PICA_SCALED_CROP_LIBRARY)
+            message(FATAL_ERROR "The iOS Metal renderer requires both compiled PICA shader libraries")
+        endif()
+        foreach(pica_library IN ITEMS "${CARA_IOS_PICA_METAL_LIBRARY}" "${CARA_IOS_PICA_SCALED_CROP_LIBRARY}")
+            set_property(TARGET cara-ios APPEND PROPERTY LINK_DEPENDS "${pica_library}")
+            add_custom_command(TARGET cara-ios POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${pica_library}"
+                    "$<TARGET_BUNDLE_DIR:cara-ios>"
+                VERBATIM)
+        endforeach()
+        target_sources(cara-ios PRIVATE ios/metal_lcd_view.mm)
+        target_link_libraries(cara-ios PRIVATE video_core "-framework Metal")
+    endif()
     if(CARA_INTERNAL_HOST_PC_SAMPLER)
         target_link_libraries(cara-ios PRIVATE cara-host-pc-sampler)
         # ThinLTO backend objects carry optimized line tables needed by dsymutil.

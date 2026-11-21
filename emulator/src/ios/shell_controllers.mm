@@ -401,7 +401,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
     __weak CaraSettingsController* weakSettings=self;
     if(self.categorized) {
         selectedCategory=@"General"; sidebar=[UIStackView new]; sidebar.axis=UILayoutConstraintAxisVertical; sidebar.spacing=10;
-        for(NSString* category in @[@"General",@"Appearance",@"Emulation",@"Audio",@"Controls",@"Library & storage",@"Save data",@"Local multiplayer",@"About Cara"]) { UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* config=[UIButtonConfiguration tintedButtonConfiguration]; config.image=[UIImage systemImageNamed:@{@"General":@"gearshape",@"Appearance":@"paintpalette",@"Emulation":@"cpu",@"Audio":@"speaker.wave.2",@"Controls":@"gamecontroller",@"Library & storage":@"externaldrive",@"Save data":@"sdcard",@"Local multiplayer":@"antenna.radiowaves.left.and.right",@"About Cara":@"info.circle"}[category]]; config.imagePadding=12; button.configuration=config; [button setTitle:category forState:UIControlStateNormal]; button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading; [button.heightAnchor constraintEqualToConstant:52].active=YES; [button addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraSettingsController* controller=weakSettings; if(controller) { CaraMenuSound(@"select"); controller->selectedCategory=category; [controller refresh]; } }] forControlEvents:UIControlEventTouchUpInside]; [sidebar addArrangedSubview:button]; } sidebarScroll=[UIScrollView new]; [sidebarScroll addSubview:sidebar]; [self.view addSubview:sidebarScroll];
+        for(NSString* category in [self settingCategories]) { UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* config=[UIButtonConfiguration tintedButtonConfiguration]; config.image=[UIImage systemImageNamed:@{@"General":@"gearshape",@"Appearance":@"paintpalette",@"Emulation":@"cpu",@"Display":@"display",@"Audio":@"speaker.wave.2",@"Controls":@"gamecontroller",@"Library & storage":@"externaldrive",@"Save data":@"sdcard",@"Local multiplayer":@"antenna.radiowaves.left.and.right",@"About Cara":@"info.circle"}[category]]; config.imagePadding=12; button.configuration=config; [button setTitle:category forState:UIControlStateNormal]; button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading; [button.heightAnchor constraintEqualToConstant:52].active=YES; [button addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraSettingsController* controller=weakSettings; if(controller) { CaraMenuSound(@"select"); controller->selectedCategory=category; [controller refresh]; } }] forControlEvents:UIControlEventTouchUpInside]; [sidebar addArrangedSubview:button]; } sidebarScroll=[UIScrollView new]; [sidebarScroll addSubview:sidebar]; [self.view addSubview:sidebarScroll];
         self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Categories" style:UIBarButtonItemStylePlain target:self action:@selector(chooseCategory)];
     }
     [self updateVisibleSections];
@@ -426,8 +426,19 @@ static UIImage* CaraThemePreview(NSInteger style) {
     sidebarScroll.contentSize=CGSizeMake(220,contentHeight);
     self.tableView.frame=CGRectMake(left,0,self.view.bounds.size.width-left,self.view.bounds.size.height);
 }
+- (NSArray<NSString*>*)settingCategories {
+    NSMutableArray<NSString*>* names = [@[@"General", @"Appearance", @"Emulation", @"Audio",
+        @"Controls", @"Library & storage", @"Save data", @"Local multiplayer", @"About Cara"] mutableCopy];
+    for (NSDictionary* section in self.sections) {
+        if ([section[@"title"] isEqual:@"Display"]) {
+            [names insertObject:@"Display" atIndex:3];
+            break;
+        }
+    }
+    return names;
+}
 - (void)chooseCategory {
-    UIAlertController* menu=[UIAlertController alertControllerWithTitle:@"Settings" message:nil preferredStyle:UIAlertControllerStyleActionSheet]; for(NSString* name in @[@"General",@"Appearance",@"Emulation",@"Audio",@"Controls",@"Library & storage",@"Save data",@"Local multiplayer",@"About Cara"]) [menu addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { self->selectedCategory=name; [self refresh]; }]]; [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* a) { CaraMenuSound(@"cancel"); }]]; menu.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem; [self presentViewController:menu animated:YES completion:nil];
+    UIAlertController* menu=[UIAlertController alertControllerWithTitle:@"Settings" message:nil preferredStyle:UIAlertControllerStyleActionSheet]; for(NSString* name in [self settingCategories]) [menu addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { self->selectedCategory=name; [self refresh]; }]]; [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* a) { CaraMenuSound(@"cancel"); }]]; menu.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem; [self presentViewController:menu animated:YES completion:nil];
 }
 - (void)updateVisibleSections {
     if(self.sectionsProvider) self.sections=self.sectionsProvider();
