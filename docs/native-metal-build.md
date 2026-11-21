@@ -226,6 +226,12 @@ Mac accepted 32 at refresh 797. Both iPad Metal captures matched each other
 byte for byte, and all iPad runs matched guest ticks and draw counts. The
 Mac's slowest window ran at 99.75% of guest refresh speed.
 
+The same Developer-signed Mac build used to verify Game Mode reached
+100.27% with the HUD hidden, at 16.83 ms lab p99. Its slowest window was
+refreshes 3248–3367 at 16.67 ms per refresh and 100.26% speed. The signed
+and ad-hoc HUD-hidden captures matched byte for byte. The separate
+HUD-visible run averaged 97.67% with an 18.41 ms lab p99.
+
 ## Upstream boundaries
 
 - **Azahar** is the upstream boundary for 3DS execution. Propose PICA,
