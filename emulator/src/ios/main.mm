@@ -1065,7 +1065,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     if (@available(iOS 26.0,*)) orientation=scene.effectiveGeometry.interfaceOrientation;
     else orientation=scene.interfaceOrientation;
     Cara::SetIOSDeviceSensorContext([self sessionPresentation]==Cara::SessionPresentation::Running &&
-        scene.activationState==UISceneActivationStateForegroundActive,orientation);
+        !menuVisible && !libraryVisible && scene.activationState==UISceneActivationStateForegroundActive,orientation);
 }
 - (void)updateSessionPresentation {
     const auto state=[self sessionPresentation];
