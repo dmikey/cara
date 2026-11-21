@@ -28,6 +28,9 @@ precision highp sampler2D;
 vec4 CaraLUTFetch(sampler2D lut, int index) {
     return texelFetch(lut, ivec2(index & 1023, index >> 10), 0);
 }
+vec4 CaraProcTexColorFetch(sampler2D lut, int index) {
+    return vec4(CaraLUTFetch(lut, 2 * index).rg, CaraLUTFetch(lut, 2 * index + 1).rg);
+}
 )";
 
 // The macOS atlas generator emits both GL clip outputs unconditionally.
@@ -105,6 +108,8 @@ std::string PrepareSource(std::string_view original, bool desktop_clip,
     Replace(source, "precision highp uimage2D;", "");
     Replace(source, "#define fma_safe(x, y, z) fma(x, y, z)",
             "#define fma_safe(x, y, z) ((x) * (y) + (z))");
+    Replace(source, "texelFetch(texture_buffer_lut_rgba,", "CaraProcTexColorFetch(texture_buffer_lut_lf,");
+    Replace(source, "texelFetch(texture_buffer_lut_rg,", "CaraLUTFetch(texture_buffer_lut_lf,");
     Replace(source, "texelFetch(texture_buffer_lut_", "CaraLUTFetch(texture_buffer_lut_");
     if (raw_indices) {
         std::string lookup(RawLookup);

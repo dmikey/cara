@@ -57,7 +57,7 @@ void DispatchImport(id<MTLComputeCommandEncoder> encoder, unsigned width, unsign
 
 bool EncodeDepthImport(id<MTLCommandBuffer> command, const PicaMetalDepthImportPipelines& pipelines,
                        id<MTLBuffer> source, NSUInteger offset, id<MTLTexture> texture,
-                       id<MTLBuffer> errors, const PicaGuestTilePatch* patch) {
+                       id<MTLBuffer> errors, const PicaGuestTilePatch* patch, bool has_stencil) {
     const auto device = command.device;
     const auto width = patch ? patch->width : static_cast<u32>(texture.width);
     const auto height = patch ? patch->height : static_cast<u32>(texture.height);
@@ -65,12 +65,12 @@ bool EncodeDepthImport(id<MTLCommandBuffer> command, const PicaMetalDepthImportP
     const NSUInteger depth_pitch = (NSUInteger{width} * 4 + 255) & ~NSUInteger{255};
     const NSUInteger stencil_pitch = (NSUInteger{width} + 255) & ~NSUInteger{255};
     const auto max_bytes = device.maxBufferLength;
-    if (!width || !height || !device || !command.retainedReferences ||
+    if (!width || !height || (!has_stencil && patch) || !device || !command.retainedReferences ||
         command.status != MTLCommandBufferStatusNotEnqueued ||
         texture.device != device || texture.pixelFormat != MTLPixelFormatDepth32Float_Stencil8 ||
         source.device != device || errors.device != device || errors.length < sizeof(u32) ||
         offset > source.length || offset % 4 ||
-        u64{width} * height > (source.length - offset) / 4 ||
+        u64{width} * height > (source.length - offset) / (has_stencil ? 4u : 3u) ||
         detile_pipeline.device != device || detile_pipeline.maxTotalThreadsPerThreadgroup < 64 ||
         pipelines.unpack_depth.device != device || pipelines.unpack_depth.maxTotalThreadsPerThreadgroup < 64 ||
         depth_pitch > max_bytes / height || stencil_pitch > max_bytes / height ||
@@ -78,7 +78,8 @@ bool EncodeDepthImport(id<MTLCommandBuffer> command, const PicaMetalDepthImportP
         stencil_pitch * height > std::numeric_limits<u32>::max())
         return false;
 
-    const auto fused = !patch && ((width | height) & 7u) == 0 ? FusedDepthImport(device) : nil;
+    const auto fused = has_stencil && !patch && ((width | height) & 7u) == 0
+                           ? FusedDepthImport(device) : nil;
     const auto depth = [device newBufferWithLength:depth_pitch * height
                                            options:MTLResourceStorageModePrivate];
     const auto stencil = [device newBufferWithLength:stencil_pitch * height

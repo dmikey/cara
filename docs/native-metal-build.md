@@ -56,3 +56,24 @@ includes the unmodified upstream license texts and notices in the app's
 corresponding-source material when packaging these developer builds. glslang's
 notices cover several licenses and SPIRV-Cross includes the Apache 2.0 license
 and a separate `LICENSES` directory for components.
+
+## ROM compatibility
+
+For ROM compatibility, boot with a fresh user directory and include scripted
+confirmation inputs when the game waits on first-run dialogs. Check that the
+runner presents the full refresh interval and inspect the captured screen.
+Keep compatibility runs separate from timed scene replays.
+
+The shared Metal renderer handles Ever Oasis's packed RGB565 horizontal crop
+and its tiled two-axis reductions in RGB565 and RGBA8.
+Driver Renegade uses a three-byte tiled D24 surface and a packed-format cube
+map. D24 uses the host combined depth/stencil attachment with guest
+stencil disabled, and its import and export preserve the three-byte layout.
+The cube importer decodes each face with the guest texture format before
+assembling the native RGBA8 cube. Cooking Mama 5 uses transparent border
+sampling, which maps to Metal's zero border for decoded RGBA8 textures.
+Monster Hunter Stories uses both render-target feedback and procedural
+texturing. For the supported primary RGBA8 feedback case, publish the previous
+draws and decode the authoritative guest bytes into a separate sampled
+texture before drawing. The Metal shader uses the shared PICA procedural
+texture generator and takes its lookup tables from the native LUT atlas.

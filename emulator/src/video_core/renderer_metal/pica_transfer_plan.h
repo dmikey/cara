@@ -136,39 +136,52 @@ inline constexpr std::optional<DisplayTransferPlan> PlanDisplayTransfer(
                                flip};
 }
 
-// Tiled RGBA8 cropped to the requested extent, scaled 2:1 in X, and
-// stored as linear RGB8 or RGB565 using the integer guest box filter.
-struct ScaledCropRgba8Plan {
+// Tiled color cropped to the requested extent and scaled with the integer
+// guest box filter. ScaleXY keeps the output tiled.
+struct ScaledColorCropPlan {
     GuestInterval source;
     GuestInterval destination;
     std::uint32_t output_width;
     std::uint32_t output_height;
+    std::uint32_t source_bpp;
     std::uint32_t destination_bpp;
+    bool scale_xy_tiled;
 };
 
-inline constexpr std::optional<ScaledCropRgba8Plan> PlanScaledCropRgba8(
+inline constexpr std::optional<ScaledColorCropPlan> PlanScaledColorCrop(
     DisplayTransferRegisters regs) {
     constexpr std::uint32_t ScaleXCropRgb8 = 0x01001004u;
     constexpr std::uint32_t ScaleXCropRgb565 = 0x01002004u;
+    constexpr std::uint32_t ScaleXCropPackedRgb565 = 0x01002204u;
+    constexpr std::uint32_t ScaleXYTiledRgb565 = 0x02002220u;
+    constexpr std::uint32_t ScaleXYTiledRgba8 = 0x02000020u;
     const auto flags = regs.flags & ~1u;
-    if ((flags != ScaleXCropRgb8 && flags != ScaleXCropRgb565) ||
+    const bool scale_xy_tiled = flags == ScaleXYTiledRgb565 || flags == ScaleXYTiledRgba8;
+    if ((flags != ScaleXCropRgb8 && flags != ScaleXCropRgb565 &&
+         flags != ScaleXCropPackedRgb565 && !scale_xy_tiled) ||
         regs.address_override_enabled ||
         ((regs.input_width | regs.input_height) & 7u) || (regs.output_width & 1u) ||
+        (scale_xy_tiled && ((regs.output_width | regs.output_height) & 15u)) ||
         !regs.output_width || !regs.output_height ||
         regs.output_width > regs.input_width || regs.output_height > regs.input_height)
         return std::nullopt;
     constexpr std::uint64_t Limit = 16u * 1024u * 1024u;
-    const auto src_bytes = std::uint64_t{regs.input_width} * regs.input_height * 4u;
+    const std::uint32_t source_bpp =
+        flags == ScaleXCropPackedRgb565 || flags == ScaleXYTiledRgb565 ? 2u : 4u;
+    const auto src_bytes = std::uint64_t{regs.input_width} * regs.input_height * source_bpp;
     const auto dst_width = std::uint32_t{regs.output_width} / 2u;
-    const std::uint32_t destination_bpp = flags == ScaleXCropRgb8 ? 3u : 2u;
-    const auto dst_bytes = std::uint64_t{dst_width} * regs.output_height * destination_bpp;
+    const auto dst_height = std::uint32_t{regs.output_height} / (scale_xy_tiled ? 2u : 1u);
+    const std::uint32_t destination_bpp = scale_xy_tiled ? source_bpp :
+                                          flags == ScaleXCropRgb8 ? 3u : 2u;
+    const auto dst_bytes = std::uint64_t{dst_width} * dst_height * destination_bpp;
     if (src_bytes > Limit)
         return std::nullopt;
     const auto src = AlignedGuestInterval(regs.source_address, src_bytes);
     const auto dst = AlignedGuestInterval(regs.destination_address, dst_bytes);
     if (!src || !dst || src->Overlaps(*dst))
         return std::nullopt;
-    return ScaledCropRgba8Plan{*src, *dst, dst_width, regs.output_height, destination_bpp};
+    return ScaledColorCropPlan{*src, *dst, dst_width, dst_height, source_bpp,
+                               destination_bpp, scale_xy_tiled};
 }
 
 struct LinearToTiledRgb8Plan {

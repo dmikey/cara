@@ -15,6 +15,7 @@ public:
     bool BeginWarmup() { return pipelines.BeginWarmup(); }
     bool FinishWarmup() { return pipelines.FinishWarmup(); }
     void InvalidateLuts() { lut_dirty = true; }
+    void InvalidateProceduralLuts() { procedural_lut_dirty = true; }
     std::optional<NativePicaDrawBindings> Prepare(
         PicaMetalNativeDrawLane& lane, const Pica::State& state, bool indexed,
         const MetalGuestAuthority::GuestReader& ram,
@@ -26,6 +27,8 @@ private:
     PicaMetalLightingCache lighting;
     id<MTLTexture> lut = nil;
     bool lut_dirty = true;
+    bool procedural_lut_dirty = true;
+    bool lut_has_procedural = false;
     u64 generation = 0;
 };
 

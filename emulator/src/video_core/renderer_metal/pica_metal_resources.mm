@@ -52,6 +52,8 @@ std::optional<PicaMetalResources> LoadPicaMetalResources(
     };
     const NamedCompute required[] = {
         {&resources.draw.detile_depth, @"DetilePicaDepth24Stencil8"},
+        {&resources.draw.detile_depth24, @"DetilePicaDepth24"},
+        {&resources.draw.tiled_depth24_export, @"ExportPicaTiledDepth24"},
         {&resources.draw.detile_depth_rect, @"DetilePicaDepth24Stencil8Rect"},
         {&resources.draw.mixed_alias, @"cara_pica_mixed_linear_alias"},
         {&resources.draw.unpack_depth, @"unpack_pica_depth"},

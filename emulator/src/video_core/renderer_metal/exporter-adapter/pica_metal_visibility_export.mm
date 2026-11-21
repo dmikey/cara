@@ -308,11 +308,12 @@ MetalGuestExport MakePicaTiledVisibilityExporter(
     id<MTLTexture> texture, std::uint64_t backing_generation, PicaGuestRange physical_surface,
     PicaExportFormat format, id<MTLComputePipelineState> tiled_pack,
     id<MTLComputePipelineState> depth24_pack) {
-    const bool depth = format == PicaExportFormat::Depth24Stencil8;
+    const bool depth24 = format == PicaExportFormat::Depth24;
+    const bool depth = depth24 || format == PicaExportFormat::Depth24Stencil8;
     const bool rgb565 = format == PicaExportFormat::Rgb565;
     const bool rgba4 = format == PicaExportFormat::Rgba4;
     const bool rgb5a1 = format == PicaExportFormat::Rgb5A1;
-    const unsigned pixel_bytes = rgb565 || rgba4 || rgb5a1 ? 2 : 4;
+    const unsigned pixel_bytes = depth24 ? 3 : (rgb565 || rgba4 || rgb5a1 ? 2 : 4);
     auto expected = MTLPixelFormatRGBA8Unorm;
     if (depth)
         expected = MTLPixelFormatDepth32Float_Stencil8;
@@ -355,7 +356,8 @@ MetalGuestExport MakePicaTiledVisibilityExporter(
         const NSUInteger guest_end_row = 8 * (1 + last_tile / per_row);
         const NSUInteger y = height - guest_end_row;
         const NSUInteger rows = guest_end_row - guest_first_row;
-        const auto color_pitch = Pitch(width * pixel_bytes), stencil_pitch = Pitch(width);
+        const auto color_pitch = Pitch(width * (depth ? 4u : pixel_bytes));
+        const auto stencil_pitch = Pitch(width);
 
         id<MTLDevice> device=queue.device;
         id<MTLBuffer> canonical=[device newBufferWithLength:color_pitch*height options:gpu_scratch];

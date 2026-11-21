@@ -27,8 +27,8 @@ bool EncodePicaTiledExport(id<MTLCommandBuffer> command,
         requested_scratch.storageMode != MTLStorageModeShared ||
         pipeline.device != command.device || canonical.device != command.device ||
         requested_scratch.device != command.device || !width || !height ||
-        width % 8 || height % 8 || (pixel_bytes != 2 && pixel_bytes != 4) ||
-        std::uint64_t{width} * pixel_bytes > source_row) {
+        width % 8 || height % 8 || pixel_bytes < 2 || pixel_bytes > 4 ||
+        std::uint64_t{width} * (pixel_bytes == 3 ? 4u : pixel_bytes) > source_row) {
         return false;
     }
     // The earlier row-pitch check bounds width to allow the first product.

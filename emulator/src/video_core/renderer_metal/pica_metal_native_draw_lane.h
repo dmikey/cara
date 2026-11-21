@@ -63,7 +63,8 @@ public:
     PicaMetalNativeAttachment AcquireTiledDepthStencil(
         MetalTransfer::GuestInterval bytes, u32 width, u32 height,
         const PicaMetalDepthImportPipelines& pipelines, id<MTLComputePipelineState> tiled_export,
-        id<MTLComputePipelineState> depth_pack, const MetalGuestAuthority::GuestReader& ram);
+        id<MTLComputePipelineState> depth_pack, const MetalGuestAuthority::GuestReader& ram,
+        bool has_stencil = true);
     // Ordered immutable texture initialization on this lane's Metal queue.
     // Submission errors retire through the same checks as draw and transfer work.
     void SubmitSampledTextureBuild(id<MTLCommandBuffer> command);

@@ -26,6 +26,20 @@ kernel void DetilePicaDepth24Stencil8(device const uchar4* guest [[buffer(0)]],
     packed[position.y * size.x + position.x] = guest[index].wzyx;
 }
 
+kernel void DetilePicaDepth24(device const uchar* guest [[buffer(0)]],
+                             device uchar4* packed [[buffer(1)]],
+                             constant uint2& size [[buffer(2)]],
+                             uint2 position [[thread_position_in_grid]]) {
+    if (any(position >= size))
+        return;
+
+    const uint guest_y = size.y - 1u - position.y;
+    const uint tile = (guest_y / 8u) * (size.x / 8u) + position.x / 8u;
+    const uint offset = 3u * (tile * 64u + InterleaveWithinTile(position.x, guest_y));
+    packed[position.y * size.x + position.x] =
+        uchar4(0, guest[offset + 2u], guest[offset + 1u], guest[offset]);
+}
+
 // Merge import stages only a rectangle whose underlying guest tiles are
 // wholly RAM-owned. The output uses local rows for aligned depth/stencil blits.
 struct GuestDepthRectangle {

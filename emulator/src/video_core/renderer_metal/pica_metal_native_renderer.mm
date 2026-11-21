@@ -108,12 +108,13 @@ public:
     }
 
     void NotifyPicaRegisterChanged(u32) override {
-        // Only the dedicated fog and lighting writes change LUT contents.
+        // LUT data writes also have dedicated notifications.
         if (!NativeMetalCost::AvoidRedundantSetup())
             bindings.InvalidateLuts();
     }
     void SyncFogLutData() override { bindings.InvalidateLuts(); }
     void SyncLightingLutData() override { bindings.InvalidateLuts(); }
+    void SyncProcTexLutData() override { bindings.InvalidateProceduralLuts(); }
 
     void FlushDeferredDraws() override {
         if (!failed)
