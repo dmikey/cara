@@ -201,6 +201,9 @@ platform's starting value. `CARA_METAL_QUEUE_POLICY_REPORT=1` records
 samples and decisions in `metal-queue-policy.csv`.
 `CARA_MAC_METAL_FULLSCREEN=1` uses a native macOS full-screen Space in the
 Metal test host. Launch it through `open` when checking Apple Game Mode.
+The Mac host uses the measured precompiled FastInterp options and core
+refresh pacing. Set `CARA_METAL_HOST_DISPLAY_SYNC=1` to add display sync
+for a controlled comparison.
 Use the Metal Performance HUD to verify the actual system state separately
 from frame-time measurements.
 

@@ -19,6 +19,7 @@
 #include <string_view>
 #include <stdexcept>
 #include "cara/config.h"
+#include "common/apple_fastinterp_policy.h"
 #include "common/apple_metal_policy.h"
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
@@ -179,6 +180,9 @@ int main(int argc, char** argv) {
             layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
             layer.drawableSize = CGSizeMake(400, 480);
             layer.framebufferOnly = NO;
+            // The core already paces refreshes. A second sync to the Mac
+            // display can stall the producer at a different refresh cadence.
+            layer.displaySyncEnabled = NO;
             if (const auto* sync = std::getenv("CARA_METAL_HOST_DISPLAY_SYNC")) {
                 const std::string_view value(sync);
                 if (value != "0" && value != "1")
@@ -209,6 +213,8 @@ int main(int argc, char** argv) {
             if (backend != "fastinterp" && backend != "jit")
                 throw std::runtime_error("Unsupported CPU backend");
             const bool jit = backend == "jit";
+            if (!jit)
+                Common::ApplyAppleFastInterpDefaults();
 #if !defined(CARA_MAC_CPU_JIT)
             if (jit)
                 throw std::runtime_error("This Mac Metal runner has no CPU JIT");
