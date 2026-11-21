@@ -126,8 +126,8 @@ worst 120-refresh window had a 28.24 ms p99. The
 upload-arena waits rose to 2.71 ms per refresh. The eight-slot async
 depth variant removed two synchronous depth exports per refresh and
 raised submission waits to 11.44 ms per refresh. Its lab mean was 30.05 ms.
-All three Metal traces matched the same capture. Keep queue width and
-async depth as experimental controls until matched runs show a gain.
+All three Metal traces matched the same capture. The retained renderer
+port below rechecks queue width with the recovered dependencies.
 
 ### Retained renderer port
 
@@ -157,6 +157,20 @@ matched byte for byte. All four runs matched the guest ticks and PICA draw
 requests in the four 120-refresh windows. To reproduce the last row, set
 `CARA_METAL_SUBMISSION_WINDOW=32` and
 `CARA_METAL_QUEUE_PENDING_DEPTH_EXPORT=1`.
+
+### Validated iPad submission policy
+
+The iPad Pro 11-inch M4 tested here (`iPad16,3`) defaults to 32 tracked
+submissions and enables queued pending depth export when native Metal is
+selected. Explicit overrides still take priority. The queued path consumes
+the producer on the same Metal queue and keeps its validation receipt
+attached to the import. Other devices use their existing submission policy.
+
+In separate traced replays of the lab, the eight-slot policy spent 4.96 ms
+per refresh waiting on the oldest tracked draw. The combined policy recorded
+zero submission-pressure waits and two queued depth exports per refresh.
+The command timeline confirmed a 32-slot queue. Use the untraced replays
+for the frame-time comparison.
 
 ## Upstream boundaries
 
