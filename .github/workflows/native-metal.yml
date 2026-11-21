@@ -7,6 +7,7 @@ on:
       - 'emulator/**'
       - 'LICENSE'
       - 'NOTICE'
+      - 'tests/metal_queue_policy_test.cpp'
       - 'tests/metal_display_transfer_startup_test.mm'
       - 'tests/metal_async_depth_validation_test.mm'
       - 'tests/run_metal_async_depth_validation_test.py'
@@ -19,6 +20,7 @@ on:
       - 'emulator/**'
       - 'LICENSE'
       - 'NOTICE'
+      - 'tests/metal_queue_policy_test.cpp'
       - 'tests/metal_display_transfer_startup_test.mm'
       - 'tests/metal_async_depth_validation_test.mm'
       - 'tests/run_metal_async_depth_validation_test.py'
@@ -65,6 +67,11 @@ jobs:
       - name: Install Mac SDL dependencies
         if: matrix.target == 'mac'
         run: brew install sdl2 libpng
+      - name: Check adaptive Metal queue transitions
+        if: matrix.artifact == 'mac-fastinterp'
+        run: |
+          xcrun clang++ -std=c++20 -I emulator/src tests/metal_queue_policy_test.cpp -o "$RUNNER_TEMP/metal-queue-policy"
+          "$RUNNER_TEMP/metal-queue-policy"
       - name: Check exact display-transfer planning without a ROM
         if: matrix.artifact == 'mac-fastinterp'
         run: |

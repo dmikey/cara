@@ -117,6 +117,7 @@ public:
     // the current draw. If moving to GL, first complete the verified handoff.
     Result Append(const TexturedMetalDraw& draw, const PicaMetalDrawViews& views);
     std::optional<PicaMetalDrawTicket> Commit();
+    std::uint64_t TakeUploadWaitNs() { return upload.TakeWaitNs(); }
     bool HasRecordedDraws() const { return pending.count != 0; }
 
 private:

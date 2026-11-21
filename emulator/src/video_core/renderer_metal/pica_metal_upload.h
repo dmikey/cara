@@ -4,6 +4,8 @@
 #import <Metal/Metal.h>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <utility>
 #include <optional>
 #include <span>
 
@@ -31,6 +33,7 @@ public:
     bool Submit();
     void Cancel();
     bool Failed() const { return failed; }
+    std::uint64_t TakeWaitNs() { return std::exchange(wait_ns, 0); }
 
 private:
     struct Page {
@@ -45,6 +48,7 @@ private:
     std::size_t next_page = 0;
     Page* active = nullptr;
     bool failed = false;
+    std::uint64_t wait_ns = 0;
 
     std::optional<Range> Reserve(NSUInteger bytes, NSUInteger alignment);
 };

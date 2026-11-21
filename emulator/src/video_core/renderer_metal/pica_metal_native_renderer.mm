@@ -198,6 +198,8 @@ public:
                             present_drawable);
     }
 
+    void OnFrameUpdate() override { lane.EndRefresh(); }
+
     void Stop() noexcept {
         failed = true;
         lane.Abort();

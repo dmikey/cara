@@ -115,8 +115,9 @@ if (CARA_PRIVATE_MAC_METAL_HOST)
     add_executable(cara-metal-rom MACOSX_BUNDLE native_mac/metal_rom.mm native_mac/config.cpp)
     target_link_libraries(cara-metal-rom PRIVATE common core video_core input_common inih glad
         nihstro-headers SDL2 Threads::Threads "-framework Metal" "-framework QuartzCore"
-        "-framework Foundation")
+        "-framework Foundation" "-framework AppKit")
     set_target_properties(cara-metal-rom PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/native_mac/metal_rom.plist"
         OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
     target_compile_options(cara-metal-rom PRIVATE -fobjc-arc)
     if (CARA_MAC_CPU_JIT)

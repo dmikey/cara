@@ -3107,6 +3107,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 @interface AppDelegate : UIResponder <UIApplicationDelegate>
 @end
 @implementation AppDelegate
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+- (void)applicationDidReceiveMemoryWarning:(UIApplication*)app {
+    (void)app;
+    Cara::SignalNativeMetalMemoryPressure();
+}
+#endif
 - (BOOL)application:(UIApplication*)app didFinishLaunchingWithOptions:(NSDictionary*)options { return YES; }
 - (UISceneConfiguration*)application:(UIApplication*)app configurationForConnectingSceneSession:(UISceneSession*)session options:(UISceneConnectionOptions*)options {
     UISceneConfiguration* config = [[UISceneConfiguration alloc] initWithName:@"Default" sessionRole:session.role];

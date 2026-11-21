@@ -4,7 +4,9 @@
 #include "video_core/renderer_metal/pica_metal_draw_stage_profile.hh"
 #include "video_core/video_core.h"
 
+#import <Foundation/Foundation.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -19,9 +21,32 @@
 namespace Cara {
 namespace {
 
+std::atomic<std::uint64_t> memory_pressure_generation{0};
+
+bool AdaptiveSubmissionWindow() {
+    const auto* option = std::getenv("CARA_METAL_ADAPTIVE_QUEUE");
+    return !std::getenv("CARA_METAL_SUBMISSION_WINDOW") && option &&
+           std::string_view(option) == "1";
+}
+
+bool ResourcePressure(id<MTLDevice> device) {
+    if (NSProcessInfo.processInfo.thermalState >= NSProcessInfoThermalStateSerious)
+        return true;
+    if (@available(iOS 16.0, *)) {
+        const auto budget = device.recommendedMaxWorkingSetSize;
+        return budget != 0 && device.currentAllocatedSize >= budget - budget / 5;
+    }
+    return false;
+}
+
 std::size_t SubmissionWindow() {
     const auto* option = std::getenv("CARA_METAL_SUBMISSION_WINDOW");
-    if (!option || std::string_view(option) == "8")
+    if (!option) {
+        const auto* wide = std::getenv("CARA_METAL_QUEUE_START_WIDE");
+        return wide && std::string_view(wide) == "1" ? MetalQueuePolicy::MaxSlots
+                                                     : MetalQueuePolicy::MinSlots;
+    }
+    if (std::string_view(option) == "8")
         return PicaMetalSubmissionQueue::Capacity;
     if (std::string_view(option) == "16")
         return 16;
@@ -66,6 +91,19 @@ struct QueueWait {
 constexpr std::size_t MaxQueueWaits = 65536;
 thread_local std::vector<QueueWait> queue_waits;
 thread_local std::size_t queue_waits_dropped;
+struct QueuePolicyTiming {
+    std::uint64_t refresh;
+    std::size_t slots;
+    std::size_t next_slots;
+    MetalQueueSample sample;
+    const char* reason;
+};
+thread_local std::vector<QueuePolicyTiming> policy_timings;
+
+bool QueuePolicyReportEnabled() {
+    const auto* option = std::getenv("CARA_METAL_QUEUE_POLICY_REPORT");
+    return option && std::string_view(option) == "1";
+}
 
 double MachSeconds(std::uint64_t ticks) {
     static const double seconds_per_tick = [] {
@@ -97,7 +135,23 @@ void RecordQueueWait(const PicaMetalDrawTicket& ticket, std::uint64_t start, std
 
 } // namespace
 
+void SignalNativeMetalMemoryPressure() {
+    memory_pressure_generation.fetch_add(1, std::memory_order_relaxed);
+}
+
 void ReportNativeMetalCommandTimeline(const std::string& path) {
+    if (QueuePolicyReportEnabled()) {
+        std::ofstream out(path + "metal-queue-policy.csv");
+        out << "refresh,slots,next_slots,p99_ns,queue_wait_ns,upload_wait_ns,pressure,reason\n";
+        for (const auto& entry : policy_timings) {
+            const auto& sample = entry.sample;
+            out << entry.refresh << ',' << entry.slots << ',' << entry.next_slots << ','
+                << sample.p99_ns << ',' << sample.queue_wait_ns << ',' << sample.upload_wait_ns
+                << ',' << sample.resource_pressure << ',' << entry.reason << '\n';
+        }
+        if (!out)
+            throw std::runtime_error("Could not retain the Metal queue policy report");
+    }
     if (QueueWaitTimelineEnabled()) {
         std::ofstream waits(path + "metal-queue-waits.csv");
         waits << "refresh_before_vblank,elapsed_ns,oldest_draw_count,"
@@ -130,17 +184,21 @@ void ReportNativeMetalCommandTimeline(const std::string& path) {
 
 PicaMetalSubmissionQueue::PicaMetalSubmissionQueue(id<MTLCommandQueue> queue_,
                                                    std::function<void()> reject_writes_)
-    : owner(std::this_thread::get_id()), queue(queue_), reject_writes(std::move(reject_writes_)), limit(SubmissionWindow()) {
+    : owner(std::this_thread::get_id()), queue(queue_), reject_writes(std::move(reject_writes_)),
+      adaptive(AdaptiveSubmissionWindow()), policy(SubmissionWindow()),
+      observed_memory_pressure(memory_pressure_generation.load(std::memory_order_relaxed)) {
     if (!queue || !reject_writes)
         throw std::invalid_argument("Metal submissions need a queue and an owning memory fault handler");
-    LOG_INFO(Render_OpenGL, "Native Metal submission window={}", limit);
+    LOG_INFO(Render_OpenGL, "Native Metal submission window={} adaptive={}", Limit(), adaptive);
+    if (QueuePolicyReportEnabled())
+        policy_timings.clear();
     if (QueueWaitTimelineEnabled()) {
         queue_waits.clear();
         queue_waits.reserve(MaxQueueWaits);
         queue_waits_dropped = 0;
     }
     if (NativeMetalCost::Enabled())
-        queue_profile = {.owner = this, .window = limit};
+        queue_profile = {.owner = this, .window = Limit()};
 }
 
 void PicaMetalSubmissionQueue::RejectWrites() {
@@ -152,8 +210,53 @@ void PicaMetalSubmissionQueue::Reserve() {
     CheckThread();
     if (Full()) {
         NativeMetalCost::Scope scope(NativeMetalCost::QueueReserveFull);
-        Retire(true);
+        while (Full())
+            Retire(true, true);
     }
+}
+
+void PicaMetalSubmissionQueue::EndRefresh(std::uint64_t upload_wait_ns) {
+    if (!adaptive)
+        return;
+    CheckThread();
+    const auto now = Clock::now();
+    const auto previous = std::exchange(previous_refresh, now);
+    const auto queue_wait = std::exchange(reserve_wait_ns, 0);
+    if (previous == Clock::time_point{})
+        return;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(now - previous).count();
+    // Backgrounding and debugger pauses should not influence the next trial.
+    if (elapsed <= 0 || elapsed > 500'000'000) {
+        samples = 0;
+        upload_wait_total_ns = 0;
+        window_reserve_wait_ns = 0;
+        return;
+    }
+    refresh_ns[samples++] = static_cast<std::uint64_t>(elapsed);
+    window_reserve_wait_ns += queue_wait;
+    upload_wait_total_ns += upload_wait_ns;
+    if (samples != refresh_ns.size())
+        return;
+
+    auto p99 = refresh_ns.begin() + (99 * refresh_ns.size() + 99) / 100 - 1;
+    std::nth_element(refresh_ns.begin(), p99, refresh_ns.end());
+    const auto generation = memory_pressure_generation.load(std::memory_order_relaxed);
+    const bool memory_warning = std::exchange(observed_memory_pressure, generation) != generation;
+    const MetalQueueSample sample{*p99, window_reserve_wait_ns / samples,
+                                 upload_wait_total_ns / samples,
+                                 memory_warning || ResourcePressure(queue.device)};
+    const auto old = Limit();
+    const char* reason = policy.Update(sample);
+    if (reason) {
+        LOG_INFO(Render_OpenGL, "Native Metal adaptive slots={} -> {} refresh={} reason={}",
+                 old, Limit(), VideoCore::GetCurrentFrame(), reason);
+    }
+    if (QueuePolicyReportEnabled() && policy_timings.size() < 16384)
+        policy_timings.push_back({VideoCore::GetCurrentFrame(), old, Limit(), sample,
+                                  reason ? reason : "hold"});
+    samples = 0;
+    window_reserve_wait_ns = 0;
+    upload_wait_total_ns = 0;
 }
 
 void PicaMetalSubmissionQueue::CheckThread() const {
@@ -168,7 +271,7 @@ void PicaMetalSubmissionQueue::Fail(const char* reason) {
     throw std::runtime_error(reason);
 }
 
-void PicaMetalSubmissionQueue::Retire(bool wait_for_oldest) {
+void PicaMetalSubmissionQueue::Retire(bool wait_for_oldest, bool capacity_wait) {
     bool wait = wait_for_oldest;
     while (count != 0) {
         auto& ticket = in_flight[first];
@@ -178,14 +281,17 @@ void PicaMetalSubmissionQueue::Retire(bool wait_for_oldest) {
             using namespace NativeMetalCost;
             const bool profile = Enabled();
             const bool trace_wait = QueueWaitTimelineEnabled();
-            const auto start = profile ? Scope::Clock::now() : Scope::Clock::time_point{};
+            const auto start = (profile || adaptive) ? Clock::now() : Clock::time_point{};
             const auto mach_start = trace_wait ? mach_absolute_time() : 0;
             state = ticket.WaitUntilGuestRead();
             const auto mach_end = trace_wait ? mach_absolute_time() : 0;
+            if (profile || adaptive)
+                queue_wait_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    Clock::now() - start).count();
+            if (adaptive && capacity_wait)
+                reserve_wait_ns += queue_wait_ns;
             if (profile) {
-                const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    Scope::Clock::now() - start).count();
-                queue_wait_ns = ns;
+                const auto ns = queue_wait_ns;
                 const auto producer = queue_profile.owner == this
                                           ? queue_profile.producer[first] : QueueWork::Other;
                 RecordNs(ReserveWait, ns);
@@ -220,7 +326,7 @@ void PicaMetalSubmissionQueue::Retire(bool wait_for_oldest) {
         }
         wait = false;
         ticket = {};
-        first = (first + 1) & (limit - 1);
+        first = (first + 1) & (MaxCapacity - 1);
         --count;
     }
 }
@@ -233,15 +339,16 @@ PicaMetalDrawTicket& PicaMetalSubmissionQueue::Track(const PicaMetalDrawTicket& 
             Fail("Metal submission has no valid committed command on the owner queue");
         if (Full()) {
             NativeMetalCost::Scope scope(NativeMetalCost::QueueTrackFull);
-            Retire(true);
+            while (Full())
+                Retire(true, true);
         }
 
-        const auto slot = (first + count) & (limit - 1);
+        const auto slot = (first + count) & (MaxCapacity - 1);
         if (NativeMetalCost::Enabled()) {
             static_assert(std::tuple_size_v<decltype(in_flight)> ==
                           std::tuple_size_v<decltype(queue_profile.producer)>);
             if (queue_profile.owner != this)
-                queue_profile = {.owner = this, .window = limit};
+                queue_profile = {.owner = this, .window = Limit()};
             queue_profile.producer[slot] = NativeMetalCost::queue_request;
             queue_profile.submit_refresh[slot] = VideoCore::GetCurrentFrame();
         }
@@ -266,7 +373,7 @@ bool PicaMetalSubmissionQueue::IsTrackedProducer(id<MTLCommandBuffer> command) c
     if (!command || command.commandQueue != queue)
         return false;
     for (std::size_t i = 0; i < count; ++i) {
-        if (in_flight[(first + i) & (limit - 1)].command == command)
+        if (in_flight[(first + i) & (MaxCapacity - 1)].command == command)
             return true;
     }
     return false;
@@ -284,7 +391,7 @@ PicaMetalSubmissionQueue::Predecessors() const {
     static_assert(std::tuple_size_v<decltype(in_flight)> ==
                   std::tuple_size_v<decltype(commands)>);
     for (std::size_t i = 0; i < count; ++i) {
-        const auto& ticket = in_flight[(first + i) & (limit - 1)];
+        const auto& ticket = in_flight[(first + i) & (MaxCapacity - 1)];
         commands[i] = ticket.command;
         validations[i] = ticket.validation;
     }
@@ -317,7 +424,7 @@ void PicaMetalSubmissionQueue::Abort() noexcept {
             [ticket.command waitUntilCompleted];
         MetalDrawStageProfile::Cancel(ticket.command);
         ticket = {};
-        first = (first + 1) & (limit - 1);
+        first = (first + 1) & (MaxCapacity - 1);
         --count;
     }
 }

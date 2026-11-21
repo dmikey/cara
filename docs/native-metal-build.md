@@ -184,18 +184,25 @@ captures matched byte for byte. All three runs matched guest ticks and
 | FastInterp Metal, repeat | 100.00% | 17.27 ms | 3211–3330 | 16.72 ms | 17.05 ms |
 | FastInterp GLES | 100.01% | 20.61 ms | 3436–3555 | 16.75 ms | 20.31 ms |
 
-#### Measuring queue headroom on other Apple devices
+#### Adaptive Metal submissions
 
-Each slot tracks a command buffer and its dependencies. Several submissions
-can belong to one emulated refresh. Compare the time blocked on the oldest
-ticket with GPU start/end spans and upload-arena waits. Grow the queue one
-step during a controlled replay when the slot limit blocks the producer and
-the upload arena has headroom. Keep the change only if rolling frame times
-improve. A growing GPU backlog, longer arena waits, or memory pressure can
-erase the gain by keeping resources alive longer. Use the Metal memory
-budget as a headroom signal and the OS memory warning as a separate limit.
-A runtime policy should resize only the submission limit, let existing
-tickets retire normally, and wait several windows before increasing again.
+The native Apple frontends evaluate a 120-refresh window. Each slot tracks
+one submitted command buffer and its validation dependencies. The verified
+M4 iPad starts with 32 slots and the Mac Metal host starts with eight. When
+the submission cap blocks the producer, the host can try the next step
+from eight to 16 or from 16 to 32. It reverts an unsuccessful trial and
+waits three windows before trying again. Thermal pressure, the Metal
+working-set budget, and iOS memory warnings can lower the cap. Smaller caps
+keep existing tickets alive and apply backpressure to new submissions.
+
+Set `CARA_METAL_SUBMISSION_WINDOW` to 8, 16, or 32 for a pinned
+comparison. `CARA_METAL_ADAPTIVE_QUEUE=0` disables trials and keeps the
+platform's starting value. `CARA_METAL_QUEUE_POLICY_REPORT=1` records
+samples and decisions in `metal-queue-policy.csv`.
+`CARA_MAC_METAL_FULLSCREEN=1` uses a native macOS full-screen Space in the
+Metal test host. Launch it through `open` when checking Apple Game Mode.
+Use the Metal Performance HUD to verify the actual system state separately
+from frame-time measurements.
 
 ## Upstream boundaries
 

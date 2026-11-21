@@ -2,9 +2,12 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <SDL_metal.h>
+#include <SDL_syswm.h>
+#import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +19,7 @@
 #include <string_view>
 #include <stdexcept>
 #include "cara/config.h"
+#include "common/apple_metal_policy.h"
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
 #include "common/logging/backend.h"
@@ -153,9 +157,10 @@ int main(int argc, char** argv) {
             const auto should_capture = [&](unsigned frame) {
                 return frame == limit || (interval && frame && frame % interval == 0);
             };
-            // Use the same ordered Metal transfer queue policy as the iPad by default.
-            if (setenv("CARA_METAL_OVERLAP_TRANSFERS", "1", 0) != 0)
-                throw std::runtime_error("Could not set the Metal transfer queue policy");
+            if (!Common::ApplyAppleMetalDefaults() ||
+                setenv("CARA_METAL_QUEUE_PENDING_DEPTH_EXPORT", "1", 0) != 0 ||
+                setenv("CARA_METAL_REUSE_UNIFORM_UPLOADS", "1", 0) != 0)
+                throw std::runtime_error("Could not initialize the Apple Metal policy");
             SDL_SetMainReady();
             if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0)
                 throw std::runtime_error(SDL_GetError());
@@ -174,6 +179,23 @@ int main(int argc, char** argv) {
             layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
             layer.drawableSize = CGSizeMake(400, 480);
             layer.framebufferOnly = NO;
+            if (const auto* sync = std::getenv("CARA_METAL_HOST_DISPLAY_SYNC")) {
+                const std::string_view value(sync);
+                if (value != "0" && value != "1")
+                    throw std::runtime_error("Host display sync must be 0 or 1");
+                layer.displaySyncEnabled = value == "1";
+            }
+            NSWindow* native = nil;
+            if (const auto* fullscreen = std::getenv("CARA_MAC_METAL_FULLSCREEN");
+                fullscreen && std::string_view(fullscreen) == "1") {
+                SDL_SysWMinfo info{};
+                SDL_VERSION(&info.version);
+                if (!SDL_GetWindowWMInfo(window, &info) || info.subsystem != SDL_SYSWM_COCOA)
+                    throw std::runtime_error("Could not get the native Metal game window");
+                native = info.info.cocoa.window;
+                native.collectionBehavior |= NSWindowCollectionBehaviorFullScreenPrimary;
+                [native toggleFullScreen:nil];
+            }
             NSError* error = nil;
             NSURL* library = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
             const auto assets = Cara::LoadPicaMetalResources(layer.device, library,
@@ -214,6 +236,12 @@ int main(int argc, char** argv) {
             VideoCore::SetNativeRendererFactory([&](Frontend::EmuWindow& w, Memory::MemorySystem& m) {
                 return Cara::MakeNativeMetalRenderer(w, m, layer, *assets,
                     [&]() -> std::optional<Cara::NativeLcdTarget> {
+                        // SDL's Cocoa view resets its drawable on a Space transition.
+                        // The compatibility capture always uses the same pixel grid.
+                        const auto size = CGSizeMake(host.GetFramebufferLayout().width,
+                                                     host.GetFramebufferLayout().height);
+                        if (!CGSizeEqualToSize(layer.drawableSize, size))
+                            layer.drawableSize = size;
                         return Cara::NativeLcdTarget{host.GetFramebufferLayout()};
                     },
                     [&](bool submitted) { presentations += submitted; },
@@ -250,6 +278,10 @@ int main(int argc, char** argv) {
                         throw std::runtime_error("Could not initialize local Metal pipeline learning");
                     std::cout << "METAL_PIPELINE_LEARNING active=1" << std::endl;
                 }
+                const bool record_refresh_timing = std::getenv("CARA_REFRESH_TIMING");
+                using Clock = std::chrono::steady_clock;
+                auto last_refresh = Clock::now();
+                std::vector<std::pair<unsigned, std::int64_t>> timing;
                 size_t next_input = 0;
                 unsigned previous_frame = VideoCore::GetCurrentFrame();
                 Uint32 title_updated_at = SDL_GetTicks();
@@ -270,6 +302,17 @@ int main(int argc, char** argv) {
                         std::cout << "CAPTURE frame=" << frame << std::endl;
                     }
                     if (frame != previous_frame) {
+                        if (native && previous_frame < 120 && frame >= 120) {
+                            std::cout << "HOST_FULLSCREEN active=" << NSApp.active
+                                      << " native=" << ((native.styleMask & NSWindowStyleMaskFullScreen) != 0)
+                                      << " display_sync=" << layer.displaySyncEnabled << std::endl;
+                        }
+                        if (record_refresh_timing) {
+                            const auto now = Clock::now();
+                            timing.emplace_back(frame, std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                now - last_refresh).count());
+                            last_refresh = now;
+                        }
                         const Uint32 now = SDL_GetTicks();
                         if (now - title_updated_at >= 2000) {
                             const auto stats = core.GetAndResetPerfStats();
@@ -284,6 +327,14 @@ int main(int argc, char** argv) {
                 }
                 const auto frames = VideoCore::GetCurrentFrame();
                 const bool captured = frames >= limit && Cara::WriteNativeMetalCapture(output);
+                if (record_refresh_timing) {
+                    std::ofstream report(output + "refresh-timing.csv");
+                    report << "refresh,elapsed_ns\n";
+                    for (const auto& [refresh, elapsed] : timing)
+                        report << refresh << ',' << elapsed << '\n';
+                    if (!report)
+                        throw std::runtime_error("Could not retain refresh timing");
+                }
                 if (learning && frames == limit && presentations == limit && captured) {
                     if (!Cara::FinishNativeMetalWarmup())
                         throw std::runtime_error("Could not finish local Metal pipeline learning");
