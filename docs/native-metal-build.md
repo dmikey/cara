@@ -135,8 +135,8 @@ The shared renderer now includes the retained index scan cache and shader
 identity reuse, vertex and texture lookup reuse, and the related upload,
 publication, and checked depth paths. The iPad native Metal frontend
 initializes the recovered policy before renderer creation. Explicit
-environment settings override it. The Mac build uses the same renderer
-implementation and keeps its existing startup policy.
+environment settings override it. This port kept the Mac startup policy
+while sharing the renderer implementation.
 
 Set `CARA_REFRESH_TIMING=1` to write the elapsed time of every measured refresh
 to `Documents/cara/refresh-timing.csv`. Compute the lab p99 over all 480
@@ -164,7 +164,8 @@ The iPad Pro 11-inch M4 tested here (`iPad16,3`) defaults to 32 tracked
 submissions and enables queued pending depth export when native Metal is
 selected. Explicit overrides still take priority. The queued path consumes
 the producer on the same Metal queue and keeps its validation receipt
-attached to the import. Other devices use their existing submission policy.
+attached to the import. The adaptive policy below treats 32 as the starting
+value on the verified iPad.
 
 In separate traced replays of the lab, the eight-slot policy spent 4.96 ms
 per refresh waiting on the oldest tracked draw. The combined policy recorded
@@ -205,7 +206,9 @@ The Mac host uses the measured precompiled FastInterp options and core
 refresh pacing. Set `CARA_METAL_HOST_DISPLAY_SYNC=1` to add display sync
 for a controlled comparison.
 Use the Metal Performance HUD to verify the actual system state separately
-from frame-time measurements.
+from frame-time measurements. The Developer-signed Mac verification build
+showed Game Mode On in the HUD in native full screen. On the M4 iPad, the
+system Game Overlay reported Game Mode On.
 
 The following normal boots used the Dark Moon cartridge and the same
 in-game save and input sequence. The sample covers lab refreshes
