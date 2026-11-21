@@ -207,6 +207,22 @@ for a controlled comparison.
 Use the Metal Performance HUD to verify the actual system state separately
 from frame-time measurements.
 
+The following normal boots used the Dark Moon cartridge and the same
+in-game save and input sequence. The sample covers lab refreshes
+3121–3600. Timing includes core pacing, with the Metal HUD disabled.
+
+| Device and renderer | Lab speed | Lab p99 | Slowest rolling 120 refreshes | Mean in that window |
+| --- | ---: | ---: | --- | ---: |
+| M4 iPad, adaptive Metal, default start | 100.00% | 17.15 ms | 3224–3343 | 16.72 ms |
+| M4 iPad, adaptive Metal, eight-slot start | 100.01% | 17.23 ms | 3161–3280 | 16.72 ms |
+| M4 iPad, GLES | 100.00% | 20.51 ms | 3470–3589 | 16.75 ms |
+| M3 Pro Mac, adaptive Metal, native full screen | 100.27% | 17.97 ms | 3311–3430 | 16.76 ms |
+
+The iPad's eight-slot run accepted 32 slots at refresh 790, and the
+Mac accepted 32 at refresh 797. Both iPad Metal captures matched each other
+byte for byte, and all iPad runs matched guest ticks and draw counts. The
+Mac's slowest window ran at 99.75% of guest refresh speed.
+
 ## Upstream boundaries
 
 - **Azahar** is the upstream boundary for 3DS execution. Propose PICA,
