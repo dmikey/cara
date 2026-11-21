@@ -34,8 +34,6 @@ bool ValidExtraMaterial(const TexturedMetalDraw& d, const SecondaryPicaMaterial&
            s.texture.device == d.color.device && s.sampler.device == d.color.device &&
            s.texture.pixelFormat == MTLPixelFormatRGBA8Unorm &&
            s.texture.textureType == MTLTextureType2D && s.texture.sampleCount == 1 &&
-           d.texture0.textureType == MTLTextureType2D && d.texture0.sampleCount == 1 &&
-           d.texture0.device == d.color.device && d.texture0_sampler.device == d.color.device &&
            s.texture_slot < 16 && s.sampler_slot < 16 &&
            s.texture_slot != d.texture0_slot && s.sampler_slot != d.texture0_sampler_slot &&
            s.texture_slot != d.lut_texture_slot && s.sampler_slot != d.lut_sampler_slot;
@@ -58,11 +56,14 @@ bool ValidExtraMaterials(const TexturedMetalDraw& d) {
 bool ValidMaterial(const TexturedMetalDraw& d) {
     if (d.texture0_slot == NSNotFound)
         return d.texture0_sampler_slot == NSNotFound && !d.texture0 && !d.texture0_sampler &&
-               d.primary_material_unit == NoMaterialUnit && !d.secondary_material && !d.tertiary_material;
-    return d.texture0_slot < 16 && d.texture0_sampler_slot < 16 && d.texture0_sampler &&
+               d.primary_material_unit == NoMaterialUnit && !d.primary_material_cube &&
+               !d.secondary_material && !d.tertiary_material;
+    const auto dimension = d.primary_material_cube ? MTLTextureTypeCube : MTLTextureType2D;
+    return (!d.primary_material_cube || d.primary_material_unit == 0) && d.texture0_slot < 16 && d.texture0_sampler_slot < 16 && d.texture0_sampler &&
            d.texture0_sampler.device == d.color.device &&
            d.texture0 && d.texture0.device == d.color.device &&
            d.texture0.pixelFormat == MTLPixelFormatRGBA8Unorm &&
+           d.texture0.textureType == dimension && d.texture0.sampleCount == 1 &&
            d.texture0 != d.color && d.texture0 != d.depth_stencil &&
            d.texture0 != d.lighting_lut && d.texture0_slot != d.lut_texture_slot &&
            d.texture0_sampler_slot != d.lut_sampler_slot && ValidExtraMaterials(d);

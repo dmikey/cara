@@ -238,10 +238,11 @@ void VerifyInterface(const Stage& vs, const Stage& fs, RuntimeMetalVertexMode mo
     }
 }
 
-void ValidateTexture(const Stage& stage, const Resource& resource, SPIRType::BaseType component) {
+void ValidateTexture(const Stage& stage, const Resource& resource, SPIRType::BaseType component,
+                     spv::Dim dimension = spv::Dim2D) {
     const auto& type = stage.compiler.get_type(resource.type_id);
     Require(type.basetype == SPIRType::SampledImage && type.array.empty() &&
-                type.image.dim == spv::Dim2D && !type.image.arrayed && !type.image.ms &&
+                type.image.dim == dimension && !type.image.arrayed && !type.image.ms &&
                 !type.image.depth && stage.compiler.get_type(type.image.type).basetype == component,
             "unsupported PICA texture binding");
 }
@@ -308,8 +309,11 @@ void BindFragment(Stage& stage, RuntimeMetalShaderPair& pair) {
     // ordered by guest slot and independently remapped from their Vulkan binding.
     std::map<unsigned, const Resource*> materials;
     for (const auto& resource : stage.resources.sampled_images) {
-        ValidateTexture(stage, resource, SPIRType::Float);
-        if (resource.name == "texture_buffer_lut_lf" && pair.slots[0] == RuntimeMetalUnusedSlot) {
+        const bool cube = resource.name == "tex_cube";
+        ValidateTexture(stage, resource, SPIRType::Float, cube ? spv::DimCube : spv::Dim2D);
+        if (cube) {
+            Require(materials.emplace(0, &resource).second, "duplicate PICA fragment material");
+        } else if (resource.name == "texture_buffer_lut_lf" && pair.slots[0] == RuntimeMetalUnusedSlot) {
             stage.Bind(resource, 0);
             // The backing texture uses texelFetch. Retain its reserved
             // sampler slot for the existing draw-dispatch ABI.
