@@ -10,6 +10,7 @@ on:
       - 'tools/build_mac_sdl.py'
       - 'tools/audit_no_jit.py'
       - 'tools/package_*.py'
+      - 'tools/sign_nightly.py'
       - 'tools/mac_bundle.py'
       - 'tools/mac_app_launcher.mm'
       - 'tools/mac_runtime.json'
@@ -17,8 +18,15 @@ on:
       - 'tests/test_release_packages.py'
   release:
     types: [published]
+  schedule:
+    - cron: '23 8 * * *'
   workflow_dispatch:
     inputs:
+      nightly:
+        description: 'Build signed prerelease packages from main'
+        required: false
+        type: boolean
+        default: false
       release_tag:
         description: 'Existing release tag to build and attach to; leave empty for build artifacts only'
         required: false
@@ -26,7 +34,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: release-packages-${{ github.event.release.tag_name || inputs.release_tag || github.ref }}
+  group: release-packages-${{ (github.event_name == 'schedule' || inputs.nightly) && 'nightly' || github.event.release.tag_name || inputs.release_tag || github.ref }}
   cancel-in-progress: false
 jobs:
   source:
@@ -37,7 +45,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ inputs.release_tag || github.event.release.tag_name || github.sha }}
+      - name: Check nightly dispatch
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)
+        env:
+          EXISTING_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main || -n "$EXISTING_TAG" ]]; then
+            echo "Nightlies build main and create their own prerelease tag."
+            exit 1
+          fi
       - id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   mac:
@@ -48,6 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ needs.source.outputs.sha }}
       - name: Install build-only dependencies
         run: |
@@ -84,6 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ needs.source.outputs.sha }}
       - name: Install pinned build tools
         run: |
@@ -136,3 +156,111 @@ jobs:
           git check-ref-format "refs/tags/$RELEASE_TAG"
           gh release view "$RELEASE_TAG" >/dev/null
           gh release upload "$RELEASE_TAG" dist/* SHA256SUMS.txt --clobber
+
+  nightly-sign:
+    name: Sign the audited Apple nightly packages
+    needs: [source, mac, ios]
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly))
+    runs-on: macos-15
+    timeout-minutes: 35
+    environment: nightly-signing
+    outputs:
+      signed: ${{ steps.result.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-macOS-arm64-JIT
+          path: work/unsigned-mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-iOS-arm64-GLES3-unsigned
+          path: work/unsigned-ios
+      - name: Sign and notarize the Mac nightly
+        id: mac
+        env:
+          CARA_MAC_CERTIFICATE_BASE64: ${{ secrets.CARA_MAC_CERTIFICATE_BASE64 }}
+          CARA_MAC_CERTIFICATE_PASSWORD: ${{ secrets.CARA_MAC_CERTIFICATE_PASSWORD }}
+          CARA_NOTARY_KEY_BASE64: ${{ secrets.CARA_NOTARY_KEY_BASE64 }}
+          CARA_NOTARY_KEY_ID: ${{ secrets.CARA_NOTARY_KEY_ID }}
+          CARA_NOTARY_ISSUER_ID: ${{ secrets.CARA_NOTARY_ISSUER_ID }}
+        run: |
+          python3 tools/sign_nightly.py mac --artifact-dir work/unsigned-mac \
+            --output work/signed/Cara-macOS-arm64-JIT-signed.zip
+      - name: Sign the iOS nightly with App Store distribution provisioning
+        id: ios
+        env:
+          CARA_IOS_CERTIFICATE_BASE64: ${{ secrets.CARA_IOS_CERTIFICATE_BASE64 }}
+          CARA_IOS_CERTIFICATE_PASSWORD: ${{ secrets.CARA_IOS_CERTIFICATE_PASSWORD }}
+          CARA_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.CARA_IOS_APP_STORE_PROFILE_BASE64 }}
+        run: |
+          python3 tools/sign_nightly.py ios --artifact-dir work/unsigned-ios \
+            --output work/signed/Cara-iOS-arm64-GLES3-signed.ipa
+      - uses: actions/upload-artifact@v4
+        if: steps.mac.outputs.signed == 'true' && steps.ios.outputs.signed == 'true'
+        with:
+          name: nightly-signed
+          path: work/signed/*
+          if-no-files-found: error
+      - id: result
+        if: steps.mac.outputs.signed == 'true' && steps.ios.outputs.signed == 'true'
+        run: echo "signed=true" >> "$GITHUB_OUTPUT"
+  nightly-publish:
+    name: Publish signed nightly prerelease
+    needs: [source, nightly-sign]
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)) && needs.nightly-sign.outputs.signed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightly-signed
+          path: dist
+      - name: Verify and publish matching signed products
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          assets = {
+              'Cara-macOS-arm64-JIT-signed.zip': {'signing':'developer-id','notarized':True,'cpu_jit':True},
+              'Cara-iOS-arm64-GLES3-signed.ipa': {'signing':'apple-distribution','distribution':'app-store-connect','cpu_jit':False},
+          }
+          assert {p.name for p in Path('dist').iterdir()} == {
+              name + ext for name in assets for ext in ('', '.json')}, 'Unexpected release assets'
+          versions = set()
+          for name, requirements in assets.items():
+              path = Path('dist') / name
+              manifest = json.loads(path.with_suffix(path.suffix + '.json').read_text())
+              assert manifest['source_revision'] == os.environ['EXPECTED_SHA'], name
+              assert manifest['shader_jit'] is False, name
+              assert all(manifest.get(k) == v for k,v in requirements.items()), name
+              with path.open('rb') as asset:
+                  assert manifest['asset_sha256'] == hashlib.file_digest(asset, 'sha256').hexdigest(), name
+              versions.add(manifest['build_version'])
+          assert len(versions) == 1
+          PYCODE
+          (cd dist && sha256sum -- * > ../SHA256SUMS.txt)
+          stamp=$(date -u +%Y%m%d)
+          tag="nightly-$stamp-${EXPECTED_SHA:0:12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '%s\n' \
+            "Automated Cara nightly from commit $EXPECTED_SHA." \
+            "The macOS app is Developer ID-signed and notarized, with optional ARM64 CPU JIT." \
+            "The iOS IPA uses App Store distribution signing for App Store Connect. It requires separate installation or distribution through Apple." \
+            "Verify downloaded files using SHA256SUMS.txt." > notes.md
+          gh release create "$tag" dist/* SHA256SUMS.txt --draft --prerelease --latest=false \
+            --target "$EXPECTED_SHA" --title "Cara Nightly $stamp · ${EXPECTED_SHA:0:12}" --notes-file notes.md
+          gh release edit "$tag" --draft=false --latest=false
+          url=$(gh release view "$tag" --json url,isDraft,isPrerelease --jq 'select(.isDraft == false and .isPrerelease == true) | .url')
+          test -n "$url"
+          printf '%s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
