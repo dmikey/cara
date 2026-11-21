@@ -1,0 +1,55 @@
+name: Native Metal developer builds
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/native-metal.yml'
+      - 'emulator/**'
+      - 'tests/metal_display_transfer_startup_test.mm'
+      - 'tools/build_native_metal.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-metal-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    name: "Native Metal ${{ matrix.target }} / compile and audit"
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac
+            flags: --cpu-jit
+          - target: ios
+            flags: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned build tools
+        run: |
+          python3 -m venv work/tools
+          work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
+          echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+      - name: Install Mac SDL dependencies
+        if: matrix.target == 'mac'
+        run: brew install sdl2 libpng
+      - name: Check exact display-transfer planning without a ROM
+        if: matrix.target == 'mac'
+        run: |
+          xcrun clang++ -std=c++20 -fobjc-arc -I emulator/src \
+            tests/metal_display_transfer_startup_test.mm \
+            emulator/src/video_core/renderer_metal/pica_metal_transfers.mm \
+            -framework Metal -framework Foundation -o "$RUNNER_TEMP/metal-transfer-test"
+          "$RUNNER_TEMP/metal-transfer-test"
+      - name: Build and audit without private shader assets
+        run: python3 tools/build_native_metal.py ${{ matrix.target }} ${{ matrix.flags }} --jobs 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-metal-${{ matrix.target }}-audit
+          path: work/build-native-metal-${{ matrix.target }}/native-metal-audit.json
+          if-no-files-found: error
