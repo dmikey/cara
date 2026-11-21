@@ -33,6 +33,19 @@ extern std::atomic<bool> g_hw_shader_enabled;
 extern std::function<void(u32 width, u32 height, const std::vector<u32>& pixels)>
     g_screenshot_complete_callback;
 
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+struct NativeRendererPair {
+    std::unique_ptr<RendererBase> renderer;
+    std::unique_ptr<RasterizerInterface> rasterizer;
+};
+
+// Set and reset by the emulation thread for the lifetime of its frontend.
+using NativeRendererFactory = std::function<NativeRendererPair(
+    Frontend::EmuWindow&, Memory::MemorySystem&)>;
+void SetNativeRendererFactory(NativeRendererFactory factory);
+
+#endif
+
 enum class ResultStatus {
     Success,
     ErrorWindow,

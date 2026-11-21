@@ -116,6 +116,9 @@ A Linux x86_64 OpenGL developer build is available through the
 It uses a command-line SDL frontend and FastInterp without JIT. See the
 [Linux build and runtime requirements](docs/build.md#linux-opengl).
 
+The [native Metal build guide](docs/native-metal-build.md) covers opt-in
+development builds for Apple Silicon Macs and physical iOS devices.
+
 Start with the [build guide](docs/build.md). Reports should include the Cara
 revision, device, operating system and version, game region, settings and steps to reproduce.
 For performance work, include comparable runs and correctness checks.

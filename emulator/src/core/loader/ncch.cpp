@@ -233,6 +233,25 @@ ResultStatus AppLoader_NCCH::Load(std::shared_ptr<Kernel::Process>& process) {
     return ResultStatus::Success;
 }
 
+std::string AppLoader_NCCH::ReadOnlineGameVersion() const {
+    if (!is_loaded)
+        return {};
+
+    const auto& bytes = overlay_ncch->exheader_header.codeset_info.flags.remaster_version;
+    const unsigned revision = bytes[0] | (static_cast<unsigned>(bytes[1]) << 8);
+    if (overlay_ncch != &update_ncch)
+        return fmt::format("base:{}", revision);
+
+    const u64 update_id = base_ncch.ncch_header.program_id | UPDATE_MASK;
+    FileSys::TitleMetadata tmd;
+    if (tmd.Load(Service::AM::GetTitleMetadataPath(Service::FS::MediaType::SDMC, update_id)) ==
+            ResultStatus::Success &&
+        tmd.GetTitleID() == update_id) {
+        return fmt::format("update:{}", tmd.GetTitleVersion());
+    }
+    return fmt::format("update-revision:{}", revision);
+}
+
 ResultStatus AppLoader_NCCH::IsExecutable(bool& out_executable) {
     Loader::ResultStatus result = overlay_ncch->Load();
     if (result != Loader::ResultStatus::Success)

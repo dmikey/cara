@@ -176,6 +176,11 @@ public:
         return ResultStatus::ErrorNotImplemented;
     }
 
+    // Online room version of the executable that Load selected, where available.
+    virtual std::string ReadOnlineGameVersion() const {
+        return {};
+    }
+
     /**
      * Get the extdata id for the application
      * @param out_extdata_id Reference to store extdata id into

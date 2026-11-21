@@ -49,6 +49,12 @@ extern "C" int __llvm_profile_write_file(void);
 #include "cara/presentation_guard.h"
 #include "ios/play_profile.h"
 #include "ios/session_presentation.h"
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+#include "ios/metal_lcd_view.h"
+#include "video_core/renderer_metal/pica_metal_native_renderer.h"
+#include "video_core/renderer_metal/pica_metal_pipelines.h"
+#include "video_core/renderer_metal/pica_metal_resources.h"
+#endif
 #include <algorithm>
 #include <mutex>
 #include <chrono>
@@ -290,12 +296,99 @@ public:
     std::mutex display_mutex;
     CGRect display_rects[2]={CGRectMake(0,0,1,.5),CGRectMake(.1,.5,.8,.5)};
     int display_width=0,display_height=0;
-    void SetDisplayLayout(CGRect upper,CGRect lower,CGSize size,CGFloat pixelScale) {
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    CaraNativeMetalLcdView* __strong metal_lcd_view = nil; // UIKit layout owner only.
+    CAMetalLayer* __strong metal_lcd_layer = nil;
+    id<MTLDevice> __strong metal_lcd_device = nil;
+    bool native_metal_only = false;
+    std::atomic<bool> metal_lcd_foreground{false};
+    std::function<void()> show_metal_lcd;
+    std::optional<Layout::FramebufferLayout> metal_lcd_layout;
+    unsigned metal_lcd_upscale = 1;
+    Cara::PresentationGuard metal_presentation_guard;
+    bool metal_presentation_was_adaptive = false;
+
+    bool AdmitMetalPresentation(bool capturing) {
+        const bool enabled = adaptiveFrameSkip.load();
+        if (enabled != metal_presentation_was_adaptive) {
+            metal_presentation_guard = {};
+            metal_presentation_was_adaptive = enabled;
+        }
+        if (!enabled || capturing)
+            return true;
+        const bool admit = metal_presentation_guard.Admit(
+            displayLinkSequence.load(std::memory_order_relaxed));
+        if (!admit)
+            ++presentation_coalesced;
+        return admit;
+    }
+
+    void PrepareNativeMetal() {
+        id<MTLDevice> device = metal_lcd_device;
+        CAMetalLayer* layer = metal_lcd_layer;
+        if (!device || !layer) {
+            graphics_error = "Metal rendering requires a supported Metal device";
+            return;
+        }
+        if (std::getenv("CARA_VERTEX_SELF_TEST") || std::getenv("CARA_DEPTH_SELF_TEST") ||
+            std::getenv("CARA_GPU_WAIT_TIMING") || std::getenv("CARA_CAPTURE_FRAMES") ||
+            std::getenv("CARA_CAPTURE_BURST_START")) {
+            graphics_error = "These GLES diagnostics require the GLES renderer";
+            return;
+        }
+        NSError* error = nil;
+        NSURL* shaders = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
+        const auto resources = Cara::LoadPicaMetalResources(
+            device, shaders, layer.pixelFormat, &error);
+        if (!resources) {
+            graphics_error = error.localizedDescription.UTF8String ?: "Missing Metal resources";
+            return;
+        }
+        VideoCore::SetNativeRendererFactory([this, layer, resources = *resources](
+                                                Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
+            return Cara::MakeNativeMetalRenderer(window, memory, layer, resources,
+                [this]() -> std::optional<Cara::NativeLcdTarget> {
+                    if (!metal_lcd_foreground.load())
+                        return std::nullopt;
+                    std::lock_guard<std::mutex> lock(display_mutex);
+                    if (!metal_lcd_layout)
+                        return std::nullopt;
+                    return Cara::NativeLcdTarget{*metal_lcd_layout, metal_lcd_upscale};
+                }, [this](bool submitted) {
+                    if (submitted) {
+                        if (presentation_submissions == 0 && show_metal_lcd)
+                            show_metal_lcd();
+                        RecordPresentation();
+                    }
+                    ++frames;
+                    if (frame_presented)
+                        frame_presented(frames);
+                }, [this]() {
+                    const auto* target = std::getenv("CARA_BENCHMARK_FRAMES");
+                    return target && std::getenv("CARA_BENCHMARK_CAPTURE") &&
+                        frames + 1 == static_cast<unsigned>(std::clamp(std::strtol(target, nullptr, 10),
+                                                                     1L, 18000L));
+                }, [this](bool capturing) { return AdmitMetalPresentation(capturing); });
+        });
+    }
+#endif
+    void SetDisplayLayout(CGRect upper, CGRect lower, CGSize size, CGFloat pixelScale, unsigned upscale) {
         if (size.width<=0 || size.height<=0) return;
         std::lock_guard<std::mutex> lock(display_mutex);
         CGRect rects[]={upper,lower};
         for (unsigned i=0;i<2;++i) display_rects[i]=CGRectMake(rects[i].origin.x/size.width,rects[i].origin.y/size.height,rects[i].size.width/size.width,rects[i].size.height/size.height);
         display_width=int(std::lround(size.width*pixelScale)); display_height=int(std::lround(size.height*pixelScale));
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        if (native_metal_only && metal_lcd_view) {
+            metal_lcd_upscale = upscale;
+            metal_lcd_layout = Cara::iOS::MakeMetalLcdLayout(upper, lower, size, pixelScale);
+            if (metal_lcd_layout)
+                [metal_lcd_view setDrawablePixelWidth:metal_lcd_layout->width
+                                               height:metal_lcd_layout->height];
+        }
+#else
+        (void)upscale;
+#endif
     }
 #endif
     std::atomic<int> touch{-1};
@@ -319,6 +412,12 @@ public:
         else TouchPressed((value & 0xffff) + 40, (value >> 16) + 240);
     }
     void MakeCurrent() override {
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        if (native_metal_only) {
+            PrepareNativeMetal();
+            return;
+        }
+#endif
 #ifdef CARA_IOS_GLES
         if (!graphics_context) {
             graphics_context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
@@ -366,6 +465,12 @@ public:
 #endif
     }
     void DoneCurrent() override {
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        if (native_metal_only) {
+            VideoCore::SetNativeRendererFactory({});
+            return;
+        }
+#endif
 #ifdef CARA_IOS_GLES
         [EAGLContext setCurrentContext:nil];
 #endif
@@ -491,6 +596,16 @@ static const char* CaraSelectedCPUBackend() {
 static BOOL CaraCanTuneEmulation() {
     return !std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_ADAPTIVE_GUEST_CPU") && !std::getenv("CARA_MAX_SPEED_PERCENT");
 }
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+static NSString* const CaraMetalRendererKey = @"metalRendererAfterBootRecovery";
+
+static bool CaraMetalRendererRequested() {
+    if (const auto* override = std::getenv("CARA_PRIVATE_IOS_METAL_ONLY"))
+        return std::strcmp(override, "1") == 0;
+    return [NSUserDefaults.standardUserDefaults boolForKey:CaraMetalRendererKey];
+}
+#endif
+
 static NSDictionary* CaraGameOverrides;
 static id CaraEmulationValue(NSString* key) { return CaraGameOverrides[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; }
 static bool CaraAdaptiveFrameSkipAvailable() {
@@ -540,6 +655,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     UIImageView* bottom;
 #ifdef CARA_IOS_GLES
     CaraGPUView* gpuSurface;
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    CaraNativeMetalLcdView* metalLcdSurface;
+#endif
 #endif
     UILabel* status;
     UIImageView* skinArt;
@@ -828,6 +946,10 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     libraryNavigation.view.frame=self.view.bounds;
 #ifdef CARA_IOS_GLES
     gpuSurface.frame=self.view.bounds;
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    metalLcdSurface.frame=self.view.bounds;
+    metalLcdSurface.contentScaleFactor=gpuSurface.contentScaleFactor;
+#endif
 #endif
     const BOOL landscape=self.view.bounds.size.width>self.view.bounds.size.height;
     const BOOL physicalSkin=[self usesPhysicalControllerSkin];
@@ -896,7 +1018,16 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     statusIndicator.frame=hud.indicator;
     status.adjustsFontSizeToFitWidth=YES; status.minimumScaleFactor=0.7;
 #ifdef CARA_IOS_GLES
-    if (emuWindow) emuWindow->SetDisplayLayout(top.frame,bottom.frame,self.view.bounds.size,gpuSurface.contentScaleFactor);
+    unsigned upscale = 1;
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    if (emuWindow && emuWindow->native_metal_only) {
+        const auto saved = [NSUserDefaults.standardUserDefaults integerForKey:@"losslessScreenScale"];
+        if (saved == 2 || saved == 4)
+            upscale = static_cast<unsigned>(saved);
+    }
+#endif
+    if (emuWindow) emuWindow->SetDisplayLayout(top.frame, bottom.frame, self.view.bounds.size,
+                                              gpuSurface.contentScaleFactor, upscale);
 #endif
 }
 - (NSUInteger)maximumSpeedPercent { return maximumSpeedLimit.load(); }
@@ -949,6 +1080,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     }
 #ifdef CARA_IOS_GLES
     gpuSurface.hidden=Cara::ClearSessionPresentation(state);
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    metalLcdSurface.hidden = gpuSurface.hidden;
+#endif
     presentationLink.paused=state!=Cara::SessionPresentation::Running;
 #endif
 }
@@ -1085,6 +1219,36 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [cloud addObject:action(@"Sync now / resolve conflicts",@"arrow.triangle.2.circlepath.icloud",available && (saveSync.enabled||stateSync.enabled),^{ [owner syncSaves:nil completion:nil]; })];
     if (saveSync.enabled || stateSync.enabled) [cloud addObject:action(@"Disconnect sync folder",@"icloud.slash",!saveSync.busy && !stateSync.busy,^{ EmulatorController* c=owner; if (!c) return; [c->saveSync disconnect]; [c->stateSync disconnect]; [c resumeFromMenu]; })];
     [sections addObject:@{@"title":@"iCloud & Files",@"rows":cloud,@"footer":@"Choose the same iCloud Drive folder on each device. Stop the game to restore data or change folders. Save states need a matching Cara build."}];
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    NSUserDefaults* displayDefaults = NSUserDefaults.standardUserDefaults;
+    NSMutableArray* display = [NSMutableArray arrayWithObject:
+        @{@"title":@"Metal Render", @"symbol":@"gpu",
+          @"subtitle":@"Applies the next time you open a game.",
+          @"value":@([displayDefaults boolForKey:CaraMetalRendererKey]),
+          @"change":^(BOOL enabled) {
+              [displayDefaults setBool:enabled forKey:CaraMetalRendererKey];
+              [owner updateSyncFeedback];
+          }}];
+    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+        const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
+        const NSInteger scale = saved == 2 || saved == 4 ? saved : 0;
+        for (NSInteger multiplier : {0, 2, 4}) {
+            NSString* name = multiplier ? [NSString stringWithFormat:@"Lossless %ld×", (long)multiplier]
+                                        : @"Native (Fit)";
+            [display addObject:@{@"title":name, @"symbol":scale == multiplier ? @"checkmark.circle.fill" : @"circle",
+                                  @"keepOpen":@YES, @"action":^{
+                EmulatorController* controller = owner;
+                if (!controller)
+                    return;
+                [displayDefaults setInteger:multiplier forKey:@"losslessScreenScale"];
+                [controller.view setNeedsLayout];
+                [controller updateSyncFeedback];
+            }}];
+        }
+    }
+    [sections addObject:@{@"title":@"Display", @"rows":display,
+                          @"footer":@"Lossless scaling applies when Metal Render is selected."}];
+#endif
     [sections addObject:@{@"title":@"Audio",@"rows":@[
         @{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@(!AudioCore::IsIOSAudioMuted()),@"change":^(BOOL on) { AudioCore::SetIOSAudioMuted(!on); [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"audioMuted"]; }},
         @{@"title":@"Audio stretching",@"subtitle":@"Adjust audio when emulation speed varies.",@"symbol":@"waveform",@"value":@(stretchAudio.load()),@"change":^(BOOL on) { EmulatorController* c=owner; if (!c) return; c->stretchAudio=on; c->stretchAudioDirty=true; [NSUserDefaults.standardUserDefaults setBool:on forKey:@"audioStretching"]; }},
@@ -1316,8 +1480,17 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [self presentViewController:slots animated:YES completion:nil];
 }
 - (void)stopGame { if(relayClient) relayClient->Disconnect(); stop=true; sessionNotice=nil; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
-- (void)background { if(relayClient) relayClient->Disconnect(); backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
+- (void)background {
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    if (emuWindow) emuWindow->metal_lcd_foreground = false;
+#endif
+    if(relayClient) relayClient->Disconnect(); backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true;
+    AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation];
+}
 - (void)foreground {
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    if (emuWindow) emuWindow->metal_lcd_foreground = true;
+#endif
     if (backgroundAt > 0 && running) {
         const double duration = CFAbsoluteTimeGetCurrent() - backgroundAt;
         startedAt += duration;
@@ -1582,10 +1755,46 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     std::string rom = url.path.UTF8String;
     NSString* documents = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
     std::string user = std::string(documents.UTF8String) + "/cara/";
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    if (const auto* compat = std::getenv("CARA_METAL_COMPAT_CASE");
+        compat && std::getenv("CARA_BENCHMARK_FRAMES")) {
+        const std::string_view name(compat);
+        if (!name.empty() && name.size() <= 48 &&
+            name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") == std::string_view::npos) {
+            user = std::string(documents.UTF8String) + "/metal-compat-" + std::string(name) + "/";
+        }
+    }
+#endif
     __weak EmulatorController* weakSelf = self;
     emuWindow.reset();
     emuWindow = std::make_unique<IOSWindow>();
     emuWindow->adaptiveFrameSkip=CaraAdaptiveFrameSkipEnabled();
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    emuWindow->native_metal_only = CaraMetalRendererRequested();
+    if (emuWindow->native_metal_only) {
+        if (!metalLcdSurface)
+            metalLcdSurface = [[CaraNativeMetalLcdView alloc] initWithFrame:self.view.bounds];
+        [self.view insertSubview:metalLcdSurface belowSubview:gpuSurface];
+        metalLcdSurface.hidden = gpuSurface.hidden;
+        emuWindow->metal_lcd_view = metalLcdSurface;
+        emuWindow->metal_lcd_layer = metalLcdSurface.metalLayer;
+        emuWindow->metal_lcd_device = metalLcdSurface.metalDevice;
+        emuWindow->metal_lcd_foreground =
+            UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+        emuWindow->show_metal_lcd = [weakSelf, session] {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                EmulatorController* controller = weakSelf;
+                if (!controller || controller->sessionGeneration != session || !controller->running)
+                    return;
+                [controller.view insertSubview:controller->metalLcdSurface
+                                  aboveSubview:controller->gpuSurface];
+            });
+        };
+    } else if (metalLcdSurface) {
+        [metalLcdSurface removeFromSuperview];
+        metalLcdSurface = nil;
+    }
+#endif
     [self viewDidLayoutSubviews];
     [self runSkinInputCheck];
 #ifdef CARA_IOS_GLES
@@ -1806,6 +2015,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     result=Core::System::ResultStatus::ErrorUnknown;
                 }
             }
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+            const bool learn_metal = result == Core::System::ResultStatus::Success &&
+                emuWindow->native_metal_only && !target_frames && Cara::ConfigureNativeMetalLearning(
+                    user, system.GetTitleID(), system.StateGameHash(),
+                    system.GetAppLoader().ReadOnlineGameVersion()) && Cara::BeginNativeMetalWarmup();
+#endif
             if (result==Core::System::ResultStatus::Success)
                 LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
             if (result==Core::System::ResultStatus::Success) Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
@@ -2140,7 +2355,23 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         benchmark_paced,has_speed_override,self->speedLimitEnabled.load());
                     emuWindow->presentation_speed=has_speed_override?paced_speed:self->maximumSpeedLimit.load();
                     Network::DrainRelayPackets(system);
-                    result = system.RunLoop();
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                    if (emuWindow->native_metal_only) {
+                        try {
+                            @autoreleasepool {
+                                result = system.RunLoop();
+                            }
+                        } catch (const std::exception& error) {
+                            Cara::AbortNativeMetalRendering();
+                            emuWindow->graphics_error = error.what();
+                            LOG_ERROR(Frontend, "Metal session stopped: {}", error.what());
+                            result = Core::System::ResultStatus::ErrorVideoCore;
+                        }
+                    } else
+#endif
+                    {
+                        result = system.RunLoop();
+                    }
                     Cara::GuestGPUTrace::Flush();
                     if (Cara::GuestGPUTrace::TakeExportError())
                         LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
@@ -2506,7 +2737,15 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
                            << ",\"gpu_vertices\":" << Common::FrameTiming::counters.gpu_vertices
                            << ",\"cpu_vertex_draws\":" << Common::FrameTiming::counters.cpu_vertex_draws
-                           << ",\"jit\":false,\"software_renderer\":false,\"gpu_backend\":\"native_gles3\"}\n";
+                           << ",\"jit\":false,\"software_renderer\":false,\"gpu_backend\":"
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                           << std::quoted(emuWindow->native_metal_only ? "native_metal" : "native_gles3")
+                           << ",\"eagl_context_created\":"
+                           << (emuWindow->graphics_context ? "true" : "false")
+#else
+                           << "\"native_gles3\""
+#endif
+                           << "}\n";
 #else
                            << ",\"jit\":false,\"software_renderer\":true}\n";
 #endif
@@ -2514,7 +2753,16 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #ifdef CARA_IOS_GLES
                 // Capture only after measured work ends, before renderer destruction.
                 // Raw pixels avoid UIKit/display color conversion in replay comparisons.
-                if (target_frames && std::getenv("CARA_BENCHMARK_CAPTURE")) {
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                if (target_frames && std::getenv("CARA_BENCHMARK_CAPTURE") &&
+                    emuWindow->native_metal_only && !Cara::WriteNativeMetalCapture(user))
+                    LOG_ERROR(Frontend, "The selected Metal benchmark frame was not captured");
+#endif
+                if (target_frames && std::getenv("CARA_BENCHMARK_CAPTURE")
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                    && !emuWindow->native_metal_only
+#endif
+                ) {
                     const auto previous = OpenGL::OpenGLState::BindReadFramebuffer(emuWindow->framebuffer);
                     GLint pack_buffer=0, pack_row_length=0, pack_alignment=0;
                     glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
@@ -2558,6 +2806,11 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 if (Cara::GuestGPUTrace::TakeExportError())
                     LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
                 if(relayClient) relayClient->Disconnect();
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                if (learn_metal && result == Core::System::ResultStatus::Success &&
+                    !Cara::FinishNativeMetalWarmup())
+                    LOG_WARNING(Frontend, "Unable to save the local Metal pipeline cache");
+#endif
                 system.Shutdown();
                 [saveSync captureCommittedSave];
                 [stateSync captureCommittedSave];
@@ -2583,8 +2836,13 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 // Homebrew utilities and system apps can close through the emulated OS.
                 const bool failed=result!=Core::System::ResultStatus::Success &&
                                   result!=Core::System::ResultStatus::ShutdownRequested;
-                if (failed && !self->sessionFailure)
-                    self->sessionFailure = [NSString stringWithFormat:@"Stopped · Error %u",unsigned(result)];
+                if (failed && !self->sessionFailure) {
+                    if (self->emuWindow && !self->emuWindow->graphics_error.empty())
+                        self->sessionFailure = [NSString stringWithFormat:@"Graphics error · %s",
+                            self->emuWindow->graphics_error.c_str()];
+                    else
+                        self->sessionFailure = [NSString stringWithFormat:@"Stopped · Error %u",unsigned(result)];
+                }
                 [self updateSessionPresentation];
                 self->libraryController.canResume=NO;
                 if (!target_frames && !self->openingGame) {
@@ -2630,4 +2888,34 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     return config;
 }
 @end
-int main(int argc,char** argv) { @autoreleasepool { return UIApplicationMain(argc,argv,nil,NSStringFromClass(AppDelegate.class)); } }
+int main(int argc, char** argv) {
+    @autoreleasepool {
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        [NSUserDefaults.standardUserDefaults registerDefaults:@{CaraMetalRendererKey: @NO}];
+        // Explicit native test launches choose their own options.
+        if (!std::getenv("CARA_PRIVATE_IOS_METAL_ONLY")) {
+            for (const char* option : {
+                     "CARA_METAL_REDUCE_COPY_QUEUE_WORK",
+                     "CARA_METAL_FUSE_DEPTH_CLEAR",
+                     "CARA_METAL_DIRECT_COLOR_EXPORT",
+                     "CARA_METAL_SETUP_REUSE",
+                     "CARA_METAL_TEXTURE_RESIDENCY",
+                     "CARA_METAL_GROUPED_PASS",
+                     "CARA_METAL_DRAW_INPUT_REUSE",
+                     "CARA_METAL_DEFER_UNRELATED_PUBLICATION",
+                     "CARA_METAL_REUSE_SELECTION",
+                     "CARA_METAL_EXACT_DEPTH_CLEAR",
+                     "CARA_METAL_QUEUE_COLOR_EXPORT",
+                     "CARA_METAL_EIGHT_UPLOAD_PAGES",
+                     "CARA_METAL_OVERLAP_TRANSFERS",
+                     "CARA_METAL_RAW_INDICES",
+                     "CARA_METAL_RAW_INDEX_CONSTANTS",
+                     "CARA_METAL_REUSE_RENDER_PIPELINES",
+                 }) {
+                setenv(option, "1", 0);
+            }
+        }
+#endif
+        return UIApplicationMain(argc, argv, nil, NSStringFromClass(AppDelegate.class));
+    }
+}

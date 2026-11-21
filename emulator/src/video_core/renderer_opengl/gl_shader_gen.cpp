@@ -142,17 +142,27 @@ out gl_PerVertex {
     return out;
 }
 
-bool PicaFSConfig::SupportsNativeNearestBorrow(const Pica::Regs& regs) {
+static bool SupportsNearestBorrowForTarget(const Pica::Regs& regs, bool gles) {
 #ifdef CARA_MAC_ATLAS_PIPELINE
-    return !GLES && regs.texturing.texture0.type == TexturingRegs::TextureConfig::Texture2D;
+    return !gles && regs.texturing.texture0.type == TexturingRegs::TextureConfig::Texture2D;
 #else
     return false;
 #endif
 }
 
+bool PicaFSConfig::SupportsNativeNearestBorrow(const Pica::Regs& regs) {
+    return SupportsNearestBorrowForTarget(regs, GLES);
+}
+
 PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs,
                                        bool native_nearest_borrow_tex0) {
-    if (native_nearest_borrow_tex0 && !SupportsNativeNearestBorrow(regs)) {
+    return BuildFromRegs(regs, native_nearest_borrow_tex0, {GLES, AllowShadow});
+}
+
+PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs,
+                                       bool native_nearest_borrow_tex0,
+                                       PicaFragmentShaderTarget target) {
+    if (native_nearest_borrow_tex0 && !SupportsNearestBorrowForTarget(regs, target.gles)) {
         throw std::invalid_argument("native nearest borrow requires native texture2D");
     }
     PicaFSConfig res{};
@@ -169,7 +179,7 @@ PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs,
 
     /*if (GLES && (GLAD_GL_ARM_shader_framebuffer_fetch || GLAD_GL_EXT_shader_framebuffer_fetch) &&
         regs.framebuffer.output_merger.alphablend_enable == 0) {*/
-    if (GLES && regs.framebuffer.output_merger.alphablend_enable == 0) {
+    if (target.gles && regs.framebuffer.output_merger.alphablend_enable == 0) {
         state.logic_op = regs.framebuffer.output_merger.logic_op;
     } else {
         state.logic_op = FramebufferRegs::LogicOp::Copy;
@@ -180,7 +190,20 @@ PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs,
                                 : FramebufferRegs::CompareFunc::Always;
 
     state.texture0_type = regs.texturing.texture0.type;
+    if (target.honor_material_enable) {
+        const auto& enable = regs.texturing.main_config;
+        const auto active = u8(enable.texture0_enable.Value()) |
+                            (u8(enable.texture1_enable.Value()) << 1) |
+                            (u8(enable.texture2_enable.Value()) << 2);
+        state.disabled_material_mask = u8(active ^ 7);
+    }
 
+    if (target.emit_explicit_material_lod_bias) {
+        const auto& t = regs.texturing;
+        state.material_lod_bias = {
+            t.texture0.lod.bias.Value(), t.texture1.lod.bias.Value(), t.texture2.lod.bias.Value(),
+        };
+    }
     state.texture2_use_coord1 = regs.texturing.main_config.texture2_use_coord1 != 0;
 
     // Copy relevant tev stages fields.
@@ -357,8 +380,23 @@ static bool IsPassThroughTevStage(const TevStageConfig& stage) {
             stage.GetColorMultiplier() == 1 && stage.GetAlphaMultiplier() == 1);
 }
 
+static std::string SampleExplicitMaterialLod(const PicaFSConfig& config, unsigned unit,
+                                             std::string_view coord) {
+    // Apply the signed fixed-point bias to the same derivative-based
+    // lambda before filtering and sampler LOD clamps.
+    const auto raw_bias = config.state.material_lod_bias[unit];
+    const auto bias = raw_bias == 0 ? std::string{} : fmt::format(" + (float({}) / 256.0)", raw_bias);
+    return fmt::format("textureLod(tex{0}, {1}, getLod({1} * vec2(textureSize(tex{0}, 0))){2})",
+                       unit, coord, bias);
+}
+
 static std::string SampleTexture(const PicaFSConfig& config, unsigned texture_unit) {
     const auto& state = config.state;
+    // With a disabled PICA unit, the software rasterizer keeps its initialized
+    // RGBA zero sample. Keep the same TEV and lighting operations without
+    // accessing texture memory belonging to stale register configuration.
+    if (texture_unit < 3 && (state.disabled_material_mask & (1u << texture_unit)))
+        return "vec4(0.0)";
     switch (texture_unit) {
     case 0:
         // Only unit 0 respects the texturing type
@@ -388,7 +426,7 @@ static std::string SampleTexture(const PicaFSConfig& config, unsigned texture_un
         return "texcolor1";
     case 2:
         if (state.texture2_use_coord1) {
-            return "textureLod(tex2, texcoord1, getLod(texcoord1 * vec2(textureSize(tex2, 0))))";
+            return SampleExplicitMaterialLod(config, 2, "texcoord1");
         } else {
             s_use_texcolor2 = true;
             return "texcolor2";
@@ -1469,10 +1507,15 @@ vec4 shadowTextureCube(vec2 uv, float w) {
 }
 
 std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader) {
+    return GenerateFragmentShader(config, separable_shader, {GLES, AllowShadow});
+}
+
+std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader,
+                                   PicaFragmentShaderTarget target) {
     const auto& state = config.state;
     if (state.native_nearest_borrow_tex0) {
 #ifdef CARA_MAC_ATLAS_PIPELINE
-        if (GLES || state.texture0_type != TexturingRegs::TextureConfig::Texture2D) {
+        if (target.gles || state.texture0_type != TexturingRegs::TextureConfig::Texture2D) {
             throw std::invalid_argument("invalid native nearest borrow shader key");
         }
 #else
@@ -1487,7 +1530,7 @@ std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_sh
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
 
-    if (GLES) {
+    if (target.gles) {
         /*if (state.logic_op != FramebufferRegs::LogicOp::Copy) {
             if (GLAD_GL_EXT_shader_framebuffer_fetch) {
                 out += "#extension GL_EXT_shader_framebuffer_fetch : enable\n"
@@ -1501,7 +1544,7 @@ std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_sh
                 shader_logic_ops = true;
             }
         }*/
-        if (AllowShadow && state.shadow_rendering) {
+        if (target.allow_shadow && state.shadow_rendering) {
             shadow_rendering = true;
         }
         out += fragment_shader_precision_OES;
@@ -1688,17 +1731,17 @@ vec4 secondary_fragment_color = vec4(0.0);
             throw std::invalid_argument("native nearest borrow is unavailable on this backend");
 #endif
         } else {
-            out += "vec4 texcolor0 = textureLod(tex0, texcoord0, getLod(texcoord0 * "
-                   "vec2(textureSize(tex0, 0))));\n";
+            out += "vec4 texcolor0 = " + SampleExplicitMaterialLod(config, 0, "texcoord0") +
+                   ";\n";
         }
     }
     if (s_use_texcolor1) {
-        out += "vec4 texcolor1 = textureLod(tex1, texcoord1, getLod(texcoord1 * "
-               "vec2(textureSize(tex1, 0))));\n";
+        out += "vec4 texcolor1 = " + SampleExplicitMaterialLod(config, 1, "texcoord1") +
+               ";\n";
     }
     if (s_use_texcolor2) {
-        out += "vec4 texcolor2 = textureLod(tex2, texcoord2, getLod(texcoord2 * "
-               "vec2(textureSize(tex2, 0))));\n";
+        out += "vec4 texcolor2 = " + SampleExplicitMaterialLod(config, 2, "texcoord2") +
+               ";\n";
     }
 
     out += lighting_codes;
