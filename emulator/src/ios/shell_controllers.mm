@@ -51,7 +51,7 @@ static UIColor* CaraBackground() {
 
 // Read only the unencrypted icon section; never initialize or borrow the active
 // emulator, decrypt a game, or read the whole ROM just to decorate the library.
-NSDictionary* CaraReadGameArtwork(CaraLibraryGame* game) {
+static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     BOOL scoped=[game.url startAccessingSecurityScopedResource];
     @try {
         NSNumber* ubiquitous=nil; NSNumber* downloaded=nil;
@@ -252,7 +252,7 @@ NSDictionary* CaraReadGameArtwork(CaraLibraryGame* game) {
     NSString* key=[NSString stringWithFormat:@"%@-%@-%llu",game.url,game.modified,game.fileSize]; NSDictionary* cached=[artworkCache objectForKey:key]; if(cached) { apply(cached); return; }
     unsigned generation=artworkGeneration.load(); dispatch_async(artworkQueue,^{ @autoreleasepool {
         if(generation!=self->artworkGeneration.load()) return;
-        NSMutableDictionary* metadata=[(CaraReadGameArtwork(game)?:@{}) mutableCopy];
+        NSMutableDictionary* metadata=[(ReadGameArtwork(game)?:@{}) mutableCopy];
         if(!metadata[@"title"]) metadata[@"title"]=game.title;
         NSDictionary* embedded=[metadata copy];
         dispatch_async(dispatch_get_main_queue(),^{ if(generation==self->artworkGeneration.load()) apply(embedded); });
@@ -446,7 +446,9 @@ static UIImage* CaraThemePreview(NSInteger style) {
         visibleSections=@[@{@"title":@"Accent color",@"rows":accents},@{@"title":@"Collection",@"rows":@[@{@"title":@"Menu sounds",@"symbol":@"speaker.wave.2",@"value":@(![NSUserDefaults.standardUserDefaults objectForKey:@"libraryMenuSounds"] || [NSUserDefaults.standardUserDefaults boolForKey:@"libraryMenuSounds"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:@"libraryMenuSounds"]; }},@{@"title":@"Show game titles",@"value":@(![NSUserDefaults.standardUserDefaults boolForKey:@"libraryHideTitles"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"libraryHideTitles"]; }}],@"footer":@"Make your collection feel like home."}]; return;
     }
     if([selectedCategory isEqual:@"About Cara"]) { visibleSections=@[@{@"title":@"Cara",@"rows":@[@{@"title":@"Nintendo 3DS emulation",@"subtitle":@"Cara is built on the open-source Citra emulator. See the bundled source and license notices.",@"symbol":@"info.circle"},@{@"title":@"Version",@"subtitle":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"Development build",@"symbol":@"app"}]}]; return; }
-    visibleSections=[self.sections filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* b) { NSString* title=section[@"title"]; if([self->selectedCategory isEqual:@"General"]) return [title isEqual:@"Current game"] || [title isEqual:@"Play mode"]; if([self->selectedCategory isEqual:@"Controls"]) return [title hasSuffix:@"skin"]; if([self->selectedCategory isEqual:@"Library & storage"]) return [title isEqual:@"Game library"]; if([self->selectedCategory isEqual:@"Save data"]) return [title isEqual:@"iCloud & Files"]; return [title isEqual:self->selectedCategory]; }]];
+    visibleSections=[self.sections filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* b) { NSString* title=section[@"title"]; if([self->selectedCategory isEqual:@"General"]) return [title isEqual:@"Current game"] || [title isEqual:@"Play mode"]; if([self->selectedCategory isEqual:@"Controls"]) {
+        return [title hasSuffix:@"skin"] || [title isEqual:@"Controllers"];
+    } if([self->selectedCategory isEqual:@"Library & storage"]) return [title isEqual:@"Game library"]; if([self->selectedCategory isEqual:@"Save data"]) return [title isEqual:@"iCloud & Files"]; return [title isEqual:self->selectedCategory]; }]];
     if(!visibleSections.count) visibleSections=@[@{@"title":selectedCategory,@"rows":@[@{@"title":@"Ready to play",@"subtitle":@"Use Emulation to choose a play mode, or Library & storage to add your games.",@"symbol":@"checkmark.circle"}]}];
 }
 - (void)refresh {
