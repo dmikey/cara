@@ -758,7 +758,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
                 {address(Face::PositiveX), address(Face::NegativeX),
                  address(Face::PositiveY), address(Face::NegativeY),
                  address(Face::PositiveZ), address(Face::NegativeZ)},
-                u32(t.width), u32(t.height), tile_size, u32(t.lod.min_level),
+                u32(t.width), u32(t.height), static_cast<u32>(tile_size), u32(t.lod.min_level),
                 u32(t.lod.max_level), s32(t.lod.bias)};
             primary_cube = MetalTransfer::PlanCube(cube, *color_range, *depth_range);
             if (!primary_cube)
