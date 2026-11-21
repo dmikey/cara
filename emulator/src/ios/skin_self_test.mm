@@ -75,6 +75,8 @@ int main(int argc,char** argv) { @autoreleasepool {
         require(upper.size.width*scale>=290 && lower.size.width*scale>=190,
                 "Phone screens too small for the 17e");
         const CGRect message=CaraSkinRect(phone[@"caraMessageFrame"]);
+        const CGRect menu=CaraSkinTouchMenuFrame(phone);
+        require(!CGRectIsNull(menu),"Phone Menu frame is missing");
         require(!CGRectIsNull(message) && CGRectContainsRect(CGRectMake(0,0,mapping.width,mapping.height),message),
                 "Phone status message is missing or outside the canvas");
         require(!CGRectIntersectsRect(message,upper) && !CGRectIntersectsRect(message,lower),
