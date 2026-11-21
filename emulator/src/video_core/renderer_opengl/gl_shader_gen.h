@@ -52,6 +52,7 @@ struct PicaFSConfigState {
     bool texture2_use_coord1;
     // Explicit native diagnostic key; never aliases a normal texture0 program.
     bool native_nearest_borrow_tex0 = false;
+    u8 disabled_material_mask = 0;
     std::array<TevStageConfigRaw, 6> tev_stages;
     u8 combiner_buffer_input;
 
@@ -119,6 +120,16 @@ struct PicaFSConfigState {
 
     bool shadow_rendering;
     bool shadow_texture_orthographic;
+    std::array<s32, 3> material_lod_bias{}; // Signed raw 1.4.8 values for explicit LOD.
+};
+
+// Explicit source dialect so a native renderer can match the iOS shader
+// corpus without a GLES context or GL capability globals.
+struct PicaFragmentShaderTarget {
+    bool gles;
+    bool allow_shadow;
+    bool honor_material_enable = false;
+    bool emit_explicit_material_lod_bias = false;
 };
 
 /**
@@ -135,6 +146,9 @@ struct PicaFSConfig {
     static bool SupportsNativeNearestBorrow(const Pica::Regs& regs);
     static PicaFSConfig BuildFromRegs(const Pica::Regs& regs,
                                       bool native_nearest_borrow_tex0 = false);
+    static PicaFSConfig BuildFromRegs(const Pica::Regs& regs,
+                                      bool native_nearest_borrow_tex0,
+                                      PicaFragmentShaderTarget target);
 
     bool TevStageUpdatesCombinerBufferColor(unsigned stage_index) const {
         return (stage_index < 4) && (state.combiner_buffer_input & (1 << stage_index));
@@ -238,5 +252,7 @@ std::string GenerateFixedGeometryShader(const PicaFixedGSConfig& config, bool se
  * @returns String of the shader source code
  */
 std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader);
+std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader,
+                                   PicaFragmentShaderTarget target);
 
 } // namespace OpenGL

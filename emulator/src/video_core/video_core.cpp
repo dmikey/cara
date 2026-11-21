@@ -24,6 +24,9 @@
 
 namespace VideoCore {
 
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+static thread_local NativeRendererFactory native_renderer_factory;
+#endif
 static std::unique_ptr<RendererBase> g_renderer;
 static std::unique_ptr<RasterizerInterface> g_rasterizer;
 Memory::MemorySystem* g_memory = nullptr;
@@ -59,8 +62,28 @@ static void ApplySetting() {
     g_setting_update = false;
 }
 
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+void SetNativeRendererFactory(NativeRendererFactory factory) {
+    native_renderer_factory = std::move(factory);
+}
+#endif
+
 /// Initialize the video core
 ResultStatus Init(Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    if (native_renderer_factory) {
+        g_memory = &memory;
+        Pica::Init();
+        auto pair = native_renderer_factory(window, memory);
+        if (!pair.renderer || !pair.rasterizer || pair.renderer->Init() != ResultStatus::Success)
+            return ResultStatus::ErrorGenericDrivers;
+        g_renderer = std::move(pair.renderer);
+        g_rasterizer = std::move(pair.rasterizer);
+        ApplySetting();
+        g_current_frame = 0;
+        return ResultStatus::Success;
+    }
+#endif
     // A recreated video session cannot inherit unfinished GL work from a prior
     // save-state epoch. No virtual time or guest event is changed by this wait.
     OpenGL::CommandQueue::Drain();
@@ -149,11 +172,17 @@ void SetBackgroundImage(u32* pixels, u32 width, u32 height) {
 /// Shutdown the video core
 void Shutdown() {
     if (g_rasterizer) g_rasterizer->FlushDeferredDraws();
-    OpenGL::CommandQueue::Drain();
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    if (!native_renderer_factory)
+#endif
+        OpenGL::CommandQueue::Drain();
     Pica::Shutdown();
     g_rasterizer.reset();
     g_renderer.reset();
-    OpenGL::CommandQueue::Drain();
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    if (!native_renderer_factory)
+#endif
+        OpenGL::CommandQueue::Drain();
     g_memory = nullptr;
 }
 
@@ -162,7 +191,10 @@ void Shutdown() {
 namespace VideoCore {
 template <class Archive> void serialize(Archive& ar, const unsigned int) {
     if (g_rasterizer) g_rasterizer->FlushDeferredDraws();
-    OpenGL::CommandQueue::Drain();
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    if (!native_renderer_factory)
+#endif
+        OpenGL::CommandQueue::Drain();
     ar& Pica::g_state;
     if (Archive::is_loading::value) {
         g_setting_update = true;

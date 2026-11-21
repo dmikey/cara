@@ -54,6 +54,7 @@ public:
     ResultStatus ReadLogo(std::vector<u8>& buffer) override;
 
     ResultStatus ReadProgramId(u64& out_program_id) override;
+    std::string ReadOnlineGameVersion() const override;
 
     ResultStatus ReadExtdataId(u64& out_extdata_id) override;
 

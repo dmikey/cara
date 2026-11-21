@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#pragma once
+
+#include "video_core/renderer_metal/pica_metal_native_draw_lane.h"
+#include "video_core/renderer_metal/pica_metal_resources.h"
+#include "video_core/renderer_metal/pica_metal_pipelines.h"
+#include "video_core/renderer_metal/pica_metal_lut.h"
+
+namespace Cara {
+
+class PicaMetalNativeBindings {
+public:
+    explicit PicaMetalNativeBindings(const PicaMetalResources& resources);
+    bool BeginWarmup() { return pipelines.BeginWarmup(); }
+    bool FinishWarmup() { return pipelines.FinishWarmup(); }
+    void InvalidateLuts() { lut_dirty = true; }
+    std::optional<NativePicaDrawBindings> Prepare(
+        PicaMetalNativeDrawLane& lane, const Pica::State& state, bool indexed,
+        const MetalGuestAuthority::GuestReader& ram,
+        std::span<const PicaMetalStageVertex> stage_in = {});
+
+private:
+    PicaMetalResources resources;
+    PicaMetalPipelines pipelines;
+    PicaMetalLightingCache lighting;
+    id<MTLTexture> lut = nil;
+    bool lut_dirty = true;
+    u64 generation = 0;
+};
+
+} // namespace Cara

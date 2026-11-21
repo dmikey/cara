@@ -4,6 +4,9 @@
 
 #pragma once
 
+#include <functional>
+#include <stdexcept>
+#include <utility>
 #include "common/common_types.h"
 #include "core/hw/gpu.h"
 
@@ -78,6 +81,30 @@ public:
         return false;
     }
 
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    // Installed once by a native renderer before a guest session begins.
+    // Dispatch is exclusive: a rejected native draw must fail the session.
+    using NativePicaDraw = std::function<void(bool indexed)>;
+    void InstallNativePicaDraw(NativePicaDraw dispatch, bool accept_original_stage_in = false) {
+        if (native_pica_draw_ || !dispatch)
+            throw std::logic_error("Invalid native PICA draw installation");
+        native_pica_draw_ = std::move(dispatch);
+        native_original_stage_in_ = accept_original_stage_in;
+    }
+
+    bool DispatchNativePicaDraw(bool indexed, bool hardware_eligible) {
+        if (!native_pica_draw_)
+            return false;
+        if (!hardware_eligible && native_original_stage_in_)
+            return false;
+        if (!hardware_eligible)
+            throw std::runtime_error("PICA draw is unsupported by the native renderer");
+        native_pica_draw_(indexed);
+        return true;
+    }
+
+#endif
+
     /// Attempt to draw using hardware shaders
     virtual bool AccelerateDrawBatch(bool is_indexed) {
         return false;
@@ -96,6 +123,10 @@ protected:
     void SetPicaWriteHooksActive(bool active) noexcept { pica_write_hooks_active_ = active; }
 
 private:
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    NativePicaDraw native_pica_draw_;
+    bool native_original_stage_in_ = false;
+#endif
     bool pica_write_hooks_active_ = false;
 };
 } // namespace VideoCore

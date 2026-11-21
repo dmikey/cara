@@ -775,7 +775,13 @@ static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInter
 
         bool is_indexed = (id == PICA_REG_INDEX(pipeline.trigger_draw_indexed));
 
-        if (accelerate_draw && VideoCore::Rasterizer()->AccelerateDrawBatch(is_indexed)) {
+        auto* const rasterizer = VideoCore::Rasterizer();
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+        if (rasterizer->DispatchNativePicaDraw(is_indexed, accelerate_draw)) {
+            break;
+        }
+#endif
+        if (accelerate_draw && rasterizer->AccelerateDrawBatch(is_indexed)) {
             break;
         } else if (Settings::values.skip_slow_draw) {
             break;
