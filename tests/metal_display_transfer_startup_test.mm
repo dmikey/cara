@@ -1,11 +1,47 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <cassert>
 
+#include "video_core/renderer_metal/pica_metal_cube_plan.h"
 #include "video_core/renderer_metal/pica_metal_transfers.h"
 
 namespace Cara::MetalTransfer {
 std::optional<LinearColorTransferPlan> PlanNativeLinearColorTransfer(DisplayTransferRegisters regs);
 }
+
+namespace {
+using namespace Cara::MetalTransfer;
+
+constexpr bool CubePlanMatchesGuestLayout() {
+    constexpr std::uint32_t face_bytes = 21760;
+    constexpr auto first = std::uint32_t{0x20000000};
+    CubeRegisters regs{{}, 64, 64, 256, 0, 3, 0};
+    for (std::size_t i = 0; i < regs.addresses.size(); ++i)
+        regs.addresses[i] = first + i * face_bytes;
+    constexpr GuestInterval color{0x18100000, 0x18104000};
+    constexpr GuestInterval depth{0x18200000, 0x18204000};
+    const auto cube = PlanCube(regs, color, depth);
+    if (!cube || cube->levels != 4)
+        return false;
+    for (std::size_t i = 0; i < cube->faces.size(); ++i) {
+        const auto& face = cube->faces[i];
+        if (face.bytes.begin != regs.addresses[i] || face.bytes.Size() != face_bytes ||
+            face.mips[0].Size() != 16384 || face.mips[1].Size() != 4096 ||
+            face.mips[2].Size() != 1024 || face.mips[3].Size() != 256)
+            return false;
+    }
+    if (PlanCube(regs, {first, first + 8}, depth) ||
+        PlanCube(regs, color, depth, GuestInterval{first + 8, first + 16}))
+        return false;
+    regs.max_level = 4;
+    if (PlanCube(regs, color, depth))
+        return false;
+    regs.max_level = 3;
+    regs.addresses[5] = 0xfffffff8;
+    return !PlanCube(regs, color, depth);
+}
+
+static_assert(CubePlanMatchesGuestLayout());
+} // namespace
 
 int main() {
     using namespace Cara::MetalTransfer;
