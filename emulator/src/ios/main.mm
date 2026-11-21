@@ -49,6 +49,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "cara/frame_pacer.h"
 #include "cara/presentation_guard.h"
 #include "cara/play_profile.h"
+#include "common/apple_metal_policy.h"
 #include "ios/session_presentation.h"
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
 #include "ios/metal_lcd_view.h"
@@ -56,6 +57,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "video_core/renderer_metal/pica_metal_native_renderer.h"
 #include "video_core/renderer_metal/pica_metal_pipelines.h"
 #include "video_core/renderer_metal/pica_metal_resources.h"
+#include "video_core/renderer_metal/pica_metal_submission_queue.h"
 #endif
 #include <algorithm>
 #include <mutex>
@@ -1900,6 +1902,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     emuWindow->native_metal_only = CaraMetalRendererRequested();
     if (emuWindow->native_metal_only) {
+        if (!std::getenv("CARA_PRIVATE_IOS_METAL_ONLY") && !Common::ApplyAppleMetalDefaults(true))
+            LOG_WARNING(Frontend, "Could not initialize every Apple Metal tuning option");
         if (!metalLcdSurface)
             metalLcdSurface = [[CaraNativeMetalLcdView alloc] initWithFrame:self.view.bounds];
         [self.view insertSubview:metalLcdSurface belowSubview:gpuSurface];
@@ -1985,7 +1989,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             FileUtil::SetUserPath(user);
             // Clear reports before any self-test can fail, so stale results are
             // never mistaken for evidence from this launch.
-            for (const char* name : {"benchmark-status.json","frame-timing.json","runtime-status.json",
+            for (const char* name : {"benchmark-status.json","frame-timing.json","refresh-timing.csv","runtime-status.json",
                                      "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
                                      "surface-flushes.json","surface-uploads.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
                                      "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json",
@@ -2026,7 +2030,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             const bool benchmark_paced=std::getenv("CARA_PACED_BENCHMARK")!=nullptr;
             bool pace_frames = !target_frames || benchmark_paced;
             Common::FrameTiming::counters = {};
-            Common::FrameTiming::counters.enabled = std::getenv("CARA_FRAME_TIMING") != nullptr;
+            const bool capture_refresh_timing = target_frames && std::getenv("CARA_REFRESH_TIMING");
+            Common::FrameTiming::counters.enabled = capture_refresh_timing ||
+                std::getenv("CARA_FRAME_TIMING");
             s.init_clock = target_frames ? Settings::InitClock::FixedTime : Settings::InitClock::SystemTime;
             s.init_time = 946684801;
             s.sink_id = std::getenv("CARA_AUDIO_DISABLED") ? "null" : "ios"; s.audio_volume = 1; s.enable_audio_stretching = self->stretchAudio.load() && std::getenv("CARA_AUDIO_NO_STRETCH")==nullptr; s.shared_font_type = Settings::SharedFontType::Auto;
@@ -2154,7 +2160,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
             const bool learn_metal = result == Core::System::ResultStatus::Success &&
-                emuWindow->native_metal_only && !target_frames && Cara::ConfigureNativeMetalLearning(
+                emuWindow->native_metal_only && Common::AppleMetalPipelineLearning(target_frames != 0) &&
+                Cara::ConfigureNativeMetalLearning(
                     user, system.GetTitleID(), system.StateGameHash(),
                     system.GetAppLoader().ReadOnlineGameVersion()) && Cara::BeginNativeMetalWarmup();
 #endif
@@ -2213,6 +2220,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 auto last_frame_time = benchmark_start;
                 unsigned timed_frame = 0;
                 std::vector<double> frame_times;
+                std::vector<std::pair<unsigned, std::chrono::nanoseconds::rep>> refresh_timing;
+                if (capture_refresh_timing)
+                    refresh_timing.reserve(target_frames);
                 std::vector<std::string> timing_windows;
                 auto previous_counters = Common::FrameTiming::counters;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
@@ -2545,6 +2555,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     if (Common::FrameTiming::counters.enabled && emuWindow->frames != timed_frame) {
                         const auto now = std::chrono::steady_clock::now();
                         frame_times.push_back(std::chrono::duration<double, std::milli>(now - last_frame_time).count());
+                        if (capture_refresh_timing)
+                            refresh_timing.emplace_back(emuWindow->frames,
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(now - last_frame_time).count());
                         last_frame_time = now;
                         timed_frame = emuWindow->frames;
                         if (frame_times.size() == window_frames || (target_frames && timed_frame == target_frames)) {
@@ -2896,6 +2909,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                             std::getenv("CARA_BENCHMARK_CAPTURE") &&
                             !Cara::WriteNativeMetalCapture(user))
                             throw std::runtime_error("The selected Metal benchmark frame was not captured");
+                        if (target_frames && result == Core::System::ResultStatus::Success)
+                            Cara::ReportNativeMetalCommandTimeline(user);
                     } catch (const std::exception& error) {
                         Cara::AbortNativeMetalRendering();
                         if (emuWindow->graphics_error.empty())
@@ -2909,6 +2924,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     const double wall_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - benchmark_start).count();
                     const double pause_elapsed = std::chrono::duration<double>(paused_duration).count();
                     const double elapsed = std::max(0.001, wall_elapsed - pause_elapsed);
+                    if (capture_refresh_timing) {
+                        std::ofstream timing(user + "refresh-timing.csv");
+                        timing << "refresh,elapsed_ns\n";
+                        for (const auto& [refresh, elapsed_ns] : refresh_timing)
+                            timing << refresh << ',' << elapsed_ns << '\n';
+                    }
                     std::ofstream report(user + "benchmark-status.json");
                     report << "{\"title_id\":" << system.GetTitleID() << ",\"rom_filename\":" << std::quoted(std::string(FileUtil::GetFilename(rom))) << ",\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
                            << ",\"fps\":" << emuWindow->frames / elapsed
@@ -3085,29 +3106,6 @@ int main(int argc, char** argv) {
     @autoreleasepool {
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
         [NSUserDefaults.standardUserDefaults registerDefaults:@{CaraMetalRendererKey: @NO}];
-        // Explicit native test launches choose their own options.
-        if (!std::getenv("CARA_PRIVATE_IOS_METAL_ONLY")) {
-            for (const char* option : {
-                     "CARA_METAL_REDUCE_COPY_QUEUE_WORK",
-                     "CARA_METAL_FUSE_DEPTH_CLEAR",
-                     "CARA_METAL_DIRECT_COLOR_EXPORT",
-                     "CARA_METAL_SETUP_REUSE",
-                     "CARA_METAL_TEXTURE_RESIDENCY",
-                     "CARA_METAL_GROUPED_PASS",
-                     "CARA_METAL_DRAW_INPUT_REUSE",
-                     "CARA_METAL_DEFER_UNRELATED_PUBLICATION",
-                     "CARA_METAL_REUSE_SELECTION",
-                     "CARA_METAL_EXACT_DEPTH_CLEAR",
-                     "CARA_METAL_QUEUE_COLOR_EXPORT",
-                     "CARA_METAL_EIGHT_UPLOAD_PAGES",
-                     "CARA_METAL_OVERLAP_TRANSFERS",
-                     "CARA_METAL_RAW_INDICES",
-                     "CARA_METAL_RAW_INDEX_CONSTANTS",
-                     "CARA_METAL_REUSE_RENDER_PIPELINES",
-                 }) {
-                setenv(option, "1", 0);
-            }
-        }
 #endif
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(AppDelegate.class));
     }

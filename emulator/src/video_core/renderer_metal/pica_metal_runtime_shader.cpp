@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "pica_metal_runtime_shader.h"
+#include "simd_vertex_source.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -353,6 +354,24 @@ void BindFragment(Stage& stage, RuntimeMetalShaderPair& pair) {
 std::optional<RuntimeMetalShaderPair> TranslateRuntimeMetalShaders(
     std::string_view vs, std::string_view fs, RuntimeMetalVertexMode mode,
     bool raw_indices, bool raw_index_constants, std::string& error) {
+    if (HasSimdVertexTag(vs)) {
+        const auto full = StripSimdVertexTag(vs);
+        const auto actual = RemoveVertexReference(full);
+        if (mode == RuntimeMetalVertexMode::Packed && raw_indices && actual) {
+            auto pair = TranslateRuntimeMetalShaders(*actual, fs, mode, raw_indices,
+                                                     raw_index_constants, error);
+            if (pair) {
+                if (auto shared = MakeVertexReferenceSource(pair->vertex, true)) {
+                    pair->vertex = std::move(*shared);
+                    return pair;
+                }
+            }
+        }
+        // A tagged request can fail admission. Return the complete original
+        // shader; selection/reflection must never advertise this as SIMD.
+        return TranslateRuntimeMetalShaders(full, fs, mode, raw_indices,
+                                            raw_index_constants, error);
+    }
     try {
         static const bool initialized = glslang::InitializeProcess();
         Require(initialized, "glslang process initialization");

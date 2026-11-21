@@ -146,9 +146,11 @@ public:
         : resource(resource_), command(command_), generation(generation_), begin(begin_), end(end_),
           exporter(std::move(exporter_)), residency_revision(residency_revision_),
           predecessors(std::move(predecessors_)), raw_guest(raw_guest_), rgba8(rgba8_), packed_color(packed_color_),
-          validation(std::move(validation_)) {}
+          validation(std::move(validation_)), cache_completed(CacheCompleted()) {}
 
     MetalGuestWriteStatus Status() const override {
+        if (KnownComplete())
+            return MetalGuestWriteStatus::Complete;
         const auto state = command.status;
         if (!command || state == MTLCommandBufferStatusError || command.error)
             return MetalGuestWriteStatus::Failed;
@@ -165,7 +167,10 @@ public:
             if (checked == PicaMetalCompletion::Pending)
                 return MetalGuestWriteStatus::Pending;
         }
-        return state == MTLCommandBufferStatusCompleted ? before : MetalGuestWriteStatus::Pending;
+        const auto result = state == MTLCommandBufferStatusCompleted ? before : MetalGuestWriteStatus::Pending;
+        if (result == MetalGuestWriteStatus::Complete)
+            RememberComplete();
+        return result;
     }
 
     id<MTLResource> Resource() const { return resource; }
@@ -184,19 +189,23 @@ public:
 
     bool Covers(PAddr first, PAddr last) const override {
         return resource && command && command.commandQueue && generation != 0 && exporter &&
-               command.status >= MTLCommandBufferStatusCommitted &&
+               (KnownComplete() || command.status >= MTLCommandBufferStatusCommitted) &&
                first >= begin && first < last && last <= end;
     }
 
     const MetalGuestExport& Exporter() const { return exporter; }
 
     bool ValidateProducerCompletion() const {
+        if (KnownComplete())
+            return true;
         if (!command || (predecessors && !predecessors->Wait()))
             return false;
         [command waitUntilCompleted];
         const bool complete = command.status == MTLCommandBufferStatusCompleted && !command.error &&
                (!validation || (validation->Command() == command &&
                                 validation->Wait() == PicaMetalCompletion::Complete));
+        if (complete)
+            RememberComplete();
         return complete;
     }
 
@@ -207,6 +216,23 @@ public:
     }
 
 private:
+    static bool CacheCompleted() {
+        static const bool enabled = [] {
+            const auto* value = std::getenv("CARA_METAL_CACHE_COMPLETED_WRITERS");
+            return value && std::string_view(value) == "1";
+        }();
+        return enabled;
+    }
+    bool KnownComplete() const {
+        return cache_completed && completed.load(std::memory_order_acquire);
+    }
+    void RememberComplete() const {
+        // Completed is final, and all dependencies/receipts have passed. Keep
+        // every immutable resource alive for concurrent readers; no Pending or
+        // Failed observation can publish this proof.
+        if (cache_completed)
+            completed.store(true, std::memory_order_release);
+    }
     const id<MTLResource> resource;
     const id<MTLCommandBuffer> command;
     const u64 generation;
@@ -219,6 +245,8 @@ private:
     const std::optional<MetalRgba8Layout> rgba8;
     const std::optional<PicaGuestRange> packed_color;
     const std::shared_ptr<const PicaMetalValidationReceipt> validation;
+    const bool cache_completed;
+    mutable std::atomic<bool> completed{false};
 };
 
 } // namespace Cara

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "pica_metal_pair_indices.h"
 #include "pica_metal_draw.h"
+#include "pica_metal_simd_token.h"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "video_core/renderer_metal/pica_metal_draw_stage_profile.hh"
 #include "video_core/renderer_metal/pica_metal_raw_index_format.hh"
 #include "video_core/renderer_metal/pica_metal_depth_clear_encoding.hh"
 #include "common/logging/log.h"
-#include <TargetConditionals.h>
 #include <algorithm>
 #include <bit>
 #include <vector>
@@ -90,6 +91,15 @@ bool ValidVertexStream(const TexturedMetalDraw& d) {
     if (d.packed_vertices.empty() || d.packed_vertices.size() % vertex_row_bytes ||
         d.vs_uniform.size() != 1856)
         return false;
+    if (d.vertex_mode == PicaMetalVertexMode::PairIndexed) {
+        const auto& pair = d.pair_indices;
+        return pair && pair->admitted && pair->pair_count > 0 && pair->pair_count <= 65535 &&
+            pair->elements.size() == d.vertex_count && pair->element_buffer && pair->pair_texture &&
+            pair->element_buffer.device == d.color.device && pair->pair_texture.device == d.color.device &&
+            pair->pair_texture.pixelFormat == MTLPixelFormatRGBA32Uint && pair->pair_texture.width == 128 &&
+            pair->pair_texture.height >= (pair->pair_count+127)/128 &&
+            pair->element_buffer.length >= d.vertex_count*sizeof(std::uint16_t) && d.layout_uniform.size() == 256;
+    }
     if (d.vertex_mode == MetalRawIndexMode) {
         constexpr auto raw_row_bytes = MetalRawIndexRow * sizeof(std::uint16_t);
         if (d.expanded_indices.empty() || d.expanded_indices.size() % raw_row_bytes)
@@ -112,7 +122,8 @@ bool ValidVertexStream(const TexturedMetalDraw& d) {
 }
 
 bool Valid(const TexturedMetalDraw& d) {
-    if (!d.pipeline || !d.depth_stencil_state || !d.texel_fetch_sampler ||
+    if ((d.simd_reference && (d.vertex_mode != MetalRawIndexMode || d.batched_vertex)) ||
+        !d.pipeline || !d.depth_stencil_state || !d.texel_fetch_sampler ||
         !d.color || !d.depth_stencil || !ValidLut(d) || !ValidMaterial(d) ||
         d.fragment_common_slot >= 16 ||
         (d.fragment_light_slot != NSNotFound && d.fragment_light_slot >= 16) ||
@@ -170,10 +181,49 @@ struct EncoderBindings {
     std::uint32_t fragment_buffers{}, fragment_textures{}, fragment_samplers{};
 };
 
+struct EndEncoderOnExit {
+    id<MTLCommandEncoder> encoder;
+    ~EndEncoderOnExit() { if (encoder) [encoder endEncoding]; }
+};
+
 using UniformRange = std::optional<PicaMetalUploadArena::Range>;
 
 struct UniformUploads {
     UniformRange common, light, vs;
+};
+
+struct RasterStateSnapshot {
+    id<MTLRenderPipelineState> pipeline;
+    id<MTLDepthStencilState> depth;
+    std::uint32_t stencil_reference;
+    std::array<float,4> blend_color;
+    MTLViewport viewport;
+    MTLScissorRect scissor;
+    MTLCullMode cull;
+    MTLWinding winding;
+};
+thread_local std::array<std::array<std::uint64_t,2>,8> raster_state_profile{};
+
+bool ReuseRasterState() {
+    static const bool enabled=[] {
+        const auto* value=std::getenv("CARA_METAL_REUSE_RASTER_STATE");
+        return value && std::string_view(value)=="1";
+    }();
+    return enabled;
+}
+
+bool ReuseFragmentBufferBindings() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_METAL_REUSE_FRAGMENT_BUFFER_BINDINGS");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
+struct FragmentBufferBinding {
+    // Enabled only for commands that retain their encoded resources.
+    __unsafe_unretained id<MTLBuffer> buffer = nil;
+    NSUInteger offset = 0;
 };
 
 struct OpenDrawPass {
@@ -183,6 +233,8 @@ struct OpenDrawPass {
     EncoderBindings bound{};
     const PicaMetalUploadArena* uniform_owner = nullptr;
     UniformUploads uniforms{};
+    std::optional<RasterStateSnapshot> raster;
+    std::optional<std::array<FragmentBufferBinding, 16>> fragment_buffers;
 };
 
 // A Metal command admits one contiguous native draw group on its owning lane.
@@ -190,21 +242,21 @@ struct OpenDrawPass {
 thread_local std::optional<OpenDrawPass> open_pass;
 
 bool ReuseUniformUploads() {
-#if defined(CARA_PRIVATE_GATE_METAL_CATALOG) && TARGET_OS_IOS
+    // Shared Apple opt-in. This currently trades deferred vertex batching for
+    // exact uniform reuse inside an open pass; keep the default unchanged.
     static const bool enabled = [] {
-        const auto enabled_flag = [](const char* name) {
-            const char* value = std::getenv(name);
-            return value && std::string_view(value) == "1";
-        };
-        return enabled_flag("CARA_METAL_REUSE_UNIFORM_UPLOADS") &&
-               enabled_flag("CARA_IOS_GATE_CAPTURE_PROFILE") &&
-               enabled_flag("CARA_PRIVATE_IOS_METAL_ONLY") &&
-               std::getenv("CARA_BENCHMARK_FRAMES");
+        const char* value = std::getenv("CARA_METAL_REUSE_UNIFORM_UPLOADS");
+        return value && std::string_view(value) == "1";
     }();
     return enabled;
-#else
-    return false;
-#endif
+}
+
+bool ReuseDeferredUniformUploads() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_METAL_REUSE_DEFERRED_UNIFORMS");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
 }
 
 struct UniformUploadMetrics {
@@ -253,7 +305,7 @@ void ClearStaleBindings(OpenDrawPass& pass, const TexturedMetalDraw& d,
     };
     const bool gather = computed && d.batched_vertex->gathers_unique_vertices;
     EncoderBindings current{
-        computed ? (gather ? 9u : 8u) : stage_in ? 3u : (packed ? 7u : 3u),
+        (computed ? (gather ? 9u : 8u) : stage_in ? 3u : (packed ? 7u : 3u)) | (d.simd_reference ? 8u : 0u),
         computed ? (gather ? 2u : 0u) : stage_in ? 0u : 3u,
         stage_in || computed ? 0u : 3u,
         bit(d.fragment_common_slot) | bit(d.fragment_light_slot),
@@ -276,8 +328,11 @@ void ClearStaleBindings(OpenDrawPass& pass, const TexturedMetalDraw& d,
           [&](unsigned i) { [encoder setVertexTexture:nil atIndex:i]; });
     clear(pass.bound.vertex_samplers, current.vertex_samplers,
           [&](unsigned i) { [encoder setVertexSamplerState:nil atIndex:i]; });
-    clear(pass.bound.fragment_buffers, current.fragment_buffers,
-          [&](unsigned i) { [encoder setFragmentBuffer:nil offset:0 atIndex:i]; });
+    clear(pass.bound.fragment_buffers, current.fragment_buffers, [&](unsigned i) {
+        [encoder setFragmentBuffer:nil offset:0 atIndex:i];
+        if (pass.fragment_buffers)
+            (*pass.fragment_buffers)[i] = {};
+    });
     clear(pass.bound.fragment_textures, current.fragment_textures,
           [&](unsigned i) { [encoder setFragmentTexture:nil atIndex:i]; });
     clear(pass.bound.fragment_samplers, current.fragment_samplers,
@@ -291,8 +346,11 @@ struct DrawUploads {
 };
 
 std::optional<DrawUploads> UploadDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& arena,
-                                     const TexturedMetalDraw& d, bool grouped) {
-    if (!commands || commands.status!=MTLCommandBufferStatusNotEnqueued || !Valid(d)) {
+                                     const TexturedMetalDraw& d, bool grouped,
+                                     UniformUploads* deferred_uniforms = nullptr) {
+    if (!commands || commands.status!=MTLCommandBufferStatusNotEnqueued || !Valid(d) ||
+        (d.vertex_mode == PicaMetalVertexMode::PairIndexed &&
+         (!commands.retainedReferences || commands.device != d.pair_indices->element_buffer.device))) {
         LOG_ERROR(Render_OpenGL, "Native Metal encoder validation command={} lut={} material={} "
                   "vertex_stream={} vertex_bytes={} indices={} vs={} common={} light={}",
                   bool(commands), ValidLut(d), ValidMaterial(d), ValidVertexStream(d),
@@ -302,15 +360,17 @@ std::optional<DrawUploads> UploadDraw(id<MTLCommandBuffer> commands, PicaMetalUp
     }
     const bool stage_in = d.vertex_mode == PicaMetalVertexMode::StageIn;
     const bool raw_indices = d.vertex_mode == MetalRawIndexMode;
-    const bool packed = d.vertex_mode == PicaMetalVertexMode::Packed || raw_indices;
+    const bool paired = d.vertex_mode == PicaMetalVertexMode::PairIndexed;
+    const bool packed = d.vertex_mode == PicaMetalVertexMode::Packed || raw_indices || paired;
     if (grouped && open_pass &&
         (open_pass->command != commands || open_pass->color != d.color ||
          open_pass->depth != d.depth_stencil))
         return std::nullopt;
     NativeMetalCost::Scope upload(NativeMetalCost::Upload);
     const bool reuse_uniforms = grouped && ReuseUniformUploads() && commands.retainedReferences;
-    auto* cached = reuse_uniforms && open_pass && open_pass->uniform_owner == &arena ?
-                       &open_pass->uniforms : nullptr;
+    auto* cached = deferred_uniforms ? deferred_uniforms :
+        reuse_uniforms && open_pass && open_pass->uniform_owner == &arena ?
+            &open_pass->uniforms : nullptr;
     const auto common = CopyDrawUniform(arena, d.common_uniform, cached ? &cached->common : nullptr,
                                         common_upload_metrics);
     const auto light = CopyDrawUniform(arena, d.light_uniform, cached ? &cached->light : nullptr,
@@ -327,8 +387,9 @@ std::optional<DrawUploads> UploadDraw(id<MTLCommandBuffer> commands, PicaMetalUp
                                 d.packed_vertices.size() / vertex_row_bytes, vertex_row_bytes);
         const auto index_width = raw_indices ? MetalRawIndexRow : row_width;
         const auto index_bytes = index_width * sizeof(std::uint16_t);
-        indices = arena.Copy2D(d.expanded_indices, MTLPixelFormatR16Uint, index_width,
-                               d.expanded_indices.size() / index_bytes, index_bytes);
+        indices = paired ? d.pair_indices->pair_texture :
+            arena.Copy2D(d.expanded_indices, MTLPixelFormatR16Uint, index_width,
+                         d.expanded_indices.size() / index_bytes, index_bytes);
     }
     if (!common || !light || (stage_in && !stream) ||
         (!stage_in && (!vertices || !indices || !vs)) || (packed && !layout)) {
@@ -348,7 +409,7 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
     const auto& [common, light, stream, layout, vs, vertices, indices] = data;
     const auto stage_in = d.vertex_mode == PicaMetalVertexMode::StageIn;
     const auto packed = d.vertex_mode == PicaMetalVertexMode::Packed ||
-                        d.vertex_mode == MetalRawIndexMode;
+                        d.vertex_mode == MetalRawIndexMode || d.vertex_mode == PicaMetalVertexMode::PairIndexed;
     const bool reuse_uniforms = grouped && ReuseUniformUploads() && commands.retainedReferences;
     if (grouped && open_pass &&
         (open_pass->command != commands || open_pass->color != d.color ||
@@ -393,6 +454,8 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         NativeMetalCost::Count(NativeMetalCost::EncoderStarts, 1);
         if (grouped) {
             open_pass.emplace(OpenDrawPass{commands, encoder, d.color, d.depth_stencil, {}});
+            if (ReuseFragmentBufferBindings() && commands.retainedReferences)
+                open_pass->fragment_buffers.emplace();
             if (reuse_uniforms) {
                 open_pass->uniform_owner = &arena;
                 open_pass->uniforms = {common, light, vs};
@@ -401,17 +464,46 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
     }
     if (grouped)
         ClearStaleBindings(*open_pass, d, stage_in, packed, computed != nil);
+    const EndEncoderOnExit end_ungrouped{grouped ? nil : encoder};
     open.Stop();
     NativeMetalCost::Scope encode(NativeMetalCost::EncoderDraw);
-    [encoder setRenderPipelineState:d.pipeline];
-    [encoder setDepthStencilState:d.depth_stencil_state];
-    [encoder setStencilReferenceValue:d.stencil_reference];
-    [encoder setBlendColorRed:d.blend_color[0] green:d.blend_color[1]
-                         blue:d.blend_color[2] alpha:d.blend_color[3]];
-    [encoder setViewport:d.viewport];
-    [encoder setScissorRect:d.scissor];
-    [encoder setCullMode:d.cull];
-    [encoder setFrontFacingWinding:d.winding];
+    const bool reuse_raster=grouped && ReuseRasterState();
+    const auto* previous=reuse_raster && open_pass->raster ? &*open_pass->raster : nullptr;
+    const bool profile=NativeMetalCost::Enabled();
+    const auto apply=[&](unsigned state,bool unchanged,const auto& set) {
+        if (profile) {
+            ++raster_state_profile[state][0];
+            raster_state_profile[state][1]+=unchanged;
+        }
+        if (!unchanged)
+            set();
+    };
+    apply(0,previous && previous->pipeline==d.pipeline,[&] { [encoder setRenderPipelineState:d.pipeline]; });
+    apply(1,previous && previous->depth==d.depth_stencil_state,[&] { [encoder setDepthStencilState:d.depth_stencil_state]; });
+    apply(2,previous && previous->stencil_reference==d.stencil_reference,[&] { [encoder setStencilReferenceValue:d.stencil_reference]; });
+    apply(3,previous && EqualMetalBlendColorBits(previous->blend_color,d.blend_color),[&] {
+        [encoder setBlendColorRed:d.blend_color[0] green:d.blend_color[1]
+                            blue:d.blend_color[2] alpha:d.blend_color[3]];
+    });
+    apply(4,previous && EqualMetalViewportBits(previous->viewport,d.viewport),[&] { [encoder setViewport:d.viewport]; });
+    const auto same_scissor=[&] {
+        return previous && previous->scissor.x==d.scissor.x && previous->scissor.y==d.scissor.y &&
+               previous->scissor.width==d.scissor.width && previous->scissor.height==d.scissor.height;
+    };
+    apply(5,same_scissor(),[&] { [encoder setScissorRect:d.scissor]; });
+    apply(6,previous && previous->cull==d.cull,[&] { [encoder setCullMode:d.cull]; });
+    apply(7,previous && previous->winding==d.winding,[&] { [encoder setFrontFacingWinding:d.winding]; });
+    // Only this owner writes raster state on the open encoder. Closing or
+    // aborting its pass destroys the snapshot; no state crosses an encoder.
+    if (reuse_raster)
+        open_pass->raster.emplace(RasterStateSnapshot{d.pipeline,d.depth_stencil_state,
+            d.stencil_reference,d.blend_color,d.viewport,d.scissor,d.cull,d.winding});
+    if (d.simd_reference) {
+        const auto token=simd_draw_tokens.Next();
+        if (!token) throw std::runtime_error("Metal SIMD draw token exhausted");
+        [encoder setVertexBytes:&*token length:sizeof(*token) atIndex:3];
+        NativeMetalCost::Count(NativeMetalCost::SimdReferenceDraws, 1);
+    }
     if (computed) {
         [encoder setVertexBuffer:computed offset:output_offset atIndex:3];
         if (d.batched_vertex->gathers_unique_vertices) {
@@ -431,10 +523,25 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         [encoder setVertexSamplerState:d.texel_fetch_sampler atIndex:0];
         [encoder setVertexSamplerState:d.texel_fetch_sampler atIndex:1];
     }
-    if (d.fragment_light_slot!=NSNotFound) {
-        [encoder setFragmentBuffer:light->buffer offset:light->offset atIndex:d.fragment_light_slot];
-    }
-    [encoder setFragmentBuffer:common->buffer offset:common->offset atIndex:d.fragment_common_slot];
+    auto* fragment_buffers = grouped && open_pass->fragment_buffers ?
+        &*open_pass->fragment_buffers : nullptr;
+    const auto bind_fragment = [&](NSUInteger slot, const PicaMetalUploadArena::Range& range) {
+        if (fragment_buffers) {
+            auto& bound = (*fragment_buffers)[slot];
+            if (bound.buffer == range.buffer) {
+                if (bound.offset != range.offset) {
+                    [encoder setFragmentBufferOffset:range.offset atIndex:slot];
+                    bound.offset = range.offset;
+                }
+                return;
+            }
+            bound = {range.buffer, range.offset};
+        }
+        [encoder setFragmentBuffer:range.buffer offset:range.offset atIndex:slot];
+    };
+    if (d.fragment_light_slot != NSNotFound)
+        bind_fragment(d.fragment_light_slot, *light);
+    bind_fragment(d.fragment_common_slot, *common);
     if (d.lighting_lut) {
         [encoder setFragmentTexture:d.lighting_lut atIndex:d.lut_texture_slot];
         [encoder setFragmentSamplerState:d.texel_fetch_sampler atIndex:d.lut_sampler_slot];
@@ -451,11 +558,16 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         [encoder setFragmentTexture:third->texture atIndex:third->texture_slot];
         [encoder setFragmentSamplerState:third->sampler atIndex:third->sampler_slot];
     }
-    // The original PICA shader samples the packed index texture with its
-    // invocation ID; hardware index drawing would index this stream twice.
-    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:d.vertex_count];
-    if (!grouped)
-        [encoder endEncoding];
+    if (d.vertex_mode == PicaMetalVertexMode::PairIndexed) {
+        // Mode6's invocation ID names an immutable (source,triangle-first)
+        // pair. Hardware indices preserve triangle corner and provoking order.
+        [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:d.vertex_count
+            indexType:MTLIndexTypeUInt16 indexBuffer:d.pair_indices->element_buffer indexBufferOffset:0];
+    } else {
+        // The original raw shader indexes by triangle corner; indexing this
+        // stream again would change both source and quaternion reference.
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:d.vertex_count];
+    }
     return true;
 }
 
@@ -473,13 +585,43 @@ struct DeferredDraw {
     DrawUploads uploads;
     std::uint32_t output_base = 0;
     bool computed = false;
+    bool transform_admitted = true;
 };
 struct DeferredBatch {
     std::vector<DeferredDraw> draws;
     id<MTLCommandBuffer> command = nil;
     PicaMetalUploadArena* arena = nullptr;
+    UniformUploads uniforms{};
 };
 thread_local DeferredBatch deferred;
+
+constexpr std::array<std::uint64_t, 11> deferred_corner_bounds{
+    0, 3, 12, 48, 192, 768, 3072, 8192, 16384, 65536,
+    std::numeric_limits<std::uint64_t>::max()};
+constexpr std::array<std::uint64_t, 8> deferred_unique_bounds{
+    0, 32, 128, 512, 2048, 8192, 65536, std::numeric_limits<std::uint64_t>::max()};
+constexpr std::array<const char*, 12> deferred_reason_names{
+    "no_retained_command", "simd_reference", "depth_clear", "uniform_reuse",
+    "no_program", "wrong_mode", "invalid_unique_count", "transform_limit",
+    "raster_corner_limit", "legacy_corner_limit", "ungrouped", "admitted"};
+constexpr std::array<std::uint64_t, 7> deferred_group_bounds{1, 2, 4, 8, 16, 32, 64};
+struct DeferredAdmissionProfile {
+    // Each cell retains draws, raster corners and declared dense source count.
+    std::array<std::array<std::array<std::uint64_t, 3>, deferred_unique_bounds.size()>,
+               deferred_corner_bounds.size()> histogram{};
+    std::array<std::uint64_t, deferred_reason_names.size()> reasons{};
+    std::array<std::uint64_t, deferred_group_bounds.size()> group_sizes{};
+    std::uint64_t singleton_draws = 0;
+    std::uint64_t max_output_bytes = 0;
+    std::uint64_t raster_only_packets = 0;
+};
+thread_local DeferredAdmissionProfile deferred_admission;
+
+template<std::size_t N>
+std::size_t AdmissionBucket(std::uint64_t value, const std::array<std::uint64_t, N>& bounds) {
+    return std::find_if(bounds.begin(), bounds.end(),
+                        [value](auto bound) { return value <= bound; }) - bounds.begin();
+}
 
 bool CloseNativeColorPass(id<MTLCommandBuffer> command) {
     if (!open_pass)
@@ -503,6 +645,42 @@ struct DeviceBatchRange {
     std::uint32_t first_group, count, output_base;
 };
 
+bool DedupVertexTransforms() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_METAL_DEDUP_VERTEX_TRANSFORMS");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
+bool SameUniformBytes(const UniformRange& a, const UniformRange& b, NSUInteger bytes) {
+    const auto valid = [bytes](const UniformRange& range) {
+        return range && range->buffer && range->bytes == bytes &&
+            range->buffer.storageMode == MTLStorageModeShared && range->buffer.contents &&
+            range->offset <= range->buffer.length && bytes <= range->buffer.length-range->offset;
+    };
+    if (!valid(a) || !valid(b))
+        return false;
+    const auto* left = static_cast<const std::byte*>(a->buffer.contents)+a->offset;
+    const auto* right = static_cast<const std::byte*>(b->buffer.contents)+b->offset;
+    return std::memcmp(left, right, bytes) == 0;
+}
+
+bool SameUniqueTransform(const DeferredDraw& a, const DeferredDraw& b) {
+    // UploadDraw snapshots these inputs into immutable ranges/textures. This
+    // comparison is local to one command's live arena lease, never guest spans.
+    return a.draw.batched_vertex->gathers_unique_vertices &&
+        b.draw.batched_vertex->gathers_unique_vertices &&
+        !(a.draw.batched_vertex->resources & ((1u << 4) | (1u << 6))) &&
+        !(b.draw.batched_vertex->resources & ((1u << 4) | (1u << 6))) &&
+        a.draw.batched_vertex->compute == b.draw.batched_vertex->compute &&
+        a.draw.unique_source_vertices == b.draw.unique_source_vertices &&
+        a.uploads.vertices == b.uploads.vertices &&
+        SameUniformBytes(a.uploads.layout, b.uploads.layout, 256) &&
+        SameUniformBytes(a.uploads.vs, b.uploads.vs, 1856) &&
+        SameUniformBytes(a.uploads.common, b.uploads.common, 288);
+}
+
 bool FlushDeferredDraws(id<MTLCommandBuffer> command) {
     if (deferred.draws.empty())
         return true;
@@ -513,20 +691,24 @@ bool FlushDeferredDraws(id<MTLCommandBuffer> command) {
     deferred.draws.clear();
     deferred.command = nil;
     deferred.arena = nullptr;
+    deferred.uniforms = {};
 
     // Group by shader, while leaving raster jobs in their original order.
     struct Group {
         const BatchedMetalVertexProgram* program;
         std::vector<std::size_t> indices;
+        std::vector<std::size_t> transforms;
     };
     std::vector<Group> groups;
     for (std::size_t i = 0; i < pending.size(); ++i) {
+        if (!pending[i].transform_admitted)
+            continue;
         const auto* p = pending[i].draw.batched_vertex.get();
         const auto match = std::find_if(groups.begin(), groups.end(), [&](const Group& group) {
             return group.program->compute == p->compute;
         });
         if (match == groups.end())
-            groups.push_back({p, {i}});
+            groups.push_back({p, {i}, {}});
         else
             match->indices.push_back(i);
     }
@@ -537,48 +719,71 @@ bool FlushDeferredDraws(id<MTLCommandBuffer> command) {
     std::uint32_t total = 0;
     std::uint32_t raster_corners = 0;
     std::uint32_t unique_transforms = 0;
-    for (const auto& group : groups) {
-        if (group.indices.size() < 2)
+    for (auto& group : groups) {
+        if (NativeMetalCost::Enabled())
+            ++deferred_admission.group_sizes[AdmissionBucket(group.indices.size(), deferred_group_bounds)];
+        if (group.indices.size() < 2) {
+            if (NativeMetalCost::Enabled())
+                deferred_admission.singleton_draws += group.indices.size();
             continue;
+        }
+        const bool dedup = DedupVertexTransforms() && group.program->gathers_unique_vertices &&
+            !(group.program->resources & ((1u << 4) | (1u << 6)));
         for (const auto i : group.indices) {
             auto& job = pending[i];
-            job.output_base = total;
             const auto count = transform_count(job.draw);
-            total += count;
             raster_corners += static_cast<std::uint32_t>(job.draw.vertex_count);
+            job.computed = true;
+            if (dedup) {
+                NativeMetalCost::Count(NativeMetalCost::VertexTransformDedupCandidates, 1);
+                const auto previous = std::find_if(group.transforms.begin(), group.transforms.end(),
+                    [&](std::size_t index) { return SameUniqueTransform(pending[index], job); });
+                if (previous != group.transforms.end()) {
+                    job.output_base = pending[*previous].output_base;
+                    NativeMetalCost::Count(NativeMetalCost::VertexTransformDedupHits, 1);
+                    NativeMetalCost::Count(NativeMetalCost::VertexTransformsAvoided, count);
+                    continue;
+                }
+            }
+            job.output_base = total;
+            total += count;
             if (group.program->gathers_unique_vertices)
                 unique_transforms += count;
-            job.computed = true;
+            group.transforms.push_back(i);
         }
     }
     id<MTLBuffer> outputs = nil;
     if (total) {
+        if (NativeMetalCost::Enabled())
+            deferred_admission.max_output_bytes = std::max(deferred_admission.max_output_bytes,
+                std::uint64_t(total) * BatchedMetalVertexStride);
         const auto device = command.device;
         outputs = [device newBufferWithLength:NSUInteger(total) * BatchedMetalVertexStride
                                       options:MTLResourceStorageModePrivate];
-        const auto encoder = [command computeCommandEncoder];
-        if (!outputs || !encoder)
+        if (!outputs)
             return false;
+        const auto encoder = [command computeCommandEncoder];
+        if (!encoder)
+            return false;
+        const EndEncoderOnExit end_compute{encoder};
         for (const auto& group : groups) {
             if (group.indices.size() < 2)
                 continue;
             const auto& p = *group.program;
             const auto width = p.compute.threadExecutionWidth;
             if (!width || width > p.compute.maxTotalThreadsPerThreadgroup) {
-                [encoder endEncoding];
                 return false;
             }
             const auto arg_length = p.arguments.encodedLength;
-            id<MTLBuffer> args = [device newBufferWithLength:arg_length * group.indices.size()
+            id<MTLBuffer> args = [device newBufferWithLength:arg_length * group.transforms.size()
                                                    options:MTLResourceStorageModeShared];
             std::vector<DeviceBatchRange> ranges;
-            ranges.reserve(group.indices.size());
+            ranges.reserve(group.transforms.size());
             std::uint32_t first_group = 0;
             if (!args) {
-                [encoder endEncoding];
                 return false;
             }
-            for (const auto i : group.indices) {
+            for (const auto i : group.transforms) {
                 const auto& job = pending[i];
                 const auto& u = job.uploads;
                 const auto index = ranges.size();
@@ -617,9 +822,8 @@ bool FlushDeferredDraws(id<MTLCommandBuffer> command) {
             [encoder dispatchThreadgroups:MTLSizeMake(first_group, 1, 1)
                     threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
             NativeMetalCost::Count(NativeMetalCost::BatchedVertexDispatches, 1);
-            NativeMetalCost::Count(NativeMetalCost::BatchedVertexDraws, count);
+            NativeMetalCost::Count(NativeMetalCost::BatchedVertexDraws, group.indices.size());
         }
-        [encoder endEncoding];
         NativeMetalCost::Count(NativeMetalCost::BatchedVertexCorners, raster_corners);
         if (unique_transforms)
             NativeMetalCost::Count(NativeMetalCost::BatchedUniqueVertexTransforms, unique_transforms);
@@ -642,18 +846,122 @@ bool FlushDeferredDraws(id<MTLCommandBuffer> command) {
 }
 
 bool CanDeferDraw(id<MTLCommandBuffer> command, const TexturedMetalDraw& draw) {
-    // The benchmark retains the same checked flush and depth-clear boundaries.
-    return command.retainedReferences && !active_depth_clear && !ReuseUniformUploads() &&
-           draw.batched_vertex && draw.vertex_mode == MetalRawIndexMode &&
-           (!draw.batched_vertex->gathers_unique_vertices || draw.unique_source_vertices > 0) &&
-           NativeMetalCost::GroupDrawPasses() && draw.vertex_count <= 8192;
+    static const bool unique_count_admission = [] {
+        const auto* value = std::getenv("CARA_METAL_UNIQUE_TRANSFORM_ADMISSION");
+        return value && std::string_view(value) == "1";
+    }();
+    const bool profile = NativeMetalCost::Enabled();
+    if (profile && draw.vertex_mode == MetalRawIndexMode) {
+        auto& cell = deferred_admission.histogram[
+            AdmissionBucket(draw.vertex_count, deferred_corner_bounds)][
+            AdmissionBucket(draw.unique_source_vertices, deferred_unique_bounds)];
+        ++cell[0];
+        cell[1] += draw.vertex_count;
+        cell[2] += draw.unique_source_vertices;
+    }
+    const auto result = [&](std::size_t reason) {
+        if (profile)
+            ++deferred_admission.reasons[reason];
+        return reason == deferred_reason_names.size() - 1;
+    };
+    // Keep every existing ownership, clear, uniform and shader admission gate.
+    if (!command.retainedReferences) return result(0);
+    if (draw.simd_reference) return result(1);
+    if (active_depth_clear) return result(2);
+    if (ReuseUniformUploads()) return result(3);
+    if (!draw.batched_vertex) return result(4);
+    if (draw.vertex_mode != MetalRawIndexMode) return result(5);
+    const bool gather = draw.batched_vertex->gathers_unique_vertices;
+    if (gather && (!draw.unique_source_vertices || draw.unique_source_vertices >= draw.vertex_count))
+        return result(6);
+    const auto transforms = gather ? draw.unique_source_vertices : draw.vertex_count;
+    if (transforms > 8192) return result(7);
+    // The original raw capture admits at most 65536 raster corners. Only unique
+    // gathers may use the wider input stream; output storage remains <=8192.
+    if (unique_count_admission && gather) {
+        if (draw.vertex_count > 65536) return result(8);
+    } else if (draw.vertex_count > 8192) {
+        return result(9);
+    }
+    if (!NativeMetalCost::GroupDrawPasses()) return result(10);
+    return result(11);
+}
+
+bool CanDeferRasterOnly(id<MTLCommandBuffer> command, const TexturedMetalDraw& draw) {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_METAL_DEFER_RASTER_FALLBACKS");
+        return value && std::string_view(value) == "1";
+    }();
+    // Only the already-recognized unique raw program is eligible. Its rejected
+    // transform metadata is never used for allocation or dispatch. Keep every
+    // encoder/clear/ownership boundary and the native raw capture's input bound.
+    return enabled && command.retainedReferences && !draw.simd_reference &&
+        !active_depth_clear && !ReuseUniformUploads() && draw.batched_vertex &&
+        draw.batched_vertex->gathers_unique_vertices && draw.vertex_mode == MetalRawIndexMode &&
+        draw.vertex_count <= 65536 && NativeMetalCost::GroupDrawPasses();
 }
 
 } // namespace
 
+void AppendNativeMetalDeferredAdmissionProfile(std::ostream& out, bool json) {
+    if (!NativeMetalCost::Enabled())
+        return;
+    if (json)
+        out << ",\"metal_deferred_admission_totals\":{\"reasons\":{";
+    for (std::size_t i = 0; i < deferred_reason_names.size(); ++i) {
+        if (json)
+            out << (i ? "," : "") << '"' << deferred_reason_names[i] << "\":"
+                << deferred_admission.reasons[i];
+        else
+            out << "deferred_admission_" << deferred_reason_names[i] << ','
+                << deferred_admission.reasons[i] << ",0\n";
+    }
+    if (json)
+        out << "},\"singleton_draws\":" << deferred_admission.singleton_draws
+            << ",\"raster_only_packets\":" << deferred_admission.raster_only_packets
+            << ",\"max_output_bytes\":" << deferred_admission.max_output_bytes
+            << ",\"group_sizes\":[";
+    else
+        out << "deferred_admission_singleton_draws," << deferred_admission.singleton_draws << ",0\n"
+            << "deferred_admission_raster_only_packets," << deferred_admission.raster_only_packets << ",0\n"
+            << "deferred_admission_max_output_bytes," << deferred_admission.max_output_bytes << ",0\n";
+    for (std::size_t i = 0; i < deferred_group_bounds.size(); ++i) {
+        if (json)
+            out << (i ? "," : "") << "{\"draws_le\":" << deferred_group_bounds[i]
+                << ",\"groups\":" << deferred_admission.group_sizes[i] << '}';
+        else
+            out << "deferred_group_draws_le" << deferred_group_bounds[i] << ','
+                << deferred_admission.group_sizes[i] << ",0\n";
+    }
+    if (json) out << "],\"histogram\":[";
+    bool first = true;
+    for (std::size_t c = 0; c < deferred_corner_bounds.size(); ++c) {
+        for (std::size_t u = 0; u < deferred_unique_bounds.size(); ++u) {
+            const auto& cell = deferred_admission.histogram[c][u];
+            if (!cell[0]) continue;
+            if (json) {
+                out << (first ? "" : ",") << "{\"corners_le\":" << deferred_corner_bounds[c]
+                    << ",\"unique_le\":" << deferred_unique_bounds[u] << ",\"draws\":" << cell[0]
+                    << ",\"corners\":" << cell[1] << ",\"unique\":" << cell[2] << '}';
+                first = false;
+            } else {
+                for (std::size_t k = 0; k < cell.size(); ++k)
+                    out << "deferred_hist_c" << deferred_corner_bounds[c] << "_u"
+                        << deferred_unique_bounds[u] << '_' << std::array{"draws", "corners", "unique"}[k]
+                        << ',' << cell[k] << ",0\n";
+            }
+        }
+    }
+    if (json) out << "]}";
+}
+
 bool EncodeTexturedMetalDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& arena,
                             const TexturedMetalDraw& draw) {
     return EncodeDraw(commands, arena, draw, false);
+}
+
+std::array<std::array<std::uint64_t,2>,8> ReadNativeMetalRasterStateProfile() noexcept {
+    return raster_state_profile;
 }
 
 bool CloseGroupedMetalDraw(id<MTLCommandBuffer> command) {
@@ -676,12 +984,23 @@ void AbortGroupedMetalDraw(id<MTLCommandBuffer> command) noexcept {
 
 bool EncodeGroupedMetalDraw(id<MTLCommandBuffer> command, PicaMetalUploadArena& arena,
                            const TexturedMetalDraw& draw) {
-    if (CanDeferDraw(command, draw)) {
-        if (deferred.command && deferred.command != command)
+    const bool transform_admitted = CanDeferDraw(command, draw);
+    if (transform_admitted || CanDeferRasterOnly(command, draw)) {
+        if (deferred.command && (deferred.command != command || deferred.arena != &arena))
             return false;
-        if (deferred.draws.size() >= 32 && !FlushDeferredDraws(command))
+        // Keep compute and raster capacity aligned so a wide draw group does
+        // not force an intermediate encoder/tile-store boundary at 32 draws.
+        if (deferred.draws.size() >= NativeMetalCost::DrawComputeGroupLimit() &&
+            !FlushDeferredDraws(command))
             return false;
-        auto data = UploadDraw(command, arena, draw, false);
+        // A pending batch owns exactly one retained command and arena lease.
+        // Its immutable uniform ranges remain valid through the later compute
+        // and raster encoding. Flush/abort discard this memo before any lease
+        // can rotate, so reuse does not require disabling compute batching.
+        if (deferred.draws.empty())
+            deferred.uniforms = {};
+        auto* uniforms = ReuseDeferredUniformUploads() ? &deferred.uniforms : nullptr;
+        auto data = UploadDraw(command, arena, draw, false, uniforms);
         if (!data)
             return false;
         auto snapshot = draw;
@@ -691,7 +1010,9 @@ bool EncodeGroupedMetalDraw(id<MTLCommandBuffer> command, PicaMetalUploadArena& 
         snapshot.vs_uniform = {};
         snapshot.common_uniform = {};
         snapshot.light_uniform = {};
-        deferred.draws.push_back({std::move(snapshot), std::move(*data)});
+        deferred.draws.push_back({std::move(snapshot), std::move(*data), 0, false, transform_admitted});
+        if (!transform_admitted && NativeMetalCost::Enabled())
+            ++deferred_admission.raster_only_packets;
         deferred.command = command;
         deferred.arena = &arena;
         return true;

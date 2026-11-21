@@ -10,6 +10,8 @@ on:
       - 'tests/metal_display_transfer_startup_test.mm'
       - 'tests/metal_async_depth_validation_test.mm'
       - 'tests/run_metal_async_depth_validation_test.py'
+      - 'tests/metal_fcram_watch_release_test.mm'
+      - 'tests/run_metal_fcram_watch_release_test.py'
       - 'tools/build_native_metal.py'
   pull_request:
     paths:
@@ -20,6 +22,8 @@ on:
       - 'tests/metal_display_transfer_startup_test.mm'
       - 'tests/metal_async_depth_validation_test.mm'
       - 'tests/run_metal_async_depth_validation_test.py'
+      - 'tests/metal_fcram_watch_release_test.mm'
+      - 'tests/run_metal_fcram_watch_release_test.py'
       - 'tools/build_native_metal.py'
   workflow_dispatch:
 permissions:
@@ -74,6 +78,9 @@ jobs:
       - name: Link the checked depth round-trip fixture
         if: matrix.artifact == 'mac-fastinterp'
         run: python3 tests/run_metal_async_depth_validation_test.py --build-dir work/build-native-metal-mac --compile-only
+      - name: Link the Metal FCRAM page ownership fixture
+        if: matrix.artifact == 'mac-fastinterp'
+        run: python3 tests/run_metal_fcram_watch_release_test.py --build-dir work/build-native-metal-mac --compile-only
       - uses: actions/upload-artifact@v4
         with:
           name: native-metal-${{ matrix.artifact }}-audit

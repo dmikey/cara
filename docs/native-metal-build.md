@@ -129,6 +129,35 @@ raised submission waits to 11.44 ms per refresh. Its lab mean was 30.05 ms.
 All three Metal traces matched the same capture. Keep queue width and
 async depth as experimental controls until matched runs show a gain.
 
+### Retained renderer port
+
+The shared renderer now includes the retained index scan cache and shader
+identity reuse, vertex and texture lookup reuse, and the related upload,
+publication, and checked depth paths. The iPad native Metal frontend
+initializes the recovered policy before renderer creation. Explicit
+environment settings override it. The Mac build uses the same renderer
+implementation and keeps its existing startup policy.
+
+Set `CARA_REFRESH_TIMING=1` to write the elapsed time of every measured refresh
+to `Documents/cara/refresh-timing.csv`. Compute the lab p99 over all 480
+samples and slide a 120-refresh window one sample at a time to find the
+slowest contiguous period. Speed below is relative to the 3DS refresh
+cadence of approximately 59.84 Hz.
+
+| M4 iPad, raw cartridge, portrait | Lab speed | Lab p99 | Slowest 120 refreshes | Mean in that window |
+| --- | ---: | ---: | --- | ---: |
+| FastInterp GLES | 100.01% | 20.42 ms | 3164–3283 | 16.75 ms |
+| FastInterp Metal, recovered policy | 89.36% | 22.08 ms | 3328–3447 | 19.24 ms |
+| FastInterp Metal, 16 submission slots | 83.73% | 23.72 ms | 3412–3531 | 20.35 ms |
+| FastInterp Metal, 32 slots and queued pending depth export | 100.00% | 17.17 ms | 3294–3413 | 16.72 ms |
+
+These runs booted from the same ordinary in-game save and enabled
+`CARA_FASTINTERP_ALU_PAIRS=1` for both renderers. The three Metal captures
+matched byte for byte. All four runs matched the guest ticks and PICA draw
+requests in the four 120-refresh windows. To reproduce the last row, set
+`CARA_METAL_SUBMISSION_WINDOW=32` and
+`CARA_METAL_QUEUE_PENDING_DEPTH_EXPORT=1`.
+
 ## Upstream boundaries
 
 - **Azahar** is the upstream boundary for 3DS execution. Propose PICA,

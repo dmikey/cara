@@ -5,9 +5,12 @@
 #include <bitset>
 #include <cstring>
 #include <limits>
+#include <memory>
+#include "common/hash.h"
 #include "pica_metal_frame_cost.hh"
 #include "pica_metal_packed_inputs.h"
 #include "pica_metal_raw_index_format.hh"
+#include "pica_metal_index_scan_memo.h"
 #include "video_core/pica_state.h"
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_vertex_upload_ranges.h"
@@ -75,6 +78,10 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
             const auto* option = std::getenv("CARA_METAL_INDEX_SCAN_MEMO");
             return option && std::string_view(option) == "1";
         }();
+        static const bool associative = [] {
+            const auto* option = std::getenv("CARA_METAL_INDEX_SCAN_ASSOCIATIVE");
+            return option && std::string_view(option) == "1";
+        }();
         struct ScanMemo {
             u64 address{};
             unsigned width{};
@@ -85,10 +92,25 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
         constexpr std::size_t max_bytes = 32 * 1024;
         ScanMemo* slot = nullptr;
         const auto active_bytes = std::size_t{active_count} * width;
+        ExactMetalIndexScanMemo* exact_memo = nullptr;
+        const ExactMetalIndexScanMemo::Key exact_key{address,active_count,width};
+        std::optional<ExactMetalIndexScanMemo::Result> exact_result;
         bool reused = false;
         first = std::numeric_limits<u16>::max();
         u32 last = 0;
-        if (memoize && active_bytes <= max_bytes) {
+        if (memoize && associative) {
+            // Separate bounded tiers retain 128 small keys (<=4 MiB) and
+            // eight larger keys (<=1 MiB). All current bytes were read above.
+            thread_local std::unique_ptr<ExactMetalIndexScanMemo> cache;
+            if (!cache) cache = std::make_unique<ExactMetalIndexScanMemo>();
+            if (ExactMetalIndexScanMemo::Admits(exact_key,{bytes,active_bytes})) {
+                exact_memo = cache.get();
+                exact_result = exact_memo->Lookup(exact_key,{bytes,active_bytes});
+                reused = exact_result.has_value();
+                NativeMetalCost::Count(reused ? NativeMetalCost::IndexMemoHits
+                                              : NativeMetalCost::IndexMemoMisses,1);
+            }
+        } else if (memoize && active_bytes <= max_bytes) {
             thread_local std::array<ScanMemo, 128> cache{};
             const auto key = (address >> 2) ^ (address >> 9) ^ active_count ^ (width << 4);
             slot = &cache[key % cache.size()];
@@ -99,9 +121,9 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
                                           : NativeMetalCost::IndexMemoMisses, 1);
         }
         if (reused) {
-            first = slot->first;
-            last = slot->last;
-            unique = slot->unique;
+            first = exact_result ? exact_result->first : slot->first;
+            last = exact_result ? exact_result->last : slot->last;
+            unique = exact_result ? exact_result->unique : slot->unique;
         } else if (specialize) {
             const auto scan = [&]<unsigned Width>() {
                 // Count new bits while visiting indices. The byte stream only
@@ -146,6 +168,8 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
             slot->last = last;
             slot->unique = unique;
         }
+        if (exact_memo && !reused)
+            exact_memo->Store(exact_key,{bytes,active_bytes},{first,last,unique});
         span = last - first;
         result.indices[1] = static_cast<u16>(first);
     } else if (u64{first} + count - 1 > std::numeric_limits<u32>::max()) {
@@ -227,13 +251,35 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
         const auto* option = std::getenv("CARA_METAL_REUSE_VERTEX_READ_PLAN");
         return option && std::string_view(option) == "1";
     }();
+    static const bool wide_plan = [] {
+        const auto* option = std::getenv("CARA_METAL_VERTEX_READ_PLAN_CACHE_128");
+        return option && std::string_view(option) == "1";
+    }();
+    static const bool relative_plan = [] {
+        const auto* option = std::getenv("CARA_METAL_VERTEX_READ_PLAN_RELATIVE_BASE");
+        return option && std::string_view(option) == "1";
+    }();
+    const bool relative = reuse_plan && wide_plan && relative_plan;
     std::optional<ReadPlan> fresh;
     const ReadPlan* plan = nullptr;
     if (reuse_plan) {
         thread_local std::array<std::optional<Entry>, 16> entries;
+        // Allocate the larger metadata cache only for the startup opt-in. The
+        // ordinary path retains its original sixteen-entry storage and hash.
+        thread_local std::unique_ptr<std::array<std::optional<Entry>, 128>> wide_entries;
         Key key{};
         static_assert(sizeof(pipe.vertex_attributes) == 39 * sizeof(u32));
         std::memcpy(key.attributes.data(), &pipe.vertex_attributes, key.attributes.size());
+        if (relative) {
+            // Only the actual base_address field is a common translation.
+            // Preserve reserved bits0 and29..31 of this register word.
+            using BaseAddressField = decltype(pipe.vertex_attributes.base_address);
+            static_assert(BaseAddressField::mask == 0x1ffffffe);
+            u32 word;
+            std::memcpy(&word, key.attributes.data(), sizeof(word));
+            word &= ~BaseAddressField::mask;
+            std::memcpy(key.attributes.data(), &word, sizeof(word));
+        }
         key.map_low = regs.vs.input_attribute_to_register_map_low;
         key.map_high = regs.vs.input_attribute_to_register_map_high;
         key.max_attribute = regs.vs.max_input_attribute_index;
@@ -241,10 +287,30 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
         key.span = span;
         key.mask = selected_inputs;
         key.unique = unique;
-        const auto hash = (base >> 4) ^ (base >> 10) ^ first ^ (span * 17) ^ key.map_low;
-        auto& entry = entries[hash % entries.size()];
-        const auto window = VideoCore::GetCurrentFrame();
-        const bool count = window >= 720 && window < 840;
+        std::optional<Entry>* selected_entry = nullptr;
+        if (wide_plan) {
+            if (!wide_entries)
+                wide_entries = std::make_unique<std::array<std::optional<Entry>, 128>>();
+            // The attributes are exactly 39 packed register words, including
+            // their base address. Hash each remaining scalar explicitly; Key
+            // padding and guest payload/default values never enter this hash.
+            u64 hash = Common::ComputeHash64(key.attributes.data(), key.attributes.size());
+            const auto mix = [&](u64 value) {
+                value += 0x9e3779b97f4a7c15ULL;
+                value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+                value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+                value ^= value >> 31;
+                hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+            };
+            mix(key.map_low); mix(key.map_high); mix(key.max_attribute);
+            mix(key.first); mix(key.span); mix(key.mask); mix(key.unique);
+            selected_entry = &(*wide_entries)[hash % wide_entries->size()];
+        } else {
+            const auto hash = (base >> 4) ^ (base >> 10) ^ first ^ (span * 17) ^ key.map_low;
+            selected_entry = &entries[hash % entries.size()];
+        }
+        auto& entry = *selected_entry;
+        const bool count = NativeMetalCost::Enabled();
         if (entry && entry->key == key) {
             if (count)
                 ++raw_read_plan_hits;
@@ -254,6 +320,17 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
                 ++raw_read_plan_misses;
             fresh = prepare();
             if (fresh) {
+                if (relative) {
+                    // Keep original construction/overflow/diagnostic behavior.
+                    // Uniform translation leaves merge order, byte lengths and
+                    // destination+(attribute-range.begin) unchanged.
+                    for (auto& range : fresh->ranges) {
+                        if (range.begin < base || range.end < base)
+                            return std::nullopt;
+                        range.begin -= base;
+                        range.end -= base;
+                    }
+                }
                 // Invalid component counts must still report on each draw.
                 const auto& loaders = pipe.vertex_attributes.attribute_loaders;
                 if (std::all_of(std::begin(loaders), std::end(loaders),
@@ -272,6 +349,16 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
         return std::nullopt;
     // Hold a local value before callbacks can enter the renderer again.
     const ReadPlan selected = *plan;
+    if (relative) {
+        // Check every range before the first payload callback: a later overflow
+        // must not cause earlier reads/publications on an otherwise failed draw.
+        constexpr auto last = std::numeric_limits<PAddr>::max();
+        if (base > last)
+            return std::nullopt;
+        for (const auto& range : selected.ranges)
+            if (range.end <= range.begin || range.end > last - base)
+                return std::nullopt;
+    }
     Constants constants{};
     for (unsigned reg = 0; reg < constants.size(); ++reg) {
         const int attr = selected.constant_attributes[reg];
@@ -290,7 +377,7 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
         if (staging)
             std::fill(result.vertices.begin() + written,
                       result.vertices.begin() + range.destination, u8{});
-        if (!read(static_cast<PAddr>(range.begin),
+        if (!read(static_cast<PAddr>((relative ? base : 0) + range.begin),
                   {result.vertices.data() + range.destination, range.end - range.begin}))
             return std::nullopt;
         written = range.destination + (range.end - range.begin);

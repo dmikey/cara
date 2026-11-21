@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_metal/pica_metal_native_bindings.h"
+#include "simd_vertex_source.h"
 #include "video_core/renderer_metal/pica_metal_cube_build.hh"
 #include "video_core/renderer_metal/pica_metal_draw_stage_profile.hh"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "video_core/renderer_metal/pica_metal_capture_raw_indices.hh"
+#include "video_core/renderer_metal/pica_metal_pair_indices.h"
 
 #include <CommonCrypto/CommonDigest.h>
 
@@ -17,6 +19,7 @@
 #include "common/file_util.h"
 #include "common/logging/log.h"
 #include <limits>
+#include <memory>
 #include <fmt/format.h>
 #include "core/settings.h"
 #include "video_core/pica_state.h"
@@ -44,6 +47,9 @@ thread_local std::array<HostPhase, phase_names.size()> phases{};
 thread_local u64 fog_bindings = 0;
 thread_local u64 raw_index_draws = 0, raw_index_vertices = 0;
 thread_local u64 mip_chain_hits = 0, mip_chain_misses = 0;
+thread_local u64 vertex_source_probes = 0, vertex_source_recent_hits = 0;
+thread_local u64 vertex_source_fallback_hits = 0, vertex_source_generations = 0;
+thread_local u64 packed_layout_admissions = 0, packed_layout_hits = 0, packed_layout_declines = 0;
 
 bool NativeHostProfileEnabled() {
     static const bool value = [] {
@@ -182,7 +188,9 @@ bool SpecializePc230(std::string& source) {
 NativeShaderSource NativeVertexSource(const Pica::Shader::ShaderSetup& setup,
                                     const OpenGL::PicaVSConfig& config,
                                     const OpenGL::PicaFixedGSConfig& output,
-                                    u16 input_mask, unsigned indexed_mode, bool user_clip) {
+                                    u16 input_mask, unsigned indexed_mode, bool user_clip,
+                                    const OpenGL::PackedVertexLayout* captured_layout = nullptr,
+                                    bool simd_reference = false) {
     struct Entry {
         OpenGL::PicaVSConfig config;
         OpenGL::PicaFixedGSConfig output;
@@ -194,42 +202,179 @@ NativeShaderSource NativeVertexSource(const Pica::Shader::ShaderSetup& setup,
         std::string source;
         u64 revision;
         bool pc230_specialized;
+        OpenGL::PackedVertexLayout layout{};
+        mutable u64 validated_code_identity = 0, validated_swizzle_identity = 0;
     };
     const auto enabled = [](const char* name) {
         const auto* value = std::getenv(name);
         return value && std::string_view(value) == "1";
     };
     static const bool pc230_enabled = enabled("CARA_METAL_PC230_SPECIALIZATION");
+    static const bool reuse_recent = enabled("CARA_METAL_REUSE_VERTEX_SOURCE_LOOKUP");
+    static const bool cache_source_policy = enabled("CARA_METAL_CACHE_SHADER_POLICY");
+    static const bool specialize_layout = enabled("CARA_METAL_SPECIALIZE_PACKED_LAYOUT");
+    static const bool reuse_identity = enabled("CARA_METAL_REUSE_SHADER_IDENTITY");
+    static const bool validate_identity = enabled("CARA_METAL_VALIDATE_SHADER_IDENTITY");
+    // Two identities identify bytes, not source configuration or a hash. Every
+    // existing small key check remains in the caller before this byte check.
+    const auto code_identity = reuse_identity ? setup.GetProgramCodeIdentity() : 0;
+    const auto swizzle_identity = reuse_identity ? setup.GetSwizzleDataIdentity() : 0;
+    const bool identities_available = reuse_identity && code_identity && swizzle_identity &&
+        Pica::Shader::ShaderIdentityAvailable();
+    const auto same_program = [&](const Entry& entry) {
+        const auto complete = [&] {
+            NativeMetalCost::Count(NativeMetalCost::ShaderIdentityFullChecks, 1);
+            NativeMetalCost::Count(NativeMetalCost::ShaderIdentityComparedBytes,
+                sizeof(entry.code) + sizeof(entry.swizzle));
+            return entry.code == setup.program_code && entry.swizzle == setup.swizzle_data;
+        };
+        if (identities_available && entry.validated_code_identity == code_identity &&
+            entry.validated_swizzle_identity == swizzle_identity) {
+            if (validate_identity && !complete()) {
+                NativeMetalCost::Count(NativeMetalCost::ShaderIdentityValidationFailures, 1);
+                throw std::runtime_error("Shader arrays changed without MarkDirty");
+            }
+            NativeMetalCost::Count(NativeMetalCost::ShaderIdentityFastHits, 1);
+            return true;
+        }
+        if (!complete()) {
+            return false;
+        }
+        if (identities_available) {
+            entry.validated_code_identity = code_identity;
+            entry.validated_swizzle_identity = swizzle_identity;
+        }
+        return true;
+    };
+    const auto read_source_policy = [&] {
+        // These diagnostic generator options are configured before emulation.
+        // Preserve the two presence-based options, including empty/"0" values,
+        // separately from the two options requiring the exact value "1".
+        return (std::getenv("CARA_RAW_DEPTH") ? 1u : 0u) |
+               (std::getenv("CARA_UNSNAPPED_VERTICES") ? 2u : 0u) |
+               (enabled("CARA_GPU_QUATERNION_SLICE") ? 4u : 0u) |
+               (enabled("CARA_GPU_PACKED_FETCH_REUSE") ? 8u : 0u);
+    };
+    // Opt-in startup contract: source-generator environment options stay fixed
+    // for this process. Avoid four libc environment-lock scans on every draw.
+    // The control retains its original live environment reads.
+    static const unsigned cached_source_policy = cache_source_policy ? read_source_policy() : 0u;
+    const unsigned source_policy = cache_source_policy ? cached_source_policy : read_source_policy();
     const bool pc230_branch = pc230_enabled && indexed_mode == 2 && UseMetalRawIndices() &&
                               UseMetalRawIndexConstants() && setup.uniforms.b[14];
-    const unsigned policy = (pc230_branch ? 64u : 0u) |
-        (std::getenv("CARA_RAW_DEPTH") ? 1u : 0u) |
-        (std::getenv("CARA_UNSNAPPED_VERTICES") ? 2u : 0u) |
-        (enabled("CARA_GPU_QUATERNION_SLICE") ? 4u : 0u) |
-        (enabled("CARA_GPU_PACKED_FETCH_REUSE") ? 8u : 0u) |
+    const unsigned policy = source_policy | (pc230_branch ? 64u : 0u) | (simd_reference ? 1024u : 0u) |
         (Settings::values.disable_clip_coef ? 16u : 0u) | (user_clip ? 32u : 0u);
+
+    // Permanent bounded admission prevents layout churn from continually minting
+    // new source revisions and unbounded downstream compiled pipeline variants.
+    // PC230's byte-audited source rewrite retains priority over this experiment.
+    struct SpecializedCache {
+        std::array<std::optional<Entry>, OpenGL::MaxSpecializedPackedLayouts> entries;
+        std::size_t count = 0;
+        std::size_t recent = entries.size();
+    };
+    thread_local std::unique_ptr<SpecializedCache> specialized;
+
+    std::optional<OpenGL::PackedVertexLayout> known_layout;
+    const auto same_identity = [&](const Entry& entry) {
+        return entry.input_mask == input_mask && entry.indexed_mode == indexed_mode &&
+            entry.policy == policy &&
+            std::memcmp(&entry.config.state, &config.state, sizeof(config.state)) == 0 &&
+            std::memcmp(&entry.output.state, &output.state, sizeof(output.state)) == 0 &&
+            same_program(entry);
+    };
+    if (specialize_layout && captured_layout && indexed_mode == 2 && !pc230_branch) {
+        if (!specialized) specialized = std::make_unique<SpecializedCache>();
+        auto& specialized_entries = specialized->entries;
+        auto& specialized_count = specialized->count;
+        auto& specialized_recent = specialized->recent;
+        known_layout = OpenGL::CanonicalPackedVertexLayout(*captured_layout);
+        const auto candidate = [&](std::size_t index) {
+            if (NativeHostProfileEnabled()) ++vertex_source_probes;
+            const auto& entry = *specialized_entries[index];
+            return entry.layout == *known_layout && same_identity(entry);
+        };
+        if (specialized_recent < specialized_count && candidate(specialized_recent)) {
+            if (NativeHostProfileEnabled()) { ++vertex_source_recent_hits; ++packed_layout_hits; }
+            const auto& entry = *specialized_entries[specialized_recent];
+            return {entry.source, entry.revision, entry.pc230_specialized};
+        }
+        std::size_t family_count = 0;
+        for (std::size_t i = 0; i < specialized_count; ++i) {
+            if (i != specialized_recent && candidate(i)) {
+                if (NativeHostProfileEnabled()) { ++vertex_source_fallback_hits; ++packed_layout_hits; }
+                specialized_recent = i;
+                const auto& entry = *specialized_entries[i];
+                return {entry.source, entry.revision, entry.pc230_specialized};
+            }
+            if (same_identity(*specialized_entries[i])) ++family_count;
+        }
+        if (!OpenGL::CanAdmitPackedVertexLayout(specialized_count, family_count)) {
+            known_layout.reset(); // Reuse the ordinary generic source cache.
+            if (NativeHostProfileEnabled()) ++packed_layout_declines;
+        }
+    }
 
     thread_local std::array<std::optional<Entry>, 64> entries;
     thread_local std::size_t next = 0;
-    for (const auto& entry : entries) {
-        if (entry && entry->input_mask == input_mask && entry->indexed_mode == indexed_mode &&
+    thread_local std::size_t recent = entries.size();
+    const bool profile = NativeHostProfileEnabled();
+    const auto matches = [&](std::size_t i) {
+        if (profile)
+            ++vertex_source_probes;
+        const auto& entry = entries[i];
+        return entry && entry->input_mask == input_mask && entry->indexed_mode == indexed_mode &&
             entry->policy == policy &&
             std::memcmp(&entry->config.state, &config.state, sizeof(config.state)) == 0 &&
             std::memcmp(&entry->output.state, &output.state, sizeof(output.state)) == 0 &&
-            entry->code == setup.program_code && entry->swizzle == setup.swizzle_data)
+            same_program(*entry);
+    };
+    // This is only a candidate-order hint, never a source identity. Recheck the
+    // complete current program, swizzles and configuration even after a load or
+    // replacement of this slot. The bounded source storage and revisions retain
+    // their original ownership and replacement policy.
+    if (!known_layout && reuse_recent && recent < entries.size() && matches(recent)) {
+        if (profile)
+            ++vertex_source_recent_hits;
+        const auto& entry = entries[recent];
+        return {entry->source, entry->revision, entry->pc230_specialized};
+    }
+    for (std::size_t i = 0; !known_layout && i < entries.size(); ++i) {
+        if (reuse_recent && i == recent)
+            continue; // The same exact comparison already failed above.
+        if (matches(i)) {
+            if (profile)
+                ++vertex_source_fallback_hits;
+            recent = i;
+            const auto& entry = entries[i];
             return {entry->source, entry->revision, entry->pc230_specialized};
+        }
     }
 
+    if (profile)
+        ++vertex_source_generations;
     auto source = OpenGL::GenerateVertexShader(setup, config, false, &output, input_mask,
-                                               indexed_mode, true, false);
+                                               indexed_mode, true, false, false, false,
+                                               known_layout ? &*known_layout : nullptr);
     if (user_clip)
         source.insert(0, RuntimeMetalUserClip);
     const bool pc230_specialized = pc230_branch && SpecializePc230(source);
-    auto& entry = entries[next];
+    if (simd_reference && !TagSimdVertexSource(source)) {
+        NativeMetalCost::Count(NativeMetalCost::SimdReferenceRejected, 1);
+        LOG_INFO(Render_OpenGL, "SIMD vertex source admission rejected; retaining full shader");
+    }
+    const auto destination = known_layout ? specialized->count : next;
+    auto& entry = known_layout ? specialized->entries[destination] : entries[destination];
     entry.emplace(Entry{config, output, setup.program_code, setup.swizzle_data,
                         input_mask, indexed_mode, policy, std::move(source), NextSourceRevision(),
-                        pc230_specialized});
-    next = (next + 1) % entries.size();
+                        pc230_specialized, known_layout.value_or(OpenGL::PackedVertexLayout{})});
+    if (known_layout) {
+        specialized->recent = specialized->count++;
+        if (profile) ++packed_layout_admissions;
+    } else {
+        recent = next;
+        next = (next + 1) % entries.size();
+    }
     return {entry->source, entry->revision, entry->pc230_specialized};
 }
 
@@ -614,6 +759,7 @@ PicaGuestRange WriteFootprint(MetalTransfer::GuestInterval bytes, u32 width, u32
 } // namespace
 
 void ReportNativeMetalTextureResidency(const std::string& path);
+void AppendNativeMetalDeferredAdmissionProfile(std::ostream& out, bool json);
 
 std::array<std::uint64_t, 5> ReadNativeMetalBindingOpeningProfile() noexcept {
     return {phases[1].ns, phases[2].ns, phases[3].ns, phases[4].ns, fog_bindings};
@@ -633,10 +779,15 @@ void AppendNativeMetalBindingWindow(std::ostream& stream,
     }
     stream << '}';
     MetalDrawStageProfile::AppendWindow(stream);
+    AppendNativeMetalDeferredAdmissionProfile(stream, true);
+    stream << ",\"metal_raw_work_totals\":{\"draws\":" << raw_index_draws
+           << ",\"vertices\":" << raw_index_vertices
+           << ",\"source_generations\":" << vertex_source_generations << '}';
 }
 
 void ReportNativeMetalBindings(const std::string& path) {
     ReportNativeMetalTextureResidency(path);
+    ReportNativeMetalCommandTimeline(path);
     if (!NativeHostProfileEnabled())
         return;
     std::ofstream out(path + "metal-binding-profile.csv");
@@ -644,13 +795,30 @@ void ReportNativeMetalBindings(const std::string& path) {
     for (std::size_t i = 0; i < phases.size(); ++i)
         out << phase_names[i] << ',' << phases[i].count << ',' << phases[i].ns << '\n';
     NativeMetalCost::Append(out);
+    AppendNativeMetalDeferredAdmissionProfile(out, false);
+    ReportMetalPairIndices(out);
+    MetalDrawStageProfile::Append(out);
     out << "fog_bindings," << fog_bindings << ",0\n"
         << "mip_chain_hits," << mip_chain_hits << ",0\n"
         << "mip_chain_misses," << mip_chain_misses << ",0\n"
         << "raw_index_draws," << raw_index_draws << ",0\n"
         << "raw_index_vertices," << raw_index_vertices << ",0\n"
         << "raw_read_plan_hits," << raw_read_plan_hits << ",0\n"
-        << "raw_read_plan_misses," << raw_read_plan_misses << ",0\n";
+        << "raw_read_plan_misses," << raw_read_plan_misses << ",0\n"
+        << "vertex_source_lookup_probes," << vertex_source_probes << ",0\n"
+        << "vertex_source_recent_hits," << vertex_source_recent_hits << ",0\n"
+        << "vertex_source_fallback_hits," << vertex_source_fallback_hits << ",0\n"
+        << "vertex_source_generations," << vertex_source_generations << ",0\n"
+        << "packed_layout_admissions," << packed_layout_admissions << ",0\n"
+        << "packed_layout_hits," << packed_layout_hits << ",0\n"
+        << "packed_layout_declines," << packed_layout_declines << ",0\n";
+    if (NativeMetalCost::Enabled()) {
+        const auto raster = ReadNativeMetalRasterStateProfile();
+        for (std::size_t i = 0; i < raster.size(); ++i) {
+            out << "raster_state_" << NativeMetalRasterStateNames[i] << "_requests," << raster[i][0] << ",0\n";
+            out << "raster_state_" << NativeMetalRasterStateNames[i] << "_skips," << raster[i][1] << ",0\n";
+        }
+    }
 }
 
 PicaMetalNativeBindings::PicaMetalNativeBindings(const PicaMetalResources& resources_)
@@ -732,6 +900,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     std::optional<std::array<unsigned, 3>> units;
     std::optional<PicaMetalPackedInputs> vertex_inputs;
     bool raw_indices = false;
+    std::shared_ptr<const MetalPairIndexPayload> pair_indices;
     std::shared_ptr<BindingStorage> storage;
     using Mode = PicaMetalVertexMode;
     if (stage_in.empty()) {
@@ -778,10 +947,31 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         });
         if (vertex_inputs) {
             raw_indices = UseMetalRawIndices();
+            if (raw_indices && UseMetalPairIndices())
+                pair_indices = Measure(3, [&] {
+                    return CaptureMetalPairIndices(resources.queue.device, state, indexed, mask, *vertex_inputs);
+                });
+            const auto source_mode = pair_indices ? 6u : 2u;
+            const auto simd_flag = [](const char* name) { const auto* value=std::getenv(name); return value && std::string_view(value)=="1"; };
+            static const bool simd_requested=simd_flag("CARA_METAL_VERTEX_SIMD_REFERENCE");
+            static const bool compute_requested=simd_flag("CARA_METAL_BATCH_VERTEX_COMPUTE") || simd_flag("CARA_METAL_UNIQUE_VERTEX_COMPUTE");
+            const bool simd_reference=simd_requested && !compute_requested && source_mode==2 &&
+                UseMetalRawIndices() && UseMetalRawIndexConstants() && [resources.queue.device supportsFamily:MTLGPUFamilyApple7];
+            pica.vertex_mode = pair_indices ? Mode::PairIndexed : Mode::Packed;
             vs = Measure(2, [&]{
-                return NativeVertexSource(setup, vcfg, gs, mask, 2, pica.clip1);
+                return NativeVertexSource(setup, vcfg, gs, mask, source_mode, pica.clip1,
+                                          &vertex_inputs->layout, simd_reference);
             });
-            units = Measure(4, [&] { return material_units(Mode::Packed); });
+            units = Measure(4, [&] { return material_units(pica.vertex_mode); });
+            if (pair_indices && !units) {
+                pair_indices.reset(); pica.vertex_mode = Mode::Packed;
+                vs = Measure(2, [&] {
+                    return NativeVertexSource(setup, vcfg, gs, mask, 2, pica.clip1,
+                                              &vertex_inputs->layout);
+                });
+                units = Measure(4, [&] { return material_units(Mode::Packed); });
+            }
+            raw_indices = raw_indices && !pair_indices;
         } else {
             vs = Measure(2, [&]{
                 return NativeVertexSource(setup, vcfg, gs, mask, 1, pica.clip1);
@@ -814,7 +1004,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     }
     pica.vertex = vs.bytes;
     pica.fragment = fs.bytes;
-    pica.packed_arrays = pica.vertex_mode == Mode::Packed;
+    pica.packed_arrays = pica.vertex_mode == Mode::Packed || pica.vertex_mode == Mode::PairIndexed;
     pica.sampled_unit = (*units)[0];
     pica.secondary_unit = (*units)[1];
     pica.tertiary_unit = (*units)[2];
@@ -896,14 +1086,30 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     sampler_plan.Stop();
     const auto second = ranges[1] ? std::optional{sampler[1]} : std::nullopt;
     const auto third = ranges[2] ? std::optional{sampler[2]} : std::nullopt;
-    const auto selection = Measure(4, [&] {
+    const auto resolve_pipeline = [&] {
         if (memo)
             return memo->Resolve(pipelines, vs, fs, pica, sampler, second.has_value(), third.has_value());
         auto result = pipelines.Select(pica, sampler[0], second, third);
         if (!result && pipelines.Prepare(pica, sampler[0], second, third))
             result = pipelines.Select(pica, sampler[0], second, third);
         return result;
-    });
+    };
+    auto selection = Measure(4, resolve_pipeline);
+    if (pair_indices && (!selection || selection->vertex_mode != Mode::PairIndexed ||
+                         selection->primary_material_cube != primary_cube.has_value())) {
+        // An unsupported/failed experiment must retain the established raw
+        // renderer, including current attributes, uniforms, clip and ordering.
+        pair_indices.reset(); raw_indices = true; pica.vertex_mode = Mode::Packed;
+        auto& setup = const_cast<Pica::Shader::ShaderSetup&>(state.vs);
+        const OpenGL::PicaVSConfig vcfg(r, setup);
+        const OpenGL::PicaFixedGSConfig gs(r);
+        vs = Measure(2, [&] { return NativeVertexSource(setup, vcfg, gs, mask, 2, pica.clip1,
+                                                       &vertex_inputs->layout); });
+        const auto raw_units = Measure(4, [&] { return material_units(Mode::Packed); });
+        if (!raw_units || *raw_units != *units) return decline("raw pair fallback material identity");
+        pica.vertex = vs.bytes;
+        selection = Measure(4, resolve_pipeline);
+    }
     if (!selection || selection->primary_material_cube != primary_cube.has_value())
         return decline("pipeline state or reflection");
     if (raw_indices && selection->vertex_mode != MetalRawIndexMode) {
@@ -1056,9 +1262,12 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         }
         out.draw.packed_vertices = std::as_bytes(std::span(vertices.vertices));
         out.draw.expanded_indices = std::as_bytes(std::span(vertices.indices));
-        if (pica.vertex_mode == Mode::Packed)
+        if (pica.vertex_mode == Mode::PairIndexed)
+            vertices.layout = OpenGL::CanonicalPackedVertexLayout(vertices.layout);
+        if (pica.vertex_mode == Mode::Packed || pica.vertex_mode == Mode::PairIndexed)
             out.draw.layout_uniform = std::as_bytes(std::span(vertices.layout));
         out.draw.vertex_count = vertices.vertex_count;
+        out.draw.pair_indices = std::move(pair_indices);
         if (raw_indices) {
             out.draw.vertex_mode = MetalRawIndexMode;
             if (NativeHostProfileEnabled()) {

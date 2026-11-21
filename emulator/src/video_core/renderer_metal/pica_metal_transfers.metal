@@ -168,3 +168,25 @@ kernel void cara_pica_display_raw_rgba_layout(
             destination[to + i] = source[from + (4u - channels) + i];
     }
 }
+
+// The native color transfer publishes ONLY guest_bytes. This optional variant
+// preserves its float average/rint arithmetic while omitting the transient
+// output texture, which has no authoritative owner or subsequent consumer.
+kernel void cara_pica_display_to_linear_bytes(
+    texture2d<float, access::read> source [[texture(0)]],
+    device uchar* guest_bytes [[buffer(0)]], constant uint4& args [[buffer(1)]],
+    uint2 xy [[thread_position_in_grid]]) {
+    const uint width=args.z, height=args.w;
+    if (xy.x>=width || xy.y>=height) return;
+    const uint source_y=(args.y&1u) ? height-1u-xy.y : xy.y;
+    const bool scale_x=(args.y&2u)!=0;
+    const uint source_x=xy.x<<uint(scale_x);
+    float4 color=source.read(uint2(source_x,source_y));
+    if (scale_x) color=(color+source.read(uint2(source_x+1u,source_y)))*0.5f;
+    const uchar4 packed=uchar4(rint(color*255.0f));
+    const uint offset=(xy.y*width+xy.x)*args.x, alpha_bytes=args.x-3u;
+    guest_bytes[offset+alpha_bytes]=packed.b;
+    guest_bytes[offset+alpha_bytes+1u]=packed.g;
+    guest_bytes[offset+alpha_bytes+2u]=packed.r;
+    if (alpha_bytes) guest_bytes[offset]=packed.a;
+}

@@ -11,7 +11,7 @@ namespace Cara {
 
 inline void ValidateMetalDrawTicket(const PicaMetalDrawTicket& ticket) {
     if (!ticket.command || ticket.command.status < MTLCommandBufferStatusCommitted ||
-        ticket.count == 0 || ticket.count > ticket.publications.size())
+        ticket.count == 0 || ticket.count > ticket.Publications().size())
         throw std::runtime_error("Invalid Metal draw ticket");
 }
 
@@ -39,7 +39,7 @@ inline std::optional<MetalGuestWrite> MakeMetalDrawWrite(
     return MetalGuestWrite{begin, end,
         std::make_shared<MetalSurfaceWriter>(view.texture, ticket.command, writer.backing_generation,
                                              begin, end, exporter, residency_revision, predecessors,
-                                             nil, rgba8, packed_color)};
+                                             nil, rgba8, packed_color, ticket.validation)};
 }
 
 } // namespace Cara

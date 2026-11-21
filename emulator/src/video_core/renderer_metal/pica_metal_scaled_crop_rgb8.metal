@@ -43,3 +43,29 @@ kernel void cara_pica_display_linear_to_tiled_rgb8(
     for (uint channel = 0; channel < 3u; ++channel)
         destination[to + channel] = source[from + 1u + channel];
 }
+
+// Exact fusion of ExportPicaTiledRGBA8 followed by the scaled/cropped raw
+// transfer. Quantize each texel BEFORE the integer box filter: float averaging
+// would round half values differently from the existing guest byte path.
+kernel void cara_pica_display_texture_scaled_crop(
+    texture2d<float, access::read> source [[texture(0)]],
+    device uchar* destination [[buffer(0)]], constant uint4& args [[buffer(1)]],
+    uint2 xy [[thread_position_in_grid]]) {
+    const uint width=args.x, height=args.y, bpp=args.z;
+    if (xy.x>=width || xy.y>=height) return;
+    const uint source_y=source.get_height()-1u-xy.y;
+    const uint3 first=uint3(rint(source.read(uint2(2u*xy.x,source_y)).rgb*255.0f));
+    const uint3 second=uint3(rint(source.read(uint2(2u*xy.x+1u,source_y)).rgb*255.0f));
+    const uint3 sum=first+second;
+    const uint output_y=args.w ? height-1u-xy.y : xy.y;
+    const uint to=bpp*(output_y*width+xy.x);
+    if (bpp==3u) {
+        destination[to]=uchar(sum.b>>1u);
+        destination[to+1u]=uchar(sum.g>>1u);
+        destination[to+2u]=uchar(sum.r>>1u);
+    } else {
+        const uint packed=((sum.r>>4u)<<11u)|((sum.g>>3u)<<5u)|(sum.b>>4u);
+        destination[to]=uchar(packed);
+        destination[to+1u]=uchar(packed>>8u);
+    }
+}

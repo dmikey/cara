@@ -12,6 +12,7 @@
 #include <type_traits>
 #include "common/hash.h"
 #include "video_core/regs.h"
+#include "video_core/renderer_opengl/gl_packed_vertex.h"
 #include "video_core/shader/shader.h"
 
 namespace OpenGL {
@@ -234,7 +235,8 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
                                  bool ios_source_optimizations = true,
                                  bool native_quaternion_geometry = false,
                                  bool native_isolated_dispatch = false,
-                                 bool native_suffix_sharing = false);
+                                 bool native_suffix_sharing = false,
+                                 const PackedVertexLayout* known_packed_layout = nullptr);
 
 /*
  * Generates the GLSL fixed geometry shader program source code for non-GS PICA pipeline
