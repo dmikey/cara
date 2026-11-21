@@ -41,7 +41,7 @@ static NSError* LibraryError(NSString* message) {
     return self;
 }
 + (BOOL)isGameURL:(NSURL*)url {
-    return [@[@"3ds",@"cci",@"cxi",@"3dsx",@"elf"] containsObject:url.pathExtension.lowercaseString];
+    return [@[@"3ds",@"cci",@"cxi",@"3dsx",@"elf",@"zip"] containsObject:url.pathExtension.lowercaseString];
 }
 - (NSString*)folderName { return selectedFolder.lastPathComponent?:@"Roms"; }
 - (BOOL)hasCustomFolder { return [preferences dataForKey:@"romsFolderBookmark"]!=nil; }
@@ -66,7 +66,7 @@ static NSError* LibraryError(NSString* message) {
     [preferences removeObjectForKey:@"romsFolderBookmark"];
 }
 - (BOOL)rememberGame:(NSURL*)url error:(NSError**)error {
-    if (![CaraLibraryStore isGameURL:url]) { if (error) *error=LibraryError(@"Choose an extracted 3DS game."); return NO; }
+    if (![CaraLibraryStore isGameURL:url]) { if (error) *error=LibraryError(@"Choose a 3DS game or a ZIP containing one .3ds ROM."); return NO; }
     NSMutableArray* hidden=[[preferences arrayForKey:@"libraryHiddenPaths"] mutableCopy]; [hidden removeObject:[self keyForGame:url]]; if (hidden) [preferences setObject:hidden forKey:@"libraryHiddenPaths"];
     BOOL scoped=[url startAccessingSecurityScopedResource];
     NSData* bookmark=[url bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:error];

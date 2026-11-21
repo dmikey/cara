@@ -42,11 +42,17 @@ int main() { @autoreleasepool {
     Check(store.hasCustomFolder && Scan(store).count==4,@"external folder augments local collection");
     store=[[CaraLibraryStore alloc] initWithDocuments:docs defaults:defaults];
     Check(store.hasCustomFolder && Scan(store).count==4,@"folder bookmark survives store relaunch");
-    NSURL* opened=[root URLByAppendingPathComponent:@"Elsewhere/Opened.elf"]; Put(opened);
-    Check([store rememberGame:opened error:&error],@"remember file opened outside folder");
+    NSURL* opened=[root URLByAppendingPathComponent:@"Elsewhere/Opened.3ds.ZIP"]; Put(opened);
+    Check([CaraLibraryStore isGameURL:opened],@"accept ZIP ROM from Files regardless of extension case");
+    Check([store rememberGame:opened error:&error],@"remember ZIP opened outside folder");
     Check([store rememberGame:opened error:&error],@"remember duplicate");
     Check(Scan(store).count==5 && [[defaults arrayForKey:@"libraryGameBookmarks"] count]==1,@"deduplicated collection and records");
-    Check(![store rememberGame:[NSURL fileURLWithPath:@"/private/tmp/not-a-rom.zip"] error:&error],@"ZIP remains unsupported");
+    Check(![store rememberGame:[NSURL fileURLWithPath:@"/private/tmp/not-a-rom.txt"] error:&error],@"reject unrelated extension");
+    CaraLibraryGame* archive=nil;
+    for (CaraLibraryGame* game in Scan(store)) {
+        if ([game.url.lastPathComponent isEqual:opened.lastPathComponent]) archive=game;
+    }
+    Check([archive.url.URLByStandardizingPath isEqual:opened.URLByStandardizingPath],@"library retains the original ZIP URL");
     [store useDefaultFolder]; Check(!store.hasCustomFolder && Scan(store).count==4,@"return to default keeps local and explicitly opened games");
     Check([NSFileManager.defaultManager fileExistsAtPath:[external URLByAppendingPathComponent:@"Fourth.cxi"].path],@"changing folder never deletes/moves game");
     NSURL* local=[store.defaultFolder URLByAppendingPathComponent:@"Third.3dsx"];
