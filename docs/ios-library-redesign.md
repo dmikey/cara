@@ -24,6 +24,8 @@ through the core's full state validation. Sync runs through the existing launch
 workflow first. The UI never treats an incompatible state as ready.
 
 The full Settings screen has an iPad sidebar and an iPhone category chooser.
+On iPhone, the empty Collection gives Add Games a central button. It opens
+the same Files import or ROMs folder chooser available in a populated library.
 Library appearance is independent of the OLED game skin and orange app icon.
 Only functional appearance controls are shown. The eight bundled original
 interaction sounds preload through AudioServices, obey the system sound/silent
@@ -45,3 +47,13 @@ They never activate or change the game's audio session.
 - Simulator builds compile and link the frontend with the actual engine. UIKit
   fixture screenshots and tests demonstrate UI behavior; they do not establish
   physical-device audio behavior or an end-to-end commercial-game state restore.
+
+## iPhone 17e
+
+The bundled Carbon Duo skin has dedicated iPhone portrait and landscape
+representations. It fits both 3DS screens and their controls inside the phone's
+safe area, and the bottom screen keeps its native touch mapping. The layout
+fixture checks non-overlapping controls with at least 44-point targets in
+both orientations at the 17e's 390 × 844-point size. iPad uses its own
+representations from the same skin archive. The app uses the shared iOS
+FastInterp core and graphics backends on both devices.

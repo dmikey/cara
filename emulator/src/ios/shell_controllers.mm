@@ -344,6 +344,7 @@ static NSString* ArtworkCacheKey(CaraLibraryGame* game) {
     BOOL sortRecent;
     UILabel* syncLabel;
     UIStackView* libraryBody;
+    UIButton* footerAdd;
 }
 - (void)viewDidLoad {
     [super viewDidLoad]; CaraPrepareMenuSounds(); self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraAccent();
@@ -365,7 +366,9 @@ static NSString* ArtworkCacheKey(CaraLibraryGame* game) {
     heroPlay=[UIButton buttonWithType:UIButtonTypeSystem]; heroPlay.configuration=[UIButtonConfiguration filledButtonConfiguration]; [heroPlay addTarget:self action:@selector(openRecent) forControlEvents:UIControlEventTouchUpInside]; heroPlay.layer.cornerRadius=20;
     UIStackView* copy=[[UIStackView alloc] initWithArrangedSubviews:@[eyebrow,heroTitle,heroSubtitle,heroPlay]]; copy.axis=UILayoutConstraintAxisVertical; copy.spacing=10;
     UIStackView* heroBody=[[UIStackView alloc] initWithArrangedSubviews:@[copy,heroArtwork]]; heroBody.spacing=24; heroBody.alignment=UIStackViewAlignmentCenter; heroBody.translatesAutoresizingMaskIntoConstraints=NO; [hero addSubview:heroBody];
-    [NSLayoutConstraint activateConstraints:@[[heroBody.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:24],[heroBody.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-24],[heroBody.topAnchor constraintEqualToAnchor:hero.topAnchor constant:20],[heroBody.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:-20],[heroArtwork.widthAnchor constraintEqualToAnchor:heroBody.widthAnchor multiplier:.45],[heroArtwork.heightAnchor constraintEqualToConstant:145]]];
+    NSLayoutConstraint* heroArtworkWidth=[heroArtwork.widthAnchor constraintEqualToAnchor:heroBody.widthAnchor multiplier:.45];
+    heroArtworkWidth.priority=UILayoutPriorityDefaultHigh;
+    [NSLayoutConstraint activateConstraints:@[[heroBody.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:24],[heroBody.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-24],[heroBody.topAnchor constraintEqualToAnchor:hero.topAnchor constant:20],[heroBody.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:-20],heroArtworkWidth,[heroArtwork.heightAnchor constraintEqualToConstant:145]]];
     countLabel=[UILabel new]; countLabel.font=[UIFont systemFontOfSize:23 weight:UIFontWeightBold]; countLabel.text=@"Your collection";
     UIButton* sort=[UIButton buttonWithType:UIButtonTypeSystem]; sort.configuration=[UIButtonConfiguration borderedButtonConfiguration]; [sort setTitle:@"Sort" forState:UIControlStateNormal]; sort.showsMenuAsPrimaryAction=YES;
     __weak CaraLibraryController* owner=self;
@@ -374,9 +377,9 @@ static NSString* ArtworkCacheKey(CaraLibraryGame* game) {
     UICollectionViewFlowLayout* layout=[UICollectionViewFlowLayout new]; layout.minimumInteritemSpacing=18; layout.minimumLineSpacing=22;
     collection=[[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout]; collection.backgroundColor=UIColor.clearColor; collection.alwaysBounceVertical=YES; collection.delegate=self; collection.dataSource=self; [collection registerClass:CaraGameCell.class forCellWithReuseIdentifier:@"game"];
     UIRefreshControl* refresh=[UIRefreshControl new]; [refresh addTarget:self action:@selector(reloadLibrary) forControlEvents:UIControlEventValueChanged]; collection.refreshControl=refresh;
-    UIButton* add=[UIButton buttonWithType:UIButtonTypeSystem]; add.configuration=[UIButtonConfiguration borderedButtonConfiguration]; [add setTitle:@"＋  Add games" forState:UIControlStateNormal]; [add addTarget:self action:@selector(addTapped) forControlEvents:UIControlEventTouchUpInside];
+    footerAdd=[UIButton buttonWithType:UIButtonTypeSystem]; footerAdd.configuration=[UIButtonConfiguration borderedButtonConfiguration]; [footerAdd setTitle:@"＋  Add games" forState:UIControlStateNormal]; [footerAdd addTarget:self action:@selector(addTapped) forControlEvents:UIControlEventTouchUpInside];
     syncLabel=[UILabel new]; syncLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; syncLabel.textColor=UIColor.secondaryLabelColor; syncLabel.numberOfLines=2;
-    UIStackView* footer=[[UIStackView alloc] initWithArrangedSubviews:@[add,syncLabel]]; footer.spacing=20; footer.alignment=UIStackViewAlignmentCenter;
+    UIStackView* footer=[[UIStackView alloc] initWithArrangedSubviews:@[footerAdd,syncLabel]]; footer.spacing=20; footer.alignment=UIStackViewAlignmentCenter;
     UIStackView* body=[[UIStackView alloc] initWithArrangedSubviews:@[hero,heading,collection,footer]]; libraryBody=body; body.axis=UILayoutConstraintAxisVertical; body.spacing=18; body.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:body];
     [NSLayoutConstraint activateConstraints:@[[body.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:24],[body.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-24],[body.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],[body.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-12]]];
     [self reloadLibrary];
@@ -398,6 +401,37 @@ static NSString* ArtworkCacheKey(CaraLibraryGame* game) {
 - (NSString*)displayTitleForGame:(CaraLibraryGame*)game {
     return [self.store displayTitleOverrideForGame:game.url] ?: [artworkCache objectForKey:ArtworkCacheKey(game)][@"title"] ?: game.title;
 }
+- (UIView*)phoneLibraryWelcome {
+    UIView* background=[UIView new];
+    UILabel* prompt=[UILabel new];
+    prompt.text=@"Choose a Nintendo 3DS game from Files.";
+    prompt.textColor=UIColor.secondaryLabelColor;
+    prompt.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    prompt.adjustsFontForContentSizeCategory=YES;
+    prompt.textAlignment=NSTextAlignmentCenter;
+    prompt.numberOfLines=0;
+    UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem];
+    UIButtonConfiguration* configuration=[UIButtonConfiguration filledButtonConfiguration];
+    configuration.title=@"Add games";
+    configuration.image=[UIImage systemImageNamed:@"plus"];
+    configuration.imagePadding=8;
+    configuration.contentInsets=NSDirectionalEdgeInsetsMake(10,20,10,20);
+    button.configuration=configuration;
+    [button addTarget:self action:@selector(addTapped) forControlEvents:UIControlEventTouchUpInside];
+    UIStackView* body=[[UIStackView alloc] initWithArrangedSubviews:@[prompt,button]];
+    body.axis=UILayoutConstraintAxisVertical;
+    body.alignment=UIStackViewAlignmentCenter;
+    body.spacing=14;
+    body.translatesAutoresizingMaskIntoConstraints=NO;
+    [background addSubview:body];
+    [NSLayoutConstraint activateConstraints:@[
+        [body.centerXAnchor constraintEqualToAnchor:background.centerXAnchor],
+        [body.centerYAnchor constraintEqualToAnchor:background.centerYAnchor],
+        [body.widthAnchor constraintEqualToAnchor:background.widthAnchor constant:-24],
+        [button.heightAnchor constraintGreaterThanOrEqualToConstant:44],
+    ]];
+    return background;
+}
 - (void)filterGames {
     NSString* query=search.searchBar.text?:@""; NSInteger tab=tabs.selectedSegmentIndex;
     filtered=[games filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(CaraLibraryGame* game,NSDictionary* b) {
@@ -410,8 +444,14 @@ static NSString* ArtworkCacheKey(CaraLibraryGame* game) {
     countLabel.text=[NSString stringWithFormat:@"%@ · %lu",tab==1?@"Favorites":tab==2?@"Recently played":@"Your collection",(unsigned long)filtered.count];
     recent=nil; NSDate* latest=NSDate.distantPast; for(CaraLibraryGame* game in games) { NSDate* date=[self.store metadataForGame:game.url][@"lastPlayed"]; if(date && [date compare:latest]==NSOrderedDescending) { latest=date; recent=game; } }
     if(recent) { heroTitle.text=[self displayTitleForGame:recent]; heroSubtitle.text=[@"Last played " stringByAppendingString:[NSDateFormatter localizedStringFromDate:latest dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle]]; BOOL resume=self.canResume && [recent.url.URLByStandardizingPath isEqual:self.activeGameURL.URLByStandardizingPath]; [heroPlay setTitle:resume?@"▶  Resume game":@"▶  Game details" forState:UIControlStateNormal]; CaraLibraryGame* heroGame=recent; heroArtwork.image=nil; [self artwork:heroGame completion:^(NSDictionary* m) { if(![self->recent.url isEqual:heroGame.url]) return; self->heroArtwork.image=m[@"hero"]?:m[@"image"]?:[UIImage systemImageNamed:@"gamecontroller"]; self->heroArtwork.contentMode=m[@"hero"]?UIViewContentModeScaleAspectFill:UIViewContentModeScaleAspectFit; self->heroTitle.text=m[@"title"]?:heroGame.title; }]; }
-    syncLabel.text=self.syncDetail?:@"Add games from Files. Your saves stay on this device."; [collection reloadData]; [self.view setNeedsLayout];
-    if(!filtered.count) { UILabel* empty=[UILabel new]; empty.text=games.count?@"No games match this view.":@"Your collection starts here.\nAdd a game or choose your ROMs folder."; empty.numberOfLines=0; empty.textAlignment=NSTextAlignmentCenter; empty.textColor=UIColor.secondaryLabelColor; collection.backgroundView=empty; } else collection.backgroundView=nil;
+    const BOOL phoneWelcome=self.traitCollection.userInterfaceIdiom==UIUserInterfaceIdiomPhone &&
+        games && !games.count && tab==0 && !query.length;
+    footerAdd.hidden=phoneWelcome;
+    syncLabel.text=self.syncDetail?:(phoneWelcome?nil:@"Add games from Files. Your saves stay on this device.");
+    [collection reloadData]; [self.view setNeedsLayout];
+    if (phoneWelcome) collection.backgroundView=[self phoneLibraryWelcome];
+    else if(!filtered.count) { UILabel* empty=[UILabel new]; empty.text=games.count?@"No games match this view.":@"Your collection starts here.\nAdd a game or choose your ROMs folder."; empty.numberOfLines=0; empty.textAlignment=NSTextAlignmentCenter; empty.textColor=UIColor.secondaryLabelColor; collection.backgroundView=empty; }
+    else collection.backgroundView=nil;
 }
 - (void)updateSearchResultsForSearchController:(UISearchController*)controller { [self filterGames]; }
 - (void)artwork:(CaraLibraryGame*)game completion:(void(^)(NSDictionary*))apply {

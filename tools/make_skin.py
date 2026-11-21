@@ -14,8 +14,8 @@ TOP = dict(x=610, y=120, width=1200, height=720)
 BOTTOM = dict(x=794, y=900, width=832, height=624)
 
 
-def portrait(width, height, phone):
-    name = 'carbon-duo-iphone-portrait.pdf' if phone else 'carbon-duo-portrait.pdf'
+def tablet_portrait(width, height):
+    name = 'carbon-duo-portrait.pdf'
     c = canvas.Canvas(str(DEST / name), pagesize=(width, height), pageCompression=1, invariant=1)
     c.setTitle('Carbon Duo portrait artwork')
     items = []
@@ -28,23 +28,23 @@ def portrait(width, height, phone):
         c.setFillColor(HexColor('#e4dcc6')); c.setFont('Helvetica-Bold', size); c.drawCentredString(x, height-y, value)
     def item(inputs, x, y, w, h, edges=12, **extra):
         items.append(dict(inputs=inputs,frame=dict(x=x,y=y,width=w,height=h),extendedEdges=dict(top=edges,bottom=edges,left=edges,right=edges),**extra))
-    top = dict(x=60 if phone else 234,y=150,width=1050 if phone else 1200,height=630 if phone else 720)
-    bottom = dict(x=185 if phone else 434,y=840 if phone else 930,width=800,height=600)
+    top = dict(x=234,y=150,width=1200,height=720)
+    bottom = dict(x=434,y=930,width=800,height=600)
     box(0,0,width,height,'#000000',radius=0)
     box(24,24,width-48,height-48,'#000000','#17231b',44)
     for f in [top,bottom]:
         box(f['x']-12,f['y']-12,f['width']+24,f['height']+24,'#000000','#26362a',20)
-    shoulder_y=1480 if phone else 1570
+    shoulder_y=1570
     shoulders=[('ZL',40,'zl'),('L',270,'l'),('R',width-460,'r'),('ZR',width-230,'zr')]
     for label,x,key in shoulders:
         box(x,shoulder_y,190,76,'#0e1811','#43553d',24); text(label,x+95,shoulder_y+52,36)
         item([key],x,shoulder_y,190,76,16)
-    cx,cy=(220,1710) if phone else (310,1795)
-    sx,sy=(950,1720) if phone else (1360,1795)
+    cx,cy=(310,1795)
+    sx,sy=(1360,1795)
     for x,y,r,axes in [(cx,cy,130,('circlePadX','circlePadY')),(sx,sy,88,('cStickX','cStickY'))]:
         disc(x,y,r+9,'#050905','#35482f'); disc(x,y,r,'#101b12','#667b52'); disc(x,y,r*.72,'#0c140e','#2b402b')
         item(dict(x=axes[0],y=axes[1]),x-r,y-r,2*r,2*r,14,thumbstick=dict(name='thumbstick.png',width=1.2*r,height=1.2*r))
-    dx,dy=(75,1935) if phone else (165,1950)
+    dx,dy=(165,1950)
     box(dx,dy,290,290,'#050905','#273a28',32)
     box(dx,dy+97,290,96,'#142317','#526346',12); box(dx+97,dy,96,290,'#142317','#526346',12)
     disc(dx+145,dy+145,25,'#102013','#354b31')
@@ -59,7 +59,7 @@ def portrait(width, height, phone):
         for px,py in points[1:]: path.lineTo(px,height-py)
         path.close(); c.setFillColor(HexColor('#a8b08e')); c.drawPath(path,fill=1,stroke=0)
     item(dict(up='up',down='down',left='left',right='right'),dx,dy,290,290,18)
-    fx,fy=(930,2070) if phone else (1360,2090)
+    fx,fy=(1360,2090)
     for label,x,y in [('X',fx,fy-140),('A',fx+140,fy),('B',fx,fy+140),('Y',fx-140,fy)]:
         disc(x,y,60,'#070d09','#30442e'); disc(x,y,53,'#17281a','#758865'); text(label,x,y+20,56)
         item([label.lower()],x-58,y-58,116,116,16)
@@ -73,6 +73,111 @@ def portrait(width, height, phone):
                 screens=[dict(inputFrame=dict(x=0,y=0,width=400,height=240),outputFrame=top),dict(inputFrame=dict(x=40,y=240,width=320,height=240),outputFrame=bottom)],
                 caraStatusFrame=dict(x=48,y=26,width=64,height=82),
                 caraStatsFrame=dict(x=124,y=26,width=430,height=82),translucent=False)
+
+
+def phone(landscape):
+    """Lay out the phone skin in logical points, with 3× artwork coordinates."""
+    width, height = (750, 360) if landscape else (390, 760)
+    orientation = 'landscape' if landscape else 'portrait'
+    name = f'carbon-duo-iphone-{orientation}.pdf'
+    art = canvas.Canvas(str(DEST / name), pagesize=(3 * width, 3 * height),
+                        pageCompression=1, invariant=1)
+    art.setTitle(f'Cara Carbon Duo phone {orientation}')
+    art.scale(3, 3)
+
+    def rect(x, y, w, h):
+        return dict(x=3*x, y=3*y, width=3*w, height=3*h)
+
+    def box(x, y, w, h, fill, stroke, radius):
+        art.setFillColor(HexColor(fill))
+        art.setStrokeColor(HexColor(stroke))
+        art.setLineWidth(1)
+        art.roundRect(x, height-y-h, w, h, radius, stroke=1, fill=1)
+
+    def disc(x, y, r, fill, stroke):
+        art.setFillColor(HexColor(fill))
+        art.setStrokeColor(HexColor(stroke))
+        art.setLineWidth(1)
+        art.circle(x, height-y, r, stroke=1, fill=1)
+
+    def label(value, x, y, size):
+        art.setFillColor(HexColor('#e4dcc6'))
+        art.setFont('Helvetica-Bold', size)
+        art.drawCentredString(x, height-y, value)
+
+    items = []
+
+    def button(title, key, x, y, w, h):
+        box(x, y, w, h, '#101c13', '#52634a', h * .32)
+        label(title, x+w/2, y+h/2+4, 12)
+        items.append(dict(inputs=[key], frame=rect(x, y, w, h)))
+
+    def stick(x, y, radius, prefix):
+        disc(x, y, radius, '#0e1811', '#667b52')
+        disc(x, y, radius * .74, '#0c140e', '#2b402b')
+        items.append(dict(inputs=dict(x=prefix+'X', y=prefix+'Y'),
+                          frame=rect(x-radius, y-radius, 2*radius, 2*radius),
+                          thumbstick=dict(name='thumbstick.png', width=radius*3.6,
+                                          height=radius*3.6)))
+
+    def dpad(x, y, side):
+        arm = side / 3
+        box(x, y, side, side, '#050905', '#273a28', 10)
+        box(x, y+arm, side, arm, '#142317', '#526346', 5)
+        box(x+arm, y, arm, side, '#142317', '#526346', 5)
+        disc(x+side/2, y+side/2, 8, '#102013', '#354b31')
+        items.append(dict(inputs=dict(up='up', down='down', left='left', right='right'),
+                          frame=rect(x, y, side, side)))
+
+    def faces(x, y, spread):
+        for title, bx, by in [('X', x, y-spread), ('A', x+spread, y),
+                              ('B', x, y+spread), ('Y', x-spread, y)]:
+            disc(bx, by, 23, '#17281a', '#758865')
+            label(title, bx, by+5, 16)
+            items.append(dict(inputs=[title.lower()], frame=rect(bx-23, by-23, 46, 46)))
+
+    box(1, 1, width-2, height-2, '#000000', '#17231b', 14)
+    if landscape:
+        top, bottom = (225, 19, 300, 180), (275, 205, 200, 150)
+        status, stats = (14, 10, 19, 30), (41, 10, 164, 30)
+        message = (14, 40, 191, 15)
+        menu = (667, 4, 69, 46)
+        shoulder_y, shoulder_width = 55, 91
+        shoulders = (12, 114, 545, 647)
+    else:
+        top, bottom = (15, 61, 360, 216), (67, 290, 256, 192)
+        status, stats = (14, 12, 20, 28), (42, 12, 224, 28)
+        message = (14, 41, 260, 17)
+        menu = (307, 7, 68, 46)
+        shoulder_y, shoulder_width = 493, 75
+        shoulders = (14, 98, 217, 301)
+    for x, y, w, h in (top, bottom):
+        box(x-3, y-3, w+6, h+6, '#000000', '#26362a', 6)
+    button('MENU', 'menu', *menu)
+    for title, x in zip(('ZL', 'L', 'R', 'ZR'), shoulders):
+        button(title, title.lower(), x, shoulder_y, shoulder_width, 46)
+    if landscape:
+        stick(89, 160, 48, 'circlePad')
+        stick(559, 161, 24, 'cStick')
+        dpad(50, 229, 86)
+        faces(650, 233, 49)
+        button('SELECT', 'select', 151, 219, 66, 46)
+        button('START', 'start', 151, 273, 66, 46)
+    else:
+        stick(69, 600, 46, 'circlePad')
+        stick(203, 574, 23, 'cStick')
+        dpad(20, 660, 78)
+        faces(301, 633, 50)
+        button('SELECT', 'select', 109, 704, 69, 46)
+        button('START', 'start', 187, 704, 66, 46)
+    items.append(dict(inputs=dict(x='touchScreenX', y='touchScreenY'), frame=rect(*bottom)))
+    art.showPage()
+    art.save()
+    return dict(assets=dict(resizable=name), mappingSize=dict(width=3*width, height=3*height),
+                screens=[dict(inputFrame=dict(x=0, y=0, width=400, height=240), outputFrame=rect(*top)),
+                         dict(inputFrame=dict(x=40, y=240, width=320, height=240), outputFrame=rect(*bottom))],
+                items=items, caraStatusFrame=rect(*status), caraStatsFrame=rect(*stats),
+                caraMessageFrame=rect(*message), translucent=False)
 
 
 def main():
@@ -134,13 +239,17 @@ def main():
     rep=dict(assets=dict(resizable=pdf.name), mappingSize=dict(width=W,height=H),items=items,
              screens=[dict(inputFrame=dict(x=0,y=0,width=400,height=240),outputFrame=TOP),dict(inputFrame=dict(x=40,y=240,width=320,height=240),outputFrame=BOTTOM)],translucent=False,
              caraStatusFrame=dict(x=52,y=50,width=64,height=102),caraStatsFrame=dict(x=128,y=50,width=430,height=102))
-    portrait_pad=portrait(1668,2420,False)
-    portrait_phone=portrait(1170,2532,True)
-    info=dict(name='Cara Carbon Duo',identifier='com.dmikey.cara.carbon-duo.v2',gameTypeIdentifier='com.dmikey.cara.game.3ds',debug=False,representations=dict(ipad=dict(standard=dict(landscape=rep,portrait=portrait_pad)),iphone=dict(standard=dict(landscape=rep,portrait=portrait_phone))))
+    portrait_pad=tablet_portrait(1668,2420)
+    phone_representations=dict(portrait=phone(False),landscape=phone(True))
+    info=dict(name='Cara Carbon Duo',identifier='com.dmikey.cara.carbon-duo.v2',gameTypeIdentifier='com.dmikey.cara.game.3ds',debug=False,representations=dict(ipad=dict(standard=dict(landscape=rep,portrait=portrait_pad)),iphone=dict(standard=phone_representations)))
     (DEST/'carbon-duo.json').write_text(json.dumps(info,indent=2)+'\n')
     # Native thumbsticks are a documented Cara extension; no external assets required.
     with zipfile.ZipFile(DEST/'CarbonDuo.deltaskin','w') as z:
-        for name, data in [('info.json',json.dumps(info,indent=2).encode()),(pdf.name,pdf.read_bytes()),('carbon-duo-portrait.pdf',(DEST/'carbon-duo-portrait.pdf').read_bytes()),('carbon-duo-iphone-portrait.pdf',(DEST/'carbon-duo-iphone-portrait.pdf').read_bytes()),('thumbstick.png',(DEST/'thumbstick.png').read_bytes())]:
+        asset_names=[pdf.name,'carbon-duo-portrait.pdf','thumbstick.png']
+        asset_names.extend(layout['assets']['resizable'] for layout in phone_representations.values())
+        files=[('info.json',json.dumps(info,indent=2).encode())]
+        files.extend((name,(DEST/name).read_bytes()) for name in asset_names)
+        for name, data in files:
             entry=zipfile.ZipInfo(name,(2026,1,1,0,0,0)); entry.compress_type=zipfile.ZIP_DEFLATED
             entry.external_attr=0o100644<<16; z.writestr(entry,data)
     print(DEST/'CarbonDuo.deltaskin')

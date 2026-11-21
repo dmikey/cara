@@ -29,12 +29,16 @@ NSDictionary* CaraControllerSkinRepresentation(BOOL landscape) {
     });
     return landscape?wide:portrait;
 }
-BOOL CaraSkinHasTouchMenu(NSDictionary* representation) {
+CGRect CaraSkinTouchMenuFrame(NSDictionary* representation) {
     for (NSDictionary* item in representation[@"items"]) {
         NSArray* inputs=item[@"inputs"];
-        if ([inputs isKindOfClass:NSArray.class] && [inputs containsObject:@"menu"]) return YES;
+        if ([inputs isKindOfClass:NSArray.class] && [inputs containsObject:@"menu"])
+            return CaraSkinRect(item[@"frame"]);
     }
-    return NO;
+    return CGRectNull;
+}
+BOOL CaraSkinHasTouchMenu(NSDictionary* representation) {
+    return !CGRectIsNull(CaraSkinTouchMenuFrame(representation));
 }
 CGRect CaraAspectFit(CGSize source, CGRect destination) {
     const double scale=MIN(destination.size.width/source.width,destination.size.height/source.height);

@@ -999,6 +999,10 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     skinArt.frame=canvas; skinControls.frame=canvas; [skinControls setNeedsDisplay];
     const auto convert=[&](CGRect r) { return CGRectMake(canvas.origin.x+r.origin.x/mapping.width*canvas.size.width,canvas.origin.y+r.origin.y/mapping.height*canvas.size.height,r.size.width/mapping.width*canvas.size.width,r.size.height/mapping.height*canvas.size.height); };
     top.frame=convert(skinControls.upperScreen); bottom.frame=convert(skinControls.lowerScreen);
+    const BOOL phone=self.traitCollection.userInterfaceIdiom==UIUserInterfaceIdiomPhone;
+    const CGRect skinMenu=phone?CaraSkinTouchMenuFrame(rep):CGRectNull;
+    const CGRect phoneMenu=CGRectIsNull(skinMenu)?CGRectNull:convert(skinMenu);
+    if (actionsEnabled && !CGRectIsNull(phoneMenu)) menuFallback.frame=phoneMenu;
 
     CGRect statsFrame=CaraSkinRect(rep[@"caraStatsFrame"]);
     if (statsFrame.size.width<=0 || statsFrame.size.height<=0) statsFrame=CGRectMake(52,50,430,102);
@@ -1007,7 +1011,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSString* statsKey=landscape?@"landscapeStatsVisible":@"portraitStatsVisible";
     performanceHUD.hidden=[NSUserDefaults.standardUserDefaults objectForKey:statsKey] && ![NSUserDefaults.standardUserDefaults boolForKey:statsKey];
     if (deviceStatusHUD) {
-        const CGFloat right=menuFallback.hidden?CGRectGetMaxX(canvas)-12:CGRectGetMinX(menuFallback.frame)-8;
+        CGRect visibleMenu=menuFallback.hidden?phoneMenu:menuFallback.frame;
+        const CGFloat right=CGRectIsNull(visibleMenu)?CGRectGetMaxX(canvas)-12:CGRectGetMinX(visibleMenu)-8;
         CGRect badge=CGRectMake(right-124,MAX(CGRectGetMinY(canvas)+12,CGRectGetMinY(hud.metrics)),124,26);
         const BOOL fits=CGRectContainsRect(safe,badge) &&
             !CGRectIntersectsRect(badge,top.frame) && !CGRectIntersectsRect(badge,bottom.frame) &&
@@ -1017,8 +1022,13 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         deviceStatusHUD.monitoring=!deviceStatusHUD.hidden;
     }
     const CGFloat portraitStatusY=mapping.height-(defaultControllerSkin?90:170);
-    status.frame=landscape?convert(CGRectMake(statsFrame.origin.x,CGRectGetMaxY(statsFrame)+8,statsFrame.size.width,54)):convert(CGRectMake((mapping.width-600)/2,portraitStatusY,600,48));
-    status.numberOfLines=landscape?2:1;
+    const CGRect messageFrame=CaraSkinRect(rep[@"caraMessageFrame"]);
+    const BOOL hasMessageFrame=!CGRectIsNull(messageFrame) && !CGRectIsEmpty(messageFrame) &&
+        CGRectContainsRect(CGRectMake(0,0,mapping.width,mapping.height),messageFrame);
+    status.frame=hasMessageFrame ? convert(messageFrame) :
+        landscape ? convert(CGRectMake(statsFrame.origin.x,CGRectGetMaxY(statsFrame)+8,statsFrame.size.width,54)) :
+                    convert(CGRectMake((mapping.width-600)/2,portraitStatusY,600,48));
+    status.numberOfLines=landscape && !hasMessageFrame ? 2 : 1;
     statusIndicator.frame=hud.indicator;
     status.adjustsFontSizeToFitWidth=YES; status.minimumScaleFactor=0.7;
 #ifdef CARA_IOS_GLES

@@ -153,9 +153,8 @@ static UIImage* SkinImage(NSData* data, CGSize size) {
     menuHeld=menu; [self setNeedsLayout];
 }
 - (CGRect)menuFrame {
-    for (NSDictionary* item in self.representation[@"items"])
-        if ([item[@"inputs"] isKindOfClass:NSArray.class] && [item[@"inputs"] containsObject:@"menu"]) return CaraSkinRect(item[@"frame"]);
-    return CGRectMake(0,0,1,1);
+    const CGRect menu=CaraSkinTouchMenuFrame(self.representation);
+    return CGRectIsNull(menu)?CGRectMake(0,0,1,1):menu;
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
