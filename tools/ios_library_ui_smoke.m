@@ -14,10 +14,14 @@
  XCTAssertTrue(add.hittable);
  [self shot:app name:@"Phone empty library"];
  [add tap];
- XCTAssertTrue([app.buttons[@"Open game from Files…"] waitForExistenceWithTimeout:5]);
+ XCUIElement* open=app.buttons[@"Open game from Files…"];
+ XCTAssertTrue([open waitForExistenceWithTimeout:5]);
  XCTAssertTrue(app.buttons[@"Choose ROMs folder…"].exists);
- [app.buttons[@"Cancel"] tap];
- XCTAssertTrue(add.hittable);
+ [open tap];
+ XCTNSPredicateExpectation* dismissed=[[XCTNSPredicateExpectation alloc]
+     initWithPredicate:[NSPredicate predicateWithFormat:@"exists == NO"] object:open];
+ XCTAssertEqual([XCTWaiter waitForExpectations:@[dismissed] timeout:5],XCTWaiterResultCompleted);
+ [self shot:app name:@"Phone Files picker"];
 }
 - (void)testInGameSettingsNavigation {
  self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
