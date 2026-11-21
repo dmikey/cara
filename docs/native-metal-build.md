@@ -184,18 +184,44 @@ captures matched byte for byte. All three runs matched guest ticks and
 | FastInterp Metal, repeat | 100.00% | 17.27 ms | 3211–3330 | 16.72 ms | 17.05 ms |
 | FastInterp GLES | 100.01% | 20.61 ms | 3436–3555 | 16.75 ms | 20.31 ms |
 
-#### Measuring queue headroom on other Apple devices
+#### Adaptive Metal submissions
 
-Each slot tracks a command buffer and its dependencies. Several submissions
-can belong to one emulated refresh. Compare the time blocked on the oldest
-ticket with GPU start/end spans and upload-arena waits. Grow the queue one
-step during a controlled replay when the slot limit blocks the producer and
-the upload arena has headroom. Keep the change only if rolling frame times
-improve. A growing GPU backlog, longer arena waits, or memory pressure can
-erase the gain by keeping resources alive longer. Use the Metal memory
-budget as a headroom signal and the OS memory warning as a separate limit.
-A runtime policy should resize only the submission limit, let existing
-tickets retire normally, and wait several windows before increasing again.
+The native Apple frontends evaluate a 120-refresh window. Each slot tracks
+one submitted command buffer and its validation dependencies. The verified
+M4 iPad starts with 32 slots and the Mac Metal host starts with eight. When
+the submission cap blocks the producer, the host can try the next step
+from eight to 16 or from 16 to 32. It reverts an unsuccessful trial and
+waits three windows before trying again. Thermal pressure, the Metal
+working-set budget, and iOS memory warnings can lower the cap. Smaller caps
+keep existing tickets alive and apply backpressure to new submissions.
+
+Set `CARA_METAL_SUBMISSION_WINDOW` to 8, 16, or 32 for a pinned
+comparison. `CARA_METAL_ADAPTIVE_QUEUE=0` disables trials and keeps the
+platform's starting value. `CARA_METAL_QUEUE_POLICY_REPORT=1` records
+samples and decisions in `metal-queue-policy.csv`.
+`CARA_MAC_METAL_FULLSCREEN=1` uses a native macOS full-screen Space in the
+Metal test host. Launch it through `open` when checking Apple Game Mode.
+The Mac host uses the measured precompiled FastInterp options and core
+refresh pacing. Set `CARA_METAL_HOST_DISPLAY_SYNC=1` to add display sync
+for a controlled comparison.
+Use the Metal Performance HUD to verify the actual system state separately
+from frame-time measurements.
+
+The following normal boots used the Dark Moon cartridge and the same
+in-game save and input sequence. The sample covers lab refreshes
+3121–3600. Timing includes core pacing, with the Metal HUD disabled.
+
+| Device and renderer | Lab speed | Lab p99 | Slowest rolling 120 refreshes | Mean in that window |
+| --- | ---: | ---: | --- | ---: |
+| M4 iPad, adaptive Metal, default start | 100.00% | 17.15 ms | 3224–3343 | 16.72 ms |
+| M4 iPad, adaptive Metal, eight-slot start | 100.01% | 17.23 ms | 3161–3280 | 16.72 ms |
+| M4 iPad, GLES | 100.00% | 20.51 ms | 3470–3589 | 16.75 ms |
+| M3 Pro Mac, adaptive Metal, native full screen | 100.27% | 17.97 ms | 3311–3430 | 16.76 ms |
+
+The iPad's eight-slot run accepted 32 slots at refresh 790, and the
+Mac accepted 32 at refresh 797. Both iPad Metal captures matched each other
+byte for byte, and all iPad runs matched guest ticks and draw counts. The
+Mac's slowest window ran at 99.75% of guest refresh speed.
 
 ## Upstream boundaries
 

@@ -79,8 +79,10 @@ inline bool ApplyAppleMetalDefaults(bool wider_upload_paging = false,
     if (memory_bytes >= 6ULL * 1024 * 1024 * 1024 &&
         setenv("CARA_METAL_CACHE_LARGE_TEXTURE_SNAPSHOTS", "1", 0) != 0)
         return false;
+    if (setenv("CARA_METAL_ADAPTIVE_QUEUE", "1", 0) != 0)
+        return false;
     if (AppleMetalWideSubmissionDevice() &&
-        (setenv("CARA_METAL_SUBMISSION_WINDOW", "32", 0) != 0 ||
+        (setenv("CARA_METAL_QUEUE_START_WIDE", "1", 0) != 0 ||
          setenv("CARA_METAL_QUEUE_PENDING_DEPTH_EXPORT", "1", 0) != 0))
         return false;
     const bool wider = wider_upload_paging || memory_bytes >= 6ULL * 1024 * 1024 * 1024;

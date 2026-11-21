@@ -323,8 +323,11 @@ bool PicaMetalUploadArena::Begin(id<MTLCommandBuffer> command) {
     if (!oldest.command || oldest.command.status < MTLCommandBufferStatusCommitted)
         return false;
     {
+        using Clock = std::chrono::steady_clock;
         NativeMetalCost::Scope cost(NativeMetalCost::ArenaWait);
+        const auto start = Clock::now();
         [oldest.command waitUntilCompleted];
+        wait_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
     }
     if (oldest.command.status != MTLCommandBufferStatusCompleted || oldest.command.error) {
         failed = true;

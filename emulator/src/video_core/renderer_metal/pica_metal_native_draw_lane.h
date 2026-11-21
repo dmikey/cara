@@ -82,6 +82,7 @@ public:
     // this FCRAM page and its successor must be free of watch dependencies.
     bool CanReleaseFcramWatchPage(PAddr page);
     void Drain();
+    void EndRefresh() { submissions.EndRefresh(group.TakeUploadWaitNs()); }
 
 private:
     std::array<std::optional<MetalLCD::Screen>, 2> previous_lcd;
