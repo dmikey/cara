@@ -5,6 +5,8 @@
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "video_core/renderer_metal/pica_metal_capture_raw_indices.hh"
 
+#include <CommonCrypto/CommonDigest.h>
+
 #include <cmath>
 #include <chrono>
 #include <cstdlib>
@@ -76,6 +78,7 @@ auto Measure(std::size_t phase, Work&& work) {
 struct NativeShaderSource {
     std::string_view bytes;
     u64 revision = 0;
+    bool pc230_specialized = false;
 };
 
 u64 NextSourceRevision() {
@@ -128,6 +131,52 @@ NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config) {
     return {slot->source, slot->revision};
 }
 
+// The audited PC 230 rewrite selects only byte ranges from the runtime shader.
+// Both hashes gate the transformation and no captured shader is bundled.
+bool SpecializePc230(std::string& source) {
+    using Digest = std::array<unsigned char, CC_SHA256_DIGEST_LENGTH>;
+    constexpr Digest original {0x0f, 0x53, 0xca, 0x69, 0x86, 0x7b, 0x61, 0xcc, 0xf5, 0xea, 0x8a, 0x6b, 0x24, 0xf4, 0x81, 0x6e, 0x29, 0xac, 0x2c, 0x05, 0x7c, 0x36, 0x18, 0x3c, 0xfc, 0x3e, 0x61, 0x29, 0x73, 0x7a, 0xef, 0x97};
+    constexpr Digest specialized {0x56, 0x1a, 0xfb, 0xf1, 0x51, 0x87, 0x01, 0x52, 0xd8, 0xfb, 0x04, 0x6f, 0x0f, 0x75, 0x24, 0x97, 0xce, 0x8c, 0x28, 0xdb, 0x15, 0x6b, 0x15, 0x83, 0xa1, 0x13, 0x57, 0xa8, 0x21, 0x0a, 0x21, 0x01};
+    const auto matches = [](std::string_view text, const Digest& expected) {
+        Digest actual{};
+        return CC_SHA256(text.data(), static_cast<CC_LONG>(text.size()), actual.data()) &&
+               actual == expected;
+    };
+    if (source.size() != 75804 || !matches(source, original))
+        return false;
+
+    std::string result = source.substr(0, 4210);
+    const auto append_instructions = [&](std::size_t first, std::size_t end,
+                                         std::size_t indentation) {
+        while (first < end) {
+            const auto next = source.find('\n', first) + 1;
+            result.append(indentation, ' ');
+            result.append(source, first + 12, next - first - 12);
+            first = next;
+        }
+    };
+    result += "bool sub_105_134();\nbool sub_45_55();\nbool sub_51_53();\nbool sub_53_54();\n"
+              "\nbool exec_shader() {\n";
+    append_instructions(47510, 48032, 4); // PCs 230–235
+    append_instructions(72341, 72448, 8); // PC 499
+    append_instructions(72543, 72865, 4); // PCs 500–502
+    result += "    return true;\n}\n\nbool sub_105_134() {\n";
+    append_instructions(15865, 16789, 4); // PCs 105–112
+    append_instructions(17390, 18898, 12); // PCs 118–133
+    result += "    return false;\n}\n\n";
+    result.append(source, 10891, 582);
+    result += '\n';
+    result.append(source, 11473, 177);
+    result += '\n';
+    result.append(source, 11650, 104);
+    result += '\n';
+    result.append(source, 72997);
+    if (!matches(result, specialized))
+        return false;
+    source = std::move(result);
+    return true;
+}
+
 // Match the generator configuration and the complete input program. A hash match
 // alone cannot admit a cached source, including after a save-state load.
 NativeShaderSource NativeVertexSource(const Pica::Shader::ShaderSetup& setup,
@@ -144,12 +193,16 @@ NativeShaderSource NativeVertexSource(const Pica::Shader::ShaderSetup& setup,
         unsigned policy;
         std::string source;
         u64 revision;
+        bool pc230_specialized;
     };
     const auto enabled = [](const char* name) {
         const auto* value = std::getenv(name);
         return value && std::string_view(value) == "1";
     };
-    const unsigned policy =
+    static const bool pc230_enabled = enabled("CARA_METAL_PC230_SPECIALIZATION");
+    const bool pc230_branch = pc230_enabled && indexed_mode == 2 && UseMetalRawIndices() &&
+                              UseMetalRawIndexConstants() && setup.uniforms.b[14];
+    const unsigned policy = (pc230_branch ? 64u : 0u) |
         (std::getenv("CARA_RAW_DEPTH") ? 1u : 0u) |
         (std::getenv("CARA_UNSNAPPED_VERTICES") ? 2u : 0u) |
         (enabled("CARA_GPU_QUATERNION_SLICE") ? 4u : 0u) |
@@ -164,18 +217,20 @@ NativeShaderSource NativeVertexSource(const Pica::Shader::ShaderSetup& setup,
             std::memcmp(&entry->config.state, &config.state, sizeof(config.state)) == 0 &&
             std::memcmp(&entry->output.state, &output.state, sizeof(output.state)) == 0 &&
             entry->code == setup.program_code && entry->swizzle == setup.swizzle_data)
-            return {entry->source, entry->revision};
+            return {entry->source, entry->revision, entry->pc230_specialized};
     }
 
     auto source = OpenGL::GenerateVertexShader(setup, config, false, &output, input_mask,
                                                indexed_mode, true, false);
     if (user_clip)
         source.insert(0, RuntimeMetalUserClip);
+    const bool pc230_specialized = pc230_branch && SpecializePc230(source);
     auto& entry = entries[next];
     entry.emplace(Entry{config, output, setup.program_code, setup.swizzle_data,
-                        input_mask, indexed_mode, policy, std::move(source), NextSourceRevision()});
+                        input_mask, indexed_mode, policy, std::move(source), NextSourceRevision(),
+                        pc230_specialized});
     next = (next + 1) % entries.size();
-    return {entry->source, entry->revision};
+    return {entry->source, entry->revision, entry->pc230_specialized};
 }
 
 // The shader revisions carry source identity. Compare the remaining recipe
@@ -591,7 +646,9 @@ void ReportNativeMetalBindings(const std::string& path) {
         << "mip_chain_hits," << mip_chain_hits << ",0\n"
         << "mip_chain_misses," << mip_chain_misses << ",0\n"
         << "raw_index_draws," << raw_index_draws << ",0\n"
-        << "raw_index_vertices," << raw_index_vertices << ",0\n";
+        << "raw_index_vertices," << raw_index_vertices << ",0\n"
+        << "raw_read_plan_hits," << raw_read_plan_hits << ",0\n"
+        << "raw_read_plan_misses," << raw_read_plan_misses << ",0\n";
 }
 
 PicaMetalNativeBindings::PicaMetalNativeBindings(const PicaMetalResources& resources_)
@@ -669,6 +726,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     std::optional<std::array<unsigned, 3>> units;
     std::optional<PicaMetalPackedInputs> vertex_inputs;
     bool raw_indices = false;
+    std::shared_ptr<BindingStorage> storage;
     using Mode = PicaMetalVertexMode;
     if (stage_in.empty()) {
         if (r.pipeline.use_gs != Pica::PipelineRegs::UseGS::No)
@@ -684,9 +742,33 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         const auto visible = [&](PAddr address, std::span<u8> bytes) {
             return lane.ReadGuest(address, bytes, ram);
         };
+        const bool use_raw_indices = UseMetalRawIndices();
+        static const bool reuse_staging = [] {
+            const char* value = std::getenv("CARA_METAL_REUSE_VERTEX_STAGING");
+            return value && std::string_view(value) == "1";
+        }();
+        if (reuse_staging && use_raw_indices) {
+            // An outstanding draw owns its binding storage. Reentrant or
+            // deferred consumers get a distinct object until that lease ends.
+            thread_local std::shared_ptr<BindingStorage> retained;
+            if (!retained)
+                retained = std::make_shared<BindingStorage>();
+            if (retained.use_count() == 1) {
+                storage = retained;
+                if (!storage->vertex_inputs)
+                    storage->vertex_inputs.emplace();
+                static thread_local bool reported = false;
+                if (!reported && !storage->vertex_inputs->vertices.empty() &&
+                    !storage->vertex_inputs->indices.empty()) {
+                    LOG_INFO(Render_OpenGL, "Metal reused owned vertex staging");
+                    reported = true;
+                }
+            }
+        }
         vertex_inputs = Measure(3, [&] {
-            return UseMetalRawIndices() ? CaptureMetalRawIndices(state, indexed, mask, visible)
-                                       : CapturePicaMetalPackedInputs(state, indexed, mask, visible);
+            auto* staging = storage ? &*storage->vertex_inputs : nullptr;
+            return use_raw_indices ? CaptureMetalRawIndices(state, indexed, mask, visible, staging)
+                                   : CapturePicaMetalPackedInputs(state, indexed, mask, visible);
         });
         if (vertex_inputs) {
             raw_indices = UseMetalRawIndices();
@@ -917,9 +999,12 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
 
     footprint.Stop();
     NativeMetalCost::Scope uniforms(NativeMetalCost::UniformsHost);
-    auto storage = std::make_shared<BindingStorage>();
+    if (!storage)
+        storage = std::make_shared<BindingStorage>();
     storage->uniforms = CapturePicaMetalUniforms(
         state, Settings::values.disable_clip_coef && !pica.clip1);
+    if (vs.pc230_specialized && !storage->uniforms.vertex.uniforms.bools[14].b)
+        throw std::runtime_error("Metal PC 230 draw uniforms changed after shader selection");
     out.draw.common_uniform = std::as_bytes(std::span(&storage->uniforms.common, 1));
     out.draw.light_uniform = std::as_bytes(std::span(&storage->uniforms.light, 1));
     if (pica.vertex_mode != Mode::StageIn)

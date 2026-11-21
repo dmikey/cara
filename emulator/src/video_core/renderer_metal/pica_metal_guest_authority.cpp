@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_metal/pica_metal_guest_authority.h"
-#include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 
 #include <algorithm>
+#include <cstdlib>
+#include <string_view>
 #include <iterator>
 #include <limits>
 #include <stdexcept>
@@ -30,28 +31,6 @@ void MetalGuestAuthority::SplitAt(PAddr position) {
 void MetalGuestAuthority::Replace(PAddr begin, PAddr end, const MetalGuestWriterRef& writer) {
     if (!materialized.empty())
         materialized.subtract(MaterializedIntervals::interval_type::right_open(begin, end));
-    // Known-exact replacement already owns a map node for these bounds.
-    // Fall through if replacing it must change the canonical coalescing.
-    static const bool reuse_exact_write = [] {
-        const auto* value = std::getenv("CARA_METAL_REUSE_EXACT_WRITE_NODE");
-        return value && std::string_view(value) == "1";
-    }();
-    if (reuse_exact_write && writer) {
-        const auto exact = regions.find(begin);
-        if (exact != regions.end() && exact->second.end == end) {
-            const auto left = exact == regions.begin() ? regions.end() : std::prev(exact);
-            const auto right = std::next(exact);
-            const bool join_left = left != regions.end() && left->second.end == begin &&
-                                   left->second.writer == writer;
-            const bool join_right = right != regions.end() && right->first == end &&
-                                    right->second.writer == writer;
-            if (!join_left && !join_right) {
-                exact->second.writer = writer;
-                NativeMetalCost::Count(NativeMetalCost::ExactWriteNodeReuse, 1);
-                return;
-            }
-        }
-    }
     SplitAt(begin);
     SplitAt(end);
     const auto next = regions.erase(regions.lower_bound(begin), regions.lower_bound(end));
@@ -84,8 +63,44 @@ void MetalGuestAuthority::Publish(std::span<const MetalGuestWrite> writes) {
             write.writer->Status() == MetalGuestWriteStatus::Failed)
             throw std::runtime_error("Invalid committed Metal guest write");
     }
-    for (const auto& write : writes)
-        Replace(write.begin, write.end, write.writer);
+    static const bool reuse_exact = [] {
+        const char* value = std::getenv("CARA_METAL_REUSE_OWNERSHIP_PUBLICATIONS");
+        return value && std::string_view(value) == "1";
+    }();
+    if (reuse_exact && !writes.empty()) {
+        auto position = regions.end();
+        for (const auto& write : writes) {
+            if (position != regions.end() && position->second.end <= write.begin)
+                ++position; // One untouched interval may separate the stripes.
+            if (position == regions.end() || position->first != write.begin)
+                position = regions.lower_bound(write.begin);
+            if (position != regions.end() && position->first == write.begin &&
+                position->second.end == write.end) {
+                const auto next = std::next(position);
+                const auto previous = position == regions.begin() ? regions.end()
+                                                                   : std::prev(position);
+                const bool joins_left = previous != regions.end() &&
+                    previous->second.end == write.begin && previous->second.writer == write.writer;
+                const bool joins_right = next != regions.end() &&
+                    next->first == write.end && next->second.writer == write.writer;
+                if (!joins_left && !joins_right) {
+                    // Reuse the existing node, including its key and exact byte bounds.
+                    if (!materialized.empty())
+                        materialized.subtract(
+                            MaterializedIntervals::interval_type::right_open(write.begin, write.end));
+                    position->second.writer = write.writer;
+                    position = next;
+                    continue;
+                }
+            }
+            Replace(write.begin, write.end, write.writer);
+            // Replace can erase or join either neighbour. Invalidate the cursor.
+            position = regions.end();
+        }
+    } else {
+        for (const auto& write : writes)
+            Replace(write.begin, write.end, write.writer);
+    }
     faulted = false;
 }
 

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "pica_metal_visibility_export.h"
-#include "pica_metal_queued_color_export.hh"
+#include "video_core/renderer_metal/exporter-adapter/pica_metal_visibility_export.h"
+#include "video_core/renderer_metal/exporter-adapter/pica_metal_queued_color_export.hh"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #import <Foundation/Foundation.h>
 
 #include <cstring>
+#include "common/logging/log.h"
 #include <memory>
 #include <stdexcept>
 
@@ -57,6 +58,60 @@ bool PackDepthRows(id<MTLCommandBuffer> command, id<MTLComputePipelineState> pip
     [encode dispatchThreads:MTLSizeMake(layout.width,layout.height,1)
         threadsPerThreadgroup:MTLSizeMake(group,1,1)];
     [encode endEncoding];
+    return true;
+}
+
+struct FusedDepthLayout {
+    std::uint32_t width, height, first_guest_row, row_count;
+    std::uint32_t depth_stride, stencil_stride, begin, end;
+};
+
+id<MTLComputePipelineState> FusedDepthPipeline(id<MTLDevice> device) {
+    static const bool enabled = [] {
+        const char* option = std::getenv("CARA_METAL_FUSE_JOINED_DEPTH_EXPORT");
+        return option && std::string_view(option) == "1";
+    }();
+    if (!enabled)
+        return nil;
+
+    struct Cache {
+        id<MTLDevice> owner;
+        id<MTLComputePipelineState> pipeline = nil;
+    };
+    thread_local Cache cache{};
+    if (cache.owner != device) {
+        cache = {device};
+        const auto url = [NSBundle.mainBundle URLForResource:@"cara-pica"
+                                               withExtension:@"metallib"];
+        const auto lib = url ? [device newLibraryWithURL:url error:nullptr] : nil;
+        const auto fn = [lib newFunctionWithName:@"ExportCheckedPicaDepth"];
+        if (fn) {
+            const auto pipeline = [device newComputePipelineStateWithFunction:fn error:nullptr];
+            if (pipeline.threadExecutionWidth != 0 &&
+                pipeline.threadExecutionWidth <= pipeline.maxTotalThreadsPerThreadgroup)
+                cache.pipeline = pipeline;
+        }
+        if (cache.pipeline)
+            LOG_INFO(Render_OpenGL, "Metal fused joined depth export enabled");
+    }
+    return cache.pipeline;
+}
+
+bool EncodeFusedDepth(id<MTLCommandBuffer> commands, id<MTLComputePipelineState> pipeline,
+                      id<MTLBuffer> requested, id<MTLBuffer> depth, id<MTLBuffer> stencil,
+                      id<MTLBuffer> errors, const FusedDepthLayout& layout) {
+    const auto encoder = [commands computeCommandEncoder];
+    if (!encoder)
+        return false;
+    [encoder setComputePipelineState:pipeline];
+    [encoder setBuffer:depth offset:0 atIndex:0];
+    [encoder setBuffer:stencil offset:0 atIndex:1];
+    [encoder setBuffer:requested offset:0 atIndex:2];
+    [encoder setBuffer:errors offset:0 atIndex:3];
+    [encoder setBytes:&layout length:sizeof(layout) atIndex:4];
+    [encoder dispatchThreads:MTLSizeMake(layout.width * layout.row_count, 1, 1)
+        threadsPerThreadgroup:MTLSizeMake(pipeline.threadExecutionWidth, 1, 1)];
+    [encoder endEncoding];
     return true;
 }
 
@@ -181,6 +236,72 @@ id<MTLBuffer> EncodeQueuedPackedColorExport(id<MTLCommandBuffer> command,
         format != MTLPixelFormatA1BGR5Unorm)
         return nil;
     return EncodeQueuedTiledColor(command, tiled_pack, texture, surface, requested, 2);
+}
+
+id<MTLBuffer> EncodeQueuedCheckedDepthExport(
+    id<MTLCommandBuffer> command, id<MTLTexture> texture,
+    PicaGuestRange physical_surface, PicaGuestRange requested,
+    id<MTLComputePipelineState> tiled_pack, id<MTLComputePipelineState> depth_pack,
+    id<MTLBuffer> errors) {
+    const auto width = texture.width, height = texture.height;
+    const auto device = command.device;
+    if (!command || command.status != MTLCommandBufferStatusNotEnqueued ||
+        !command.retainedReferences || !texture || texture.device != device ||
+        texture.pixelFormat != MTLPixelFormatDepth32Float_Stencil8 ||
+        texture.textureType != MTLTextureType2D || texture.sampleCount != 1 ||
+        texture.hazardTrackingMode != MTLHazardTrackingModeTracked ||
+        texture.storageMode == MTLStorageModeMemoryless || !width || !height ||
+        width > max_extent || height > max_extent || (width | height) % 8 ||
+        !errors || errors.device != device || errors.length < 4 ||
+        !tiled_pack || tiled_pack.device != device || !depth_pack || depth_pack.device != device ||
+        physical_surface.begin >= physical_surface.end ||
+        physical_surface.end - physical_surface.begin != width * height * 4 ||
+        requested.begin < physical_surface.begin || requested.end > physical_surface.end ||
+        requested.begin >= requested.end)
+        return nil;
+
+    constexpr NSUInteger tile_bytes = 64 * 4;
+    const auto first_tile = (requested.begin - physical_surface.begin) / tile_bytes;
+    const auto last_tile = (requested.end - 1 - physical_surface.begin) / tile_bytes;
+    const auto per_row = width / 8;
+    const auto guest_first_row = 8 * (first_tile / per_row);
+    const auto guest_end_row = 8 * (1 + last_tile / per_row);
+    const auto y = height - guest_end_row;
+    const auto rows = guest_end_row - guest_first_row;
+    const auto depth_pitch = Pitch(width * 4), stencil_pitch = Pitch(width);
+    const auto fused = FusedDepthPipeline(device);
+    const auto canonical = fused ? nil :
+        [device newBufferWithLength:depth_pitch*height options:gpu_scratch];
+    const auto depth = [device newBufferWithLength:depth_pitch*height options:gpu_scratch];
+    const auto stencil = [device newBufferWithLength:stencil_pitch*height options:gpu_scratch];
+    const auto requested_bytes = [device newBufferWithLength:requested.end-requested.begin
+                                                   options:cpu_scratch];
+    if ((!fused && !canonical) || !depth || !stencil || !requested_bytes)
+        throw std::runtime_error("Could not allocate queued checked depth export");
+    const auto blit = [command blitCommandEncoder];
+    if (!blit)
+        throw std::runtime_error("Could not start queued checked depth export");
+    CopyRows(blit, texture, depth, depth_pitch, y, rows, MTLBlitOptionDepthFromDepthStencil);
+    CopyRows(blit, texture, stencil, stencil_pitch, y, rows, MTLBlitOptionStencilFromDepthStencil);
+    [blit endEncoding];
+    if (fused) {
+        const FusedDepthLayout layout{static_cast<u32>(width), static_cast<u32>(height),
+            static_cast<u32>(guest_first_row), static_cast<u32>(rows),
+            static_cast<u32>(depth_pitch/4), static_cast<u32>(stencil_pitch),
+            static_cast<u32>(requested.begin-physical_surface.begin),
+            static_cast<u32>(requested.end-physical_surface.begin)};
+        if (!EncodeFusedDepth(command, fused, requested_bytes, depth, stencil, errors, layout))
+            throw std::runtime_error("Could not encode fused joined depth export");
+        return requested_bytes;
+    }
+    const DepthLayout layout{static_cast<u32>(width), static_cast<u32>(rows), 0,
+        static_cast<u32>(y), static_cast<u32>(depth_pitch/4), static_cast<u32>(depth_pitch/4),
+        static_cast<u32>(stencil_pitch), 24};
+    if (!PackDepthRows(command, depth_pack, canonical, depth, stencil, errors, layout) ||
+        !EncodePicaTiledExport(command, tiled_pack, canonical, requested_bytes,
+            width, height, depth_pitch, physical_surface, requested, 4))
+        throw std::runtime_error("Could not encode queued checked depth export");
+    return requested_bytes;
 }
 
 MetalGuestExport MakePicaTiledVisibilityExporter(

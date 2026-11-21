@@ -3,6 +3,11 @@
 
 #include <array>
 #include <limits>
+#include <cstdlib>
+#include <string_view>
+#include <memory>
+#include <Foundation/Foundation.h>
+#include "common/logging/log.h"
 #include "common/common_types.h"
 
 namespace Cara {
@@ -12,6 +17,36 @@ struct DepthLayout {
     u32 width, height, x, y, packed_stride, depth_stride, stencil_stride, depth_bits;
 };
 static_assert(sizeof(DepthLayout) == 32);
+struct FusedImportLayout {
+    u32 width, height, depth_stride, stencil_stride, depth_bits;
+};
+static_assert(sizeof(FusedImportLayout) == 20);
+
+id<MTLComputePipelineState> FusedDepthImport(id<MTLDevice> device) {
+    static const bool enabled = [] {
+        const auto* flag = std::getenv("CARA_METAL_FUSE_CHECKED_DEPTH_IMPORT");
+        return flag && std::string_view(flag) == "1";
+    }();
+    if (!enabled)
+        return nil;
+    struct Cache {
+        id<MTLDevice> device = nil;
+        id<MTLComputePipelineState> pipeline = nil;
+    };
+    static thread_local std::unique_ptr<Cache> cache;
+    if (!cache || cache->device != device) {
+        cache = std::make_unique<Cache>();
+        cache->device = device;
+        const auto url = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
+        const auto library = url ? [device newLibraryWithURL:url error:nullptr] : nil;
+        const auto function = [library newFunctionWithName:@"detile_unpack_depth_import"];
+        cache->pipeline = function ? [device newComputePipelineStateWithFunction:function error:nullptr] : nil;
+        if (cache->pipeline.maxTotalThreadsPerThreadgroup >= 64)
+            LOG_INFO(Render_OpenGL, "Metal fused checked depth import ready");
+    }
+    return cache->pipeline.maxTotalThreadsPerThreadgroup >= 64 ? cache->pipeline : nil;
+}
+
 
 void DispatchImport(id<MTLComputeCommandEncoder> encoder, unsigned width, unsigned height) {
     [encoder dispatchThreadgroups:MTLSizeMake((width + 7) / 8, (height + 7) / 8, 1)
@@ -43,45 +78,64 @@ bool EncodeDepthImport(id<MTLCommandBuffer> command, const PicaMetalDepthImportP
         stencil_pitch * height > std::numeric_limits<u32>::max())
         return false;
 
-    const auto packed = [device newBufferWithLength:NSUInteger{width} * height * 4
-                                            options:MTLResourceStorageModePrivate];
+    const auto fused = !patch && ((width | height) & 7u) == 0 ? FusedDepthImport(device) : nil;
     const auto depth = [device newBufferWithLength:depth_pitch * height
                                            options:MTLResourceStorageModePrivate];
     const auto stencil = [device newBufferWithLength:stencil_pitch * height
                                              options:MTLResourceStorageModePrivate];
-    if (!packed || !depth || !stencil)
+    if (!depth || !stencil)
         return false;
 
-    const auto detile = [command computeCommandEncoder];
-    if (!detile)
-        return false;
-    const std::array<u32, 2> dimensions{width, height};
-    [detile setComputePipelineState:detile_pipeline];
-    [detile setBuffer:source offset:offset atIndex:0];
-    [detile setBuffer:packed offset:0 atIndex:1];
-    if (patch) {
-        const std::array<u32, 6> rect{static_cast<u32>(texture.width), static_cast<u32>(texture.height),
-                                     patch->x, patch->y, patch->width, patch->height};
-        [detile setBytes:rect.data() length:sizeof(rect) atIndex:2];
+    if (fused) {
+        const auto encoder = [command computeCommandEncoder];
+        if (!encoder)
+            return false;
+        const FusedImportLayout layout{width, height, static_cast<u32>(depth_pitch / 4),
+                                       static_cast<u32>(stencil_pitch), 24};
+        [encoder setComputePipelineState:fused];
+        [encoder setBuffer:source offset:offset atIndex:0];
+        [encoder setBuffer:depth offset:0 atIndex:1];
+        [encoder setBuffer:stencil offset:0 atIndex:2];
+        [encoder setBuffer:errors offset:0 atIndex:3];
+        [encoder setBytes:&layout length:sizeof(layout) atIndex:4];
+        DispatchImport(encoder, width, height);
+        [encoder endEncoding];
     } else {
-        [detile setBytes:dimensions.data() length:sizeof(dimensions) atIndex:2];
-    }
-    DispatchImport(detile, width, height);
-    [detile endEncoding];
+        const auto packed = [device newBufferWithLength:NSUInteger{width} * height * 4
+                                                options:MTLResourceStorageModePrivate];
+        if (!packed)
+            return false;
+        const auto detile = [command computeCommandEncoder];
+        if (!detile)
+            return false;
+        const std::array<u32, 2> dimensions{width, height};
+        [detile setComputePipelineState:detile_pipeline];
+        [detile setBuffer:source offset:offset atIndex:0];
+        [detile setBuffer:packed offset:0 atIndex:1];
+        if (patch) {
+            const std::array<u32, 6> rect{static_cast<u32>(texture.width), static_cast<u32>(texture.height),
+                                         patch->x, patch->y, patch->width, patch->height};
+            [detile setBytes:rect.data() length:sizeof(rect) atIndex:2];
+        } else {
+            [detile setBytes:dimensions.data() length:sizeof(dimensions) atIndex:2];
+        }
+        DispatchImport(detile, width, height);
+        [detile endEncoding];
 
-    const auto unpack = [command computeCommandEncoder];
-    if (!unpack)
-        return false;
-    const DepthLayout conversion{width, height, 0, 0, width, static_cast<u32>(depth_pitch / 4),
-                                 static_cast<u32>(stencil_pitch), 24};
-    [unpack setComputePipelineState:pipelines.unpack_depth];
-    [unpack setBuffer:packed offset:0 atIndex:0];
-    [unpack setBuffer:depth offset:0 atIndex:1];
-    [unpack setBuffer:stencil offset:0 atIndex:2];
-    [unpack setBuffer:errors offset:0 atIndex:3];
-    [unpack setBytes:&conversion length:sizeof(conversion) atIndex:4];
-    DispatchImport(unpack, width, height);
-    [unpack endEncoding];
+        const auto unpack = [command computeCommandEncoder];
+        if (!unpack)
+            return false;
+        const DepthLayout conversion{width, height, 0, 0, width, static_cast<u32>(depth_pitch / 4),
+                                     static_cast<u32>(stencil_pitch), 24};
+        [unpack setComputePipelineState:pipelines.unpack_depth];
+        [unpack setBuffer:packed offset:0 atIndex:0];
+        [unpack setBuffer:depth offset:0 atIndex:1];
+        [unpack setBuffer:stencil offset:0 atIndex:2];
+        [unpack setBuffer:errors offset:0 atIndex:3];
+        [unpack setBytes:&conversion length:sizeof(conversion) atIndex:4];
+        DispatchImport(unpack, width, height);
+        [unpack endEncoding];
+    }
 
     const auto blit = [command blitCommandEncoder];
     if (!blit)

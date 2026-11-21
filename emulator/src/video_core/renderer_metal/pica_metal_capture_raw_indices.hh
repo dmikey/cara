@@ -12,14 +12,17 @@
 #include "video_core/renderer_opengl/gl_vertex_input_layout.h"
 #include "video_core/renderer_opengl/gl_vertex_upload_ranges.h"
 #include "video_core/vertex_loader.h"
+#include "video_core/video_core.h"
 
 namespace Cara {
+inline thread_local u64 raw_read_plan_hits = 0;
+inline thread_local u64 raw_read_plan_misses = 0;
 
 // Only the original guest index bytes are staged. The Metal vertex function
 // expands each triangle slot and rebases its index at the existing fetch.
 inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
     const Pica::State& state, bool indexed, u16 selected_inputs,
-    const MetalGuestAuthority::GuestReader& read) {
+    const MetalGuestAuthority::GuestReader& read, PicaMetalPackedInputs* staging = nullptr) {
     const auto& regs = state.regs;
     const auto& pipe = regs.pipeline;
     using Topology = Pica::PipelineRegs::TriangleTopology;
@@ -38,10 +41,22 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
     const auto index_bytes = std::size_t{count} * width;
     const auto index_words = MetalRawIndexHeader + (index_bytes + 1) / 2;
     PicaMetalPackedInputs result;
+    if (staging) {
+        result.vertices.swap(staging->vertices);
+        result.indices.swap(staging->indices);
+    }
     result.vertex_count = expanded ? (count - 2) * 3 : active_count;
     result.indices.resize(((index_words + MetalRawIndexRow - 1) / MetalRawIndexRow) *
                           MetalRawIndexRow);
     result.indices[0] = static_cast<u16>(topology) | static_cast<u16>(width << 2);
+    if (staging) {
+        result.indices[1] = 0;
+        // The guest read overwrites exactly index_bytes. The remainder is
+        // part of the uploaded image and must match the original zero fill.
+        auto* payload = reinterpret_cast<u8*>(result.indices.data() + MetalRawIndexHeader);
+        auto* end = reinterpret_cast<u8*>(result.indices.data() + result.indices.size());
+        std::fill(payload + index_bytes, end, u8{});
+    }
 
     u32 first = pipe.vertex_offset;
     u32 span = active_count - 1;
@@ -143,68 +158,145 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
     if (unique == span + 1 && unique < result.vertex_count)
         result.unique_dense_vertices = static_cast<u32>(unique);
 
-    // Match the existing packed input layout and the original authoritative
-    // guest-read sequence. Only index staging and topology expansion differ.
-    constexpr std::size_t max_vertex_bytes = 8 * 1024 * 1024;
-    const OpenGL::IOSVertexInputLayout layout(regs.vs, selected_inputs);
-    const Pica::VertexLoader loader(pipe);
-    OpenGL::BoundedVertexUploadRanges<16> ranges;
-    std::array<u64, 16> addresses{};
-    std::array<bool, 16> loaded{};
-    std::array<std::array<float, 4>, 16> constants{};
-    for (unsigned reg = 0; reg < layout.offsets.size(); ++reg) {
-        const auto offset = layout.offsets[reg];
-        if (offset < 0)
-            continue;
-        const auto attr = layout.source_attributes[offset];
-        const auto desc = loader.GetAttributeLayout(attr);
-        if (!desc.elements) {
-            if (desc.is_default) {
-                const auto& value = state.input_default_attributes.attr[attr];
-                constants[reg] = {value.x.ToFloat32(), value.y.ToFloat32(), value.z.ToFloat32(),
-                                  value.w.ToFloat32()};
+    // Plans describe registers and address ranges only. Payload and default
+    // attributes are always read from the current guest draw.
+    using Constants = std::array<std::array<float, 4>, 16>;
+    struct ReadPlan {
+        OpenGL::BoundedVertexUploadRanges<16> ranges{};
+        decltype(result.layout) layout{};
+        std::array<int, 16> constant_attributes{};
+        std::size_t buffer_bytes = sizeof(Constants);
+    };
+    const auto prepare = [&]() -> std::optional<ReadPlan> {
+        constexpr std::size_t max_vertex_bytes = 8 * 1024 * 1024;
+        const OpenGL::IOSVertexInputLayout layout(regs.vs, selected_inputs);
+        const Pica::VertexLoader loader(pipe);
+        ReadPlan plan;
+        plan.constant_attributes.fill(-1);
+        std::array<u64, 16> addresses{};
+        std::array<bool, 16> loaded{};
+        for (unsigned reg = 0; reg < layout.offsets.size(); ++reg) {
+            const auto offset = layout.offsets[reg];
+            if (offset < 0)
+                continue;
+            const auto attr = layout.source_attributes[offset];
+            const auto desc = loader.GetAttributeLayout(attr);
+            if (!desc.elements) {
+                if (desc.is_default)
+                    plan.constant_attributes[reg] = static_cast<int>(attr);
+                plan.layout[reg] = {static_cast<s32>(reg * sizeof(Constants::value_type)), 0, 3, 4};
+                continue;
             }
-            result.layout[reg] = {static_cast<s32>(reg * sizeof(constants[reg])), 0, 3, 4};
-            continue;
+            const auto format = static_cast<unsigned>(desc.format);
+            if (desc.elements > 4 || format > 3)
+                return std::nullopt;
+            const unsigned bytes = format == 3 ? 4 : format == 2 ? 2 : 1;
+            const auto start = base + desc.offset + u64{first} * desc.stride;
+            const auto end = start + u64{span} * desc.stride + bytes * desc.elements;
+            if (end > std::numeric_limits<PAddr>::max() || end - start > max_vertex_bytes ||
+                !plan.ranges.Add(start, end))
+                return std::nullopt;
+            addresses[reg] = start;
+            loaded[reg] = true;
+            plan.layout[reg] = {0, static_cast<s32>(desc.stride), static_cast<s32>(format),
+                                static_cast<s32>(desc.elements)};
         }
-        const auto format = static_cast<unsigned>(desc.format);
-        if (desc.elements > 4 || format > 3)
+        plan.ranges.SortAndMerge();
+        for (auto& range : plan.ranges) {
+            range.destination = (plan.buffer_bytes + 3) & ~std::size_t{3};
+            plan.buffer_bytes = range.destination + (range.end - range.begin);
+            for (unsigned reg = 0; reg < loaded.size(); ++reg) {
+                if (loaded[reg] && addresses[reg] >= range.begin && addresses[reg] < range.end)
+                    plan.layout[reg][0] = static_cast<s32>(range.destination + addresses[reg] - range.begin);
+            }
+        }
+        if (plan.buffer_bytes > max_vertex_bytes ||
+            plan.buffer_bytes > sizeof(Constants) + unique * layout.stride * sizeof(Constants::value_type))
             return std::nullopt;
-        const unsigned bytes = format == 3 ? 4 : format == 2 ? 2 : 1;
-        const auto start = base + desc.offset + u64{first} * desc.stride;
-        const auto end = start + u64{span} * desc.stride + bytes * desc.elements;
-        if (end > std::numeric_limits<PAddr>::max() || end - start > max_vertex_bytes ||
-            !ranges.Add(start, end))
-            return std::nullopt;
-
-        addresses[reg] = start;
-        loaded[reg] = true;
-        result.layout[reg] = {0, static_cast<s32>(desc.stride), static_cast<s32>(format),
-                              static_cast<s32>(desc.elements)};
+        return plan;
+    };
+    struct Key {
+        std::array<std::byte, sizeof(pipe.vertex_attributes)> attributes;
+        u32 map_low, map_high, max_attribute, first, span;
+        u16 mask;
+        std::size_t unique;
+        bool operator==(const Key&) const = default;
+    };
+    struct Entry { Key key; ReadPlan plan; };
+    static const bool reuse_plan = [] {
+        const auto* option = std::getenv("CARA_METAL_REUSE_VERTEX_READ_PLAN");
+        return option && std::string_view(option) == "1";
+    }();
+    std::optional<ReadPlan> fresh;
+    const ReadPlan* plan = nullptr;
+    if (reuse_plan) {
+        thread_local std::array<std::optional<Entry>, 16> entries;
+        Key key{};
+        static_assert(sizeof(pipe.vertex_attributes) == 39 * sizeof(u32));
+        std::memcpy(key.attributes.data(), &pipe.vertex_attributes, key.attributes.size());
+        key.map_low = regs.vs.input_attribute_to_register_map_low;
+        key.map_high = regs.vs.input_attribute_to_register_map_high;
+        key.max_attribute = regs.vs.max_input_attribute_index;
+        key.first = first;
+        key.span = span;
+        key.mask = selected_inputs;
+        key.unique = unique;
+        const auto hash = (base >> 4) ^ (base >> 10) ^ first ^ (span * 17) ^ key.map_low;
+        auto& entry = entries[hash % entries.size()];
+        const auto window = VideoCore::GetCurrentFrame();
+        const bool count = window >= 720 && window < 840;
+        if (entry && entry->key == key) {
+            if (count)
+                ++raw_read_plan_hits;
+            plan = &entry->plan;
+        } else {
+            if (count)
+                ++raw_read_plan_misses;
+            fresh = prepare();
+            if (fresh) {
+                // Invalid component counts must still report on each draw.
+                const auto& loaders = pipe.vertex_attributes.attribute_loaders;
+                if (std::all_of(std::begin(loaders), std::end(loaders),
+                    [](const auto& loader) { return loader.component_count <= 12; })) {
+                    entry.emplace(Entry{key, *fresh});
+                }
+                plan = &*fresh;
+            }
+        }
+    } else {
+        fresh = prepare();
+        if (fresh)
+            plan = &*fresh;
     }
-    ranges.SortAndMerge();
-    std::size_t buffer_bytes = sizeof(constants);
-    for (auto& range : ranges) {
-        range.destination = (buffer_bytes + 3) & ~std::size_t{3};
-        buffer_bytes = range.destination + (range.end - range.begin);
-    }
-    if (buffer_bytes > max_vertex_bytes ||
-        buffer_bytes > sizeof(constants) + unique * layout.stride * sizeof(constants[0]))
+    if (!plan)
         return std::nullopt;
-    constexpr auto row_bytes = OpenGL::IOS_VERTEX_INPUT_WIDTH * sizeof(constants[0]);
-    result.vertices.resize(((buffer_bytes + row_bytes - 1) / row_bytes) * row_bytes);
+    // Hold a local value before callbacks can enter the renderer again.
+    const ReadPlan selected = *plan;
+    Constants constants{};
+    for (unsigned reg = 0; reg < constants.size(); ++reg) {
+        const int attr = selected.constant_attributes[reg];
+        if (attr >= 0) {
+            const auto& value = state.input_default_attributes.attr[attr];
+            constants[reg] = {value.x.ToFloat32(), value.y.ToFloat32(),
+                              value.z.ToFloat32(), value.w.ToFloat32()};
+        }
+    }
+    result.layout = selected.layout;
+    constexpr auto row_bytes = OpenGL::IOS_VERTEX_INPUT_WIDTH * sizeof(Constants::value_type);
+    result.vertices.resize(((selected.buffer_bytes + row_bytes - 1) / row_bytes) * row_bytes);
     std::memcpy(result.vertices.data(), constants.data(), sizeof(constants));
-    for (const auto& range : ranges) {
+    std::size_t written = sizeof(constants);
+    for (const auto& range : selected.ranges) {
+        if (staging)
+            std::fill(result.vertices.begin() + written,
+                      result.vertices.begin() + range.destination, u8{});
         if (!read(static_cast<PAddr>(range.begin),
                   {result.vertices.data() + range.destination, range.end - range.begin}))
             return std::nullopt;
-        for (unsigned reg = 0; reg < loaded.size(); ++reg) {
-            if (loaded[reg] && addresses[reg] >= range.begin && addresses[reg] < range.end) {
-                result.layout[reg][0] =
-                    static_cast<s32>(range.destination + addresses[reg] - range.begin);
-            }
-        }
+        written = range.destination + (range.end - range.begin);
     }
+    if (staging)
+        std::fill(result.vertices.begin() + written, result.vertices.end(), u8{});
     return result;
 }
 

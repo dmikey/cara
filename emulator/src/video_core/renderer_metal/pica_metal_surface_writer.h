@@ -112,15 +112,18 @@ public:
                first >= begin && first < last && last <= end;
     }
 
-    bool ExportGuestBytes(PAddr first, PAddr last, std::span<u8> output) const override {
-        if (!Covers(first, last) || output.size() != last - first ||
-            (predecessors && !predecessors->Wait()))
-            return false;
+    const MetalGuestExport& Exporter() const { return exporter; }
 
+    bool ValidateProducerCompletion() const {
+        if (!command || (predecessors && !predecessors->Wait()))
+            return false;
         [command waitUntilCompleted];
-        if (command.status != MTLCommandBufferStatusCompleted || command.error)
-            return false;
+        return command.status == MTLCommandBufferStatusCompleted && !command.error;
+    }
 
+    bool ExportGuestBytes(PAddr first, PAddr last, std::span<u8> output) const override {
+        if (!Covers(first, last) || output.size() != last - first || !ValidateProducerCompletion())
+            return false;
         return exporter(command.commandQueue, resource, generation, first, last, output);
     }
 
