@@ -48,7 +48,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "cara/adaptive_clock.h"
 #include "cara/frame_pacer.h"
 #include "cara/presentation_guard.h"
-#include "ios/play_profile.h"
+#include "cara/play_profile.h"
 #include "ios/session_presentation.h"
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
 #include "ios/metal_lcd_view.h"

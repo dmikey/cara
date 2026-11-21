@@ -1,6 +1,8 @@
 #include <SDL.h>
 #include "cara/native_mac/native_command_policy.h"
 #include "cara/native_mac/game_menu.h"
+#include "cara/adaptive_clock.h"
+#include "cara/native_mac/mac_preferences.h"
 #include "cara/native_mac/mac_preferences_ui.h"
 #include "cara/native_mac/controller_play_test.h"
 #ifdef CARA_MAC_CPU_JIT
@@ -11,6 +13,7 @@
 #include "video_core/renderer_opengl/gl_command_queue.h"
 #include "cara/native_mac/diagnostic_clock.h"
 #include <atomic>
+#include <chrono>
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/video_core.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
@@ -30,6 +33,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <SDL_video.h>
@@ -88,14 +92,25 @@ static void NativeCPUDefaults() {
             setenv(item.first, item.second, 0);
     }
 }
-static void WriteNativeManifest(const std::string& directory) {
+static void WriteNativeManifest(const std::string& directory, const EmuWindow_SDL2& window,
+                                bool diagnostics) {
     auto& system=Core::System::GetInstance();
     const auto& v = Settings::values;
     std::ofstream out(directory + "native-settings.json");
     out << std::boolalpha;
     out << "{\"guest_cpu_percent\":" << Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())
         << ",\"maximum_speed_percent\":" << v.frame_limit << ",\"diagnostic_clock\":";
-    Cara::NativeDiagnosticClock::WriteJSON(out,system.CoreTiming(),system.GetNumCores());
+    if (diagnostics)
+        Cara::NativeDiagnosticClock::WriteJSON(out,system.CoreTiming(),system.GetNumCores());
+    else
+        out << "null";
+    const auto& layout = window.GetFramebufferLayout();
+    out << ",\"presentation\":{\"requested_integer_scale\":" << window.GetIntegerOutputScale()
+        << ",\"drawable_width\":" << layout.width << ",\"drawable_height\":" << layout.height
+        << ",\"top_screen_width\":" << layout.top_screen.GetWidth()
+        << ",\"top_screen_height\":" << layout.top_screen.GetHeight()
+        << ",\"bottom_screen_width\":" << layout.bottom_screen.GetWidth()
+        << ",\"bottom_screen_height\":" << layout.bottom_screen.GetHeight() << '}';
     out << ",\"use_cpu_jit\":" << v.use_cpu_jit;
     out << ",\"use_shader_jit\":" << v.use_shader_jit;
     out << ",\"use_gles\":" << v.use_gles;
@@ -258,6 +273,19 @@ static int RunNativeMain(int argc, char** argv) {
         (void)Cara::NativeDiagnosticClock::Get(); // validate explicit request before SDL/window/core load
         Common::DetachedTasks tasks;
         Config config;
+        const bool diagnostics =
+            NativeMac::DeveloperCommands::One(std::getenv("CARA_NATIVE_DIAGNOSTICS"));
+        Cara::MacPreferences::PlaySettings play_settings;
+        if (!diagnostics) {
+            std::string ini_text;
+            FileUtil::ReadFileToString(false,
+                FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir) + "sdl2-config.ini", ini_text);
+            play_settings = Cara::MacPreferences::PlaySettings::Read(
+                Cara::MacPreferences::Ini(std::move(ini_text)));
+            const auto policy = play_settings.Policy();
+            Settings::values.use_frame_limit = policy.limit_speed;
+            Settings::values.frame_limit = policy.maximum_speed;
+        }
         Log::Filter filter(Log::Level::Info);
         filter.ParseFilterString(Settings::values.log_filter);
         Log::SetGlobalFilter(filter);
@@ -274,8 +302,11 @@ static int RunNativeMain(int argc, char** argv) {
         Network::InstallRelaySession(relay);
         SCOPE_EXIT({ if (relay) relay->Disconnect(); Network::InstallRelaySession(nullptr); });
         EmuWindow_SDL2 window(fullscreen);
-        if (!NativeMac::DeveloperCommands::One(std::getenv("CARA_NATIVE_DIAGNOSTICS")))
+        if (!diagnostics) {
+            window.SetPresentationOptions(static_cast<unsigned>(play_settings.display_scale),
+                                          play_settings.SkipHostFrames());
             Cara::NativeGameMenu::Install();
+        }
         window.MakeCurrent();
         const bool native_gl_audit=std::getenv("CARA_NATIVE_GL_ERROR_AUDIT") &&
             std::string(std::getenv("CARA_NATIVE_GL_ERROR_AUDIT"))=="1" &&
@@ -429,8 +460,22 @@ static int RunNativeMain(int argc, char** argv) {
             finish_query_census();close_core();
             return passed && report && !shutdown_failed ? 0 : 4;
         }
-        const bool diagnostics = std::getenv("CARA_NATIVE_DIAGNOSTICS") &&
-                                 std::string(std::getenv("CARA_NATIVE_DIAGNOSTICS")) == "1";
+        Cara::AdaptiveClock adaptive_clock;
+        u32 adaptive_frame = VideoCore::GetCurrentFrame();
+        std::optional<u32> discard_sample_at;
+        Cara::MacUI::TakePreferencesClosed();
+        const auto apply_guest_policy = [&] {
+            const auto policy = play_settings.Policy();
+            if (adaptive_clock.Enabled() != policy.adaptive)
+                adaptive_clock.SetEnabled(policy.adaptive);
+            adaptive_clock.ResetSamples();
+            adaptive_frame = VideoCore::GetCurrentFrame();
+            discard_sample_at.reset();
+            const auto clock = policy.adaptive ? adaptive_clock.Percent() : policy.guest_clock;
+            system.CoreTiming().UpdateClockSpeed(clock);
+            LOG_INFO(Frontend, "Session guest CPU policy: {}% ({})", clock,
+                     policy.adaptive ? "adaptive" : "fixed");
+        };
         const auto record_state = [&](const char* operation, unsigned slot = 1) {
             std::ofstream state(directory + "native-state-status.json");
             state << "{\"operation\":\"" << operation
@@ -439,7 +484,10 @@ static int RunNativeMain(int argc, char** argv) {
                   << "\",\"ticks\":" << system.CoreTiming().GetTicks()
                   << ",\"guest_cpu_percent\":" << Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())
                   << ",\"diagnostic_clock\":";
-            Cara::NativeDiagnosticClock::WriteJSON(state,system.CoreTiming(),system.GetNumCores());
+            if (diagnostics)
+                Cara::NativeDiagnosticClock::WriteJSON(state,system.CoreTiming(),system.GetNumCores());
+            else
+                state << "null";
             state << "}\n";
         };
         if (const char* load = std::getenv("CARA_NATIVE_LOAD_SLOT");
@@ -449,9 +497,11 @@ static int RunNativeMain(int argc, char** argv) {
             Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
                 Cara::NativeScriptOnlyInput::Enabled(),"startup-state-load");
             record_state("load");
-        } else {
+        } else if (diagnostics) {
             Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
                 Cara::NativeScriptOnlyInput::Enabled(),"startup-normal-load");
+        } else {
+            apply_guest_policy();
         }
         const char* copy_trace_flag = std::getenv("CARA_TEXTURE_COPY_TRACE");
         const bool copy_trace_requested = diagnostics && copy_trace_flag &&
@@ -511,12 +561,11 @@ static int RunNativeMain(int argc, char** argv) {
             throw std::runtime_error("Relay connection could not start");
         auto relay_state = Network::RelayClient::State::Idle;
         u64 relay_status_frame = ~u64{0};
-        if (const char* diagnostic = std::getenv("CARA_NATIVE_DIAGNOSTICS");
-            diagnostic && std::string(diagnostic) == "1")
+        if (diagnostics)
             Common::FrameTiming::counters.enabled =
                 !std::getenv("CARA_NATIVE_TIMING_COUNTERS") ||
                 std::string(std::getenv("CARA_NATIVE_TIMING_COUNTERS")) != "0";
-        WriteNativeManifest(directory);
+        WriteNativeManifest(directory, window, diagnostics);
         WriteNativeProfileSnapshot(directory + "native-startup", VideoCore::GetCurrentFrame());
         std::unique_ptr<NativeMac::CPUCategoryProfiler> category_profile;
         if (NativeMac::CategoryFlag("CARA_NATIVE_CPU_CATEGORY_PROFILE"))
@@ -553,6 +602,44 @@ static int RunNativeMain(int argc, char** argv) {
                 flush_gpu_trace(true);
                 return 4;
             }
+            if (!diagnostics) {
+                if (const auto saved = Cara::MacUI::TakeSavedPlaySettings();
+                    saved && *saved != play_settings) {
+                    const auto previous_policy = play_settings.Policy();
+                    const auto policy = saved->Policy();
+                    play_settings = *saved;
+                    Settings::values.use_frame_limit = policy.limit_speed;
+                    Settings::values.frame_limit = policy.maximum_speed;
+                    window.SetPresentationOptions(static_cast<unsigned>(play_settings.display_scale),
+                                                  play_settings.SkipHostFrames());
+                    if (previous_policy.adaptive != policy.adaptive ||
+                        previous_policy.guest_clock != policy.guest_clock) {
+                        apply_guest_policy();
+                    }
+                }
+                const auto frame = VideoCore::GetCurrentFrame();
+                if (Cara::MacUI::TakePreferencesClosed()) {
+                    // PollEvents opens Settings after frame timing ends. The next sample
+                    // includes the modal pause, which should never lower the guest clock.
+                    discard_sample_at = frame + 1;
+                }
+                if (adaptive_clock.Enabled() && frame != adaptive_frame) {
+                    if (frame == discard_sample_at) {
+                        discard_sample_at.reset();
+                    } else if (frame == adaptive_frame + 1) {
+                        using Seconds = std::chrono::duration<double>;
+                        const auto timing = system.perf_stats->GetLastFrameTiming();
+                        const auto previous = adaptive_clock.Percent();
+                        const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
+                                                                      Seconds(timing.elapsed).count());
+                        if (previous != next)
+                            system.CoreTiming().UpdateClockSpeed(next);
+                    } else {
+                        adaptive_clock.ResetSamples();
+                    }
+                    adaptive_frame = frame;
+                }
+            }
             // This explicit attribution mode samples only after RunLoop and all
             // nested timing scopes have returned. It never injects input.
             if (category_profile && category_profile->Observe(VideoCore::GetCurrentFrame(),
@@ -580,8 +667,12 @@ static int RunNativeMain(int argc, char** argv) {
                     flush_copy_trace(true);
                     flush_gpu_trace(true);
                     system.LoadState(state_slot);
-                    Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
-                        Cara::NativeScriptOnlyInput::Enabled(),"runtime-state-load");
+                    if (diagnostics) {
+                        Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
+                            Cara::NativeScriptOnlyInput::Enabled(),"runtime-state-load");
+                    } else {
+                        apply_guest_policy();
+                    }
                     record_state("load", state_slot);
                     if (menu_state.action != Cara::NativeGameMenu::StateAction::None) window.StateCompleted(false, state_slot);
                     if (copy_trace_requested)

@@ -32,6 +32,9 @@ struct FramebufferLayout {
  * @return Newly created FramebufferLayout object with default screen regions initialized
  */
 FramebufferLayout DefaultFrameLayout(u32 width, u32 height, bool is_swapped);
+/// Center both screens at a whole number of drawable pixels per guest pixel, bounded by the
+/// preferred scale and drawable size. A zero preference or a sub-native drawable uses Fit.
+FramebufferLayout IntegerFrameLayout(u32 width, u32 height, bool swapped, u32 preferred_scale);
 
 /**
  * Factory method for constructing a FramebufferLayout with only the top or bottom screen

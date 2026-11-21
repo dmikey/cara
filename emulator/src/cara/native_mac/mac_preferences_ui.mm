@@ -1,16 +1,23 @@
 // Copyright 2026 Cara contributors. GPLv2 or later; see license.txt.
 #import <Cocoa/Cocoa.h>
 #include <SDL.h>
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <memory>
+#include <utility>
 #include "cara/native_mac/mac_preferences.h"
 #include "cara/native_mac/mac_preferences_ui.h"
 #include "cara/native_mac/game_menu.h"
 #include "input_common/main.h"
 #include "input_common/keyboard.h"
 namespace {
+using Cara::MacPreferences::DisplayScale;
 using Cara::MacPreferences::Model;
+using Cara::MacPreferences::PlaySettings;
+using Cara::PlayMode;
+std::optional<PlaySettings> saved_play_settings;
+bool preferences_closed = false;
 NSWindow* welcome_window=nil;
 NSWindow* settings_window=nil;
 std::string startup_rom;
@@ -40,11 +47,21 @@ SDL_Scancode Key(NSEvent* e){
 @implementation CaraPreferencesRoot
 -(void)drawRect:(NSRect)rect{[[NSColor windowBackgroundColor]setFill];NSRectFill(rect);[super drawRect:rect];}
 @end
-@interface CaraPreferencesActions:NSObject<NSTableViewDataSource,NSTableViewDelegate,NSWindowDelegate>{
+@interface CaraPreferencesActions:NSObject<NSTableViewDataSource,NSTableViewDelegate,NSWindowDelegate,NSTabViewDelegate>{
 @public std::unique_ptr<Model> model;NSTableView* table;NSPopUpButton* engine;NSTextField* status;NSButton* bind;
+NSTabView* tabs;
+NSButton* tab_buttons[3];
+NSPopUpButton *mode, *scale;
+NSButton *fixedClock, *limitSpeed, *frameSkip, *resetTuning;
+NSSlider *guestClock, *maximumSpeed;
+NSTextField *guestClockValue, *maximumSpeedValue, *modeDescription;
 NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<InputCommon::Polling::DevicePoller>> pollers;
 }
 -(void)change:(id)sender;-(void)save:(id)sender;-(void)cancel:(id)sender;-(void)reset:(id)sender;-(void)tick:(id)sender;
+-(void)updatePlayControls;
+-(void)selectSettingsTab:(NSButton*)sender;
+-(void)changePlayOption:(id)sender;
+-(void)restorePlayTuning:(id)sender;
 -(void)accept:(const std::string&)value;-(void)stopBinding;-(NSEvent*)handleKey:(NSEvent*)event;
 @end
 @implementation CaraPreferencesActions
@@ -82,6 +99,80 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
  (void)sender;SDL_PumpEvents();if(waiting<0)return;
  for(auto& p:pollers){auto value=p->GetNextInput();if(value.Has("engine")){[self accept:value.Serialize()];break;}}
 }
+-(void)updatePlayControls {
+    const auto& play = model->play;
+    const bool performance = play.mode == PlayMode::Performance;
+    [mode selectItemAtIndex:performance ? 1 : 0];
+    fixedClock.state = !performance || play.fixed_guest_clock ? NSControlStateValueOn : NSControlStateValueOff;
+    limitSpeed.state = !performance || play.limit_speed ? NSControlStateValueOn : NSControlStateValueOff;
+    frameSkip.state = play.SkipHostFrames() ? NSControlStateValueOn : NSControlStateValueOff;
+    fixedClock.enabled = limitSpeed.enabled = frameSkip.enabled = resetTuning.enabled = performance;
+    guestClock.enabled = performance && play.fixed_guest_clock;
+    maximumSpeed.enabled = performance && play.limit_speed;
+    guestClock.integerValue = performance ? play.guest_clock_percent : 100;
+    maximumSpeed.integerValue = performance ? play.maximum_speed_percent : 100;
+    guestClock.hidden = !guestClock.enabled;
+    maximumSpeed.hidden = !maximumSpeed.enabled;
+    guestClockValue.stringValue = performance && !play.fixed_guest_clock
+        ? @"Automatic" : [NSString stringWithFormat:@"%ld%%", long(guestClock.integerValue)];
+    maximumSpeedValue.stringValue = performance && !play.limit_speed
+        ? @"Unlimited" : [NSString stringWithFormat:@"%ld%%", long(maximumSpeed.integerValue)];
+    modeDescription.stringValue = performance
+        ? @"Cara adjusts the guest clock under load unless you set a fixed clock."
+        : @"Runs the guest clock and speed limit at 100% with adaptive frame skip off.";
+    [scale selectItemWithTag:static_cast<NSInteger>(play.display_scale)];
+}
+-(void)changePlayOption:(id)sender {
+    auto& play = model->play;
+    if (sender == mode)
+        play.mode = mode.indexOfSelectedItem == 0 ? PlayMode::Accuracy : PlayMode::Performance;
+    else if (sender == fixedClock)
+        play.fixed_guest_clock = fixedClock.state == NSControlStateValueOn;
+    else if (sender == limitSpeed)
+        play.limit_speed = limitSpeed.state == NSControlStateValueOn;
+    else if (sender == frameSkip)
+        play.adaptive_frame_skip = frameSkip.state == NSControlStateValueOn;
+    else if (sender == guestClock)
+        play.guest_clock_percent = 5 * std::lround(guestClock.doubleValue / 5);
+    else if (sender == maximumSpeed)
+        play.maximum_speed_percent = 5 * std::lround(maximumSpeed.doubleValue / 5);
+    else if (sender == scale)
+        play.display_scale = static_cast<DisplayScale>(scale.selectedTag);
+    [self updatePlayControls];
+}
+-(void)restorePlayTuning:(id)sender {
+    (void)sender;
+    auto& play = model->play;
+    const auto modeBefore = play.mode;
+    const auto scaleBefore = play.display_scale;
+    play = PlaySettings{};
+    play.mode = modeBefore;
+    play.display_scale = scaleBefore;
+    [self updatePlayControls];
+}
+-(void)selectSettingsTab:(NSButton*)sender {
+    const auto index = sender.tag;
+    [tabs selectTabViewItemAtIndex:index];
+    // Clicking the active control should leave it selected.
+    sender.state = NSControlStateValueOn;
+}
+-(void)tabView:(NSTabView*)tabView didSelectTabViewItem:(NSTabViewItem*)item {
+    const auto selected = [tabView indexOfTabViewItem:item];
+    for (NSInteger index = 0; index < tabView.numberOfTabViewItems; ++index) {
+        auto* control = tab_buttons[index];
+        const bool active = index == selected;
+        control.state = active ? NSControlStateValueOn : NSControlStateValueOff;
+        const auto size = [NSFont systemFontSize];
+        control.font = active ? [NSFont boldSystemFontOfSize:size] : [NSFont systemFontOfSize:size];
+    }
+}
+-(void)tabView:(NSTabView*)tabView willSelectTabViewItem:(NSTabViewItem*)item {
+    (void)tabView;
+    if (![item.label isEqualToString:@"Controls"] && waiting >= 0) {
+        [self stopBinding];
+        status.stringValue = @"Binding cancelled.";
+    }
+}
 -(void)save:(id)sender{
  (void)sender;[self stopBinding];try{
   const auto path=ConfigPath();if(Read(path)!=model->original)throw std::runtime_error("Settings changed elsewhere. Close and reopen Settings to reload them.");
@@ -90,34 +181,109 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
   std::filesystem::create_directories(path.parent_path());NSError* error=nil;
   NSData* data=[NSData dataWithBytes:text.data() length:text.size()];
   if(![data writeToFile:Text(path.string()) options:NSDataWritingAtomic error:&error])throw std::runtime_error(String(error.localizedDescription));
-  model->original=text;Settings::ApplyInputProfile(model->Controls(Settings::values.current_input_profile));[NSApp stopModalWithCode:NSModalResponseOK];
+  model->original=text;Settings::ApplyInputProfile(model->Controls(Settings::values.current_input_profile));
+  saved_play_settings=model->play;[NSApp stopModalWithCode:NSModalResponseOK];
  }catch(const std::exception& e){Alert(@"Could not save settings",Text(e.what()));}
 }
 -(void)cancel:(id)sender{(void)sender;[self stopBinding];[NSApp abortModal];}
 -(BOOL)windowShouldClose:(NSWindow*)window{(void)window;[self cancel:nil];return NO;}
--(void)reset:(id)sender{(void)sender;[self stopBinding];const auto original=model->original;const auto backend=model->backend;model=std::make_unique<Model>();model->original=original;model->backend=backend;[table reloadData];status.stringValue=@"Default bindings restored. Save to keep them.";}
+-(void)reset:(id)sender{(void)sender;[self stopBinding];const auto original=model->original;const auto backend=model->backend;const auto play=model->play;model=std::make_unique<Model>();model->original=original;model->backend=backend;model->play=play;[table reloadData];status.stringValue=@"Default bindings restored. Save to keep them.";}
 @end
 namespace {
+NSView* PreferencesTab(NSTabView* tabs, NSString* title) {
+    auto* item = [[[NSTabViewItem alloc] initWithIdentifier:title] autorelease];
+    item.label = title;
+    item.view = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, 560, 321)] autorelease];
+    [tabs addTabViewItem:item];
+    return item.view;
+}
+NSButton* PlayCheckbox(NSString* title, NSRect frame, CaraPreferencesActions* actions) {
+    auto* button = [NSButton checkboxWithTitle:title target:actions action:@selector(changePlayOption:)];
+    button.frame = frame;
+    return button;
+}
+NSSlider* PlaySlider(NSString* title, CGFloat y, double minimum, CaraPreferencesActions* actions) {
+    auto* slider = [NSSlider sliderWithValue:100 minValue:minimum maxValue:200
+                                      target:actions action:@selector(changePlayOption:)];
+    slider.frame = NSMakeRect(235, y, 242, 22);
+    slider.continuous = YES;
+    slider.numberOfTickMarks = static_cast<NSInteger>((200 - minimum) / 5) + 1;
+    slider.allowsTickMarkValuesOnly = YES;
+    [slider setAccessibilityLabel:title];
+    return slider;
+}
 CaraPreferencesActions* BuildPreferences(){
  auto* a=[[CaraPreferencesActions alloc]init];a->model=std::make_unique<Model>(Read(ConfigPath()));
- auto* window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,720,660) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];window.title=@"Cara Settings";window.releasedWhenClosed=NO;window.delegate=a;settings_window=window;
+ auto* window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,620,439) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];window.title=@"Cara Settings";window.releasedWhenClosed=NO;window.delegate=a;settings_window=window;
  window.contentView=[[[CaraPreferencesRoot alloc]initWithFrame:window.contentView.bounds]autorelease];auto* root=window.contentView;
- [root addSubview:Label(@"Emulation",NSMakeRect(24,614,270,28),22)];
- [root addSubview:Label(@"CPU engine",NSMakeRect(24,574,130,22))];
- a->engine=[[[NSPopUpButton alloc]initWithFrame:NSMakeRect(150,570,360,30) pullsDown:NO]autorelease];
+ a->tabs=[[[NSTabView alloc]initWithFrame:NSMakeRect(18,63,584,326)]autorelease];
+ a->tabs.tabViewType=NSNoTabsBezelBorder;
+ auto* emulation=PreferencesTab(a->tabs,@"Emulation");
+ auto* display=PreferencesTab(a->tabs,@"Display");
+ auto* controls=PreferencesTab(a->tabs,@"Controls");
+ a->tabs.delegate=a;
+ [root addSubview:a->tabs];
+ NSArray<NSString*>* tabTitles = @[@"Emulation", @"Display", @"Controls"];
+ for (NSInteger index = 0; index < tabTitles.count; ++index) {
+     auto* button = Button(tabTitles[index], NSMakeRect(18 + 116 * index, 392, 108, 32),
+                           a, @selector(selectSettingsTab:));
+     [button setButtonType:NSButtonTypePushOnPushOff];
+     button.tag=index;
+     a->tab_buttons[index]=button;
+     [root addSubview:button];
+ }
+ [a tabView:a->tabs didSelectTabViewItem:a->tabs.selectedTabViewItem];
+
+ [emulation addSubview:Label(@"CPU engine",NSMakeRect(15,281,125,22))];
+ a->engine=[[[NSPopUpButton alloc]initWithFrame:NSMakeRect(141,277,340,30) pullsDown:NO]autorelease];
+ [a->engine setAccessibilityLabel:@"CPU engine"];
  for(auto entry:{std::pair{"FastInterp","fastinterp"},std::pair{"JIT (Dynarmic, experimental)","jit"},std::pair{"Interpreter (compatibility)","dyncom"}}){[a->engine addItemWithTitle:Text(entry.first)];a->engine.lastItem.representedObject=Text(entry.second);if(entry.second==std::string("jit"))a->engine.lastItem.enabled=Cara::MacPreferences::JitAvailable();}
  a->engine.menu.autoenablesItems=NO;NSInteger selected=0;for(NSInteger i=0;i<a->engine.numberOfItems;++i)if(String([a->engine itemAtIndex:i].representedObject)==a->model->backend)selected=i;
- [a->engine selectItemAtIndex:selected];[root addSubview:a->engine];
- [root addSubview:Label(Cara::MacPreferences::JitAvailable()?@"FastInterp is the default. JIT is optional; game compatibility can differ.":@"This build has no JIT backend. FastInterp is the default.",NSMakeRect(24,534,672,30))];
- [root addSubview:Label(@"Controls",NSMakeRect(24,491,270,28),22)];
- [root addSubview:Label(@"Select an action, then change its keyboard key, controller button or stick.",NSMakeRect(24,460,672,25))];
- auto* scroll=[[[NSScrollView alloc]initWithFrame:NSMakeRect(24,146,672,310)]autorelease];scroll.hasVerticalScroller=YES;scroll.borderType=NSBezelBorder;
+ [a->engine selectItemAtIndex:selected];[emulation addSubview:a->engine];
+ [emulation addSubview:Label(@"CPU engine changes apply to the next game.",NSMakeRect(15,253,522,20))];
+ [emulation addSubview:Label(@"Play mode",NSMakeRect(15,209,125,22))];
+ a->mode=[[[NSPopUpButton alloc]initWithFrame:NSMakeRect(141,205,194,30) pullsDown:NO]autorelease];
+ [a->mode setAccessibilityLabel:@"Play mode"];
+ [a->mode addItemsWithTitles:@[@"Accuracy",@"Performance"]];
+ a->mode.target=a;a->mode.action=@selector(changePlayOption:);[emulation addSubview:a->mode];
+ a->modeDescription=Label(@"",NSMakeRect(15,172,528,28));
+ [emulation addSubview:a->modeDescription];
+
+ a->fixedClock=PlayCheckbox(@"Fixed Guest Clock",NSMakeRect(15,134,213,22),a);
+ a->guestClock=PlaySlider(@"Guest Clock percentage",134,25,a);
+ a->guestClockValue=Label(@"",NSMakeRect(486,134,78,22));
+ a->limitSpeed=PlayCheckbox(@"Limit game speed",NSMakeRect(15,101,213,22),a);
+ a->maximumSpeed=PlaySlider(@"Game speed limit percentage",101,50,a);
+ a->maximumSpeedValue=Label(@"",NSMakeRect(486,101,78,22));
+ a->frameSkip=PlayCheckbox(@"Adaptive Frame Skip",NSMakeRect(15,67,220,22),a);
+ [emulation addSubview:a->fixedClock];[emulation addSubview:a->guestClock];[emulation addSubview:a->guestClockValue];
+ [emulation addSubview:a->limitSpeed];[emulation addSubview:a->maximumSpeed];[emulation addSubview:a->maximumSpeedValue];
+ [emulation addSubview:a->frameSkip];
+ [emulation addSubview:Label(@"Presents at most one frame per display interval.",NSMakeRect(239,64,301,22))];
+ a->resetTuning=Button(@"Reset performance settings",NSMakeRect(15,16,213,32),a,@selector(restorePlayTuning:));
+ [emulation addSubview:a->resetTuning];
+
+ [display addSubview:Label(@"Scaling",NSMakeRect(15,281,125,22))];
+ a->scale=[[[NSPopUpButton alloc]initWithFrame:NSMakeRect(141,277,194,30) pullsDown:NO]autorelease];
+ [a->scale setAccessibilityLabel:@"Display scaling"];
+ [a->scale addItemsWithTitles:@[@"Native (Fit)",@"Lossless 2×",@"Lossless 4×"]];
+ [a->scale itemAtIndex:0].tag=static_cast<NSInteger>(DisplayScale::Fit);
+ [a->scale itemAtIndex:1].tag=static_cast<NSInteger>(DisplayScale::Lossless2x);
+ [a->scale itemAtIndex:2].tag=static_cast<NSInteger>(DisplayScale::Lossless4x);
+ a->scale.target=a;a->scale.action=@selector(changePlayOption:);[display addSubview:a->scale];
+ [display addSubview:Label(@"Lossless modes center the screens at whole pixel multiples. Smaller windows use the largest whole multiple that fits. Below 1×, the screens fit the window.",NSMakeRect(15,205,528,59))];
+ [a updatePlayControls];
+
+ [controls addSubview:Label(@"Select an action to change its keyboard key, controller button or stick.",NSMakeRect(15,283,528,25))];
+ auto* scroll=[[[NSScrollView alloc]initWithFrame:NSMakeRect(15,81,528,198)]autorelease];scroll.hasVerticalScroller=YES;scroll.borderType=NSBezelBorder;
  a->table=[[[NSTableView alloc]initWithFrame:scroll.bounds]autorelease];a->table.rowHeight=28;a->table.allowsMultipleSelection=NO;a->table.dataSource=a;a->table.delegate=a;
- for(auto col:{std::pair{@"action",@"Action"},std::pair{@"binding",@"Binding"}}){auto* c=[[[NSTableColumn alloc]initWithIdentifier:col.first]autorelease];c.title=col.second;c.width=[col.first isEqualToString:@"action"]?250:390;[a->table addTableColumn:c];}
- scroll.documentView=a->table;[root addSubview:scroll];
- a->bind=Button(@"Change binding…",NSMakeRect(24,105,164,32),a,@selector(change:));a->bind.enabled=NO;[root addSubview:a->bind];[root addSubview:Button(@"Restore default controls",NSMakeRect(198,105,190,32),a,@selector(reset:))];
- a->status=Label(@"Controls apply on Save. CPU engine changes apply to the next game.",NSMakeRect(24,65,672,30));[root addSubview:a->status];
- [root addSubview:Button(@"Cancel",NSMakeRect(496,20,90,32),a,@selector(cancel:))];auto* save=Button(@"Save",NSMakeRect(596,20,100,32),a,@selector(save:));save.keyEquivalent=@"\r";[root addSubview:save];[window center];return a;
+ for(auto col:{std::pair{@"action",@"Action"},std::pair{@"binding",@"Binding"}}){auto* c=[[[NSTableColumn alloc]initWithIdentifier:col.first]autorelease];c.title=col.second;c.width=[col.first isEqualToString:@"action"]?214:292;[a->table addTableColumn:c];}
+ scroll.documentView=a->table;[controls addSubview:scroll];
+ a->bind=Button(@"Change binding…",NSMakeRect(15,44,164,32),a,@selector(change:));a->bind.enabled=NO;[controls addSubview:a->bind];[controls addSubview:Button(@"Restore default controls",NSMakeRect(189,44,190,32),a,@selector(reset:))];
+ a->status=Label(@"Controls apply on Save.",NSMakeRect(15,8,528,30));[controls addSubview:a->status];
+ [root addSubview:Button(@"Cancel",NSMakeRect(402,18,90,32),a,@selector(cancel:))];auto* save=Button(@"Save",NSMakeRect(502,18,100,32),a,@selector(save:));save.keyEquivalent=@"\r";[root addSubview:save];
+ window.initialFirstResponder=a->tab_buttons[0];
+ [window center];return a;
 }
 void CleanupPreferences(CaraPreferencesActions* a){[a stopBinding];if(a->key_monitor)[NSEvent removeMonitor:a->key_monitor];[a->timer invalidate];if(auto* k=InputCommon::GetKeyboard())k->ReleaseAllKeys();SDL_FlushEvents(SDL_KEYDOWN,SDL_KEYUP);[settings_window close];[settings_window release];settings_window=nil;[a release];}
 }
@@ -131,6 +297,8 @@ void CleanupPreferences(CaraPreferencesActions* a){[a stopBinding];if(a->key_mon
 -(BOOL)windowShouldClose:(NSWindow*)window{(void)window;[NSApp abortModal];return NO;}
 @end
 namespace Cara::MacUI {
+std::optional<PlaySettings> TakeSavedPlaySettings(){return std::exchange(saved_play_settings,std::nullopt);}
+bool TakePreferencesClosed(){return std::exchange(preferences_closed,false);}
 bool HandleStartupOpen(){if(!welcome_window)return false;const auto rom=PickGame();if(!rom.empty()){startup_rom=rom;[NSApp stopModalWithCode:NSModalResponseOK];}return true;}
 void ShowPreferences(){
  if(settings_window){[settings_window makeKeyAndOrderFront:nil];return;}
@@ -140,13 +308,14 @@ void ShowPreferences(){
   }];
   a->timer=[NSTimer scheduledTimerWithTimeInterval:.02 target:a selector:@selector(tick:) userInfo:nil repeats:YES];[[NSRunLoop mainRunLoop]addTimer:a->timer forMode:NSModalPanelRunLoopMode];
   [settings_window makeKeyAndOrderFront:nil];[NSApp runModalForWindow:settings_window];CleanupPreferences(a);
+  preferences_closed = true;
  }catch(const std::exception& e){Alert(@"Settings unavailable",Text(e.what()));}}
 }
 std::string Welcome(){
  @autoreleasepool{
  startup_rom.clear();auto* a=[[CaraWelcomeActions alloc]init];welcome_window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,600,400) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];welcome_window.title=@"Cara";welcome_window.releasedWhenClosed=NO;welcome_window.delegate=a;
  welcome_window.contentView=[[[CaraPreferencesRoot alloc]initWithFrame:welcome_window.contentView.bounds]autorelease];auto* root=welcome_window.contentView;auto* icon=[[[NSImageView alloc]initWithFrame:NSMakeRect(248,255,104,104)]autorelease];icon.image=NSApp.applicationIconImage;[root addSubview:icon];
- auto* title=Label(@"Welcome to Cara",NSMakeRect(50,206,500,42),30);title.alignment=NSTextAlignmentCenter;[root addSubview:title];auto* body=Label(@"Choose a Nintendo 3DS game to begin.\nYour controls and CPU engine are in Settings.",NSMakeRect(50,139,500,52),15);body.alignment=NSTextAlignmentCenter;[root addSubview:body];
+ auto* title=Label(@"Welcome to Cara",NSMakeRect(50,206,500,42),30);title.alignment=NSTextAlignmentCenter;[root addSubview:title];auto* body=Label(@"Choose a Nintendo 3DS game to begin.\nAdjust emulation, display and controls in Settings.",NSMakeRect(50,139,500,52),15);body.alignment=NSTextAlignmentCenter;[root addSubview:body];
  auto* open=Button(@"Open Game…",NSMakeRect(187,83,226,40),a,@selector(open:));open.keyEquivalent=@"\r";[root addSubview:open];[root addSubview:Button(@"Settings…",NSMakeRect(235,35,130,32),a,@selector(settings:))];
  NativeGameMenu::Install();[welcome_window center];[welcome_window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];[NSApp runModalForWindow:welcome_window];[welcome_window close];[welcome_window release];welcome_window=nil;[a release];return startup_rom;
  }
@@ -165,6 +334,28 @@ int SelfTest(const std::string& out){
   require(a->engine.numberOfItems==3,"CPU choices missing");
   require([a->engine itemAtIndex:1].enabled==MacPreferences::JitAvailable(),"JIT availability mismatch");
   [a->engine selectItemAtIndex:MacPreferences::JitAvailable()?1:0];
+  require(a->mode.numberOfItems==2&&a->scale.numberOfItems==3,"play and scaling choices missing");
+  snapshot(settings_window,"settings.png");
+  [a->mode selectItemAtIndex:1];[a changePlayOption:a->mode];
+  a->fixedClock.state=NSControlStateValueOn;[a changePlayOption:a->fixedClock];
+  a->guestClock.integerValue=155;[a changePlayOption:a->guestClock];
+  a->limitSpeed.state=NSControlStateValueOn;[a changePlayOption:a->limitSpeed];
+  a->maximumSpeed.integerValue=125;[a changePlayOption:a->maximumSpeed];
+  [a->mode selectItemAtIndex:0];[a changePlayOption:a->mode];
+  require(!a->fixedClock.enabled && a->fixedClock.state==NSControlStateValueOn &&
+          !a->guestClock.enabled && a->guestClock.integerValue==100 && !a->maximumSpeed.enabled &&
+          a->maximumSpeed.integerValue==100 && !a->frameSkip.enabled,"Accuracy controls not locked");
+  [a->mode selectItemAtIndex:1];[a changePlayOption:a->mode];
+  require(a->guestClock.enabled && a->maximumSpeed.enabled && a->guestClock.integerValue==155 &&
+          a->maximumSpeed.integerValue==125,"Performance did not restore saved tuning");
+  [a selectSettingsTab:a->tab_buttons[1]];
+  require(a->tab_buttons[0].state==NSControlStateValueOff &&
+          a->tab_buttons[1].state==NSControlStateValueOn,"Display tab selection failed");
+  [a->scale selectItemWithTag:static_cast<NSInteger>(DisplayScale::Lossless4x)];[a changePlayOption:a->scale];
+  snapshot(settings_window,"display.png");
+  [a selectSettingsTab:a->tab_buttons[2]];
+  require(a->tab_buttons[1].state==NSControlStateValueOff &&
+          a->tab_buttons[2].state==NSControlStateValueOn,"Controls tab selection failed");
   [a->table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];[a change:nil];
   NSEvent* key=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0
       timestamp:0 windowNumber:settings_window.windowNumber context:nil characters:@"q"
@@ -188,7 +379,7 @@ int SelfTest(const std::string& out){
   require(a->model->analogs[0].use_controller,"controller stick capture failed");
   const auto button=a->model->buttons[1].value,analog=a->model->analogs[0].controller;
   SDL_JoystickClose(joystick);SDL_JoystickDetachVirtual(index);SDL_PumpEvents();
-  snapshot(settings_window,"settings.png");
+  snapshot(settings_window,"controls.png");
   const bool cpu_before=Settings::values.use_cpu_jit;
   auto* save_timer=[NSTimer timerWithTimeInterval:.05 repeats:NO block:^(NSTimer*){[a save:nil];}];
   [[NSRunLoop mainRunLoop]addTimer:save_timer forMode:NSModalPanelRunLoopMode];
@@ -198,17 +389,25 @@ int SelfTest(const std::string& out){
   Model saved(Read(ConfigPath()));require(saved.buttons[0].value==MacPreferences::Keyboard(SDL_SCANCODE_Q)
       &&saved.buttons[1].value==button&&saved.analogs[0].controller==analog,"binding persistence failed");
   require(saved.backend==(MacPreferences::JitAvailable()?"jit":"fastinterp"),"backend persistence failed");
+  require(saved.play.guest_clock_percent==155 && saved.play.maximum_speed_percent==125 &&
+          saved.play.display_scale==DisplayScale::Lossless4x,"play settings persistence failed");
+  const auto applied = TakeSavedPlaySettings();
+  require(applied && *applied==saved.play,"Save did not publish the runtime play settings");
   CleanupPreferences(a);
   const auto before_cancel=Read(ConfigPath());a=BuildPreferences();[a reset:nil];
+  require(a->model->play==saved.play,"control reset changed play settings");
+  [a restorePlayTuning:nil];
+  require(a->model->play.guest_clock_percent==100 && a->model->play.maximum_speed_percent==100 &&
+          a->model->play.display_scale==saved.play.display_scale,"reset tuning changed display settings");
   auto* cancel_timer=[NSTimer timerWithTimeInterval:.05 repeats:NO block:^(NSTimer*){[a cancel:nil];}];
   [[NSRunLoop mainRunLoop]addTimer:cancel_timer forMode:NSModalPanelRunLoopMode];
   [NSApp runModalForWindow:settings_window];CleanupPreferences(a);
-  require(Read(ConfigPath())==before_cancel,"Cancel changed settings");
+  require(Read(ConfigPath())==before_cancel && !TakeSavedPlaySettings(),"Cancel changed settings");
   auto* welcome_timer=[NSTimer timerWithTimeInterval:.1 repeats:NO block:^(NSTimer*){
       snapshot(welcome_window,"welcome.png");[NSApp abortModal];}];
   [[NSRunLoop mainRunLoop]addTimer:welcome_timer forMode:NSModalPanelRunLoopMode];
   require(Welcome().empty(),"Welcome automatically selected a game");
-  std::ofstream(out+"/ui-result.json")<<"{\"settings_window\":true,\"keyboard_capture\":true,\"virtual_controller_button\":true,\"virtual_controller_stick\":true,\"live_profile_updated\":true,\"cpu_choice_unchanged\":true,\"save_roundtrip\":true,\"cancel_unchanged\":true,\"welcome_empty\":true,\"jit_available\":"<<(MacPreferences::JitAvailable()?"true":"false")<<",\"game_loaded\":false}\n";
+  std::ofstream(out+"/ui-result.json")<<"{\"settings_window\":true,\"keyboard_capture\":true,\"virtual_controller_button\":true,\"virtual_controller_stick\":true,\"live_profile_updated\":true,\"cpu_choice_unchanged\":true,\"save_roundtrip\":true,\"play_controls_locked_and_restored\":true,\"display_scale_saved\":true,\"cancel_unchanged\":true,\"welcome_empty\":true,\"jit_available\":"<<(MacPreferences::JitAvailable()?"true":"false")<<",\"game_loaded\":false}\n";
   return 0;
  }catch(const std::exception& e){std::ofstream(out+"/ui-error.txt")<<e.what();return 1;}}
 }

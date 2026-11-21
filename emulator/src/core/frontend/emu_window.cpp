@@ -126,7 +126,8 @@ void EmuWindow::UpdateFramebufferLayout(u32 width, u32 height) {
             break;
         case Settings::LayoutOption::Default:
         default:
-            layout = Layout::DefaultFrameLayout(width, height, Settings::values.swap_screen);
+            layout = Layout::IntegerFrameLayout(width, height, Settings::values.swap_screen,
+                                                GetIntegerOutputScale());
             break;
         }
         if (Settings::values.swap_screen) {

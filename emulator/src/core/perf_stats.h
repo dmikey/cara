@@ -15,7 +15,7 @@ class FrameLimiter {
 public:
     using Clock = std::chrono::high_resolution_clock;
 
-    void DoFrameLimiting(std::chrono::microseconds current_system_time_us);
+    Clock::duration DoFrameLimiting(std::chrono::microseconds current_system_time_us);
 
 private:
     /// Emulated system time (in microseconds) at the last limiter invocation
@@ -56,6 +56,13 @@ public:
      */
     double GetLastFrameTimeScale() const;
 
+    // Emulation-loop only. Work includes renderer and driver waits, excluding pacing sleep.
+    struct FrameTiming {
+        Clock::duration work;
+        Clock::duration elapsed;
+    };
+    FrameTiming GetLastFrameTiming() const;
+
 private:
     FrameLimiter frame_limiter;
 
@@ -73,6 +80,8 @@ private:
     Clock::time_point previous_frame_end = reset_point;
     /// Total visible duration (including frame-limiting, etc.) of the previous system frame
     Clock::duration previous_frame_length = Clock::duration::zero();
+    Clock::duration frame_pacing_sleep = Clock::duration::zero();
+    Clock::duration previous_frame_pacing_sleep = Clock::duration::zero();
 };
 
 } // namespace Core

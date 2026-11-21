@@ -82,6 +82,9 @@ public:
      */
     void UpdateFramebufferLayout(u32 width, u32 height);
 
+    virtual u32 GetIntegerOutputScale() const { return 0; }
+    virtual bool ShouldPresentFrame() { return true; }
+
     /**
      * Android
      */

@@ -64,7 +64,7 @@ private:
     void ConfigureFramebufferTexture(TextureInfo& texture,
                                      const GPU::Regs::FramebufferConfig& framebuffer);
     void RenderScreenshot();
-    void DrawScreens(const Layout::FramebufferLayout& layout);
+    void DrawScreens(const Layout::FramebufferLayout& layout, bool integer_output = false);
     void RenderToMailbox(const Layout::FramebufferLayout& layout);
 
     // Loads framebuffer from emulated memory into the display information structure
@@ -82,6 +82,7 @@ private:
     OGLBuffer vertex_buffer;
     OGLProgram shader;
     OGLSampler filter_sampler;
+    OGLSampler nearest_output_sampler;
 
     OGLProgram bg_shader;
     OGLTexture bg_texture;

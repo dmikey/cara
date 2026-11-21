@@ -6,6 +6,7 @@
 #pragma once
 
 #include <memory>
+#include "cara/presentation_guard.h"
 #include "cara/native_mac/keyboard_latch.h"
 #include <utility>
 #include "core/frontend/emu_window.h"
@@ -19,6 +20,9 @@ public:
     ~EmuWindow_SDL2();
 
     void SwapBuffers() override;
+    u32 GetIntegerOutputScale() const override { return integer_output_scale; }
+    bool ShouldPresentFrame() override;
+    void SetPresentationOptions(u32 output_scale, bool adaptive_frame_skip);
 
     enum class StateCommand {
         None,
@@ -88,7 +92,13 @@ private:
     /// Called when a configuration change affects the minimal size of the window
     void OnMinimalClientAreaChangeRequest(std::pair<u32, u32> minimal_size);
 
+    void UpdateDisplayRefreshRate();
+
     Cara::KeyboardLatch keyboard_latch;
+    Cara::PresentationGuard presentation_guard;
+    unsigned display_refresh_rate = 60;
+    u32 integer_output_scale = 0;
+    bool adaptive_frame_skip = false;
 
     /// Is the window still open?
     bool is_open = true;
