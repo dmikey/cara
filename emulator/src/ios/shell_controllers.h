@@ -3,6 +3,8 @@
 #import <UIKit/UIKit.h>
 #import "ios/library_store.h"
 
+NSDictionary* CaraReadGameArtwork(CaraLibraryGame* game);
+
 @interface CaraLibraryController : UIViewController
 @property(strong,nonatomic) CaraLibraryStore* store;
 @property(copy,nonatomic) void(^openGame)(NSURL*);
@@ -40,6 +42,10 @@
 @interface CaraStatsView : UIView
 - (void)updateGameFPS:(double)fps speed:(double)speed guestClock:(unsigned)clock adaptive:(BOOL)adaptive;
 - (void)showInactiveGuestClock:(unsigned)clock adaptive:(BOOL)adaptive;
+@end
+
+@interface CaraDeviceStatusView : UIView
+@property(nonatomic, getter=isMonitoring) BOOL monitoring;
 @end
 
 typedef NS_ENUM(NSUInteger,CaraStatusLight) {

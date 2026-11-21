@@ -51,7 +51,7 @@ static UIColor* CaraBackground() {
 
 // Read only the unencrypted icon section; never initialize or borrow the active
 // emulator, decrypt a game, or read the whole ROM just to decorate the library.
-static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
+NSDictionary* CaraReadGameArtwork(CaraLibraryGame* game) {
     BOOL scoped=[game.url startAccessingSecurityScopedResource];
     @try {
         NSNumber* ubiquitous=nil; NSNumber* downloaded=nil;
@@ -252,7 +252,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     NSString* key=[NSString stringWithFormat:@"%@-%@-%llu",game.url,game.modified,game.fileSize]; NSDictionary* cached=[artworkCache objectForKey:key]; if(cached) { apply(cached); return; }
     unsigned generation=artworkGeneration.load(); dispatch_async(artworkQueue,^{ @autoreleasepool {
         if(generation!=self->artworkGeneration.load()) return;
-        NSMutableDictionary* metadata=[(ReadGameArtwork(game)?:@{}) mutableCopy];
+        NSMutableDictionary* metadata=[(CaraReadGameArtwork(game)?:@{}) mutableCopy];
         if(!metadata[@"title"]) metadata[@"title"]=game.title;
         NSDictionary* embedded=[metadata copy];
         dispatch_async(dispatch_get_main_queue(),^{ if(generation==self->artworkGeneration.load()) apply(embedded); });
@@ -535,6 +535,98 @@ static UIImage* CaraThemePreview(NSInteger style) {
     self.accessibilityLabel=adaptive?@"No live game metrics, adaptive guest CPU":
         [NSString stringWithFormat:@"No live game metrics, configured guest CPU %u percent",clock];
 }
+@end
+
+@implementation CaraDeviceStatusView {
+    UILabel* clockLabel;
+    UILabel* batteryLabel;
+    UIStackView* bar;
+    NSDateFormatter* clockFormatter;
+    NSTimer* minuteTimer;
+    BOOL enabledBatteryMonitoring;
+}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if ((self=[super initWithFrame:frame])) {
+        self.backgroundColor=[UIColor colorWithRed:.025 green:.035 blue:.025 alpha:.80];
+        self.layer.cornerRadius=9;
+        self.layer.borderWidth=.5;
+        self.layer.borderColor=[UIColor colorWithRed:.23 green:.29 blue:.20 alpha:.78].CGColor;
+        self.userInteractionEnabled=NO;
+        self.isAccessibilityElement=YES;
+        self.accessibilityIdentifier=@"device-status-hud";
+        clockLabel=[UILabel new];
+        batteryLabel=[UILabel new];
+        for (UILabel* label in @[clockLabel,batteryLabel]) {
+            label.font=[UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightMedium];
+            label.textColor=[UIColor colorWithRed:.77 green:.79 blue:.70 alpha:1];
+            label.adjustsFontSizeToFitWidth=YES;
+            label.minimumScaleFactor=.75;
+        }
+        batteryLabel.textAlignment=NSTextAlignmentRight;
+        bar=[[UIStackView alloc] initWithArrangedSubviews:@[clockLabel,batteryLabel]];
+        bar.spacing=8;
+        [self addSubview:bar];
+    }
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    bar.frame=CGRectInset(self.bounds,9,1);
+}
+- (void)updateStatus {
+    NSString* time=[clockFormatter stringFromDate:NSDate.date];
+    clockLabel.text=time;
+    UIDevice* device=UIDevice.currentDevice;
+    const float level=device.batteryLevel;
+    NSString* battery=level>=0 && level<=1
+        ? [NSString localizedStringWithFormat:@"%.0f%%",double(level)*100] : nil;
+    batteryLabel.hidden=battery==nil;
+    batteryLabel.text=battery;
+    NSString* power=device.batteryState==UIDeviceBatteryStateCharging?@", charging":@"";
+    self.accessibilityLabel=battery
+        ? [NSString stringWithFormat:@"%@, battery %@%@",time,battery,power] : time;
+}
+- (void)resetClock {
+    [minuteTimer invalidate];
+    clockFormatter=[NSDateFormatter new];
+    clockFormatter.dateStyle=NSDateFormatterNoStyle;
+    clockFormatter.timeStyle=NSDateFormatterShortStyle;
+    [self updateStatus];
+    const NSTimeInterval seconds=NSDate.date.timeIntervalSince1970;
+    const NSTimeInterval untilNextMinute=60-std::fmod(seconds,60);
+    __weak CaraDeviceStatusView* weakSelf=self;
+    minuteTimer=[[NSTimer alloc] initWithFireDate:[NSDate dateWithTimeIntervalSinceNow:untilNextMinute]
+        interval:60 repeats:YES block:^(NSTimer* timer) { [weakSelf updateStatus]; }];
+    minuteTimer.tolerance=.5;
+    [NSRunLoop.mainRunLoop addTimer:minuteTimer forMode:NSRunLoopCommonModes];
+}
+- (void)batteryChanged:(NSNotification*)note { [self updateStatus]; }
+- (void)clockChanged:(NSNotification*)note { [self resetClock]; }
+- (void)setMonitoring:(BOOL)monitoring {
+    if (_monitoring==monitoring) return;
+    _monitoring=monitoring;
+    NSNotificationCenter* center=NSNotificationCenter.defaultCenter;
+    UIDevice* device=UIDevice.currentDevice;
+    if (monitoring) {
+        enabledBatteryMonitoring=!device.batteryMonitoringEnabled;
+        device.batteryMonitoringEnabled=YES;
+        for (NSNotificationName event in @[UIDeviceBatteryLevelDidChangeNotification,
+                                          UIDeviceBatteryStateDidChangeNotification])
+            [center addObserver:self selector:@selector(batteryChanged:) name:event object:device];
+        for (NSNotificationName event in @[UIApplicationSignificantTimeChangeNotification,
+                                          NSCurrentLocaleDidChangeNotification,
+                                          NSSystemTimeZoneDidChangeNotification])
+            [center addObserver:self selector:@selector(clockChanged:) name:event object:nil];
+        [self resetClock];
+    } else {
+        [center removeObserver:self];
+        [minuteTimer invalidate];
+        minuteTimer=nil;
+        if (enabledBatteryMonitoring) device.batteryMonitoringEnabled=NO;
+        enabledBatteryMonitoring=NO;
+    }
+}
+- (void)dealloc { self.monitoring=NO; }
 @end
 
 @implementation CaraSessionIndicator {

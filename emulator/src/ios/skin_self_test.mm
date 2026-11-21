@@ -53,6 +53,22 @@ int main(int argc,char** argv) { @autoreleasepool {
         require(CGRectContainsRect(stats,fallback.indicator) && CGRectContainsRect(stats,fallback.metrics),"Imported skin HUD footprint changed");
         require([orientation[@"screens"] count]==2,"Both screens required in each orientation");
     }
+    for (BOOL landscape : {NO,YES}) {
+        NSDictionary* controller=CaraControllerSkinRepresentation(landscape);
+        require(CaraValidateRepresentation(controller),"Built-in controller skin is invalid");
+        require(!CaraSkinHasTouchMenu(controller),"Built-in controller skin should get the shared menu button");
+        NSArray* screens=controller[@"screens"];
+        CGRect top=CaraSkinRect(screens[0][@"outputFrame"]),bottom=CaraSkinRect(screens[1][@"outputFrame"]);
+        require(!CGRectIntersectsRect(top,bottom),"Controller skin screens overlap");
+        require(landscape?CGRectGetMinX(bottom)>CGRectGetMaxX(top):CGRectGetMinY(bottom)>CGRectGetMaxY(top),
+                "Controller skin screen order");
+        NSArray* items=controller[@"items"];
+        require(items.count==1 && CGRectEqualToRect(CaraSkinRect(items[0][@"frame"]),bottom) &&
+                [items[0][@"inputs"][@"x"] isEqual:@"touchScreenX"],"Controller skin leaves the bottom screen touchable");
+        CGRect canvas=CGRectMake(0,0,[controller[@"mappingSize"][@"width"] doubleValue],[controller[@"mappingSize"][@"height"] doubleValue]);
+        const CaraHUDLayout hud=CaraSkinHUDLayout(controller,canvas);
+        require(!CGRectIntersectsRect(top,hud.metrics) && !CGRectIntersectsRect(bottom,hud.metrics),"Controller HUD covers a game screen");
+    }
     NSMutableDictionary* bad=[rep mutableCopy]; bad[@"mappingSize"]=@{@"width":@0,@"height":@100};
     require(!CaraValidateRepresentation(bad),"Zero mapping accepted");
     bad=[rep mutableCopy]; bad[@"items"]=@[@{@"inputs":@[@"quickSave"],@"frame":@{@"x":@0,@"y":@0,@"width":@40,@"height":@40}}];

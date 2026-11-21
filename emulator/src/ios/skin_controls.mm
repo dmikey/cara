@@ -59,14 +59,16 @@ static UIImage* SkinImage(NSData* data, CGSize size) {
     _lowerScreen=CaraAspectFit(CGSizeMake(320,240),CaraSkinRect(screens[1][@"outputFrame"]));
     NSDictionary* assets=representation[@"assets"];
     NSString* name=assets[@"resizable"]?:assets[@"large"]?:assets[@"medium"]?:assets[@"small"];
-    UIImage* raw=SkinImage(self.skin.assets[name],size);
-    if (!raw) { _artwork=nil; return; }
-    UIGraphicsImageRendererFormat* format=[UIGraphicsImageRendererFormat defaultFormat]; format.scale=1; format.opaque=NO;
-    _artwork=[[[UIGraphicsImageRenderer alloc] initWithSize:size format:format] imageWithActions:^(UIGraphicsImageRendererContext* context) {
-        [raw drawInRect:CGRectMake(0,0,size.width,size.height)];
-        CGContextSetBlendMode(context.CGContext,kCGBlendModeClear);
-        CGContextFillRect(context.CGContext,self->_upperScreen); CGContextFillRect(context.CGContext,self->_lowerScreen);
-    }];
+    UIImage* raw=name?SkinImage(self.skin.assets[name],size):nil;
+    _artwork=nil;
+    if (raw) {
+        UIGraphicsImageRendererFormat* format=[UIGraphicsImageRendererFormat defaultFormat]; format.scale=1; format.opaque=NO;
+        _artwork=[[[UIGraphicsImageRenderer alloc] initWithSize:size format:format] imageWithActions:^(UIGraphicsImageRendererContext* context) {
+            [raw drawInRect:CGRectMake(0,0,size.width,size.height)];
+            CGContextSetBlendMode(context.CGContext,kCGBlendModeClear);
+            CGContextFillRect(context.CGContext,self->_upperScreen); CGContextFillRect(context.CGContext,self->_lowerScreen);
+        }];
+    }
     for (NSDictionary* item in representation[@"items"]) {
         NSDictionary* thumb=item[@"thumbstick"];
         if (thumb) {

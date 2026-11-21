@@ -38,6 +38,7 @@ int main() { @autoreleasepool {
     [hub handleKeyboardCode:GCKeyCodeKeyP pressed:NO]; [hub handleKeyboardCode:GCKeyCodeKeyJ pressed:YES]; Check(![buttons containsObject:@"a"],@"old mapping replaced"); [hub handleKeyboardCode:GCKeyCodeKeyJ pressed:NO];
     [hub resetMappings:YES]; [hub handleKeyboardCode:GCKeyCodeKeyJ pressed:YES]; Check([buttons containsObject:@"a"],@"default mapping restored"); [hub handleKeyboardCode:GCKeyCodeKeyJ pressed:NO];
     GCController* controller=[GCController controllerWithExtendedGamepad]; [hub useController:controller];
+    Check(hub.controllerConnected && hub.controllerHasCirclePad,@"extended controller availability");
     // Snapshot setters update values but do not promise hardware callbacks.
     // Inject the public profile event after writing the native synthetic value.
     const auto event=[&](GCControllerElement* element) { if (controller.extendedGamepad.valueChangedHandler) controller.extendedGamepad.valueChangedHandler(controller.extendedGamepad,element); Drain(); };
@@ -46,7 +47,28 @@ int main() { @autoreleasepool {
     [controller.extendedGamepad.leftThumbstick.xAxis setValue:.8]; WaitFor(^BOOL { return controller.extendedGamepad.leftThumbstick.xAxis.value>.79; },@"snapshot axis value arrives"); event(controller.extendedGamepad.leftThumbstick.xAxis); Check(circle.x>.7 && circle.y==0,@"native controller analog and deadzone");
     [controller.extendedGamepad.buttonA setValue:1]; WaitFor(^BOOL { return controller.extendedGamepad.buttonA.isPressed; },@"snapshot reconnect press value arrives"); event(controller.extendedGamepad.buttonA);
     [NSNotificationCenter.defaultCenter postNotificationName:GCKeyboardDidConnectNotification object:nil]; Check([buttons containsObject:@"a"],@"unrelated device notifications retain an explicitly selected snapshot");
+    [hub updateSurface:@"skin" buttons:[NSSet setWithObjects:@"a",@"b",nil]
+                 circle:CGPointZero cstick:CGPointZero touch:CGPointMake(160,120)];
+    Check([buttons containsObject:@"b"] && CGPointEqualToPoint(hub.touchPoint,CGPointMake(160,120)),@"touch merges with controller");
+    [hub clearSurfaces];
+    Check([buttons containsObject:@"a"] && ![buttons containsObject:@"b"] && hub.touchPoint.x<0,@"skin swap clears only touch");
+    hub.active=NO; hub.active=YES;
+    Check(buttons.count==0 && CGPointEqualToPoint(circle,CGPointZero),@"held inputs stay neutral after background and menu resume");
+    [controller.extendedGamepad.buttonA setValue:0];
+    WaitFor(^BOOL { return !controller.extendedGamepad.buttonA.isPressed; },@"held button released");
+    event(controller.extendedGamepad.buttonA);
+    [controller.extendedGamepad.leftThumbstick.xAxis setValue:0];
+    WaitFor(^BOOL { return controller.extendedGamepad.leftThumbstick.xAxis.value==0; },@"held stick returned to center");
+    event(controller.extendedGamepad.leftThumbstick.xAxis);
+    [controller.extendedGamepad.buttonA setValue:1];
+    WaitFor(^BOOL { return controller.extendedGamepad.buttonA.isPressed; },@"fresh press after resume");
+    event(controller.extendedGamepad.buttonA);
+    Check([buttons containsObject:@"a"],@"fresh press activates after resume");
     [hub useController:nil]; Check(![buttons containsObject:@"a"] && CGPointEqualToPoint(circle,CGPointZero),@"controller removal clears held buttons and axes");
+    Check(!hub.controllerConnected,@"disconnect clears controller availability");
+    [hub useController:controller];
+    Check(hub.controllerConnected && ![buttons containsObject:@"a"],@"reconnecting a held controller does not press a guest button");
+    [hub useController:nil];
     // Menu callback can synchronously deactivate the hub; stale commands must
     // not re-enable held fast-forward after that nested reset.
     __weak CaraInputHub* weakHub=hub;
