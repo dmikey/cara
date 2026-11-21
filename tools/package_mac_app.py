@@ -100,6 +100,7 @@ def main():
     info = dict(CFBundleName='Cara', CFBundleDisplayName='Cara', CFBundleExecutable='Cara',
                 CFBundleIdentifier='org.cara.mac', CFBundlePackageType='APPL',
                 CFBundleIconFile='cara.icns', CFBundleShortVersionString='0.2',
+                LSApplicationCategoryType='public.app-category.games', LSSupportsGameMode=True,
                 CFBundleVersion='20261117.1', LSMinimumSystemVersion=deployment,
                 NSHighResolutionCapable=True)
     (contents / 'Info.plist').write_bytes(plistlib.dumps(info))

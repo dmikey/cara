@@ -44,6 +44,8 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSSupportsGameMode</key>
+	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>MinimumOSVersion</key>
@@ -154,6 +156,8 @@
 			</dict>
 		</dict>
 	</array>
+	<key>GCSupportsGameMode</key>
+	<true/>
 	<key>GCSupportedGameControllers</key>
 	<array>
 		<dict>
