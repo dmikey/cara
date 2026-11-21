@@ -1,4 +1,5 @@
 """Release layout and dependency-policy fixtures; no game or compiler is invoked."""
+import datetime
 import importlib.util
 import hashlib
 import json
@@ -16,6 +17,7 @@ sys.path.insert(0, str(TOOLS))
 import package_ipa
 import mac_bundle
 import package_mac_app
+import sign_nightly
 
 
 class IPATests(unittest.TestCase):
@@ -137,6 +139,63 @@ class BundleTests(unittest.TestCase):
         self.assertTrue(mac_bundle.system('/usr/lib/libc++.1.dylib'))
         self.assertFalse(mac_bundle.system('/usr/local/lib/not-system.dylib'))
         self.assertFalse(mac_bundle.system('/opt/homebrew/lib/not-system.dylib'))
+
+
+class NightlySigningPolicyTests(unittest.TestCase):
+    now = datetime.datetime(2026, 11, 20, tzinfo=datetime.timezone.utc)
+
+    def profile(self):
+        return {
+            'Platform': ['iOS'],
+            'TeamIdentifier': ['TEAM'],
+            'ApplicationIdentifierPrefix': ['PREFIX'],
+            'ExpirationDate': (self.now + datetime.timedelta(days=1)).replace(tzinfo=None),
+            'Entitlements': {
+                'application-identifier': 'PREFIX.com.dmikey.cara',
+                'com.apple.developer.team-identifier': 'TEAM',
+                'beta-reports-active': True,
+                'get-task-allow': False,
+                'keychain-access-groups': ['PREFIX.*'],
+            },
+        }
+
+    def validate(self, profile):
+        return sign_nightly.app_store_entitlements(profile, 'com.dmikey.cara', self.now)
+
+    def test_only_required_entitlements_issued(self):
+        profile = self.profile()
+        profile['Entitlements']['com.apple.developer.networking.networkextension'] = ['fixture']
+        entitlements = self.validate(profile)
+        self.assertEqual(entitlements, {
+            'application-identifier': 'PREFIX.com.dmikey.cara',
+            'com.apple.developer.team-identifier': 'TEAM',
+            'beta-reports-active': True,
+            'get-task-allow': False,
+            'keychain-access-groups': ['PREFIX.com.dmikey.cara'],
+        })
+
+    def test_device_and_enterprise_profiles_rejected(self):
+        for field, value in [('ProvisionedDevices', ['fixture']), ('ProvisionsAllDevices', True)]:
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'no device identifiers'):
+                self.validate(dict(self.profile(), **{field: value}))
+
+    def test_expired_profile_rejected(self):
+        profile = dict(self.profile(), ExpirationDate=self.now.replace(tzinfo=None))
+        with self.assertRaisesRegex(ValueError, 'expired'):
+            self.validate(profile)
+
+    def test_wrong_app_debug_and_non_store_profiles_rejected(self):
+        for field, value in [('application-identifier', 'PREFIX.*'), ('get-task-allow', True),
+                             ('beta-reports-active', False), ('keychain-access-groups', ['OTHER.*'])]:
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                profile = self.profile()
+                profile['Entitlements'][field] = value
+                self.validate(profile)
+
+    def test_ci_build_number_advances_with_run(self):
+        for first, second in [(1, 2), (99, 100), (9999, 10000)]:
+            key = lambda run: tuple(map(int, sign_nightly.build_version(run).split('.')))
+            self.assertLess(key(first), key(second))
 
 
 if __name__ == '__main__':
