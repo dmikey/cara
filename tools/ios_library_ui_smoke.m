@@ -3,6 +3,22 @@
 @end
 @implementation CaraUISmoke
 - (void)shot:(XCUIApplication*)app name:(NSString*)name { XCTAttachment* shot=[XCTAttachment attachmentWithScreenshot:app.screenshot]; shot.name=name; shot.lifetime=XCTAttachmentLifetimeKeepAlways; [self addAttachment:shot]; }
+- (void)testPhoneEmptyLibraryImport {
+ if (UIDevice.currentDevice.userInterfaceIdiom!=UIUserInterfaceIdiomPhone) return;
+ self.continueAfterFailure=NO;
+ XCUIDevice.sharedDevice.orientation=UIDeviceOrientationPortrait;
+ XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
+ app.launchEnvironment=@{@"CARA_UI_SCENE":@"empty"}; [app launch];
+ XCUIElement* add=app.buttons[@"Add games"];
+ XCTAssertTrue([add waitForExistenceWithTimeout:15]);
+ XCTAssertTrue(add.hittable);
+ [self shot:app name:@"Phone empty library"];
+ [add tap];
+ XCTAssertTrue([app.buttons[@"Open game from Files…"] waitForExistenceWithTimeout:5]);
+ XCTAssertTrue(app.buttons[@"Choose ROMs folder…"].exists);
+ [app.buttons[@"Cancel"] tap];
+ XCTAssertTrue(add.hittable);
+}
 - (void)testInGameSettingsNavigation {
  self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
  app.launchEnvironment=@{@"CARA_UI_SCENE":@"in-game-settings"}; [app launch];

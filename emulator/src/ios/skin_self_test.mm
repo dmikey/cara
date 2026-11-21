@@ -53,6 +53,55 @@ int main(int argc,char** argv) { @autoreleasepool {
         require(CGRectContainsRect(stats,fallback.indicator) && CGRectContainsRect(stats,fallback.metrics),"Imported skin HUD footprint changed");
         require([orientation[@"screens"] count]==2,"Both screens required in each orientation");
     }
+    // Exercise both orientations of the 390×844-point iPhone 17e with cutout
+    // and home-indicator space excluded, plus some extra safe-area margin.
+    for (BOOL landscape : {NO,YES}) {
+        NSDictionary* phone=[skin strictRepresentationForPad:NO landscape:landscape];
+        require(phone!=[skin strictRepresentationForPad:YES landscape:landscape],
+                "Phone fell back to the iPad skin");
+        CGRect safe=landscape ? CGRectMake(50,0,744,359) : CGRectMake(0,49,390,758);
+        CGSize mapping=CGSizeMake([phone[@"mappingSize"][@"width"] doubleValue],
+                                  [phone[@"mappingSize"][@"height"] doubleValue]);
+        CGRect canvas=CaraAspectFit(mapping,safe);
+        require(CGRectContainsRect(CGRectInset(safe,-.001,-.001),canvas),"Phone skin escaped the safe area");
+        const CGFloat scale=canvas.size.width/mapping.width;
+        NSArray* screens=phone[@"screens"];
+        const CGRect upper=CaraSkinRect(screens[0][@"outputFrame"]);
+        const CGRect lower=CaraSkinRect(screens[1][@"outputFrame"]);
+        require(!CGRectIntersectsRect(upper,lower),"Phone screens overlap");
+        require(std::abs(upper.size.width/upper.size.height-400.0/240)<.001 &&
+                std::abs(lower.size.width/lower.size.height-320.0/240)<.001,
+                "Phone screen aspect ratio changed");
+        require(upper.size.width*scale>=290 && lower.size.width*scale>=190,
+                "Phone screens too small for the 17e");
+        const CGRect message=CaraSkinRect(phone[@"caraMessageFrame"]);
+        require(!CGRectIsNull(message) && CGRectContainsRect(CGRectMake(0,0,mapping.width,mapping.height),message),
+                "Phone status message is missing or outside the canvas");
+        require(!CGRectIntersectsRect(message,upper) && !CGRectIntersectsRect(message,lower),
+                "Phone status message covers a screen");
+        std::vector<CGRect> targets;
+        NSMutableSet* buttons=[NSMutableSet new];
+        BOOL touchScreen=NO;
+        for (NSDictionary* item in phone[@"items"]) {
+            const CGRect frame=CaraSkinRect(item[@"frame"]);
+            id inputs=item[@"inputs"];
+            if ([inputs isKindOfClass:NSDictionary.class] && [inputs[@"x"] isEqual:@"touchScreenX"]) {
+                touchScreen=CGRectEqualToRect(frame,lower);
+                continue;
+            }
+            if ([inputs isKindOfClass:NSArray.class]) [buttons addObjectsFromArray:inputs];
+            require(frame.size.width*scale>=44 && frame.size.height*scale>=44,
+                    "Phone control dropped below 44 points");
+            require(!CGRectIntersectsRect(frame,upper) && !CGRectIntersectsRect(frame,lower) &&
+                    !CGRectIntersectsRect(frame,message),"Phone control covers a screen or status");
+            for (CGRect other : targets)
+                require(!CGRectIntersectsRect(frame,other),"Overlapping phone controls");
+            targets.push_back(frame);
+        }
+        NSSet* expected=[NSSet setWithArray:@[@"a",@"b",@"x",@"y",@"l",@"r",@"zl",@"zr",@"start",@"select",@"menu"]];
+        require(touchScreen && [buttons isEqualToSet:expected] && targets.size()==14,
+                "Phone controls or lower LCD touch mapping are incomplete");
+    }
     for (BOOL landscape : {NO,YES}) {
         NSDictionary* controller=CaraControllerSkinRepresentation(landscape);
         require(CaraValidateRepresentation(controller),"Built-in controller skin is invalid");

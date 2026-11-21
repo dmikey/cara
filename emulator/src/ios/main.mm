@@ -1017,8 +1017,13 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         deviceStatusHUD.monitoring=!deviceStatusHUD.hidden;
     }
     const CGFloat portraitStatusY=mapping.height-(defaultControllerSkin?90:170);
-    status.frame=landscape?convert(CGRectMake(statsFrame.origin.x,CGRectGetMaxY(statsFrame)+8,statsFrame.size.width,54)):convert(CGRectMake((mapping.width-600)/2,portraitStatusY,600,48));
-    status.numberOfLines=landscape?2:1;
+    const CGRect messageFrame=CaraSkinRect(rep[@"caraMessageFrame"]);
+    const BOOL hasMessageFrame=!CGRectIsNull(messageFrame) && !CGRectIsEmpty(messageFrame) &&
+        CGRectContainsRect(CGRectMake(0,0,mapping.width,mapping.height),messageFrame);
+    status.frame=hasMessageFrame ? convert(messageFrame) :
+        landscape ? convert(CGRectMake(statsFrame.origin.x,CGRectGetMaxY(statsFrame)+8,statsFrame.size.width,54)) :
+                    convert(CGRectMake((mapping.width-600)/2,portraitStatusY,600,48));
+    status.numberOfLines=landscape && !hasMessageFrame ? 2 : 1;
     statusIndicator.frame=hud.indicator;
     status.adjustsFontSizeToFitWidth=YES; status.minimumScaleFactor=0.7;
 #ifdef CARA_IOS_GLES
