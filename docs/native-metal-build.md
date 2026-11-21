@@ -110,8 +110,18 @@ CPU time fell from 18.03 to 13.61 ms per refresh. The local binary included
 unmerged renderer changes and a 42-option Apple policy. That comparison
 measures the whole retained build.
 
+On that same local binary, disabling the options absent from the main app
+raised the mean to 24.07 ms. Restoring only the queue and ownership options
+recovered 19.84 ms. Restoring only the shader and vertex options lowered
+emulation-thread CPU time to 16.15 ms but raised the wall time to 26.11 ms.
+The matched captures and guest draw counts survived all three comparisons.
+Applying the available queue options and a port of color-lease reuse to the
+main renderer instead took 28.10 ms. Recovering the old result therefore
+requires validating renderer dependencies along with the option values.
+
 With Metal phase tracing, the default eight slots averaged 24.34 ms and
 spent 4.87 ms per refresh waiting for the oldest tracked submission. The
+worst 120-refresh window had a 28.24 ms p99. The
 32-slot trace averaged 27.92 ms. Submission pressure disappeared and
 upload-arena waits rose to 2.71 ms per refresh. The eight-slot async
 depth variant removed two synchronous depth exports per refresh and
