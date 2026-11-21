@@ -17,16 +17,17 @@ static void FeatureError(UIViewController* owner,NSString* message) {
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh:) name:CaraInputHubDidChangeNotification object:self.hub];
 }
 - (void)refresh:(NSNotification*)note { [self.tableView reloadData]; }
-- (NSInteger)tableView:(UITableView*)table numberOfRowsInSection:(NSInteger)section { return self.hub.actions.count; }
+- (NSArray<NSString*>*)availableActions { return self.mappingActions?:self.hub.actions; }
+- (NSInteger)tableView:(UITableView*)table numberOfRowsInSection:(NSInteger)section { return self.availableActions.count; }
 - (NSString*)tableView:(UITableView*)table titleForHeaderInSection:(NSInteger)section { return self.keyboard?@"Keyboard":self.hub.controllerName; }
 - (NSString*)tableView:(UITableView*)table titleForFooterInSection:(NSInteger)section { return @"Tap an action, then press a key or controller button. Assigning an input replaces its previous mapping. Left and right sticks keep their native analog behavior."; }
 - (UITableViewCell*)tableView:(UITableView*)table cellForRowAtIndexPath:(NSIndexPath*)path {
     UITableViewCell* cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    NSString* action=self.hub.actions[path.row]; cell.textLabel.text=CaraInputActionTitle(action); cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES;
+    NSString* action=self.availableActions[path.row]; cell.textLabel.text=CaraInputActionTitle(action); cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES;
     cell.detailTextLabel.text=[self.hub bindingForAction:action keyboard:self.keyboard]; cell.detailTextLabel.adjustsFontForContentSizeCategory=YES; cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator; return cell;
 }
 - (void)tableView:(UITableView*)table didSelectRowAtIndexPath:(NSIndexPath*)path {
-    [table deselectRowAtIndexPath:path animated:YES]; NSString* action=self.hub.actions[path.row];
+    [table deselectRowAtIndexPath:path animated:YES]; NSString* action=self.availableActions[path.row];
     UIAlertController* capture=[UIAlertController alertControllerWithTitle:CaraInputActionTitle(action) message:self.keyboard?@"Press a keyboard key…":@"Press a controller button…" preferredStyle:UIAlertControllerStyleAlert];
     [capture addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* item) { [self.hub cancelCapture]; }]];
     __weak CaraMappingController* owner=self;

@@ -6,6 +6,7 @@
 
 @interface CaraMappingController : UITableViewController
 @property(strong,nonatomic) CaraInputHub* hub;
+@property(copy,nonatomic) NSArray<NSString*>* mappingActions;
 @property(nonatomic) BOOL keyboard;
 @property(copy,nonatomic) void(^finished)(void);
 @end

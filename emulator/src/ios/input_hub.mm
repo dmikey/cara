@@ -11,9 +11,27 @@ static NSDictionary* DefaultKeyBindings() {
     return @{@(GCKeyCodeKeyJ).stringValue:@"a",@(GCKeyCodeKeyK).stringValue:@"b",@(GCKeyCodeKeyU).stringValue:@"x",@(GCKeyCodeKeyI).stringValue:@"y",@(GCKeyCodeKeyQ).stringValue:@"l",@(GCKeyCodeKeyE).stringValue:@"r",@(GCKeyCodeOne).stringValue:@"zl",@(GCKeyCodeThree).stringValue:@"zr",@(GCKeyCodeUpArrow).stringValue:@"up",@(GCKeyCodeDownArrow).stringValue:@"down",@(GCKeyCodeLeftArrow).stringValue:@"left",@(GCKeyCodeRightArrow).stringValue:@"right",@(GCKeyCodeReturnOrEnter).stringValue:@"start",@(GCKeyCodeRightShift).stringValue:@"select",@(GCKeyCodeKeyW).stringValue:@"circleUp",@(GCKeyCodeKeyS).stringValue:@"circleDown",@(GCKeyCodeKeyA).stringValue:@"circleLeft",@(GCKeyCodeKeyD).stringValue:@"circleRight",@(GCKeyCodeKeyT).stringValue:@"cstickUp",@(GCKeyCodeKeyG).stringValue:@"cstickDown",@(GCKeyCodeKeyF).stringValue:@"cstickLeft",@(GCKeyCodeKeyH).stringValue:@"cstickRight",@(GCKeyCodeF1).stringValue:@"menu",@(GCKeyCodeF5).stringValue:@"quickSave",@(GCKeyCodeF8).stringValue:@"quickLoad",@(GCKeyCodeSpacebar).stringValue:@"fastForward"};
 }
 static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
-    const double radius=std::hypot(point.x,point.y); if (radius<=deadzone) return CGPointZero;
+    const double radius=std::hypot(point.x,point.y); if (!std::isfinite(radius) || radius<=deadzone) return CGPointZero;
     double scale=std::min(1.0,(radius-deadzone)/(1-deadzone))/radius; return CGPointMake(point.x*scale,point.y*scale);
 }
+
+// Some older MFi devices expose only the original standard gamepad profile.
+// Keep that fallback local so the extended profile remains the primary path.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+static GCGamepad* StandardGamepad(GCController* controller) {
+    return controller.gamepad;
+}
+#pragma clang diagnostic pop
+
+static BOOL SupportsController(GCController* controller) {
+    return controller.extendedGamepad != nil || StandardGamepad(controller) != nil;
+}
+
+static CGPoint ReadStick(GCControllerDirectionPad* stick) {
+    return NormalizeStick(CGPointMake(stick.xAxis.value,stick.yAxis.value),.15);
+}
+
 @implementation CaraInputHub {
     NSUserDefaults* preferences;
     GCController* selected;
@@ -23,6 +41,8 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
     NSMutableSet<NSString*>* suppressedPad;
     NSSet<NSString*>* lastCommands;
     CGPoint padCircle,padCStick;
+    BOOL suppressCircle,suppressCStick;
+    NSDictionary<NSString*,GCControllerButtonInput*>* selectedButtons;
     NSString* captureTarget;
     BOOL captureKeyboard;
     void(^captureCompletion)(NSError*);
@@ -57,35 +77,86 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
 }
 - (void)announce { [NSNotificationCenter.defaultCenter postNotificationName:CaraInputHubDidChangeNotification object:self]; }
 - (NSString*)controllerName { return selected.vendorName?: (selected?@"Game controller":@"No controller connected"); }
+- (BOOL)controllerConnected { return selected!=nil; }
+- (BOOL)controllerHasCirclePad { return selected.extendedGamepad.leftThumbstick!=nil; }
 - (BOOL)keyboardConnected { return GCKeyboard.coalescedKeyboard!=nil; }
 - (void)devicesChanged:(NSNotification*)notification {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{ [self devicesChanged:notification]; }); return; }
-    if (!selected || (!selected.isSnapshot && ![GCController.controllers containsObject:selected])) {
+    const BOOL controllerEvent=!notification || [notification.name isEqual:GCControllerDidConnectNotification] ||
+                               [notification.name isEqual:GCControllerDidDisconnectNotification];
+    if (controllerEvent && (!selected || (!selected.isSnapshot && ![GCController.controllers containsObject:selected]))) {
         GCController* replacement=nil;
-        for (GCController* controller in GCController.controllers) if (controller.extendedGamepad) { replacement=controller; break; }
+        for (GCController* controller in GCController.controllers) {
+            if (!SupportsController(controller)) continue;
+            if (!replacement || controller.extendedGamepad) replacement=controller;
+            if (controller.extendedGamepad) break;
+        }
         [self useController:replacement];
     }
+    if (notification && controllerEvent) return;
     __weak CaraInputHub* owner=self;
     GCKeyboard* keyboard=GCKeyboard.coalescedKeyboard; keyboard.handlerQueue=dispatch_get_main_queue();
     keyboard.keyboardInput.keyChangedHandler=^(GCKeyboardInput* input,GCDeviceButtonInput* key,GCKeyCode code,BOOL pressed) { [owner handleKeyboardCode:code pressed:pressed]; };
     [keysDown removeAllObjects]; [self rebuild]; [self announce];
 }
 - (void)useController:(GCController*)controller {
-    selected.extendedGamepad.valueChangedHandler=nil; selected=controller;
+    if (!SupportsController(controller)) controller=nil;
+    if (selected==controller) return;
+    selected.extendedGamepad.valueChangedHandler=nil;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    StandardGamepad(selected).valueChangedHandler=nil;
+#pragma clang diagnostic pop
+    selected=controller;
+    selectedButtons=[self makePadButtons];
     controller.handlerQueue=dispatch_get_main_queue(); __weak CaraInputHub* owner=self;
-    controller.extendedGamepad.valueChangedHandler=^(GCExtendedGamepad* gamepad,GCControllerElement* element) { [owner pollPad]; };
-    [padDown removeAllObjects]; padCircle=padCStick=CGPointZero; [self pollPad]; [self announce];
+    if (controller.extendedGamepad) {
+        controller.extendedGamepad.valueChangedHandler=^(GCExtendedGamepad* gamepad,GCControllerElement* element) {
+            CaraInputHub* hub=owner;
+            if (hub && hub->selected.extendedGamepad==gamepad) [hub pollPad];
+        };
+    } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        StandardGamepad(controller).valueChangedHandler=^(GCGamepad* gamepad,GCControllerElement* element) {
+            CaraInputHub* hub=owner;
+            if (hub && StandardGamepad(hub->selected)==gamepad) [hub pollPad];
+        };
+#pragma clang diagnostic pop
+    }
+    [self suppressHeldPadInputs];
+    [self pollPad];
+    [self announce];
 }
-- (NSDictionary<NSString*,GCControllerButtonInput*>*)padButtons {
-    GCExtendedGamepad* p=selected.extendedGamepad; if (!p) return @{};
+- (NSDictionary<NSString*,GCControllerButtonInput*>*)makePadButtons {
+    GCExtendedGamepad* p=selected.extendedGamepad;
+    if (!p) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        GCGamepad* standard=StandardGamepad(selected);
+        if (!standard) return @{};
+        return @{@"A":standard.buttonA,@"B":standard.buttonB,@"X":standard.buttonX,@"Y":standard.buttonY,
+                 @"L":standard.leftShoulder,@"R":standard.rightShoulder,@"Up":standard.dpad.up,
+                 @"Down":standard.dpad.down,@"Left":standard.dpad.left,@"Right":standard.dpad.right};
+#pragma clang diagnostic pop
+    }
     NSMutableDictionary* buttons=[@{@"A":p.buttonA,@"B":p.buttonB,@"X":p.buttonX,@"Y":p.buttonY,@"L":p.leftShoulder,@"R":p.rightShoulder,@"ZL":p.leftTrigger,@"ZR":p.rightTrigger,@"Up":p.dpad.up,@"Down":p.dpad.down,@"Left":p.dpad.left,@"Right":p.dpad.right,@"Start":p.buttonMenu} mutableCopy];
     if (p.buttonOptions) buttons[@"Select"]=p.buttonOptions;
     if (p.leftThumbstickButton) buttons[@"L3"]=p.leftThumbstickButton;
     if (p.rightThumbstickButton) buttons[@"R3"]=p.rightThumbstickButton;
     return buttons;
 }
+- (void)suppressHeldPadInputs {
+    [padDown removeAllObjects];
+    [suppressedPad removeAllObjects];
+    for (NSString* name in selectedButtons)
+        if (selectedButtons[name].isPressed) [suppressedPad addObject:name];
+    GCExtendedGamepad* pad=selected.extendedGamepad;
+    suppressCircle=!CGPointEqualToPoint(ReadStick(pad.leftThumbstick),CGPointZero);
+    suppressCStick=!CGPointEqualToPoint(ReadStick(pad.rightThumbstick),CGPointZero);
+}
 - (void)pollPad {
-    NSDictionary* buttons=[self padButtons];
+    NSDictionary* buttons=selectedButtons;
     for (NSString* name in buttons) {
         const BOOL pressed=[buttons[name] isPressed];
         if (!pressed) { [padDown removeObject:name]; [suppressedPad removeObject:name]; continue; }
@@ -94,8 +165,11 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
         else [padDown addObject:name];
     }
     GCExtendedGamepad* p=selected.extendedGamepad;
-    padCircle=NormalizeStick(CGPointMake(p.leftThumbstick.xAxis.value,p.leftThumbstick.yAxis.value),.15);
-    padCStick=NormalizeStick(CGPointMake(p.rightThumbstick.xAxis.value,p.rightThumbstick.yAxis.value),.15);
+    const CGPoint circle=ReadStick(p.leftThumbstick),cstick=ReadStick(p.rightThumbstick);
+    if (CGPointEqualToPoint(circle,CGPointZero)) suppressCircle=NO;
+    if (CGPointEqualToPoint(cstick,CGPointZero)) suppressCStick=NO;
+    padCircle=suppressCircle?CGPointZero:circle;
+    padCStick=suppressCStick?CGPointZero:cstick;
     [self rebuild];
 }
 - (void)updateSurface:(NSString*)source buttons:(NSSet<NSString*>*)buttons circle:(CGPoint)circle cstick:(CGPoint)cstick touch:(CGPoint)touch {
@@ -106,7 +180,8 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
 - (void)setActive:(BOOL)value {
     if (_active==value) return; _active=value;
     [keysDown removeAllObjects]; [padDown removeAllObjects];
-    if (value) [self pollPad]; else { [surfaces removeAllObjects]; padCircle=padCStick=CGPointZero; [self rebuild]; }
+    if (value) { [self suppressHeldPadInputs]; [self pollPad]; }
+    else { [surfaces removeAllObjects]; padCircle=padCStick=CGPointZero; [self rebuild]; }
 }
 - (void)handleKeyboardCode:(GCKeyCode)code pressed:(BOOL)pressed {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{ [self handleKeyboardCode:code pressed:pressed]; }); return; }
@@ -158,7 +233,7 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
             NSString* name=[GCKeyboard.coalescedKeyboard.keyboardInput buttonForKeyCode:(GCKeyCode)key.integerValue].localizedName;
             NSDictionary* standard=@{@(GCKeyCodeKeyW).stringValue:@"W",@(GCKeyCodeKeyA).stringValue:@"A",@(GCKeyCodeKeyS).stringValue:@"S",@(GCKeyCodeKeyD).stringValue:@"D",@(GCKeyCodeKeyJ).stringValue:@"J",@(GCKeyCodeKeyK).stringValue:@"K",@(GCKeyCodeKeyU).stringValue:@"U",@(GCKeyCodeKeyI).stringValue:@"I",@(GCKeyCodeF1).stringValue:@"F1",@(GCKeyCodeF5).stringValue:@"F5",@(GCKeyCodeF8).stringValue:@"F8",@(GCKeyCodeReturnOrEnter).stringValue:@"Return",@(GCKeyCodeSpacebar).stringValue:@"Space"};
             [names addObject:name?:standard[key]?:[NSString stringWithFormat:@"Key %@",key]];
-        } else [names addObject:[self padButtons][key].localizedName?:key];
+        } else [names addObject:selectedButtons[key].localizedName?:key];
     }
     return names.count?[[names sortedArrayUsingSelector:@selector(localizedStandardCompare:)] componentsJoinedByString:@", "]:@"Not assigned";
 }
@@ -182,5 +257,12 @@ static CGPoint NormalizeStick(CGPoint point,CGFloat deadzone) {
 - (void)cancelCapture { captureTarget=nil; captureCompletion=nil; ++captureGeneration; [self rebuild]; }
 - (void)reloadMappings { cachedPad=nil; cachedKeys=nil; [self rebuild]; [self announce]; }
 - (void)resetMappings:(BOOL)keyboard { if (keyboard) cachedKeys=nil; else cachedPad=nil; [preferences removeObjectForKey:keyboard?@"keyboardBindings":@"controllerBindings"]; [self cancelCapture]; [self announce]; }
-- (void)dealloc { selected.extendedGamepad.valueChangedHandler=nil; [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)dealloc {
+    selected.extendedGamepad.valueChangedHandler=nil;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    StandardGamepad(selected).valueChangedHandler=nil;
+#pragma clang diagnostic pop
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+}
 @end

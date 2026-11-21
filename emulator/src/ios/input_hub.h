@@ -14,6 +14,8 @@ FOUNDATION_EXPORT NSNotificationName const CaraInputHubDidChangeNotification;
 @property(copy,nonatomic) void(^inputChanged)(NSSet<NSString*>*,CGPoint,CGPoint);
 @property(copy,nonatomic) void(^commandChanged)(NSString*,BOOL);
 @property(copy,readonly,nonatomic) NSString* controllerName;
+@property(readonly,nonatomic) BOOL controllerConnected;
+@property(readonly,nonatomic) BOOL controllerHasCirclePad;
 @property(readonly,nonatomic) BOOL keyboardConnected;
 @property(readonly,nonatomic) NSArray<NSString*>* actions;
 - (instancetype)initWithDefaults:(NSUserDefaults*)defaults;

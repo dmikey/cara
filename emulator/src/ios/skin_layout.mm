@@ -10,6 +10,32 @@ CGRect CaraSkinRect(NSDictionary* value) {
     return CGRectMake([value[@"x"] doubleValue],[value[@"y"] doubleValue],
                       [value[@"width"] doubleValue],[value[@"height"] doubleValue]);
 }
+NSDictionary* CaraControllerSkinRepresentation(BOOL landscape) {
+    static NSDictionary* portrait;
+    static NSDictionary* wide;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        const auto rect=[](CGFloat x,CGFloat y,CGFloat w,CGFloat h) {
+            return @{@"x":@(x),@"y":@(y),@"width":@(w),@"height":@(h)};
+        };
+        const auto make=[&](BOOL horizontal,NSDictionary* top,NSDictionary* bottom) {
+            return @{@"mappingSize":horizontal?@{@"width":@1200,@"height":@900}:@{@"width":@900,@"height":@1200},
+                @"screens":@[@{@"outputFrame":top},@{@"outputFrame":bottom}],
+                @"items":@[@{@"frame":bottom,@"inputs":@{@"x":@"touchScreenX",@"y":@"touchScreenY"}}],
+                @"assets":@{},@"caraStatsFrame":rect(34,24,410,72)};
+        };
+        portrait=make(NO,rect(55,112,790,474),rect(130,612,640,480));
+        wide=make(YES,rect(36,260,610,366),rect(674,260,490,367.5));
+    });
+    return landscape?wide:portrait;
+}
+BOOL CaraSkinHasTouchMenu(NSDictionary* representation) {
+    for (NSDictionary* item in representation[@"items"]) {
+        NSArray* inputs=item[@"inputs"];
+        if ([inputs isKindOfClass:NSArray.class] && [inputs containsObject:@"menu"]) return YES;
+    }
+    return NO;
+}
 CGRect CaraAspectFit(CGSize source, CGRect destination) {
     const double scale=MIN(destination.size.width/source.width,destination.size.height/source.height);
     return CGRectMake(CGRectGetMidX(destination)-source.width*scale/2,CGRectGetMidY(destination)-source.height*scale/2,source.width*scale,source.height*scale);

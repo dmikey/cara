@@ -12,6 +12,9 @@
 @end
 
 CGRect CaraSkinRect(NSDictionary* value);
+// Built-in iPad skin used when a physical controller supplies the buttons.
+NSDictionary* CaraControllerSkinRepresentation(BOOL landscape);
+BOOL CaraSkinHasTouchMenu(NSDictionary* representation);
 typedef struct { CGRect indicator; CGRect metrics; } CaraHUDLayout;
 CaraHUDLayout CaraSkinHUDLayout(NSDictionary* representation,CGRect canvas);
 CGRect CaraAspectFit(CGSize source, CGRect destination);
