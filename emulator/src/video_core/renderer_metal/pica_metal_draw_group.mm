@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "pica_metal_draw_group.h"
 #include "pica_metal_frame_cost.hh"
+#include "pica_metal_surface_writer.h"
 #include "common/logging/log.h"
 
 #include <algorithm>
@@ -9,6 +10,7 @@ namespace Cara {
 bool EncodeGroupedMetalDraw(id<MTLCommandBuffer> command, PicaMetalUploadArena& arena,
                            const TexturedMetalDraw& draw);
 bool CloseGroupedMetalDraw(id<MTLCommandBuffer> command);
+void AbortGroupedMetalDraw(id<MTLCommandBuffer> command) noexcept;
 
 namespace {
 
@@ -47,13 +49,90 @@ bool CompatibleView(id<MTLDevice> device, const PicaMetalSurfaceView& view,
 
 } // namespace
 
+PicaMetalCompletion PicaMetalValidationReceipt::Poll() const {
+    // Metal Completed/Error are final states. Once every shader-side check
+    // passes, neither the command nor its immutable validation can change.
+    // https://developer.apple.com/documentation/metal/mtlcommandbuffer/status
+    const auto terminal = checked.load(std::memory_order_acquire);
+    if (terminal != PicaMetalCompletion::Pending)
+        return terminal;
+    if (!command || command.status < MTLCommandBufferStatusCommitted ||
+        command.status == MTLCommandBufferStatusError || command.error) {
+        checked.store(PicaMetalCompletion::Failed, std::memory_order_release);
+        return PicaMetalCompletion::Failed;
+    }
+    if (command.status != MTLCommandBufferStatusCompleted)
+        return PicaMetalCompletion::Pending;
+    // Several descendant snapshots can inspect this same receipt concurrently.
+    // Serialize only its first completed inspection and one-time ARC releases.
+    // No GPU wait is performed while holding this mutex.
+    std::lock_guard lock(inspection);
+    const auto inspected = checked.load(std::memory_order_relaxed);
+    if (inspected != PicaMetalCompletion::Pending)
+        return inspected;
+    if (source) {
+        const auto source_status = source->Status();
+        if (source_status == MetalGuestWriteStatus::Pending)
+            return PicaMetalCompletion::Pending;
+        if (source_status == MetalGuestWriteStatus::Failed) {
+            NativeMetalCost::Count(NativeMetalCost::AsyncDepthChecksFailed, 1);
+            checked.store(PicaMetalCompletion::Failed, std::memory_order_release);
+            return PicaMetalCompletion::Failed;
+        }
+    }
+    {
+        for (const auto& buffer : errors)
+            if (!buffer || buffer.device != command.device || buffer.length < sizeof(u32) ||
+                buffer.storageMode != MTLStorageModeShared || !buffer.contents ||
+                *static_cast<const u32*>(buffer.contents) != 0) {
+                NativeMetalCost::Count(NativeMetalCost::AsyncDepthChecksFailed, 1);
+                checked.store(PicaMetalCompletion::Failed, std::memory_order_release);
+                return PicaMetalCompletion::Failed;
+            }
+        NativeMetalCost::Count(NativeMetalCost::AsyncDepthChecksPassed, 1);
+        errors = {}; // Completed checks no longer retain their staging allocations.
+        source.reset();
+        checked.store(PicaMetalCompletion::Complete, std::memory_order_release);
+    }
+    return PicaMetalCompletion::Complete;
+}
+
+PicaMetalCompletion PicaMetalValidationReceipt::Wait() const {
+    auto status = Poll();
+    if (status != PicaMetalCompletion::Pending)
+        return status;
+    [command waitUntilCompleted];
+    status = Poll();
+    if (status != PicaMetalCompletion::Pending)
+        return status;
+    // The GPU dependency precedes this command. Its host completion or
+    // validation receipt may still need resolving at a guest-read boundary.
+    std::shared_ptr<const MetalSurfaceWriter> pending_source;
+    {
+        std::lock_guard lock(inspection);
+        pending_source = source;
+    }
+    if (pending_source && !pending_source->ValidateProducerCompletion()) {
+        checked.store(PicaMetalCompletion::Failed, std::memory_order_release);
+        return PicaMetalCompletion::Failed;
+    }
+    return Poll();
+}
+
 PicaMetalCompletion PicaMetalDrawTicket::Poll() const {
     if (!command) {
         return PicaMetalCompletion::Failed;
     }
     const auto status = command.status;
-    if (status < MTLCommandBufferStatusCommitted || status == MTLCommandBufferStatusError) {
+    if (status < MTLCommandBufferStatusCommitted || status == MTLCommandBufferStatusError || command.error) {
         return PicaMetalCompletion::Failed;
+    }
+    if (validation) {
+        if (validation->Command() != command)
+            return PicaMetalCompletion::Failed;
+        const auto checked = validation->Poll();
+        if (checked != PicaMetalCompletion::Complete)
+            return checked;
     }
     return status == MTLCommandBufferStatusCompleted ? PicaMetalCompletion::Complete
                                                     : PicaMetalCompletion::Pending;
@@ -61,6 +140,8 @@ PicaMetalCompletion PicaMetalDrawTicket::Poll() const {
 
 PicaMetalCompletion PicaMetalDrawTicket::WaitUntilGuestRead() const {
     if (Poll() == PicaMetalCompletion::Pending) {
+        if (validation)
+            return validation->Wait();
         [command waitUntilCompleted];
     }
     return Poll();
@@ -68,6 +149,24 @@ PicaMetalCompletion PicaMetalDrawTicket::WaitUntilGuestRead() const {
 
 PicaMetalDrawGroup::PicaMetalDrawGroup(id<MTLCommandQueue> owner_queue, NSUInteger upload_page_bytes)
     : queue(owner_queue), upload(owner_queue.device, upload_page_bytes) {}
+
+PicaMetalDrawGroup::~PicaMetalDrawGroup() { Abort(); }
+
+void PicaMetalDrawGroup::Abort() noexcept {
+    if (std::this_thread::get_id() != owner)
+        std::terminate(); // Metal encoding and its thread-local packets have one owner.
+    faulted = true;
+    AbortGroupedMetalDraw(pending.command);
+    upload.Cancel();
+    // A failed commit may already have submitted the prefix. Do not release its
+    // local backing before completion, and never publish its rejected writes.
+    if (pending.command.status >= MTLCommandBufferStatusCommitted &&
+        pending.command.status < MTLCommandBufferStatusCompleted)
+        [pending.command waitUntilCompleted];
+    pending = {};
+    color = {};
+    depth_stencil = {};
+}
 
 PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& draw,
                                                      const PicaMetalDrawViews& views) {

@@ -8,6 +8,8 @@ on:
       - 'LICENSE'
       - 'NOTICE'
       - 'tests/metal_display_transfer_startup_test.mm'
+      - 'tests/metal_async_depth_validation_test.mm'
+      - 'tests/run_metal_async_depth_validation_test.py'
       - 'tools/build_native_metal.py'
   pull_request:
     paths:
@@ -16,6 +18,8 @@ on:
       - 'LICENSE'
       - 'NOTICE'
       - 'tests/metal_display_transfer_startup_test.mm'
+      - 'tests/metal_async_depth_validation_test.mm'
+      - 'tests/run_metal_async_depth_validation_test.py'
       - 'tools/build_native_metal.py'
   workflow_dispatch:
 permissions:
@@ -67,6 +71,9 @@ jobs:
           "$RUNNER_TEMP/metal-transfer-test"
       - name: Build and audit without private shader assets
         run: python3 tools/build_native_metal.py ${{ matrix.target }} ${{ matrix.flags }} --jobs 2
+      - name: Link the checked depth round-trip fixture
+        if: matrix.artifact == 'mac-fastinterp'
+        run: python3 tests/run_metal_async_depth_validation_test.py --build-dir work/build-native-metal-mac --compile-only
       - uses: actions/upload-artifact@v4
         with:
           name: native-metal-${{ matrix.artifact }}-audit
