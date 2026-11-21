@@ -192,6 +192,33 @@ class NightlySigningPolicyTests(unittest.TestCase):
                 profile['Entitlements'][field] = value
                 self.validate(profile)
 
+    def test_signing_archive_blocks_unsafe_entries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / 'fixture.zip'
+            for entries in (
+                ['Payload/Cara.app/../../escape'],
+                ['/Payload/Cara.app/Info.plist'],
+                ['Payload/Cara.app/Test', 'Payload/Cara.app/test'],
+                ['Other/Info.plist'],
+            ):
+                with self.subTest(entries=entries):
+                    with zipfile.ZipFile(archive, 'w') as zipped:
+                        for name in entries:
+                            zipped.writestr(name, b'fixture')
+                    with self.assertRaisesRegex(ValueError, 'Unexpected path'):
+                        sign_nightly.safe_archive(archive, {'Payload'})
+
+    def test_signing_archive_blocks_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / 'fixture.zip'
+            entry = zipfile.ZipInfo('Payload/Cara.app/link')
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFLNK | 0o777) << 16
+            with zipfile.ZipFile(archive, 'w') as zipped:
+                zipped.writestr(entry, '../../escape')
+            with self.assertRaisesRegex(ValueError, 'Unexpected path'):
+                sign_nightly.safe_archive(archive, {'Payload'})
+
     def test_ci_build_number_advances_with_run(self):
         for first, second in [(1, 2), (99, 100), (9999, 10000)]:
             key = lambda run: tuple(map(int, sign_nightly.build_version(run).split('.')))

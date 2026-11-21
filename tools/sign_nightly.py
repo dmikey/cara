@@ -13,6 +13,7 @@ import plistlib
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import tempfile
 import zipfile
@@ -109,11 +110,10 @@ def mac_zip(app, out):
     run('/usr/bin/ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', app, out)
 
 
-def mac_package(app, audit_path, out, revision, version, folder):
+def mac_package(app, audit, out, revision, version, folder):
     resources = app / 'Contents/Resources'
     manifest_path = resources / 'build.json'
     manifest = json.loads(manifest_path.read_text())
-    audit = json.loads(audit_path.read_text())
     core = app / 'Contents/MacOS/cara-core'
     if (manifest.get('source_revision') != revision or manifest.get('self_contained') is not True
             or manifest.get('cpu_jit_available') is not True or manifest.get('shader_jit') is not False
@@ -193,16 +193,16 @@ def app_store_entitlements(profile, bundle_id, now):
     }
 
 
-def ios_package(app, audit_path, out, revision, version, folder):
-    audit = json.loads(audit_path.read_text())
+def ios_package(app, audit, out, revision, version, folder):
     info_path = app / 'Info.plist'
     info = read_plist(info_path)
     name = info['CFBundleExecutable']
     if Path(name).name != name:
         raise RuntimeError('Invalid iOS executable name')
-    if (audit.get('source_revision') != revision or audit.get('platform') != 'ios'
-            or audit.get('renderer') != 'gles3' or audit.get('jit_enabled') is not False
-            or audit.get('binary_sha256') != hash_file(app / name)):
+    if (audit.get('source_revision') != revision or audit.get('renderer') != 'gles3'
+            or audit.get('unsigned') is not True or audit.get('requires_resigning') is not True
+            or audit.get('bundle_id') != info.get('CFBundleIdentifier')
+            or audit.get('executable_sha256') != hash_file(app / name)):
         raise RuntimeError('Expected the audited iOS GLES3 no-JIT app from this commit')
     paths = list(app.rglob('*'))
     if any(p.is_symlink() or p.suffix in {'.framework', '.dylib', '.appex', '.app', '.mobileprovision'}
@@ -238,6 +238,44 @@ def ios_package(app, audit_path, out, revision, version, folder):
                 shader_jit=False, bundle_id=info['CFBundleIdentifier'], renderer='gles3')
 
 
+def safe_archive(archive, roots):
+    with zipfile.ZipFile(archive) as zipped:
+        seen = set()
+        for entry in zipped.infolist():
+            parts = entry.filename.removesuffix('/').split('/')
+            normalized = '/'.join(parts).casefold()
+            mode = entry.external_attr >> 16
+            if (parts[0] not in roots or any(p in {'', '.', '..'} for p in parts)
+                    or normalized in seen or stat.S_ISLNK(mode)
+                    or '\\' in entry.filename):
+                raise ValueError('Unexpected path in unsigned package')
+            seen.add(normalized)
+
+
+def unpack_unsigned(platform, artifacts, folder, revision):
+    if platform == 'mac':
+        archive = artifacts / 'Cara-macOS-arm64-JIT.zip'
+        audit = json.loads((artifacts / 'mac-release-audit.json').read_text())
+        paths = {'Cara.app', '__MACOSX'}
+        app = folder / 'Cara.app'
+    else:
+        archive = artifacts / 'Cara-iOS-arm64-GLES3-unsigned.ipa'
+        audit = json.loads(archive.with_suffix('.ipa.json').read_text())
+        if audit.get('source_revision') != revision or audit.get('ipa_sha256') != hash_file(archive):
+            raise RuntimeError('Unsigned IPA differs from its audited package')
+        paths = {'Payload'}
+        app = folder / 'Payload/Cara.app'
+    safe_archive(archive, paths)
+    folder.mkdir()
+    run('/usr/bin/ditto', '-x', '-k', archive, folder)
+    if platform == 'mac':
+        manifest = app / 'Contents/Resources/build.json'
+        if manifest.read_bytes() != (artifacts / 'mac-build.json').read_bytes():
+            raise RuntimeError('Unsigned Mac app differs from its package manifest')
+        run(CODESIGN, '--verify', '--deep', '--strict', app)
+    return app, audit
+
+
 def build_version(run_number):
     major, tail = divmod(run_number, 10_000)
     minor, patch = divmod(tail, 100)
@@ -247,8 +285,7 @@ def build_version(run_number):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('platform', choices=['mac', 'ios'])
-    parser.add_argument('--app', required=True, type=Path)
-    parser.add_argument('--audit', required=True, type=Path)
+    parser.add_argument('--artifact-dir', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
     required = MAC_VARIABLES if args.platform == 'mac' else IOS_VARIABLES
@@ -268,7 +305,9 @@ def main():
     output.parent.mkdir(parents=True, exist_ok=True)
     package = mac_package if args.platform == 'mac' else ios_package
     with tempfile.TemporaryDirectory(prefix='cara-signing-') as temporary:
-        metadata = package(args.app.resolve(), args.audit.resolve(), output, revision, version, Path(temporary))
+        folder = Path(temporary)
+        app, audit = unpack_unsigned(args.platform, args.artifact_dir.resolve(), folder / 'unsigned', revision)
+        metadata = package(app, audit, output, revision, version, folder)
     metadata.update(source_revision=revision, build_version=version, asset_sha256=hash_file(output))
     output.with_suffix(output.suffix + '.json').write_text(json.dumps(metadata, indent=2) + '\n')
     with open(os.environ['GITHUB_OUTPUT'], 'a') as file:

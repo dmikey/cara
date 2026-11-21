@@ -62,9 +62,7 @@ jobs:
     needs: source
     name: Self-contained macOS arm64 / optional CPU JIT included
     runs-on: macos-15
-    timeout-minutes: 65
-    outputs:
-      signed: ${{ steps.nightly-sign.outputs.signed }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,31 +95,11 @@ jobs:
           name: Cara-macOS-arm64-JIT
           path: dist/*
           if-no-files-found: error
-      - name: Sign and notarize the Mac nightly
-        if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly))
-        id: nightly-sign
-        env:
-          CARA_MAC_CERTIFICATE_BASE64: ${{ secrets.CARA_MAC_CERTIFICATE_BASE64 }}
-          CARA_MAC_CERTIFICATE_PASSWORD: ${{ secrets.CARA_MAC_CERTIFICATE_PASSWORD }}
-          CARA_NOTARY_KEY_BASE64: ${{ secrets.CARA_NOTARY_KEY_BASE64 }}
-          CARA_NOTARY_KEY_ID: ${{ secrets.CARA_NOTARY_KEY_ID }}
-          CARA_NOTARY_ISSUER_ID: ${{ secrets.CARA_NOTARY_ISSUER_ID }}
-        run: |
-          python3 tools/sign_nightly.py mac --app work/Cara.app --audit work/mac-release-audit.json \
-            --output work/signed/Cara-macOS-arm64-JIT-signed.zip
-      - uses: actions/upload-artifact@v4
-        if: steps.nightly-sign.outputs.signed == 'true'
-        with:
-          name: nightly-macos-signed
-          path: work/signed/*
-          if-no-files-found: error
   ios:
     needs: source
     name: iOS arm64 GLES3 / unsigned IPA / no JIT
     runs-on: macos-15
     timeout-minutes: 45
-    outputs:
-      signed: ${{ steps.nightly-sign.outputs.signed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,22 +123,6 @@ jobs:
         with:
           name: Cara-iOS-arm64-GLES3-unsigned
           path: dist/*
-          if-no-files-found: error
-      - name: Sign the iOS nightly with App Store distribution provisioning
-        if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly))
-        id: nightly-sign
-        env:
-          CARA_IOS_CERTIFICATE_BASE64: ${{ secrets.CARA_IOS_CERTIFICATE_BASE64 }}
-          CARA_IOS_CERTIFICATE_PASSWORD: ${{ secrets.CARA_IOS_CERTIFICATE_PASSWORD }}
-          CARA_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.CARA_IOS_APP_STORE_PROFILE_BASE64 }}
-        run: |
-          python3 tools/sign_nightly.py ios --app work/build-ios-gles3/bin/cara-ios.app \
-            --audit work/build-ios-gles3/no-jit-audit.json --output work/signed/Cara-iOS-arm64-GLES3-signed.ipa
-      - uses: actions/upload-artifact@v4
-        if: steps.nightly-sign.outputs.signed == 'true'
-        with:
-          name: nightly-ios-signed
-          path: work/signed/*
           if-no-files-found: error
   publish:
     name: Attach audited binaries to the existing release
@@ -195,19 +157,69 @@ jobs:
           gh release view "$RELEASE_TAG" >/dev/null
           gh release upload "$RELEASE_TAG" dist/* SHA256SUMS.txt --clobber
 
+  nightly-sign:
+    name: Sign the audited Apple nightly packages
+    needs: [source, mac, ios]
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly))
+    runs-on: macos-15
+    timeout-minutes: 35
+    environment: nightly-signing
+    outputs:
+      signed: ${{ steps.result.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-macOS-arm64-JIT
+          path: work/unsigned-mac
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-iOS-arm64-GLES3-unsigned
+          path: work/unsigned-ios
+      - name: Sign and notarize the Mac nightly
+        id: mac
+        env:
+          CARA_MAC_CERTIFICATE_BASE64: ${{ secrets.CARA_MAC_CERTIFICATE_BASE64 }}
+          CARA_MAC_CERTIFICATE_PASSWORD: ${{ secrets.CARA_MAC_CERTIFICATE_PASSWORD }}
+          CARA_NOTARY_KEY_BASE64: ${{ secrets.CARA_NOTARY_KEY_BASE64 }}
+          CARA_NOTARY_KEY_ID: ${{ secrets.CARA_NOTARY_KEY_ID }}
+          CARA_NOTARY_ISSUER_ID: ${{ secrets.CARA_NOTARY_ISSUER_ID }}
+        run: |
+          python3 tools/sign_nightly.py mac --artifact-dir work/unsigned-mac \
+            --output work/signed/Cara-macOS-arm64-JIT-signed.zip
+      - name: Sign the iOS nightly with App Store distribution provisioning
+        id: ios
+        env:
+          CARA_IOS_CERTIFICATE_BASE64: ${{ secrets.CARA_IOS_CERTIFICATE_BASE64 }}
+          CARA_IOS_CERTIFICATE_PASSWORD: ${{ secrets.CARA_IOS_CERTIFICATE_PASSWORD }}
+          CARA_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.CARA_IOS_APP_STORE_PROFILE_BASE64 }}
+        run: |
+          python3 tools/sign_nightly.py ios --artifact-dir work/unsigned-ios \
+            --output work/signed/Cara-iOS-arm64-GLES3-signed.ipa
+      - uses: actions/upload-artifact@v4
+        if: steps.mac.outputs.signed == 'true' && steps.ios.outputs.signed == 'true'
+        with:
+          name: nightly-signed
+          path: work/signed/*
+          if-no-files-found: error
+      - id: result
+        if: steps.mac.outputs.signed == 'true' && steps.ios.outputs.signed == 'true'
+        run: echo "signed=true" >> "$GITHUB_OUTPUT"
   nightly-publish:
     name: Publish signed nightly prerelease
-    needs: [source, mac, ios]
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)) && needs.mac.outputs.signed == 'true' && needs.ios.outputs.signed == 'true'
+    needs: [source, nightly-sign]
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)) && needs.nightly-sign.outputs.signed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: nightly-*-signed
+          name: nightly-signed
           path: dist
-          merge-multiple: true
       - name: Verify and publish matching signed products
         env:
           GH_TOKEN: ${{ github.token }}

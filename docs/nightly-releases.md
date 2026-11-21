@@ -19,7 +19,15 @@ pass verification. It includes signing and source receipts plus
 Builds without both sets of signing credentials retain their unsigned
 workflow artifacts and identify missing secret names in the run summary.
 
-## Repository Actions secrets
+## Signing environment
+
+Before adding secrets, create a GitHub Actions environment named
+`nightly-signing` under **Settings → Environments**. Select the
+deployment rules that allow only the `main` branch. The package build
+jobs need no secrets. Only the signing job uses this environment.
+
+Add the following as **environment secrets**. Avoid repository-level
+signing secrets, which could be used by another branch's workflow.
 
 | Secret | Value |
 | --- | --- |
