@@ -1104,7 +1104,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                  : registers.output_width == registers.input_width &&
                    registers.output_height == registers.input_height);
     std::optional<MetalTransfer::LinearColorTransferPlan> detile_plan;
-    const auto scaled_crop = MetalTransfer::PlanScaledCropRgba8(registers);
+    const auto scaled_crop = MetalTransfer::PlanScaledColorCrop(registers);
     if (valid_extent && !registers.address_override_enabled &&
         ((registers.input_width | registers.input_height) & 7u) == 0) {
         if (rgb565 || packed16 || block32_rgb8 || cropped) {
@@ -1134,7 +1134,8 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                                          ? NativeMetalCost::RetileHost
                                          : NativeMetalCost::RawDetileHost);
         using MetalTransfer::AlignedGuestInterval;
-        const u64 size = u64{registers.input_width} * registers.input_height * (packed16 ? 2u : 4u);
+        const u32 source_bpp = scaled_crop ? scaled_crop->source_bpp : packed16 ? 2u : 4u;
+        const u64 size = u64{registers.input_width} * registers.input_height * source_bpp;
         std::optional<MetalTransfer::GuestInterval> src, dst;
         if (rgb8_retile) {
             src = rgb8_retile->source;
@@ -1191,8 +1192,15 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         const auto encoder = [command computeCommandEncoder];
         if (!encoder)
             submissions.Fail("Could not encode linear-to-tiled Metal transfer");
-        const u32 mode = scaled_crop ? 5u : packed16 ? 1u
-                        : (linear_to_tiles || rgb8_retile) ? 0u : detile_plan->destination_bpp;
+        u32 mode = 0;
+        if (scaled_crop && scaled_crop->scale_xy_tiled)
+            mode = source_bpp == 2u ? 7u : 8u;
+        else if (scaled_crop)
+            mode = source_bpp == 2u ? 6u : 5u;
+        else if (packed16)
+            mode = 1;
+        else if (!linear_to_tiles && !rgb8_retile)
+            mode = detile_plan->destination_bpp;
         const u32 output_width = scaled_crop ? scaled_crop->output_width : registers.output_width;
         const u32 output_height = scaled_crop ? scaled_crop->output_height : registers.output_height;
         const std::array<u32, 6> arguments{registers.input_width, registers.input_height,
@@ -1205,7 +1213,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         [encoder dispatchThreadgroups:MTLSizeMake((output_width + 7u) / 8,
                                                  (output_height + 7u) / 8, 1)
                 threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
-        if (scaled_crop && !scaled_crop_rgb8)
+        if (scaled_crop && scaled_crop->destination_bpp == 2u)
             NativeMetalCost::Count(NativeMetalCost::DisplayScaledCropRgb565, 1);
         [encoder endEncoding];
         PublishBytes(command, output, DenseRows(*dst));
@@ -1670,17 +1678,19 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledColor(
 PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     MetalTransfer::GuestInterval bytes, u32 width, u32 height,
     const PicaMetalDepthImportPipelines& pipelines, id<MTLComputePipelineState> tiled_export,
-    id<MTLComputePipelineState> depth_pack, const MetalGuestAuthority::GuestReader& ram) {
+    id<MTLComputePipelineState> depth_pack, const MetalGuestAuthority::GuestReader& ram,
+    bool has_stencil) {
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Sample);
     submissions.CheckThread();
     if (HasTextureCopyBatch(this))
         PublishPending();
     submissions.Retire(false);
+    const u32 pixel_bytes = has_stencil ? 4u : 3u;
     if (!width || !height || ((width | height) & 7u) || bytes.begin >= bytes.end ||
-        bytes.Size() > MaxBackingBytes || bytes.Size() % 4 ||
-        u64{width} * height != bytes.Size() / 4 ||
+        bytes.Size() > MaxBackingBytes || bytes.Size() % pixel_bytes ||
+        u64{width} * height != bytes.Size() / pixel_bytes ||
         attachment_generation == std::numeric_limits<u64>::max())
-        submissions.Fail("Unsupported native Metal D24S8 surface");
+        submissions.Fail("Unsupported native Metal depth surface");
 
     if (resident_depth) {
         const auto& view = resident_depth->view;
@@ -1691,10 +1701,11 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     }
 
     PublishPending();
-    const bool allow_fuse = NativeMetalCost::FuseDepthClear();
+    const bool allow_fuse = has_stencil && NativeMetalCost::FuseDepthClear();
     if (!allow_fuse)
         submissions.Reserve();
-    const auto clear_word = FullDepthFill(queue, authority, bytes, submissions);
+    const auto clear_word = has_stencil ? FullDepthFill(queue, authority, bytes, submissions)
+                                        : std::nullopt;
     const bool deferred_clear = allow_fuse && clear_word.has_value();
     if (allow_fuse && !deferred_clear)
         submissions.Reserve();
@@ -1722,12 +1733,14 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     descriptor.usage = MTLTextureUsageRenderTarget;
     const auto texture = [queue.device newTextureWithDescriptor:descriptor];
     if ((!deferred_clear && !command) || !texture || (!clear_word && !source))
-        submissions.Fail("Could not allocate native Metal D24S8 import");
+        submissions.Fail("Could not allocate native Metal depth import");
 
     const auto generation = ++attachment_generation;
     const PicaGuestRange range{bytes.begin, bytes.end};
     auto exporter = MakePicaTiledVisibilityExporter(
-        texture, generation, range, PicaExportFormat::Depth24Stencil8, tiled_export, depth_pack);
+        texture, generation, range,
+        has_stencil ? PicaExportFormat::Depth24Stencil8 : PicaExportFormat::Depth24,
+        tiled_export, depth_pack);
     if (!exporter)
         submissions.Fail("Could not certify native Metal depth/stencil export");
 
@@ -1763,8 +1776,9 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
         if (!errors)
             submissions.Fail("Could not allocate native Metal depth-validation buffer");
         *static_cast<u32*>(errors.contents) = 0;
-        if (!EncodeDepthImport(command, pipelines, source->buffer, source->buffer_offset, texture, errors))
-            submissions.Fail("Could not encode native Metal D24S8 import");
+        if (!EncodeDepthImport(command, pipelines, source->buffer, source->buffer_offset, texture,
+                               errors, nullptr, has_stencil))
+            submissions.Fail("Could not encode native Metal depth import");
         // Preserve both GPU checks and, for the queued path, the original
         // producer's transitive validity across retirement and guest reads.
         std::shared_ptr<const PicaMetalValidationReceipt> validation;
@@ -1780,7 +1794,7 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
             submissions.Retire(false);
             if (command.status != MTLCommandBufferStatusCompleted || command.error ||
                 *static_cast<const u32*>(errors.contents) != 0)
-                submissions.Fail("Native Metal D24S8 import failed validation");
+                submissions.Fail("Native Metal depth import failed validation");
             if (joined.producer) {
                 const auto* writer = static_cast<const MetalSurfaceWriter*>(joined.producer.get());
                 if (!writer->ValidateProducerCompletion() ||
@@ -1791,7 +1805,7 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
 
     }
 
-    if (!deferred_clear && JoinCheckedDepthImport())
+    if (has_stencil && !deferred_clear && JoinCheckedDepthImport())
         exporter = CheckedDepthExporter{std::move(exporter), proof};
     resident_depth = PicaMetalNativeAttachment{{texture, range, generation}, std::move(exporter),
                                               std::nullopt};

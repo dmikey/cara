@@ -188,21 +188,26 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
     };
     if (draw.primary_material_cube != views.primary_cube_faces.has_value())
         return decline("primary cube presence");
-    const auto compatible_primary_reads = [&](PicaGuestRange range) {
-        if (!views.primary_cube_faces)
-            return CompatibleReadRanges(range, views.sampled.authoritative_bytes);
-        return std::all_of(views.primary_cube_faces->begin(), views.primary_cube_faces->end(),
+    if (views.primary_color_snapshot &&
+        (views.primary_cube_faces || !draw.texture0 || draw.texture0 == draw.color ||
+         (draw.texture0.usage & MTLTextureUsageRenderTarget) ||
+         !Overlaps(views.sampled.authoritative_bytes, views.color.authoritative_bytes)))
+        return decline("primary color snapshot");
+    const auto compatible_cube_reads = [&](PicaGuestRange range) {
+        return !views.primary_cube_faces ||
+               std::all_of(views.primary_cube_faces->begin(), views.primary_cube_faces->end(),
                            [&](PicaGuestRange face) { return CompatibleReadRanges(range, face); });
     };
     if (draw.secondary_material.has_value() != views.secondary_sampled.has_value())
         return decline("secondary presence");
     if (const auto& s=views.secondary_sampled) {
         const auto& range=s->authoritative_bytes;
-        // Immutable inputs may read the same complete guest range.
+        // Decoded 2D inputs are immutable snapshots. Their guest ranges may
+        // overlap, for example when one material reads more mip levels.
         if (!CompatibleView(queue.device,*s,draw.secondary_material->texture,MTLTextureUsageShaderRead) ||
             Overlaps(range,views.color.authoritative_bytes) ||
             Overlaps(range,views.depth_stencil.authoritative_bytes) ||
-            !compatible_primary_reads(range))
+            !compatible_cube_reads(range))
             return decline("secondary view or alias");
     }
     if (draw.tertiary_material.has_value() != views.tertiary_sampled.has_value())
@@ -213,8 +218,7 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
             !CompatibleView(queue.device, *third, draw.tertiary_material->texture, MTLTextureUsageShaderRead) ||
             Overlaps(range, views.color.authoritative_bytes) ||
             Overlaps(range, views.depth_stencil.authoritative_bytes) ||
-            !compatible_primary_reads(range) ||
-            !CompatibleReadRanges(range, views.secondary_sampled->authoritative_bytes))
+            !compatible_cube_reads(range))
             return decline("tertiary view or alias");
     }
     if (views.primary_cube_faces) {
@@ -229,7 +233,8 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
             return decline("primary cube views or aliases");
     } else if (draw.texture0) {
         if (!CompatibleView(queue.device, views.sampled, draw.texture0, MTLTextureUsageShaderRead) ||
-            Overlaps(views.sampled.authoritative_bytes, views.color.authoritative_bytes) ||
+            (!views.primary_color_snapshot &&
+             Overlaps(views.sampled.authoritative_bytes, views.color.authoritative_bytes)) ||
             Overlaps(views.sampled.authoritative_bytes, views.depth_stencil.authoritative_bytes))
             return decline("primary view or alias");
     } else if (views.sampled.texture || views.sampled.backing_generation ||

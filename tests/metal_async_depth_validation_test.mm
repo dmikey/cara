@@ -226,6 +226,26 @@ int main(int argc,char** argv) { @autoreleasepool {try {
     Require(lib!=nil,"No production library");
     for(unsigned bad=0;bad<3;++bad)CheckReceipt(device,bad);
     {
+        DepthFixture fixture(device, lib);
+        constexpr u32 size = 16 * 16 * 3;
+        constexpr auto address = DepthFixture::a;
+        auto* ram = fixture.f.ram.data() + address - base;
+        for (u32 i = 0; i < size; ++i)
+            ram[i] = u8(i * 23 + i / 7);
+        const auto expected = fixture.f.Raw(address, size);
+        auto imports = fixture.imports;
+        imports.detile_depth = Compute(device, lib, @"DetilePicaDepth24");
+        const auto tiled = Compute(device, lib, @"ExportPicaTiledDepth24");
+        const auto attachment = fixture.f.lane.AcquireTiledDepthStencil(
+            {address, address + size}, 16, 16, imports, tiled, fixture.pack,
+            fixture.f.Reader(), false);
+        fixture.Publish(attachment);
+        const auto partial = fixture.f.Read(address + 1, size - 3);
+        Require(std::equal(partial.begin(), partial.end(), expected.begin() + 1),
+                "Guest D24 partial read changed packed bytes");
+        Require(fixture.f.Read(address, size) == expected, "Guest D24 round-trip differs");
+    }
+    {
         DepthFixture fixture(device,lib);
         for(unsigned i=0;i<1024;++i)fixture.f.ram[DepthFixture::a-base+i]=u8(i*37+(i>>2)*11);
         const auto expected=fixture.f.Raw(DepthFixture::a,1024);

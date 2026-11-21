@@ -380,8 +380,9 @@ std::optional<MetalTransfer::GuestInterval> TiledRange(PAddr address, u32 width,
 std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned unit,
                                                 bool cube = false) {
     using Mode = TextureConfig::WrapMode;
-    const auto supported_wrap = [](Mode mode) {
-        return mode == Mode::Repeat || mode == Mode::MirroredRepeat || mode == Mode::ClampToEdge;
+    const auto supported_wrap = [&](Mode mode) {
+        return mode == Mode::Repeat || mode == Mode::MirroredRepeat || mode == Mode::ClampToEdge ||
+               (mode == Mode::ClampToBorder && t.border_color.raw == 0);
     };
     // Runtime shaders apply the full signed bias in explicit Texture2D LOD.
     if (!NativeFragmentTarget().emit_explicit_material_lod_bias && t.lod.bias != 0)
@@ -581,10 +582,11 @@ PicaPipelineInputs ReadPipeline(const Pica::Regs& regs) {
     p.depth_write = fb.allow_depth_stencil_write && merger.depth_write_enable;
     p.depth_compare = merger.depth_test_enable ? PicaToGL::CompareFunc(merger.depth_test_func)
                                                 : GL_ALWAYS;
-    p.stencil = stencil.enable;
+    p.stencil = regs.framebuffer.HasStencil() && stencil.enable;
     p.stencil_compare = PicaToGL::CompareFunc(stencil.func);
     p.stencil_read = stencil.input_mask;
-    p.stencil_write = fb.allow_depth_stencil_write ? u32(stencil.write_mask) : 0;
+    p.stencil_write = regs.framebuffer.HasStencil() && fb.allow_depth_stencil_write
+                          ? u32(stencil.write_mask) : 0;
     p.stencil_reference = stencil.reference_value;
     p.stencil_fail = PicaToGL::StencilOp(stencil.action_stencil_fail);
     p.stencil_depth_fail = PicaToGL::StencilOp(stencil.action_depth_fail);
@@ -678,14 +680,17 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
             Settings::values.use_linear_filter));
     };
     using ColorFormat = Pica::FramebufferRegs::ColorFormat;
+    using DepthFormat = Pica::FramebufferRegs::DepthFormat;
     const auto color_format = fb.color_format.Value();
+    const auto depth_format = fb.depth_format.Value();
+    const bool has_stencil = depth_format == DepthFormat::D24S8;
     const bool packed_color = color_format == ColorFormat::RGB565 ||
                               color_format == ColorFormat::RGBA4 ||
                               color_format == ColorFormat::RGB5A1;
-    if (r.framebuffer.IsShadowRendering() || r.texturing.main_config.texture3_enable ||
+    if (r.framebuffer.IsShadowRendering() ||
         (!packed_color && color_format != ColorFormat::RGBA8) ||
         (packed_color && ![resources.queue.device supportsFamily:MTLGPUFamilyApple2]) ||
-        fb.depth_format != Pica::FramebufferRegs::DepthFormat::D24S8 ||
+        (!has_stencil && depth_format != DepthFormat::D24) ||
         Settings::values.custom_textures || Settings::values.use_linear_filter)
         return decline("framebuffer or configuration");
 
@@ -693,7 +698,8 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     const u32 height = fb.GetHeight();
     const auto color_range = TiledRange(fb.GetColorBufferPhysicalAddress(), width, height,
                                         packed_color ? 128 : 256);
-    const auto depth_range = TiledRange(fb.GetDepthBufferPhysicalAddress(), width, height, 256);
+    const auto depth_range = TiledRange(fb.GetDepthBufferPhysicalAddress(), width, height,
+                                       has_stencil ? 256 : 192);
     const auto view = r.rasterizer.GetViewportRect();
     if (!color_range || !depth_range || color_range->Overlaps(*depth_range) ||
         view.left < 0 || view.bottom < 0 || view.right <= view.left || view.top <= view.bottom ||
@@ -818,6 +824,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     std::array<PicaSampleInputs, 3> sampler{};
     std::array<std::optional<TextureMipPlan>, 3> ranges;
     std::optional<MetalTransfer::CubePlan> primary_cube;
+    bool primary_color_snapshot = false;
     for (unsigned i = 0; i < units->size(); ++i) {
         const auto unit = (*units)[i];
         if (unit == NoMaterialUnit)
@@ -828,12 +835,15 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
             return decline("texture format or enable");
         const auto tile_size = Pica::Texture::CalculateTileSize(info.format);
         if (unit == 0 && t.type == TextureConfig::TextureCube) {
-            // The measured native path uses RGBA8, unbiased sampling and a private cube.
-            // Other cube formats stay outside this validated route.
+            // Each face is decoded with its guest format before assembling
+            // the private RGBA8 cube.
             const auto recipe = ReadSampler(t, unit, true);
-            if (i != 0 || !recipe ||
-                info.format != Pica::TexturingRegs::TextureFormat::RGBA8)
-                return decline("cube sampler or format");
+            if (i != 0 || !recipe)
+                throw std::runtime_error(fmt::format(
+                    "Native PICA cube sampler unit={} format={} wrap_s={} wrap_t={} "
+                    "lod_min={} lod_max={} lod_bias={}",
+                    unit, unsigned(info.format), unsigned(t.wrap_s.Value()), unsigned(t.wrap_t.Value()),
+                    u32(t.lod.min_level), u32(t.lod.max_level), s32(t.lod.bias)));
             using Face = Pica::TexturingRegs::CubeFace;
             const auto address = [&](Face face) { return r.texturing.GetCubePhysicalAddress(face); };
             const MetalTransfer::CubeRegisters cube{
@@ -850,17 +860,22 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         }
         const auto recipe = ReadSampler(t, unit);
         ranges[i] = PlanTextureMips(t, tile_size);
-        if (!recipe || !ranges[i] || ranges[i]->bytes.Overlaps(*color_range) ||
+        const bool color_alias = ranges[i] && ranges[i]->bytes.Overlaps(*color_range);
+        if (i == 0 && color_alias && !packed_color && t.lod.max_level == 0 &&
+            info.format == Pica::TexturingRegs::TextureFormat::RGBA8)
+            primary_color_snapshot = true;
+        if (!recipe || !ranges[i] || (color_alias && !(i == 0 && primary_color_snapshot)) ||
             ranges[i]->bytes.Overlaps(*depth_range)) {
             throw std::runtime_error(fmt::format(
                 "Native PICA sampler unit={} format={} type={} addr=0x{:08x} dims={}x{} "
                 "min_filter={} mag_filter={} mip_filter={} wrap_s={} wrap_t={} "
-                "lod_min={} lod_max={} lod_bias={} valid_range={} color_alias={} depth_alias={}",
+                "lod_min={} lod_max={} lod_bias={} border=0x{:08x} "
+                "valid_range={} color_alias={} depth_alias={}",
                 unit, unsigned(info.format), unsigned(t.type.Value()), t.GetPhysicalAddress(),
                 u32(t.width), u32(t.height), unsigned(t.min_filter.Value()),
                 unsigned(t.mag_filter.Value()), unsigned(t.mip_filter.Value()),
                 unsigned(t.wrap_s.Value()), unsigned(t.wrap_t.Value()),
-                u32(t.lod.min_level), u32(t.lod.max_level), s32(t.lod.bias),
+                u32(t.lod.min_level), u32(t.lod.max_level), s32(t.lod.bias), t.border_color.raw,
                 ranges[i].has_value(), ranges[i] && ranges[i]->bytes.Overlaps(*color_range),
                 ranges[i] && ranges[i]->bytes.Overlaps(*depth_range)));
         }
@@ -906,19 +921,28 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     auto depth = Measure(5, [&] {
         NativeMetalCost::Scope cost(NativeMetalCost::Depth);
         return lane.AcquireTiledDepthStencil(*depth_range, width, height,
-        {parts.detile_depth, parts.unpack_depth}, parts.tiled_export, parts.pack_depth, ram); });
+        {has_stencil ? parts.detile_depth : parts.detile_depth24, parts.unpack_depth},
+        has_stencil ? parts.tiled_export : parts.tiled_depth24_export, parts.pack_depth, ram,
+        has_stencil); });
 
-    if (selection->slots[0] != NSNotFound && lut_dirty) {
+    const bool procedural = r.texturing.main_config.texture3_enable;
+    if (selection->slots[0] != NSNotFound &&
+        (lut_dirty || (procedural && (!lut_has_procedural || procedural_lut_dirty)))) {
         lut = Measure(5, [&] {
             NativeMetalCost::Scope cost(NativeMetalCost::Lut);
-            const auto values = SnapshotPicaMetalLuts(state, ++generation);
+            const auto values = SnapshotPicaMetalLuts(state, ++generation, procedural);
+            const auto rows = procedural ? values->procedural_rows : values->rows;
+            const auto active = std::span(values->texels).first(rows * values->width);
+            const auto bytes = std::as_bytes(active);
             return lighting.Resolve(resources.queue,
-                {{reinterpret_cast<const u8*>(values->texels.data()), sizeof(values->texels)},
-                 values->rows, values->generation});
+                {{reinterpret_cast<const u8*>(bytes.data()), bytes.size()}, rows, values->generation});
         });
         if (!lut)
             return decline("lighting LUT");
         lut_dirty = false;
+        lut_has_procedural = procedural;
+        if (procedural)
+            procedural_lut_dirty = false;
     }
 
     NativePicaDrawBindings out{};
@@ -945,6 +969,11 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     out.draw.color = out.color.view.texture;
     out.draw.depth_stencil = out.depth.view.texture;
     out.draw.lighting_lut = selection->slots[0] == NSNotFound ? nil : lut;
+    // Match OpenGL's pre-draw snapshot for attachment feedback. DecodeTexture
+    // reads authoritative guest bytes into a separate sampled-only texture.
+    if (primary_color_snapshot)
+        lane.PublishPending();
+    out.views.primary_color_snapshot = primary_color_snapshot;
     for (unsigned i = 0; i < ranges.size(); ++i) {
         if (i == 0 && primary_cube) {
             const auto cube = Measure(6, [&] {
@@ -992,7 +1021,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     }
     if (pica.depth_write || pica.stencil_write)
         out.views.depth_stencil_dirty = WriteFootprint(*depth_range, width, height,
-                                                       Params::PixelFormat::D24S8, rect);
+            has_stencil ? Params::PixelFormat::D24S8 : Params::PixelFormat::D24, rect);
     out.draw.viewport = {double(rect.left), double(rect.bottom), double(rect.GetWidth()),
                          double(rect.GetHeight()), 0, 1};
     out.draw.scissor = {rect.left, rect.bottom, rect.GetWidth(), rect.GetHeight()};

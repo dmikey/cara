@@ -16,6 +16,7 @@ struct PicaMetalDepthImportPipelines {
 // then check it after the command completes and before using the texture.
 bool EncodeDepthImport(id<MTLCommandBuffer> command, const PicaMetalDepthImportPipelines& pipelines,
                        id<MTLBuffer> source, NSUInteger offset, id<MTLTexture> texture,
-                       id<MTLBuffer> errors, const PicaGuestTilePatch* patch = nullptr);
+                       id<MTLBuffer> errors, const PicaGuestTilePatch* patch = nullptr,
+                       bool has_stencil = true);
 
 } // namespace Cara

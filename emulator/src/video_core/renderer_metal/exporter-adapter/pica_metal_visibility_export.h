@@ -6,7 +6,7 @@
 
 namespace Cara {
 
-enum class PicaExportFormat { Rgba8, Depth24Stencil8, Rgb565, Rgba4, Rgb5A1 };
+enum class PicaExportFormat { Rgba8, Depth24Stencil8, Rgb565, Rgba4, Rgb5A1, Depth24 };
 
 // Snapshot the exact native lease. A returned callback is valid for this
 // resource/generation only and never receives guest RAM memory.

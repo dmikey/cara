@@ -45,6 +45,25 @@ kernel void ExportPicaTiled32(device const uchar* canonical [[buffer(0)]],
     }
 }
 
+kernel void ExportPicaTiledDepth24(device const uchar* canonical [[buffer(0)]],
+                                  device uchar* requested [[buffer(1)]],
+                                  constant PicaTiledExport& layout [[buffer(2)]],
+                                  uint index [[thread_position_in_grid]]) {
+    const uint pixel = layout.begin / 3u + index;
+    if (pixel > (layout.end - 1u) / 3u)
+        return;
+    const uint tile = pixel / 64u;
+    const uint in_tile = pixel % 64u;
+    const uint x = (tile % layout.tiles_per_row) * 8u + DrawMortonCoordinate(in_tile);
+    const uint y = (tile / layout.tiles_per_row) * 8u + DrawMortonCoordinate(in_tile >> 1u);
+    const ulong source = ulong(layout.height - 1u - y) * layout.source_row + ulong(x) * 4u;
+    for (uint byte = 0; byte < 3u; ++byte) {
+        const uint address = pixel * 3u + byte;
+        if (address >= layout.begin && address < layout.end)
+            requested[address - layout.begin] = canonical[source + 3u - byte];
+    }
+}
+
 // Invert the same Morton mapping directly from a tracked RGBA8 attachment.
 // UNORM8 conversion and the R/B byte order match the buffer export above.
 kernel void ExportPicaTiledRGBA8(texture2d<float, access::read> source [[texture(0)]],

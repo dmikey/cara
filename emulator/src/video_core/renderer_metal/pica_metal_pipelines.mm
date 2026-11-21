@@ -592,6 +592,7 @@ std::optional<MTLSamplerAddressMode> GateAddressMode(unsigned mode) {
     case 0x2901: return MTLSamplerAddressModeRepeat;
     case 0x8370: return MTLSamplerAddressModeMirrorRepeat;
     case 0x812f: return MTLSamplerAddressModeClampToEdge;
+    case 0x812d: return MTLSamplerAddressModeClampToZero; // RGBA8 transparent border
     default: return std::nullopt;
     }
 }
