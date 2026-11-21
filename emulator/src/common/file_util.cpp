@@ -12,6 +12,7 @@
 #include "common/common_funcs.h"
 #include "common/common_paths.h"
 #include "common/file_util.h"
+#include "common/zip_rom.h"
 #include "common/logging/log.h"
 
 #include <cctype>
@@ -605,15 +606,32 @@ IOFile::IOFile(IOFile&& other) noexcept {
     std::swap(state_mode, other.state_mode);
 }
 
+// Keep the ZIP source kind in the existing serialized mode field so old
+// native I/O save states continue to reopen with their original modes.
+static constexpr const char* ZipRomMode = "rb:zip";
+
+bool IOFile::OpenRom(const std::string& filename) {
+    return Open(filename, IsZipRomPath(filename) ? ZipRomMode : "rb");
+}
+
 bool IOFile::Open(const std::string& filename, const char openmode[]) {
-    state_filename = filename; state_mode = openmode;
-    if (s_io_factory) {
-        m_file = s_io_factory->Open(filename, openmode);
-    } else {
+    state_filename = filename;
+    state_mode = openmode;
+    const bool zip_rom = state_mode == ZipRomMode;
+    const char* native_mode = zip_rom ? "rb" : openmode;
+    std::unique_ptr<IOHandler> source;
+    if (!zip_rom && !s_io_factory)
         m_file.reset();
-        if (auto* handle = std::fopen(filename.c_str(), openmode))
-            m_file = std::make_unique<NativeIOHandler>(handle);
+    if (s_io_factory) {
+        source = s_io_factory->Open(filename, native_mode);
+    } else if (auto* handle = std::fopen(filename.c_str(), native_mode)) {
+        source = std::make_unique<NativeIOHandler>(handle);
     }
+    // Keep the previous handle alive until we open the successor. It can
+    // already own the shared ZIP index when a loader reopens the same path.
+    if (zip_rom && source)
+        source = OpenIndexedZipRom(filename, std::move(source));
+    m_file = std::move(source);
     m_good = m_file != nullptr;
     return m_good;
 }

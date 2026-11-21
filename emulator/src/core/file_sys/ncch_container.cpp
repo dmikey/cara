@@ -116,7 +116,7 @@ static bool LZSS_Decompress(const u8* compressed, u32 compressed_size, u8* decom
 
 NCCHContainer::NCCHContainer(const std::string& filepath, u32 ncch_offset, u32 partition)
     : ncch_offset(ncch_offset), partition(partition), filepath(filepath) {
-    file.Open(filepath, "rb");
+    file.OpenRom(filepath);
 }
 
 Loader::ResultStatus NCCHContainer::OpenFile(const std::string& filepath, u32 ncch_offset,
@@ -124,7 +124,7 @@ Loader::ResultStatus NCCHContainer::OpenFile(const std::string& filepath, u32 nc
     this->filepath = filepath;
     this->ncch_offset = ncch_offset;
     this->partition = partition;
-    file.Open(filepath, "rb");
+    file.OpenRom(filepath);
 
     if (!file.IsOpen()) {
         LOG_WARNING(Service_FS, "Failed to open {}", filepath);
@@ -427,7 +427,7 @@ Loader::ResultStatus NCCHContainer::Load() {
                     .ProcessData(data, data, sizeof(exefs_header));
             }
 
-            exefs_file.Open(filepath, "rb");
+            exefs_file.OpenRom(filepath);
             has_exefs = true;
         }
 
@@ -464,7 +464,7 @@ Loader::ResultStatus NCCHContainer::LoadOverrides() {
             is_tainted = true;
             has_exefs = true;
         } else {
-            exefs_file.Open(filepath, "rb");
+            exefs_file.OpenRom(filepath);
         }
     } else if (FileUtil::Exists(exefsdir_override) && FileUtil::IsDirectory(exefsdir_override)) {
         is_tainted = true;
@@ -679,8 +679,8 @@ Loader::ResultStatus NCCHContainer::ReadRomFS(std::shared_ptr<RomFSReader>& romf
         return Loader::ResultStatus::Error;
 
     // We reopen the file, to allow its position to be independent from file's
-    FileUtil::IOFile romfs_file_inner(filepath, "rb");
-    if (!romfs_file_inner.IsOpen())
+    FileUtil::IOFile romfs_file_inner;
+    if (!romfs_file_inner.OpenRom(filepath))
         return Loader::ResultStatus::Error;
 
     std::shared_ptr<RomFSReader> direct_romfs;

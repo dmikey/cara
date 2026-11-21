@@ -227,3 +227,13 @@ The bounded route parser has a ROM-free compiler test:
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_native_mac_controls.py
 ```
+
+## ZIP cartridge images
+
+The macOS game picker and developer runner accept standard ZIP archives with a
+single .3ds cartridge image. Stored, Deflate, and ZIP64 entries are supported.
+The loader skips macOS AppleDouble metadata and checks the member bounds and
+checksum before boot. For Deflate it keeps an index of decompression states
+in memory and reads the original archive in place. ExeFS and RomFS reopens
+share the index and maintain separate read cursors. The first open logs the
+index build time.

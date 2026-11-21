@@ -60,6 +60,8 @@ add_library(common STATIC
     common_paths.h
     common_types.h
     file_util.cpp
+    zip_rom.cpp
+    zip_rom.h
     file_util.h
     hash.cpp
     hash.h
@@ -116,4 +118,5 @@ if (ARCHITECTURE_x86_64)
 endif()
 
 target_sources(common PRIVATE memory_ref.cpp zstd_compression.cpp)
-target_link_libraries(common PUBLIC Boost::serialization PRIVATE libzstd_static)
+find_package(ZLIB REQUIRED)
+target_link_libraries(common PUBLIC Boost::serialization PRIVATE libzstd_static ZLIB::ZLIB)
