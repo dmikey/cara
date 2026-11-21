@@ -1938,7 +1938,8 @@ void main() {
 std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const PicaVSConfig& config,
                                  bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs,
                                  bool ios_source_optimizations, bool native_quaternion_geometry,
-                                 bool native_isolated_dispatch, bool native_suffix_sharing) {
+                                 bool native_isolated_dispatch, bool native_suffix_sharing,
+                                 const PackedVertexLayout* known_packed_layout) {
     std::string out;
     if (native_isolated_dispatch && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
     if (native_quaternion_geometry && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
@@ -2105,8 +2106,11 @@ layout (std140) uniform vs_config {
         out += UniformBlockDef;
         if (ios_indexed_inputs >= 2) {
             const char* reuse_fetch = std::getenv("CARA_GPU_PACKED_FETCH_REUSE");
-            out += ios_source_optimizations && reuse_fetch && std::string_view(reuse_fetch) == "1"
-                       ? PackedVertexFetchReuseGLSL : PackedVertexDecoderGLSL;
+            const char* decoder = ios_source_optimizations && reuse_fetch && std::string_view(reuse_fetch) == "1"
+                                      ? PackedVertexFetchReuseGLSL : PackedVertexDecoderGLSL;
+            const auto specialized = known_packed_layout
+                ? SpecializePackedVertexDecoder(decoder, *known_packed_layout) : std::string{};
+            out += specialized.empty() ? std::string_view(decoder) : std::string_view(specialized);
         }
         else out += "uniform highp sampler2D cara_vertex_inputs;\n";
         if (ios_indexed_inputs) out += "uniform highp usampler2D cara_vertex_indices;\n";

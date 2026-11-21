@@ -25,8 +25,15 @@ struct PicaMetalNativeAttachment {
 class PicaMetalNativeDrawLane {
 public:
     using GuestWriteNotice = std::function<void(PAddr begin, PAddr end)>;
+    // Synchronous owner-thread RAM view. Its bytes must remain stable until
+    // DecodeTexture returns or invokes another callback. Must not reenter the
+    // lane or mutate guest memory. Never retained by
+    // the lane or submitted to Metal; return empty when unavailable.
+    using GuestRamView = std::function<std::span<const u8>(PAddr, std::size_t)>;
     PicaMetalNativeDrawLane(id<MTLCommandQueue> queue, NSUInteger upload_page_bytes,
-                          GuestWriteNotice notice = {});
+                          GuestWriteNotice notice = {}, GuestRamView ram_view = {});
+    ~PicaMetalNativeDrawLane();
+    void Abort() noexcept;
     void FlushGuest(PAddr begin, PAddr end,
                     const std::function<bool(PAddr, std::span<const u8>)>& write);
     void Record(const TexturedMetalDraw& draw, const PicaMetalDrawViews& views,
@@ -71,9 +78,10 @@ public:
     void PublishPending();
     bool ReadGuest(PAddr begin, std::span<u8> scratch, const MetalGuestAuthority::GuestReader& ram);
     void InvalidateGuest(PAddr begin, PAddr end);
+    // Owner-thread metadata proof only; never waits for GPU completion. Both
+    // this FCRAM page and its successor must be free of watch dependencies.
+    bool CanReleaseFcramWatchPage(PAddr page);
     void Drain();
-    ~PicaMetalNativeDrawLane();
-    void Abort() noexcept;
 
 private:
     std::array<std::optional<MetalLCD::Screen>, 2> previous_lcd;
@@ -96,6 +104,7 @@ private:
     void InvalidateAttachments(PicaGuestRange bytes, const PicaMetalSurfaceView* same_view = nullptr);
     const id<MTLCommandQueue> queue;
     const GuestWriteNotice write_notice;
+    const GuestRamView ram_view;
     u64 byte_generation = 0;
     u64 attachment_generation = 0;
     std::optional<PicaMetalNativeAttachment> resident_color;

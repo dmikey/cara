@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include "pica_metal_draw.h"
 #include "pica_metal_runtime_shader.h"
+#include "pica_metal_source_pool.h"
 
 namespace Cara {
 
@@ -92,6 +93,7 @@ struct PicaMetalPipelineSelection {
     // The caller binds authoritative backing, raster bounds and immutable payloads.
     void Apply(TexturedMetalDraw& draw) const;
     std::shared_ptr<const BatchedMetalVertexProgram> batched_vertex;
+    bool simd_reference = false;
     bool primary_material_cube = false;
 };
 
@@ -115,6 +117,7 @@ public:
         const std::optional<PicaSampleInputs>& tertiary = std::nullopt) const;
 
 private:
+    friend struct PicaMetalPipelineCacheTestAccess;
     using Key = std::array<unsigned, 28>;
     struct WarmupRecipe {
         std::string vertex, fragment;
@@ -142,9 +145,11 @@ private:
         PicaMetalPipelineSelection selection{};
     };
     struct RuntimeEntry {
-        std::string vertex_source, fragment_source;
+        std::string_view vertex_source, fragment_source;
         PicaMetalVertexMode mode;
+        // Metadata retains its public shape; source ownership is in the pool.
         RuntimeMetalShaderPair stages;
+        std::string_view msl_vertex, msl_fragment;
     };
     std::optional<unsigned> FindRuntime(std::string_view vertex, std::string_view fragment,
                                         PicaMetalVertexMode mode) const;
@@ -158,13 +163,14 @@ private:
     const std::vector<PicaMetalDualAsset> dual_assets;
     const id<MTLLibrary> gate_library;
     const bool rgba8_dither_verified_host;
+    // Declared before all dependent view caches, so it is destroyed last.
+    mutable PicaMetalSourcePool runtime_sources{64 * 1024 * 1024};
     // Reuse successful Metal stage functions across PSO state variants.
     using StageCache = std::unordered_map<std::string_view, id<MTLFunction>>;
     StageCache vertex_functions, fragment_functions;
     std::vector<Entry> entries;
     // Storage remains stable for the stage cache's string_view keys.
     mutable std::deque<RuntimeEntry> runtime_pairs;
-    mutable std::size_t runtime_source_bytes = 0;
 };
 
 } // namespace Cara

@@ -163,12 +163,14 @@ if (CARA_PRIVATE_METAL_DRAWS)
     target_sources(video_core PRIVATE
         renderer_metal/pica_metal_draw.mm
         renderer_metal/batched_vertex_source.cpp
+        renderer_metal/simd_vertex_source.cpp
         renderer_metal/pica_metal_draw_group.mm
         renderer_metal/pica_metal_upload.mm
         renderer_metal/pica_metal_submission_queue.mm
         renderer_metal/pica_metal_guest_authority.cpp
         renderer_metal/pica_metal_native_draw_lane.mm
         renderer_metal/pica_metal_packed_inputs.cpp
+        renderer_metal/pica_metal_pair_indices.mm
         renderer_metal/pica_metal_lut.cpp
         renderer_metal/pica_metal_lighting_cache.mm
         renderer_metal/pica_metal_pipelines.mm

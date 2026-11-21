@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
+#include <string_view>
 #include <unordered_set>
 #include "common/logging/log.h"
 #include "core/memory.h"
@@ -50,6 +52,11 @@ public:
         : memory(memory_), resources(resources_),
           lane(resources.queue, 2 * 1024 * 1024, [this](auto first, auto last) {
               MarkPages(first, last);
+          }, [this](PAddr address, std::size_t size) -> std::span<const u8> {
+              const auto ref = memory.GetPhysicalRef(address);
+              if (!ref || !ref.GetPtr() || size > ref.GetSize())
+                  return {};
+              return {ref.GetPtr(), size};
           }),
           bindings(resources),
           read([this](PAddr address, std::span<u8> bytes) {
@@ -71,7 +78,7 @@ public:
     }
 
     ~NativeRasterizer() override {
-        UnregisterNativeMetalTextureCopyBatch(lane);
+        Stop();
         if (shadow_requests)
             LOG_INFO(Render_OpenGL, "Matched iPad GLES unsupported-shadow requests: {}",
                      shadow_requests);
@@ -80,6 +87,11 @@ public:
 
     bool BeginWarmup() { return bindings.BeginWarmup(); }
     bool FinishWarmup() { return bindings.FinishWarmup(); }
+    void ValidateCapture() {
+        if (failed)
+            throw std::runtime_error("Native Metal capture depends on an aborted renderer");
+        lane.Drain();
+    }
 
     void AddTriangle(const Pica::Shader::OutputVertex& a, const Pica::Shader::OutputVertex& b,
                      const Pica::Shader::OutputVertex& c) override {
@@ -144,6 +156,8 @@ public:
         if (!addr && size == std::numeric_limits<PAddr>::max()) {
             bindings.InvalidateLuts();
             ReleasePages();
+        } else {
+            ReleaseInvalidatedFcramPages(addr, EndAddress(addr, size));
         }
     }
 
@@ -189,7 +203,81 @@ public:
         lane.Abort();
     }
 
+    void AppendWatchProfile(std::ostream& stream, bool json) const {
+        const auto fcram = std::count_if(cached_pages.begin(), cached_pages.end(), [](PAddr page) {
+            return page >= Memory::FCRAM_PADDR && page < Memory::FCRAM_N3DS_PADDR_END;
+        });
+        const auto field = [&](const char* name, u64 value) {
+            if (json)
+                stream << ",\"" << name << "\":" << value;
+            else
+                stream << name << ',' << value << ",0\n";
+        };
+        field("metal_watch_pages_checked", watch_pages_checked);
+        field("metal_watch_pages_released", watch_pages_released);
+        field("metal_watch_ownerless_queries", watch_ownerless_queries);
+        field("metal_watch_ownerless_pages", watch_ownerless_pages);
+        field("metal_watch_pages_current", cached_pages.size());
+        field("metal_watch_fcram_current", static_cast<u64>(fcram));
+    }
+
 private:
+    void ReleaseInvalidatedFcramPages(PAddr begin, PAddr end) {
+        static const bool enabled = [] {
+            const auto* value = std::getenv("CARA_METAL_RELEASE_INVALIDATED_FCRAM_PAGES");
+            return value && std::string_view(value) == "1";
+        }();
+        static const bool partial = [] {
+            const auto* value = std::getenv("CARA_METAL_RELEASE_OWNERLESS_FCRAM_PAGES");
+            return value && std::string_view(value) == "1";
+        }();
+        const bool profile = NativeMetalCost::Enabled();
+        if (!enabled && !partial && !profile)
+            return;
+        constexpr PAddr page_size = Memory::PAGE_SIZE;
+        if (begin >= end || begin >= Memory::FCRAM_N3DS_PADDR_END || end <= Memory::FCRAM_PADDR)
+            return;
+        const u64 clipped_begin = std::max<u64>(begin, Memory::FCRAM_PADDR);
+        const u64 clipped_end = std::min<u64>(end, Memory::FCRAM_N3DS_PADDR_END);
+        const u64 whole_first = (clipped_begin + page_size - 1) & ~u64(Memory::PAGE_MASK);
+        const u64 whole_last = clipped_end & ~u64(Memory::PAGE_MASK);
+        const u64 first = partial || profile ? clipped_begin & ~u64(Memory::PAGE_MASK) : whole_first;
+        const u64 last = partial || profile ? (clipped_end + page_size - 1) & ~u64(Memory::PAGE_MASK) : whole_last;
+        if (first >= last)
+            return;
+        // Complete invalidated pages no longer have authority or residents;
+        // partial pages additionally need the lane's full dependency proof.
+        // Keep the predecessor of a still-watched page outside a whole run.
+        const bool guard = whole_last < Memory::FCRAM_N3DS_PADDR_END &&
+                           cached_pages.contains(static_cast<PAddr>(whole_last));
+        bool released = false;
+        for (u64 page = first; page < last; page += page_size) {
+            const auto found = cached_pages.find(static_cast<PAddr>(page));
+            if (found == cached_pages.end())
+                continue;
+            ++watch_pages_checked;
+            bool ownerless = false;
+            if (partial || profile) {
+                ++watch_ownerless_queries;
+                ownerless = lane.CanReleaseFcramWatchPage(static_cast<PAddr>(page));
+                watch_ownerless_pages += ownerless;
+            }
+            const bool whole = page >= whole_first && page < whole_last &&
+                               !(guard && page + page_size == whole_last);
+            if (!(partial && ownerless) && !(enabled && whole))
+                continue;
+            memory.RasterizerMarkRegionCached(static_cast<PAddr>(page), page_size, false);
+            cached_pages.erase(found);
+            ++watch_pages_released;
+            released = true;
+        }
+        // A later GPU write must restore every released page's barrier.
+        if (released) {
+            marked_ranges = {};
+            next_marked_range = 0;
+        }
+    }
+
     bool ApplyExistingIpadShadowPolicy() {
         if (!Pica::g_state.regs.framebuffer.IsShadowRendering())
             return false;
@@ -244,6 +332,8 @@ private:
     std::unordered_set<PAddr> cached_pages;
     std::array<std::pair<PAddr, PAddr>, 16> marked_ranges{};
     std::size_t next_marked_range = 0;
+    u64 watch_pages_checked = 0, watch_pages_released = 0;
+    u64 watch_ownerless_queries = 0, watch_ownerless_pages = 0;
     std::vector<PicaMetalStageVertex> vertices;
     u64 shadow_requests = 0;
     bool failed = false;
@@ -278,7 +368,9 @@ public:
     bool TryPresent() override { return false; }
     void ResetPresent() override { retained = {}; }
     bool WriteCapture(const std::string& path) {
-        rasterizer.FlushDeferredDraws();
+        // A successful LCD command alone does not validate earlier shader-side
+        // depth checks. Drain through the checked owner queue before exporting.
+        rasterizer.ValidateCapture();
         ReportNativeMetalBindings(path);
         const auto& pixels = retained.capture;
         if (!pixels.buffer || !retained.commands || pixels.format != MTLPixelFormatBGRA8Unorm)
@@ -315,6 +407,11 @@ private:
 };
 
 } // namespace
+
+void AppendNativeMetalWatchProfile(std::ostream& stream, bool json) {
+    if (auto* rasterizer = dynamic_cast<NativeRasterizer*>(VideoCore::Rasterizer()))
+        rasterizer->AppendWatchProfile(stream, json);
+}
 
 VideoCore::NativeRendererPair MakeNativeMetalRenderer(
     Frontend::EmuWindow& window, Memory::MemorySystem& memory, CAMetalLayer* layer,

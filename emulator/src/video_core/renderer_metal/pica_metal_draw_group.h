@@ -10,6 +10,11 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <span>
+#include <thread>
+#include <utility>
+#include <vector>
 
 namespace Cara {
 
@@ -76,8 +81,19 @@ private:
 struct PicaMetalDrawTicket {
     id<MTLCommandBuffer> command = nil;
     std::array<PicaMetalDrawPublication, 64> publications{};
+    // Only wider diagnostic groups allocate additional publication storage.
+    // It is filled before commit and immutable while any submitted ticket owns it.
+    std::shared_ptr<std::vector<PicaMetalDrawPublication>> extended_publications;
     std::size_t count = 0;
     std::shared_ptr<const PicaMetalValidationReceipt> validation;
+
+    std::span<PicaMetalDrawPublication> Publications() {
+        return extended_publications ? std::span(*extended_publications) : std::span(publications);
+    }
+    std::span<const PicaMetalDrawPublication> Publications() const {
+        return extended_publications ? std::span<const PicaMetalDrawPublication>(*extended_publications)
+                                     : std::span<const PicaMetalDrawPublication>(publications);
+    }
 
     PicaMetalCompletion Poll() const;
     // Only a real external visibility boundary may wait. Reads/export must

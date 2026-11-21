@@ -268,6 +268,9 @@ private:
     }
 };
 
+// Renderer identity metadata is process-local, lazy and never serialized.
+u64 AllocateShaderIdentity();
+bool ShaderIdentityAvailable();
 struct ShaderSetup {
     Uniforms uniforms;
 
@@ -282,11 +285,28 @@ struct ShaderSetup {
     } engine_data;
 
     void MarkProgramCodeDirty() {
+        program_code_identity = 0;
         program_code_hash_dirty = true;
     }
 
     void MarkSwizzleDataDirty() {
+        swizzle_data_identity = 0;
         swizzle_data_hash_dirty = true;
+    }
+
+    // Same owner-thread requirement as shader hashes. Direct array writers
+    // must call the corresponding MarkDirty, including authored fixtures.
+    u64 GetProgramCodeIdentity() const {
+        if (!program_code_identity) {
+            program_code_identity = AllocateShaderIdentity();
+        }
+        return program_code_identity;
+    }
+    u64 GetSwizzleDataIdentity() const {
+        if (!swizzle_data_identity) {
+            swizzle_data_identity = AllocateShaderIdentity();
+        }
+        return swizzle_data_identity;
     }
 
     u64 GetProgramCodeHash() {
@@ -306,6 +326,8 @@ struct ShaderSetup {
     }
 
 private:
+    mutable u64 program_code_identity = 0;
+    mutable u64 swizzle_data_identity = 0;
     bool program_code_hash_dirty = true;
     bool swizzle_data_hash_dirty = true;
     u64 program_code_hash = 0xDEADC0DE;
@@ -314,6 +336,13 @@ private:
     friend class boost::serialization::access;
     template <class Archive>
     void serialize(Archive& ar, const unsigned int file_version) {
+        // Invalidate BEFORE load: a partially failed archive must not retain
+        // an identity belonging to pre-load bytes. Existing archive fields,
+        // order and restored hash/dirty values remain exactly unchanged.
+        if constexpr (Archive::is_loading::value) {
+            program_code_identity = 0;
+            swizzle_data_identity = 0;
+        }
         ar& uniforms;
         ar& program_code;
         ar& swizzle_data;

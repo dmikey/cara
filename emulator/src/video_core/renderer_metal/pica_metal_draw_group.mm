@@ -263,6 +263,10 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
             return Result::BoundaryRequired;
         }
     } else {
+        const auto limit = NativeMetalCost::DrawGroupLimit();
+        if (limit > pending.publications.size())
+            pending.extended_publications =
+                std::make_shared<std::vector<PicaMetalDrawPublication>>(limit);
         pending.command = [queue commandBuffer];
         if (!upload.Begin(pending.command)) {
             pending.command = nil;
@@ -278,6 +282,7 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
         // consumed upload ranges may be dropped with an empty command; bytes
         // leased to an already recorded prefix must survive through commit.
         if (!HasRecordedDraws()) {
+            AbortGroupedMetalDraw(pending.command);
             upload.Cancel();
             pending.command = nil;
             color = {};
@@ -285,7 +290,7 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
         }
         return decline("draw encoder");
     }
-    pending.publications[pending.count++] = {
+    pending.Publications()[pending.count++] = {
         {views.color.backing_generation, views.color_dirty},
         {views.depth_stencil.backing_generation, views.depth_stencil_dirty},
     };
