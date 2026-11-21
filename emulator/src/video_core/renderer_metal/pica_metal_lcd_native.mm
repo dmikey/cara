@@ -178,18 +178,20 @@ Receipt PresentNative(id<MTLCommandQueue> queue, CAMetalLayer* layer,
     }
 
     // Keep scanout and its previous-image history ordered even when this
-    // refresh has no host display slot.
-    if (!present_drawable && !capture) {
+    // refresh has no host display slot or the layer has no drawable yet.
+    const auto keep_scanout = [&] {
         [commands commit];
         if (previous)
             *previous = std::move(screens);
-        return {Status::Coalesced, commands};
-    }
+        return Receipt{Status::Coalesced, commands};
+    };
+    if (!present_drawable && !capture)
+        return keep_scanout();
 
     Cara::AdaptivePresentationWork display_work;
     const auto drawable = [layer nextDrawable];
     if (!drawable)
-        return {Status::DrawableUnavailable, nil};
+        return previous ? keep_scanout() : Receipt{Status::DrawableUnavailable, nil};
     auto composed = screens;
     if (upscale != 1 &&
         ((upscale != 2 && upscale != 4) || !lossless ||
