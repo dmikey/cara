@@ -389,6 +389,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
 }
 @implementation CaraSettingsController {
     BOOL completed;
+    BOOL updatingAppIcon;
     UIStackView* sidebar;
     UIScrollView* sidebarScroll;
     NSString* selectedCategory;
@@ -440,6 +441,49 @@ static UIImage* CaraThemePreview(NSInteger style) {
 - (void)chooseCategory {
     UIAlertController* menu=[UIAlertController alertControllerWithTitle:@"Settings" message:nil preferredStyle:UIAlertControllerStyleActionSheet]; for(NSString* name in [self settingCategories]) [menu addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { self->selectedCategory=name; [self refresh]; }]]; [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction* a) { CaraMenuSound(@"cancel"); }]]; menu.popoverPresentationController.barButtonItem=self.navigationItem.leftBarButtonItem; [self presentViewController:menu animated:YES completion:nil];
 }
+- (void)changeAppIcon:(NSString*)iconName {
+    UIApplication* app=UIApplication.sharedApplication;
+    if (updatingAppIcon || !app.supportsAlternateIcons || app.applicationState!=UIApplicationStateActive)
+        return;
+    updatingAppIcon=YES;
+    [self refresh];
+    __weak CaraSettingsController* owner=self;
+    [app setAlternateIconName:iconName completionHandler:^(NSError* error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            CaraSettingsController* settings=owner;
+            if (!settings) return;
+            settings->updatingAppIcon=NO;
+            [settings refresh];
+            if (error && settings.viewIfLoaded.window) {
+                UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Couldn’t change app icon"
+                    message:error.localizedDescription preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [settings presentViewController:alert animated:YES completion:nil];
+            }
+        });
+    }];
+}
+- (NSArray<NSDictionary*>*)appIconRows {
+    UIApplication* app=UIApplication.sharedApplication;
+    if (!app.supportsAlternateIcons) return @[];
+    NSArray<NSString*>* names=@[@"AppIcon",@"AppIconSilver",@"AppIconAmber",@"AppIconLime",@"AppIconOnyx"];
+    NSArray<NSString*>* titles=@[@"Citrus (Default)",@"Silver",@"Amber",@"Lime",@"Onyx"];
+    NSString* current=app.alternateIconName?:names.firstObject;
+    NSMutableArray<NSDictionary*>* rows=[NSMutableArray array];
+    __weak CaraSettingsController* owner=self;
+    for (NSUInteger i=0;i<names.count;++i) {
+        NSString* name=names[i];
+        NSString* alternate=i==0?nil:name;
+        BOOL selected=[current isEqualToString:name];
+        NSMutableDictionary* row=[@{@"title":titles[i],@"symbol":@"app",
+                                     @"imageName":[name stringByAppendingString:@"Preview"],
+                                     @"selected":@(selected),@"keepOpen":@YES} mutableCopy];
+        if (!selected && !updatingAppIcon)
+            row[@"action"]=[^{ [owner changeAppIcon:alternate]; } copy];
+        [rows addObject:row];
+    }
+    return rows;
+}
 - (void)updateVisibleSections {
     if(self.sectionsProvider) self.sections=self.sectionsProvider();
     if(!self.categorized) { visibleSections=self.sections; return; }
@@ -454,7 +498,11 @@ static UIImage* CaraThemePreview(NSInteger style) {
         for(NSInteger i=0;i<3;++i) { NSInteger chosen=i; UIButton* card=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* config=[UIButtonConfiguration borderedButtonConfiguration]; config.title=@[@"System",@"Light",@"Dark"][i]; config.image=CaraThemePreview(i); config.imagePlacement=NSDirectionalRectEdgeTop; config.imagePadding=12; config.background.strokeColor=theme==i?CaraAccent():UIColor.separatorColor; config.background.strokeWidth=theme==i?2:1; config.baseForegroundColor=UIColor.labelColor; card.configuration=config; card.accessibilityTraits=UIAccessibilityTraitButton|(theme==i?UIAccessibilityTraitSelected:0); [card addAction:[UIAction actionWithHandler:^(UIAction* a) { [NSUserDefaults.standardUserDefaults setInteger:chosen forKey:@"libraryTheme"]; CaraMenuSound(@"select"); owner.navigationController.overrideUserInterfaceStyle=chosen==1?UIUserInterfaceStyleLight:chosen==2?UIUserInterfaceStyleDark:UIUserInterfaceStyleUnspecified; [owner refresh]; }] forControlEvents:UIControlEventTouchUpInside]; [cards addArrangedSubview:card]; }
         self.tableView.tableHeaderView=preview;
         NSMutableArray* accents=[NSMutableArray new]; for(NSInteger i=0;i<5;++i) { NSInteger value=i; [accents addObject:@{@"title":@[@"Teal",@"Blue",@"Rose",@"Purple",@"Graphite"][i],@"tint":@[[UIColor colorWithRed:0 green:.67 blue:.70 alpha:1],UIColor.systemBlueColor,UIColor.systemPinkColor,UIColor.systemPurpleColor,UIColor.systemGrayColor][i],@"symbol":[NSUserDefaults.standardUserDefaults integerForKey:@"libraryAccent"]==i?@"checkmark.circle.fill":@"circle.fill",@"keepOpen":@YES,@"action":^{ CaraMenuSound(@"select"); [NSUserDefaults.standardUserDefaults setInteger:value forKey:@"libraryAccent"]; owner.view.tintColor=CaraAccent(); owner.navigationController.view.tintColor=CaraAccent(); [owner refresh]; }}]; }
-        visibleSections=@[@{@"title":@"Accent color",@"rows":accents},@{@"title":@"Collection",@"rows":@[@{@"title":@"Menu sounds",@"symbol":@"speaker.wave.2",@"value":@(![NSUserDefaults.standardUserDefaults objectForKey:@"libraryMenuSounds"] || [NSUserDefaults.standardUserDefaults boolForKey:@"libraryMenuSounds"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:@"libraryMenuSounds"]; }},@{@"title":@"Show game titles",@"value":@(![NSUserDefaults.standardUserDefaults boolForKey:@"libraryHideTitles"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"libraryHideTitles"]; }}],@"footer":@"Make your collection feel like home."}]; return;
+        NSArray<NSDictionary*>* appearanceSections=@[@{@"title":@"Accent color",@"rows":accents},@{@"title":@"Collection",@"rows":@[@{@"title":@"Menu sounds",@"symbol":@"speaker.wave.2",@"value":@(![NSUserDefaults.standardUserDefaults objectForKey:@"libraryMenuSounds"] || [NSUserDefaults.standardUserDefaults boolForKey:@"libraryMenuSounds"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:@"libraryMenuSounds"]; }},@{@"title":@"Show game titles",@"value":@(![NSUserDefaults.standardUserDefaults boolForKey:@"libraryHideTitles"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"libraryHideTitles"]; }}],@"footer":@"Make your collection feel like home."}];
+        NSArray<NSDictionary*>* iconRows=[self appIconRows];
+        visibleSections=iconRows.count?[@[@{@"title":@"App icon",@"rows":iconRows}]
+            arrayByAddingObjectsFromArray:appearanceSections]:appearanceSections;
+        return;
     }
     if([selectedCategory isEqual:@"About Cara"]) { visibleSections=@[@{@"title":@"Cara",@"rows":@[@{@"title":@"Nintendo 3DS emulation",@"subtitle":@"Cara is built on the open-source Citra emulator. See the bundled source and license notices.",@"symbol":@"info.circle"},@{@"title":@"Version",@"subtitle":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"Development build",@"symbol":@"app"}]}]; return; }
     visibleSections=[self.sections filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* b) { NSString* title=section[@"title"]; if([self->selectedCategory isEqual:@"General"]) return [title isEqual:@"Current game"] || [title isEqual:@"Play mode"]; if([self->selectedCategory isEqual:@"Controls"]) {
@@ -463,10 +511,23 @@ static UIImage* CaraThemePreview(NSInteger style) {
     if(!visibleSections.count) visibleSections=@[@{@"title":selectedCategory,@"rows":@[@{@"title":@"Ready to play",@"subtitle":@"Use Emulation to choose a play mode, or Library & storage to add your games.",@"symbol":@"checkmark.circle"}]}];
 }
 - (void)refresh {
+    if (!self.isViewLoaded) {
+        [self updateVisibleSections];
+        return;
+    }
+
+    // UIKit can lay out the old index paths while collecting visible cells.
+    // Keep their data source in place until the new sections are ready to reload.
+    NSMutableArray<UIView*>* views = [self.tableView.visibleCells mutableCopy];
+    while (views.count) {
+        UIView* view = views.lastObject;
+        [views removeLastObject];
+        if ([view isKindOfClass:UISlider.class] && ((UISlider*)view).tracking)
+            return;
+        [views addObjectsFromArray:view.subviews];
+    }
+
     [self updateVisibleSections];
-    if (!self.isViewLoaded) return;
-    NSMutableArray* views=[NSMutableArray arrayWithArray:self.tableView.visibleCells];
-    while (views.count) { UIView* view=views.lastObject; [views removeLastObject]; if ([view isKindOfClass:UISlider.class] && ((UISlider*)view).tracking) return; [views addObjectsFromArray:view.subviews]; }
     [self.tableView reloadData];
 }
 - (void)done { CaraMenuSound(@"back"); completed=YES; [self dismissViewControllerAnimated:YES completion:^{ if (self.finished) self.finished(); }]; }
@@ -481,7 +542,13 @@ static UIImage* CaraThemePreview(NSInteger style) {
     UITableViewCell* cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
     cell.textLabel.text=row[@"title"]; cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES; cell.textLabel.numberOfLines=0;
     cell.detailTextLabel.text=row[@"subtitle"]; cell.detailTextLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; cell.detailTextLabel.adjustsFontForContentSizeCategory=YES; cell.detailTextLabel.numberOfLines=0;
-    cell.imageView.image=[UIImage systemImageNamed:row[@"symbol"]?:@"circle"]; cell.imageView.tintColor=row[@"tint"]?:([row[@"destructive"] boolValue]?UIColor.systemRedColor:((self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange()));
+    UIImage* preview=row[@"imageName"]?[UIImage imageNamed:row[@"imageName"]]:nil;
+    cell.imageView.image=preview?:[UIImage systemImageNamed:row[@"symbol"]?:@"circle"];
+    if (preview) {
+        cell.imageView.layer.cornerRadius=10;
+        cell.imageView.clipsToBounds=YES;
+    }
+    cell.imageView.tintColor=row[@"tint"]?:([row[@"destructive"] boolValue]?UIColor.systemRedColor:((self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange()));
     BOOL enabled=!row[@"enabled"] || [row[@"enabled"] boolValue];
     cell.textLabel.textColor=!enabled?UIColor.tertiaryLabelColor:([row[@"destructive"] boolValue]?UIColor.systemRedColor:UIColor.labelColor);
     cell.selectionStyle=row[@"action"] && enabled?UITableViewCellSelectionStyleDefault:UITableViewCellSelectionStyleNone;
@@ -491,7 +558,12 @@ static UIImage* CaraThemePreview(NSInteger style) {
         UISwitch* toggle=[UISwitch new]; toggle.onTintColor=(self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange(); toggle.on=[row[@"value"] boolValue]; toggle.enabled=enabled; toggle.accessibilityLabel=row[@"title"];
         __weak UISwitch* weakToggle=toggle;
         [toggle addAction:[UIAction actionWithHandler:^(UIAction* action) { void(^change)(BOOL)=row[@"change"]; if (change) change(weakToggle.on); CaraMenuSound(@"toggle"); [weakSettings refresh]; }] forControlEvents:UIControlEventValueChanged]; cell.accessoryView=toggle;
-    } else if (row[@"action"] && enabled) cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    } else if ([row[@"selected"] boolValue]) {
+        cell.accessoryType=UITableViewCellAccessoryCheckmark;
+        cell.accessibilityTraits|=UIAccessibilityTraitSelected;
+    } else if (row[@"action"] && enabled && !row[@"imageName"]) {
+        cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+    }
     return cell;
 }
 - (void)tableView:(UITableView*)table didSelectRowAtIndexPath:(NSIndexPath*)path {
