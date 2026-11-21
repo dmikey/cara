@@ -5,6 +5,7 @@
 #include "video_core/renderer_metal/pica_metal_resources.h"
 #include "video_core/renderer_metal/pica_metal_pipelines.h"
 #include "video_core/renderer_metal/pica_metal_lut.h"
+#include "video_core/renderer_metal/pica_metal_lighting_cache.h"
 
 namespace Cara {
 
