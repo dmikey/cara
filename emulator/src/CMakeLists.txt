@@ -366,6 +366,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
             --platform "${CARA_ICON_PLATFORM}"
             --minimum-deployment-target 15.0
             --app-icon AppIcon --target-device iphone --target-device ipad
+            --alternate-app-icon AppIconSilver --alternate-app-icon AppIconAmber
+            --alternate-app-icon AppIconLime --alternate-app-icon AppIconOnyx
             --output-partial-info-plist "${CARA_ICON_INFO}"
             --output-format human-readable-text
             "${CMAKE_CURRENT_SOURCE_DIR}/ios/Assets.xcassets"
