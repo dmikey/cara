@@ -26,6 +26,14 @@
 #include "video_core/renderer_metal/exporter-adapter/pica_metal_visibility_export.h"
 #include "video_core/rasterizer_interface.h"
 
+namespace Cara {
+id<MTLBuffer> EncodeQueuedCheckedDepthExport(
+    id<MTLCommandBuffer> command, id<MTLTexture> texture,
+    PicaGuestRange physical_surface, PicaGuestRange requested,
+    id<MTLComputePipelineState> tiled_pack, id<MTLComputePipelineState> depth_pack,
+    id<MTLBuffer> errors);
+}
+
 namespace Cara::MetalTransfer {
 std::optional<LinearColorTransferPlan> PlanNativeLinearColorTransfer(DisplayTransferRegisters regs);
 }
@@ -106,6 +114,7 @@ void InvalidateDecodedTextures(id<MTLCommandQueue> queue, u64 begin, u64 end) {
         decoded_residency->Invalidate(begin, end);
 }
 
+
 bool OverlapsAttachment(PAddr begin, PAddr end, const PicaMetalNativeAttachment& attachment) {
     const auto range = attachment.view.authoritative_bytes;
     return begin < range.end && range.begin < end;
@@ -153,10 +162,25 @@ std::optional<u32> FullDepthFill(id<MTLCommandQueue> queue, MetalGuestAuthority&
     return std::nullopt;
 }
 
+struct DepthExportProof {
+    PicaGuestRange surface;
+    id<MTLTexture> texture;
+    u64 generation;
+    id<MTLComputePipelineState> tiled_export, depth_pack;
+};
+struct CheckedDepthExporter {
+    MetalGuestExport exporter;
+    DepthExportProof proof;
+    bool operator()(id<MTLCommandQueue> queue, id<MTLResource> resource, u64 generation,
+                    PAddr begin, PAddr end, std::span<u8> bytes) const {
+        return exporter(queue, resource, generation, begin, end, bytes);
+    }
+};
 struct DeferredDepthExport {
     MetalGuestExport export_bytes;
     std::shared_ptr<bool> initialized;
     u32 clear_word;
+    DepthExportProof proof;
 
     bool operator()(id<MTLCommandQueue> command_queue, id<MTLResource> resource, u64 generation,
                     PAddr begin, PAddr end, std::span<u8> output) const {
@@ -501,6 +525,26 @@ void PicaMetalNativeDrawLane::PublishBytes(id<MTLCommandBuffer> command, id<MTLB
     }
 }
 
+namespace {
+bool JoinCheckedDepthImport() {
+    static const bool on = [] {
+        const auto* value = std::getenv("CARA_METAL_JOIN_CHECKED_DEPTH_IMPORT");
+        return value && std::string_view(value) == "1";
+    }();
+    return on;
+}
+struct JoinedDepthCheck {
+    MetalGuestWriterRef producer;
+    id<MTLBuffer> errors = nil;
+};
+thread_local JoinedDepthCheck* active_depth_check = nullptr;
+struct ScopedJoinedDepthCheck {
+    JoinedDepthCheck* previous = active_depth_check;
+    explicit ScopedJoinedDepthCheck(JoinedDepthCheck* check) { active_depth_check = check; }
+    ~ScopedJoinedDepthCheck() { active_depth_check = previous; }
+};
+} // namespace
+
 std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
     const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
@@ -638,10 +682,40 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             if (writer && ((from | to | size) & 3u) == 0) {
                 copies.push_back({writer->RawGuestBuffer(), from, to, size});
             } else {
-                const auto exported = ((to | size) & 3u) == 0
+                auto exported = ((to | size) & 3u) == 0
                     ? queue_texture_export(*owner, first, last) : nil;
+                bool joined_depth_export = false;
+                if (!exported && active_depth_check && !active_depth_check->producer && ((to | size) & 3u) == 0) {
+                    const auto* depth_writer = dynamic_cast<const MetalSurfaceWriter*>(owner->writer.get());
+                    const DepthExportProof* proof = nullptr;
+                    if (depth_writer && depth_writer->Queue() == queue &&
+                        depth_writer->Status() == MetalGuestWriteStatus::Complete) {
+                        const auto& exporter = depth_writer->Exporter();
+                        if (const auto* deferred = exporter.target<DeferredDepthExport>(); deferred && *deferred->initialized)
+                            proof = &deferred->proof;
+                        else if (const auto* checked = exporter.target<CheckedDepthExporter>())
+                            proof = &checked->proof;
+                    }
+                    if (proof && proof->texture == depth_writer->Resource() &&
+                        proof->generation == depth_writer->Generation() &&
+                        depth_writer->Covers(first,last)) {
+                        const auto errors = [queue.device newBufferWithLength:sizeof(u32)
+                                                               options:MTLResourceStorageModeShared];
+                        if (!errors)
+                            submissions.Fail("Could not allocate queued depth export validation");
+                        *static_cast<u32*>(errors.contents) = 0;
+                        exported = EncodeQueuedCheckedDepthExport(command, proof->texture, proof->surface,
+                            {first,last}, proof->tiled_export, proof->depth_pack, errors);
+                        if (!exported)
+                            submissions.Fail("Could not encode certified queued depth export");
+                        joined_depth_export = true;
+                        active_depth_check->producer = owner->writer;
+                        active_depth_check->errors = errors;
+                    }
+                }
                 if (exported) {
-                    NativeMetalCost::Count(NativeMetalCost::QueuedColorExportHost, 1);
+                    if (!joined_depth_export)
+                        NativeMetalCost::Count(NativeMetalCost::QueuedColorExportHost, 1);
                     copies.push_back({exported, 0, to, size});
                 } else {
                     // Unaligned and depth spans retain the certified checked CPU read.
@@ -1549,8 +1623,12 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
         submissions.Reserve();
     const auto command = deferred_clear ? nil : [queue commandBuffer];
     std::optional<MetalTransfer::ByteView> source;
+    JoinedDepthCheck joined;
     if (!clear_word) {
+        const ScopedJoinedDepthCheck checked(JoinCheckedDepthImport() ? &joined : nullptr);
         source = ResolveBytes(command, DenseRows(bytes), 4, ram);
+        if (joined.producer && !source)
+            submissions.Fail("Could not resolve complete queued depth import");
         if (command && !source) {
             // Cross-format aliases still take the exact existing import.
             const auto scratch = AllocateBytes(bytes);
@@ -1576,11 +1654,12 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     if (!exporter)
         submissions.Fail("Could not certify native Metal depth/stencil export");
 
+    const DepthExportProof proof{range, texture, generation, tiled_export, depth_pack};
     if (deferred_clear) {
         // The raw guest writer remains authoritative. Prepare the exact
         // attachment on the first real draw, before a texture writer exists.
         exporter = DeferredDepthExport{std::move(exporter), std::make_shared<bool>(false),
-                                       *clear_word};
+                                       *clear_word, proof};
         NativeMetalCost::Count(NativeMetalCost::DepthClearHits, 1);
     } else if (clear_word) {
         // The raw guest writer stays authoritative until the first draw.
@@ -1616,9 +1695,17 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
         if (command.status != MTLCommandBufferStatusCompleted || command.error ||
             *static_cast<const u32*>(errors.contents) != 0)
             submissions.Fail("Native Metal D24S8 import failed validation");
+        if (joined.producer) {
+            const auto* writer = static_cast<const MetalSurfaceWriter*>(joined.producer.get());
+            if (!writer->ValidateProducerCompletion() ||
+                *static_cast<const u32*>(joined.errors.contents) != 0)
+                submissions.Fail("Queued depth import source failed validation");
+        }
 
     }
 
+    if (!deferred_clear && JoinCheckedDepthImport())
+        exporter = CheckedDepthExporter{std::move(exporter), proof};
     resident_depth = PicaMetalNativeAttachment{{texture, range, generation}, std::move(exporter),
                                               std::nullopt};
     return *resident_depth;
@@ -1698,13 +1785,10 @@ void PicaMetalNativeDrawLane::PublishPending() {
     try {
         NativeMetalCost::Scope ownership(NativeMetalCost::DrawPublishAuthority);
         ValidateMetalDrawTicket(submitted);
-        std::vector<MetalGuestWrite> writes;
-        writes.reserve(submitted.count * 2);
-        const auto append = [&](const PicaMetalWriter& writer,
-                                const PicaMetalNativeAttachment& attachment) {
-            if (auto write = MakeMetalDrawWrite(submitted, writer, attachment.view,
-                                                attachment.exporter, 0, predecessors, attachment.rgba8))
-                writes.push_back(std::move(*write));
+        const auto make_write = [&](const PicaMetalWriter& writer,
+                                    const PicaMetalNativeAttachment& attachment) {
+            return MakeMetalDrawWrite(submitted, writer, attachment.view, attachment.exporter,
+                                      0, predecessors, attachment.rgba8);
         };
         static const bool dedup = [] {
             const auto* value = std::getenv("CARA_METAL_DEDUP_DRAW_PUBLICATIONS");
@@ -1733,11 +1817,30 @@ void PicaMetalNativeDrawLane::PublishPending() {
             NativeMetalCost::Count(NativeMetalCost::DrawWritesElided, eliminated);
             count = 1;
         }
-        for (std::size_t i = 0; i < count; ++i) {
-            append(submitted.publications[i].color, pending->color);
-            append(submitted.publications[i].depth_stencil, pending->depth);
+        static const bool reuse_publications = [] {
+            const char* value = std::getenv("CARA_METAL_REUSE_OWNERSHIP_PUBLICATIONS");
+            return value && std::string_view(value) == "1";
+        }();
+        if (reuse_publications && count == 1) {
+            std::array<MetalGuestWrite, 2> writes;
+            std::size_t size = 0;
+            if (auto color = make_write(first.color, pending->color))
+                writes[size++] = std::move(*color);
+            if (auto depth = make_write(first.depth_stencil, pending->depth))
+                writes[size++] = std::move(*depth);
+            authority.Publish(std::span{writes}.first(size));
+        } else {
+            std::vector<MetalGuestWrite> writes;
+            writes.reserve(submitted.count * 2);
+            for (std::size_t i = 0; i < count; ++i) {
+                const auto& draw = submitted.publications[i];
+                if (auto color = make_write(draw.color, pending->color))
+                    writes.push_back(std::move(*color));
+                if (auto depth = make_write(draw.depth_stencil, pending->depth))
+                    writes.push_back(std::move(*depth));
+            }
+            authority.Publish(writes);
         }
-        authority.Publish(writes);
     } catch (...) {
         submissions.RejectWrites();
         throw;

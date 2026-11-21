@@ -9,6 +9,8 @@ endif()
 
 set(CARA_PICA_METAL_SOURCES
     pica_depth_transfer
+    pica_fused_depth_export
+    pica_fused_depth_import
     pica_metal_lcd
     pica_metal_mixed_alias
     pica_metal_surface_import
@@ -20,7 +22,7 @@ foreach(shader IN LISTS CARA_PICA_METAL_SOURCES)
     set(source "${CMAKE_CURRENT_LIST_DIR}/${shader}.metal")
     set(object "${CMAKE_CURRENT_BINARY_DIR}/${shader}.air")
     set(dependencies "${source}")
-    if (shader STREQUAL "pica_depth_transfer")
+    if (shader MATCHES "^pica_(depth_transfer|fused_depth_)")
         list(APPEND dependencies "${CMAKE_CURRENT_LIST_DIR}/depth_conversion.h")
     endif()
     add_custom_command(OUTPUT "${object}"
