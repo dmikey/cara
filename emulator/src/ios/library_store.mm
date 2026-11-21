@@ -89,6 +89,25 @@ static NSError* LibraryError(NSString* message) {
     NSMutableDictionary* all=[[preferences dictionaryForKey:@"libraryMetadata"] mutableCopy]?:[NSMutableDictionary new];
     NSMutableDictionary* value=[[self metadataForGame:url] mutableCopy]; [value addEntriesFromDictionary:metadata]; all[[self keyForGame:url]]=value; [preferences setObject:all forKey:@"libraryMetadata"];
 }
+- (NSString*)displayTitleOverrideForGame:(NSURL*)url {
+    id title=[self metadataForGame:url][@"displayTitle"];
+    return [title isKindOfClass:NSString.class] && [title length] ? title : nil;
+}
+- (void)setDisplayTitle:(NSString*)title forGame:(NSURL*)url {
+    NSString* trimmed=[title stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (trimmed.length) {
+        [self setMetadata:@{@"displayTitle":trimmed} forGame:url];
+        return;
+    }
+    NSString* key=[self keyForGame:url];
+    NSMutableDictionary* all=[[preferences dictionaryForKey:@"libraryMetadata"] mutableCopy];
+    NSMutableDictionary* value=[all[key] mutableCopy];
+    if (!value[@"displayTitle"]) return;
+    [value removeObjectForKey:@"displayTitle"];
+    if (value.count) all[key]=value;
+    else [all removeObjectForKey:key];
+    [preferences setObject:all forKey:@"libraryMetadata"];
+}
 - (void)setFavorite:(BOOL)value game:(NSURL*)url { [self setMetadata:@{@"favorite":@(value)} forGame:url]; }
 - (void)recordPlayed:(NSURL*)url { [self setMetadata:@{@"lastPlayed":NSDate.date} forGame:url]; }
 - (void)removeGame:(NSURL*)url {

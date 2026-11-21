@@ -21,6 +21,8 @@
 - (BOOL)rememberGame:(NSURL*)url error:(NSError**)error;
 - (NSDictionary*)metadataForGame:(NSURL*)url;
 - (void)setMetadata:(NSDictionary*)metadata forGame:(NSURL*)url;
+- (NSString*)displayTitleOverrideForGame:(NSURL*)url;
+- (void)setDisplayTitle:(NSString*)title forGame:(NSURL*)url;
 - (void)setFavorite:(BOOL)value game:(NSURL*)url;
 - (void)recordPlayed:(NSURL*)url;
 - (void)removeGame:(NSURL*)url;

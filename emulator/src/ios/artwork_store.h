@@ -6,6 +6,9 @@
 @interface CaraArtworkStore : NSObject
 - (instancetype)initWithRoot:(NSURL*)root;
 - (NSDictionary*)artworkForURL:(NSURL*)game title:(NSString*)title;
+- (NSArray<NSString*>*)catalogNamesForHero:(BOOL)hero;
+- (UIImage*)catalogImageNamed:(NSString*)name hero:(BOOL)hero;
+- (BOOL)saveArtworkImage:(UIImage*)image forGame:(NSURL*)game hero:(BOOL)hero error:(NSError**)error;
 - (BOOL)importImage:(NSURL*)image forGame:(NSURL*)game hero:(BOOL)hero error:(NSError**)error;
 - (void)removeOverridesForGame:(NSURL*)game;
 + (NSString*)normalizedTitle:(NSString*)title;
