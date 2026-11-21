@@ -22,6 +22,9 @@ public:
         std::string endpoint = "wss://carap2p.therad.ninja/relay";
         std::string room;
         std::string password; // Memory only; never logged, serialized, or put in a URL.
+        std::string game_hash; // All three fields are required for a public room.
+        std::string game_version;
+        std::string title_id;
     };
     struct Status {
         State state = State::Idle;

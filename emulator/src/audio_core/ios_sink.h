@@ -18,6 +18,7 @@ private:
 };
 void SetIOSAudioPaused(bool paused);
 void SetIOSAudioMuted(bool muted);
+bool SetIOSMicrophoneActive(bool active);
 bool IsIOSAudioMuted();
 bool IOSAudioOutputFailed();
 // Diagnostic snapshots are written by the emulation thread, never the playback callback.

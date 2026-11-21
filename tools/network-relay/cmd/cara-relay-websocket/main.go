@@ -26,6 +26,7 @@ func main() {
 	publicHost := flag.String("public-host", "", "exact public Host header (no scheme or path)")
 	maxPeers := flag.Int("max-peers", 32, "total connection limit")
 	queue := flag.Int("queue-depth", 64, "per-peer queue depth")
+	publicRooms := flag.Bool("public-rooms", os.Getenv("CARA_RELAY_PUBLIC_ROOMS") == "1", "allow the bounded public room directory")
 	health := flag.String("healthcheck", "", "check this local HTTP health URL, then exit")
 	flag.Parse()
 	if *health != "" {
@@ -59,30 +60,32 @@ func main() {
 	if *publicHost == "" || strings.ContainsAny(*publicHost, "/:\\?#@ \t\r\n") {
 		log.Fatal("set a DNS hostname with -public-host")
 	}
-	if *roomsFile == "" {
-		log.Fatal("set -rooms-file")
-	}
-	file, err := os.Open(*roomsFile)
-	if err != nil {
-		log.Fatal("cannot open private room configuration")
-	}
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 65536 {
-		file.Close()
-		log.Fatal("room file must be regular, private (mode 0600 or 0400), and at most 64 KiB")
+	if *roomsFile == "" && !*publicRooms {
+		log.Fatal("set -rooms-file or enable public rooms")
 	}
 	var rooms map[string]string
-	decoder := json.NewDecoder(io.LimitReader(file, 65537))
-	err = decoder.Decode(&rooms)
-	var extra interface{}
-	if err == nil && decoder.Decode(&extra) != io.EOF {
-		err = fmt.Errorf("trailing configuration")
+	if *roomsFile != "" {
+		file, err := os.Open(*roomsFile)
+		if err != nil {
+			log.Fatal("cannot open private room configuration")
+		}
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 65536 {
+			file.Close()
+			log.Fatal("room file must be regular, private (mode 0600 or 0400), and at most 64 KiB")
+		}
+		decoder := json.NewDecoder(io.LimitReader(file, 65537))
+		err = decoder.Decode(&rooms)
+		var extra interface{}
+		if err == nil && decoder.Decode(&extra) != io.EOF {
+			err = fmt.Errorf("trailing configuration")
+		}
+		file.Close()
+		if err != nil {
+			log.Fatal("invalid private room configuration")
+		}
 	}
-	file.Close()
-	if err != nil {
-		log.Fatal("invalid private room configuration")
-	}
-	server, err := relay.New(relay.Config{Rooms: rooms, MaxPeers: *maxPeers, QueueDepth: *queue})
+	server, err := relay.New(relay.Config{Rooms: rooms, MaxPeers: *maxPeers, QueueDepth: *queue, PublicRooms: *publicRooms})
 	if err != nil {
 		log.Fatal(err)
 	}

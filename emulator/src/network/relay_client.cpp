@@ -23,7 +23,7 @@ const char* RelayClient::StatusText(const Status& status) {
     switch(status.state) {
     case State::Idle:return "Not connected";
     case State::Connecting:return "Connecting";
-    case State::Connected:return "Connected to private room";
+    case State::Connected:return "Connected to room";
     case State::Disconnected:return "Disconnected";
     case State::Failed:break;
     }

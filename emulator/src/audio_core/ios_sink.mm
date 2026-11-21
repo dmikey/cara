@@ -24,6 +24,17 @@ std::atomic<bool> playback_paused{false};
 struct Playback;
 std::mutex active_mutex;
 std::weak_ptr<Playback> active_playback;
+std::mutex session_mutex;
+unsigned microphone_users=0;
+
+bool SelectSessionCategory(AVAudioSession* session, bool microphone, NSError** error) {
+    NSString* category=microphone?AVAudioSessionCategoryPlayAndRecord:AVAudioSessionCategoryPlayback;
+    const AVAudioSessionCategoryOptions options=microphone
+        ? AVAudioSessionCategoryOptionDefaultToSpeaker|AVAudioSessionCategoryOptionAllowBluetoothA2DP : 0;
+    return ([session.category isEqualToString:category] && session.categoryOptions==options &&
+            [session.mode isEqualToString:AVAudioSessionModeDefault]) ||
+        [session setCategory:category mode:AVAudioSessionModeDefault options:options error:error];
+}
 
 struct Playback {
     std::mutex control;
@@ -113,9 +124,10 @@ struct Playback {
     }
     bool ActivateSessionLocked() {
         @autoreleasepool {
+            std::lock_guard session_lock(session_mutex);
             AVAudioSession* session=AVAudioSession.sharedInstance;
             NSError* failure=nil;
-            if (![session setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeDefault options:0 error:&failure] ||
+            if (!SelectSessionCategory(session,microphone_users!=0,&failure) ||
                 ![session setActive:YES error:&failure]) {
                 error.store(failure?int(failure.code):-2);
                 LOG_ERROR(Audio,"Cara iOS audio session: {}",failure?failure.localizedDescription.UTF8String:"activation failed");
@@ -199,7 +211,9 @@ struct Playback {
         { std::lock_guard<std::mutex> active_lock(active_mutex);
           if (auto other=active_playback.lock()) another_sink=(other.get()!=this); }
         if (!another_sink) @autoreleasepool {
-            [AVAudioSession.sharedInstance setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
+            std::lock_guard session_lock(session_mutex);
+            if (!microphone_users)
+                [AVAudioSession.sharedInstance setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
         }
     }
     ~Playback() { Shutdown(); }
@@ -245,6 +259,26 @@ unsigned int IOSAudioSink::GetNativeSampleRate() const { return native_sample_ra
 void IOSAudioSink::SetCallback(std::function<void(s16*,std::size_t)> cb) { impl->state->SetCallback(std::move(cb)); }
 void SetIOSAudioPaused(bool paused) { playback_paused.store(paused); if (auto state=Active()) state->SetPaused(paused); }
 void SetIOSAudioMuted(bool value) { muted.store(value,std::memory_order_relaxed); if (auto state=Active()) state->ApplyMute(); }
+bool SetIOSMicrophoneActive(bool active) {
+    const bool has_playback=bool(Active());
+    std::lock_guard lock(session_mutex);
+    if (active && microphone_users) {
+        ++microphone_users;
+        return true;
+    }
+    if (!active && (!microphone_users || --microphone_users)) return true;
+    AVAudioSession* session=AVAudioSession.sharedInstance;
+    NSError* error=nil;
+    if (!SelectSessionCategory(session,active,&error) || (active && ![session setActive:YES error:&error])) {
+        if (active) SelectSessionCategory(session,false,nullptr);
+        LOG_WARNING(Audio,"Cara microphone audio session: {}",error?error.localizedDescription.UTF8String:"configuration failed");
+        return false;
+    }
+    if (active) microphone_users=1;
+    if (!active && !has_playback)
+        [session setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];
+    return true;
+}
 bool IsIOSAudioMuted() { return muted.load(std::memory_order_relaxed); }
 bool IOSAudioOutputFailed() { if (auto state=Active()) return state->error.load()!=0; return false; }
 void WriteIOSAudioDiagnostics(const std::string& path, u64 requested, u64 supplied, u64 underruns) {

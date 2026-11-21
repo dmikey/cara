@@ -48,6 +48,12 @@
 	<true/>
 	<key>MinimumOSVersion</key>
 	<string>15.0</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Cara uses the camera when the 3DS game requests a live camera feed.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Cara uses the microphone when the 3DS game requests microphone input.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Cara uses device motion to control 3DS games that support tilt or gyro aiming.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
