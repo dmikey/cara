@@ -11,6 +11,6 @@ A00000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.c
 A00000000000000000000009 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
 A00000000000000000000010 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000013,); runOnlyForDeploymentPostprocessing = 0;};
 A00000000000000000000011 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
-A00000000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = com.dmikey.cara.uitests; GENERATE_INFOPLIST_FILE = YES; CODE_SIGNING_ALLOWED = NO; TARGETED_DEVICE_FAMILY = "1,2"; OTHER_LDFLAGS = "-framework XCTest";}; name = Debug;};
+A00000000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = com.dmikey.cara.uitests; GENERATE_INFOPLIST_FILE = YES; CODE_SIGNING_ALLOWED = NO; TARGETED_DEVICE_FAMILY = "1,2"; OTHER_LDFLAGS = "-framework XCTest -framework UIKit";}; name = Debug;};
 A00000000000000000000013 = {isa = PBXBuildFile; fileRef = A00000000000000000000007;};
 }; rootObject = A00000000000000000000001; }
