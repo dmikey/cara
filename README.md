@@ -40,6 +40,11 @@ host display updates while preserving guest rendering. Under **Display**,
 Play and display settings apply when you save. CPU engine changes apply when
 you next open a game.
 
+Cara opts into Apple Game Mode by default on supported devices. It activates
+automatically in full-screen play unless you turn it off. The **Game Mode**
+entry in Cara's settings on iPhone and iPad, or the **Cara** menu on Mac,
+shows where to change it in Apple's Game Overlay or Game menu.
+
 ## Graphics
 
 | Backend | Role in Cara |

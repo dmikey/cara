@@ -1585,6 +1585,18 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [actions addObject:@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Skins"]; }}];
     [actions addObject:@{@"title":@"Controllers",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Controllers"]; }}];
     if (running) [actions addObject:@{@"title":@"Game library",@"symbol":@"square.grid.2x2",@"action":^{ [owner showLibrary]; }}];
+    if (@available(iOS 18.0, *)) {
+        if (gameLoaded && running && !stop) {
+            [actions addObject:@{@"title":@"Game Mode",@"symbol":@"speedometer",@"keepOpen":@YES,@"action":^{
+                UIViewController* settings=owner.presentedViewController;
+                UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Game Mode"
+                    message:@"Game Mode starts automatically in full screen. To turn it on or off, open Control Center and choose Game Overlay, Controls, then Game Mode."
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]];
+                [settings presentViewController:alert animated:YES completion:nil];
+            }}];
+        }
+    }
     [actions addObject:@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Advanced"]; }}];
     quick.actions=actions; quick.finished=^{ [owner resumeFromMenu]; };
     UINavigationController* navigation=[[UINavigationController alloc] initWithRootViewController:quick]; navigation.view.tintColor=[UIColor colorWithRed:1 green:.48 blue:.24 alpha:1];

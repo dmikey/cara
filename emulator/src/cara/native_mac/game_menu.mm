@@ -15,6 +15,7 @@ Cara::NativeGameMenu::StateRequest state_request;
 @interface CaraGameMenuActions : NSObject
 - (void)openROM:(id)sender;
 - (void)preferences:(id)sender;
+- (void)showGameMode:(id)sender;
 - (void)saveState:(id)sender;
 - (void)loadState:(id)sender;
 - (BOOL)validateMenuItem:(NSMenuItem*)item;
@@ -53,6 +54,17 @@ Cara::NativeGameMenu::StateRequest state_request;
     }
 }
 - (void)preferences:(id)sender { (void)sender; Cara::MacUI::ShowPreferences(); }
+- (void)showGameMode:(id)sender {
+    (void)sender;
+    NSAlert* alert = [[[NSAlert alloc] init] autorelease];
+    alert.messageText = @"Game Mode";
+    if (@available(macOS 26.0, *)) {
+        alert.informativeText = @"Use the green window button to play in full screen. Game Mode starts automatically unless you turned it off. Press Command–Escape and choose Settings, then Game Mode to change it.";
+    } else {
+        alert.informativeText = @"Use the green window button to play in full screen. Game Mode starts automatically unless you turned it off. Use the Game menu in the macOS menu bar to change it.";
+    }
+    [alert runModal];
+}
 - (void)saveState:(id)sender { Cara::NativeGameMenu::RequestState(Cara::NativeGameMenu::StateAction::Save, (unsigned)[sender tag]); }
 - (void)loadState:(id)sender { Cara::NativeGameMenu::RequestState(Cara::NativeGameMenu::StateAction::Load, (unsigned)[sender tag]); }
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
@@ -85,6 +97,16 @@ void Install() {
         NSMenuItem* preferences = [[[NSMenuItem alloc] initWithTitle:@"Settings…" action:@selector(preferences:) keyEquivalent:@","] autorelease];
         preferences.target=actions; preferences.tag=7101;
         [app insertItem:preferences atIndex:MIN((NSInteger)2,app.numberOfItems)];
+    }
+    if (@available(macOS 14.0, *)) {
+        if (app && ![app itemWithTag:7103]) {
+            NSMenuItem* game_mode = [[[NSMenuItem alloc] initWithTitle:@"Game Mode…"
+                action:@selector(showGameMode:) keyEquivalent:@""] autorelease];
+            game_mode.target = actions;
+            game_mode.tag = 7103;
+            const NSInteger settings_index = [app indexOfItemWithTag:7101];
+            [app insertItem:game_mode atIndex:settings_index + 1];
+        }
     }
     if ([main_menu itemWithTag:7102]) return;
 
