@@ -48,7 +48,7 @@ enum Phase : std::size_t {
     ExportFallbackRawBuffer, ExportFallbackOther, RuntimeMslDiskHits, IndexScanEightBit, IndexScanSixteenBit, IndexMemoHits, IndexMemoMisses, RuntimeMslLoadHost,
     DrawWritesElided, DrawGroupsAtCapacity, DrawPublishOther, DrawPublishFromDraw,
     DrawPublishFromCopy, DrawPublishFromFill, DrawPublishFromDisplay, DrawPublishFromSample,
-    DrawPublishFromPresent, DrawPublishFromDrain, DrawPublishAuthority, DrawEncodeWhileQueueFull, DrawBoundaryCapacity, DrawBoundaryBacking, FillLeaseFullQueue, PhaseCount
+    DrawPublishFromPresent, DrawPublishFromDrain, DrawPublishAuthority, DrawEncodeWhileQueueFull, DrawBoundaryCapacity, DrawBoundaryBacking, FillLeaseFullQueue, ExactWriteNodeReuse, TextureCopyStripedSourceReuse, TextureCopyStagingBytesAvoided, PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
     "color_acquire", "depth_acquire", "lut_refresh", "record_total", "encode_total",
@@ -101,7 +101,7 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "draw_publish_from_copy", "draw_publish_from_fill", "draw_publish_from_display",
     "draw_publish_from_sample", "draw_publish_from_present", "draw_publish_from_drain",
     "draw_publish_authority", "draw_encode_while_queue_full",
-    "draw_boundary_capacity", "draw_boundary_backing", "fill_lease_full_queue"};
+    "draw_boundary_capacity", "draw_boundary_backing", "fill_lease_full_queue", "exact_write_node_reuse", "texture_copy_striped_source_reuse", "texture_copy_staging_bytes_avoided"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {
