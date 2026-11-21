@@ -172,6 +172,31 @@ zero submission-pressure waits and two queued depth exports per refresh.
 The command timeline confirmed a 32-slot queue. Use the untraced replays
 for the frame-time comparison.
 
+Two normal boots with shipping FastInterp settings used the automatic
+policy without queue or CPU overrides. The GLES control used the same
+signed binary, raw cartridge, in-game save, inputs and clock. Both Metal
+captures matched byte for byte. All three runs matched guest ticks and
+336,000 draw requests over the 480-refresh lab interval.
+
+| Renderer | Lab speed | Lab p99 | Slowest 120 refreshes | Mean in that window | p99 in that window |
+| --- | ---: | ---: | --- | ---: | ---: |
+| FastInterp Metal, first boot | 100.00% | 17.15 ms | 3231–3350 | 16.72 ms | 17.06 ms |
+| FastInterp Metal, repeat | 100.00% | 17.27 ms | 3211–3330 | 16.72 ms | 17.05 ms |
+| FastInterp GLES | 100.01% | 20.61 ms | 3436–3555 | 16.75 ms | 20.31 ms |
+
+#### Measuring queue headroom on other Apple devices
+
+Each slot tracks a command buffer and its dependencies. Several submissions
+can belong to one emulated refresh. Compare the time blocked on the oldest
+ticket with GPU start/end spans and upload-arena waits. Grow the queue one
+step during a controlled replay when the slot limit blocks the producer and
+the upload arena has headroom. Keep the change only if rolling frame times
+improve. A growing GPU backlog, longer arena waits, or memory pressure can
+erase the gain by keeping resources alive longer. Use the Metal memory
+budget as a headroom signal and the OS memory warning as a separate limit.
+A runtime policy should resize only the submission limit, let existing
+tickets retire normally, and wait several windows before increasing again.
+
 ## Upstream boundaries
 
 - **Azahar** is the upstream boundary for 3DS execution. Propose PICA,
