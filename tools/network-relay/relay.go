@@ -75,12 +75,14 @@ type JoinRequest struct {
 	Password   string `json:"password"`
 	PeerEvents bool   `json:"peer_events,omitempty"`
 	Instance   string `json:"instance,omitempty"`
+	GameIdentity
 }
 
 type Config struct {
-	Rooms      map[string]string
-	MaxPeers   int
-	QueueDepth int
+	Rooms       map[string]string
+	MaxPeers    int
+	QueueDepth  int
+	PublicRooms bool
 }
 
 type peer struct {
@@ -96,6 +98,7 @@ type peer struct {
 type Server struct {
 	mu                   sync.Mutex
 	rooms                map[string][32]byte
+	publicRooms          map[string]publicRoom
 	peers                map[uint64]*peer
 	connections          map[net.Conn]struct{}
 	nextID               uint64
@@ -104,7 +107,7 @@ type Server struct {
 }
 
 func New(config Config) (*Server, error) {
-	if len(config.Rooms) == 0 {
+	if len(config.Rooms) == 0 && !config.PublicRooms {
 		return nil, errors.New("at least one password-protected room is required")
 	}
 	rooms := make(map[string][32]byte)
@@ -123,7 +126,14 @@ func New(config Config) (*Server, error) {
 	if config.MaxPeers < 1 || config.MaxPeers > 1024 || config.QueueDepth < 1 || config.QueueDepth > 1024 {
 		return nil, errors.New("peer and queue limits must be 1..1024")
 	}
-	return &Server{rooms: rooms, peers: make(map[uint64]*peer), connections: make(map[net.Conn]struct{}), maxPeers: config.MaxPeers, queueDepth: config.QueueDepth}, nil
+	if config.PublicRooms && (config.MaxPeers < publicRoomCapacity || config.QueueDepth < publicRoomCapacity+1) {
+		return nil, errors.New("public rooms require at least 4 peer slots and a queue depth of 5")
+	}
+	server := &Server{rooms: rooms, peers: make(map[uint64]*peer), connections: make(map[net.Conn]struct{}), maxPeers: config.MaxPeers, queueDepth: config.QueueDepth}
+	if config.PublicRooms {
+		server.publicRooms = make(map[string]publicRoom)
+	}
+	return server, nil
 }
 
 // ServeConn takes ownership of conn. The caller supplies TLS for remote peers.
@@ -154,14 +164,30 @@ func (s *Server) ServeConn(conn net.Conn) {
 		request.Instance = hex.EncodeToString(token)
 	}
 	provided := sha256.Sum256([]byte(request.Password))
-	wanted, exists := s.rooms[request.Room]
-	if !exists || subtle.ConstantTimeCompare(provided[:], wanted[:]) != 1 {
-		WriteFrame(conn, Frame{Type: Failure, Payload: []byte("join rejected")})
-		return
-	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
+		return
+	}
+	if s.publicRooms != nil {
+		s.reapPublicRoomsLocked(time.Now(), s.publicOccupancyLocked())
+	}
+	room, public := s.publicRooms[request.Room]
+	wanted, exists := s.rooms[request.Room]
+	failure := ""
+	if public {
+		game, valid := request.GameIdentity.canonical()
+		if !valid || game != room.GameIdentity {
+			failure = "Game hash or version does not match this room"
+		} else if !request.PeerEvents {
+			failure = "Update Cara to join online rooms"
+		}
+	} else if !exists || subtle.ConstantTimeCompare(provided[:], wanted[:]) != 1 {
+		failure = "join rejected"
+	}
+	if failure != "" {
+		s.mu.Unlock()
+		WriteFrame(conn, Frame{Type: Failure, Payload: []byte(failure)})
 		return
 	}
 	var retired []*peer
@@ -175,6 +201,11 @@ func (s *Server) ServeConn(conn net.Conn) {
 		} else if request.PeerEvents {
 			existing = append(existing, id)
 		}
+	}
+	if public && len(existing) >= room.Capacity {
+		s.mu.Unlock()
+		WriteFrame(conn, Frame{Type: Failure, Payload: []byte("This online room is full")})
+		return
 	}
 	if request.PeerEvents && len(existing)+2 > s.queueDepth {
 		s.mu.Unlock()
@@ -210,6 +241,10 @@ func (s *Server) ServeConn(conn net.Conn) {
 		// A reconnect may already have retired this exact source. Never repeat its leave.
 		if s.peers[p.id] == p {
 			delete(s.peers, p.id)
+			if room, public := s.publicRooms[p.room]; public {
+				room.expires = time.Now().Add(emptyRoomLifetime)
+				s.publicRooms[p.room] = room
+			}
 			stalled = s.membershipLocked(p, PeerLeft)
 		}
 		close(p.done)

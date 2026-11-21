@@ -7,3 +7,11 @@
 @property(copy, nonatomic) void (^joinRoom)(NSString* endpoint, NSString* room, NSString* password);
 @property(copy, nonatomic) void (^leaveRoom)(void);
 @end
+
+@interface CaraOnlineRoomsController : UITableViewController
+@property(copy, nonatomic) NSDictionary<NSString*, NSString*>* gameIdentity;
+@property(copy, nonatomic) NSDictionary* (^connectionStatus)(void);
+@property(copy, nonatomic) NSString* (^joinRoom)(NSString* roomID);
+@property(copy, nonatomic) void (^leaveRoom)(void);
+@property(copy, nonatomic) void (^finished)(void);
+@end

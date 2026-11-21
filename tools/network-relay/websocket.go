@@ -40,6 +40,10 @@ func WebSocketHandler(server *Server, publicHost string, maxConnections int) htt
 			json.NewEncoder(w).Encode(map[string]interface{}{"service": "cara-relay", "status": "ok", "protocol": 1, "transport": "websocket"})
 			return
 		}
+		if r.URL.Path == "/rooms/v1/create" || r.URL.Path == "/rooms/v1/browse" {
+			server.roomDirectory(w, r)
+			return
+		}
 		if r.URL.Path != "/relay" {
 			http.NotFound(w, r)
 			return

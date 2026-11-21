@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     network_mode: host
     command: ["-listen", "127.0.0.1:24874", "-public-host", "carap2p.therad.ninja", "-rooms-file", "/rooms.json", "-max-peers", "32", "-queue-depth", "64"]
+    environment:
+      CARA_RELAY_PUBLIC_ROOMS: "${CARA_RELAY_PUBLIC_ROOMS:-0}"
     volumes:
       - type: bind
         source: ${CARA_RELAY_ROOMS_FILE:?Set the private 0400 room JSON path}

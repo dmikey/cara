@@ -467,6 +467,14 @@ static NSString* ArtworkCacheKey(CaraLibraryGame* game) {
     if(!stateRows.count) [stateRows addObject:@{@"title":@"No save states on this device",@"subtitle":@"Create a state from the game menu. In-game saves are separate.",@"symbol":@"tray"}];
     [sections addObject:@{@"title":@"Save states",@"rows":stateRows,@"footer":@"Only compatible save states can be loaded."}];
     if(self.gameSettings) [sections addObject:@{@"title":@"Preferences",@"rows":@[@{@"title":@"Game settings",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ if(owner.gameSettings) owner.gameSettings(game.url); }}]}];
+    if (self.onlineRooms) [rows addObject:@{@"title":@"Online Rooms",@"symbol":@"globe",@"keepOpen":@YES,
+        @"subtitle":active ? @"Create or browse rooms for this game." : @"Open this game to verify its hash and version.",
+        @"action":^{ if (owner.onlineRooms) owner.onlineRooms(game.url); }}];
+    NSMutableArray* sections=[NSMutableArray arrayWithObject:@{@"title":@"GAME",@"rows":rows}]; NSMutableArray* stateRows=[NSMutableArray new];
+    for(NSDictionary* record in states) { NSMutableDictionary* row=[@{@"title":record[@"title"]?:@"Save state",@"subtitle":record[@"subtitle"]?:@"",@"symbol":@"clock.arrow.circlepath",@"enabled":record[@"compatible"]?:@NO} mutableCopy]; if([record[@"compatible"] boolValue] && self.startFromState) { row[@"sound"]=@"launch"; row[@"action"]=^{ if(owner.startFromState) owner.startFromState(game.url,record[@"filename"]); }; } [stateRows addObject:row]; }
+    if(!stateRows.count) [stateRows addObject:@{@"title":@"No save states on this device",@"subtitle":@"Create a state from the game menu. In-game saves are separate.",@"symbol":@"tray"}];
+    [sections addObject:@{@"title":@"Save states",@"rows":stateRows,@"footer":@"Only compatible save states can be loaded."}];
+    if(self.gameSettings) [sections addObject:@{@"title":@"Preferences",@"rows":@[@{@"title":@"Game settings",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ if(owner.gameSettings) owner.gameSettings(game.url); }}]}];
     [sections addObject:@{@"title":@"Manage game",@"rows":@[
         @{@"title":@"Rename…",@"symbol":@"pencil",@"action":^{ [owner renameGame:game]; }},
         @{@"title":@"Clear game settings",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner confirmGame:game operation:@"settings"]; }},

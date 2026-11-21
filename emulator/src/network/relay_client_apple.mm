@@ -146,13 +146,33 @@ public:
             auto string=[](const std::string& value) {return [[NSString alloc] initWithBytes:value.data() length:value.size() encoding:NSUTF8StringEncoding];};
             NSString* endpoint=string(config.endpoint);NSString* room=string(config.room);NSString* password=string(config.password);
             NSURLComponents* parts=endpoint ? [NSURLComponents componentsWithString:endpoint] : nil;
+            const bool public_room = !config.game_hash.empty() || !config.game_version.empty() ||
+                                     !config.title_id.empty();
+            const auto hex = [](const std::string& value, std::size_t length) {
+                return value.size() == length &&
+                       value.find_first_not_of("0123456789abcdefABCDEF") == std::string::npos;
+            };
+            const bool valid_game = hex(config.game_hash, 64) && hex(config.title_id, 16) &&
+                !config.game_version.empty() && config.game_version.size() <= 96 &&
+                config.game_version.find_first_not_of(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:+-") ==
+                    std::string::npos;
             const bool valid=parts && [parts.scheme.lowercaseString isEqualToString:@"wss"] && parts.host.length &&
                 [parts.path isEqualToString:@"/relay"] && !parts.user && !parts.password && !parts.query && !parts.fragment &&
-                room && config.room.size()>=1 && config.room.size()<=64 && password && config.password.size()>=1 && config.password.size()<=512;
+                room && config.room.size()>=1 && config.room.size()<=64 && password &&
+                (public_room ? config.password.empty() && valid_game :
+                               config.password.size()>=1 && config.password.size()<=512);
             if(!valid) {
                 std::lock_guard lock(state->mutex);state->wire.Fail(Failure::InvalidConfiguration);return false;
             }
-            NSData* json=[NSJSONSerialization dataWithJSONObject:@{@"version":@1,@"room":room,@"password":password,@"peer_events":@YES,@"instance":[NSString stringWithUTF8String:state->instance.c_str()]} options:0 error:nil];
+            NSMutableDictionary* fields=[@{@"version":@1,@"room":room,@"password":password,@"peer_events":@YES,
+                @"instance":[NSString stringWithUTF8String:state->instance.c_str()]} mutableCopy];
+            if (public_room) {
+                fields[@"game_hash"] = string(config.game_hash);
+                fields[@"game_version"] = string(config.game_version);
+                fields[@"title_id"] = string(config.title_id);
+            }
+            NSData* json=[NSJSONSerialization dataWithJSONObject:fields options:0 error:nil];
             config.password.clear();password=nil;
             if(!json || json.length>4096 || !parts.URL) {
                 std::lock_guard lock(state->mutex);state->wire.Fail(Failure::InvalidConfiguration);return false;

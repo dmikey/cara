@@ -24,6 +24,7 @@ extern "C" int __llvm_profile_write_file(void);
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
 #import "ios/network_controller.h"
+#include "ios/device_sensors.h"
 #include "ios/session_overlay.h"
 #include "network/relay_client.h"
 #import "ios/state_catalog.h"
@@ -699,6 +700,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     CGSize lastSkinSize;
     std::unique_ptr<IOSWindow> emuWindow;
     std::thread worker;
+    NSDictionary<NSString*, NSString*>* onlineGameIdentity;
     std::shared_ptr<Network::RelayClient> relayClient;
     CADisplayLink* presentationLink;
     std::atomic<bool> stop;
@@ -943,6 +945,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    [self updateDeviceSensors];
     libraryNavigation.view.frame=self.view.bounds;
 #ifdef CARA_IOS_GLES
     gpuSurface.frame=self.view.bounds;
@@ -1051,8 +1054,22 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 - (Cara::SessionPresentation)sessionPresentation {
     return Cara::ResolveSessionPresentation(openingGame,running.load(),gameLoaded.load(),stop.load(),paused.load(),sessionFailure!=nil);
 }
+- (void)updateDeviceSensors {
+    if (std::getenv("CARA_BENCHMARK_FRAMES")) return;
+    UIWindowScene* scene=self.view.window.windowScene;
+    if (!scene) {
+        Cara::SetIOSDeviceSensorContext(false,UIInterfaceOrientationUnknown);
+        return;
+    }
+    UIInterfaceOrientation orientation;
+    if (@available(iOS 26.0,*)) orientation=scene.effectiveGeometry.interfaceOrientation;
+    else orientation=scene.interfaceOrientation;
+    Cara::SetIOSDeviceSensorContext([self sessionPresentation]==Cara::SessionPresentation::Running &&
+        scene.activationState==UISceneActivationStateForegroundActive,orientation);
+}
 - (void)updateSessionPresentation {
     const auto state=[self sessionPresentation];
+    [self updateDeviceSensors];
     if (deviceStatusHUD) {
         if (state!=Cara::SessionPresentation::Running) {
             deviceStatusHUD.hidden=YES;
@@ -1124,6 +1141,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         libraryController.chooseFolder=^{ [owner chooseROMsFolder]; };
         libraryController.showSettings=^{ [owner showFullSettings]; };
         libraryController.statesForGame=^NSArray*(NSURL* url) { return [owner libraryStatesForGame:url]; };
+        libraryController.onlineRooms=^(NSURL* url) { [owner showOnlineRoomsForGame:url]; };
         libraryController.startFromState=^(NSURL* url,NSString* filename) { EmulatorController* c=owner; if(!c) return; c->pendingLibraryState=filename; [c openGameURL:url]; };
         libraryController.gameSettings=^(NSURL* url) { EmulatorController* c=owner; if (c) [c showGameSettings:url navigation:(UINavigationController*)c->libraryController.presentedViewController]; };
         libraryController.clearGameSettings=^(NSURL* url) { EmulatorController* c=owner; if(!c) return; [c->libraryStore setMetadata:@{@"overrides":@{},@"actionLayout":CaraNewActionLayout()} forGame:url]; if([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) { [c reloadActionLayout]; CaraGameOverrides=nil; [c applySavedPlayPolicy]; c->stretchAudio=[CaraEmulationValue(@"audioStretching") boolValue]; c->stretchAudioDirty=true; } };
@@ -1334,6 +1352,96 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
     if ([navigation isKindOfClass:UINavigationController.class]) [navigation pushViewController:settings animated:YES];
 }
+- (void)showOnlineRoomsForGame:(NSURL*)url {
+    UINavigationController* navigation=(UINavigationController*)libraryController.presentedViewController;
+    if (![navigation isKindOfClass:UINavigationController.class] || openingGame) return;
+    if (gameLoaded && running && !stop && [gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) {
+        [self showOnlineRoomsInNavigation:navigation];
+        return;
+    }
+    UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Open game for Online Rooms"
+        message:@"Cara checks the game hash and installed version after the game loads."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    __weak EmulatorController* owner=self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Open Game" style:UIAlertActionStyleDefault
+                                          handler:^(UIAlertAction* action) {
+        [navigation dismissViewControllerAnimated:YES completion:^{
+            EmulatorController* c=owner;
+            if (!c) return;
+            c->pendingLibraryState=nil;
+            [c openGameURL:url forOnlineRooms:YES];
+        }];
+    }]];
+    [navigation presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)showOnlineRoomsInNavigation:(UINavigationController*)navigation {
+    if (!gameLoaded || !running || stop) return;
+    if (!onlineGameIdentity) {
+        UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Game hash unavailable"
+            message:@"Cara needs a Nintendo 3DS game with a readable game hash and version to use Online Rooms."
+            preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            if (!navigation) [self resumeFromMenu];
+        }]];
+        if (navigation) [navigation presentViewController:alert animated:YES completion:nil];
+        else [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    CaraOnlineRoomsController* controller=[CaraOnlineRoomsController new];
+    NSDictionary<NSString*, NSString*>* identity=onlineGameIdentity;
+    const unsigned generation=sessionGeneration;
+    controller.gameIdentity=identity;
+    __weak EmulatorController* owner=self;
+    controller.connectionStatus=^NSDictionary* {
+        EmulatorController* c=owner;
+        if (!c || !c->relayClient || c->sessionGeneration!=generation) return @{};
+        const auto state=c->relayClient->GetStatus();
+        const BOOL active=state.state==Network::RelayClient::State::Connecting ||
+                          state.state==Network::RelayClient::State::Connected;
+        if (!active && (c->menuVisible || c->libraryVisible) && !c->modalPaused)
+            [c applyInterfacePausePolicy];
+        NSString* detail=state.failure==Network::RelayClient::Failure::AuthenticationRejected ?
+            @"This room is no longer joinable. Browse Rooms again and compare the game hash and version." :
+            [NSString stringWithUTF8String:Network::RelayClient::StatusText(state)];
+        return @{@"detail":detail,@"active":@(active)};
+    };
+    controller.joinRoom=^NSString*(NSString* roomID) {
+        EmulatorController* c=owner;
+        if (!c || !c->relayClient || !c->running || !c->gameLoaded || c->stop ||
+            c->sessionGeneration!=generation || c->backgroundAt>0 ||
+            ![c->onlineGameIdentity isEqualToDictionary:identity])
+            return @"Open this game again to verify its hash and version.";
+        if ([c relayKeepsRunning]) return @"Disconnect from the current room first.";
+        Network::RelayClient::Config config;
+        config.room=roomID.UTF8String;
+        config.game_hash=identity[@"game_hash"].UTF8String;
+        config.game_version=identity[@"game_version"].UTF8String;
+        config.title_id=identity[@"title_id"].UTF8String;
+        if (!c->relayClient->Connect(std::move(config))) return @"The relay could not start this connection.";
+        [c applyInterfacePausePolicy];
+        return nil;
+    };
+    controller.leaveRoom=^{
+        EmulatorController* c=owner;
+        if (c && c->relayClient && c->sessionGeneration==generation) {
+            c->relayClient->Disconnect();
+            [c applyInterfacePausePolicy];
+        }
+    };
+    if (navigation) {
+        [navigation pushViewController:controller animated:YES];
+        return;
+    }
+    UINavigationController* sheet=[[UINavigationController alloc] initWithRootViewController:controller];
+    controller.finished=^{ [owner dismissViewControllerAnimated:YES completion:^{ [owner resumeFromMenu]; }]; };
+    sheet.modalPresentationStyle=UIModalPresentationFormSheet;
+    sheet.preferredContentSize=CGSizeMake(620,650);
+    // The Done action clears the existing pause policy on dismissal.
+    sheet.modalInPresentation=YES;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
 - (void)showNetworkSettings {
     CaraNetworkController* controller=[CaraNetworkController new];
     __weak EmulatorController* owner=self;
@@ -1455,6 +1563,10 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         [actions addObject:@{@"title":@"Load state",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner showStateSlots:NO]; }}];
     }
     [actions addObject:@{@"title":@"Library & iCloud",@"symbol":@"folder",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Library & iCloud"]; }}];
+    if (gameLoaded && running && !stop) {
+        [actions addObject:@{@"title":@"Online Rooms",@"symbol":@"globe",@"keepOpen":@YES,
+            @"action":^{ EmulatorController* c=owner; if (c) [c showOnlineRoomsInNavigation:(UINavigationController*)c.presentedViewController]; }}];
+    }
     [actions addObject:@{@"title":@"Local multiplayer",@"symbol":@"antenna.radiowaves.left.and.right",@"keepOpen":@YES,@"action":^{ [owner showNetworkSettings]; }}];
     [actions addObject:@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Skins"]; }}];
     [actions addObject:@{@"title":@"Controllers",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Controllers"]; }}];
@@ -1596,6 +1708,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     }];
 }
 - (void)openGameURL:(NSURL*)url {
+    [self openGameURL:url forOnlineRooms:NO];
+}
+- (void)openGameURL:(NSURL*)url forOnlineRooms:(BOOL)showOnlineRooms {
     if (openingGame) return;
     if (![@[@"3ds",@"cci",@"cxi",@"3dsx",@"elf"] containsObject:url.pathExtension.lowercaseString]) { status.text=@"Choose an extracted .3ds, .cci, .cxi, .3dsx or .elf game."; [self resumeFromMenu]; return; }
     [self ensureLibrary];
@@ -1616,7 +1731,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:url options:0 error:&error byAccessor:^(NSURL* actual) {
                 if ([actual checkResourceIsReachableAndReturnError:&error]) readable=actual;
             }];
-            dispatch_async(dispatch_get_main_queue(), ^{ self->openingGame=NO; if (readable) [self startROM:readable]; else [self shellError:@"Game unavailable" message:error.localizedDescription?:@"Select this game again in Files."]; });
+            dispatch_async(dispatch_get_main_queue(), ^{ self->openingGame=NO; if (readable) [self startROM:readable showOnlineRooms:showOnlineRooms]; else [self shellError:@"Game unavailable" message:error.localizedDescription?:@"Select this game again in Files."]; });
         });
     }];
 }
@@ -1742,7 +1857,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSDictionary* result=@{@"passed":@(failures.count==0),@"checks":@(checks),@"failures":failures,@"skin":activeSkin.info[@"name"]?:@"none",@"scope":@"Same contact dispatch and HID/analog adapters used by UIKit; not physical finger input"};
     [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[documents stringByAppendingPathComponent:@"skin-input-check.json"] atomically:YES];
 }
-- (void)startROM:(NSURL*)url {
+- (void)startROM:(NSURL*)url showOnlineRooms:(BOOL)showOnlineRooms {
+    onlineGameIdentity=nil;
     [self hideLibrary];
     NSString* requestedState=pendingLibraryState; pendingLibraryState=nil;
     const unsigned session=++sessionGeneration;
@@ -1844,7 +1960,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     emuWindow->present = [weakSelf,session](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
-    worker = std::thread([self,rom,user,session,url,requestedState] {
+    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms] {
         // Diagnostic only: requested QoS is not evidence of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
         const bool worker_interactive_qos = interactive_qos_env &&
@@ -1874,6 +1990,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 Log::AddBackend(std::make_unique<Log::FileBackend>(user + "emulator.log"));
                 Input::RegisterFactory<Input::ButtonDevice>("ios",std::make_shared<ButtonFactory>());
                 Input::RegisterFactory<Input::AnalogDevice>("ios",std::make_shared<StickFactory>());
+                Cara::RegisterIOSDeviceSensors();
             });
             auto& s = Settings::values;
             s.is_new_3ds = false; // Core selects New 3DS mode for recognized titles on load.
@@ -1906,6 +2023,14 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             s.current_input_profile.analogs[0] = "engine:ios,index:0";
             s.current_input_profile.analogs[1] = "engine:ios,index:1";
             s.current_input_profile.touch_device = "engine:emu_window";
+            if (!target_frames) {
+                s.current_input_profile.motion_device = "engine:ios";
+                s.mic_input_type = Settings::MicInputType::Real;
+                s.camera_name.fill("ios");
+                s.camera_config[Service::CAM::InnerCamera]="front";
+                s.camera_config[Service::CAM::OuterLeftCamera]="back";
+                s.camera_config[Service::CAM::OuterRightCamera]="back";
+            }
             Settings::Apply(); Frontend::RegisterDefaultApplets();
             auto& system = Core::System::GetInstance();
             FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::LogDir));
@@ -2024,12 +2149,27 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             if (result==Core::System::ResultStatus::Success)
                 LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
             if (result==Core::System::ResultStatus::Success) Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
+            NSDictionary<NSString*, NSString*>* roomIdentity=nil;
+            if (!target_frames && result==Core::System::ResultStatus::Success && system.GetTitleID()) {
+                const std::string version=system.GetAppLoader().ReadOnlineGameVersion();
+                const auto& hash=system.StateGameHash();
+                if (!version.empty() && std::any_of(hash.begin(),hash.end(),[](u8 byte) { return byte!=0; })) {
+                    NSMutableString* hex=[NSMutableString stringWithCapacity:64];
+                    for (u8 byte : hash) [hex appendFormat:@"%02x", static_cast<unsigned>(byte)];
+                    roomIdentity=@{@"game_hash":[hex copy],
+                        @"game_version":[NSString stringWithUTF8String:version.c_str()],
+                        @"title_id":[NSString stringWithFormat:@"%016llx",(unsigned long long)system.GetTitleID()]};
+                }
+            }
             gameLoaded=result==Core::System::ResultStatus::Success;
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (self->sessionGeneration!=session) return;
+                self->onlineGameIdentity=roomIdentity;
                 if (result != Core::System::ResultStatus::Success)
                     self->sessionFailure = [NSString stringWithFormat:@"Load failed (code %u)",unsigned(result)];
                 [self updateSessionPresentation];
+                if (showOnlineRooms && !self.presentedViewController)
+                    [self showOnlineRoomsInNavigation:nil];
             });
             if (result == Core::System::ResultStatus::Success) {
                 const auto benchmark_start = std::chrono::steady_clock::now();
@@ -2854,6 +2994,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     });
 }
 - (void)dealloc {
+    Cara::SetIOSDeviceSensorContext(false,UIInterfaceOrientationUnknown);
     if(relayClient) relayClient->Disconnect();
     stop = true;
     if (worker.joinable()) worker.join();

@@ -63,6 +63,18 @@ Public clients must validate the system trust chain and hostname and require TLS
 
 See `DEPLOYMENT.md` for the deployment receipt, scoped operations and rollback.
 
+### Public game rooms
+
+The iPad’s Online Rooms screen uses the SHA-256 of the loaded game executable, title ID and active game version. Players compare **Your Game Hash** and **Game Version** in Cara. This identity accounts for the executable selected by the loader, including applicable updates or code patches.
+
+Enable the bounded directory on a WebSocket relay with `-public-rooms`, or set `CARA_RELAY_PUBLIC_ROOMS=1` for the supplied Compose service. The staged HTTPS proxy configuration forwards and rate-limits its two POST paths. Existing private rooms still require their original password and remain absent from the public directory.
+
+- `POST /rooms/v1/create` takes `name`, `game_hash`, `game_version`, and `title_id`. It returns `{"room":{...}}`.
+- `POST /rooms/v1/browse` takes the three game fields and returns `{"rooms":[...]}`. It lists the matching hash and title, including versions the client can label as incompatible.
+- A public-room join includes the same game fields in the v1 Join frame, with peer events enabled. The relay checks all three fields before sending Welcome. Public rooms allow four players and expire after two minutes empty.
+
+The hash is a compatibility identifier supplied by the client. Room requests use HTTPS JSON, and game packets continue over the existing TLS WebSocket transport. The local integration tests cover directory isolation, hash/version rejection, room capacity and original packet forwarding.
+
 ### Opt-in authenticated membership
 
 A protocol-v1 Join may request `peer_events:true` and carry an optional `instance`

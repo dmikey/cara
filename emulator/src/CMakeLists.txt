@@ -341,8 +341,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         target_link_libraries(cara-ios PRIVATE nihstro-headers)
         target_link_libraries(cara-ios PRIVATE glad "-framework OpenGLES")
     endif()
+    target_sources(cara-ios PRIVATE ios/device_sensors.mm ios/ios_microphone.mm)
     target_link_libraries(cara-ios PRIVATE core common Threads::Threads
-        "-framework Foundation" "-lobjc" "-framework UIKit" "-framework CoreGraphics" "-framework UniformTypeIdentifiers" "-framework ImageIO" "-framework QuartzCore" "-framework GameController" "-framework AudioToolbox" z)
+        "-framework Foundation" "-lobjc" "-framework UIKit" "-framework CoreGraphics" "-framework UniformTypeIdentifiers" "-framework ImageIO" "-framework QuartzCore" "-framework GameController" "-framework AudioToolbox"
+        "-framework AVFoundation" "-framework CoreMotion" "-framework CoreMedia" "-framework CoreVideo" z)
     set_target_properties(cara-ios PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist"
         XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
