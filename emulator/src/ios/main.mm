@@ -1713,7 +1713,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)openGameURL:(NSURL*)url forOnlineRooms:(BOOL)showOnlineRooms {
     if (openingGame) return;
-    if (![@[@"3ds",@"cci",@"cxi",@"3dsx",@"elf"] containsObject:url.pathExtension.lowercaseString]) { status.text=@"Choose an extracted .3ds, .cci, .cxi, .3dsx or .elf game."; [self resumeFromMenu]; return; }
+    if (![CaraLibraryStore isGameURL:url]) { status.text=@"Choose a 3DS game or a ZIP containing one .3ds ROM."; [self resumeFromMenu]; return; }
     [self ensureLibrary];
     if(relayClient && (gameURL || worker.joinable())) relayClient->Disconnect();
     openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];

@@ -234,6 +234,7 @@ public:
     ~IOFile();
 
     bool Open(const std::string& filename, const char openmode[]);
+    bool OpenRom(const std::string& filename);
 
     void Close() {
         m_file.reset();

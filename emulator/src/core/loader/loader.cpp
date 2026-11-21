@@ -33,8 +33,8 @@ FileType IdentifyFile(FileUtil::IOFile& file) {
 }
 
 FileType IdentifyFile(const std::string& file_name) {
-    FileUtil::IOFile file(file_name, "rb");
-    if (!file.IsOpen()) {
+    FileUtil::IOFile file;
+    if (!file.OpenRom(file_name)) {
         LOG_ERROR(Loader, "Failed to load file {}", file_name);
         return FileType::Unknown;
     }
@@ -115,8 +115,8 @@ static std::unique_ptr<AppLoader> GetFileLoader(FileUtil::IOFile&& file, FileTyp
 }
 
 std::unique_ptr<AppLoader> GetLoader(const std::string& filename) {
-    FileUtil::IOFile file(filename, "rb");
-    if (!file.IsOpen()) {
+    FileUtil::IOFile file;
+    if (!file.OpenRom(filename)) {
         LOG_ERROR(Loader, "Failed to load file {}", filename);
         return nullptr;
     }
@@ -125,8 +125,15 @@ std::unique_ptr<AppLoader> GetLoader(const std::string& filename) {
     Common::SplitPath(filename, nullptr, &filename_filename, &filename_extension);
 
     FileType type = IdentifyFile(file);
-    FileType filename_type = GuessFromExtension(filename_extension);
+    if (Common::ToLower(filename_extension) == ".zip") {
+        if (type != FileType::CCI && type != FileType::CXI) {
+            LOG_ERROR(Loader, "ZIP member is not a Nintendo 3DS cartridge image");
+            return nullptr;
+        }
+        return GetFileLoader(std::move(file), type, filename_filename, filename);
+    }
 
+    FileType filename_type = GuessFromExtension(filename_extension);
     if (type != filename_type) {
         LOG_WARNING(Loader, "File {} has a different type than its extension.", filename);
         if (FileType::Unknown == type)
