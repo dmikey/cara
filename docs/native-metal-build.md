@@ -93,3 +93,43 @@ in-game save, boot each cartridge normally, and match the final screen
 capture. For Dark Moon, the lab replay uses A presses at refreshes 720,
 960, and 1200. Inspect the four 120-refresh windows after refresh 3120
 separately from startup and shader compilation.
+
+### M4 iPad lab replay
+
+The same FastInterp build at 100% guest clock reached the Gadd conversation
+from a normal boot with both renderers. Over refreshes 3121–3600, GLES averaged
+16.71 ms per refresh and Metal averaged 24.00 ms. Both executed the same
+guest tick count and 336,000 PICA draw requests across the four windows.
+Raw and indexed ZIP cartridges produced byte-identical Metal captures and
+the same 24.00 ms lab mean.
+
+A retained local build based on `cce1a67` with additional Apple tuning
+completed the same lab window at 19.15 ms per refresh. It matched the main
+build's final pixels, guest ticks, and PICA draw requests. Emulation-thread
+CPU time fell from 18.03 to 13.61 ms per refresh. The local binary included
+unmerged renderer changes and a 42-option Apple policy. That comparison
+measures the whole retained build.
+
+With Metal phase tracing, the default eight slots averaged 24.34 ms and
+spent 4.87 ms per refresh waiting for the oldest tracked submission. The
+32-slot trace averaged 27.92 ms. Submission pressure disappeared and
+upload-arena waits rose to 2.71 ms per refresh. The eight-slot async
+depth variant removed two synchronous depth exports per refresh and
+raised submission waits to 11.44 ms per refresh. Its lab mean was 30.05 ms.
+All three Metal traces matched the same capture. Keep queue width and
+async depth as experimental controls until matched runs show a gain.
+
+## Upstream boundaries
+
+- **Azahar** is the upstream boundary for 3DS execution. Propose PICA,
+  renderer, FastInterp, and Dynarmic changes against its core interfaces. Cara
+  shares Metal shaders, pipeline and submission code between Mac and iPad.
+  An Azahar adapter would map its renderer ownership, PICA state, guest-memory
+  coherency, and presentation contracts onto that shared code.
+  [Azahar rasterizer interface](https://github.com/azahar-emu/azahar/blob/master/src/video_core/rasterizer_interface.h)
+- **Delta and DeltaCore** are the reference for the Apple emulator shell and
+  controller skin interoperability. Cara owns its library UI, game lifecycle,
+  and 3DS skin extensions. A host adapter should translate control layouts
+  and button combinations to ordinary 3DS input events, and carry session,
+  video, audio, and save operations between the shell and core.
+  [DeltaCore bridge](https://github.com/rileytestut/DeltaCore/blob/main/DeltaCore/Cores/EmulatorBridging.swift)
