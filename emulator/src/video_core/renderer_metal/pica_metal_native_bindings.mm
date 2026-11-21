@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_metal/pica_metal_native_bindings.h"
+#include "video_core/renderer_metal/pica_metal_cube_build.hh"
 #include "video_core/renderer_metal/pica_metal_draw_stage_profile.hh"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "video_core/renderer_metal/pica_metal_capture_raw_indices.hh"
@@ -321,7 +322,8 @@ std::optional<MetalTransfer::GuestInterval> TiledRange(PAddr address, u32 width,
     return MetalTransfer::AlignedGuestInterval(address, u64{width / 8} * (height / 8) * tile_bytes);
 }
 
-std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned unit) {
+std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned unit,
+                                                bool cube = false) {
     using Mode = TextureConfig::WrapMode;
     const auto supported_wrap = [](Mode mode) {
         return mode == Mode::Repeat || mode == Mode::MirroredRepeat || mode == Mode::ClampToEdge;
@@ -330,7 +332,8 @@ std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned uni
     if (!NativeFragmentTarget().emit_explicit_material_lod_bias && t.lod.bias != 0)
         return std::nullopt;
     // Only PICA texture unit 0 interprets the texture type field.
-    if ((unit == 0 && t.type != TextureConfig::Texture2D) || t.lod.max_level > 7 ||
+    const auto unit0_type = cube ? TextureConfig::TextureCube : TextureConfig::Texture2D;
+    if ((unit == 0 && t.type != unit0_type) || t.lod.max_level > 7 ||
         t.lod.min_level > t.lod.max_level ||
         !supported_wrap(t.wrap_s) || !supported_wrap(t.wrap_t))
         return std::nullopt;
@@ -732,6 +735,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     const auto textures = r.texturing.GetTextures();
     std::array<PicaSampleInputs, 3> sampler{};
     std::array<std::optional<TextureMipPlan>, 3> ranges;
+    std::optional<MetalTransfer::CubePlan> primary_cube;
     for (unsigned i = 0; i < units->size(); ++i) {
         const auto unit = (*units)[i];
         if (unit == NoMaterialUnit)
@@ -740,8 +744,29 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         const auto& t = info.config;
         if (!info.enabled || unsigned(info.format) >= 14)
             return decline("texture format or enable");
-        const auto recipe = ReadSampler(t, unit);
         const auto tile_size = Pica::Texture::CalculateTileSize(info.format);
+        if (unit == 0 && t.type == TextureConfig::TextureCube) {
+            // The measured native path uses RGBA8, unbiased sampling and a private cube.
+            // Other cube formats stay outside this validated route.
+            const auto recipe = ReadSampler(t, unit, true);
+            if (i != 0 || !recipe ||
+                info.format != Pica::TexturingRegs::TextureFormat::RGBA8)
+                return decline("cube sampler or format");
+            using Face = Pica::TexturingRegs::CubeFace;
+            const auto address = [&](Face face) { return r.texturing.GetCubePhysicalAddress(face); };
+            const MetalTransfer::CubeRegisters cube{
+                {address(Face::PositiveX), address(Face::NegativeX),
+                 address(Face::PositiveY), address(Face::NegativeY),
+                 address(Face::PositiveZ), address(Face::NegativeZ)},
+                u32(t.width), u32(t.height), tile_size, u32(t.lod.min_level),
+                u32(t.lod.max_level), s32(t.lod.bias)};
+            primary_cube = MetalTransfer::PlanCube(cube, *color_range, *depth_range);
+            if (!primary_cube)
+                return decline("cube mip geometry or ownership");
+            sampler[i] = *recipe;
+            continue;
+        }
+        const auto recipe = ReadSampler(t, unit);
         ranges[i] = PlanTextureMips(t, tile_size);
         if (!recipe || !ranges[i] || ranges[i]->bytes.Overlaps(*color_range) ||
             ranges[i]->bytes.Overlaps(*depth_range)) {
@@ -759,6 +784,18 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         }
         sampler[i] = *recipe;
     }
+    if (primary_cube) {
+        for (const auto& resource : ranges) {
+            if (!resource)
+                continue;
+            for (const auto& face : primary_cube->faces) {
+                const auto range = resource->bytes;
+                if (range.Overlaps(face.bytes) &&
+                    (range.begin != face.bytes.begin || range.end != face.bytes.end))
+                    return decline("cube face aliases another sampler");
+            }
+        }
+    }
     sampler_plan.Stop();
     const auto second = ranges[1] ? std::optional{sampler[1]} : std::nullopt;
     const auto third = ranges[2] ? std::optional{sampler[2]} : std::nullopt;
@@ -770,7 +807,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
             result = pipelines.Select(pica, sampler[0], second, third);
         return result;
     });
-    if (!selection)
+    if (!selection || selection->primary_material_cube != primary_cube.has_value())
         return decline("pipeline state or reflection");
     if (raw_indices && selection->vertex_mode != MetalRawIndexMode) {
         ScopedNativeHostPhase timer(3);
@@ -827,6 +864,18 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     out.draw.depth_stencil = out.depth.view.texture;
     out.draw.lighting_lut = selection->slots[0] == NSNotFound ? nil : lut;
     for (unsigned i = 0; i < ranges.size(); ++i) {
+        if (i == 0 && primary_cube) {
+            const auto cube = Measure(6, [&] {
+                return BuildPicaMetalCube(lane, resources.queue, *parts.textures, *primary_cube,
+                                          unsigned(textures[0].format), ram);
+            });
+            out.draw.texture0 = cube.texture;
+            out.views.sampled = {cube.texture, {}, ++generation};
+            auto& faces = out.views.primary_cube_faces.emplace();
+            for (std::size_t face = 0; face < cube.faces.size(); ++face)
+                faces[face] = {cube.faces[face].begin, cube.faces[face].end};
+            continue;
+        }
         if (!ranges[i])
             continue;
         const auto& info = textures[(*units)[i]];

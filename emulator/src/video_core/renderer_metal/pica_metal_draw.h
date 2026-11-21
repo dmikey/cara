@@ -50,6 +50,7 @@ struct TexturedMetalDraw {
     std::span<const std::byte> packed_vertices, expanded_indices;
     std::span<const std::byte> layout_uniform, vs_uniform, common_uniform, light_uniform;
     unsigned primary_material_unit = NoMaterialUnit;
+    bool primary_material_cube = false;
     std::optional<SecondaryPicaMaterial> secondary_material{};
     PicaMetalVertexMode vertex_mode = PicaMetalVertexMode::Packed;
     std::optional<SecondaryPicaMaterial> tertiary_material{};

@@ -478,7 +478,8 @@ bool CoversBindings(NSArray<id<MTLBinding>>* bindings, const std::set<Binding>& 
                                            actual.begin(), actual.end()) : actual == expected;
 }
 
-bool CheckReflection(MTLRenderPipelineReflection* reflection, const Pair& pair) {
+bool CheckReflection(MTLRenderPipelineReflection* reflection, const Pair& pair,
+                     bool& primary_material_cube) {
     if (@available(macOS 13.0, iOS 16.0, *)) {
         if (!reflection)
             return false;
@@ -486,6 +487,18 @@ bool CheckReflection(MTLRenderPipelineReflection* reflection, const Pair& pair) 
         constexpr auto texture = MTLBindingTypeTexture;
         constexpr auto sampler = MTLBindingTypeSampler;
         const auto& [lut, lut_sampler, image, image_sampler, common, light] = pair.slots;
+        for (id<MTLBinding> value in reflection.fragmentBindings) {
+            if (!value.isUsed || value.type != texture || image == NSNotFound ||
+                value.index != image)
+                continue;
+            auto texture_binding = (id<MTLTextureBinding>)value;
+            if (texture_binding.textureType == MTLTextureTypeCube) {
+                if (!pair.runtime || pair.sampled_unit != 0 ||
+                    ![value.name isEqualToString:@"tex_cube"])
+                    return false;
+                primary_material_cube = true;
+            }
+        }
         std::set<Binding> vertex = {{buffer, 0}};
         if (pair.vertex_mode != PicaMetalVertexMode::StageIn)
             vertex.insert({{buffer, 1}, {texture, 0}, {texture, 1}});
@@ -511,7 +524,8 @@ bool CheckReflection(MTLRenderPipelineReflection* reflection, const Pair& pair) 
                         return [value.name isEqualToString:name];
                 return false;
             };
-            const auto primary=[NSString stringWithFormat:@"tex%u",pair.sampled_unit];
+            const auto primary = primary_material_cube ? @"tex_cube"
+                : [NSString stringWithFormat:@"tex%u", pair.sampled_unit];
             const auto secondary=[NSString stringWithFormat:@"tex%u",pair.secondary_unit];
             if ((lut != NSNotFound && !named(texture,lut,@"texture_buffer_lut_lf")) ||
                 !named(texture,image,primary) ||
@@ -1019,6 +1033,7 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                 selection.pipeline = render->selection.pipeline;
                 selection.vertex_mode = render->selection.vertex_mode;
                 selection.batched_vertex = render->selection.batched_vertex;
+                selection.primary_material_cube = render->selection.primary_material_cube;
                 NativeMetalCost::Count(NativeMetalCost::RenderPipelineReuse, 1);
             } else {
                 MTLRenderPipelineDescriptor* ps = [MTLRenderPipelineDescriptor new];
@@ -1146,7 +1161,7 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                 }
 #endif
 
-                if (!CheckReflection(reflection,pair))
+                if (!CheckReflection(reflection, pair, selection.primary_material_cube))
                     return false;
 #ifdef CARA_RUNTIME_METAL_SHADERS
                 if (pair.runtime && raw_index_function) {
@@ -1259,6 +1274,7 @@ void PicaMetalPipelineSelection::Apply(TexturedMetalDraw& draw) const {
     draw.texel_fetch_sampler = texel_fetch;
     draw.texture0_sampler = material;
     draw.primary_material_unit = primary_unit;
+    draw.primary_material_cube = primary_material_cube;
     draw.vertex_mode = vertex_mode == MetalRawIndexMode ? PicaMetalVertexMode::Packed : vertex_mode;
     draw.secondary_material = secondary;
     draw.tertiary_material = tertiary;

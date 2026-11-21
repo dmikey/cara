@@ -92,6 +92,7 @@ struct PicaMetalPipelineSelection {
     // The caller binds authoritative backing, raster bounds and immutable payloads.
     void Apply(TexturedMetalDraw& draw) const;
     std::shared_ptr<const BatchedMetalVertexProgram> batched_vertex;
+    bool primary_material_cube = false;
 };
 
 // Same owner thread as the draw queue. Prepare is explicit startup/preparation

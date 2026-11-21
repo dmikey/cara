@@ -3,6 +3,7 @@
 
 #include "pica_metal_draw.h"
 
+#include <array>
 #include <cstdint>
 
 namespace Cara {
@@ -31,6 +32,7 @@ struct PicaMetalDrawViews {
     PicaGuestRange depth_stencil_dirty;
     std::optional<PicaMetalSurfaceView> secondary_sampled{};
     std::optional<PicaMetalSurfaceView> tertiary_sampled{};
+    std::optional<std::array<PicaGuestRange, 6>> primary_cube_faces{};
 };
 
 struct PicaMetalWriter {
