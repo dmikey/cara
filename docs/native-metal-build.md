@@ -77,3 +77,19 @@ texturing. For the supported primary RGBA8 feedback case, publish the previous
 draws and decode the authoritative guest bytes into a separate sampled
 texture before drawing. The Metal shader uses the shared PICA procedural
 texture generator and takes its lookup tables from the native LUT atlas.
+
+## iPad Metal timing
+
+Run a paced FastInterp benchmark with `CARA_FRAME_TIMING=1` and
+`CARA_HOST_CPU_TIMING=1` to compare elapsed refresh time with emulation-thread
+CPU time. The iPad app writes `Documents/cara/frame-timing.json` with
+per-window p50, p95, p99, and maximum elapsed time. Add
+`CARA_METAL_FRAME_COST=1` to record deltas from the shared Metal phase
+counters on the renderer's owner thread. Phases can be nested. Compare
+throughput again with phase tracing disabled after identifying a hotspot.
+
+For a raw-versus-ZIP comparison, use the same signed app, seed the same
+in-game save, boot each cartridge normally, and match the final screen
+capture. For Dark Moon, the lab replay uses A presses at refreshes 720,
+960, and 1200. Inspect the four 120-refresh windows after refresh 3120
+separately from startup and shader compilation.

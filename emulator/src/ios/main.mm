@@ -52,6 +52,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "ios/session_presentation.h"
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
 #include "ios/metal_lcd_view.h"
+#include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "video_core/renderer_metal/pica_metal_native_renderer.h"
 #include "video_core/renderer_metal/pica_metal_pipelines.h"
 #include "video_core/renderer_metal/pica_metal_resources.h"
@@ -2204,6 +2205,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 std::vector<double> frame_times;
                 std::vector<std::string> timing_windows;
                 auto previous_counters = Common::FrameTiming::counters;
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                auto previous_metal_cost = Cara::NativeMetalCost::spans;
+#endif
                 const bool category_timing=Common::FrameTiming::counters.enabled && Common::CPUCategoryTiming::DiagnosticEnabled();
                 Common::CPUCategoryTiming::Counters previous_categories{};
                 double category_clock_ns_per_read=0;
@@ -2564,6 +2568,26 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                     ",\"cpu_category_clock_reads\":"+std::to_string(entries*2);
                                 previous_categories=categories;
                             }
+                            std::string metal_window;
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                            if (emuWindow->native_metal_only && Cara::NativeMetalCost::Enabled()) {
+                                namespace Cost = Cara::NativeMetalCost;
+                                metal_window = ",\"metal_phase_deltas\":{";
+                                bool first = true;
+                                for (std::size_t i = 0; i < Cost::spans.size(); ++i) {
+                                    const auto calls = Cost::spans[i].calls - previous_metal_cost[i].calls;
+                                    const auto ns = Cost::spans[i].ns - previous_metal_cost[i].ns;
+                                    if (!calls && !ns)
+                                        continue;
+                                    metal_window += std::string(first ? "\"" : ",\"") + Cost::names[i] +
+                                        "\":{\"calls\":" + std::to_string(calls) +
+                                        ",\"ns\":" + std::to_string(ns) + "}";
+                                    first = false;
+                                }
+                                metal_window += '}';
+                                previous_metal_cost = Cost::spans;
+                            }
+#endif
                             timing_windows.push_back("{\"end_frame\":" + std::to_string(timed_frame) +
                                 ",\"frames\":" + std::to_string(frame_times.size()) +
                                 ",\"factor_3d_percent\":" + std::to_string(unsigned(Settings::values.factor_3d.load())) +
@@ -2575,6 +2599,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                 ",\"process_cpu_ms_per_frame\":" + std::to_string(host_cpu_valid?(host_cpu.second-previous_host_cpu.second)*1000/count:0) +
                                 ",\"p50_ms\":" + std::to_string(frame_times[frame_times.size() / 2]) +
                                 ",\"p95_ms\":" + std::to_string(frame_times[(frame_times.size() - 1) * 95 / 100]) +
+                                ",\"p99_ms\":" + std::to_string(frame_times[(99 * frame_times.size() + 99) / 100 - 1]) +
                                 ",\"max_ms\":" + std::to_string(frame_times.back()) +
                                 ",\"over_budget_frames\":" + std::to_string(late) +
                                 ",\"cpu_shader_ms_per_frame\":" + std::to_string((current.shader_seconds - previous_counters.shader_seconds) * 1000 / count) +
@@ -2785,7 +2810,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                 ",\"gpu_feedback_vertex_draws\":" + std::to_string(current.gpu_feedback_vertex_draws - previous_counters.gpu_feedback_vertex_draws) +
                                 ",\"gpu_feedback_source_vertices\":" + std::to_string(current.gpu_feedback_source_vertices - previous_counters.gpu_feedback_source_vertices) +
                                 ",\"gpu_vertices\":" + std::to_string(current.gpu_vertices - previous_counters.gpu_vertices) +
-                                ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + category_window + "}");
+                                ",\"cpu_vertex_draws\":" + std::to_string(current.cpu_vertex_draws - previous_counters.cpu_vertex_draws) + category_window + metal_window + "}");
                             previous_counters = current;
                             previous_host_cpu = host_cpu;
                             frame_times.clear();
