@@ -55,7 +55,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Cara uses the microphone when the 3DS game requests microphone input.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>Cara uses device motion to control 3DS games that support tilt or gyro aiming.</string>
+	<string>Cara uses motion for tilt and gyro controls and imports today’s step counts when you choose Import Steps.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

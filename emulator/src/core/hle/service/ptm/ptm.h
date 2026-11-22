@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include "core/hle/service/ptm/step_history.h"
 #include "common/common_types.h"
 #include "core/hle/ipc_helpers.h"
 #include "core/hle/service/service.h"
@@ -142,6 +143,7 @@ public:
     };
 
 private:
+    StepHistory step_history; // Current persistent NAND data, independent of save slots.
     bool shell_open = true;
     bool battery_is_charging = true;
     bool pedometer_is_counting = false;
