@@ -1,0 +1,100 @@
+name: Android release packages
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/android-release.yml'
+      - 'emulator/src/android/**'
+      - 'tools/sign_android_nightly.py'
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+jobs:
+  android:
+    name: Android ARM64 release APK and App Bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.31.6'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build release packages without signing credentials
+        working-directory: emulator/src/android
+        env:
+          VERSION_BASE: ${{ vars.CARA_ANDROID_VERSION_CODE_BASE || '0' }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION_BASE" =~ ^(0|[1-9][0-9]{0,9})$ ]]
+          version=$(( VERSION_BASE + GITHUB_RUN_NUMBER ))
+          test "$version" -gt 0 && test "$version" -le 2100000000
+          gradle --no-daemon --max-workers=3 :app:assembleRelease :app:bundleRelease \
+            -PcaraReleaseVersionCode="$version" -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          echo "CARA_BUILT_ANDROID_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Verify packaging and native library alignment
+        run: |
+          set -euo pipefail
+          mkdir dist
+          outputs=emulator/src/android/app/build/outputs
+          apk="$outputs/apk/release/app-release-unsigned.apk"
+          bundle="$outputs/bundle/release/app-release.aab"
+          sdk="$ANDROID_HOME/build-tools/36.0.0"
+          "$sdk/zipalign" -c -P 16 -v 4 "$apk"
+          "$sdk/aapt2" dump badging "$apk" > "$RUNNER_TEMP/cara-apk-metadata"
+          grep -F "package: name='org.cara.emu' versionCode='$CARA_BUILT_ANDROID_VERSION'" "$RUNNER_TEMP/cara-apk-metadata"
+          grep -Fx "targetSdkVersion:'36'" "$RUNNER_TEMP/cara-apk-metadata"
+          grep -Fx "native-code: 'arm64-v8a'" "$RUNNER_TEMP/cara-apk-metadata"
+          unzip -p "$apk" lib/arm64-v8a/libmain.so > "$RUNNER_TEMP/libmain.so"
+          unzip -p "$bundle" base/lib/arm64-v8a/libmain.so > "$RUNNER_TEMP/bundle-libmain.so"
+          cmp "$RUNNER_TEMP/libmain.so" "$RUNNER_TEMP/bundle-libmain.so"
+          "$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
+            -W -l "$RUNNER_TEMP/libmain.so" | gawk '$1=="LOAD" {if (strtonum($NF)<16384) bad=1; n++} END {exit (bad || !n)}'
+          cp "$apk" dist/Cara-Android-arm64-unsigned.apk
+          cp "$bundle" dist/Cara-Android-arm64-unsigned.aab
+          python3 - <<'PYCODE'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          root = Path('dist')
+          receipt = {
+              'source_revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'version_code': int(os.environ['CARA_BUILT_ANDROID_VERSION']),
+              'application_id': 'org.cara.emu',
+              'target_sdk': 36,
+              'architecture': 'arm64-v8a',
+              'renderer': 'gles-atlas',
+              'cpu_jit': True,
+              'shader_jit': False,
+              'assets': {},
+          }
+          for suffix in ('apk', 'aab'):
+              path = root / f'Cara-Android-arm64-unsigned.{suffix}'
+              with path.open('rb') as file:
+                  receipt['assets'][path.name] = hashlib.file_digest(file, 'sha256').hexdigest()
+          (root / 'android-build.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PYCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cara-Android-arm64-unsigned
+          path: dist/*
+          if-no-files-found: error
