@@ -62,7 +62,54 @@ PerfStats::FrameTiming PerfStats::GetLastFrameTiming() const {
             previous_frame_length};
 }
 
+void FrameLimiter::SetBoundedFramePacing(bool enabled) {
+    if (bounded_frame_pacing != enabled) {
+        bounded_frame_pacing = enabled;
+        ResetFramePacing();
+    }
+}
+
+void FrameLimiter::ResetFramePacing() {
+    reset_bounded_pacer = true;
+    frame_limiting_delta_err = microseconds::zero();
+    previous_walltime = Clock::now();
+}
+
+FrameLimiter::Clock::duration FrameLimiter::PaceBoundedFrame(microseconds current_system_time_us) {
+    using MonotonicClock = std::chrono::steady_clock;
+    const auto now = MonotonicClock::now();
+    const auto seconds = DoubleSecs(now.time_since_epoch()).count();
+    const auto speed = Cara::FramePacer::ClampSpeedPercent(Settings::values.frame_limit);
+    if (reset_bounded_pacer || current_system_time_us < previous_system_time_us ||
+        bounded_pacer.SpeedPercent() != speed) {
+        bounded_pacer.SetSpeedPercent(speed, seconds);
+        bounded_pacer.Reset(seconds);
+        reset_bounded_pacer = false;
+        previous_system_time_us = current_system_time_us;
+        return Clock::duration::zero();
+    }
+
+    if (current_system_time_us == previous_system_time_us)
+        return Clock::duration::zero();
+    previous_system_time_us = current_system_time_us;
+    // BeginSystemFrame is called once per emulated VBlank, on the emulation thread.
+    const auto deadline = bounded_pacer.Advance(1, seconds);
+    if (deadline <= seconds)
+        return Clock::duration::zero();
+    const auto target = MonotonicClock::time_point(duration_cast<MonotonicClock::duration>(DoubleSecs(deadline)));
+    std::this_thread::sleep_until(target);
+    return duration_cast<Clock::duration>(MonotonicClock::now() - now);
+}
+
 FrameLimiter::Clock::duration FrameLimiter::DoFrameLimiting(microseconds current_system_time_us) {
+    if (bounded_frame_pacing) {
+        if (Settings::values.use_frame_limit)
+            return PaceBoundedFrame(current_system_time_us);
+        reset_bounded_pacer = true;
+        previous_system_time_us = current_system_time_us;
+        return Clock::duration::zero();
+    }
+
     if (!Settings::values.use_frame_limit) {
         return Clock::duration::zero();
     }
