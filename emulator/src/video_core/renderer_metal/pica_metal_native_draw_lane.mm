@@ -1234,6 +1234,15 @@ void PicaMetalNativeDrawLane::TransferDisplay(
     const bool detile_raw = detile_plan && (rgb565 || packed16 || block32_rgb8 || cropped ||
         !ResolveRgba8({detile_plan->source.begin,
         detile_plan->source.end, detile_plan->width, detile_plan->height, true}));
+    const auto publish_display = [&](id<MTLCommandBuffer> command, id<MTLBuffer> output,
+        MetalTransfer::GuestInterval dest, id<MTLTexture> image, unsigned width, unsigned height,
+        unsigned bpp) {
+        PublishBytes(command, output, DenseRows(dest));
+        if (image) {
+            enhanced_lcd[next_enhanced_lcd] = {dest, width, height, bpp, output, image};
+            next_enhanced_lcd = (next_enhanced_lcd + 1) % enhanced_lcd.size();
+        }
+    };
     if (scaled_crop || rgb8_retile || ((linear_to_tiles || detile_raw) &&
         !registers.address_override_enabled && valid_extent &&
         ((registers.input_width | registers.input_height) & 7u) == 0)) {
@@ -1323,7 +1332,28 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         if (scaled_crop && scaled_crop->destination_bpp == 2u)
             NativeMetalCost::Count(NativeMetalCost::DisplayScaledCropRgb565, 1);
         [encoder endEncoding];
-        PublishBytes(command, output, DenseRows(*dst));
+        id<MTLTexture> image = nil;
+        if (group.Resolution().Factor() > 1 && layout_flags == 0x2004u &&
+            resident_color && resident_color->rgba8) {
+            const auto& layout = *resident_color->rgba8;
+            const auto texture = resident_color->view.texture;
+            // Only a tile-row-aligned view of the current resident owner can
+            // use its enhanced subpixels. RAM and mixed surfaces keep their
+            // byte-authoritative transfer. The unused tail of the nominal
+            // input rectangle need not be inside the render target.
+            const u32 tile_row_bytes = layout.width * 8u * 4u;
+            if (layout.tiled && layout.width == registers.input_width &&
+                texture.width == layout.width && texture.height == layout.height &&
+                layout.begin <= src->begin && src->begin < layout.end && tile_row_bytes &&
+                layout.end - layout.begin == u64{layout.width} * layout.height * 4u &&
+                (src->begin - layout.begin) % tile_row_bytes == 0) {
+                const u32 first_row = (src->begin - layout.begin) / tile_row_bytes * 8u;
+                image = group.Resolution().SnapshotRgb565Crop(command, texture, output_width,
+                    output_height, first_row, bool(registers.flags & 1u));
+            }
+        }
+        publish_display(command, output, *dst, image, output_width, output_height, 2);
+
         return;
     }
     if (const auto color = MetalTransfer::PlanNativeLinearColorTransfer(registers)) {
@@ -1360,12 +1390,8 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                 const auto image = group.Resolution().Factor() > 1 ?
                     group.Resolution().SnapshotLinear(command, src, width, color->height,
                         color->destination_bpp, color->source_tiled != color->flip) : nil;
-                PublishBytes(command, buffer, DenseRows(color->destination));
-                if (image) {
-                    enhanced_lcd[next_enhanced_lcd] = {color->destination, width, color->height,
-                        color->destination_bpp, buffer, image};
-                    next_enhanced_lcd = (next_enhanced_lcd+1) % enhanced_lcd.size();
-                }
+                publish_display(command, buffer, color->destination, image, width, color->height,
+                                color->destination_bpp);
             };
             const auto bytes_pipeline = linear_bytes_only &&
                 valid_rgba_source(src, color->width, color->height) ? optional_kernel(false) : nil;
@@ -1760,7 +1786,8 @@ MetalLCD::Receipt PicaMetalNativeDrawLane::Present(
                     if (!image.image || image.bytes.begin != bytes.begin || image.bytes.end != bytes.end ||
                         image.width != scanout.width || image.height != scanout.height ||
                         scanout.rows.stride_bytes != image.width*image.bpp ||
-                        scanout.format != (image.bpp == 3 ? MetalLCD::Format::RGB8 : MetalLCD::Format::RGBA8))
+                        scanout.format != (image.bpp == 2 ? MetalLCD::Format::RGB565 :
+                                          image.bpp == 3 ? MetalLCD::Format::RGB8 : MetalLCD::Format::RGBA8))
                         continue;
                     const auto owners = authority.NativeSegments(bytes.begin, bytes.end);
                     if (owners.size() != 1 || owners[0].begin != bytes.begin || owners[0].end != bytes.end)

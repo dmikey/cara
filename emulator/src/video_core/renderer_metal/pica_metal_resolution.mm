@@ -90,6 +90,24 @@ id<MTLTexture> MetalRasterScale::SnapshotLinear(id<MTLCommandBuffer> command, id
         (bytes_per_pixel != 3 && bytes_per_pixel != 4) || native.height != height ||
         (native.width != width && native.width != 2u*width))
         return nil;
+    return Snapshot(command, enhanced, width, height, bytes_per_pixel, 0, flip, native.width / width);
+}
+
+id<MTLTexture> MetalRasterScale::SnapshotRgb565Crop(id<MTLCommandBuffer> command,
+    id<MTLTexture> native, unsigned width, unsigned height, unsigned guest_first_row, bool guest_flip) {
+    const auto enhanced = EnhancedColor(native);
+    if (!enhanced || native.pixelFormat != MTLPixelFormatRGBA8Unorm || !width || !height ||
+        width > native.width || guest_first_row > native.height || height > native.height - guest_first_row)
+        return nil;
+    // PICA tile rows start at the bottom of the Metal attachment. A flipped
+    // guest transfer reverses those rows again within the output rectangle.
+    const unsigned first_row = native.height - guest_first_row - height;
+    return Snapshot(command, enhanced, width, height, 2, first_row*factor, !guest_flip, 1);
+}
+
+id<MTLTexture> MetalRasterScale::Snapshot(id<MTLCommandBuffer> command, id<MTLTexture> enhanced,
+    unsigned width, unsigned height, unsigned bytes_per_pixel, unsigned first_row,
+    bool reverse_rows, unsigned source_step) {
     auto d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
         width:width*factor height:height*factor mipmapped:NO];
     d.storageMode = MTLStorageModePrivate;
@@ -98,7 +116,7 @@ id<MTLTexture> MetalRasterScale::SnapshotLinear(id<MTLCommandBuffer> command, id
     auto enc = texture ? [command computeCommandEncoder] : nil;
     if (!enc)
         return nil;
-    const std::array<uint32_t,2> flags{uint32_t(flip),bytes_per_pixel};
+    const std::array<uint32_t,4> flags{uint32_t(reverse_rows), bytes_per_pixel, first_row, source_step};
     [enc setComputePipelineState:scanout];
     [enc setTexture:enhanced atIndex:0];
     [enc setTexture:texture atIndex:1];

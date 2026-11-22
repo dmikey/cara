@@ -47,7 +47,8 @@ void Run(const char* file) {
 #include <metal_stdlib>
 using namespace metal;
 fragment float4 checker(float4 p [[position]]) {
-    const float v=float((uint(p.x)^uint(p.y))&1u); return float4(v,v,v,1);
+    const float v=float((uint(p.x)^uint(p.y))&1u);
+    return float4(v,float(uint(p.y)&255u)/255.f,float(uint(p.x)&255u)/255.f,1);
 })" options:nil error:&error];
     auto pd=[MTLRenderPipelineDescriptor new];
     pd.vertexFunction=[library newFunctionWithName:@"cara_scale_vertex"];
@@ -89,6 +90,17 @@ fragment float4 checker(float4 p [[position]]) {
         auto guest_z=Read(command,depth,4,MTLBlitOptionDepthFromDepthStencil);
         auto guest_s=Read(command,depth,1,MTLBlitOptionStencilFromDepthStencil);
         auto pixels=Read(command,output,4);
+        constexpr unsigned crop_w = 224, crop_h = 360, first_row = 24;
+        std::array<id<MTLBuffer>, 2> crops{};
+        for (unsigned flip = 0; flip < crops.size(); ++flip) {
+            auto crop = scale.SnapshotRgb565Crop(command, native, crop_w, crop_h, first_row, flip);
+            Check(crop && crop.width == 2*crop_w && crop.height == 2*crop_h, "RGB565 crop bounds");
+            crops[flip] = Read(command, crop, 4);
+        }
+        Check(!scale.SnapshotRgb565Crop(command,native,crop_w,crop_h,h-crop_h+1,false),
+              "crop outside resident height");
+        Check(!scale.SnapshotRgb565Crop(command,native,w+1,crop_h,0,false),
+              "crop outside resident width");
         [command commit];[command waitUntilCompleted];
         if (command.error) NSLog(@"%@",command.error);
         Check(command.status==MTLCommandBufferStatusCompleted,"GPU completion");
@@ -101,6 +113,23 @@ fragment float4 checker(float4 p [[position]]) {
         for(unsigned y=0;y<2*w;++y)for(unsigned x=0;x<2*h;++x) {
             const auto pixel=static_cast<const unsigned char*>(pixels.contents)+3328*y+4*x;
             Check(pixel[0]==(((x^y)&1u)?255:0),"LCD lost subpixel contrast");
+        }
+        const auto quantized = [](unsigned value, unsigned levels) {
+            const unsigned packed = (value * levels + 127) / 255;
+            return (packed * 255 + levels/2) / levels;
+        };
+        for (unsigned flip = 0; flip < crops.size(); ++flip) {
+            constexpr unsigned pitch = ((crop_w*2*4 + 255)/256)*256;
+            for (unsigned y = 0; y < crop_h*2; ++y) {
+                const unsigned guest_y = first_row*2 + (flip ? crop_h*2-1-y : y);
+                const unsigned source_y = h*2-1-guest_y;
+                for (unsigned x = 0; x < crop_w*2; ++x) {
+                    const auto* p = static_cast<const uint8_t*>(crops[flip].contents) + pitch*y + 4*x;
+                    Check(p[0] == (((x ^ source_y)&1) ? 255 : 0) &&
+                          p[1] == quantized(source_y&255u,63) && p[2] == quantized(x&255u,31) &&
+                          p[3] == 255, "incorrect RGB565 crop pixel or row orientation");
+                }
+            }
         }
         printf("run=%d gpu_ms=%.3f guest=240x400 lcd=800x480\n",run,
                1000*(command.GPUEndTime-command.GPUStartTime));

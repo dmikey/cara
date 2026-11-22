@@ -36,14 +36,21 @@ fragment ScaleOutput cara_scale_fragment(float4 location [[position]],
 // Preserve subpixel samples across a proven RGBA8/RGB8 linear LCD transfer.
 // Rows match the native transfer before the LCD compositor rotates them.
 kernel void cara_scale_scanout(texture2d<float,access::read> src [[texture(0)]],
-    texture2d<float,access::write> dst [[texture(1)]], constant uint2& flags [[buffer(0)]],
+    texture2d<float,access::write> dst [[texture(1)]], constant uint4& flags [[buffer(0)]],
     uint2 xy [[thread_position_in_grid]]) {
     if (xy.x >= dst.get_width() || xy.y >= dst.get_height()) return;
-    uint y = flags.x ? src.get_height() - 1u - xy.y : xy.y;
-    uint dx = src.get_width()/dst.get_width();
+    uint y = flags.z + (flags.x ? dst.get_height() - 1u - xy.y : xy.y);
+    uint dx = flags.w;
     uint x = dx*xy.x;
     float4 value = src.read(uint2(x,y));
     if (dx == 2) value = .5f*(value + src.read(uint2(x+1u,y)));
-    if (flags.y == 3) value.a = 1.f;
+    if (flags.y == 2) {
+        const uint3 levels(31u, 63u, 31u);
+        const uint3 bytes = uint3(round(value.rgb * 255.f));
+        const uint3 packed = (bytes * levels + 127u) / 255u;
+        value = float4(float3(packed) / float3(levels), 1.f);
+    } else if (flags.y == 3) {
+        value.a = 1.f;
+    }
     dst.write(value,xy);
 }

@@ -31,6 +31,8 @@ public:
                id<MTLTexture> depth, bool backed);
     id<MTLTexture> SnapshotLinear(id<MTLCommandBuffer> command, id<MTLTexture> native,
         unsigned width, unsigned height, unsigned bytes_per_pixel, bool flip);
+    id<MTLTexture> SnapshotRgb565Crop(id<MTLCommandBuffer> command, id<MTLTexture> native,
+        unsigned width, unsigned height, unsigned guest_first_row, bool guest_flip);
     bool Resolve(id<MTLCommandBuffer> command);
     const MetalRasterPair& Target() const { return target; }
     id<MTLTexture> EnhancedColor(id<MTLTexture> native) const {
@@ -43,6 +45,9 @@ public:
     void Invalidate() { source = {}; }
 
 private:
+    id<MTLTexture> Snapshot(id<MTLCommandBuffer> command, id<MTLTexture> enhanced,
+        unsigned width, unsigned height, unsigned bytes_per_pixel, unsigned first_row,
+        bool reverse_rows, unsigned source_step);
     bool Prepare(MTLPixelFormat color_format);
     bool Copy(id<MTLCommandBuffer> command, const MetalRasterPair& from,
               const MetalRasterPair& to);
