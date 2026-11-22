@@ -226,6 +226,7 @@ void BootGame(const std::string& path) {
     s_update_hid = false;
     s_stop_running = false;
     s_is_running = true;
+    system.perf_stats->SetBoundedFramePacing(true);
     Cara::AdaptiveClock adaptive_clock;
     auto sampled_frame = VideoCore::GetCurrentFrame();
     bool discard_next_sample = false;
@@ -236,6 +237,7 @@ void BootGame(const std::string& path) {
         if (adaptive_clock.Enabled() != policy.adaptive)
             adaptive_clock.SetEnabled(policy.adaptive);
         adaptive_clock.ResetSamples();
+        system.perf_stats->ResetFramePacing();
         system.CoreTiming().UpdateClockSpeed(policy.adaptive ? adaptive_clock.Percent() : policy.guest_clock);
         sampled_frame = VideoCore::GetCurrentFrame();
     };
@@ -288,6 +290,7 @@ void BootGame(const std::string& path) {
             std::unique_lock lock{s_running_mutex};
             s_running_cv.wait(lock, [] { return s_is_running || s_stop_running || s_pending_settings; });
             lock.unlock();
+            system.perf_stats->ResetFramePacing();
             adaptive_clock.ResetSamples();
             sampled_frame = VideoCore::GetCurrentFrame();
             discard_next_sample = true;
