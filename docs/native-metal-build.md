@@ -258,6 +258,49 @@ An in-session reload from a disposable state restored the recorded CPU and
 guest timing snapshot and continued with zero draw-time pipeline builds. Slot 4
 remained byte-identical and matched the new app's engine fingerprint.
 
+## Cold mansion gate on the M4 iPad
+
+A separate signed test app replayed 900 Front Yard refreshes from a copy of
+Dark Moon slot 4 at 100% emulation speed and 100% guest CPU. Rendering ran
+on native Metal with FastInterp and both modeled GPU completion options active.
+Rendering-only changes changed the engine fingerprint, so the isolated copy
+used the test build's fingerprint and retained the original archive checksum.
+The original device slot remained byte-identical. All completed runs had
+434,138 PICA draw requests, 614 top buffer swaps, and identical final captures.
+
+| Slot 4 replay | First refresh | Worst later refresh | First 120 p99 | Overall p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Empty Cara cache, original Metal compiler keys | 9,853.89 ms | 575.71 ms | 575.71 ms | 22.13 ms |
+| Vertex reuse, empty Cara cache, existing Metal compiler keys | 466.66 ms | 94.97 ms | 94.97 ms | 21.84 ms |
+| Vertex reuse, locally learned archive | 21.29 ms | 23.19 ms | 20.49 ms | 21.52 ms |
+| Vertex reuse, fresh Metal keys, serial stage compilation | 10,211.62 ms | 593.99 ms | 593.99 ms | 21.90 ms |
+| Vertex reuse, fresh Metal keys, parallel stage compilation | 9,160.77 ms | 594.49 ms | 594.49 ms | 22.04 ms |
+
+The second row reused system Metal compiler results from the first run.
+Its translation time dropped from 736 ms to 583 ms across the same 29 pair
+misses. The learned replay prepared 70 recipes in 28.34 ms, encountered zero
+draw-time shader misses, and averaged 59.70 emulated refreshes per second.
+
+The first baseline refresh spent 4.70 s creating vertex libraries, 1.51 s
+creating fragment libraries, 3.11 s creating render pipeline states and 0.51 s
+translating shader pairs. Refresh 18 spent 402 ms creating a vertex library and
+130 ms creating a render pipeline. Refresh 89 spent 328 ms creating fragment
+libraries and 125 ms translating. Submission pressure waits totaled under 2 ms
+in each run. The trace timestamps are emulation-thread refresh intervals.
+
+A diagnostic with separate Metal function names was used to avoid relying
+on shared compiler results. Paired stage overlap reduced the first refresh
+by 1.05 s and left the later hitch effectively unchanged. Metal's size
+optimization experiment took 10.40 s on its first refresh versus 10.22 s for
+the paired default setting. Parallel stage compilation is opt-in, and no
+shader artifacts from the replay enter a distribution package.
+
+The slot contains pending emulated GPU completions and cannot be restored
+with that timing model disabled. GPU busy bits and completion IRQs derive
+from emulated deadlines. Host compiler time remains wall time lost on a
+synchronous draw miss. A timing-model comparison needs a normal boot or a
+checkpoint without pending events.
+
 ## Cold shader work and command-list lead time
 
 On an M3 Pro, FastInterp Metal booted Dark Moon through Gadd's lab and the

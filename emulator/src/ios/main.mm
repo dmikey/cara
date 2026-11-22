@@ -2081,7 +2081,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             FileUtil::SetUserPath(user);
             // Clear reports before any self-test can fail, so stale results are
             // never mistaken for evidence from this launch.
-            for (const char* name : {"benchmark-status.json","frame-timing.json","refresh-timing.csv","runtime-status.json",
+            for (const char* name : {"benchmark-status.json","frame-timing.json","refresh-timing.csv","metal-refresh-cost.csv",
+                                     "runtime-status.json",
                                      "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
                                      "surface-flushes.json","surface-uploads.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
                                      "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json",
@@ -2365,6 +2366,22 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 auto previous_counters = Common::FrameTiming::counters;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
                 auto previous_metal_cost = Cara::NativeMetalCost::spans;
+                namespace MetalCost = Cara::NativeMetalCost;
+                static constexpr std::array shader_phases{
+                    MetalCost::RuntimeShaderTranslate, MetalCost::RuntimeVertexLibrary,
+                    MetalCost::RuntimeFragmentLibrary, MetalCost::RenderPipelineCreate,
+                    MetalCost::ReserveWait, MetalCost::ArenaWait, MetalCost::FlushExportGuest,
+                    MetalCost::Record, MetalCost::Present};
+                const bool trace_shader_refresh = capture_refresh_timing && emuWindow->native_metal_only &&
+                                                  MetalCost::Enabled();
+                struct ShaderRefresh {
+                    unsigned refresh;
+                    std::array<MetalCost::Span, shader_phases.size()> work;
+                };
+                std::vector<ShaderRefresh> shader_refreshes;
+                auto previous_shader_cost = previous_metal_cost;
+                if (trace_shader_refresh)
+                    shader_refreshes.reserve(target_frames);
 #endif
                 const bool category_timing=Common::FrameTiming::counters.enabled && Common::CPUCategoryTiming::DiagnosticEnabled();
                 Common::CPUCategoryTiming::Counters previous_categories{};
@@ -2775,6 +2792,20 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         if (capture_refresh_timing)
                             refresh_timing.emplace_back(emuWindow->frames,
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(now - last_frame_time).count());
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                        if (trace_shader_refresh) {
+                            ShaderRefresh entry{emuWindow->frames, {}};
+                            for (std::size_t i = 0; i < shader_phases.size(); ++i) {
+                                const auto phase = shader_phases[i];
+                                const auto current = MetalCost::spans[phase];
+                                auto& previous = previous_shader_cost[phase];
+                                entry.work[i] = {current.calls - previous.calls,
+                                                 current.ns - previous.ns};
+                                previous = current;
+                            }
+                            shader_refreshes.push_back(entry);
+                        }
+#endif
                         last_frame_time = now;
                         timed_frame = emuWindow->frames;
                         if (frame_times.size() == window_frames || (target_frames && timed_frame == target_frames)) {
@@ -3147,6 +3178,22 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         for (const auto& [refresh, elapsed_ns] : refresh_timing)
                             timing << refresh << ',' << elapsed_ns << '\n';
                     }
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                    if (trace_shader_refresh) {
+                        std::ofstream trace(user + "metal-refresh-cost.csv");
+                        trace << "refresh";
+                        for (auto phase : shader_phases)
+                            trace << ',' << MetalCost::names[phase] << "_calls,"
+                                  << MetalCost::names[phase] << "_ns";
+                        trace << '\n';
+                        for (const auto& entry : shader_refreshes) {
+                            trace << entry.refresh;
+                            for (const auto& phase : entry.work)
+                                trace << ',' << phase.calls << ',' << phase.ns;
+                            trace << '\n';
+                        }
+                    }
+#endif
                     std::ofstream report(user + "benchmark-status.json");
                     report << "{\"title_id\":" << system.GetTitleID() << ",\"rom_filename\":" << std::quoted(std::string(FileUtil::GetFilename(rom))) << ",\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
                            << ",\"fps\":" << emuWindow->frames / elapsed

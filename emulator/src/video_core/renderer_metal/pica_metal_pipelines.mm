@@ -355,6 +355,21 @@ id<MTLFunction> Compile(id<MTLDevice> device, std::string_view source, NSString*
     if (!body)
         return nil;
     MTLCompileOptions* options = [MTLCompileOptions new];
+    // Give cold compiler A/B runs independent source and function identities.
+    // Use separate Cara cache directories for each diagnostic as well.
+    static NSString* const diagnostic_suffix = []() -> NSString* {
+        const char* value = std::getenv("CARA_METAL_DIAGNOSTIC_SHADER_NAMESPACE");
+        const std::string_view suffix = value ? std::string_view(value) : std::string_view{};
+        if (suffix.empty() || suffix.size() > 32 ||
+            suffix.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") != suffix.npos)
+            return nil;
+        return [NSString stringWithUTF8String:value];
+    }();
+    if (diagnostic_suffix) {
+        NSString* named_entry = [NSString stringWithFormat:@"%@_%@", entry, diagnostic_suffix];
+        body = [body stringByReplacingOccurrencesOfString:entry withString:named_entry];
+        entry = named_entry;
+    }
     if (source.find(SimdVertexMslTag)!=source.npos) options.languageVersion=MTLLanguageVersion2_3;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -1127,10 +1142,37 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                     if (selection.simd_reference && ![device supportsFamily:MTLGPUFamilyApple7]) {
                         if (!fallback_simd()) return false;
                     } else {
-                        ps.vertexFunction = prepare_stage(vertex_functions, pair.msl_vertex, @"cara_pica_vert",
-                                                          NativeMetalCost::RuntimeVertexLibrary);
-                        ps.fragmentFunction = prepare_stage(fragment_functions, pair.msl_fragment, @"cara_pica_frag",
-                                                            NativeMetalCost::RuntimeFragmentLibrary);
+                        static const bool parallel_cold_stages = [] {
+                            const char* value = std::getenv("CARA_METAL_PARALLEL_COLD_STAGES");
+                            return value && std::string_view(value) == "1";
+                        }();
+                        if (parallel_cold_stages && !vertex_functions.contains(pair.msl_vertex) &&
+                            !fragment_functions.contains(pair.msl_fragment)) {
+                            const auto vertex_job = [device = device, source = pair.msl_vertex] {
+                                @autoreleasepool {
+                                    const auto start = std::chrono::steady_clock::now();
+                                    auto function = Compile(device, source, @"cara_pica_vert");
+                                    const auto duration = std::chrono::duration_cast<
+                                        std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start);
+                                    return std::pair{function, duration.count()};
+                                }
+                            };
+                            auto vertex_work = std::async(std::launch::async, vertex_job);
+                            ps.fragmentFunction = prepare_stage(fragment_functions, pair.msl_fragment,
+                                                                @"cara_pica_frag",
+                                                                NativeMetalCost::RuntimeFragmentLibrary);
+                            auto [function, ns] = vertex_work.get();
+                            if (NativeMetalCost::Enabled())
+                                NativeMetalCost::RecordNs(NativeMetalCost::RuntimeVertexLibrary, ns);
+                            if (function)
+                                vertex_functions.emplace(pair.msl_vertex, function);
+                            ps.vertexFunction = function;
+                        } else {
+                            ps.vertexFunction = prepare_stage(vertex_functions, pair.msl_vertex, @"cara_pica_vert",
+                                                              NativeMetalCost::RuntimeVertexLibrary);
+                            ps.fragmentFunction = prepare_stage(fragment_functions, pair.msl_fragment, @"cara_pica_frag",
+                                                                NativeMetalCost::RuntimeFragmentLibrary);
+                        }
                     }
                 }
                 if ((!ps.vertexFunction || !ps.fragmentFunction) && !fallback_simd())
