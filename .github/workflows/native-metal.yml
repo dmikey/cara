@@ -8,6 +8,7 @@ on:
       - 'LICENSE'
       - 'NOTICE'
       - 'tests/metal_queue_policy_test.cpp'
+      - 'tests/metal_tev_admission_test.cpp'
       - 'tests/metal_display_transfer_startup_test.mm'
       - 'tests/metal_async_depth_validation_test.mm'
       - 'tests/run_metal_async_depth_validation_test.py'
@@ -21,6 +22,7 @@ on:
       - 'LICENSE'
       - 'NOTICE'
       - 'tests/metal_queue_policy_test.cpp'
+      - 'tests/metal_tev_admission_test.cpp'
       - 'tests/metal_display_transfer_startup_test.mm'
       - 'tests/metal_async_depth_validation_test.mm'
       - 'tests/run_metal_async_depth_validation_test.py'
@@ -72,6 +74,8 @@ jobs:
         run: |
           xcrun clang++ -std=c++20 -I emulator/src tests/metal_queue_policy_test.cpp -o "$RUNNER_TEMP/metal-queue-policy"
           "$RUNNER_TEMP/metal-queue-policy"
+          xcrun clang++ -std=c++20 -I emulator/src tests/metal_tev_admission_test.cpp -o "$RUNNER_TEMP/metal-tev-admission"
+          "$RUNNER_TEMP/metal-tev-admission"
       - name: Check exact display-transfer planning without a ROM
         if: matrix.artifact == 'mac-fastinterp'
         run: |

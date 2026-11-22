@@ -2,6 +2,12 @@
 #include "video_core/renderer_metal/pica_metal_tev_admission.h"
 
 int main() {
+    using Mode = Cara::RuntimeTevMode;
+    if (Cara::ParseRuntimeTevMode(nullptr) != Mode::Adaptive ||
+        Cara::ParseRuntimeTevMode("adaptive") != Mode::Adaptive ||
+        Cara::ParseRuntimeTevMode("0") != Mode::Off ||
+        Cara::ParseRuntimeTevMode("1") != Mode::Always)
+        return 5;
     Cara::PicaMetalTevAdmission policy;
     char vs[2]{}, fs[8]{};
     for (unsigned i = 0; i < 5; ++i) {

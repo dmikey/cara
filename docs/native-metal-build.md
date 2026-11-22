@@ -362,12 +362,15 @@ on by default in Performance Mode. The renderer generalizes alpha
 comparison and scissor mode for unlit, fog-free 2D draws using texture 0
 and optionally texture 1. The fallback keeps the vertex program, texture
 sampling, depth output, material slots and fixed-function raster state.
-Uniforms carry alpha and scissor modes. The diagnostic `CARA_METAL_RUNTIME_TEV=1` also enables a runtime
-combiner for supported TEV operations. Six four-word uniform records then
-describe the guest's six combiner stages.
-Their source, modifier, operation, multiplier and delayed buffer updates
-are evaluated per draw until the exact pipeline becomes available. Dot3
-and other unsupported combinations retain the specialized combiner. The default Async Shaders path retains its specialized combiner.
+Uniforms carry alpha and scissor modes. When six distinct fragment shaders
+miss for the same resident packed vertex shader and texture count within
+32 guest refreshes, eligible draws switch to a runtime TEV combiner.
+A family expires after 32 idle refreshes. The usual large-vertex fallback
+remains available. Six four-word uniform records describe the sources,
+modifiers, operations, scaling and delayed buffer updates of the guest's
+six stages. Dot3 and other unsupported combinations use specialized
+combiners. For comparisons, `CARA_METAL_RUNTIME_TEV=0` disables runtime TEV
+and `CARA_METAL_RUNTIME_TEV=1` forces it on eligible draws.
 
 Cara compiles the general shader on the device. Once that pipeline is ready,
 draws can use it while a bounded worker compiles the exact shader and
@@ -769,7 +772,15 @@ two other titles. Dark Moon fell from 32.10 to 30.98 refreshes/s and its
 worst interval grew from 9255 to 10042 ms. Ocarina of Time fell from 50.88
 to 50.34 refreshes/s and its worst interval grew from 1330 to 1681 ms,
 although p99 fell from 37.1 to 31.9 ms. Both games matched at refreshes
-429–432 and 900. These results keep runtime TEV opt-in.
+429–432 and 900. The always-on setting remains diagnostic.
+
+Adaptive admission replayed the same 900-refresh routes with fresh caches.
+Kirby cold p99 fell from 276.45 to 169.09 ms, its worst interval from 2789
+to 2599 ms and its slowest rolling 120-refresh mean from 62.59 to 56.78 ms.
+The worst interval in Ocarina was 1329 ms versus the 1330 ms control.
+Dark Moon measured 9235 ms versus 9255 ms. All sampled frames matched the
+corresponding control byte-for-byte. These measurements support adaptive
+admission as the default with Async Shaders.
 
 Boot each local cartridge with a fresh user directory and FastInterp. Drive
 menus and gameplay with the same inputs when comparing performance. Capture

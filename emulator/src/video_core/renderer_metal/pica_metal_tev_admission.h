@@ -4,8 +4,18 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <string_view>
 
 namespace Cara {
+
+enum class RuntimeTevMode { Off, Adaptive, Always };
+
+inline RuntimeTevMode ParseRuntimeTevMode(const char* value) {
+    const std::string_view option = value ? value : "";
+    if (option == "0") return RuntimeTevMode::Off;
+    if (option == "1") return RuntimeTevMode::Always;
+    return RuntimeTevMode::Adaptive;
+}
 
 // Source identities are interned by this pipeline owner. A lone fixed-state
 // change or repeated use of one fragment is not a burst of shader programs.
