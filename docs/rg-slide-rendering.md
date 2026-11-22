@@ -90,6 +90,60 @@ selected. Early prologue samples reported the guest clock at 75%, then
 [Shared GLES and JIT merge](https://github.com/dmikey/cara/pull/84) ·
 [Android timing instrumentation](https://github.com/dmikey/cara/pull/85)
 
+## Mali-G57 queue and shader driver measurements
+
+The same main APK ran Stories' first walk in Performance Mode with native
+lighting buffers and the original GLES atlas/JIT pairing. It settled at
+50% guest CPU clock. Five complete warm windows reached **54.64–55.35**
+system refreshes/s, roughly **91–93%** of the 59.834 Hz cap. Per-window p99
+was **26.00–36.48 ms** and the worst warm refresh was **45.48 ms**. A
+separate **217.86 ms** refresh included **190.57 ms** of shader activity.
+The performance policy changed the guest workload and reduced requests
+from about 122,000 to 26,000 draws per 120 refreshes.
+
+A separate diagnostic APK compared packed vertex fetch reuse in the same
+walk, with native lighting and Performance Mode set in both runs. Timing
+instrumentation adds overhead, so compare these rows directly.
+
+| Packed fetch reuse | Mean system refreshes/s | Warm p99 range | Worst warm refresh |
+| --- | ---: | ---: | ---: |
+| Off | 51.13 | 27.48–38.75 ms | 48.66 ms |
+| On | 54.02 | 26.33–31.26 ms | 40.60 ms |
+
+Matched movement windows processed roughly 515,000 GPU vertex entries per
+emulated refresh. Median texture acquisition wall time was 3.23 ms/refresh
+off and 2.85 ms on. Vertex preparation was about 1.15 ms/refresh in both.
+Timing includes driver work and waits within scopes. This is one A/B with
+live gameplay, and packed fetch reuse remains an opt-in.
+
+Arm hardware counters sampled simultaneously showed programmable cores
+active during about 93% of GPU-active cycles in the walk. The fragment and
+non-fragment queues accounted for 71.9% and 57.7% of GPU-active cycles
+in the baseline. Those queues overlap. Median external bus read and
+write stall rates were 4.5% and 6.1%. GPU and driver work are already
+substantial in this scene. These device-wide counters use GPU-active
+cycles as their denominator and omit time with the entire GPU idle.
+
+Dark Moon's diagnostic cold title run reached a **47,472.74 ms** maximum.
+That window recorded **70,753.93 ms** across 46 program links and status
+checks, **10,422.59 ms** across 56 shader stage compiles, and **3.74 ms**
+of binary extraction. The slowest individual link took **3,118.40 ms**.
+A six-second CPU profile collected during that burst attributed 93% of
+emulation thread samples to the Mali GLES library. On an immediate
+relaunch of the same APK, all 47 saved programs restored in **30.93 ms**.
+The matching title window still peaked at **2,196.57 ms**, with four
+vertex stage compiles and zero links.
+
+The stored title programs contain 47 pairs, 17 distinct vertex sources,
+and 37 distinct fragment sources. Comparing generated source with only
+the scissor-test lines removed reduces the count to 40 distinct pairs.
+This identifies a bounded GLSL permutation candidate. Exact scissor
+behavior and warm speed need physical checks before changing defaults.
+
+[Diagnostic APK build](https://github.com/dmikey/cara/actions/runs/45072818833) ·
+[Hardware counter sampler build](https://github.com/dmikey/cara/actions/runs/45074322844) ·
+[Arm Mali-G57 counter reference](https://arm-software.github.io/libGPUCounters/mali-g57_counter_reference.html)
+
 ## Physical device observations
 
 ### Resident Evil Revelations, November 22, 2026
