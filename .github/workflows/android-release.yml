@@ -104,7 +104,8 @@ jobs:
           keytool -genkeypair -alias "$CARA_ANDROID_KEY_ALIAS" -keyalg RSA -keysize 2048 \
             -dname 'CN=Cara CI signing check' -validity 1 -keystore "$RUNNER_TEMP/cara-ci.p12" \
             -storepass:env CARA_ANDROID_KEYSTORE_PASSWORD
-          export CARA_ANDROID_KEYSTORE_BASE64="$(base64 -w0 "$RUNNER_TEMP/cara-ci.p12")"
+          CARA_ANDROID_KEYSTORE_BASE64="$(base64 -w0 "$RUNNER_TEMP/cara-ci.p12")"
+          export CARA_ANDROID_KEYSTORE_BASE64
           python3 tools/sign_android_nightly.py --artifact-dir dist --output "$RUNNER_TEMP/cara-ci-signed" \
             --source-revision "$(git rev-parse HEAD)"
           test -s "$RUNNER_TEMP/cara-ci-signed/android-signed.json"
