@@ -108,6 +108,19 @@ kernel void cara_pica_display_raw_rgba_layout(
         return;
     const uint y = args[2] ? output_height - 1 - xy.y : xy.y;
     const uint x = xy.x;
+    if (args[3] == 1u || args[3] == 9u) {
+        const uint from = 2u * pica_tiled_word(x, xy.y, width);
+        const uint to = 2u * (y * output_width + x);
+        uint pixel = uint(source[from]) | (uint(source[from + 1u]) << 8u);
+        if (args[3] == 9u) {
+            // Guest RGB5A1 to RGB565: drop alpha, replicate the high green
+            // bit into its new low bit. Red and blue retain all five bits.
+            pixel = (pixel & 0xffc0u) | ((pixel >> 5u) & 0x20u) | ((pixel >> 1u) & 31u);
+        }
+        destination[to] = uchar(pixel);
+        destination[to + 1u] = uchar(pixel >> 8u);
+        return;
+    }
     if (args[3] == 8u) {
         const uint from = 4u * pica_tiled_word(2u * x, 2u * xy.y, width);
         const uint to = 4u * pica_tiled_word(x, y, output_width);
@@ -140,14 +153,6 @@ kernel void cara_pica_display_raw_rgba_layout(
         const uint to = 2u * (scale_xy ? pica_tiled_word(x, y, output_width) : y * output_width + x);
         destination[to] = uchar(packed);
         destination[to + 1u] = uchar(packed >> 8u);
-        return;
-    }
-    if (args[3] == 1) {
-        // Packed RGBA4 and RGB565 uses the same two bytes on either side of the transfer.
-        const uint from = 2u * pica_tiled_word(x, xy.y, width);
-        const uint to = 2u * (y * output_width + x);
-        destination[to] = source[from];
-        destination[to + 1u] = source[from + 1u];
         return;
     }
     const bool to_tiles = args[3] == 0;

@@ -1105,10 +1105,12 @@ void PicaMetalNativeDrawLane::TransferDisplay(
     // for the unscaled RGB565 variant with the block_32 register bit set.
     const u32 packed_layout = layout_flags & ~0x10000u;
     const bool packed565_crop = packed_layout == 0x2204u;
-    const bool packed16 = layout_flags == 0x4400u || packed_layout == 0x2200u || packed565_crop;
+    const bool rgb5a1_to_rgb565 = layout_flags == 0x2304u;
+    const bool packed16 = layout_flags == 0x4400u || packed_layout == 0x2200u ||
+                          packed565_crop || rgb5a1_to_rgb565;
     const bool block32_rgb8 = layout_flags == 0x11000u;
     const bool cropped = layout_flags == 0x2004u || layout_flags == 0x1004u ||
-                         packed565_crop;
+                         packed565_crop || rgb5a1_to_rgb565;
     const bool valid_extent = registers.output_width && registers.output_height &&
         (cropped ? registers.output_width <= registers.input_width &&
                    registers.output_height <= registers.input_height
@@ -1292,7 +1294,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         else if (scaled_crop)
             mode = source_bpp == 2u ? 6u : 5u;
         else if (packed16)
-            mode = 1;
+            mode = rgb5a1_to_rgb565 ? 9u : 1u;
         else if (!linear_to_tiles && !rgb8_retile)
             mode = detile_plan->destination_bpp;
         const u32 output_width = scaled_crop ? scaled_crop->output_width : registers.output_width;
