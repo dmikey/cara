@@ -102,6 +102,7 @@ constexpr OpenGL::PicaFragmentShaderTarget NativeFragmentTarget() {
 #ifdef CARA_RUNTIME_METAL_SHADERS
         .honor_material_enable = true,
         .emit_explicit_material_lod_bias = true,
+        .emulate_material_border = true,
 #endif
     };
 }
@@ -549,7 +550,8 @@ std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned uni
     const auto supported_wrap = [&](Mode mode) {
         return mode == Mode::Repeat || mode == Mode::MirroredRepeat || mode == Mode::ClampToEdge ||
                (mode == Mode::ClampToBorder &&
-                (t.border_color.raw == 0 || t.border_color.raw == 0xff000000));
+                (t.border_color.raw == 0 || t.border_color.raw == 0xff000000 ||
+                 (!cube && (unit != 0 || t.type == TextureConfig::Texture2D))));
     };
     // Runtime shaders apply the full signed bias in explicit Texture2D LOD.
     if (!NativeFragmentTarget().emit_explicit_material_lod_bias && t.lod.bias != 0)
@@ -563,6 +565,13 @@ std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned uni
     PicaSampleInputs out{};
     out.min_filter = PicaToGL::TextureMinFilterMode(t.min_filter, t.mip_filter);
     out.mag_filter = PicaToGL::TextureMagFilterMode(t.mag_filter);
+    // The colored-border shader selects individual mips and snaps nearest
+    // samples to texel centers. Keep the hardware taps bilinear for both paths.
+    if (t.border_color.raw != 0 && t.border_color.raw != 0xff000000 &&
+        (t.wrap_s == Mode::ClampToBorder || t.wrap_t == Mode::ClampToBorder)) {
+        out.min_filter = PicaToGL::TextureMinFilterMode(TextureConfig::Linear, TextureConfig::Nearest);
+        out.mag_filter = PicaToGL::TextureMagFilterMode(TextureConfig::Linear);
+    }
     out.wrap_s = PicaToGL::WrapMode(t.wrap_s);
     out.wrap_t = PicaToGL::WrapMode(t.wrap_t);
     out.opaque_black_border = t.border_color.raw == 0xff000000 &&

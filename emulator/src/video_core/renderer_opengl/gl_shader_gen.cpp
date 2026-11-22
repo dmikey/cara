@@ -204,6 +204,21 @@ PicaFSConfig PicaFSConfig::BuildFromRegs(const Pica::Regs& regs,
             t.texture0.lod.bias.Value(), t.texture1.lod.bias.Value(), t.texture2.lod.bias.Value(),
         };
     }
+    if (target.emulate_material_border) {
+        using Config = TexturingRegs::TextureConfig;
+        const auto textures = regs.texturing.GetTextures();
+        for (unsigned i = 0; i < textures.size(); ++i) {
+            const auto& t = textures[i].config;
+            const auto axes = u8((t.wrap_s == Config::ClampToBorder ? 1 : 0) |
+                                 (t.wrap_t == Config::ClampToBorder ? 2 : 0));
+            if (textures[i].enabled && (i != 0 || t.type == Config::Texture2D) && axes &&
+                t.border_color.raw != 0 && t.border_color.raw != 0xff000000) {
+                state.material_borders[i] = {t.border_color.raw, axes,
+                    u8(t.lod.min_level), u8(t.lod.max_level), t.min_filter == Config::Linear,
+                    t.mag_filter == Config::Linear, t.mip_filter == Config::Linear};
+            }
+        }
+    }
     state.texture2_use_coord1 = regs.texturing.main_config.texture2_use_coord1 != 0;
 
     // Copy relevant tev stages fields.
@@ -386,6 +401,9 @@ static std::string SampleExplicitMaterialLod(const PicaFSConfig& config, unsigne
     // lambda before filtering and sampler LOD clamps.
     const auto raw_bias = config.state.material_lod_bias[unit];
     const auto bias = raw_bias == 0 ? std::string{} : fmt::format(" + (float({}) / 256.0)", raw_bias);
+    if (config.state.material_borders[unit].axes)
+        return fmt::format("caraBorder{0}({1}, getLod({1} * vec2(textureSize(tex{0}, 0))){2})",
+                           unit, coord, bias);
     return fmt::format("textureLod(tex{0}, {1}, getLod({1} * vec2(textureSize(tex{0}, 0))){2})",
                        unit, coord, bias);
 }
@@ -1647,6 +1665,37 @@ float getLod(vec2 coord) {
 }
 )";
 
+    // Metal's clamp-to-zero supplies the in-range taps. Add the missing
+    // border contribution at each sampled mip before blending the two levels.
+    for (unsigned i = 0; i < state.material_borders.size(); ++i) {
+        const auto& border = state.material_borders[i];
+        if (!border.axes)
+            continue;
+        out += fmt::format(R"(
+vec4 caraBorderLevel{0}(vec2 uv, int level, bool linearFilter) {{
+    vec2 size = vec2(textureSize(tex{0}, level));
+    vec2 pos = uv * size;
+    if (!linearFilter) {{
+        pos = floor(pos) + 0.5;
+        uv = pos / size;
+    }}
+    vec2 coverage = clamp(min(pos, size - pos) + 0.5, 0.0, 1.0);
+    return textureLod(tex{0}, uv, float(level)) +
+           (1.0 - {1}) * unpackUnorm4x8({2}u);
+}}
+vec4 caraBorder{0}(vec2 uv, float lod) {{
+    float clamped = clamp(lod, {3}.0, {4}.0);
+    bool linearFilter = clamped <= 0.0 ? {5} : {6};
+)", i, border.axes == 3 ? "coverage.x * coverage.y" :
+       border.axes == 1 ? "coverage.x" : "coverage.y", border.rgba, unsigned(border.min_level),
+       unsigned(border.max_level), border.mag_linear, border.min_linear);
+        if (border.mip_linear)
+            out += fmt::format("    return mix(caraBorderLevel{0}(uv, int(floor(clamped)), linearFilter), "
+                               "caraBorderLevel{0}(uv, int(ceil(clamped)), linearFilter), fract(clamped));\n", i);
+        else
+            out += fmt::format("    return caraBorderLevel{}(uv, int(floor(clamped + 0.5)), linearFilter);\n", i);
+        out += "}\n";
+    }
     if (shadow_rendering) {
         AppendShadowRendering(out, config);
     } else {
