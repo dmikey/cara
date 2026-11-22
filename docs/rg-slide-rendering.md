@@ -339,3 +339,30 @@ not establish sustained full speed across the tested RG Slide workloads.
 Mali-G52 and Mali-T820 devices require separate tests.
 
 [Arm framebuffer guidance](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-2-how-to-correctly-handle-framebuffers)
+
+## Fixed quaternion geometry probe
+
+On the RG Slide's Mali-G57 r40p0, a headless GLES 3.2 test linked two
+captured Dark Moon shader pairs in alternating order. Both arms used ESSL
+3.20. The first link took **1,787.72 ms** with the existing vertex shader and
+**825.37 ms** with the fixed geometry stage. The second took **2,973.43 ms**
+and **1,148.07 ms**, respectively. Both geometry program binaries restored
+successfully in **0.45–0.47 ms**. A separate synthetic test used the production
+geometry source with two clipped, mixed-winding triangles. It covered
+69 pixels in each arm and found zero RGBA byte mismatches. Gameplay frame
+times and visual parity still require a matched test using the Android atlas.
+
+Set `[Debug] gpu_fixed_quaternion_geometry = true` in the developer INI
+before opening a game to test the copy-free route. It runs the PICA vertex
+program once per expanded lit corner. The geometry stage aligns each triangle
+to the first corner's quaternion hemisphere and emits the same positions and
+fragment varyings in order. GLES 3.2 support and sufficient geometry output
+limits are required. The normal GPU vertex source is retried when an eligible
+variant fails to compile or link. The setting starts off.
+
+Each traced window reports `geometry_programs` for successful program
+selections. The experiment stores binaries in a separate cache with the
+geometry source digest in its identity. Warm launches report the geometry
+binary hits and source relinks separately. Compare the first visit to Gadd's
+lab, repeated warm windows, and matching pixels before enabling the route
+for ordinary play.
