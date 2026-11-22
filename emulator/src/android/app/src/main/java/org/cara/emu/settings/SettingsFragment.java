@@ -191,6 +191,16 @@ public final class SettingsFragment extends Fragment {
         sl.add(new CheckBoxSetting(SettingsFile.KEY_ACCURACY_MODE, Settings.SECTION_INI_PLAY,
                 R.string.setting_accuracy_mode, R.string.setting_accuracy_mode_desc, false,
                 mSettings.getSection(Settings.SECTION_INI_PLAY).getSetting(SettingsFile.KEY_ACCURACY_MODE)));
+        SettingSection playSection = mSettings.getSection(Settings.SECTION_INI_PLAY);
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP, Settings.SECTION_INI_PLAY,
+                R.string.setting_adaptive_frame_skip, R.string.setting_adaptive_frame_skip_desc, true,
+                playSection.getSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP)));
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_FIXED_GUEST_CLOCK, Settings.SECTION_INI_PLAY,
+                R.string.setting_fixed_guest_clock, R.string.setting_fixed_guest_clock_desc, false,
+                playSection.getSetting(SettingsFile.KEY_FIXED_GUEST_CLOCK)));
+        sl.add(new SliderSetting(SettingsFile.KEY_GUEST_CLOCK_PERCENT, Settings.SECTION_INI_PLAY,
+                R.string.setting_guest_clock_percent, 0, 25, 200, "%", 100,
+                playSection.getSetting(SettingsFile.KEY_GUEST_CLOCK_PERCENT)));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
                 R.string.setting_limit_speed, 0, true,
                 rendererSection.getSetting(SettingsFile.KEY_USE_FRAME_LIMIT)));

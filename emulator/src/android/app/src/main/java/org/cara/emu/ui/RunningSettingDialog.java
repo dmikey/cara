@@ -133,6 +133,9 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_FRAME_LIMIT = 12;
         public static final int SETTING_ACCURACY_MODE = 13;
         public static final int SETTING_LIMIT_SPEED = 14;
+        public static final int SETTING_ADAPTIVE_FRAME_SKIP = 15;
+        public static final int SETTING_FIXED_GUEST_CLOCK = 16;
+        public static final int SETTING_GUEST_CLOCK_PERCENT = 17;
 
         // pref
         public static final int SETTING_JOYSTICK_RELATIVE = 100;
@@ -535,8 +538,9 @@ public class RunningSettingDialog extends DialogFragment {
             mTextSettingName.setText(item.getName());
             mSeekBar.setOnSeekBarChangeListener(null);
             boolean speed = mItem.getSetting() == SettingsItem.SETTING_FRAME_LIMIT;
-            mMinimum = speed ? 50 : 0;
-            mSeekBar.setMax(speed ? 150 : 100);
+            boolean guestClock = mItem.getSetting() == SettingsItem.SETTING_GUEST_CLOCK_PERCENT;
+            mMinimum = speed ? 50 : guestClock ? 25 : 0;
+            mSeekBar.setMax(speed || guestClock ? 200 - mMinimum : 100);
             mSeekBar.setProgress(item.getValue() - mMinimum);
             mSeekBar.setOnSeekBarChangeListener(mOnSeekBarChangeListener);
             refreshProgress(item.getValue());
@@ -678,6 +682,15 @@ public class RunningSettingDialog extends DialogFragment {
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURACY_MODE,
                     R.string.setting_accuracy_mode, SettingsItem.TYPE_CHECKBOX,
                     mRunningSettings[SettingsItem.SETTING_ACCURACY_MODE]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP,
+                    R.string.setting_adaptive_frame_skip,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_FIXED_GUEST_CLOCK,
+                    R.string.setting_fixed_guest_clock,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_FIXED_GUEST_CLOCK]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_GUEST_CLOCK_PERCENT,
+                    R.string.setting_guest_clock_percent,
+                    SettingsItem.TYPE_SEEK_BAR, mRunningSettings[SettingsItem.SETTING_GUEST_CLOCK_PERCENT]));
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_LIMIT_SPEED,
                     R.string.setting_limit_speed, SettingsItem.TYPE_CHECKBOX,
                     mRunningSettings[SettingsItem.SETTING_LIMIT_SPEED]));

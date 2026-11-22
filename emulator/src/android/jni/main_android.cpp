@@ -17,6 +17,7 @@
 #include "cara/play_profile.h"
 #include "common/common_paths.h"
 #include "common/file_util.h"
+#include "common/frame_timing.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
@@ -50,7 +51,7 @@ static std::atomic<bool> s_stop_running;
 static std::atomic<bool> s_is_running;
 static std::mutex s_running_mutex;
 static std::condition_variable s_running_cv;
-constexpr jsize RunningSettingsCount = 15;
+constexpr jsize RunningSettingsCount = 18;
 using RunningSettings = std::array<jint, RunningSettingsCount>;
 static std::optional<RunningSettings> s_pending_settings;
 
@@ -60,7 +61,9 @@ static Cara::PlayMode ReadPlayMode() {
 
 static Cara::PlayPolicy ReadPlayPolicy() {
     return Cara::MakePlayPolicy(ReadPlayMode(), Config::Get(Config::FRAME_LIMIT),
-                                false, -1, false, 100, Config::Get(Config::USE_FRAME_LIMIT));
+                                false, -1, Config::Get(Config::FIXED_GUEST_CLOCK),
+                                Config::Get(Config::GUEST_CLOCK_PERCENT),
+                                Config::Get(Config::USE_FRAME_LIMIT));
 }
 
 static std::unique_ptr<EGLAndroid> s_render_window;
@@ -138,6 +141,9 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
     Config::Set(Config::FRAME_LIMIT, std::clamp(settings[i++], 50, 200));
     Config::Set(Config::ACCURACY_MODE, settings[i++] != 0);
     Config::Set(Config::USE_FRAME_LIMIT, settings[i++] != 0);
+    Config::Set(Config::ADAPTIVE_FRAME_SKIP, settings[i++] != 0);
+    Config::Set(Config::FIXED_GUEST_CLOCK, settings[i++] != 0);
+    Config::Set(Config::GUEST_CLOCK_PERCENT, static_cast<u16>(std::clamp(settings[i++], 25, 200)));
 
     VideoCore::SettingUpdate();
 
@@ -165,6 +171,10 @@ void BootGame(const std::string& path) {
 #endif
     LOG_INFO(Frontend, "Android CPU engine: {}",
              Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");
+    const Config::ConfigInfo<bool> trace_timing{{"Debug", "trace_renderer_timing"}, false};
+    auto& phases = Common::FrameTiming::counters;
+    phases = {};
+    phases.enabled = Config::Get(trace_timing);
     const auto gpu_policy = Cara::GetGPUCompletionPolicy(ReadPlayMode() == Cara::PlayMode::Performance);
     Cara::gpu_completion_policy = gpu_policy;
     LOG_INFO(Frontend, "Android GPU completion: P3D={} PPF={} soft knee={}",
@@ -237,17 +247,29 @@ void BootGame(const std::string& path) {
     system.perf_stats->SetBoundedFramePacing(true);
     Cara::AdaptiveClock adaptive_clock;
     auto sampled_frame = VideoCore::GetCurrentFrame();
-    bool discard_next_sample = false;
+    bool discard_next_sample = true;
+    std::array<double, 120> frame_times{};
+    std::size_t frame_count = 0;
+    const auto reset_trace = [&] {
+        frame_count = 0;
+        const bool enabled = phases.enabled;
+        phases = {};
+        phases.enabled = enabled;
+    };
     const auto apply_play_policy = [&] {
         const auto policy = ReadPlayPolicy();
         Settings::values.use_frame_limit = policy.limit_speed;
         Settings::values.frame_limit = policy.maximum_speed;
+        s_render_window->SetAdaptiveFrameSkip(ReadPlayMode() == Cara::PlayMode::Performance &&
+                                              Config::Get(Config::ADAPTIVE_FRAME_SKIP));
         if (adaptive_clock.Enabled() != policy.adaptive)
             adaptive_clock.SetEnabled(policy.adaptive);
         adaptive_clock.ResetSamples();
         system.perf_stats->ResetFramePacing();
         system.CoreTiming().UpdateClockSpeed(policy.adaptive ? adaptive_clock.Percent() : policy.guest_clock);
         sampled_frame = VideoCore::GetCurrentFrame();
+        discard_next_sample = true;
+        reset_trace();
     };
     apply_play_policy();
     while (!s_stop_running) {
@@ -273,15 +295,36 @@ void BootGame(const std::string& path) {
                 break;
             }
             const auto frame = VideoCore::GetCurrentFrame();
-            if (adaptive_clock.Enabled() && frame != sampled_frame) {
-                if (!discard_next_sample && frame == sampled_frame + 1) {
+            if (frame != sampled_frame) {
+                if (!discard_next_sample && frame == sampled_frame + 1 &&
+                    (adaptive_clock.Enabled() || phases.enabled)) {
                     using Seconds = std::chrono::duration<double>;
                     const auto timing = system.perf_stats->GetLastFrameTiming();
-                    const auto previous = adaptive_clock.Percent();
-                    const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
-                                                                  Seconds(timing.elapsed).count());
-                    if (next != previous)
-                        system.CoreTiming().UpdateClockSpeed(next);
+                    if (adaptive_clock.Enabled()) {
+                        const auto previous = adaptive_clock.Percent();
+                        const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
+                                                                      Seconds(timing.elapsed).count());
+                        if (next != previous)
+                            system.CoreTiming().UpdateClockSpeed(next);
+                    }
+                    if (phases.enabled) {
+                        frame_times[frame_count++] = Seconds(timing.elapsed).count() * 1000;
+                        if (frame_count == frame_times.size()) {
+                            std::sort(frame_times.begin(), frame_times.end());
+                            const auto guest_clock = adaptive_clock.Enabled()
+                                                         ? adaptive_clock.Percent()
+                                                         : ReadPlayPolicy().guest_clock;
+                            LOG_INFO(Frontend,
+                                "Android frame window: end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} waits_ms={:.2f}",
+                                frame, guest_clock,
+                                (frame_times[59] + frame_times[60]) / 2, frame_times[118],
+                                frame_times.back(), phases.pica_draw_requests,
+                                phases.vertex_upload_seconds * 1000, phases.draw_submit_seconds * 1000,
+                                phases.surface_download_seconds * 1000,
+                                phases.shader_compile_seconds * 1000, phases.gpu_wait_seconds * 1000);
+                            reset_trace();
+                        }
+                    }
                 }
                 discard_next_sample = false;
             }
@@ -302,6 +345,7 @@ void BootGame(const std::string& path) {
             adaptive_clock.ResetSamples();
             sampled_frame = VideoCore::GetCurrentFrame();
             discard_next_sample = true;
+            reset_trace();
             s_render_window->PollEvents();
             Settings::values.audio_volume = volume;
         }
@@ -749,6 +793,9 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(J
     settings[i++] = Config::Get(Config::FRAME_LIMIT);
     settings[i++] = Config::Get(Config::ACCURACY_MODE);
     settings[i++] = Config::Get(Config::USE_FRAME_LIMIT);
+    settings[i++] = Config::Get(Config::ADAPTIVE_FRAME_SKIP);
+    settings[i++] = Config::Get(Config::FIXED_GUEST_CLOCK);
+    settings[i++] = Config::Get(Config::GUEST_CLOCK_PERCENT);
 
     jintArray array = env->NewIntArray(i);
     if (array)

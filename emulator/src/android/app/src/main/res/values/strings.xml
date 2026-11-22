@@ -304,4 +304,9 @@
     <string name="nnf_new_folder_ok">@android:string/ok</string>
     <string name="nnf_new_folder_cancel">@android:string/cancel</string>
 
+    <string name="setting_adaptive_frame_skip">Adaptive frame skip</string>
+    <string name="setting_adaptive_frame_skip_desc">Coalesce display updates in Performance Mode while preserving guest rendering and timing.</string>
+    <string name="setting_fixed_guest_clock">Fixed guest CPU clock</string>
+    <string name="setting_fixed_guest_clock_desc">Choose a fixed CPU clock in Performance Mode. Accuracy Mode uses the original clock.</string>
+    <string name="setting_guest_clock_percent">Guest CPU clock</string>
 </resources>

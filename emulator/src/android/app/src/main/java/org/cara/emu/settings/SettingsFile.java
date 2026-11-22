@@ -40,6 +40,9 @@ public final class SettingsFile {
     public static final String KEY_FORCE_TEXTURE_FILTER = "force_texture_filter";
     public static final String KEY_RESOLUTION_FACTOR = "resolution_factor";
     public static final String KEY_ACCURACY_MODE = "accuracy_mode";
+    public static final String KEY_ADAPTIVE_FRAME_SKIP = "adaptive_frame_skip";
+    public static final String KEY_FIXED_GUEST_CLOCK = "fixed_guest_clock";
+    public static final String KEY_GUEST_CLOCK_PERCENT = "guest_clock_percent";
     public static final String KEY_USE_FRAME_LIMIT = "use_frame_limit";
     public static final String KEY_FRAME_LIMIT = "frame_limit";
     public static final String KEY_FACTOR_3D = "factor_3d";

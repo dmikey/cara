@@ -26,6 +26,9 @@ extern const ConfigInfo<Settings::SharedFontType> SHARED_FONT_TYPE;
 
 // play
 extern const ConfigInfo<bool> ACCURACY_MODE;
+extern const ConfigInfo<bool> ADAPTIVE_FRAME_SKIP;
+extern const ConfigInfo<bool> FIXED_GUEST_CLOCK;
+extern const ConfigInfo<u16> GUEST_CLOCK_PERCENT;
 
 // renderer
 extern const ConfigInfo<bool> USE_GLES;

@@ -9,6 +9,7 @@
 #include <memory>
 #include <glad/glad.h>
 #include <queue>
+#include "common/frame_timing.h"
 #include "common/bit_field.h"
 #include "common/logging/log.h"
 #include "core/3ds.h"
@@ -454,6 +455,7 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
     // INTEL driver workaround. We can't delete the previous render sync object until we are
     // sure that the presentation is done
     if (frame->present_fence) {
+        Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GPUWait);
         glClientWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
         glWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
         glDeleteSync(frame->present_fence);

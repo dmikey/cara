@@ -21,6 +21,9 @@ const ConfigInfo<Settings::SharedFontType> SHARED_FONT_TYPE{{"Core", "shared_fon
 
 // play
 const ConfigInfo<bool> ACCURACY_MODE{{"Play", "accuracy_mode"}, false};
+const ConfigInfo<bool> ADAPTIVE_FRAME_SKIP{{"Play", "adaptive_frame_skip"}, true};
+const ConfigInfo<bool> FIXED_GUEST_CLOCK{{"Play", "fixed_guest_clock"}, false};
+const ConfigInfo<u16> GUEST_CLOCK_PERCENT{{"Play", "guest_clock_percent"}, 100};
 
 // renderer
 const ConfigInfo<bool> USE_GLES{{"Renderer", "use_gles"}, true};

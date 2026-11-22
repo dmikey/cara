@@ -185,7 +185,18 @@ EGLAndroid::~EGLAndroid() {
     DestroyContext();
 }
 
+bool EGLAndroid::ShouldPresentFrame() {
+    return presentation_guard.Admit(display_ticket.load(std::memory_order_relaxed),
+                                    adaptive_frame_skip);
+}
+
+void EGLAndroid::SetAdaptiveFrameSkip(bool enabled) {
+    adaptive_frame_skip = enabled;
+    presentation_guard.Reset();
+}
+
 void EGLAndroid::TryPresenting() {
+    display_ticket.fetch_add(1, std::memory_order_relaxed);
     if (presenting_state != PresentingState::Running) {
         if (presenting_state == PresentingState::Initial) {
             eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
@@ -221,6 +232,7 @@ void EGLAndroid::PollEvents() {
     DestroyWindowSurface();
     CreateWindowSurface();
     VideoCore::Renderer()->ResetPresent();
+    presentation_guard.Reset();
     if (use_shared_context) {
         presenting_state = PresentingState::Initial;
     }
