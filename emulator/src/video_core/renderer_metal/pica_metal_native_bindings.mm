@@ -401,11 +401,12 @@ auto PipelineRecipeKey(const PicaPipelineInputs& input) {
 
 auto SamplerRecipeKey(const PicaSampleInputs& input) {
     const auto& [min_filter, mag_filter, wrap_s, wrap_t, compare, base_level, max_level, levels,
-                 min_lod, max_lod, lod_bias, anisotropy, rgba8, normalized, identity_swizzle] = input;
+                 min_lod, max_lod, lod_bias, anisotropy, rgba8, normalized, identity_swizzle,
+                 opaque_black_border] = input;
     return std::tuple{
         min_filter, mag_filter, wrap_s, wrap_t, compare, base_level, max_level, levels,
         std::bit_cast<u32>(min_lod), std::bit_cast<u32>(max_lod), std::bit_cast<u32>(lod_bias),
-        std::bit_cast<u32>(anisotropy), rgba8, normalized, identity_swizzle,
+        std::bit_cast<u32>(anisotropy), rgba8, normalized, identity_swizzle, opaque_black_border,
     };
 }
 
@@ -527,7 +528,8 @@ std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned uni
     using Mode = TextureConfig::WrapMode;
     const auto supported_wrap = [&](Mode mode) {
         return mode == Mode::Repeat || mode == Mode::MirroredRepeat || mode == Mode::ClampToEdge ||
-               (mode == Mode::ClampToBorder && t.border_color.raw == 0);
+               (mode == Mode::ClampToBorder &&
+                (t.border_color.raw == 0 || t.border_color.raw == 0xff000000));
     };
     // Runtime shaders apply the full signed bias in explicit Texture2D LOD.
     if (!NativeFragmentTarget().emit_explicit_material_lod_bias && t.lod.bias != 0)
@@ -543,6 +545,8 @@ std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned uni
     out.mag_filter = PicaToGL::TextureMagFilterMode(t.mag_filter);
     out.wrap_s = PicaToGL::WrapMode(t.wrap_s);
     out.wrap_t = PicaToGL::WrapMode(t.wrap_t);
+    out.opaque_black_border = t.border_color.raw == 0xff000000 &&
+                              (t.wrap_s == Mode::ClampToBorder || t.wrap_t == Mode::ClampToBorder);
     out.min_lod = t.lod.min_level.Value();
     out.max_lod = t.lod.max_level.Value();
     out.max_level = t.lod.max_level;

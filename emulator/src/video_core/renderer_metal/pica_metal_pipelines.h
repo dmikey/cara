@@ -63,6 +63,7 @@ struct PicaSampleInputs {
     unsigned compare = 0, base_level = 0, max_level = 0, levels = 0;
     float min_lod = 0, max_lod = 0, lod_bias = 0, anisotropy = 1;
     bool rgba8 = false, normalized = false, identity_swizzle = false;
+    bool opaque_black_border = false;
 };
 
 // Private generated assets: raw VS/FS identities and matching translated
