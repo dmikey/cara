@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include "cara/frame_pacer.h"
 #include "common/common_types.h"
 #include "common/thread.h"
 
@@ -16,8 +17,15 @@ public:
     using Clock = std::chrono::high_resolution_clock;
 
     Clock::duration DoFrameLimiting(std::chrono::microseconds current_system_time_us);
+    void SetBoundedFramePacing(bool enabled);
+    void ResetFramePacing();
 
 private:
+    Clock::duration PaceBoundedFrame(std::chrono::microseconds current_system_time_us);
+    Cara::FramePacer bounded_pacer{Cara::FramePacer::DefaultSpeedPercent, true};
+    bool bounded_frame_pacing = false;
+    bool reset_bounded_pacer = true;
+
     /// Emulated system time (in microseconds) at the last limiter invocation
     std::chrono::microseconds previous_system_time_us{0};
     /// Walltime at the last limiter invocation
@@ -62,6 +70,10 @@ public:
         Clock::duration elapsed;
     };
     FrameTiming GetLastFrameTiming() const;
+
+    // Emulation-thread only. Reapply to the new PerfStats instance after loading a state.
+    void SetBoundedFramePacing(bool enabled) { frame_limiter.SetBoundedFramePacing(enabled); }
+    void ResetFramePacing() { frame_limiter.ResetFramePacing(); }
 
 private:
     FrameLimiter frame_limiter;
