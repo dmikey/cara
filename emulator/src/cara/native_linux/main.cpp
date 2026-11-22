@@ -1,6 +1,8 @@
 // Copyright 2026 Cara contributors. GPL-2.0-or-later.
 // Uses Cara's shared core; see NOTICE for the inherited SDL input conventions.
 #include "cara/console_activity.h"
+#include "cara/p3d_completion.h"
+#include "cara/play_profile.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -8,6 +10,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <SDL.h>
@@ -45,7 +48,7 @@ public:
             SDL_DestroyWindow(window);
             throw std::runtime_error("Unable to initialize desktop OpenGL 4.3");
         }
-        SDL_GL_SetSwapInterval(0); // The core's 100% limiter owns normal pacing.
+        SDL_GL_SetSwapInterval(0); // Cara paces the guest independently of the host display.
         Resize();
         std::cout << "OpenGL: " << glGetString(GL_VERSION) << "\nRenderer: "
                   << glGetString(GL_RENDERER) << std::endl;
@@ -188,18 +191,28 @@ int main(int argc, char** argv) {
     try {
         bool self_test = false, fullscreen = false;
         unsigned frames = 0;
+        std::optional<Cara::PlayMode> requested_mode;
         std::string game;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--help" || arg == "-h") {
-                std::cout << "Cara Linux OpenGL / FastInterp\nUsage: cara [--fullscreen] [--frames N] GAME\n"
+                std::cout << "Cara Linux OpenGL / FastInterp\n"
+                             "Usage: cara [--fullscreen] [--play-mode performance|accuracy] [--frames N] GAME\n"
                              "       cara --self-test\n       cara --version\n";
                 return 0;
             } else if (arg == "--version") {
                 std::cout << "Cara " << Common::g_scm_rev << " (Linux OpenGL, no JIT)\n"; return 0;
             } else if (arg == "--self-test") self_test = true;
             else if (arg == "--fullscreen") fullscreen = true;
-            else if (arg == "--frames" && i + 1 < argc) {
+            else if (arg == "--play-mode" && i + 1 < argc) {
+                const std::string mode = argv[++i];
+                if (mode == "performance")
+                    requested_mode = Cara::PlayMode::Performance;
+                else if (mode == "accuracy")
+                    requested_mode = Cara::PlayMode::Accuracy;
+                else
+                    throw std::runtime_error("--play-mode requires performance or accuracy");
+            } else if (arg == "--frames" && i + 1 < argc) {
                 const std::string count = argv[++i];
                 if (count.empty() || count.find_first_not_of("0123456789") != std::string::npos)
                     throw std::runtime_error("--frames requires a positive integer");
@@ -223,6 +236,10 @@ int main(int argc, char** argv) {
         Log::AddBackend(std::make_unique<Log::ColorConsoleBackend>());
         SDLSession sdl;
         TaskSession tasks;
+        // Established bounded-run diagnostics keep their stock timing unless a
+        // play mode is explicitly requested.
+        const bool legacy_timing = frames && !requested_mode;
+        const auto mode = requested_mode.value_or(Cara::DefaultPlayMode);
         Configure();
         Window window(fullscreen);
         if (self_test) { window.SelfTest(); return 0; }
@@ -231,9 +248,17 @@ int main(int argc, char** argv) {
         auto& system = Core::System::GetInstance();
         system.RegisterImageInterface(std::make_shared<LodePNGImageInterface>());
         CoreSession session;
+        Cara::gpu_completion_policy = Cara::GetGPUCompletionPolicy(
+            !legacy_timing && mode == Cara::PlayMode::Performance);
         const auto result = system.Load(window, game);
         if (result != Core::System::ResultStatus::Success)
             throw std::runtime_error("Game load failed, code " + std::to_string(unsigned(result)));
+        system.perf_stats->SetBoundedFramePacing(!legacy_timing);
+        const auto timing = Cara::gpu_completion_policy;
+        std::cout << std::boolalpha << "GPU timing: render=" << timing.render
+                  << " transfer=" << timing.transfer << " refresh_relative=" << timing.soften_render
+                  << " bounded_host_pacing=" << !legacy_timing << std::endl;
+
         while (window.IsOpen() && (!frames || VideoCore::GetCurrentFrame() < frames)) {
             const auto status = system.RunLoop();
             if (status == Core::System::ResultStatus::ShutdownRequested) break;

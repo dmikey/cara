@@ -73,6 +73,13 @@ jobs:
           python3 tools/make_test_elf.py work/counter.elf
           timeout 90s xvfb-run -a -s '-screen 0 1280x1024x24' work/build-linux/bin/cara --frames 4 work/counter.elf 2>&1 | tee work/core-smoke.log
           grep -q 'Completed refreshes: 4' work/core-smoke.log
+          grep -q 'GPU timing: render=false transfer=false refresh_relative=false bounded_host_pacing=false' work/core-smoke.log
+          for mode in performance accuracy; do
+            timeout 90s xvfb-run -a -s '-screen 0 1280x1024x24' work/build-linux/bin/cara --play-mode "$mode" --frames 4 work/counter.elf 2>&1 | tee "work/core-$mode.log"
+            grep -q 'Completed refreshes: 4' "work/core-$mode.log"
+          done
+          grep -q 'GPU timing: render=true transfer=true refresh_relative=true bounded_host_pacing=true' work/core-performance.log
+          grep -q 'GPU timing: render=false transfer=false refresh_relative=false bounded_host_pacing=true' work/core-accuracy.log
       - name: Audit and package
         run: python3 tools/package_linux.py --build-dir work/build-linux --output dist
       - uses: actions/upload-artifact@v4
@@ -88,6 +95,8 @@ jobs:
           path: |
             work/opengl-smoke.log
             work/core-smoke.log
+            work/core-performance.log
+            work/core-accuracy.log
             work/build-linux/CMakeCache.txt
             work/build-linux/CMakeFiles/CMakeConfigureLog.yaml
       - uses: actions/cache/save@v4
