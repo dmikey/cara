@@ -107,12 +107,9 @@ constexpr OpenGL::PicaFragmentShaderTarget NativeFragmentTarget() {
     };
 }
 
-bool UseRuntimeTevFallback() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("CARA_METAL_RUNTIME_TEV");
-        return value && std::string_view(value) == "1";
-    }();
-    return enabled;
+RuntimeTevMode MetalRuntimeTevMode() {
+    static const auto mode = ParseRuntimeTevMode(std::getenv("CARA_METAL_RUNTIME_TEV"));
+    return mode;
 }
 
 NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool general = false,
@@ -167,7 +164,14 @@ std::optional<PicaMetalPipelineSelection> SelectGeneralFragment(
     const std::optional<PicaSampleInputs>& third) {
     canonical.state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
     canonical.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
-    if (UseRuntimeTevFallback() && canonical.SupportsRuntimeTev()) {
+    const auto mode = MetalRuntimeTevMode();
+    const bool adaptive = mode == RuntimeTevMode::Adaptive;
+    if (adaptive) {
+        if (auto ready = pipelines.Select(draw, sampler, second, third))
+            return ready;
+    }
+    if (mode != RuntimeTevMode::Off && canonical.SupportsRuntimeTev() && (mode == RuntimeTevMode::Always ||
+        (adaptive && pipelines.ObserveTevPipelineMiss(draw, second.has_value())))) {
         auto dynamic = canonical;
         dynamic.state.tev_stages = {};
         dynamic.state.combiner_buffer_input = 0;
@@ -1203,7 +1207,8 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         assembler.IsEmpty() && r.pipeline.num_vertices % 3 == 0 &&
         r.pipeline.num_vertices <= 16384 &&
         pipelines.TryVertexFallback(pica, StageInVertexSource().bytes, sampler[0], second, third,
-                                    can_use_general && UseRuntimeTevFallback() && fcfg.SupportsRuntimeTev())) {
+                                    can_use_general && MetalRuntimeTevMode() == RuntimeTevMode::Always &&
+                                    fcfg.SupportsRuntimeTev())) {
         *interpret_vertices = true;
         return std::nullopt;
     }
