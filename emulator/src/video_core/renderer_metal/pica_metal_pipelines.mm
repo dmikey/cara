@@ -1571,7 +1571,7 @@ bool PicaMetalPipelines::StartSpecialization(
 bool PicaMetalPipelines::TryVertexFallback(
     const PicaPipelineInputs& exact, std::string_view stage_in_vertex,
     const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
-    const std::optional<PicaSampleInputs>& tertiary) {
+    const std::optional<PicaSampleInputs>& tertiary, bool prefer_general) {
     PollSpecialization();
     if (warming || warmup_mode == WarmupReplay || warmup_mode == WarmupRecord ||
         HasSimdVertexTag(exact.vertex))
@@ -1589,7 +1589,7 @@ bool PicaMetalPipelines::TryVertexFallback(
     // and fixed-state combination. Use StageIn for large multi-texture variants
     // while the worker links the exact packed pipeline.
     if (vertex_functions.contains(stages.msl_vertex) &&
-        (!secondary || stages.msl_vertex.size() < 32 * 1024))
+        (prefer_general || !secondary || stages.msl_vertex.size() < 32 * 1024))
         return false;
     if (specializer && runtime_pairs[specializer->runtime_index].msl_vertex != stages.msl_vertex) {
         if (std::getenv("CARA_METAL_VERTEX_FALLBACK_TRACE"))
