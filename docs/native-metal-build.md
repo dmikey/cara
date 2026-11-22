@@ -232,6 +232,40 @@ refreshes 3248–3367 at 16.67 ms per refresh and 100.26% speed. The signed
 and ad-hoc HUD-hidden captures matched byte for byte. The separate
 HUD-visible run averaged 97.67% with an 18.41 ms lab p99.
 
+## Cartridge gameplay checks
+
+Boot each local cartridge with a fresh user directory and FastInterp. Drive
+menus and gameplay with the same inputs when comparing performance. Capture
+both screens after reaching a controllable scene and verify that directional
+or touch input moves the player or advances the game. Use the 100% speed
+limit for timing. A 200% limit can shorten an intro replay when the host has
+headroom. It is a pacing limit, not a captured frame rate.
+
+| Cartridge | Gameplay checkpoint | Metal behavior exercised |
+| --- | --- | --- |
+| Cooking Mama 5 | Meat-mincing step in Cabbage Roll Tomato Soup | Transient invalid LCD stride at boot, then valid scanout. On the Mac, mouse input reaches the touch screen. |
+| Driver Renegade | First pursuit with acceleration and steering | Immutable cube-map face chains are reused until the decoded faces change. |
+| Monster Hunter Stories | Secret Path after Cheval’s opening dialogue | Material samples that overlap the active depth attachment use a separate texture snapshot. Queued D24 and D24S8 exports retain shader-side validation before presentation or a guest read. |
+| Ever Oasis | Great Tree Spring after the prologue, with free movement | Opaque black sampler borders map to Metal on Apple GPU family 7 and later. |
+
+The initial Stories replay on the M3 Pro Mac averaged 61.78 ms per refresh
+over refreshes 4001–4600 (p99 78.40 ms). Queueing checked depth-to-texture
+exports cut that window to 55.49 ms (p99 71.89 ms) with the same input replay.
+The title still runs below full speed. CPU sampling found synchronous depth
+exports and imports on the PICA draw path. The queue trace showed windows
+with available slots while those waits continued.
+
+The Driver Renegade pursuit matched byte for byte at the final capture
+after cube reuse. Over refreshes 5721–6200, the mean moved from 20.87 to
+17.87 ms and p99 moved from 35.27 to 28.90 ms. This is a before and after
+comparison of the compatibility builds.
+
+Run the checked-depth fixture on an Apple Silicon Mac with
+`python3 tests/run_metal_async_depth_validation_test.py --build-dir <native-metal-build>`.
+It exercises ordered depth imports and exact three-byte D24 round trips with
+Metal API validation enabled, including an intentionally pending producer
+and independently failing shader-side checks.
+
 ## Upstream boundaries
 
 - **Azahar** is the upstream boundary for 3DS execution. Propose PICA,
