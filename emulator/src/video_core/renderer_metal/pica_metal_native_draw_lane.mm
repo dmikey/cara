@@ -673,6 +673,11 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         if (!proof || proof->texture != writer->Resource() ||
             proof->generation != writer->Generation() || !writer->Covers(first, last))
             return nil;
+        // The checked GPU export emits four-byte D24S8. Packed D24 still
+        // uses the writer's exact three-byte export.
+        if (proof->surface.end - proof->surface.begin !=
+            proof->texture.width * proof->texture.height * sizeof(u32))
+            return nil;
 
         const auto errors = [queue.device newBufferWithLength:sizeof(u32)
                                                options:MTLResourceStorageModeShared];
@@ -1616,7 +1621,21 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
             return true;
         };
     }
-    const auto source = ResolveBytes(command, DenseRows(bytes), 256, read);
+    // Resolve a depth-owned sample on the same queue and keep its validity
+    // tied to the texture decode. Until the receipt retires, a failed export
+    // cannot become visible to presentation or a guest read.
+    static const bool queue_depth_texture_export = [] {
+        const auto* value = std::getenv("CARA_METAL_QUEUE_DEPTH_TEXTURE_EXPORT");
+        return !value || std::string_view(value) == "1";
+    }();
+    JoinedDepthCheck joined;
+    std::optional<MetalTransfer::ByteView> source;
+    {
+        const ScopedJoinedDepthCheck scope(queue_depth_texture_export &&
+                                          AsyncCheckedDepthImport() && JoinCheckedDepthImport()
+                                              ? &joined : nullptr);
+        source = ResolveBytes(command, DenseRows(bytes), 256, read);
+    }
     if (!source)
         submissions.Fail("Could not resolve native Metal texture bytes");
     const auto descriptor = [MTLTextureDescriptor
@@ -1630,8 +1649,13 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
                         texture, MTLOriginMake(0, 0, 0), MTLSizeMake(width, height, 1), format,
                         disable_alpha))
         submissions.Fail("Could not decode native Metal texture");
+    std::shared_ptr<const PicaMetalValidationReceipt> validation;
+    if (joined.producer) {
+        validation = std::make_shared<PicaMetalValidationReceipt>(command,
+            joined.errors, std::move(joined.pending_source));
+    }
     [command commit];
-    Track(command);
+    Track(command, std::move(validation));
     if (tracked) {
         resident->Insert(key, texture);
         ++resident->vram_decodes;

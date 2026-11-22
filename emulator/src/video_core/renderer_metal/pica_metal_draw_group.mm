@@ -81,7 +81,7 @@ PicaMetalCompletion PicaMetalValidationReceipt::Poll() const {
         }
     }
     {
-        for (const auto& buffer : errors)
+        for (const auto& buffer : std::span(errors).first(error_count))
             if (!buffer || buffer.device != command.device || buffer.length < sizeof(u32) ||
                 buffer.storageMode != MTLStorageModeShared || !buffer.contents ||
                 *static_cast<const u32*>(buffer.contents) != 0) {

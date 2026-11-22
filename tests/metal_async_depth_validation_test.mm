@@ -185,6 +185,12 @@ void CheckReceipt(id<MTLDevice> device,unsigned bad) {
     PicaMetalValidationReceipt dependent(successor, {success,success}, writer);
     Require(dependent.Wait()==(bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
             "Joined consumer lost the original producer's validation");
+    PicaMetalValidationReceipt single(successor, bad == 1 ? first : second);
+    Require(single.Wait() == (bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
+            "Single-buffer sample receipt accepted the wrong result");
+    PicaMetalValidationReceipt single_dependent(successor, success, writer);
+    Require(single_dependent.Wait() == (bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
+            "Sample receipt lost the original producer's validation");
     std::array<u8,4> bytes{};
     if (bad) {
         Require(writer->Status()==MetalGuestWriteStatus::Failed,"Descendant blessed invalid checks");

@@ -1179,9 +1179,10 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     out.draw.color = out.color.view.texture;
     out.draw.depth_stencil = out.depth.view.texture;
     out.draw.lighting_lut = selection->slots[0] == NSNotFound ? nil : lut;
-    // Match OpenGL's pre-draw snapshot for attachment feedback. DecodeTexture
-    // reads authoritative guest bytes into a separate sampled-only texture.
-    if (primary_color_snapshot || depth_snapshot_slots)
+    // Depth feedback misses publish through DecodeTexture before resolving
+    // authoritative bytes. Recorded depth writes invalidate cached samples,
+    // so a cache hit can keep the current render group open.
+    if (primary_color_snapshot)
         lane.PublishPending();
     out.views.primary_color_snapshot = primary_color_snapshot;
     out.views.depth_snapshot_slots = depth_snapshot_slots;
