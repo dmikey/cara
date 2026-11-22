@@ -472,6 +472,29 @@ export time fell only from 11.24 ms to 9.63 ms. The refresh took
 requests the whole guest address space, so the result supports narrowing
 it to vertex and index input ranges before considering default admission.
 
+### Refresh 89 fragment shader reuse
+
+At the mansion gate, six generated fragment shaders differed from earlier
+variants in writes to a TEV combiner buffer whose value the shader never
+read. With Async Shaders enabled, the native Metal generator omits these
+unused writes. Draws reuse the earlier translated sources and compiled
+functions. Shaders that read the buffer retain the original stage updates.
+
+On a physical M4 iPad, three 900-refresh slot 4 replays used FastInterp,
+100% guest CPU, a 100% speed limit and Performance Mode. The experimental
+CPU vertex fallback was off. The cold control disabled the new shader
+reuse. Cold runs used separate empty Cara caches and fresh Metal entry
+names. Each raw run produced identical captures at refreshes 88–90 and 900.
+
+| Measurement | Cold control | Cold with reuse | Warm with reuse |
+| --- | ---: | ---: | ---: |
+| Full replay p99 | 24.01 ms | 21.84 ms | 21.81 ms |
+
+Cold refresh 89 fell from 446.70 ms to 17.56 ms. Its 120.46 ms of
+translation and 301.26 ms of fragment compilation both fell to zero.
+The next cold bottleneck was the vertex shader and pipeline at refresh 18
+(613.19 ms). The warm pass averaged 59.65 refreshes per second.
+
 ### macOS cold-run window responsiveness
 
 A single native Metal test binary at `3948557` ran Dark Moon for 3,600

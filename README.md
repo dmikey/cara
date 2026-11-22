@@ -33,8 +33,10 @@ fixes and check their effects on gameplay, rendering, and saves.
 Performance Mode models GPU busy flags and completion interrupts in guest time.
 On iPad, **Options → Display → Async Shaders** is enabled by default in this
 mode. Compatible draws can use a general shader compiled on-device while
-Metal builds a specialized pipeline. First visits to a scene can still hitch.
-See the [physical-device measurements](docs/native-metal-build.md#refresh-21-vertex-compilation-reuse).
+Metal builds a specialized pipeline. Metal also reuses compiled fragment
+shaders when only unused combiner-buffer writes differ. First visits to a
+scene can still hitch.
+See the [physical-device measurements](docs/native-metal-build.md#refresh-89-fragment-shader-reuse).
 
 ## Play cartridge ROMs straight from ZIP
 
