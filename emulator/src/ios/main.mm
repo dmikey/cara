@@ -28,6 +28,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "ios/session_overlay.h"
 #include "network/relay_client.h"
 #import "ios/state_catalog.h"
+#import "ios/suspend_checkpoint.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #ifdef CARA_IOS_GLES
 #import <OpenGLES/EAGL.h>
@@ -36,7 +37,6 @@ extern "C" int __llvm_profile_write_file(void);
 #include <glad/glad.h>
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
-#include "video_core/video_core.h"
 #include "ios/gpu_vertex_self_test.h"
 #include "ios/gpu_state_self_test.h"
 #include "ios/gpu_depth_self_test.h"
@@ -89,6 +89,8 @@ extern "C" int __llvm_profile_write_file(void);
 #include "core/hle/kernel/kernel.h"
 #include "core/hle/kernel/process.h"
 #include "core/memory.h"
+#include "video_core/rasterizer_interface.h"
+#include "video_core/video_core.h"
 
 static std::atomic<u64> displayLinkSequence{0};
 #ifdef CARA_IOS_GLES
@@ -206,11 +208,12 @@ static NSDictionary* CaptureProfileMemoryU32(Core::System& system, NSArray* prob
     return @{@"frame":@(frame),@"phase":phase,@"probes":values};
 }
 
-static bool CaptureBurst(unsigned frame) {
-    const char* start_env = std::getenv("CARA_CAPTURE_BURST_START");
+static bool CaptureBurst(unsigned frame, const char* start_key = "CARA_CAPTURE_BURST_START",
+                         const char* count_key = "CARA_CAPTURE_BURST_COUNT") {
+    const char* start_env = std::getenv(start_key);
     if (!start_env) return false;
     const unsigned start = unsigned(std::max(0L, std::strtol(start_env, nullptr, 10)));
-    const char* count_env = std::getenv("CARA_CAPTURE_BURST_COUNT");
+    const char* count_env = std::getenv(count_key);
     const unsigned count = count_env ? unsigned(std::clamp(std::strtol(count_env, nullptr, 10), 1L, 120L)) : 36;
     return frame >= start && frame - start < count;
 }
@@ -305,6 +308,7 @@ public:
     CAMetalLayer* __strong metal_lcd_layer = nil;
     id<MTLDevice> __strong metal_lcd_device = nil;
     bool native_metal_only = false;
+    unsigned metal_renderer_generation = 0; // Emulation worker only.
     std::atomic<bool> metal_lcd_foreground{false};
     std::function<void()> show_metal_lcd;
     std::optional<Layout::FramebufferLayout> metal_lcd_layout;
@@ -350,7 +354,7 @@ public:
         }
         VideoCore::SetNativeRendererFactory([this, layer, resources = *resources](
                                                 Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
-            return Cara::MakeNativeMetalRenderer(window, memory, layer, resources,
+            auto native = Cara::MakeNativeMetalRenderer(window, memory, layer, resources,
                 [this]() -> std::optional<Cara::NativeLcdTarget> {
                     if (!metal_lcd_foreground.load())
                         return std::nullopt;
@@ -369,10 +373,17 @@ public:
                         frame_presented(frames);
                 }, [this]() {
                     const auto* target = std::getenv("CARA_BENCHMARK_FRAMES");
-                    return target && std::getenv("CARA_BENCHMARK_CAPTURE") &&
-                        frames + 1 == static_cast<unsigned>(std::clamp(std::strtol(target, nullptr, 10),
-                                                                     1L, 18000L));
+                    if (!target || !std::getenv("CARA_BENCHMARK_CAPTURE"))
+                        return false;
+                    const auto end = static_cast<unsigned>(
+                        std::clamp(std::strtol(target, nullptr, 10), 1L, 18000L));
+                    return frames + 1 == end ||
+                           CaptureBurst(frames + 1, "CARA_METAL_PARITY_START",
+                                        "CARA_METAL_PARITY_COUNT");
                 }, [this](bool capturing) { return AdmitMetalPresentation(capturing); });
+            if (native.renderer)
+                ++metal_renderer_generation;
+            return native;
         });
     }
 #endif
@@ -602,6 +613,14 @@ static BOOL CaraCanTuneEmulation() {
 }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
 static NSString* const CaraMetalRendererKey = @"metalRendererAfterBootRecovery";
+static NSString* const CaraAsyncShadersKey = @"asyncMetalShaders";
+
+static bool CaraAsyncShadersPreference(id playMode) {
+    NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+    const bool performance = ![playMode isEqual:@"accuracy"];
+    return performance && (![defaults objectForKey:CaraAsyncShadersKey] ||
+                           [defaults boolForKey:CaraAsyncShadersKey]);
+}
 
 static bool CaraMetalRendererRequested() {
     if (const auto* override = std::getenv("CARA_PRIVATE_IOS_METAL_ONLY"))
@@ -612,6 +631,14 @@ static bool CaraMetalRendererRequested() {
 
 static NSDictionary* CaraGameOverrides;
 static id CaraEmulationValue(NSString* key) { return CaraGameOverrides[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; }
+static Cara::GPUCompletionPolicy CaraSessionGPUCompletionPolicy(id playMode) {
+    return Cara::GetGPUCompletionPolicy(CaraCanTuneEmulation() && ![playMode isEqual:@"accuracy"]);
+}
+static NSURL* CaraSuspendDirectory() {
+    NSURL* support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                       inDomains:NSUserDomainMask].firstObject;
+    return [support URLByAppendingPathComponent:@"Cara/Suspended" isDirectory:YES];
+}
 static bool CaraAdaptiveFrameSkipAvailable() {
 #ifndef CARA_IOS_GLES
     return false;
@@ -709,6 +736,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     std::atomic<bool> stop;
     std::atomic<bool> running;
     std::atomic<bool> gameLoaded;
+    UIBackgroundTaskIdentifier suspendTask; // Main thread.
+    std::atomic<UIBackgroundTaskIdentifier> pendingSuspendTask;
+    dispatch_semaphore_t suspendGraphicsReady;
     NSString* sessionFailure;
     NSString* sessionNotice;
     std::atomic<bool> stretchAudio;
@@ -929,8 +959,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     menuFallback=[UIButton buttonWithType:UIButtonTypeSystem]; menuFallback.configuration=[UIButtonConfiguration filledButtonConfiguration];
     [menuFallback setTitle:@"Menu" forState:UIControlStateNormal]; [menuFallback addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:menuFallback];
     [self reloadSelectedSkins];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(background) name:UIApplicationWillResignActiveNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(foreground) name:UIApplicationDidBecomeActiveNotification object:nil];
+    suspendTask = UIBackgroundTaskInvalid;
+    pendingSuspendTask = UIBackgroundTaskInvalid;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(syncFeedbackChanged:) name:CaraSaveSyncDidChangeNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(controllerInputChanged:)
         name:CaraInputHubDidChangeNotification object:inputHub];
@@ -1262,6 +1292,15 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
               [displayDefaults setBool:enabled forKey:CaraMetalRendererKey];
               [owner updateSyncFeedback];
           }}];
+    NSString* displayPlayMode = [displayDefaults stringForKey:@"playMode"];
+    [display addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
+        @"subtitle":@"Build eligible Metal shaders in the background. Applies when you reopen a game.",
+        @"value":@(CaraAsyncShadersPreference(displayPlayMode)),
+        @"enabled":@([displayDefaults boolForKey:CaraMetalRendererKey] &&
+                     ![displayPlayMode isEqual:@"accuracy"]),
+        @"change":^(BOOL enabled) {
+            [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
+        }}];
     if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
         const NSInteger scale = saved == 2 || saved == 4 ? saved : 0;
@@ -1517,6 +1556,18 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     BOOL access=[url startAccessingSecurityScopedResource]; NSDictionary* fileInfo=[url resourceValuesForKeys:@[NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil]; if(access) [url stopAccessingSecurityScopedResource];
     BOOL sameRevision=info[@"romModified"] && [info[@"romModified"] isEqual:fileInfo[NSURLContentModificationDateKey]] && [info[@"romSize"] isEqual:fileInfo[NSURLFileSizeKey]];
     NSMutableArray* records=[NSMutableArray new];
+    if (sameRevision) {
+        const auto timing = CaraSessionGPUCompletionPolicy(info[@"overrides"][@"playMode"] ?:
+            [NSUserDefaults.standardUserDefaults objectForKey:@"playMode"]);
+        const auto checkpoint = CaraSuspendCheckpointURL(CaraSuspendDirectory(), info[@"gameHash"],
+                                                         timing.render, timing.transfer);
+        NSDate* date = CaraCompatibleSuspendCheckpoint(checkpoint, info[@"gameHash"],
+            [NSString stringWithUTF8String:Core::GetSaveStateBuildFingerprint()], [info[@"new3DS"] boolValue],
+            std::strcmp(CaraSelectedCPUBackend(), "dyncom") == 0 ? 1 : 0);
+        if (date) [records addObject:@{@"filename":CaraSuspendSelection, @"suspended":@YES,
+            @"compatible":@YES, @"subtitle":[NSDateFormatter localizedStringFromDate:date
+                dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle]}];
+    }
     for(CaraStateRecord* state in catalog.records) [records addObject:@{@"title":state.name,@"filename":state.filename,@"compatible":@(state.compatible && sameRevision),@"subtitle":[NSString stringWithFormat:@"%@ · %@",[NSDateFormatter localizedStringFromDate:state.date dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle],!sameRevision?@"Open the game again to verify its revision":state.compatible?@"Ready to load":@"Incompatible with this build or game"]}];
     return records;
 }
@@ -1618,14 +1669,63 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [self presentViewController:slots animated:YES completion:nil];
 }
 - (void)stopGame { if(relayClient) relayClient->Disconnect(); stop=true; sessionNotice=nil; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
-- (void)background {
+- (void)sceneWillResignActive {
+    if (backgroundAt > 0) return;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     if (emuWindow) emuWindow->metal_lcd_foreground = false;
 #endif
     if(relayClient) relayClient->Disconnect(); backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true;
     AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation];
+    [self checkpointSuspendedGame];
 }
-- (void)foreground {
+- (void)finishSuspendTask:(UIBackgroundTaskIdentifier)task {
+    if (task == UIBackgroundTaskInvalid || task != suspendTask) return;
+    auto pending = task;
+    pendingSuspendTask.compare_exchange_strong(pending, UIBackgroundTaskInvalid);
+    suspendTask = UIBackgroundTaskInvalid;
+    [UIApplication.sharedApplication endBackgroundTask:task];
+}
+- (void)checkpointSuspendedGame {
+    if (!running || stop || std::getenv("CARA_BENCHMARK_FRAMES") ||
+        suspendTask != UIBackgroundTaskInvalid) return;
+    if (!gameLoaded || !paused) {
+        LOG_INFO(Frontend, "Suspended session skipped before the guest reached a pausable state");
+        return;
+    }
+    __weak EmulatorController* owner = self;
+    __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+    task = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"Save suspended game"
+        expirationHandler:^{
+            LOG_WARNING(Frontend, "Suspended session background time expired");
+            [owner finishSuspendTask:task];
+        }];
+    if (task == UIBackgroundTaskInvalid) {
+        LOG_WARNING(Frontend, "UIKit did not grant time to save the suspended session");
+        return;
+    }
+    suspendTask = task;
+    suspendGraphicsReady = dispatch_semaphore_create(0);
+    pendingSuspendTask = task;
+
+    // Metal and OpenGL ES cannot submit new work once UIKit backgrounds the
+    // app. Wait for the worker's graphics handoff while the scene is resigning
+    // active. Archive encoding and atomic disk publication happen afterward.
+    // A cold shader compile can delay the worker beyond the usual frame time.
+    constexpr int64_t workerStartBudget = 500 * NSEC_PER_MSEC;
+    if (dispatch_semaphore_wait(suspendGraphicsReady,
+                                dispatch_time(DISPATCH_TIME_NOW, workerStartBudget))) {
+        auto pending = task;
+        if (pendingSuspendTask.compare_exchange_strong(pending, UIBackgroundTaskInvalid)) {
+            LOG_WARNING(Frontend, "Emulation worker did not reach the suspend boundary in time");
+            [self finishSuspendTask:task];
+            return;
+        }
+        // Once the worker claims the request it may already be issuing GPU
+        // exports. Let it complete that phase before UIKit can background us.
+        dispatch_semaphore_wait(suspendGraphicsReady, DISPATCH_TIME_FOREVER);
+    }
+}
+- (void)sceneDidBecomeActive {
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     if (emuWindow) emuWindow->metal_lcd_foreground = true;
 #endif
@@ -1887,9 +1987,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     onlineGameIdentity=nil;
     [self hideLibrary];
     NSString* requestedState=pendingLibraryState; pendingLibraryState=nil;
-    const bool performance_gpu_timing = CaraCanTuneEmulation() &&
-        ![CaraEmulationValue(@"playMode") isEqual:@"accuracy"];
-    const auto gpu_timing = Cara::GetGPUCompletionPolicy(performance_gpu_timing);
+    const auto gpu_timing = CaraSessionGPUCompletionPolicy(CaraEmulationValue(@"playMode"));
     const unsigned session=++sessionGeneration;
     framePending[0]=false; framePending[1]=false;
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
@@ -1991,8 +2089,17 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     emuWindow->present = [weakSelf,session](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
-    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing] {
+    const bool async_shaders =
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        emuWindow->native_metal_only && CaraAsyncShadersPreference(CaraEmulationValue(@"playMode"));
+#else
+        false;
+#endif
+    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing,async_shaders] {
         Cara::gpu_completion_policy = gpu_timing;
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        Cara::ConfigureMetalGeneralFragment(async_shaders);
+#endif
         // Diagnostic only: requested QoS is not evidence of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
         const bool worker_interactive_qos = interactive_qos_env &&
@@ -2005,7 +2112,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             FileUtil::SetUserPath(user);
             // Clear reports before any self-test can fail, so stale results are
             // never mistaken for evidence from this launch.
-            for (const char* name : {"benchmark-status.json","frame-timing.json","refresh-timing.csv","runtime-status.json",
+            for (const char* name : {"benchmark-status.json","frame-timing.json","refresh-timing.csv","metal-refresh-cost.csv",
+                                     "runtime-status.json",
                                      "audio-status.json","save-state-test-status.json","fastinterp-blocks.json",
                                      "surface-flushes.json","surface-uploads.json","gpu-vertex-self-test.json","surface-coherence-self-test.json",
                                      "benchmark-frame.json","benchmark-frame.rgba","profile-checkpoint-status.json","uniform-reuse-self-test.json",
@@ -2118,18 +2226,32 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 dispatch_async(dispatch_get_main_queue(), ^{ if (self->sessionGeneration!=session) return; self->sessionFailure=[@"Graphics error · " stringByAppendingString:message]; [self updateSessionPresentation]; UIApplication.sharedApplication.idleTimerDisabled = NO; });
                 return;
             }
+            NSURL* suspendCheckpoint = nil;
             auto result=system.Load(*emuWindow,rom);
             if(result==Core::System::ResultStatus::Success) {
                 NSString* titleID=[NSString stringWithFormat:@"%016llX",(unsigned long long)system.GetTitleID()];
                 NSData* hash=[NSData dataWithBytes:system.StateGameHash().data() length:32];
+                if (!target_frames)
+                    suspendCheckpoint = CaraSuspendCheckpointURL(CaraSuspendDirectory(), hash,
+                                                                  gpu_timing.render, gpu_timing.transfer);
                 BOOL new3DS=Settings::values.is_new_3ds;
                 NSMutableString* identity=[NSMutableString stringWithString:@"homebrew-"]; for(auto byte:system.StateGameHash()) [identity appendFormat:@"%02X",byte];
                 NSString* stateID=system.GetTitleID()?titleID:identity;
                 dispatch_async(dispatch_get_main_queue(),^{ if(self->sessionGeneration==session) { NSMutableDictionary* metadata=[@{@"titleID":titleID,@"stateID":stateID,@"gameHash":hash,@"new3DS":@(new3DS)} mutableCopy]; NSDictionary* fileInfo=[url resourceValuesForKeys:@[NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil]; if(fileInfo[NSURLContentModificationDateKey]) metadata[@"romModified"]=fileInfo[NSURLContentModificationDateKey]; if(fileInfo[NSURLFileSizeKey]) metadata[@"romSize"]=fileInfo[NSURLFileSizeKey]; [self->libraryStore setMetadata:metadata forGame:url]; [self->libraryStore recordPlayed:url]; } });
                 if(requestedState.length) {
                     try {
-                        if(![requestedState.lastPathComponent isEqual:requestedState] || ![requestedState hasPrefix:[stateID stringByAppendingString:@"."]] || ![requestedState hasSuffix:@".carastate"]) throw std::runtime_error("Invalid state location");
-                        if(relayClient) relayClient->Disconnect(); system.LoadStateFromPath(FileUtil::GetUserPath(FileUtil::UserPath::StatesDir)+requestedState.UTF8String);
+                        if (relayClient) relayClient->Disconnect();
+                        if ([requestedState isEqualToString:CaraSuspendSelection]) {
+                            if (!suspendCheckpoint)
+                                throw std::runtime_error("Suspended session is unavailable");
+                            system.LoadStateFromPath(suspendCheckpoint.path.fileSystemRepresentation);
+                        } else {
+                            if (![requestedState.lastPathComponent isEqual:requestedState] ||
+                                ![requestedState hasPrefix:[stateID stringByAppendingString:@"."]] ||
+                                ![requestedState hasSuffix:@".carastate"])
+                                throw std::runtime_error("Invalid state location");
+                            system.LoadStateFromPath(FileUtil::GetUserPath(FileUtil::UserPath::StatesDir)+requestedState.UTF8String);
+                        }
                     } catch(const std::exception& error) {
                         NSString* message=[NSString stringWithUTF8String:error.what()];
                         dispatch_async(dispatch_get_main_queue(),^{ [self shellError:@"State couldn’t load" message:message]; });
@@ -2175,14 +2297,51 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 }
             }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
-            const bool learn_metal = result == Core::System::ResultStatus::Success &&
-                emuWindow->native_metal_only && Common::AppleMetalPipelineLearning(target_frames != 0) &&
-                Cara::ConfigureNativeMetalLearning(
+            const bool metal_learning_enabled = emuWindow->native_metal_only &&
+                Common::AppleMetalPipelineLearning(target_frames != 0);
+            const auto begin_metal_learning = [&] {
+                return metal_learning_enabled && Cara::ConfigureNativeMetalLearning(
                     user, system.GetTitleID(), system.StateGameHash(),
                     system.GetAppLoader().ReadOnlineGameVersion()) && Cara::BeginNativeMetalWarmup();
+            };
+            bool learn_metal = result == Core::System::ResultStatus::Success && begin_metal_learning();
+            const auto finish_metal_learning = [&] {
+                if (learn_metal && !Cara::FinishNativeMetalWarmup())
+                    LOG_WARNING(Frontend, "Unable to save the local Metal pipeline cache");
+            };
 #endif
-            if (result==Core::System::ResultStatus::Success)
-                LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
+            const auto restore_play_state = [&](auto&& load) {
+                if (relayClient)
+                    relayClient->Disconnect();
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                const auto previous_renderer = emuWindow->metal_renderer_generation;
+                finish_metal_learning();
+                const auto prewarm_restored_renderer = [&] {
+                    if (emuWindow->metal_renderer_generation != previous_renderer) {
+                        learn_metal = false;
+                        if (system.IsPoweredOn())
+                            learn_metal = begin_metal_learning();
+                    }
+                };
+                try {
+                    load();
+                } catch (...) {
+                    prewarm_restored_renderer();
+                    throw;
+                }
+                prewarm_restored_renderer();
+#else
+                load();
+#endif
+                Cara::GuestGPUTrace::Arm(user + "guest-gpu-trace.csv");
+            };
+            if (result == Core::System::ResultStatus::Success) {
+                LOG_INFO(Frontend, "Cara session title {:016X}, guest GPU timing render={} transfer={} refresh_relative={}",
+                         system.GetTitleID(), gpu_timing.render, gpu_timing.transfer, gpu_timing.soften_render);
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                LOG_INFO(Frontend, "Metal async shaders enabled={}", Cara::UseMetalGeneralFragment());
+#endif
+            }
             if (result==Core::System::ResultStatus::Success) Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
             NSDictionary<NSString*, NSString*>* roomIdentity=nil;
             if (!target_frames && result==Core::System::ResultStatus::Success && system.GetTitleID()) {
@@ -2243,6 +2402,27 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 auto previous_counters = Common::FrameTiming::counters;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
                 auto previous_metal_cost = Cara::NativeMetalCost::spans;
+                namespace MetalCost = Cara::NativeMetalCost;
+                static constexpr std::array shader_phases{
+                    MetalCost::RuntimeShaderTranslate, MetalCost::RuntimeVertexLibrary,
+                    MetalCost::RuntimeFragmentLibrary, MetalCost::RenderPipelineCreate,
+                    MetalCost::ReserveWait, MetalCost::ArenaWait, MetalCost::FlushExportGuest,
+                    MetalCost::Record, MetalCost::Present, MetalCost::GeneralFragmentDraws,
+                    MetalCost::VertexUploadToDraw, MetalCost::VertexAnyUploadToDraw,
+                    MetalCost::VertexUploadUnobserved,
+                    MetalCost::VertexFallbackDraws};
+                const bool trace_shader_refresh = capture_refresh_timing && emuWindow->native_metal_only &&
+                                                  MetalCost::Enabled();
+                struct MetalRefresh {
+                    unsigned refresh;
+                    u64 pica_lists, pica_draws, top_swaps;
+                    std::array<MetalCost::Span, shader_phases.size()> work;
+                };
+                std::vector<MetalRefresh> shader_refreshes;
+                auto previous_shader_cost = previous_metal_cost;
+                auto previous_refresh_counters = previous_counters;
+                if (trace_shader_refresh)
+                    shader_refreshes.reserve(target_frames);
 #endif
                 const bool category_timing=Common::FrameTiming::counters.enabled && Common::CPUCategoryTiming::DiagnosticEnabled();
                 Common::CPUCategoryTiming::Counters previous_categories{};
@@ -2466,8 +2646,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         }
                         if (state_saved && state_load_frame && !state_loaded && emuWindow->frames>=state_load_frame) {
                             AudioCore::SetIOSAudioPaused(true);
-                            if(relayClient) relayClient->Disconnect(); system.LoadStateFromPath(user+"device-test.carastate");
-                            Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
+                            restore_play_state([&] { system.LoadStateFromPath(user+"device-test.carastate"); });
                             if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
                             state_loaded=true; state_test_report(""); reset_clock_samples();
                             reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
@@ -2481,7 +2660,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         try {
                             if (command==101) system.SaveStateToPath(user+"profile-comparison.carastate");
                             else if (command>0) { system.SaveState(unsigned(command)); [stateSync captureCommittedSave]; }
-                            else { if(relayClient) relayClient->Disconnect(); system.LoadState(unsigned(-command)); Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv"); }
+                            else restore_play_state([&] { system.LoadState(unsigned(-command)); });
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
                         reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
@@ -2502,6 +2681,43 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                             } else [self resumeFromMenu];
                         });
                         if (!powered) { result=Core::System::ResultStatus::ErrorUnknown; break; }
+                    }
+                    if (const auto task = pendingSuspendTask.exchange(UIBackgroundTaskInvalid);
+                        task != UIBackgroundTaskInvalid) {
+                        bool canSave = paused && !stop && system.IsPoweredOn() && suspendCheckpoint;
+                        if (!canSave)
+                            LOG_WARNING(Frontend, "Paused emulation session is unavailable for suspend");
+                        if (canSave) {
+                            try {
+                                Memory::RasterizerClearAll(true);
+                                if (auto* rasterizer = VideoCore::Rasterizer())
+                                    rasterizer->FlushDeferredDraws();
+#ifdef CARA_IOS_GLES
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                                if (!emuWindow->native_metal_only)
+#endif
+                                    glFinish();
+#endif
+                            } catch (const std::exception& error) {
+                                canSave = false;
+                                LOG_WARNING(Frontend, "Unable to flush suspended session: {}", error.what());
+                            } catch (...) {
+                                canSave = false;
+                                LOG_WARNING(Frontend, "Unable to flush suspended session");
+                            }
+                        }
+                        dispatch_semaphore_signal(suspendGraphicsReady);
+                        if (canSave) {
+                            try {
+                                system.SaveStateToPath(suspendCheckpoint.path.fileSystemRepresentation);
+                                LOG_INFO(Frontend, "Suspended session checkpoint committed");
+                            } catch (const std::exception& error) {
+                                LOG_WARNING(Frontend, "Unable to save suspended session: {}", error.what());
+                            } catch (...) {
+                                LOG_WARNING(Frontend, "Unable to save suspended session");
+                            }
+                        }
+                        dispatch_async(dispatch_get_main_queue(), ^{ [self finishSuspendTask:task]; });
                     }
                     if (paused) {
                         if (!was_paused) pause_started = std::chrono::steady_clock::now();
@@ -2617,6 +2833,40 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         if (capture_refresh_timing)
                             refresh_timing.emplace_back(emuWindow->frames,
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(now - last_frame_time).count());
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                        if (trace_shader_refresh) {
+                            const auto& counters = Common::FrameTiming::counters;
+                            MetalRefresh entry{
+                                emuWindow->frames,
+                                counters.pica_command_lists - previous_refresh_counters.pica_command_lists,
+                                counters.pica_draw_requests - previous_refresh_counters.pica_draw_requests,
+                                counters.top_buffer_swaps - previous_refresh_counters.top_buffer_swaps,
+                                {}};
+                            previous_refresh_counters.pica_command_lists = counters.pica_command_lists;
+                            previous_refresh_counters.pica_draw_requests = counters.pica_draw_requests;
+                            previous_refresh_counters.top_buffer_swaps = counters.top_buffer_swaps;
+                            for (std::size_t i = 0; i < shader_phases.size(); ++i) {
+                                const auto phase = shader_phases[i];
+                                const auto current = MetalCost::spans[phase];
+                                auto& previous = previous_shader_cost[phase];
+                                entry.work[i] = {current.calls - previous.calls,
+                                                 current.ns - previous.ns};
+                                previous = current;
+                            }
+                            shader_refreshes.push_back(entry);
+                        }
+#endif
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                        if (target_frames && emuWindow->native_metal_only &&
+                            CaptureBurst(emuWindow->frames, "CARA_METAL_PARITY_START",
+                                         "CARA_METAL_PARITY_COUNT")) {
+                            const auto sample_dir = user + "parity-" +
+                                std::to_string(emuWindow->frames) + '/';
+                            FileUtil::CreateFullPath(sample_dir);
+                            if (!Cara::WriteNativeMetalCapture(sample_dir))
+                                throw std::runtime_error("Could not retain Metal parity sample");
+                        }
+#endif
                         last_frame_time = now;
                         timed_frame = emuWindow->frames;
                         if (frame_times.size() == window_frames || (target_frames && timed_frame == target_frames)) {
@@ -2905,6 +3155,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                           << ",\"used_input_attributes_requested\":" << ((std::getenv("CARA_GPU_USED_INPUTS") && std::string_view(std::getenv("CARA_GPU_USED_INPUTS")) == "1")?"true":"false")
                                           << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
                        << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
+                       << ",\"gpu_completion_soft_knee\":" << (Cara::gpu_completion_policy.soften_render?"true":"false")
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
                                           << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
                                           << ",\"cpu_category_timing\":" << (category_timing?"true":"false")
@@ -2989,6 +3240,23 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         for (const auto& [refresh, elapsed_ns] : refresh_timing)
                             timing << refresh << ',' << elapsed_ns << '\n';
                     }
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                    if (trace_shader_refresh) {
+                        std::ofstream trace(user + "metal-refresh-cost.csv");
+                        trace << "refresh,pica_lists,pica_draws,top_swaps";
+                        for (auto phase : shader_phases)
+                            trace << ',' << MetalCost::names[phase] << "_calls,"
+                                  << MetalCost::names[phase] << "_ns";
+                        trace << '\n';
+                        for (const auto& entry : shader_refreshes) {
+                            trace << entry.refresh << ',' << entry.pica_lists << ','
+                                  << entry.pica_draws << ',' << entry.top_swaps;
+                            for (const auto& phase : entry.work)
+                                trace << ',' << phase.calls << ',' << phase.ns;
+                            trace << '\n';
+                        }
+                    }
+#endif
                     std::ofstream report(user + "benchmark-status.json");
                     report << "{\"title_id\":" << system.GetTitleID() << ",\"rom_filename\":" << std::quoted(std::string(FileUtil::GetFilename(rom))) << ",\"frames\":" << emuWindow->frames << ",\"target_frames\":" << target_frames << ",\"result_code\":" << unsigned(result) << ",\"wall_seconds\":" << wall_elapsed << ",\"paused_seconds\":" << pause_elapsed << ",\"elapsed_seconds\":" << elapsed
                            << ",\"fps\":" << emuWindow->frames / elapsed
@@ -3009,6 +3277,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                            << ",\"presentation_mode\":\"mono_left_top\""
                            << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
                        << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
+                       << ",\"gpu_completion_soft_knee\":" << (Cara::gpu_completion_policy.soften_render?"true":"false")
 #ifdef CARA_IOS_GLES
                            << ",\"eagl_multithreaded\":" << (emuWindow->graphics_context.isMultiThreaded ? "true" : "false")
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
@@ -3079,10 +3348,14 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
                 if(relayClient) relayClient->Disconnect();
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
-                if (learn_metal && result == Core::System::ResultStatus::Success &&
-                    !Cara::FinishNativeMetalWarmup())
-                    LOG_WARNING(Frontend, "Unable to save the local Metal pipeline cache");
+                if (result == Core::System::ResultStatus::Success)
+                    finish_metal_learning();
 #endif
+                const auto suspend = pendingSuspendTask.exchange(UIBackgroundTaskInvalid);
+                if (suspend != UIBackgroundTaskInvalid) {
+                    dispatch_semaphore_signal(suspendGraphicsReady);
+                    dispatch_async(dispatch_get_main_queue(), ^{ [self finishSuspendTask:suspend]; });
+                }
                 system.Shutdown();
                 [saveSync captureCommittedSave];
                 [stateSync captureCommittedSave];
@@ -3146,6 +3419,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     self.window.rootViewController = [EmulatorController new];
     [self.window makeKeyAndVisible];
     for (UIOpenURLContext* context in options.URLContexts) [(EmulatorController*)self.window.rootViewController openExternalURL:context.URL];
+}
+- (void)sceneWillResignActive:(UIScene*)scene {
+    [(EmulatorController*)self.window.rootViewController sceneWillResignActive];
+}
+- (void)sceneDidBecomeActive:(UIScene*)scene {
+    [(EmulatorController*)self.window.rootViewController sceneDidBecomeActive];
 }
 - (void)scene:(UIScene*)scene openURLContexts:(NSSet<UIOpenURLContext*>*)contexts {
     for (UIOpenURLContext* context in contexts) [(EmulatorController*)self.window.rootViewController openExternalURL:context.URL];

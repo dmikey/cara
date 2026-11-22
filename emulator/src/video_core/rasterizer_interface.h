@@ -83,8 +83,9 @@ public:
 
 #ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
     // Installed once by a native renderer before a guest session begins.
-    // Dispatch is exclusive: a rejected native draw must fail the session.
-    using NativePicaDraw = std::function<void(bool indexed)>;
+    // A false return explicitly selects the original CPU-produced vertex
+    // stream. Binding failures remain errors in the native renderer.
+    using NativePicaDraw = std::function<bool(bool indexed)>;
     void InstallNativePicaDraw(NativePicaDraw dispatch, bool accept_original_stage_in = false) {
         if (native_pica_draw_ || !dispatch)
             throw std::logic_error("Invalid native PICA draw installation");
@@ -99,8 +100,10 @@ public:
             return false;
         if (!hardware_eligible)
             throw std::runtime_error("PICA draw is unsupported by the native renderer");
-        native_pica_draw_(indexed);
-        return true;
+        const bool drawn = native_pica_draw_(indexed);
+        if (!drawn && !native_original_stage_in_)
+            throw std::runtime_error("Native PICA draw declined without a vertex fallback");
+        return drawn;
     }
 
 #endif

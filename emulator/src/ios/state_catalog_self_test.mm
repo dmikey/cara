@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import "ios/state_catalog.h"
+#import "ios/suspend_checkpoint.h"
 #import "ios/save_sync.h"
 #include <cstdio>
 #include <cstdlib>
@@ -36,6 +37,51 @@ int main() { @autoreleasepool {
     Check(!other.records.firstObject.compatible,@"incompatible build retained and marked");
     [@"broken" writeToURL:[directory URLByAppendingPathComponent:@"metadata.json"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
     Check(![catalog prepareToSave:quick error:&error] && ![catalog remove:quick error:&error],@"corrupt labels never permit silent overwrite or deletion");
+    // Suspend snapshots have a private directory and never use a manual slot.
+    NSData* manualOriginal=[NSData dataWithContentsOfURL:[catalog urlForFilename:manual]];
+    NSURL* suspended=[directory URLByAppendingPathComponent:@"Suspended" isDirectory:YES];
+    Check([NSFileManager.defaultManager createDirectoryAtURL:suspended withIntermediateDirectories:NO
+                                                  attributes:nil error:nil], @"create recovery directory");
+    NSMutableData* hash=[NSMutableData dataWithLength:32];
+    static_cast<uint8_t*>(hash.mutableBytes)[0]=0xab;
+    NSURL* checkpoint=CaraSuspendCheckpointURL(suspended,hash,true,true);
+    NSURL* accuracy=CaraSuspendCheckpointURL(suspended,hash,false,false);
+    Check(checkpoint && ![checkpoint isEqual:accuracy] &&
+          [checkpoint.URLByDeletingLastPathComponent isEqual:suspended], @"GPU policy isolates recovery path");
+    Check(CaraSuspendCheckpointURL(suspended,[NSMutableData dataWithLength:32],true,true)==nil,
+          @"unidentified title has no recovery path");
+    Check(!CaraIsStatePath([@"states" stringByAppendingPathComponent:checkpoint.lastPathComponent]),
+          @"suspend snapshot is never a manual or synced state");
+
+    Fixture(checkpoint,fingerprint);
+    NSMutableData* resumeHeader=[NSMutableData dataWithContentsOfURL:checkpoint];
+    auto* resumeBytes=static_cast<uint8_t*>(resumeHeader.mutableBytes);
+    std::memcpy(resumeBytes+148,hash.bytes,32);
+    resumeBytes[32]=1; // compressed bytes
+    Check([resumeHeader writeToURL:checkpoint atomically:YES] &&
+          CaraCompatibleSuspendCheckpoint(checkpoint,hash,fingerprint,false,0)==nil,
+          @"interrupted recovery write is declined");
+    const uint8_t payload=0;
+    [resumeHeader appendBytes:&payload length:1];
+    Check([resumeHeader writeToURL:checkpoint atomically:YES], @"write recovery ROM identity");
+    Check(CaraCompatibleSuspendCheckpoint(checkpoint,hash,fingerprint,false,0)!=nil,
+          @"matching suspended game is offered");
+    Check(CaraCompatibleSuspendCheckpoint(accuracy,hash,fingerprint,false,0)==nil &&
+          CaraCompatibleSuspendCheckpoint(checkpoint,hash,fingerprint,true,0)==nil &&
+          CaraCompatibleSuspendCheckpoint(checkpoint,hash,fingerprint,false,1)==nil &&
+          CaraCompatibleSuspendCheckpoint(checkpoint,hash,@"wrong engine",false,0)==nil,
+          @"different timing, mode, backend, or engine is declined");
+    NSMutableData* otherHash=[hash mutableCopy];
+    static_cast<uint8_t*>(otherHash.mutableBytes)[1]=0xff;
+    Check(![checkpoint isEqual:CaraSuspendCheckpointURL(suspended,otherHash,true,true)] &&
+          CaraCompatibleSuspendCheckpoint(checkpoint,otherHash,fingerprint,false,0)==nil,
+          @"wrong ROM revision is declined");
+    NSURL* link=[suspended URLByAppendingPathComponent:@"linked.carastate"];
+    Check([NSFileManager.defaultManager createSymbolicLinkAtURL:link withDestinationURL:checkpoint error:nil] &&
+          CaraCompatibleSuspendCheckpoint(link,hash,fingerprint,false,0)==nil, @"symbolic link is declined");
+    Check([manualOriginal isEqual:[NSData dataWithContentsOfURL:[catalog urlForFilename:manual]]],
+          @"manual slot is byte-identical beside recovery snapshot");
+
     [NSFileManager.defaultManager removeItemAtURL:directory error:nil];
-    puts("PASS: per-game state identity, compatibility, names, locks, quick-save backup, rolling autosaves and safe metadata failure (synthetic headers)");
+    puts("PASS: save-state catalog and private suspend checkpoint identity (synthetic headers)");
 } }

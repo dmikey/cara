@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "pica_metal_runtime_shader.h"
+#include "pica_metal_frame_cost.hh"
 #include "simd_vertex_source.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -290,6 +292,43 @@ void BindVertex(Stage& stage, RuntimeMetalVertexMode mode) {
     }
 }
 
+bool ReuseVertexMsl() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_METAL_REUSE_VERTEX_MSL");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
+std::string CompileVertex(Stage& stage, std::vector<std::uint32_t> spirv,
+                          RuntimeMetalVertexMode mode) {
+    if (spirv.empty())
+        return stage.Compile();
+
+    struct Entry {
+        RuntimeMetalVertexMode mode;
+        std::vector<std::uint32_t> spirv;
+        std::string msl;
+    };
+    constexpr std::size_t MaxEntries = 16;
+    constexpr std::size_t MaxEntryBytes = 512 * 1024;
+    thread_local std::deque<Entry> cache;
+    const auto hit = std::find_if(cache.rbegin(), cache.rend(), [&](const Entry& entry) {
+        return entry.mode == mode && entry.spirv == spirv;
+    });
+    if (hit != cache.rend()) {
+        NativeMetalCost::Count(NativeMetalCost::RuntimeVertexSpirvMslHit, 1);
+        return hit->msl;
+    }
+    auto msl = stage.Compile();
+    if (spirv.size() * sizeof(spirv[0]) + msl.size() <= MaxEntryBytes) {
+        if (cache.size() == MaxEntries)
+            cache.pop_front();
+        cache.push_back({mode, std::move(spirv), msl});
+    }
+    return msl;
+}
+
 void BindFragment(Stage& stage, RuntimeMetalShaderPair& pair) {
     pair.slots.fill(RuntimeMetalUnusedSlot);
     for (const auto& block : stage.resources.uniform_buffers) {
@@ -390,13 +429,17 @@ std::optional<RuntimeMetalShaderPair> TranslateRuntimeMetalShaders(
         constexpr auto flags = static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules);
         if (!program.link(flags) || !program.mapIO())
             throw std::runtime_error(program.getInfoLog());
-        Stage metal_vs(EmitSpirv(program, EShLangVertex), spv::ExecutionModelVertex);
+        auto vertex_spirv = EmitSpirv(program, EShLangVertex);
+        // Keep pair linking and interface/binding validation on every miss.
+        // Only reuse MSL for an identical, already linked vertex stage.
+        auto vertex_key = ReuseVertexMsl() ? vertex_spirv : std::vector<std::uint32_t>{};
+        Stage metal_vs(std::move(vertex_spirv), spv::ExecutionModelVertex);
         Stage metal_fs(EmitSpirv(program, EShLangFragment), spv::ExecutionModelFragment);
         VerifyInterface(metal_vs, metal_fs, mode);
         RuntimeMetalShaderPair result;
         BindVertex(metal_vs, mode);
         BindFragment(metal_fs, result);
-        result.vertex = metal_vs.Compile();
+        result.vertex = CompileVertex(metal_vs, std::move(vertex_key), mode);
         result.fragment = metal_fs.Compile();
         Require(!desktop_clip || result.vertex.find("[[clip_distance]]") != std::string::npos,
                 "Metal vertex stage lost the fixed PICA clip plane");

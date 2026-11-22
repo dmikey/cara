@@ -715,7 +715,7 @@ static void AppendAlphaTestCondition(std::string& out, FramebufferRegs::CompareF
 }
 
 /// Writes the code to emulate the specified TEV stage
-static void WriteTevStage(std::string& out, const PicaFSConfig& config, u32 index) {
+static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config, u32 index) {
     const auto stage =
         static_cast<const TexturingRegs::TevStageConfig>(config.state.tev_stages[index]);
     if (!IsPassThroughTevStage(stage)) {
@@ -768,6 +768,7 @@ static void WriteTevStage(std::string& out, const PicaFSConfig& config, u32 inde
         }
     }
 
+    const auto buffer_updates_start = out.size();
     out += "combiner_buffer = next_combiner_buffer;\n";
 
     if (config.TevStageUpdatesCombinerBufferColor(index))
@@ -777,6 +778,7 @@ static void WriteTevStage(std::string& out, const PicaFSConfig& config, u32 inde
         out += "next_combiner_buffer.a = last_tex_env_out.a;\n";
 
     out += "\n";
+    return buffer_updates_start;
 }
 
 /// Writes the code to emulate fragment lighting
@@ -1679,7 +1681,17 @@ vec4 secondary_fragment_color = vec4(0.0);
     }
 
     // Append the scissor test
-    if (state.scissor_test_mode != RasterizerRegs::ScissorMode::Disabled) {
+    if (target.metal_general_fragment) {
+        out += R"(
+if (cara_tex0_crop.y != 0) {
+    bool inside = gl_FragCoord.x >= float(scissor_x1) &&
+                  gl_FragCoord.y >= float(scissor_y1) &&
+                  gl_FragCoord.x < float(scissor_x2) &&
+                  gl_FragCoord.y < float(scissor_y2);
+    if (inside != (cara_tex0_crop.y == 3)) discard;
+}
+)";
+    } else if (state.scissor_test_mode != RasterizerRegs::ScissorMode::Disabled) {
         out += "if (";
         // Negate the condition if we have to keep only the pixels outside the scissor box
         if (state.scissor_test_mode == RasterizerRegs::ScissorMode::Include) {
@@ -1711,8 +1723,27 @@ vec4 secondary_fragment_color = vec4(0.0);
     s_use_texcolor2 = false;
 
     std::string tev_stages;
-    for (u32 index = 0; index < state.tev_stages.size(); ++index)
-        WriteTevStage(tev_stages, config, index);
+    bool declares_combiner_buffer = true;
+    if (target.elide_dead_combiner_buffer) {
+        std::string tev_without_updates;
+        bool reads_combiner_buffer = false;
+        for (u32 index = 0; index < state.tev_stages.size(); ++index) {
+            const auto start = tev_stages.size();
+            const auto updates_start = WriteTevStage(tev_stages, config, index);
+            const auto math = std::string_view(tev_stages).substr(start, updates_start - start);
+            reads_combiner_buffer |= math.find("combiner_buffer") != std::string_view::npos;
+            tev_without_updates.append(math);
+        }
+        // Only emitted TEV expressions can read the previous buffer. An
+        // unused operand in the registers does not keep its stores alive.
+        if (!reads_combiner_buffer) {
+            declares_combiner_buffer = false;
+            tev_stages = std::move(tev_without_updates);
+        }
+    } else {
+        for (u32 index = 0; index < state.tev_stages.size(); ++index)
+            WriteTevStage(tev_stages, config, index);
+    }
 
     std::string lighting_codes;
     if (state.lighting.enable && s_use_fragment_color)
@@ -1746,13 +1777,26 @@ vec4 secondary_fragment_color = vec4(0.0);
 
     out += lighting_codes;
 
-    out += "vec4 combiner_buffer = vec4(0.0);\n"
-           "vec4 next_combiner_buffer = tev_combiner_buffer_color;\n"
-           "vec4 last_tex_env_out = vec4(0.0);\n";
+    if (declares_combiner_buffer) {
+        out += "vec4 combiner_buffer = vec4(0.0);\n"
+               "vec4 next_combiner_buffer = tev_combiner_buffer_color;\n";
+    }
+    out += "vec4 last_tex_env_out = vec4(0.0);\n";
 
     out += tev_stages;
 
-    if (state.alpha_test_func != FramebufferRegs::CompareFunc::Always) {
+    if (target.metal_general_fragment) {
+        using Compare = FramebufferRegs::CompareFunc;
+        out += "switch (cara_tex0_crop.x) {\n";
+        for (auto compare : {Compare::Equal, Compare::NotEqual, Compare::LessThan,
+                             Compare::LessThanOrEqual, Compare::GreaterThan,
+                             Compare::GreaterThanOrEqual}) {
+            out += fmt::format("case {}: if (", unsigned(compare));
+            AppendAlphaTestCondition(out, compare);
+            out += ") discard; break;\n";
+        }
+        out += "default: break; }\n";
+    } else if (state.alpha_test_func != FramebufferRegs::CompareFunc::Always) {
         out += "if (";
         AppendAlphaTestCondition(out, state.alpha_test_func);
         out += ") discard;\n";

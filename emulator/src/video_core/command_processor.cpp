@@ -44,6 +44,9 @@
 #include "video_core/regs_pipeline.h"
 #include "video_core/regs_texturing.h"
 #include "video_core/renderer_base.h"
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+#include "video_core/renderer_metal/pica_metal_frame_cost.hh"
+#endif
 #include "video_core/shader/shader.h"
 #include "video_core/vertex_loader.h"
 #include "video_core/video_core.h"
@@ -234,6 +237,10 @@ static bool ShaderConfigNotification(u32 id) {
 
 static void WriteShaderWord(Shader::ShaderSetup& setup, u32 offset, u32 value, bool swizzle) {
     auto& word = swizzle ? setup.swizzle_data[offset] : setup.program_code[offset];
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    if (&setup == &g_state.vs)
+        Cara::NativeMetalCost::RecordVertexUpload(word != value);
+#endif
     if (Cara::GuestGPUTrace::DrawsEnabled() && word != value)
         Cara::GuestGPUTrace::ShaderWordChanged(&setup == &g_state.gs);
     if (!RepeatStateEnabled() && !CommandProfileEnabled()) {
@@ -1026,6 +1033,9 @@ u64 TakeExperimentalP3DNanoseconds() {
 }
 
 void ProcessCommandList(PAddr list, u32 size) {
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    Cara::NativeMetalCost::PicaListScope shader_lead_time;
+#endif
     if (PostIRQProfileEnabled()) post_irq_submission = {};
     if (Common::FrameTiming::counters.enabled)
         ++Common::FrameTiming::counters.pica_command_lists;

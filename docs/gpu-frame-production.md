@@ -114,10 +114,10 @@ empty afterward; later engine comparisons restore the untouched checkpoint.
   emulated VBlank. `SetBufferSwap` updates framebuffer registers rather than
   invoking scene rendering. Repeated buffer addresses do not prove unchanged
   pixels, since the guest can write new contents to the same allocation.
-- Local P3D and transfer completion signaling is synchronous, without an explicit
-  guest GPU processing interval. A game can observe completed GPU work and become
-  runnable again within the same guest slice. Trace submission, completion,
-  wait/wake and VBlank guest timestamps before selecting a timing model.
+- The synchronous completion policy can make a game runnable again within the
+  same guest slice. Performance Mode schedules render and transfer visibility
+  on the guest timeline. Trace submission, completion, wait/wake, and VBlank
+  guest timestamps when evaluating the modeled durations.
 - [Azahar #2095](https://github.com/azahar-emu/azahar/pull/2095) adds GPU completion
   timing and interrupt-queue fixes, benefiting Luigi's Mansion 2. Its 3D model is
   approximate. [Azahar #2274](https://github.com/azahar-emu/azahar/pull/2274) later
@@ -180,6 +180,66 @@ Private retained evidence: `cara-stories-pacer-returned-ticks-20261115`,
 `cara-side-p3d-causality-20261115/{REPORT.md,NEXT-BATCH.md,analysis.json,next-builder-analysis.json}`.
 Temporary paths are not public reproduction dependencies. No ROM bytes, memory
 images, raw game states or screenshots are distributed here.
+
+## Performance Mode render deadlines
+
+Performance Mode retains the stock P3D estimate through half of the nominal
+60 Hz guest VBlank period. Beyond that point, each
+additional guest nanosecond adds half a nanosecond to the modeled duration.
+The eventual busy interval also includes any delay imposed by an earlier
+completion. The experiment preserves the P3D FIFO, PPF dependency, and
+per-batch completion order. Longer work can still finish across VBlank.
+Metal commands remain eligible to execute immediately. For an A/B comparison,
+`CARA_GPU_COMPLETION_SOFT_KNEE=0` restores the original render estimates while
+preserving completion and transfer simulation.
+
+The iPad comparison replays normal boots with matching guest input, at 100%
+emulation speed and 100% guest CPU, on native Metal with FastInterp. Compare
+stable in-scene refresh windows and verify final captures separately. The
+`metal-refresh-cost.csv` report includes PICA list and draw requests, applied
+top-buffer swaps, shader work, and pressure waits for each emulated refresh.
+Zero-draw refreshes measure guest production gaps. Top-buffer swaps count
+applied updates and cannot establish the number of visually distinct images.
+
+| M4 iPad gameplay | Stories, original | Stories, refined | Dark Moon, original | Dark Moon, refined |
+| --- | ---: | ---: | ---: | ---: |
+| Emulation speed | 100.13% | 99.96% | 99.99% | 100.00% |
+| Refresh p99 | 35.11 ms | 31.61 ms | 20.54 ms | 22.44 ms |
+| Worst refresh | 36.83 ms | 35.21 ms | 20.74 ms | 22.73 ms |
+| Slowest contiguous 120-refresh mean | 16.86 ms | 16.85 ms | 16.75 ms | 16.73 ms |
+| Mean queued P3D deadline | 23.48 ms | 14.64 ms | 6.07 ms | 5.45 ms |
+| Refreshes with no PICA draws | 46.7% | 16.7% | 0% | 0% |
+| PICA draw requests per refresh | 139.22 | 218.99 | 350 | 350 |
+| Applied top-buffer swaps per second | 27.3 | 43.0 | 42.5 | 29.9 |
+| Emulation-thread CPU per refresh | 6.05 ms | 7.51 ms | 7.93 ms | 7.95 ms |
+
+Stories used refreshes 4201–4800 in Secret Path, and Dark Moon used
+3121–3600 in Gadd's lab. The test windows contained no shader compilation
+or Metal queue-pressure wait. Stories had fewer idle submission refreshes
+with more CPU work. Dark Moon continued to render each refresh, while its
+top-buffer updates settled at a 2:1 refresh-to-update cadence and p99
+increased. All 239 observed gaps between Dark Moon top-buffer updates in
+the refined window span exactly two refreshes. Both Stories captures show
+Secret Path. The final pixel hashes differ across timing settings for both
+games.
+
+`GetSystemTick` and the guest CPU clock were held constant. This measures
+CPU cost from the changed GPU cadence and leaves the separate Stories poll
+loop outside the timing change. These are emulator results, with physical
+3DS deadline calibration still outstanding.
+
+The M4 iPad normal-launch log and the native Mac compatibility runner
+confirmed the refined model in Performance Mode and disabled GPU timing
+in Accuracy Mode without diagnostic overrides.
+
+Monster Hunter Generations (Europe) reached character creation in both
+2,700-refresh boots. The original and refined runs averaged 1.50 ms
+queued P3D latency in that window, with identical draw counts, update
+cadence, and final pixels. A second matched replay ran 4,200 refreshes
+and entered a test name, with byte-identical captures still in character
+creation. Kirby: Planet Robobot (USA) hit the same native Metal color-border
+sampler rejection on refresh 331 in both runs.
+No gameplay timing comparison was available from those two Kirby runs.
 
 ## Cross-title validation
 

@@ -28,6 +28,16 @@ fixes and check their effects on gameplay, rendering, and saves.
   audio are built in. Per-game Accuracy and Performance settings let you choose
   whether to use adaptive guest CPU timing.
 
+### Performance Mode on Apple hardware
+
+Performance Mode models GPU busy flags and completion interrupts in guest time.
+On iPad, **Options → Display → Async Shaders** is enabled by default in this
+mode. Compatible draws can use a general shader compiled on-device while
+Metal builds a specialized pipeline. Metal also reuses compiled fragment
+shaders when only unused combiner-buffer writes differ. First visits to a
+scene can still hitch.
+See the [physical-device measurements](docs/native-metal-build.md#refresh-89-fragment-shader-reuse).
+
 ## Play cartridge ROMs straight from ZIP
 
 Open a standard ZIP containing one `.3ds` cartridge image from the macOS
@@ -37,10 +47,12 @@ it to Z3DS. Stored entries are read directly. For Deflate, Cara builds an
 in-memory seek index at first open and decompresses data on demand. See the
 [ZIP cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
 
-**Test status.** A ZIP of *Luigi’s Mansion: Dark Moon* was tested on macOS.
-Testing on a physical iPad is still pending, including booting from Files,
-confirming that no full ROM is extracted, and comparing frame pacing in
-Gadd’s lab against the raw `.3ds`.
+**Test status.** Cara played a Deflate ZIP of *Luigi’s Mansion: Dark Moon*
+on macOS and on a physical M4 iPad. The iPad completed a 3,600-refresh
+FastInterp Metal replay from the indexed archive. The device test opened
+the archive programmatically. A separate 900-refresh mansion gate replay
+from ZIP averaged 59.70 refreshes/s on the M4 iPad. Manual selection through Files still needs
+verification.
 
 ## Platforms
 

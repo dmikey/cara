@@ -232,6 +232,340 @@ refreshes 3248–3367 at 16.67 ms per refresh and 100.26% speed. The signed
 and ad-hoc HUD-hidden captures matched byte for byte. The separate
 HUD-visible run averaged 97.67% with an 18.41 ms lab p99.
 
+## iPad Metal pipeline warmup on state load
+
+Cara warms learned render pipelines during game open and after an in-session
+state restore recreates the renderer. A normal preload keeps the existing
+125 ms startup budget and stops at the budget boundary between recipes. Before
+an in-session restore, Cara persists newly learned recipes. A game or state
+without matching learned recipes can still compile pipelines on first use.
+
+An M4 iPad replay used a copy of Dark Moon's slot 4 in the Front Yard. Both
+passes ran FastInterp Metal at 100% guest CPU with the same touch and movement
+inputs over 900 refreshes. The first pass had learned the initial view and
+encountered new recipes after answering Gadd's call. The second pass warmed
+all 70 learned recipes in 36 ms before starting the replay.
+
+| Front Yard replay | Draw-time translations | Draw-time pipeline builds | First 120 p99 | Overall p99 | Worst refresh |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Learn the extended route | 8 | 9 | 70.81 ms | 22.05 ms | 516.84 ms |
+| Replay with learned pipelines | 0 | 0 | 22.34 ms | 21.61 ms | 33.01 ms |
+
+The 33.01 ms refresh was the first after restore. The longest later refresh
+was 22.70 ms. These timings measure emulated refreshes.
+
+An in-session reload from a disposable state restored the recorded CPU and
+guest timing snapshot and continued with zero draw-time pipeline builds. Slot 4
+remained byte-identical and matched the new app's engine fingerprint.
+
+## Cold mansion gate on the M4 iPad
+
+A separate signed test app replayed 900 Front Yard refreshes from a copy of
+Dark Moon slot 4 at 100% emulation speed and 100% guest CPU. Rendering ran
+on native Metal with FastInterp and both modeled GPU completion options active.
+Rendering-only changes changed the engine fingerprint, so the isolated copy
+used the test build's fingerprint and retained the original archive checksum.
+The original device slot remained byte-identical. All completed runs had
+434,138 PICA draw requests, 614 top buffer swaps, and identical final captures.
+
+| Slot 4 replay | First refresh | Worst later refresh | First 120 p99 | Overall p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Empty Cara cache, original Metal compiler keys | 9,853.89 ms | 575.71 ms | 575.71 ms | 22.13 ms |
+| Vertex reuse, empty Cara cache, existing Metal compiler keys | 466.66 ms | 94.97 ms | 94.97 ms | 21.84 ms |
+| Vertex reuse, locally learned archive | 21.29 ms | 23.19 ms | 20.49 ms | 21.52 ms |
+| Vertex reuse, fresh Metal keys, serial stage compilation | 10,211.62 ms | 593.99 ms | 593.99 ms | 21.90 ms |
+| Vertex reuse, fresh Metal keys, parallel stage compilation | 9,160.77 ms | 594.49 ms | 594.49 ms | 22.04 ms |
+
+The second row reused system Metal compiler results from the first run.
+Its translation time dropped from 736 ms to 583 ms across the same 29 pair
+misses. The learned replay prepared 70 recipes in 28.34 ms, encountered zero
+draw-time shader misses, and averaged 59.70 emulated refreshes per second.
+
+The first baseline refresh spent 4.70 s creating vertex libraries, 1.51 s
+creating fragment libraries, 3.11 s creating render pipeline states and 0.51 s
+translating shader pairs. Refresh 18 spent 402 ms creating a vertex library and
+130 ms creating a render pipeline. Refresh 89 spent 328 ms creating fragment
+libraries and 125 ms translating. Submission pressure waits totaled under 2 ms
+in each run. The trace timestamps are emulation-thread refresh intervals.
+
+A diagnostic with separate Metal function names was used to avoid relying
+on shared compiler results. Paired stage overlap reduced the first refresh
+by 1.05 s and left the later hitch effectively unchanged. Metal's size
+optimization experiment took 10.40 s on its first refresh versus 10.22 s for
+the paired default setting. Parallel stage compilation is opt-in, and no
+shader artifacts from the replay enter a distribution package.
+
+The slot contains pending emulated GPU completions and cannot be restored
+with that timing model disabled. GPU busy bits and completion IRQs derive
+from emulated deadlines. Host compiler time remains wall time lost on a
+synchronous draw miss. A timing-model comparison needs a normal boot or a
+checkpoint without pending events.
+
+### Retaining PICA calls on iPad
+
+A second M4 iPad A/B replayed the same 900-refresh slot 4 route with the
+new Performance Mode deadlines enabled in both arms. Both used vertex MSL
+reuse, fresh Metal function names, and isolated app directories. The final
+BGRA captures matched byte for byte. The tested variant uses
+`CARA_METAL_KEEP_PICA_SUBROUTINE_CALLS=1` to leave generated calls intact
+in large vertex shaders. The option has its own on-device cache identity.
+
+| Slot 4 after guest timing refinement | Inline | Retained calls |
+| --- | ---: | ---: |
+| First refresh | 10,162.76 ms | 7,165.51 ms |
+| Worst later refresh | 601.78 ms | 488.21 ms |
+| Vertex library creation, 13 libraries total | 5,227.03 ms | 2,133.35 ms |
+| Render pipeline creation, 32 pipelines total | 3,616.53 ms | 3,691.04 ms |
+| Warm p99, refreshes 171–900 | 20.90 ms | 23.72 ms |
+
+The variant saves CPU compiler time on the initial scene but increases the
+warm refresh tail, so it stays opt-in. The 488 ms refresh still spent
+230 ms creating a vertex library and 214 ms creating a pipeline. Refresh 89
+still took 443 ms, including 346 ms building fragment libraries. The average
+after refresh 170 was 16.71 ms in both arms. No shaders from this replay
+are distributed.
+
+### Default compiler cold and warm retest
+
+With the refined Performance Mode timing on, FastInterp at 100% guest CPU,
+and a 100% speed limit, an M4 iPad ran the same 900-refresh slot 4 replay
+twice. The first pass used an empty Cara cache and new Metal entry names.
+The second used the first pass's locally learned archive. Retained PICA
+calls stayed disabled. Final BGRA captures matched byte for byte.
+
+| Refresh time | Fresh caches | Learned archive |
+| --- | ---: | ---: |
+| First refresh | 10,100.74 ms | 27.10 ms |
+| Worst later refresh | 589.11 ms | 23.47 ms |
+| First 120 p99 | 589.11 ms | 22.37 ms |
+| Full replay p99 | 21.33 ms | 21.18 ms |
+| Slowest contiguous 120-refresh mean | 110.92 ms | 16.77 ms |
+
+The repeat prepared 70 recipes in 27.83 ms with 32 binary archive hits.
+It averaged 16.70 ms per refresh with zero draw-time shader translations,
+library builds, and render pipeline builds. The cold trace spent 3.56 s
+creating pipelines in total. The 589 ms interval at refresh 18 included
+414 ms of vertex library creation and 130 ms of pipeline creation. The
+440 ms interval at refresh 89 included 344 ms of fragment library creation.
+
+The native Metal queue already executes prepared draws independently. A
+shader miss occurs during pipeline selection before the draw reaches that
+queue. Host CPU execution can overlap prepared graphics work while keeping
+guest timing unchanged. First-use overlap also needs enough earlier work
+to compile, or a correct general shader to draw with until specialization
+is ready. Reordering CPU-visible transfers would change guest behavior.
+
+### Async Shaders on iPad Metal
+
+Options → Display → Async Shaders applies when a game opens. The option is
+on by default in Performance Mode. The proof of concept generalizes alpha
+comparison and scissor mode for unlit, fog-free 2D draws using texture 0
+and optionally texture 1. It retains the current vertex program, combiner,
+depth output, material slots, and fixed-function raster state. A copied
+uniform carries the two runtime modes. Other draws use the existing path.
+
+Cara compiles the general shader on the device. Once that pipeline is ready,
+draws can use it while a bounded worker compiles the exact shader and
+pipeline. The worker takes owned shader sources and render state. The
+render owner checks completion without waiting, adopts the validated
+pipeline, and records its descriptor in the local learned archive.
+Already queued draws retain their pipeline. The first general pipeline
+can still require a synchronous compile. No game-derived shader artifacts
+are added to the distributable.
+
+The physical M4 iPad comparison replayed a copy of Dark Moon slot 4 for
+900 refreshes per run with FastInterp Metal, Performance Mode guest timing,
+and 100% speed. Both cold runs started with empty Cara caches and unique
+Metal entry names. The async run used the general path on 2,862 draws.
+Intermediate captures at refreshes 2–4, containing 272, 32, and 272
+general draws respectively, matched the corresponding stock BGRA images
+byte for byte. Both final captures also matched. Intermediate capture
+drains occur in both runs and add diagnostic overhead to nearby refreshes.
+
+| Slot 4 metric | Async off | Async on |
+| --- | ---: | ---: |
+| Cold first refresh | 10.44 s | 10.02 s |
+| Cold worst later refresh | 599.47 ms | 608.09 ms |
+| Warm replay mean | 16.71 ms | 16.71 ms |
+| Warm replay p99 | 21.09 ms | 21.06 ms |
+| Warm worst after first refresh | 21.87 ms | 23.63 ms |
+
+The async repeat loaded 101 recipes in 32.18 ms and recorded zero runtime
+shader translations, library compiles, pipeline builds, and general draws.
+The large cold stalls are still outside the prototype's coverage.
+
+### Slot 4 vertex fallback probe
+
+The upload trace records guest PICA vertex program and swizzle writes and
+sampled host time to a cold vertex library's first draw attempt. A
+checkpoint restore is outside that measurement. At refresh 18, no program
+or swizzle write had occurred between restoring slot 4 and starting the
+cold draw, including writes of identical values. The two main costs were
+410.09 ms compiling the vertex library and 131.30 ms creating its pipeline.
+This replay offers no earlier in-stream upload to schedule against.
+
+`CARA_METAL_VERTEX_FALLBACK=1` enables the opt-in probe. It can reinterpret
+vertices on the CPU and use the existing Metal StageIn route for independent
+triangles with compatible draw state. A single background worker compiles the
+exact pipeline. The render owner flushes GPU writers before the CPU reads
+guest vertex data. Unsupported draws or unavailable fallback pipelines keep
+the exact rendering path. The probe does not ship precompiled game shaders.
+
+At 100% pacing in Performance Mode, admission limited to refresh 18 cut
+that interval from 597.81 ms to 55.70 ms, with two fallback draws. Captures
+at refreshes 17–19 and 900 matched the exact path byte for byte. A subsequent
+vertex compile took refresh 20 to 557.00 ms. The warm repeat had no runtime
+vertex library builds or fallback draws and averaged 16.71 ms per refresh
+with a p99 of 21.24 ms.
+
+A second comparison used the same build for both runs and allowed fallback
+throughout the 900-refresh replay. The CPU fallback drew 24 batches. The
+cold frame at refresh 18 improved from 597.72 ms to 53.94 ms, with
+byte-identical captures at refreshes 17–20 and 900. The largest later stall
+moved to refresh 21, where 376.71 ms went to a vertex library and 138.98 ms
+to pipeline creation. The cold p99 rose from 23.96 ms to 25.92 ms. The
+synchronous guest-memory flush alone took 7.04 ms at refresh 18 across
+both fallback batches. The learned-cache repeat averaged 16.71 ms per
+refresh, with a p99 of 24.23 ms and zero runtime library and pipeline builds.
+Its five captures matched the exact path. Keep this probe opt-in while
+cold stalls and CPU readback costs remain.
+
+### Refresh 21 vertex compilation reuse
+
+The cold trace tied the 549.44 ms interval to a live render pipeline with
+an uncached vertex function. The bounded background worker was already
+building a different pipeline key with byte-identical translated vertex
+MSL. The old admission rule compared whole pipeline keys, then the live
+path compiled the vertex library a second time. The live vertex build
+and pipeline creation took 376.71 ms and 138.98 ms respectively.
+
+Eligible draws can now use StageIn while another pipeline sharing their
+translated vertex function is being built. Both lanes can reuse validated
+stage functions. The asynchronous worker only receives owned sources and
+immutable Metal objects. It returns a reflected pipeline and publishes
+stage functions only when they match the translated runtime inputs.
+
+Three 900-refresh physical M4 iPad runs used the same build and slot 4
+input replay at 100% FastInterp Metal with Performance Mode timing.
+The exact path and both candidate passes matched byte for byte at
+refreshes 17–22 and at refresh 900.
+
+| Refresh metric | Exact cold | Candidate cold | Candidate warm |
+| --- | ---: | ---: | ---: |
+| First refresh | 10,024.98 ms | 6,943.30 ms | 27.14 ms |
+| Refresh 18 | 611.49 ms | 54.55 ms | 23.47 ms |
+| Refresh 21 | 12.33 ms | 27.15 ms | 13.90 ms |
+| Largest later interval | 611.49 ms | 448.78 ms | 29.44 ms |
+| Full replay p99 | 23.76 ms | 31.31 ms | 24.46 ms |
+| Live vertex library builds | 13 | 7 | 0 |
+
+The candidate removed the duplicate compilation from refresh 21. Four
+StageIn draws remained there, including 11.24 ms exporting GPU-owned data
+for the CPU. Refresh 89 still spent 120.55 ms translating shaders and
+300.09 ms compiling fragment libraries. Keep CPU vertex fallback opt-in
+while the cold p99 and worst remaining intervals exceed the frame budget.
+
+A separate cold run enabled the existing materialized readback reuse
+probe. It reduced export calls at refresh 21 from 10,024 to 849, but
+export time fell only from 11.24 ms to 9.63 ms. The refresh took
+25.32 ms, and all seven captures still matched. The fallback still
+requests the whole guest address space, so the result supports narrowing
+it to vertex and index input ranges before considering default admission.
+
+### Refresh 89 fragment shader reuse
+
+At the mansion gate, six generated fragment shaders differed from earlier
+variants in writes to a TEV combiner buffer whose value the shader never
+read. With Async Shaders enabled, the native Metal generator omits these
+unused writes. Draws reuse the earlier translated sources and compiled
+functions. Shaders that read the buffer retain the original stage updates.
+
+On a physical M4 iPad, three 900-refresh slot 4 replays used FastInterp,
+100% guest CPU, a 100% speed limit and Performance Mode. The experimental
+CPU vertex fallback was off. The cold control disabled the new shader
+reuse. Cold runs used separate empty Cara caches and fresh Metal entry
+names. Each raw run produced identical captures at refreshes 88–90 and 900.
+
+| Measurement | Cold control | Cold with reuse | Warm with reuse |
+| --- | ---: | ---: | ---: |
+| Full replay p99 | 24.01 ms | 21.84 ms | 21.81 ms |
+
+Cold refresh 89 fell from 446.70 ms to 17.56 ms. Its 120.46 ms of
+translation and 301.26 ms of fragment compilation both fell to zero.
+The next cold bottleneck was the vertex shader and pipeline at refresh 18
+(613.19 ms). The warm pass averaged 59.65 refreshes per second.
+
+Opening the Downloads Deflate ZIP on the same M4 iPad built a 1,024-entry
+seek index in 1.44 s. Its cartridge member matched the raw cartridge by
+SHA-256. The warm ZIP replay completed all 900 refreshes at 59.70 refreshes/s
+with a p99 of 21.19 ms. Refresh 89 took 17.61 ms. ZIP pixels matched the
+raw control at refreshes 88–90. Draw counts first differed at refresh 188
+and the final capture differed. The cause of the later divergence is open.
+
+### macOS cold-run window responsiveness
+
+A single native Metal test binary at `3948557` ran Dark Moon for 3,600
+refreshes each with FastInterp and four-core Dynarmic JIT. Both runs used
+100% guest CPU, Performance Mode timing, Async Shaders, and separate cold
+runtime shaders. The longest intervals were 15.51 s at refresh 310 with
+FastInterp and 16.83 s at refresh 294 with JIT. Runtime pipeline creation
+was logged during both gaps, and both runs completed. Checkpoints by
+refresh showed different game progression, so this pair measures launch
+behavior and gives no renderer pixel-parity claim.
+
+The old `cara-metal-rom` harness ran emulation and serviced SDL window
+events on the main thread. A draw that waited for a Metal library or a
+pipeline could block event polling until the compiler returned. The
+updated harness keeps AppKit and SDL window work on the main thread and
+runs Metal setup, emulation, draw preparation, and capture on one owner
+thread. It queues input for that owner and joins it before UI teardown.
+
+A cold rerun on the M3 Max completed 1,200 refreshes with each CPU backend
+and matched the corresponding old frame 1,200 capture byte for byte.
+Samples taken during both runs placed actual library and pipeline creation
+on the emulation owner, with SDL and AppKit polling on the main thread.
+
+| Backend | Longest cold refresh | Window events delivered during it | Event delay p99 / max |
+| --- | ---: | ---: | ---: |
+| FastInterp | 15.71 s at 310 | 287 | 1 / 160 ms |
+| Dynarmic JIT | 16.80 s at 294 | 309 | 1 / 2 ms |
+
+Window responsiveness and game-frame latency are separate here. Cold
+exact shader compilation still delays gameplay until the draw is ready.
+The measured window path is the native Metal harness. The test did not
+cover manual closing or fullscreen transitions during a compile.
+
+## Cold shader work and command-list lead time
+
+On an M3 Pro, FastInterp Metal booted Dark Moon through Gadd's lab and the
+mansion entrance with the learned cache disabled. The guest CPU stayed at
+100%. Replaying with both GPU completion options enabled, the 100% and 200%
+host speed limits averaged 55.6 and 84.7 emulated refreshes per second.
+Both produced byte-identical pixels at 40 matching capture refreshes.
+The 200% diagnostic still had an 847.79 ms refresh interval during the
+entrance sequence. These are emulator refresh intervals. The run order also
+allowed the system Metal compiler cache to carry over between processes.
+
+With `CARA_METAL_FRAME_COST=1`, `pica_list_to_first_shader_translation`
+measures from PICA command-list entry to the first runtime translation miss
+in that list. In the 200% replay, 31 of 42 such lists reached their first miss
+in less than 1 ms, and all 42 in less than 5 ms. Runtime translation handled
+259 new pairs in 8.96 s total. A submission hook could inspect an immutable
+command-list snapshot. On this route, its head start would usually cover a
+small fraction of translation. Later misses within the same list can have
+more lead time, including time spent on earlier shader misses.
+
+`CARA_METAL_REUSE_VERTEX_MSL=1` tests a bounded reuse cache for identical
+linked vertex SPIR-V and vertex mode. Each pair still links and validates
+its resources and varyings. The cache skips the SPIRV-Cross MSL emission for
+a repeated vertex stage paired with a different fragment.
+
+In the matched 200% replays, it reused 198 of 259 vertex stages and cut
+draw-time translation from 8.96 s to 5.86 s. All 41 captured images,
+including the final capture, matched byte for byte. Overall refresh p99
+went from 35.62 ms to 29.40 ms. The slowest mansion-entrance refresh
+still took 543.22 ms, down from 847.79 ms. The experiment remains opt-in.
+
 ## Cartridge gameplay checks
 
 Boot each local cartridge with a fresh user directory and FastInterp. Drive
