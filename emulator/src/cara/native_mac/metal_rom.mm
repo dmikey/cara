@@ -384,12 +384,13 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         if (adaptive_clock.Enabled())
             guest_clock = adaptive_clock.Percent();
         core.CoreTiming().UpdateClockSpeed(guest_clock);
-        core.perf_stats->SetBoundedFramePacing(saved_play_mode && !diagnostic_speed);
+        const bool bounded_frame_pacing = saved_play_mode && !diagnostic_speed;
+        core.perf_stats->SetBoundedFramePacing(bounded_frame_pacing);
         std::cout << "GUEST_TIMING clock=" << guest_clock
                   << " p3d=" << Cara::ExperimentalP3DCompletionEnabled()
                   << " ppf=" << Cara::ExperimentalPPFDependencyEnabled()
                   << " soft_knee=" << Cara::gpu_completion_policy.soften_render
-                  << " bounded_pacing=" << (saved_play_mode && !diagnostic_speed)
+                  << " bounded_pacing=" << bounded_frame_pacing
                   << " speed_limit=" << Settings::values.use_frame_limit
                   << " max_speed=" << Settings::values.frame_limit << std::endl;
         std::cout << "TITLE " << std::hex << core.GetTitleID() << std::dec << std::endl;
@@ -412,6 +413,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         size_t next_input = 0;
         unsigned previous_frame = VideoCore::GetCurrentFrame();
         Uint32 title_updated_at = SDL_GetTicks();
+        bool discard_clock_sample = false;
         while (!events.stop.load() && VideoCore::GetCurrentFrame() < limit) {
             while (next_input < inputs.size() && inputs[next_input].frame <= previous_frame)
                 host.ApplyInput(inputs[next_input++]);
@@ -422,7 +424,9 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
             }
             const unsigned frame = VideoCore::GetCurrentFrame();
             if (adaptive_clock.Enabled() && frame != previous_frame) {
-                if (frame == previous_frame + 1) {
+                if (std::exchange(discard_clock_sample, false) || frame != previous_frame + 1) {
+                    adaptive_clock.ResetSamples();
+                } else {
                     const auto timing = core.perf_stats->GetLastFrameTiming();
                     using Seconds = std::chrono::duration<double>;
                     const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
@@ -431,8 +435,6 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                         guest_clock = next;
                         core.CoreTiming().UpdateClockSpeed(guest_clock);
                     }
-                } else {
-                    adaptive_clock.ResetSamples();
                 }
             }
             if (frame != previous_frame && frame < limit && should_capture(frame)) {
@@ -440,8 +442,9 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                 std::filesystem::create_directory(capture_dir);
                 if (!Cara::WriteNativeMetalCapture(capture_dir))
                     throw std::runtime_error("Could not retain Metal checkpoint");
-                core.perf_stats->ResetFramePacing();
-                adaptive_clock.ResetSamples();
+                if (bounded_frame_pacing)
+                    core.perf_stats->ResetFramePacing();
+                discard_clock_sample = true;
                 std::cout << "CAPTURE frame=" << frame << std::endl;
             }
             if (frame != previous_frame) {
