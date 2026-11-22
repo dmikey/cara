@@ -14,6 +14,10 @@
     <string>1</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.games</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Nearby StreetPass exchanges public game messages with other enabled Cara libraries.</string>
+    <key>NSBonjourServices</key>
+    <array><string>_cara-pass-v1._tcp</string></array>
     <key>LSSupportsGameMode</key>
     <true/>
 </dict>

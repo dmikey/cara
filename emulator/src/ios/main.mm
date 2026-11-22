@@ -14,6 +14,7 @@
 #include <sys/resource.h>
 #include <time.h>
 #import "ios/skin_controls.h"
+#import "core/frontend/apple/nearby_streetpass.h"
 #import "ios/action_layout.h"
 #import "ios/input_hub.h"
 #import "ios/feature_controllers.h"
@@ -752,6 +753,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     __weak CaraSettingsController* settingsController;
     NSTimer* cloudFeedbackTimer;
     BOOL libraryVisible;
+    CaraNearbyStreetPass* nearbyPass;
     BOOL pickingROMsFolder;
     BOOL pickingStreetPass, exportingStreetPass;
     NSURL* gameURL;
@@ -1238,7 +1240,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)hideLibrary {
     inputHub.active=NO;
-    libraryVisible=NO;
+    libraryVisible=NO; [nearbyPass stop];
     libraryNavigation.view.hidden=YES; [libraryController suspendArtwork];
     [self resumeFromMenu]; [self setNeedsStatusBarAppearanceUpdate];
     if (@available(iOS 16.0,*)) [self setNeedsUpdateOfSupportedInterfaceOrientations];
@@ -1260,6 +1262,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)updateSyncFeedback {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{ [self updateSyncFeedback]; }); return; }
+    [self refreshNearbyStreetPass];
     BOOL busy=saveSync.busy || stateSync.busy;
     CaraSaveSync* attention=nil;
     for (CaraSaveSync* channel in @[saveSync,stateSync]) if ([channel.phase isEqual:@"error"] || [channel.phase isEqual:@"conflict"]) { attention=channel; break; }
@@ -1292,6 +1295,15 @@ static std::filesystem::path PedometerHistoryPath() {
         inDomains:NSUserDomainMask].firstObject;
     return std::filesystem::path(documents.fileSystemRepresentation) / "cara/nand/cara-steps.txt";
 }
+- (void)refreshNearbyStreetPass {
+    if (libraryVisible && !backgroundAt && !running && !openingGame && !saveSync.busy && !stateSync.busy &&
+        self.view.window.windowScene.activationState == UISceneActivationStateForegroundActive &&
+        [NSUserDefaults.standardUserDefaults boolForKey:@"nearbyStreetPass"]) {
+        if (!nearbyPass) nearbyPass = [CaraNearbyStreetPass new];
+        [nearbyPass startWithNand:[NSURL fileURLWithFileSystemRepresentation:
+            PedometerHistoryPath().parent_path().c_str() isDirectory:YES relativeToURL:nil]];
+    } else [nearbyPass stop];
+}
 - (void)exportStreetPass {
     NSURL* packet = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
         URLByAppendingPathComponent:@"Cara StreetPass.carapass"];
@@ -1323,7 +1335,7 @@ static std::filesystem::path PedometerHistoryPath() {
         [self shellError:@"StreetPass" message:@"Stop the game and let the save sync finish first."];
         return;
     }
-    openingGame = YES;
+    [nearbyPass stop]; openingGame = YES;
     const BOOL access = [url startAccessingSecurityScopedResource];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         NSError* failure = nil;
@@ -1341,7 +1353,7 @@ static std::filesystem::path PedometerHistoryPath() {
             }];
         if (access) [url stopAccessingSecurityScopedResource];
         dispatch_async(dispatch_get_main_queue(), ^{
-            self->openingGame = NO;
+            self->openingGame = NO; [self refreshNearbyStreetPass];
             [self shellError:@"StreetPass" message:detail ?: failure.localizedDescription];
         });
     });
@@ -1424,9 +1436,16 @@ static std::filesystem::path PedometerHistoryPath() {
     if (CMPedometer.isStepCountingAvailable) {
         [activity addObject:action(@"Import today’s device steps", @"figure.walk", available, ^{ [owner importPedometerSteps]; })];
     }
+    [activity insertObject:@{@"title":@"Nearby StreetPass", @"symbol":@"antenna.radiowaves.left.and.right",
+        @"subtitle":nearbyPass.statusText ?: @"Off",
+        @"value":@([NSUserDefaults.standardUserDefaults boolForKey:@"nearbyStreetPass"]),
+        @"change":^(BOOL on) {
+            [NSUserDefaults.standardUserDefaults setBool:on forKey:@"nearbyStreetPass"];
+            [owner refreshNearbyStreetPass];
+        }} atIndex:0];
     [activity addObject:action(@"Record 100 simulated steps", @"shoeprints.fill", available, ^{ [owner recordPedometerSteps]; })];
     [sections addObject:@{@"title":@"3DS activity", @"rows":activity,
-        @"footer":@"Games can read steps and spend Play Coins. Earn one coin per 100 steps, up to 10 per day and 300 in your wallet."}];
+        @"footer":@"Nearby StreetPass shares registered title IDs and public game messages with other enabled Cara libraries while this library is open. Earn one coin per 100 steps, up to 10 per day and 300 in your wallet."}];
     NSMutableArray* locations=[NSMutableArray arrayWithObject:@{@"title":@"ROMs folder",@"subtitle":libraryStore.folderName?:@"Roms",@"symbol":@"folder",@"enabled":@(available),@"action":^{ [owner chooseROMsFolder]; }}];
     [locations addObject:action(@"Open game from Files…",@"doc.badge.plus",!openingGame,^{ EmulatorController* c=owner; if (c) { c->pickingSkin=NO; [c openROM]; } })];
     if (libraryStore.hasCustomFolder) [locations addObject:action(@"Use Cara’s Roms folder",@"folder.fill",available,^{ EmulatorController* c=owner; if (c) { [c->libraryStore useDefaultFolder]; [c->libraryController reloadLibrary]; [c resumeFromMenu]; } })];
@@ -1830,6 +1849,7 @@ static std::filesystem::path PedometerHistoryPath() {
 }
 - (void)stopGame { if(relayClient) relayClient->Disconnect(); stop=true; sessionNotice=nil; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
 - (void)sceneWillResignActive {
+    [nearbyPass stop];
     if (backgroundAt > 0) return;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     if (emuWindow) emuWindow->metal_lcd_foreground = false;
@@ -1899,6 +1919,7 @@ static std::filesystem::path PedometerHistoryPath() {
     [self applyInterfacePausePolicy];
     [saveSync refreshCloudStatus]; [stateSync refreshCloudStatus];
     if (libraryVisible) [libraryController reloadLibrary];
+    [self refreshNearbyStreetPass];
 }
 - (void)openRecentGame {
     NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
@@ -2003,7 +2024,7 @@ static std::filesystem::path PedometerHistoryPath() {
     if (![CaraLibraryStore isGameURL:url]) { status.text=@"Choose a 3DS game or a ZIP containing one .3ds ROM."; [self resumeFromMenu]; return; }
     [self ensureLibrary];
     if(relayClient && (gameURL || worker.joinable())) relayClient->Disconnect();
-    openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];
+    [nearbyPass stop]; openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];
     if (worker.joinable()) worker.join();
     if (gameScoped) [gameURL stopAccessingSecurityScopedResource];
     CaraGameOverrides=[libraryStore metadataForGame:url][@"overrides"];

@@ -9,6 +9,9 @@
 #include "core/hle/service/ptm/step_history.h"
 
 namespace Cara {
+#if defined(__APPLE__)
+int RunNearbyStreetPass(const std::filesystem::path& nand, unsigned seconds);
+#endif
 inline std::optional<int> RunConsoleActivity(int argc, char** argv) {
     if (argc < 2 || std::string_view(argv[1]) != "--activity") return std::nullopt;
     try {
@@ -17,6 +20,17 @@ inline std::optional<int> RunConsoleActivity(int argc, char** argv) {
         if (!std::filesystem::is_directory(nand))
             throw std::runtime_error("Select an existing Cara user directory containing nand");
         const std::string_view command = argv[3];
+#if defined(__APPLE__)
+        if (command == "nearby") {
+            unsigned seconds = 0;
+            const std::string_view duration = argv[4];
+            const auto end = duration.data() + duration.size();
+            const auto parsed = std::from_chars(duration.data(), end, seconds);
+            if (parsed.ec != std::errc{} || parsed.ptr != end || !seconds || seconds > 3600)
+                throw std::runtime_error("Nearby duration must be 1 to 3600 seconds");
+            return RunNearbyStreetPass(nand,seconds);
+        }
+#endif
         if (command == "export") {
             const auto count = Service::CECD::ExportStreetPass(nand, argv[4]);
             std::cout << count << " public StreetPass messages exported\n";

@@ -21,7 +21,7 @@ using Box = Module::CecBoxInfoHeader;
 using Mailbox = Module::CecMBoxInfoHeader;
 constexpr std::string_view Signature = "CARAPASS1";
 constexpr size_t MaxMessage = 0x19000;
-constexpr size_t MaxPacket = 24 * 8 * MaxMessage + Signature.size();
+static_assert(MaxStreetPassFile == 24 * 8 * MaxMessage + Signature.size());
 
 Bytes Read(const fs::path& path, size_t limit) {
     const auto size = fs::file_size(path);
@@ -116,10 +116,17 @@ bool HasNewStreetPass(const fs::path& nand) {
     return false;
 }
 
-unsigned ExportStreetPass(const fs::path& nand, const fs::path& file) {
+StreetPassTitles RegisteredStreetPassTitles(const fs::path& nand) {
+    StreetPassTitles result;
+    for (const auto& [title, box] : Registered(nand)) result.insert(title);
+    return result;
+}
+
+unsigned ExportStreetPass(const fs::path& nand, const fs::path& file, const StreetPassTitles* allowed) {
     Bytes packet(Signature.begin(), Signature.end());
     unsigned count = 0;
     for (const auto& [title, box] : Registered(nand)) {
+        if (allowed && !allowed->contains(title)) continue;
         const auto out = box.dir / "OutBox__";
         if (!fs::is_regular_file(out / "OBIndex_____")) continue;
         const auto index = Read(out / "OBIndex_____", 8 + 8 * 8);
@@ -141,7 +148,7 @@ unsigned ExportStreetPass(const fs::path& nand, const fs::path& file) {
 }
 
 unsigned ImportStreetPass(const fs::path& nand, const fs::path& file, std::time_t received) {
-    const auto packet = Read(file, MaxPacket);
+    const auto packet = Read(file, MaxStreetPassFile);
     if (packet.size() < Signature.size() || !std::equal(Signature.begin(), Signature.end(), packet.begin()))
         throw std::runtime_error("Choose a Cara StreetPass file");
     const auto boxes = Registered(nand);
