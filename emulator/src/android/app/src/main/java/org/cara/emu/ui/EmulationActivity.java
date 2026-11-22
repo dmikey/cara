@@ -84,6 +84,7 @@ public final class EmulationActivity extends AppCompatActivity {
             mGameName = gameName == null || gameName.isEmpty() ? getString(R.string.app_name) : gameName;
             mBitmaps = result;
             setTitle(mGameName);
+            findViewById(R.id.game_open_progress).setVisibility(View.GONE);
             if (mEmulationFragment == null) {
                 mEmulationFragment = EmulationFragment.newInstance(path);
                 getSupportFragmentManager().beginTransaction()
@@ -152,7 +153,7 @@ public final class EmulationActivity extends AppCompatActivity {
         }
         mEmulationFragment = (EmulationFragment)getSupportFragmentManager().findFragmentById(
                 R.id.fragment_emulation);
-        new InitTask().execute();
+        prepareGame();
     }
 
     private static String getLaunchPath(Intent intent) {
@@ -237,6 +238,13 @@ public final class EmulationActivity extends AppCompatActivity {
         mGameId = null;
         mGameName = null;
         mLaunchGeneration++;
+        prepareGame();
+    }
+
+    private void prepareGame() {
+        if (mEmulationFragment == null) {
+            findViewById(R.id.game_open_progress).setVisibility(View.VISIBLE);
+        }
         new InitTask().execute();
     }
 
