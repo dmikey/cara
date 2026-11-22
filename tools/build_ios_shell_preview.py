@@ -29,7 +29,8 @@ info = dict(CFBundleExecutable='CaraShellPreview', CFBundleIdentifier='com.dmike
             UIApplicationSceneManifest=dict(UIApplicationSupportsMultipleScenes=False))
 info['UISupportedInterfaceOrientations~ipad'] = ['UIInterfaceOrientationPortrait', 'UIInterfaceOrientationPortraitUpsideDown', 'UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight']
 (app / 'Info.plist').write_bytes(plistlib.dumps(info))
-shutil.copy2(ROOT / 'emulator/src/ios/skins/CarbonDuo.deltaskin', app / 'CarbonDuo.deltaskin')
+for skin in (ROOT / 'emulator/src/ios/skins').glob('*.deltaskin'):
+    shutil.copy2(skin, app / skin.name)
 sounds = ROOT / 'emulator/src/ios/MenuSounds'
 if sounds.is_dir():
     shutil.copytree(sounds, app / 'MenuSounds', dirs_exist_ok=True)
