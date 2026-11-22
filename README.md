@@ -24,21 +24,33 @@ fixes and check their effects on gameplay, rendering, and saves.
   connect a supported game controller.
 - **Pick up where you left off.** Make per-game save states and sync in-game
   saves through a selected iCloud Drive folder.
-- **Choose how each game runs.** Hardware-accelerated graphics and native stereo
-  audio are built in. Per-game Accuracy and Performance settings let you choose
-  whether to use adaptive guest CPU timing.
+- **Per-game play settings.** Choose Accuracy for a fixed 100% guest CPU clock
+  and game speed, or Performance for adaptive tuning.
 
-### Performance Mode on Apple hardware
+### What Performance Mode does on iPad
 
-Performance Mode models GPU busy flags and completion interrupts in guest time.
-On iPad, **Options → Display → Async Shaders** is enabled by default in this
-mode. On Mac, the native Metal runner reads the saved Performance Mode and
-Async Shaders preferences. Compatible draws can use a general shader compiled on-device while
-Metal builds a specialized pipeline. For eligible cold vertex draws, Cara can
-interpret the guest vertices and submit the triangles to Metal while compilation
-continues. GLES and Metal reuse fragment shaders when only unused combiner-buffer
-writes differ. First visits to a scene can still hitch.
-See the [mansion gate frame times](docs/native-metal-build.md#mansion-gate-with-performance-mode-defaults).
+- **Adaptive guest CPU.** Cara adjusts the emulated 3DS CPU clock under load
+  to help keep gameplay near the speed limit. Turn on **Use fixed guest clock**
+  if you want to set the clock yourself.
+- **Adaptive Frame Skip.** Cara can combine display updates when it falls
+  behind, while still running every 3DS draw and transfer.
+- **Less waiting for shaders.** **Options → Display → Async Shaders** is on by
+  default in Performance Mode. Compatible draws can use a general shader while
+  Metal builds a specialized pipeline. Eligible vertex draws can keep going
+  through CPU interpretation. Metal and GLES also reuse fragment shaders when
+  only unused combiner-buffer writes differ. First visits can still hitch.
+
+Cara models GPU busy flags and completion interrupts in 3DS guest time so
+games receive those signals at the expected points.
+
+**Measured on an M4 iPad Pro.** In the same normal-boot *Luigi’s Mansion:
+Dark Moon* Gadd’s lab replay, Metal and GLES both held **100% emulation
+speed**. Metal cut the 99th-percentile time between refreshes from
+**20.51 ms to 17.15 ms**, about **16% shorter**. At the mansion gate, Async
+Shaders cut one first-visit stall from **611 ms to 46 ms** in the Metal
+replay. The first refresh and other cold stalls remained. See the
+[Gadd’s lab comparison](docs/native-metal-build.md#adaptive-metal-submissions)
+and [mansion gate frame times](docs/native-metal-build.md#mansion-gate-with-performance-mode-defaults).
 
 ## Play cartridge ROMs straight from ZIP
 
@@ -77,7 +89,8 @@ guest clock and a separate game speed limit. Adaptive Frame Skip coalesces
 host display updates while preserving guest rendering. Under **Display**,
 **Lossless 2×** and **Lossless 4×** center the screens at whole pixel multiples.
 Play and display settings apply when you save. CPU engine changes apply when
-you next open a game.
+you next open a game. The native Metal runner reads the saved Performance Mode
+and Async Shaders preferences.
 
 Cara opts into Apple Game Mode by default on supported devices. It activates
 automatically in full-screen play unless you turn it off. The **Game Mode**
