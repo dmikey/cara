@@ -608,6 +608,34 @@ static const char* CaraSelectedCPUBackend() {
     return backend && std::strcmp(backend,"dyncom")==0 ? "dyncom" : "fastinterp";
 }
 
+#ifdef CARA_IOS_GLES
+static bool WriteGlesCapture(const IOSWindow& window, const std::string& directory) {
+    const auto previous = OpenGL::OpenGLState::BindReadFramebuffer(window.framebuffer);
+    GLint pack_buffer=0, pack_row_length=0, pack_alignment=0;
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row_length);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    std::vector<u8> pixels(400 * 480 * 4);
+    glReadPixels(0, 0, 400, 480, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    const GLenum capture_error = glGetError();
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer);
+    glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
+    glPixelStorei(GL_PACK_ALIGNMENT, pack_alignment);
+    OpenGL::OpenGLState::BindReadFramebuffer(previous);
+    if (capture_error == GL_NO_ERROR) {
+        std::ofstream raw(directory + "benchmark-frame.rgba", std::ios::binary);
+        raw.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
+    }
+    std::ofstream(directory + "benchmark-frame.json")
+        << "{\"width\":400,\"height\":480,\"origin\":\"bottom_left\",\"format\":\"RGBA8\",\"gl_error\":"
+        << capture_error << ",\"frame\":" << window.frames << "}\n";
+    return capture_error == GL_NO_ERROR;
+}
+#endif
+
 static BOOL CaraCanTuneEmulation() {
     return !std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_ADAPTIVE_GUEST_CPU") && !std::getenv("CARA_MAX_SPEED_PERCENT");
 }
@@ -2867,6 +2895,19 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                 throw std::runtime_error("Could not retain Metal parity sample");
                         }
 #endif
+#ifdef CARA_IOS_GLES
+                        if (target_frames &&
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                            !emuWindow->native_metal_only &&
+#endif
+                            CaptureBurst(emuWindow->frames, "CARA_GLES_PARITY_START",
+                                         "CARA_GLES_PARITY_COUNT")) {
+                            const auto directory = user + "parity-" + std::to_string(emuWindow->frames) + '/';
+                            FileUtil::CreateFullPath(directory);
+                            if (!WriteGlesCapture(*emuWindow, directory))
+                                throw std::runtime_error("Could not retain GLES parity sample");
+                        }
+#endif
                         last_frame_time = now;
                         timed_frame = emuWindow->frames;
                         if (frame_times.size() == window_frames || (target_frames && timed_frame == target_frames)) {
@@ -3304,28 +3345,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     && !emuWindow->native_metal_only
 #endif
                 ) {
-                    const auto previous = OpenGL::OpenGLState::BindReadFramebuffer(emuWindow->framebuffer);
-                    GLint pack_buffer=0, pack_row_length=0, pack_alignment=0;
-                    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
-                    glGetIntegerv(GL_PACK_ROW_LENGTH, &pack_row_length);
-                    glGetIntegerv(GL_PACK_ALIGNMENT, &pack_alignment);
-                    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-                    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-                    glPixelStorei(GL_PACK_ALIGNMENT, 4);
-                    std::vector<u8> pixels(400 * 480 * 4);
-                    glReadPixels(0, 0, 400, 480, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-                    const GLenum capture_error = glGetError();
-                    glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer);
-                    glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
-                    glPixelStorei(GL_PACK_ALIGNMENT, pack_alignment);
-                    OpenGL::OpenGLState::BindReadFramebuffer(previous);
-                    if (capture_error == GL_NO_ERROR) {
-                        std::ofstream raw(user+"benchmark-frame.rgba", std::ios::binary);
-                        raw.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
-                    }
-                    std::ofstream(user+"benchmark-frame.json")
-                        << "{\"width\":400,\"height\":480,\"origin\":\"bottom_left\",\"format\":\"RGBA8\",\"gl_error\":"
-                        << capture_error << ",\"frame\":" << emuWindow->frames << "}\n";
+                    WriteGlesCapture(*emuWindow, user);
                 }
 #endif
                 if (std::getenv("CARA_FASTINTERP_PROFILE")) {

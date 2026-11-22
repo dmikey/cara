@@ -14,6 +14,7 @@
 #include "core/settings.h"
 #include "core/hw/gpu.h"
 #include "video_core/pica_state.h"
+#include "video_core/vertex_loader.h"
 
 namespace Cara {
 
@@ -73,8 +74,7 @@ public:
             bool interpret_vertices = false;
             auto draw = bindings.Prepare(lane, Pica::g_state, indexed, read, {}, &interpret_vertices);
             if (interpret_vertices) {
-                // The CPU vertex loader reads guest RAM directly.
-                FlushAll();
+                FlushVertexInputs(indexed);
                 NativeMetalCost::Count(NativeMetalCost::VertexFallbackDraws, 1);
                 return false;
             }
@@ -140,6 +140,48 @@ public:
     void FlushDeferredDraws() override {
         if (!failed)
             lane.Drain();
+    }
+
+    void FlushVertexInputs(bool indexed) {
+        const auto& pipe = Pica::g_state.regs.pipeline;
+        const u32 count = pipe.num_vertices;
+        if (!count)
+            return;
+        const u64 base = pipe.vertex_attributes.GetPhysicalBaseAddress();
+        u64 first = pipe.vertex_offset;
+        u64 last = first + count - 1;
+        if (indexed) {
+            const u32 width = pipe.index_array.format ? 2 : 1;
+            const u64 start = base + pipe.index_array.offset;
+            const u64 size = u64(count) * width;
+            if (start + size > std::numeric_limits<PAddr>::max())
+                return FlushAll();
+            FlushRegion(start, size);
+            const auto ref = memory.GetPhysicalRef(start);
+            if (!ref || size > ref.GetSize())
+                return FlushAll();
+            const auto* indices = ref.GetPtr();
+            first = std::numeric_limits<u16>::max();
+            last = 0;
+            for (u32 i = 0; i < count; ++i) {
+                const auto* bytes = indices + i * width;
+                const u64 index = width == 2 ? bytes[0] | (u32(bytes[1]) << 8) : bytes[0];
+                first = std::min(first, index);
+                last = std::max(last, index);
+            }
+        }
+        const Pica::VertexLoader loader(pipe);
+        for (int i = 0; i < loader.GetNumTotalAttributes(); ++i) {
+            const auto attr = loader.GetAttributeLayout(i);
+            if (!attr.elements)
+                continue;
+            const u64 start = base + attr.offset + first * attr.stride;
+            const u64 end = base + attr.offset + last * attr.stride +
+                            attr.elements * pipe.vertex_attributes.GetElementSizeInBytes(i);
+            if (end > std::numeric_limits<PAddr>::max())
+                return FlushAll();
+            FlushRegion(start, end - start);
+        }
     }
 
     void FlushAll() override {
