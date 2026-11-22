@@ -60,6 +60,8 @@ add_library(common STATIC
     common_paths.h
     common_types.h
     file_util.cpp
+    sevenzip_rom.cpp
+    sevenzip_rom.h
     z3ds_rom.cpp
     z3ds_rom.h
     zip_rom.cpp
@@ -126,4 +128,4 @@ set_source_files_properties("${ZSTD_ROOT}/contrib/seekable_format/zstdseek_decom
     PROPERTIES INCLUDE_DIRECTORIES "${ZSTD_ROOT}/lib/common")
 target_sources(common PRIVATE memory_ref.cpp zstd_compression.cpp)
 find_package(ZLIB REQUIRED)
-target_link_libraries(common PUBLIC Boost::serialization PRIVATE libzstd_static ZLIB::ZLIB)
+target_link_libraries(common PUBLIC Boost::serialization PRIVATE archive_static libzstd_static ZLIB::ZLIB)

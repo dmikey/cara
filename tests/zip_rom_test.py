@@ -3,6 +3,7 @@
 import io
 from pathlib import Path
 import random
+import shutil
 import struct
 import subprocess
 import sys
@@ -94,7 +95,20 @@ def main():
             member = folder / (name + ".z3ds")
             member.write_bytes(image[:position] + replacement + image[position + len(replacement):])
             bad_z3ds.append(member)
-        subprocess.run([test,raw,stored,deflated,zip64,streamed,z3ds,zcci,"--bad",malformed,bad_offset,
+        seven_good, seven_bad = [], []
+        if tar := shutil.which("bsdtar") or (shutil.which("tar") if sys.platform == "darwin" else None):
+            member = folder / "Cart.3ds"
+            member.write_bytes(payload)
+            second = folder / "Two.cci"
+            second.write_bytes(b"second")
+            for name, names in [("single.7Z", [member.name]), ("multiple.7z", [member.name, second.name])]:
+                target = folder / name
+                subprocess.run([tar, "--format=7zip", "-cf", target, "-C", folder, *names], check=True)
+                (seven_good if len(names) == 1 else seven_bad).append(target)
+            truncated = folder / "truncated.7z"
+            truncated.write_bytes(seven_good[0].read_bytes()[:-19])
+            seven_bad.append(truncated)
+        subprocess.run([test,raw,stored,deflated,zip64,streamed,z3ds,zcci,*seven_good,"--bad",*seven_bad,malformed,bad_offset,
                         checksum,ambiguous,*bad_z3ds], check=True)
 
 

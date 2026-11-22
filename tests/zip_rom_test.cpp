@@ -59,6 +59,7 @@ int main(int argc, char** argv) {
             std::array<u8, 4> signature{};
             Require(raw_archive.ReadBytes(signature.data(), signature.size()) == signature.size() &&
                         (signature == std::array<u8, 4>{0x50, 0x4b, 3, 4} ||
+                         signature == std::array<u8, 4>{0x37, 0x7a, 0xbc, 0xaf} ||
                          signature == std::array<u8, 4>{'Z', '3', 'D', 'S'}),
                     "Plain archive open returned ROM content");
             const u64 boundary = 1024 * 1024;

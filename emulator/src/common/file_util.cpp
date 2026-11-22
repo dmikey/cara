@@ -14,6 +14,7 @@
 #include "common/file_util.h"
 #include "common/zip_rom.h"
 #include "common/z3ds_rom.h"
+#include "common/sevenzip_rom.h"
 #include "common/string_util.h"
 #include "common/logging/log.h"
 
@@ -610,10 +611,13 @@ IOFile::IOFile(IOFile&& other) noexcept {
 
 // Keep the compressed source kind in the existing serialized mode field so old
 // native I/O save states continue to reopen with their original modes.
+static constexpr const char* SevenZipRomMode = "rb:7z";
 static constexpr const char* Z3dsRomMode = "rb:z3ds";
 static constexpr const char* ZipRomMode = "rb:zip";
 
 bool IOFile::OpenRom(const std::string& filename) {
+    if (filename.size() >= 3 && Common::ToLower(filename.substr(filename.size() - 3)) == ".7z")
+        return Open(filename, SevenZipRomMode);
     if (filename.size() >= 5) {
         const auto suffix = Common::ToLower(filename.substr(filename.size() - 5));
         if (suffix == ".z3ds" || suffix == ".zcci")
@@ -627,9 +631,10 @@ bool IOFile::Open(const std::string& filename, const char openmode[]) {
     state_mode = openmode;
     const bool zip_rom = state_mode == ZipRomMode;
     const bool z3ds_rom = state_mode == Z3dsRomMode;
-    const char* native_mode = zip_rom || z3ds_rom ? "rb" : openmode;
+    const bool seven_zip = state_mode == SevenZipRomMode;
+    const char* native_mode = zip_rom || z3ds_rom || seven_zip ? "rb" : openmode;
     std::unique_ptr<IOHandler> source;
-    if (!zip_rom && !s_io_factory)
+    if (!zip_rom && !seven_zip && !s_io_factory)
         m_file.reset();
     if (s_io_factory) {
         source = s_io_factory->Open(filename, native_mode);
@@ -638,6 +643,8 @@ bool IOFile::Open(const std::string& filename, const char openmode[]) {
     }
     // Keep the previous handle alive until we open the successor. It can
     // already own the shared ZIP index when a loader reopens the same path.
+    if (seven_zip && source)
+        source = OpenSevenZipRom(filename, std::move(source));
     if (z3ds_rom && source)
         source = OpenZ3dsRom(std::move(source));
     if (zip_rom && source)

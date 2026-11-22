@@ -117,6 +117,7 @@ if (CARA_PRIVATE_MAC_METAL_HOST)
         message(FATAL_ERROR "The native Mac Metal host requires the Mac SDL host and the Metal renderer")
     endif()
     add_executable(cara-metal-rom MACOSX_BUNDLE native_mac/metal_rom.mm native_mac/config.cpp "${nearby_source}")
+    cara_bundle_sevenzip_licenses(cara-metal-rom)
     target_link_libraries(cara-metal-rom PRIVATE common core video_core input_common inih glad
         nihstro-headers SDL2 Threads::Threads "-framework Metal" "-framework QuartzCore"
         "-framework Foundation" "-framework AppKit" "-framework MultipeerConnectivity")

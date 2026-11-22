@@ -64,6 +64,11 @@ place. Stored entries are read directly. For Deflate, Cara builds an
 in-memory seek index at first open and decompresses data on demand. See the
 [ZIP cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
 
+Cara opens a 7z archive containing one regular `.3ds` or `.cci` file. At launch,
+it expands the cartridge to private temporary storage and shares it across
+ROM readers until the game closes. Allow free space for the uncompressed
+image. Password-protected and multi-cartridge archives are unsupported.
+
 Cara also opens Azahar v1 cartridge images with the `.z3ds` or `.zcci` extension.
 The shared ROM reader uses
 the embedded Zstandard seek table to read individual frames on demand. Both

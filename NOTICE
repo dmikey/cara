@@ -78,3 +78,10 @@ b3a92ab54dadd26a0c2a87d2677b80249d2e1a5a, with retained local fmt6, ARM64 ABI/ti
 and MAP_FAILED compatibility repairs. See emulator/externals/dynarmic/LICENSE.txt
 and bundled dependency licenses there, plus docs/evidence/m1-dynarmic-source-manifest.json.
 The original CPU adapter attribution is retained in emulator/src/core/arm/dynarmic.
+
+7z cartridge support uses libarchive 3.8.11 by Tim Kientzle and contributors
+and liblzma from XZ Utils 5.8.4 by Lasse Collin and contributors. The library
+sources, individual copyright notices and license texts are included under
+emulator/externals/sevenzip. Upstream releases:
+https://github.com/libarchive/libarchive/releases/tag/v3.8.11
+https://github.com/tukaani-project/xz/releases/tag/v5.8.4
