@@ -83,7 +83,23 @@ the missed display intervals. The HUD numbers describe one live sample.
 · [Native LUT investigation](https://github.com/dmikey/cara/commit/5aee993)
 · [Packed-fetch investigation](https://github.com/dmikey/cara/commit/2756155)
 
-### Monster Hunter Stories
+### Dark Moon, probes that stayed off
+
+| Probe | RG Slide result |
+| --- | --- |
+| Threaded GL state reuse | 13.59 refreshes/s against 13.59 averaged controls |
+| Depth encoding strength reduction | 77.04 ms/refresh against 72.78 ms averaged controls, despite an exhaustive match of all 16,777,216 encoding results |
+| Program-owned uniform location caching | 69.19 ms/refresh against 68.90 ms averaged controls with packed fetch reuse enabled |
+| Fragment lighting ablation | 48.53 ms/refresh against 83.86 ms averaged controls, with intentionally incorrect lighting, alpha, and coverage |
+
+Lighting ablation points to lighting-related host work in that lab scene.
+Matched traces had 700 draws per top swap in both arms, no guest geometry
+shader draws, and no surface downloads. The result includes effects on
+vertex shader linking, coverage, driver work, and implicit waits. Preserve
+lighting and measure those costs independently. Earlier driver, submission,
+copy, checkpoint, and shader probes are recorded in the
+[archived draw processing investigation](https://github.com/dmikey/cara/blob/f41280d/docs/android-draw-processing.md).
+
 
 The opening FMV, first walk toward the Secret Path, and a stationary dialogue
 prompt are distinct workloads. An iPad gameplay trace previously attributed
