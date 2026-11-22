@@ -725,6 +725,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #endif
     UILabel* status;
     UIImageView* skinArt;
+    UIView* skinBorder;
     CaraSkinControls* skinControls;
     CaraInputHub* inputHub;
     CaraActionControls* actionControls;
@@ -951,6 +952,13 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [presentationLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 #endif
     skinArt=[UIImageView new]; skinArt.opaque=NO; skinArt.userInteractionEnabled=NO; [self.view addSubview:skinArt];
+    skinBorder=[UIView new];
+    skinBorder.userInteractionEnabled=NO;
+    skinBorder.layer.borderColor=[UIColor colorWithRed:23./255 green:35./255 blue:27./255 alpha:1].CGColor;
+    skinBorder.layer.borderWidth=1;
+    skinBorder.layer.cornerRadius=26;
+    skinBorder.layer.cornerCurve=kCACornerCurveContinuous;
+    [self.view addSubview:skinBorder];
     skinControls=[[CaraSkinControls alloc] initWithFrame:CGRectZero]; [self.view addSubview:skinControls];
     __weak EmulatorController* weakSelf=self;
     const char* inputLock=std::getenv("CARA_BENCHMARK_INPUT_LOCK");
@@ -1009,12 +1017,23 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         }];
     }
 }
-- (void)layoutPadDeviceStatus {
+- (void)layoutPadDeviceStatusForMetrics:(CGRect)metrics {
     const CGRect safe=UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets);
     const CGFloat width=MIN(152,MAX(0,CGRectGetWidth(safe)-16));
     CGRect badge=CGRectMake(CGRectGetMaxX(safe)-8-width,CGRectGetMinY(safe)+6,width,26);
-    if (!menuFallback.hidden && CGRectIntersectsRect(badge,menuFallback.frame))
-        badge.origin.y=CGRectGetMaxY(menuFallback.frame)+4;
+    if (!CGRectIsNull(metrics) && !CGRectIsEmpty(metrics)) {
+        const CGFloat inset=MAX(0,CGRectGetMinX(metrics)-CGRectGetMinX(safe));
+        badge.origin.x=MAX(CGRectGetMinX(safe),CGRectGetMaxX(safe)-inset-width);
+        badge.origin.y=CGRectGetMinY(metrics);
+        badge.size.height=CGRectGetHeight(metrics);
+    }
+    if (!menuFallback.hidden && CGRectIntersectsRect(badge,menuFallback.frame)) {
+        const CGFloat left=CGRectGetMinX(menuFallback.frame)-8-width;
+        if (left>=CGRectGetMinX(safe) && (CGRectIsNull(metrics) || left>=CGRectGetMaxX(metrics)+8))
+            badge.origin.x=left;
+        else
+            badge.origin.y=CGRectGetMaxY(menuFallback.frame)+4;
+    }
     deviceStatusHUD.frame=badge;
     deviceStatusHUD.hidden=libraryVisible || menuVisible ||
         [self sessionPresentation]!=Cara::SessionPresentation::Running;
@@ -1042,11 +1061,13 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     BOOL actionsEnabled=!physicalSkin && [actionLayout[@"enabled"] boolValue];
     menuFallback.hidden=rep && !actionsEnabled && (!physicalSkin || CaraSkinHasTouchMenu(rep));
     if (actionsEnabled) menuFallback.frame=CGRectMake(self.view.safeAreaInsets.left+16,self.view.safeAreaInsets.top+8,100,44);
+    skinBorder.hidden=actionsEnabled || ![rep[@"caraViewportBorder"] isEqual:@YES];
+    skinBorder.frame=self.view.bounds;
     skinArt.hidden=actionsEnabled; actionControls.hidden=!actionsEnabled;
     if (!rep) {
         menuFallback.frame=CGRectMake(24,48,120,44);
         if (self.traitCollection.userInterfaceIdiom==UIUserInterfaceIdiomPad)
-            [self layoutPadDeviceStatus];
+            [self layoutPadDeviceStatusForMetrics:CGRectNull];
         else {
             deviceStatusHUD.hidden=YES;
             deviceStatusHUD.monitoring=NO;
@@ -1091,7 +1112,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSString* statsKey=landscape?@"landscapeStatsVisible":@"portraitStatsVisible";
     performanceHUD.hidden=[NSUserDefaults.standardUserDefaults objectForKey:statsKey] && ![NSUserDefaults.standardUserDefaults boolForKey:statsKey];
     if (self.traitCollection.userInterfaceIdiom==UIUserInterfaceIdiomPad) {
-        [self layoutPadDeviceStatus];
+        [self layoutPadDeviceStatusForMetrics:hud.metrics];
     } else if (deviceStatusHUD) {
         CGRect visibleMenu=menuFallback.hidden?phoneMenu:menuFallback.frame;
         const CGFloat right=CGRectIsNull(visibleMenu)?CGRectGetMaxX(canvas)-12:CGRectGetMinX(visibleMenu)-8;

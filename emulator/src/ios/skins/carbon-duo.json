@@ -7,6 +7,7 @@
     "ipad": {
       "standard": {
         "landscape": {
+          "caraViewportBorder": true,
           "assets": {
             "resizable": "carbon-duo-landscape.pdf"
           },
