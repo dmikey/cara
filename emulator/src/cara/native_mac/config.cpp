@@ -137,7 +137,8 @@ void Config::ReadValues() {
     v.use_hw_renderer=true; v.use_hw_shader=true; v.use_separable_shader=false;
     v.allow_shadow=false; v.disable_clip_coef=false;
 #endif
-    v.resolution_factor = 1;
+    v.resolution_factor = v.use_hw_renderer &&
+        sdl2_config->GetBoolean("Renderer", "metal_supersampling", false) ? 2 : 1;
     v.use_frame_limit = true;
     v.frame_limit = 100;
     // Ordinary play may override the core limiter. Keep display vsync opt-in

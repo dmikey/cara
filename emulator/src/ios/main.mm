@@ -415,7 +415,10 @@ public:
     }
 #endif
     std::atomic<int> touch{-1};
-    IOSWindow() { UpdateFramebufferLayout(400, 480); }
+    const unsigned presentation_scale;
+    explicit IOSWindow(unsigned scale) : presentation_scale(scale) {
+        UpdateFramebufferLayout(400 * scale, 480 * scale);
+    }
     ~IOSWindow() override {
 #ifdef CARA_IOS_GLES
         if (graphics_context && framebuffer) {
@@ -432,7 +435,7 @@ public:
     void PollEvents() override {
         const int value = touch.load();
         if (value < 0) TouchReleased();
-        else TouchPressed((value & 0xffff) + 40, (value >> 16) + 240);
+        else TouchPressed(((value & 0xffff) + 40) * presentation_scale, ((value >> 16) + 240) * presentation_scale);
     }
     void MakeCurrent() override {
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
@@ -461,7 +464,7 @@ public:
             glGenRenderbuffers(1, &renderbuffer);
             glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
             glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 400, 480);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 400 * presentation_scale, 480 * presentation_scale);
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                 graphics_error = "Unable to create iOS GPU presentation framebuffer";
@@ -563,7 +566,8 @@ public:
                     const GLint x1=GLint(std::lround(CGRectGetMaxX(r)*drawable_width));
                     const GLint y0=GLint(std::lround((1-CGRectGetMaxY(r))*drawable_height));
                     const GLint y1=GLint(std::lround((1-r.origin.y)*drawable_height));
-                    glBlitFramebuffer(screen?40:0,screen?0:240,screen?360:400,screen?240:480,x0,y0,x1,y1,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+                    glBlitFramebuffer((screen?40:0)*presentation_scale,(screen?0:240)*presentation_scale,
+                                      (screen?360:400)*presentation_scale,(screen?240:480)*presentation_scale,x0,y0,x1,y1,GL_COLOR_BUFFER_BIT,GL_NEAREST);
                 }
                 if (scissor) glEnable(GL_SCISSOR_TEST);
                 RecordPresentation();
@@ -584,23 +588,25 @@ public:
             if (!std::getenv("CARA_CAPTURE_FRAMES") || (frames % 60 != 0 && !CaptureBurst(frames))) return;
         }
         const auto previous = OpenGL::OpenGLState::BindReadFramebuffer(framebuffer);
-        std::vector<u8> image(400 * 480 * 4);
+        const unsigned width_px = 400 * presentation_scale, height_px = 480 * presentation_scale;
+        std::vector<u8> image(width_px * height_px * 4);
         {
             Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::Readback);
-            glReadPixels(0, 0, 400, 480, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
+            glReadPixels(0, 0, width_px, height_px, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
         }
         OpenGL::OpenGLState::BindReadFramebuffer(previous);
         for (unsigned screen = 0; screen < 2; ++screen) {
-            const unsigned width = screen == 0 ? 400 : 320;
-            const unsigned x = screen == 0 ? 0 : 40;
-            const unsigned top = screen == 0 ? 0 : 240;
-            std::vector<u8> pixels(width * 240 * 4);
-            for (unsigned y = 0; y < 240; ++y)
-                std::copy_n(image.data() + ((479 - top - y) * 400 + x) * 4, width * 4, pixels.data() + y * width * 4);
+            const unsigned width = (screen == 0 ? 400 : 320) * presentation_scale;
+            const unsigned height = 240 * presentation_scale;
+            const unsigned x = screen == 0 ? 0 : 40 * presentation_scale;
+            const unsigned top = screen == 0 ? 0 : height;
+            std::vector<u8> pixels(width * height * 4);
+            for (unsigned y = 0; y < height; ++y)
+                std::copy_n(image.data() + ((height_px - 1 - top - y) * width_px + x) * 4, width * 4, pixels.data() + y * width * 4);
             if (drawable_framebuffer) {
-                if (present) present(screen, width, 240, pixels, frames);
+                if (present) present(screen, width, height, pixels, frames);
             } else {
-                PresentSoftwareFrame(screen, width, 240, pixels);
+                PresentSoftwareFrame(screen, width, height, pixels);
             }
         }
 #endif
@@ -626,8 +632,9 @@ static bool WriteGlesCapture(const IOSWindow& window, const std::string& directo
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
-    std::vector<u8> pixels(400 * 480 * 4);
-    glReadPixels(0, 0, 400, 480, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    const unsigned width = 400 * window.presentation_scale, height = 480 * window.presentation_scale;
+    std::vector<u8> pixels(width * height * 4);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
     const GLenum capture_error = glGetError();
     glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer);
     glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
@@ -638,7 +645,7 @@ static bool WriteGlesCapture(const IOSWindow& window, const std::string& directo
         raw.write(reinterpret_cast<const char*>(pixels.data()), pixels.size());
     }
     std::ofstream(directory + "benchmark-frame.json")
-        << "{\"width\":400,\"height\":480,\"origin\":\"bottom_left\",\"format\":\"RGBA8\",\"gl_error\":"
+        << "{\"width\":" << width << ",\"height\":" << height << ",\"origin\":\"bottom_left\",\"format\":\"RGBA8\",\"gl_error\":"
         << capture_error << ",\"frame\":" << window.frames << "}\n";
     return capture_error == GL_NO_ERROR;
 }
@@ -1511,21 +1518,26 @@ static std::filesystem::path PedometerHistoryPath() {
     [cloud addObject:action(@"Sync now / resolve conflicts",@"arrow.triangle.2.circlepath.icloud",available && (saveSync.enabled||stateSync.enabled),^{ [owner syncSaves:nil completion:nil]; })];
     if (saveSync.enabled || stateSync.enabled) [cloud addObject:action(@"Disconnect sync folder",@"icloud.slash",!saveSync.busy && !stateSync.busy,^{ EmulatorController* c=owner; if (!c) return; [c->saveSync disconnect]; [c->stateSync disconnect]; [c resumeFromMenu]; })];
     [sections addObject:@{@"title":@"iCloud & Files",@"rows":cloud,@"footer":@"Choose the same iCloud Drive folder on each device. Stop the game to restore data or change folders. Save states need a matching Cara build."}];
-#ifdef CARA_PRIVATE_IOS_METAL_LCD
+#ifdef CARA_IOS_GLES
     NSUserDefaults* displayDefaults = NSUserDefaults.standardUserDefaults;
-    NSMutableArray* display = [NSMutableArray arrayWithObject:
-        @{@"title":@"Metal Render", @"symbol":@"gpu",
-          @"subtitle":@"Applies the next time you open a game.",
+    NSMutableArray* display = [NSMutableArray array];
+    NSString* resolutionKey = @"glesSupersampling";
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    if ([displayDefaults boolForKey:CaraMetalRendererKey])
+        resolutionKey = @"metalSupersampling";
+    [display addObject:@{@"title":@"Experimental Renderer", @"symbol":@"gpu",
+          @"subtitle":@"Use Metal. OpenGL ES is the default. Reopen the game to apply.",
           @"value":@([displayDefaults boolForKey:CaraMetalRendererKey]),
           @"change":^(BOOL enabled) {
               [displayDefaults setBool:enabled forKey:CaraMetalRendererKey];
               [owner updateSyncFeedback];
           }}];
+#endif
     [display addObject:@{@"title":@"2× internal resolution", @"symbol":@"square.resize",
-        @"subtitle":@"Render Metal geometry at twice the native resolution. Reopen the game to apply.",
-        @"value":@([displayDefaults boolForKey:@"metalSupersampling"]),
-        @"enabled":@([displayDefaults boolForKey:CaraMetalRendererKey]),
-        @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:@"metalSupersampling"]; }}];
+        @"subtitle":@"Render geometry at twice the native resolution. Reopen the game to apply.",
+        @"value":@([displayDefaults boolForKey:resolutionKey]),
+        @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:resolutionKey]; }}];
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
     if ([displayDefaults boolForKey:CaraMetalRendererKey]) {
         NSArray<NSString*>* filters = @[@"Game default", @"Nearest neighbor", @"Bilinear"];
         const auto selected = Cara::ParseMetalTextureFilter((int)[displayDefaults integerForKey:@"metalTextureFilter"]);
@@ -1583,7 +1595,10 @@ static std::filesystem::path PedometerHistoryPath() {
         }
     }
     [sections addObject:@{@"title":@"Display", @"rows":display,
-                          @"footer":@"Lossless scaling applies when Metal Render is selected."}];
+                          @"footer":@"Lossless output scaling requires the Experimental Renderer."}];
+#else
+    [sections addObject:@{@"title":@"Display", @"rows":display}];
+#endif
 #endif
     [sections addObject:@{@"title":@"Audio",@"rows":@[
         @{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@(!AudioCore::IsIOSAudioMuted()),@"change":^(BOOL on) { AudioCore::SetIOSAudioMuted(!on); [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"audioMuted"]; }},
@@ -2391,7 +2406,14 @@ static std::filesystem::path PedometerHistoryPath() {
 #endif
     __weak EmulatorController* weakSelf = self;
     emuWindow.reset();
-    emuWindow = std::make_unique<IOSWindow>();
+    unsigned presentationScale = 1;
+#ifdef CARA_IOS_GLES
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+    if (!CaraMetalRendererRequested())
+#endif
+        presentationScale = [NSUserDefaults.standardUserDefaults boolForKey:@"glesSupersampling"] ? 2 : 1;
+#endif
+    emuWindow = std::make_unique<IOSWindow>(presentationScale);
     emuWindow->adaptiveFrameSkip=CaraAdaptiveFrameSkipEnabled();
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     emuWindow->native_metal_only = CaraMetalRendererRequested();
@@ -2536,7 +2558,8 @@ static std::filesystem::path PedometerHistoryPath() {
             s.use_shader_cache = pipeline_cache && std::strcmp(pipeline_cache, "1") == 0; // Experimental.
 #endif
             s.use_virtual_sd = true; s.region_value = Settings::REGION_VALUE_AUTO_SELECT;
-            s.resolution_factor = 1; s.use_frame_limit = false; // Frontend counts every presented vblank.
+            s.resolution_factor = emuWindow->presentation_scale;
+            s.use_frame_limit = false; // Frontend counts every presented vblank.
             s.frame_limit = u16(self->maximumSpeedLimit.load());
             const char* target_env = std::getenv("CARA_BENCHMARK_FRAMES");
             const unsigned target_frames = target_env ? static_cast<unsigned>(std::clamp(std::strtol(target_env, nullptr, 10), 1L, 18000L)) : 0;
@@ -3700,6 +3723,12 @@ static std::filesystem::path PedometerHistoryPath() {
                            << ",\"cpu_backend\":\"" << ((std::getenv("CARA_CPU_BACKEND") && std::strcmp(std::getenv("CARA_CPU_BACKEND"), "dyncom") == 0) ? "dyncom" : "fastinterp") << "\""
                            << ",\"adaptive_guest_cpu\":" << (clock_control.Enabled()?"true":"false")
                            << ",\"guest_cpu_percent\":" << policy_clock()
+                           << ",\"internal_resolution_scale\":"
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                           << (emuWindow->native_metal_only ? ([NSUserDefaults.standardUserDefaults boolForKey:@"metalSupersampling"] ? 2 : 1) : s.resolution_factor)
+#else
+                           << s.resolution_factor
+#endif
                            << ",\"new_3ds\":" << (s.is_new_3ds ? "true" : "false")
                            << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
                            << ",\"presentation_mode\":\"mono_left_top\""

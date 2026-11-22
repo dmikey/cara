@@ -142,8 +142,11 @@ Play and display settings apply when you save. CPU engine changes apply when
 you next open a game. The native Metal runner reads the saved Performance Mode
 and Async Shaders preferences.
 
-On Mac, iPad and iPhone, select **Metal Render** and open **Display** to change
-**2× internal resolution** and **Texture filtering**. Reopen the game to apply.
+On iPhone and iPad, OpenGL ES is the default. The standard Mac launcher uses
+desktop OpenGL. In **Display**, turn on **2× internal resolution** to render
+geometry at twice its native width and height. Reopen the game to apply.
+For Metal, enable **Experimental Renderer** on mobile or use the separate
+experimental Mac runner. Metal also offers **Texture filtering**.
 At 2×, supported 3D draws rasterize at twice the width and height. The renderer
 keeps compatible frames at that resolution through display and resolves to the
 3DS resolution when the guest needs to read pixels. Supported layouts include
