@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "common/profile_activity_lock.h"
 #include "core/hle/service/cecd/streetpass.h"
 
 #include <algorithm>
@@ -143,7 +144,7 @@ unsigned ExportStreetPass(const fs::path& nand, const fs::path& file, const Stre
             ++count;
         }
     }
-    if (count) Replace(file, packet);
+    Replace(file, packet);
     return count;
 }
 
@@ -151,6 +152,7 @@ unsigned ImportStreetPass(const fs::path& nand, const fs::path& file, std::time_
     const auto packet = Read(file, MaxStreetPassFile);
     if (packet.size() < Signature.size() || !std::equal(Signature.begin(), Signature.end(), packet.begin()))
         throw std::runtime_error("Choose a Cara StreetPass file");
+    Common::ProfileActivityLock lock(nand);
     const auto boxes = Registered(nand);
     std::vector<std::pair<size_t, Message>> messages;
     for (size_t pos = Signature.size(); pos < packet.size();) {

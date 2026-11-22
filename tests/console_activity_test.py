@@ -79,8 +79,9 @@ def test(executable):
         dest.unlink()
         assert run(recipient, 'import', packet).startswith('0 ')
         assert not dest.exists()
-        run(recipient, 'steps', 99)
-        run(recipient, 'steps', 1)
+        workers = [subprocess.Popen([executable, '--activity', recipient, 'steps', '5'],
+                                    stdout=subprocess.DEVNULL) for _ in range(20)]
+        assert all(worker.wait() == 0 for worker in workers)
         assert sum(int(row.split()[1]) for row in (recipient/'nand/cara-steps.txt').read_text().splitlines()) == 100
         run(recipient, 'steps', -1, False)
 

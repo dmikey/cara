@@ -1393,6 +1393,7 @@ static std::filesystem::path PedometerHistoryPath() {
         if (failure) { [self shellError:@"Steps unavailable" message:failure.localizedDescription]; return; }
         try {
             const auto path = PedometerHistoryPath();
+            Common::ProfileActivityLock lock(path.parent_path());
             auto history = Service::PTM::StepHistory::Load(path);
             uint32_t added = 0;
             for (NSNumber* hour in counts) {

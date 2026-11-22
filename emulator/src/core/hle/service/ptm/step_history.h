@@ -10,6 +10,8 @@
 #include <map>
 #include <stdexcept>
 
+#include "common/profile_activity_lock.h"
+
 namespace Service::PTM {
 
 // Hour zero is 2000-01-01 00:00 on the guest's local clock.
@@ -35,6 +37,7 @@ struct StepHistory {
 
     // Called with the profile stopped. Rename commits a complete new history.
     static void Record(const std::filesystem::path& path, std::uint32_t hour, std::uint32_t steps) {
+        Common::ProfileActivityLock lock(path.parent_path());
         auto history = Load(path);
         if (hour > 87658200 || !steps || steps > 65535u - history.hours[hour] ||
             steps > UINT32_MAX - history.total)
