@@ -3873,7 +3873,7 @@ bool RasterizerCacheOpenGL::ValidateByReinterpretation(const Surface& surface,
 bool RasterizerCacheOpenGL::ExportDepthForCPU(const Surface& surface, const SurfaceInterval& interval) {
     const auto format=surface->pixel_format;
     if (!GLES || (format!=PixelFormat::D16 && format!=PixelFormat::D24 && format!=PixelFormat::D24S8) ||
-        surface->res_scale!=1 || !surface->width || !surface->height || surface->width!=surface->stride ||
+        !surface->res_scale || !surface->width || !surface->height || surface->width!=surface->stride ||
         boost::icl::length(interval)==0 || boost::icl::first(interval)<surface->addr ||
         boost::icl::last_next(interval)>surface->end) return false;
     const auto start=boost::icl::first(interval), end=boost::icl::last_next(interval);
@@ -3896,8 +3896,14 @@ bool RasterizerCacheOpenGL::ExportDepthForCPU(const Surface& surface, const Surf
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER,previous_unpack);
         depth_export_scratch=std::move(staging);
     }
-    if (glGetError()!=GL_NO_ERROR || !format_reinterpreter->EncodeDepthChecked(surface->texture.handle,
-            format,rect,depth_export_scratch->texture.handle,rect,surface->width,surface->height)) return false;
+    // Encode depth and stencil at the raster resolution, then select one matching
+    // sample for each guest pixel with the encoder's nearest color blit.
+    const auto scaled_rect = surface->GetScaledSubRect(surface->FromInterval(interval));
+    if (glGetError() != GL_NO_ERROR ||
+        !format_reinterpreter->EncodeDepthChecked(surface->texture.handle, format, scaled_rect,
+            depth_export_scratch->texture.handle, rect, surface->GetScaledWidth(),
+            surface->GetScaledHeight()))
+        return false;
     const auto previous=OpenGLState::GetCurState();
     GLint pack_buffer=0, pack_alignment=4, pack_row=0, pack_skip_rows=0, pack_skip_pixels=0;
     glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&pack_buffer);
