@@ -38,6 +38,11 @@ library UI are not included. The archive includes controls, licenses, its exact
 source revision, dependency linkage and a checksum. `CARA_USER_DIR` selects a
 separate save directory; otherwise Cara uses its normal Linux data location.
 
+Linux play uses Performance mode by default, with the shared guest GPU completion
+policy and bounded host frame pacing. Use `--play-mode accuracy` for stock guest
+GPU timing. Both modes use a fixed 100% guest CPU clock. Runs capped with
+`--frames` retain diagnostic timing unless a play mode is specified.
+
 Build from source with SDL2, libpng and OpenGL development packages installed:
 
 ```sh
@@ -50,7 +55,6 @@ cmake --build work/build-linux --target cara -j3
 work/build-linux/bin/cara --self-test
 ```
 
-CI uses Mesa software rendering under Xvfb to verify real OpenGL pixel readback,
-then runs an original ARM test ELF through the core and renderer for four display
-refreshes. This checks Linux initialization and shutdown without commercial ROMs;
-it does not establish game compatibility or hardware GPU performance.
+CI uses Mesa software rendering under Xvfb to verify OpenGL pixel readback.
+It runs an ARM test ELF through four display refreshes under diagnostic timing,
+Performance mode, and Accuracy mode.
