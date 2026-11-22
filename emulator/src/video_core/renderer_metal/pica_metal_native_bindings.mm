@@ -110,7 +110,7 @@ constexpr OpenGL::PicaFragmentShaderTarget NativeFragmentTarget() {
 bool UseRuntimeTevFallback() {
     static const bool enabled = [] {
         const char* value = std::getenv("CARA_METAL_RUNTIME_TEV");
-        return value && std::string_view(value) == "1";
+        return !value || std::string_view(value) != "0";
     }();
     return enabled;
 }
