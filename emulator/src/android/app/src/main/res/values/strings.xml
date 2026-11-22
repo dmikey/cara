@@ -145,6 +145,15 @@
 
     <string name="setting_header_core">System</string>
     <string name="setting_header_renderer">Display</string>
+    <string name="setting_header_play">Play mode</string>
+    <string name="setting_header_emulation">Emulation</string>
+    <string name="setting_header_controls">Controls</string>
+    <string name="setting_portrait_layout">Portrait screen layout</string>
+    <string name="setting_landscape_layout">Landscape screen layout</string>
+    <string name="setting_resolution_desc">Decreases Performance for more Detail</string>
+    <string name="setting_filter_default">Game default</string>
+    <string name="setting_filter_nearest">Nearest neighbor</string>
+    <string name="setting_filter_bilinear">Bilinear</string>
     <string name="setting_header_advanced">Advanced</string>
     <string name="setting_header_audio">Audio</string>
     <string name="setting_header_camera">Camera</string>
@@ -163,20 +172,20 @@
 
     <string name="show_fps">Show FPS</string>
     <string name="layout_option">Screen Layout</string>
-    <string name="internal_resolution">Internal resolution</string>
+    <string name="internal_resolution">Native resolution</string>
     <string name="setting_hw_shader">Enable Hardware Shader</string>
     <string name="setting_hw_shader_desc">Turn it on to improve performance, but some 2D games have display issues.</string>
     <string name="setting_shaders_accurate_mul">Accurate Multiplication</string>
     <string name="setting_shaders_accurate_mul_desc">Turn it on to fixes some of the game\'s display issues, but slows down the simulation.</string>
     <string name="post_processing_shader">Post-Processing Effect</string>
-    <string name="setting_use_present_thread">Use Dual Core</string>
-    <string name="setting_use_present_thread_desc">Most games can improve performance by using dual core.</string>
+    <string name="setting_use_present_thread">Separate presentation thread</string>
+    <string name="setting_use_present_thread_desc">Present completed frames separately from emulation. Reopen the game to apply.</string>
     <string name="cpu_usage_limit">Enable CPU Usage Limit</string>
     <string name="cpu_usage_limit_description">When enabled, emulation cpu usage will be limited to a smaller time slice.</string>
     <string name="frame_limit_enable">Enable Speed Limit</string>
     <string name="frame_limit_enable_description">When enabled, emulation speed will be limited to a specified percentage of normal speed.</string>
     <string name="setting_accuracy_mode">Accuracy mode</string>
-    <string name="setting_accuracy_mode_desc">Locks gameplay speed and guest CPU clock at 100%. GPU timing changes when you reopen the game.</string>
+    <string name="setting_accuracy_mode_desc">Locks game speed and guest CPU clock at 100%. Turn off for Performance mode. GPU timing follows your choice when you reopen the game.</string>
     <string name="setting_limit_speed">Limit game speed</string>
     <string name="frame_limit_slider">Maximum speed</string>
     <string name="frame_limit_slider_description">With the default of 100% emulation will be limited to normal speed. Values higher or lower will increase or decrease the speed limit.</string>

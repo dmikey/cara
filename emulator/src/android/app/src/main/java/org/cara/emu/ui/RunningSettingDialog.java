@@ -13,7 +13,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -136,6 +135,7 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_ADAPTIVE_FRAME_SKIP = 15;
         public static final int SETTING_FIXED_GUEST_CLOCK = 16;
         public static final int SETTING_GUEST_CLOCK_PERCENT = 17;
+        public static final int SETTING_SHOW_FPS = 18;
 
         // pref
         public static final int SETTING_JOYSTICK_RELATIVE = 100;
@@ -154,6 +154,7 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_EDIT_SCREEN = 207;
         public static final int SETTING_EXIT_GAME = 208;
         public static final int SETTING_SHOW_ADVANCED = 209;
+        public static final int SETTING_SECTION_HEADER = 210;
 
         public static final int SETTING_MULTIPLAYER_ROOM_TEXT = 400;
         public static final int SETTING_MULTIPLAYER_CREATE_ROOM = 401;
@@ -167,6 +168,7 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int TYPE_SEEK_BAR = 2;
         public static final int TYPE_BUTTON = 3;
         public static final int TYPE_TEXT = 4;
+        public static final int TYPE_HEADER = 5;
 
         private int mSetting;
         private String mName;
@@ -221,6 +223,29 @@ public class RunningSettingDialog extends DialogFragment {
         public abstract void bind(SettingsItem item);
 
         public abstract void onClick(View clicked);
+    }
+
+    public final class HeaderSettingViewHolder extends SettingViewHolder {
+        private TextView mTitle;
+
+        public HeaderSettingViewHolder(View itemView) {
+            super(itemView);
+            itemView.setClickable(false);
+            itemView.setFocusable(false);
+        }
+
+        @Override
+        protected void findViews(View root) {
+            mTitle = root.findViewById(R.id.text_header_name);
+        }
+
+        @Override
+        public void bind(SettingsItem item) {
+            mTitle.setText(item.getName());
+        }
+
+        @Override
+        public void onClick(View clicked) {}
     }
 
     public final class TextSettingViewHolder extends SettingViewHolder {
@@ -342,7 +367,7 @@ public class RunningSettingDialog extends DialogFragment {
         extends SettingViewHolder implements CompoundButton.OnCheckedChangeListener {
         SettingsItem mItem;
         private TextView mTextSettingName;
-        private CheckBox mCheckbox;
+        private CompoundButton mCheckbox;
 
         public CheckBoxSettingViewHolder(View itemView) {
             super(itemView);
@@ -380,6 +405,7 @@ public class RunningSettingDialog extends DialogFragment {
     {
         SettingsItem mItem;
         private TextView mTextSettingName;
+        private TextView mDescription;
         private RadioGroup mRadioGroup;
 
         public RadioButtonSettingViewHolder(View itemView)
@@ -390,6 +416,7 @@ public class RunningSettingDialog extends DialogFragment {
         @Override
         protected void findViews(View root) {
             mTextSettingName = root.findViewById(R.id.text_setting_name);
+            mDescription = root.findViewById(R.id.text_setting_description);
             mRadioGroup = root.findViewById(R.id.radio_group);
             mRadioGroup.setOnCheckedChangeListener(this);
         }
@@ -403,6 +430,11 @@ public class RunningSettingDialog extends DialogFragment {
 
             mItem = item;
             mTextSettingName.setText(item.getName());
+            boolean showResolutionHelp = item.getSetting() == SettingsItem.SETTING_SCALE_FACTOR;
+            mDescription.setVisibility(showResolutionHelp ? View.VISIBLE : View.GONE);
+            if (showResolutionHelp) {
+                mDescription.setText(R.string.setting_resolution_desc);
+            }
             mRadioGroup.setOnCheckedChangeListener(null);
             mRadioGroup.check(checkIds[index]);
             mRadioGroup.setOnCheckedChangeListener(this);
@@ -422,17 +454,17 @@ public class RunningSettingDialog extends DialogFragment {
                 radio3.setText(R.string.side_screen_option);
             } else if (item.getSetting() == SettingsItem.SETTING_SCALE_FACTOR) {
                 RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
-                radio0.setText("×1");
+                radio0.setText("1×");
 
                 RadioButton radio1 = mRadioGroup.findViewById(R.id.radio1);
-                radio1.setText("×2");
+                radio1.setText("2×");
 
                 RadioButton radio2 = mRadioGroup.findViewById(R.id.radio2);
-                radio2.setText("×3");
+                radio2.setText("3×");
 
                 RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
                 radio3.setVisibility(View.VISIBLE);
-                radio3.setText("×4");
+                radio3.setText("4×");
             } else if (item.getSetting() == SettingsItem.SETTING_ACCURATE_MUL) {
                 RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
                 radio0.setText(R.string.accurate_mul_off);
@@ -447,13 +479,13 @@ public class RunningSettingDialog extends DialogFragment {
                 radio3.setVisibility(View.GONE);
             } else if (item.getSetting() == SettingsItem.SETTING_FORCE_TEXTURE_FILTER) {
                 RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
-                radio0.setText(R.string.auto);
+                radio0.setText(R.string.setting_filter_default);
 
                 RadioButton radio1 = mRadioGroup.findViewById(R.id.radio1);
-                radio1.setText(R.string.nearest);
+                radio1.setText(R.string.setting_filter_nearest);
 
                 RadioButton radio2 = mRadioGroup.findViewById(R.id.radio2);
-                radio2.setText(R.string.linear);
+                radio2.setText(R.string.setting_filter_bilinear);
 
                 RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
                 radio3.setVisibility(View.GONE);
@@ -613,7 +645,32 @@ public class RunningSettingDialog extends DialogFragment {
             mRunningSettings = NativeLibrary.getRunningSettings();
             mSettings = new ArrayList<>();
 
-            // pref settings
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.setting_header_play, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURACY_MODE,
+                    R.string.setting_accuracy_mode, SettingsItem.TYPE_CHECKBOX,
+                    mRunningSettings[SettingsItem.SETTING_ACCURACY_MODE]));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.setting_header_renderer, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SCREEN_LAYOUT,
+                    R.string.layout_option, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_SCREEN_LAYOUT]));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SCALE_FACTOR,
+                    R.string.internal_resolution, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_SCALE_FACTOR]));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_FORCE_TEXTURE_FILTER,
+                    R.string.setting_force_texture_filter,
+                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_FORCE_TEXTURE_FILTER]));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_CUSTOM_LAYOUT,
+                    R.string.running_custom_layout,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_CUSTOM_LAYOUT]));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SHOW_FPS,
+                    R.string.show_fps, SettingsItem.TYPE_CHECKBOX,
+                    mRunningSettings[SettingsItem.SETTING_SHOW_FPS]));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.setting_header_controls, SettingsItem.TYPE_HEADER, 0));
             mUseHapticFeedback = InputOverlay.sUseHapticFeedback ? 1 : 0;
             mSettings.add(new SettingsItem(SettingsItem.SETTING_USE_HAPTIC_FEEDBACK,
                     R.string.use_haptic_feedback,
@@ -639,19 +696,6 @@ public class RunningSettingDialog extends DialogFragment {
                     R.string.controller_alpha, SettingsItem.TYPE_SEEK_BAR,
                     mControllerAlpha));
 
-            // Display controls stay visible. Tuning is revealed on demand.
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SCREEN_LAYOUT,
-                    R.string.layout_option, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[SettingsItem.SETTING_SCREEN_LAYOUT]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SCALE_FACTOR,
-                    R.string.internal_resolution, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[SettingsItem.SETTING_SCALE_FACTOR]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_FORCE_TEXTURE_FILTER,
-                    R.string.setting_force_texture_filter,
-                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_FORCE_TEXTURE_FILTER]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_CUSTOM_LAYOUT,
-                    R.string.running_custom_layout,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_CUSTOM_LAYOUT]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SHOW_ADVANCED,
                     R.string.setting_header_advanced, SettingsItem.TYPE_TEXT, 0));
             mAdvancedSettings = new ArrayList<>();
@@ -673,15 +717,9 @@ public class RunningSettingDialog extends DialogFragment {
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SHADOW_RENDERING,
                     R.string.setting_shadow_rendering,
                     SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SHADOW_RENDERING]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ASYNC_SHADER_COMPILE,
-                    R.string.setting_async_shader_compile,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_ASYNC_SHADER_COMPILE]));
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURATE_MUL,
                     R.string.running_accurate_mul, SettingsItem.TYPE_RADIO_GROUP,
                     mRunningSettings[SettingsItem.SETTING_ACCURATE_MUL]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURACY_MODE,
-                    R.string.setting_accuracy_mode, SettingsItem.TYPE_CHECKBOX,
-                    mRunningSettings[SettingsItem.SETTING_ACCURACY_MODE]));
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP,
                     R.string.setting_adaptive_frame_skip,
                     SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP]));
@@ -728,6 +766,9 @@ public class RunningSettingDialog extends DialogFragment {
             case SettingsItem.TYPE_TEXT:
                 itemView = inflater.inflate(R.layout.list_item_running_text, parent, false);
                 return new TextSettingViewHolder(itemView);
+            case SettingsItem.TYPE_HEADER:
+                itemView = inflater.inflate(R.layout.list_item_setting_header, parent, false);
+                return new HeaderSettingViewHolder(itemView);
             }
             return null;
         }
@@ -758,52 +799,57 @@ public class RunningSettingDialog extends DialogFragment {
             SharedPreferences.Editor editor =
                 PreferenceManager.getDefaultSharedPreferences(activity).edit();
 
-            int feedback = mSettings.get(0).getValue();
-            if (mUseHapticFeedback != feedback) {
-                editor.putBoolean(InputOverlay.PREF_HAPTIC_FEEDBACK, feedback > 0);
-                InputOverlay.sUseHapticFeedback = feedback > 0;
-            }
-            mSettings.remove(0);
-
-            int relative = mSettings.get(0).getValue();
-            if (mJoystickRelative != relative) {
-                editor.putBoolean(InputOverlay.PREF_JOYSTICK_RELATIVE, relative > 0);
-                InputOverlay.sJoystickRelative = relative > 0;
-            }
-            mSettings.remove(0);
-
-            int hide = mSettings.get(0).getValue();
-            if (mHideInputOverlay != hide) {
-                editor.putBoolean(InputOverlay.PREF_CONTROLLER_HIDE, hide > 0);
-                InputOverlay.sHideInputOverlay = hide > 0;
-            }
-            mSettings.remove(0);
-
-            int scale = mSettings.get(0).getValue();
-            if (mControllerScale != scale) {
-                editor.putInt(InputOverlay.PREF_CONTROLLER_SCALE, scale);
-                InputOverlay.sControllerScale = scale;
-            }
-            mSettings.remove(0);
-
-            int alpha = mSettings.get(0).getValue();
-            if (mControllerAlpha != alpha) {
-                editor.putInt(InputOverlay.PREF_CONTROLLER_ALPHA, alpha);
-                InputOverlay.sControllerAlpha = alpha;
-            }
-            mSettings.remove(0);
-
-            // Apply preferences.
-            editor.apply();
-            activity.refreshControls();
-
-            // native settings
             int[] newSettings = mRunningSettings.clone();
+            boolean controlsChanged = false;
             for (SettingsItem setting : mSettings) {
-                int key = setting.getSetting();
-                if (key < newSettings.length) {
-                    newSettings[key] = setting.getValue();
+                int value = setting.getValue();
+                switch (setting.getSetting()) {
+                case SettingsItem.SETTING_USE_HAPTIC_FEEDBACK:
+                    if (mUseHapticFeedback != value) {
+                        InputOverlay.sUseHapticFeedback = value > 0;
+                        editor.putBoolean(InputOverlay.PREF_HAPTIC_FEEDBACK, value > 0);
+                        controlsChanged = true;
+                    }
+                    break;
+                case SettingsItem.SETTING_JOYSTICK_RELATIVE:
+                    if (mJoystickRelative != value) {
+                        InputOverlay.sJoystickRelative = value > 0;
+                        editor.putBoolean(InputOverlay.PREF_JOYSTICK_RELATIVE, value > 0);
+                        controlsChanged = true;
+                    }
+                    break;
+                case SettingsItem.SETTING_HIDE_INPUT_OVERLAY:
+                    if (mHideInputOverlay != value) {
+                        InputOverlay.sHideInputOverlay = value > 0;
+                        editor.putBoolean(InputOverlay.PREF_CONTROLLER_HIDE, value > 0);
+                        controlsChanged = true;
+                    }
+                    break;
+                case SettingsItem.SETTING_CONTROLLER_SCALE:
+                    if (mControllerScale != value) {
+                        InputOverlay.sControllerScale = value;
+                        editor.putInt(InputOverlay.PREF_CONTROLLER_SCALE, value);
+                        controlsChanged = true;
+                    }
+                    break;
+                case SettingsItem.SETTING_CONTROLLER_ALPHA:
+                    if (mControllerAlpha != value) {
+                        InputOverlay.sControllerAlpha = value;
+                        editor.putInt(InputOverlay.PREF_CONTROLLER_ALPHA, value);
+                        controlsChanged = true;
+                    }
+                    break;
+                default:
+                    int key = setting.getSetting();
+                    if (key >= 0 && key < newSettings.length) {
+                        newSettings[key] = value;
+                    }
+                    break;
                 }
+            }
+            if (controlsChanged) {
+                editor.apply();
+                activity.refreshControls();
             }
             if (!java.util.Arrays.equals(newSettings, mRunningSettings)) {
                 NativeLibrary.setRunningSettings(newSettings);

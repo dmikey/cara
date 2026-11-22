@@ -2,7 +2,7 @@
 package org.cara.emu.settings.viewholder;
 
 import android.view.View;
-import android.widget.CheckBox;
+import android.widget.CompoundButton;
 import android.widget.TextView;
 import org.cara.emu.R;
 import org.cara.emu.settings.SettingsAdapter;
@@ -15,7 +15,7 @@ public final class CheckBoxSettingViewHolder extends SettingViewHolder {
     private TextView mTextSettingName;
     private TextView mTextSettingDescription;
 
-    private CheckBox mCheckbox;
+    private CompoundButton mCheckbox;
 
     public CheckBoxSettingViewHolder(View itemView, SettingsAdapter adapter) {
         super(itemView, adapter);
