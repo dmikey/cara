@@ -264,6 +264,51 @@ waits. SurfaceFlinger present intervals measure delivery to the display.
 They do not establish guest frame time, GPU execution time, or the source of
 the missed display intervals. The HUD numbers describe one live sample.
 
+### Dark Moon, first-use shaders in Gadd's lab
+
+On the RG Slide (Mali-G57 r40p0), a normal boot into a new profile used
+Accuracy Mode, Dynarmic, the shared GLES atlas, and 1× resolution. The
+diagnostic build restored the 47 title programs in 27.50 ms and reached
+Gadd's lab with its lab programs still cold.
+
+| 120-refresh window | p99 | Worst refresh | Program link and status | Stage compile and status |
+| --- | ---: | ---: | ---: | ---: |
+| Lab entrance, ending at 2161 | 161.47 ms | 41,016.35 ms at 2044 | 38.49 s / 21 calls | 2.35 s / 18 calls |
+| Later lab transition, ending at 2281 | 177.70 ms | 29,763.88 ms at 2223 | 29.53 s / 16 calls | 0.13 s / 11 calls |
+
+The two windows spent 96.5% of their combined shader-driver time in
+program link and status calls. The longest individual link took 3.09 s.
+Binary extraction across those windows took 3.61 ms.
+
+Four subsequent warm windows (ending at 2401–2761) ran at
+64.26–64.63 ms p50 and 68.30–70.54 ms p99, with a worst refresh of
+73.85 ms at 2496. The scene issued 83,411–83,760 draws per 120 refreshes
+and recorded zero program builds and zero surface downloads. Submit
+calls took 0.89–0.93 s per 120 refreshes, while measured presentation
+waits were below 1 ms per window.
+
+A 20 s hardware capture during the conversation showed the non-fragment
+queue active for 90.8% of GPU-active cycles, the fragment queue for 64.6%,
+and the tiler for 79.5%. The stages can overlap. These device-wide
+counters motivate an isolated vertex/tiler test alongside the lighting
+work. [Mali-G57 counter definitions](https://arm-software.github.io/libGPUCounters/mali-g57_counter_reference.html)
+
+A separate exact-source comparison found 56 new program pairs between
+the title and the lab, with only five previously unseen vertex sources
+and 37 previously unseen fragment sources. Forty-two of the added pairs
+emit lighting in fragment main. Comparing the five most reused added
+vertex sources found entry-point changes and, in one source, six extra
+attribute decodes. Each source is about 75 KB. Sharing vertex source
+alone still leaves the driver linking each exact vertex/fragment pair.
+
+The atlas emits a reference guest vertex evaluation on the second and
+third corners of expanded triangles to keep the interpolation quaternion
+in the hemisphere of the first corner. Reducing that repeated work
+requires preserving the first corner, attribute decoding, and guest
+floating-point behavior. The fragment lighting ablation below also changes
+vertex varying liveness and fragment coverage, so it cannot isolate
+fragment ALU cost.
+
 ### Dark Moon, earlier RG Slide measurements
 
 - **Surface residency.** In a warmed native GLES 3.2 title-screen A/B/A,
