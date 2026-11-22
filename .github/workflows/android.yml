@@ -2,6 +2,11 @@ name: Android GLES ARM64
 
 on:
   workflow_dispatch:
+    inputs:
+      preview:
+        description: Build an installable side-by-side preview
+        type: boolean
+        default: false
   pull_request:
     paths:
       - '.github/workflows/android.yml'
@@ -43,7 +48,9 @@ jobs:
           gradle-version: '8.13'
       - name: Build ARM64 GLES debug APK with Dynarmic and FastInterp
         working-directory: emulator/src/android
-        run: gradle --no-daemon --max-workers=3 :app:assembleDebug -PcaraGlesAtlas=${{ matrix.atlas }}
+        env:
+          CARA_ANDROID_PREVIEW: ${{ inputs.preview && 'true' || 'false' }}
+        run: gradle --no-daemon --max-workers=3 :app:assembleDebug -PcaraGlesAtlas=${{ matrix.atlas }} -PcaraPreview="$CARA_ANDROID_PREVIEW"
       - name: Verify the APK
         run: |
           apk=emulator/src/android/app/build/outputs/apk/debug/app-debug.apk
@@ -62,6 +69,6 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-android-arm64-${{ matrix.renderer }}-cpu-jit
+          name: cara-android-arm64-${{ matrix.renderer }}-cpu-jit${{ inputs.preview && '-preview' || '' }}
           if-no-files-found: error
           path: emulator/src/android/app/build/outputs/apk/debug/app-debug.apk

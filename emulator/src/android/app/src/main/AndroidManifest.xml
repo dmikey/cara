@@ -32,7 +32,7 @@
         android:appCategory="game"
         android:hasFragileUserData="true"
         android:isGame="true"
-        android:label="Cara">
+        android:label="${caraAppLabel}">
         <meta-data
             android:name="android.max_aspect"
             android:value="2.4" />
