@@ -146,7 +146,8 @@ On Mac, iPad and iPhone, select **Metal Render** and open **Display** to change
 **2× internal resolution** and **Texture filtering**. Reopen the game to apply.
 At 2×, supported 3D draws rasterize at twice the width and height. The renderer
 keeps compatible frames at that resolution through display and resolves to the
-3DS resolution when the guest needs to read pixels. Some games use display
+3DS resolution when the guest needs to read pixels. Supported layouts include
+RGB565 screen crops used in Monster Hunter Stories. Some games use display
 transfer layouts that currently present at native resolution.
 
 **Game default** honors the game's texture sampling. **Nearest neighbor** keeps
