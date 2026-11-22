@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import org.cara.emu.BuildConfig;
 import org.cara.emu.R;
 import org.cara.emu.settings.model.Setting;
 import org.cara.emu.settings.model.SettingSection;
@@ -157,6 +158,11 @@ public final class SettingsFragment extends Fragment {
                 R.array.textureFilterEntries, R.array.textureFilterValues, 0,
                 debugSection.getSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER)));
         sl.add(new HeaderSetting(null, null, R.string.setting_header_advanced, 0));
+        if (BuildConfig.CPU_JIT_AVAILABLE) {
+            Setting jit = mSettings.getSection(Settings.SECTION_INI_CORE).getSetting(SettingsFile.KEY_USE_CPU_JIT);
+            sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_CPU_JIT, Settings.SECTION_INI_CORE,
+                    R.string.setting_enable_cpu_jit, R.string.setting_enable_cpu_jit_desc, true, jit));
+        }
         sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_PRESENT_THREAD, Settings.SECTION_INI_DEBUG,
                 R.string.setting_use_present_thread, R.string.setting_use_present_thread_desc, true, presentThread));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_HW_SHADER, Settings.SECTION_INI_RENDERER,

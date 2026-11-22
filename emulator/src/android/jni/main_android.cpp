@@ -157,6 +157,8 @@ void BootGame(const std::string& path) {
     // This residency path was tested on Mali with both GLES backends.
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
     setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
+    LOG_INFO(Frontend, "Android CPU engine: {}",
+             Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");
     const auto gpu_policy = Cara::GetGPUCompletionPolicy(ReadPlayMode() == Cara::PlayMode::Performance);
     Cara::gpu_completion_policy = gpu_policy;
     LOG_INFO(Frontend, "Android GPU completion: P3D={} PPF={} soft knee={}",
@@ -591,7 +593,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Config::Clear();
     Config::Load();
     // system
-#ifdef CARA_ENABLE_JIT
+#if defined(CARA_ANDROID_CPU_JIT) || defined(CARA_ENABLE_JIT)
     Settings::values.use_cpu_jit = Config::Get(Config::USE_CPU_JIT);
 #else
     Settings::values.use_cpu_jit = false;
@@ -611,7 +613,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.show_fps = Config::Get(Config::SHOW_FPS);
     Settings::values.use_hw_renderer = true;
     Settings::values.use_hw_shader = Config::Get(Config::USE_HW_SHADER);
-    Settings::values.use_shader_jit = Config::Get(Config::USE_SHADER_JIT);
+    Settings::values.use_shader_jit = false;
     Settings::values.shaders_accurate_mul = Config::Get(Config::SHADERS_ACCURATE_MUL);
     const auto play_policy = ReadPlayPolicy();
     Settings::values.use_frame_limit = play_policy.limit_speed;

@@ -15,7 +15,7 @@
 #include "core/core.h"
 #include "core/savestate.h"
 #include "core/settings.h"
-#ifdef CARA_MAC_CPU_JIT
+#ifdef CARA_NATIVE_CPU_JIT
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #endif
 #include "network/network.h"
@@ -60,7 +60,7 @@ std::string StatePath(u64 title, u32 slot, const std::array<u8, 32>* game_hash =
     return fmt::format("{}{:016X}.{:02d}.carastate", FileUtil::GetUserPath(FileUtil::UserPath::StatesDir), title, slot);
 }
 u32 CPUBackend() {
-#ifdef CARA_MAC_CPU_JIT
+#ifdef CARA_NATIVE_CPU_JIT
     if(dynamic_cast<ARM_Dynarmic*>(&Core::System::GetInstance().GetCore(0)))return 2;
 #endif
     const char* backend = std::getenv("CARA_CPU_BACKEND"); return backend && std::strcmp(backend, "dyncom") == 0 ? 1 : 0; }
