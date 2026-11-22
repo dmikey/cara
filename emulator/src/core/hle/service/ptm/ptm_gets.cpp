@@ -29,7 +29,7 @@ PTM_Gets::PTM_Gets(std::shared_ptr<Module> ptm)
         {0x000E0000, nullptr, "GetPedometerRecordingMode"},
         {0x000F0084, nullptr, "GetStepHistoryAll"},
         // ptm:gets
-        {0x04010000, nullptr, "GetSystemTime"},
+        {0x04010000, &PTM_Gets::GetSystemTime, "GetSystemTime"},
     };
     RegisterHandlers(functions);
 }

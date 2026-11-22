@@ -8,6 +8,7 @@
 #include "common/file_util.h"
 #include "common/logging/log.h"
 #include "core/core.h"
+#include "core/hle/kernel/shared_page.h"
 #include "core/file_sys/archive_extsavedata.h"
 #include "core/file_sys/errors.h"
 #include "core/file_sys/file_backend.h"
@@ -110,6 +111,13 @@ void Module::Interface::GetTotalStepCount(Kernel::HLERequestContext& ctx) {
     IPC::RequestBuilder rb = rp.MakeBuilder(2, 0);
     rb.Push(RESULT_SUCCESS);
     rb.Push<u32>(ptm->step_history.total);
+}
+
+void Module::Interface::GetSystemTime(Kernel::HLERequestContext& ctx) {
+    IPC::RequestParser rp(ctx, 0x401, 0, 0);
+    auto rb = rp.MakeBuilder(3, 0);
+    rb.Push(RESULT_SUCCESS);
+    rb.Push(Core::System::GetInstance().Kernel().GetSharedPageHandler().GetSystemTimeSince2000());
 }
 
 void Module::Interface::GetSoftwareClosedFlag(Kernel::HLERequestContext& ctx) {

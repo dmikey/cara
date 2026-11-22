@@ -1,3 +1,4 @@
+#include "cara/console_activity.h"
 #include <SDL.h>
 #include "cara/native_mac/native_command_policy.h"
 #include "cara/native_mac/game_menu.h"
@@ -725,6 +726,7 @@ static int RunNativeMain(int argc, char** argv) {
 // Replacing the process happens only after the Core, queue, window and all
 // RunNativeMain scope guards have completed their ordinary shutdown.
 int main(int argc, char** argv) {
+    if (auto result = Cara::RunConsoleActivity(argc, argv)) return *result;
     // Avoid worker-to-AppKit synchronous dispatch while main waits on the render queue.
     // An explicit launcher override survives; guest timing and GL work are unchanged.
     setenv("SDL_MAC_OPENGL_ASYNC_DISPATCH", "1", 0);

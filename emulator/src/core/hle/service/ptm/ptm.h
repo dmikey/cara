@@ -120,6 +120,7 @@ public:
          *      2 : Output of function, * = total step count
          */
         void GetTotalStepCount(Kernel::HLERequestContext& ctx);
+        void GetSystemTime(Kernel::HLERequestContext& ctx);
 
         /**
          * PTM::GetSoftwareClosedFlag service function

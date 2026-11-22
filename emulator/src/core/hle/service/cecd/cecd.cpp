@@ -21,6 +21,7 @@
 #include "core/hle/kernel/process.h"
 #include "core/hle/result.h"
 #include "core/hle/service/cecd/cecd.h"
+#include "core/hle/service/cecd/streetpass.h"
 #include "core/hle/service/cecd/cecd_ndm.h"
 #include "core/hle/service/cecd/cecd_s.h"
 #include "core/hle/service/cecd/cecd_u.h"
@@ -950,6 +951,7 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
     switch (path_type) {
     case CecDataPathType::MboxList: {
         CecMBoxListHeader mbox_list_header = {};
+        if (file_buffer.size() < sizeof(CecMBoxListHeader)) file_buffer.resize(sizeof(CecMBoxListHeader));
         std::memcpy(&mbox_list_header, file_buffer.data(), sizeof(CecMBoxListHeader));
 
         LOG_DEBUG(Service_CECD, "CecMBoxList: magic={:#06x}, version={:#06x}, num_boxes={:#06x}",
@@ -1024,16 +1026,19 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
 
                 LOG_DEBUG(Service_CECD, "Number of entries found in /CEC: {}", entry_count);
 
-                std::string mbox_list_name("MBoxList____");
                 std::string file_name;
                 std::u16string u16_filename;
 
-                // Loop through entries but don't add mboxlist____ to itself.
+                mbox_list_header.num_boxes = 0;
+                for (auto& name : mbox_list_header.box_names) name.fill(0);
+                // Only registered title directories have eight hexadecimal digits.
                 for (u32 i = 0; i < entry_count; i++) {
                     u16_filename = std::u16string(entries[i].filename);
                     file_name = Common::UTF16ToUTF8(u16_filename);
 
-                    if (mbox_list_name.compare(file_name) != 0) {
+                    if (file_name.size() == valid_name_size &&
+                        file_name.find_first_not_of("0123456789abcdef") == file_name.npos &&
+                        mbox_list_header.num_boxes < max_num_boxes) {
                         LOG_DEBUG(Service_CECD, "Adding title to mboxlist____: {}", file_name);
                         std::memcpy(&mbox_list_header.box_names[mbox_list_header.num_boxes++],
                                     file_name.data(), valid_name_size);
@@ -1046,6 +1051,7 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
     }
     case CecDataPathType::MboxInfo: {
         CecMBoxInfoHeader mbox_info_header = {};
+        if (file_buffer.size() < sizeof(CecMBoxInfoHeader)) file_buffer.resize(sizeof(CecMBoxInfoHeader));
         std::memcpy(&mbox_info_header, file_buffer.data(), sizeof(CecMBoxInfoHeader));
 
         LOG_DEBUG(Service_CECD,
@@ -1080,6 +1086,7 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
     }
     case CecDataPathType::InboxInfo: {
         CecBoxInfoHeader inbox_info_header = {};
+        if (file_buffer.size() < sizeof(CecBoxInfoHeader)) file_buffer.resize(sizeof(CecBoxInfoHeader));
         std::memcpy(&inbox_info_header, file_buffer.data(), sizeof(CecBoxInfoHeader));
 
         LOG_DEBUG(Service_CECD,
@@ -1142,6 +1149,7 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
     }
     case CecDataPathType::OutboxInfo: {
         CecBoxInfoHeader outbox_info_header = {};
+        if (file_buffer.size() < sizeof(CecBoxInfoHeader)) file_buffer.resize(sizeof(CecBoxInfoHeader));
         std::memcpy(&outbox_info_header, file_buffer.data(), sizeof(CecBoxInfoHeader));
 
         LOG_DEBUG(Service_CECD,
@@ -1207,46 +1215,31 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
         auto dir_result = cecd_system_save_data_archive->OpenDirectory(outbox_path);
 
         auto outbox_dir = std::move(dir_result).Unwrap();
-        std::vector<FileSys::Entry> entries(outbox_info_header.max_message_num + 2);
-        const u32 entry_count =
-            outbox_dir->Read(outbox_info_header.max_message_num + 2, entries.data());
+        std::vector<FileSys::Entry> entries(10); // Eight outgoing records and two index files.
+        const u32 entry_count = outbox_dir->Read(entries.size(), entries.data());
         outbox_dir->Close();
-
-        LOG_DEBUG(Service_CECD, "Number of entries found in /OutBox: {}", entry_count);
-        std::array<CecMessageHeader, 8> message_headers;
-
-        std::string boxinfo_name("BoxInfo_____");
-        std::string obindex_name("OBIndex_____");
-        std::string file_name;
-        std::u16string u16_filename;
-
-        for (u32 i = 0; i < entry_count; i++) {
-            u16_filename = std::u16string(entries[i].filename);
-            file_name = Common::UTF16ToUTF8(u16_filename);
-
-            if (boxinfo_name.compare(file_name) != 0 && obindex_name.compare(file_name) != 0) {
-                LOG_DEBUG(Service_CECD, "Adding message to BoxInfo_____: {}", file_name);
-
-                FileSys::Path message_path(
-                    (GetCecDataPathTypeAsString(CecDataPathType::OutboxDir, ncch_program_id) + "/" +
-                     file_name)
-                        .data());
-
-                FileSys::Mode mode;
-                mode.read_flag.Assign(1);
-
-                auto message_result = cecd_system_save_data_archive->OpenFile(message_path, mode);
-
-                auto message = std::move(message_result).Unwrap();
-                const u32 message_size = static_cast<u32>(message->GetSize());
-                std::vector<u8> buffer(message_size);
-
-                message->Read(0, message_size, buffer.data()).Unwrap();
-                message->Close();
-
-                std::memcpy(&message_headers[outbox_info_header.message_num++], buffer.data(),
-                            sizeof(CecMessageHeader));
+        std::array<CecMessageHeader, 8> message_headers{};
+        outbox_info_header.message_num = 0;
+        outbox_info_header.box_size = 0;
+        outbox_info_header.box_info_size = sizeof(CecBoxInfoHeader);
+        file_buffer.resize(sizeof(CecBoxInfoHeader));
+        const auto directory = GetCecDataPathTypeAsString(CecDataPathType::OutboxDir, ncch_program_id);
+        for (u32 i = 0; i < entry_count && outbox_info_header.message_num < message_headers.size(); ++i) {
+            const auto name = Common::UTF16ToUTF8(std::u16string(entries[i].filename));
+            if (name.size() != 12 || name.front() != '_') continue;
+            FileSys::Mode mode{};
+            mode.read_flag.Assign(1);
+            auto opened = cecd_system_save_data_archive->OpenFile(FileSys::Path((directory + "/" + name).c_str()), mode);
+            if (opened.Failed()) continue;
+            auto message = std::move(opened).Unwrap();
+            CecMessageHeader header{};
+            auto read = message->Read(0, sizeof(header), reinterpret_cast<u8*>(&header));
+            if (read.Succeeded() && *read == sizeof(header) && header.magic == 0x6060 &&
+                header.message_size == message->GetSize()) {
+                message_headers[outbox_info_header.message_num++] = header;
+                outbox_info_header.box_size = u32(outbox_info_header.box_size) + u32(header.message_size);
             }
+            message->Close();
         }
 
         if (outbox_info_header.message_num > 0) {
@@ -1265,6 +1258,7 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
     }
     case CecDataPathType::OutboxIndex: {
         CecOBIndexHeader obindex_header = {};
+        if (file_buffer.size() < sizeof(CecOBIndexHeader)) file_buffer.resize(sizeof(CecOBIndexHeader));
         std::memcpy(&obindex_header, file_buffer.data(), sizeof(CecOBIndexHeader));
 
         if (file_size < sizeof(CecOBIndexHeader)) { // 0x08, minimum size
@@ -1280,16 +1274,10 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
             obindex_header.magic = 0x6767;
         }
 
-        if (obindex_header.message_num == 0) {
-            if (file_size > sizeof(CecOBIndexHeader)) {
-                LOG_DEBUG(Service_CECD, "CecOBIndexHeader message number is not set");
-                obindex_header.message_num = (file_size % 8) - 1; // 8 byte message id - 1 header
-            }
-        } else if (obindex_header.message_num != (file_size % 8) - 1) {
-            LOG_DEBUG(Service_CECD, "CecOBIndexHeader message number is incorrect: {}",
-                      obindex_header.message_num);
-            obindex_header.message_num = 0;
-        }
+        // The directory is authoritative. Rebuild from zero even if an older
+        // index already contains the very same messages.
+        obindex_header.message_num = 0;
+        file_buffer.resize(sizeof(CecOBIndexHeader));
 
         /// We need to read the /CEC/<id>/OutBox directory to find out which messages, if any,
         /// are present. The num_of_messages = (total_read_count) - 2, to adjust for
@@ -1300,15 +1288,13 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
         auto dir_result = cecd_system_save_data_archive->OpenDirectory(outbox_path);
 
         auto outbox_dir = std::move(dir_result).Unwrap();
-        std::vector<FileSys::Entry> entries(8);
-        const u32 entry_count = outbox_dir->Read(8, entries.data());
+        std::vector<FileSys::Entry> entries(10);
+        const u32 entry_count = outbox_dir->Read(entries.size(), entries.data());
         outbox_dir->Close();
 
         LOG_DEBUG(Service_CECD, "Number of entries found in /OutBox: {}", entry_count);
         std::array<std::array<u8, 8>, 8> message_ids;
 
-        std::string boxinfo_name("BoxInfo_____");
-        std::string obindex_name("OBIndex_____");
         std::string file_name;
         std::u16string u16_filename;
 
@@ -1316,7 +1302,8 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
             u16_filename = std::u16string(entries[i].filename);
             file_name = Common::UTF16ToUTF8(u16_filename);
 
-            if (boxinfo_name.compare(file_name) != 0 && obindex_name.compare(file_name) != 0) {
+            if (file_name.size() == 12 && file_name.front() == '_' &&
+                obindex_header.message_num < message_ids.size()) {
                 FileSys::Path message_path(
                     (GetCecDataPathTypeAsString(CecDataPathType::OutboxDir, ncch_program_id) + "/" +
                      file_name)
@@ -1327,15 +1314,13 @@ void Module::CheckAndUpdateFile(const CecDataPathType path_type, const u32 ncch_
 
                 auto message_result = cecd_system_save_data_archive->OpenFile(message_path, mode);
 
+                if (message_result.Failed()) continue;
                 auto message = std::move(message_result).Unwrap();
-                const u32 message_size = static_cast<u32>(message->GetSize());
-                std::vector<u8> buffer(message_size);
-
-                message->Read(0, message_size, buffer.data()).Unwrap();
+                std::array<u8,8> id{};
+                const auto read = message->Read(0x20, id.size(), id.data());
+                if (read.Succeeded() && *read == id.size())
+                    message_ids[obindex_header.message_num++] = id;
                 message->Close();
-
-                // Message id is at offset 0x20, and is 8 bytes
-                std::memcpy(&message_ids[obindex_header.message_num++], buffer.data() + 0x20, 8);
             }
         }
 
@@ -1451,6 +1436,11 @@ Module::Module(Core::System& system) : system(system) {
 
         mboxlist->Write(0, mboxlist_size, true, mboxlist_buffer.data());
         mboxlist->Close();
+    }
+    try {
+        if (HasNewStreetPass(nand_directory)) cecinfo_event->Signal();
+    } catch (const std::exception& error) {
+        LOG_WARNING(Service_CECD, "Could not check StreetPass inbox: {}", error.what());
     }
 }
 

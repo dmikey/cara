@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <CoreMotion/CoreMotion.h>
 #include "core/hle/service/ptm/step_history.h"
+#include "core/hle/service/cecd/streetpass.h"
 #include "cara/guest_gpu_trace.h"
 #ifdef CARA_INTERNAL_HOST_PC_SAMPLER
 #include "cara/host_pc_sampler.h"
@@ -752,6 +753,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSTimer* cloudFeedbackTimer;
     BOOL libraryVisible;
     BOOL pickingROMsFolder;
+    BOOL pickingStreetPass, exportingStreetPass;
     NSURL* gameURL;
     BOOL gameScoped;
     BOOL modalPaused;
@@ -1290,6 +1292,60 @@ static std::filesystem::path PedometerHistoryPath() {
         inDomains:NSUserDomainMask].firstObject;
     return std::filesystem::path(documents.fileSystemRepresentation) / "cara/nand/cara-steps.txt";
 }
+- (void)exportStreetPass {
+    NSURL* packet = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
+        URLByAppendingPathComponent:@"Cara StreetPass.carapass"];
+    try {
+        const auto count = Service::CECD::ExportStreetPass(PedometerHistoryPath().parent_path(),
+            packet.fileSystemRepresentation);
+        if (!count) {
+            [self shellError:@"StreetPass" message:@"Enable StreetPass inside a game and prepare a public message before exporting."];
+            return;
+        }
+        exportingStreetPass = YES;
+        UIDocumentPickerViewController* picker = [[UIDocumentPickerViewController alloc]
+            initForExportingURLs:@[packet] asCopy:YES];
+        picker.delegate = self;
+        [self presentViewController:picker animated:YES completion:nil];
+    } catch (const std::exception& e) {
+        [self shellError:@"StreetPass export failed" message:[NSString stringWithUTF8String:e.what()]];
+    }
+}
+- (void)chooseStreetPass {
+    pickingStreetPass = YES;
+    UIDocumentPickerViewController* picker = [[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeData] asCopy:NO];
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)importStreetPass:(NSURL*)url {
+    if (running || openingGame || saveSync.busy || stateSync.busy) {
+        [self shellError:@"StreetPass" message:@"Stop the game and let the save sync finish first."];
+        return;
+    }
+    openingGame = YES;
+    const BOOL access = [url startAccessingSecurityScopedResource];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+        NSError* failure = nil;
+        __block NSString* detail = nil;
+        [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:url
+            options:0 error:&failure byAccessor:^(NSURL* file) {
+                try {
+                    const auto count = Service::CECD::ImportStreetPass(PedometerHistoryPath().parent_path(),
+                        file.fileSystemRepresentation, std::time(nullptr));
+                    detail = count ? [NSString stringWithFormat:@"%u new messages delivered.", count]
+                                   : @"No new messages for your registered games.";
+                } catch (const std::exception& e) {
+                    detail = [NSString stringWithUTF8String:e.what()];
+                }
+            }];
+        if (access) [url stopAccessingSecurityScopedResource];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->openingGame = NO;
+            [self shellError:@"StreetPass" message:detail ?: failure.localizedDescription];
+        });
+    });
+}
 - (void)recordPedometerSteps {
     NSCalendar* calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
     try {
@@ -1362,7 +1418,9 @@ static std::filesystem::path PedometerHistoryPath() {
         @"symbol":@"antenna.radiowaves.left.and.right",@"keepOpen":@YES,
         @"action":^{ [owner showNetworkSettings]; }
     }]}];
-    NSMutableArray* activity = [NSMutableArray new];
+    NSMutableArray* activity = [NSMutableArray arrayWithObjects:
+        action(@"Export StreetPass messages…", @"square.and.arrow.up", available, ^{ [owner exportStreetPass]; }),
+        action(@"Import StreetPass messages…", @"square.and.arrow.down", available, ^{ [owner chooseStreetPass]; }), nil];
     if (CMPedometer.isStepCountingAvailable) {
         [activity addObject:action(@"Import today’s device steps", @"figure.walk", available, ^{ [owner importPedometerSteps]; })];
     }
@@ -1885,10 +1943,12 @@ static std::filesystem::path PedometerHistoryPath() {
     [NSUserDefaults.standardUserDefaults setObject:name forKey:SkinPreferenceKey(orientation,physicalController)];
     [self reloadSelectedSkins]; [self resumeFromMenu];
 }
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { pickingSaveFolder=NO; pickingSkin=NO; pickingControllerSkin=NO; pickingROMsFolder=NO; pickingSkinOrientation=nil; [self resumeFromMenu]; }
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { pickingStreetPass=NO; exportingStreetPass=NO; pickingSaveFolder=NO; pickingSkin=NO; pickingControllerSkin=NO; pickingROMsFolder=NO; pickingSkinOrientation=nil; [self resumeFromMenu]; }
 - (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
     NSURL* url=urls.firstObject;
     if (!url) { [self documentPickerWasCancelled:picker]; return; }
+    if (exportingStreetPass) { exportingStreetPass=NO; [self resumeFromMenu]; return; }
+    if (pickingStreetPass) { pickingStreetPass=NO; [self importStreetPass:url]; return; }
     if (pickingROMsFolder) {
         pickingROMsFolder=NO; [self ensureLibrary]; NSError* error=nil;
         if (![libraryStore chooseFolder:url error:&error]) { [self shellError:@"ROMs folder unavailable" message:error.localizedDescription]; return; }
