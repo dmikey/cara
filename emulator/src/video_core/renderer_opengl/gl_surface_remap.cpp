@@ -22,7 +22,12 @@ void main() {
     gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
 }
 )";
+    // Native GLES uses this shader without the atlas precision preamble.
     constexpr const char* fragment = R"(
+#ifdef GL_ES
+precision highp float;
+precision highp int;
+#endif
 uniform highp sampler2D source_texture;
 // Width, height, stride, tiled flag. Coordinates in textures are GL coordinates.
 uniform highp ivec4 source_layout;
