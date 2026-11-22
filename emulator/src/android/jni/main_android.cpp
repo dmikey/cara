@@ -30,6 +30,7 @@
 #include "core/loader/smdh.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
+#include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/video_core.h"
 
 #include "camera/ndk_camera.h"
@@ -274,6 +275,20 @@ void BootGame(const std::string& path) {
         }
         s_render_window.reset();
         return;
+    }
+
+    const Config::ConfigInfo<bool> verify_surfaces{{"Debug", "verify_surface_coherence"}, false};
+    if (Config::Get(verify_surfaces)) {
+        std::string error;
+        auto* rasterizer = dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
+        const bool passed = rasterizer && rasterizer->RunSurfaceCoherenceSelfTest(error);
+        __android_log_print(passed ? ANDROID_LOG_INFO : ANDROID_LOG_ERROR, "CaraPerf",
+                            "surface_coherence passed=%d detail=%s", passed, error.c_str());
+        if (!passed) {
+            system.Shutdown();
+            s_render_window.reset();
+            return;
+        }
     }
 
     auto hid = system.ServiceManager()
