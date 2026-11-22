@@ -16,6 +16,7 @@
 #include <fstream>
 #include <future>
 #include "core/savestate.h"
+#include "video_core/video_core.h"
 
 
 #import <Foundation/Foundation.h>
@@ -33,6 +34,14 @@
 
 namespace Cara {
 namespace {
+
+bool TraceColdPipelines() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_METAL_TRACE_COLD_PSO");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
 
 struct Pair {
     std::string_view vertex, fragment, msl_vertex, msl_fragment;
@@ -841,6 +850,12 @@ std::optional<std::array<unsigned, 3>> PicaMetalPipelines::RuntimeMaterialUnits(
                                                      : RuntimeMetalVertexMode::StageIn;
     std::string error;
     const bool raw = mode == PicaMetalVertexMode::Packed && UseMetalRawIndices();
+    if (TraceColdPipelines() && !warming && !retain_compiled_descriptor) {
+        LOG_INFO(Render_OpenGL, "Cold pair first use refresh={} pair={} mode={}",
+                 VideoCore::GetCurrentFrame() + 1,
+                 PairCount + dual_assets.size() + std::size(GatePairs) + runtime_pairs.size(),
+                 unsigned(mode));
+    }
     auto stages = [&] {
         if (auto cached = ReadMslDisk(vertex, fragment, unsigned(mode)))
             return cached;
@@ -1265,6 +1280,9 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                 bool archive_hit = false;
                 MTLRenderPipelineReflection* reflection = nil;
                 NSError* pipeline_error = nil;
+                const bool trace_creation = !retain_compiled_descriptor && TraceColdPipelines();
+                using Clock = std::chrono::steady_clock;
+                const auto start = trace_creation ? Clock::now() : Clock::time_point{};
                 {
                     NativeMetalCost::Scope creation(NativeMetalCost::RenderPipelineCreate);
                     if (warmup_archive && (warming || warmup_mode == WarmupLearn)) {
@@ -1287,6 +1305,18 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                         selection.pipeline = [device newRenderPipelineStateWithDescriptor:ps
                             options:options reflection:&reflection error:&pipeline_error];
                     }
+                }
+                if (trace_creation) {
+                    const auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                        Clock::now() - start).count();
+                    std::ostringstream descriptor;
+                    for (std::size_t i = 1; i < PicaMetalRenderKeyFields; ++i)
+                        descriptor << ',' << (*key)[i];
+                    const auto vs = SourceDigest(pair.msl_vertex);
+                    const auto fs = SourceDigest(pair.msl_fragment);
+                    LOG_INFO(Render_OpenGL, "Cold PSO refresh={} pair={} vs={} fs={} state={} build_us={} archive_hit={}",
+                             VideoCore::GetCurrentFrame() + 1, id, std::string(vs.data(), 12),
+                             std::string(fs.data(), 12), descriptor.str(), elapsed_us, archive_hit);
                 }
                 if (selection.simd_reference && (!selection.pipeline ||
                     !CheckReflection(reflection,pair,selection.primary_material_cube,true))) {
@@ -1545,26 +1575,28 @@ bool PicaMetalPipelines::TryVertexFallback(
         return false;
     const auto key = MakeKey(exact, sampler, secondary, tertiary);
     const auto runtime_index = FindRuntime(exact.vertex, exact.fragment, exact.vertex_mode);
-    if (!key || !runtime_index || Find(*key) ||
-        vertex_functions.contains(runtime_pairs[*runtime_index].msl_vertex))
+    if (!key || !runtime_index || Find(*key))
         return false;
-    if (specializer && runtime_pairs[specializer->runtime_index].msl_vertex !=
-                           runtime_pairs[*runtime_index].msl_vertex) {
-        if (std::getenv("CARA_METAL_VERTEX_FALLBACK_TRACE"))
-            LOG_INFO(Render_OpenGL, "Vertex fallback waiting on an unrelated compiler job");
-        return false;
-    }
-
+    const auto& stages = runtime_pairs[*runtime_index];
     auto stage_in = exact;
     stage_in.vertex = stage_in_vertex;
     stage_in.vertex_mode = PicaMetalVertexMode::StageIn;
     stage_in.packed_arrays = false;
+    // A resident vertex function still needs a linked PSO for each fragment
+    // and fixed-state combination. Use StageIn for large multi-texture variants
+    // while the worker links the exact packed pipeline.
+    if (vertex_functions.contains(stages.msl_vertex) &&
+        (!secondary || stages.msl_vertex.size() < 32 * 1024))
+        return false;
+    if (specializer && runtime_pairs[specializer->runtime_index].msl_vertex != stages.msl_vertex) {
+        if (std::getenv("CARA_METAL_VERTEX_FALLBACK_TRACE"))
+            LOG_INFO(Render_OpenGL, "Vertex fallback waiting on an unrelated compiler job");
+        return false;
+    }
     const auto units = RuntimeMaterialUnits(stage_in.vertex, stage_in.fragment, stage_in.vertex_mode);
     if (!units || *units != std::array{exact.sampled_unit, exact.secondary_unit, exact.tertiary_unit} ||
         !Prepare(stage_in, sampler, secondary, tertiary))
         return false;
-    // Different fixed state can still need the same vertex function. Reuse the
-    // CPU fallback until that function is published, then build only the new PSO.
     if (!specializer && !StartSpecialization(*key, *runtime_index, exact, sampler, secondary, tertiary))
         return false;
     NativeMetalCost::RecordColdVertexDraw();
