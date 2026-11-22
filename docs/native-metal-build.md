@@ -586,7 +586,8 @@ pixels at refreshes 17–21 and 900. Refresh 18 still spent 24.76 ms in
 runtime shader translation. At refresh 2, pipeline creation took 158.11 ms,
 fragment library creation 56.55 ms and translation 28.92 ms. These long
 intervals can fall outside p99. Timing includes the diagnostic captures.
-The warm run delivered 59.68 refreshes/s.
+The warm run delivered 59.68 refreshes/s. The slowest rolling 120-refresh
+window averaged 75.29 ms cold (1–120) and 16.78 ms warm (12–131).
 
 The GLES generator uses the same dead combiner-write analysis. The GLES
 shader cache reuses identical emitted source. GLES device tests can capture
@@ -601,8 +602,21 @@ the device presentation resolution.
 | Repeat process | 59.72 ms | 21.29 ms | 25.79 ms | 28.66 ms at 64 |
 
 GLES delivered 42.02 refreshes/s on the first pass and 59.70 on the repeat.
-All six raw GLES captures matched between passes. The test did not reset
+The slowest rolling 120-refresh window averaged 69.79 ms on the first
+pass and 16.92 ms on the repeat (1–120 in both). All six raw GLES
+captures matched between passes. The test did not reset
 Apple’s GLES driver cache. Cross-backend byte equivalence was not tested.
+
+Using the same route with an indexed ZIP and warm caches, Metal averaged
+59.66 refreshes/s with 24.09 ms p99. GLES averaged 59.65 with 25.51 ms
+p99. Both matched their raw-ROM captures at refreshes 17–21. At refresh
+900 both differed from raw. The cause of that divergence remains open.
+
+On the M3 Mac, the AppKit options panel persists Async Shaders for the
+separate native Metal runner. Four 120-refresh Dark Moon boot checks
+verified the effective switch for a scratch profile (off), saved Performance
+(default on), Performance with the option off, and saved Accuracy (off).
+The AppKit gameplay renderer remains OpenGL.
 
 ## Cartridge gameplay checks
 

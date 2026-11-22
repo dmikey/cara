@@ -32,7 +32,8 @@ fixes and check their effects on gameplay, rendering, and saves.
 
 Performance Mode models GPU busy flags and completion interrupts in guest time.
 On iPad, **Options → Display → Async Shaders** is enabled by default in this
-mode. Compatible draws can use a general shader compiled on-device while
+mode. On Mac, the native Metal runner reads the saved Performance Mode and
+Async Shaders preferences. Compatible draws can use a general shader compiled on-device while
 Metal builds a specialized pipeline. For eligible cold vertex draws, Cara can
 interpret the guest vertices and submit the triangles to Metal while compilation
 continues. GLES and Metal reuse fragment shaders when only unused combiner-buffer
