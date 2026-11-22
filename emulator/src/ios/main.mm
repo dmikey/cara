@@ -948,8 +948,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [self reloadSelectedSkins];
     suspendTask = UIBackgroundTaskInvalid;
     pendingSuspendTask = UIBackgroundTaskInvalid;
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(background) name:UIApplicationWillResignActiveNotification object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(foreground) name:UIApplicationDidBecomeActiveNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(syncFeedbackChanged:) name:CaraSaveSyncDidChangeNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(controllerInputChanged:)
         name:CaraInputHubDidChangeNotification object:inputHub];
@@ -1649,7 +1647,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [self presentViewController:slots animated:YES completion:nil];
 }
 - (void)stopGame { if(relayClient) relayClient->Disconnect(); stop=true; sessionNotice=nil; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
-- (void)background {
+- (void)sceneWillResignActive {
+    if (backgroundAt > 0) return;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     if (emuWindow) emuWindow->metal_lcd_foreground = false;
 #endif
@@ -1665,13 +1664,23 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [UIApplication.sharedApplication endBackgroundTask:task];
 }
 - (void)checkpointSuspendedGame {
-    if (!running || !gameLoaded || stop || !paused || std::getenv("CARA_BENCHMARK_FRAMES") ||
+    if (!running || stop || std::getenv("CARA_BENCHMARK_FRAMES") ||
         suspendTask != UIBackgroundTaskInvalid) return;
+    if (!gameLoaded || !paused) {
+        LOG_INFO(Frontend, "Suspended session skipped before the guest reached a pausable state");
+        return;
+    }
     __weak EmulatorController* owner = self;
     __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
     task = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"Save suspended game"
-        expirationHandler:^{ [owner finishSuspendTask:task]; }];
-    if (task == UIBackgroundTaskInvalid) return;
+        expirationHandler:^{
+            LOG_WARNING(Frontend, "Suspended session background time expired");
+            [owner finishSuspendTask:task];
+        }];
+    if (task == UIBackgroundTaskInvalid) {
+        LOG_WARNING(Frontend, "UIKit did not grant time to save the suspended session");
+        return;
+    }
     suspendTask = task;
     suspendGraphicsReady = dispatch_semaphore_create(0);
     pendingSuspendTask = task;
@@ -1679,11 +1688,13 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     // Metal and OpenGL ES cannot submit new work once UIKit backgrounds the
     // app. Wait for the worker's graphics handoff while the scene is resigning
     // active. Archive encoding and atomic disk publication happen afterward.
-    constexpr int64_t workerStartBudget = 150 * NSEC_PER_MSEC;
+    // A cold shader compile can delay the worker beyond the usual frame time.
+    constexpr int64_t workerStartBudget = 500 * NSEC_PER_MSEC;
     if (dispatch_semaphore_wait(suspendGraphicsReady,
                                 dispatch_time(DISPATCH_TIME_NOW, workerStartBudget))) {
         auto pending = task;
         if (pendingSuspendTask.compare_exchange_strong(pending, UIBackgroundTaskInvalid)) {
+            LOG_WARNING(Frontend, "Emulation worker did not reach the suspend boundary in time");
             [self finishSuspendTask:task];
             return;
         }
@@ -1692,7 +1703,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         dispatch_semaphore_wait(suspendGraphicsReady, DISPATCH_TIME_FOREVER);
     }
 }
-- (void)foreground {
+- (void)sceneDidBecomeActive {
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     if (emuWindow) emuWindow->metal_lcd_foreground = true;
 #endif
@@ -2616,6 +2627,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     if (const auto task = pendingSuspendTask.exchange(UIBackgroundTaskInvalid);
                         task != UIBackgroundTaskInvalid) {
                         bool canSave = paused && !stop && system.IsPoweredOn() && suspendCheckpoint;
+                        if (!canSave)
+                            LOG_WARNING(Frontend, "Paused emulation session is unavailable for suspend");
                         if (canSave) {
                             try {
                                 Memory::RasterizerClearAll(true);
@@ -2639,8 +2652,11 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         if (canSave) {
                             try {
                                 system.SaveStateToPath(suspendCheckpoint.path.fileSystemRepresentation);
+                                LOG_INFO(Frontend, "Suspended session checkpoint committed");
                             } catch (const std::exception& error) {
                                 LOG_WARNING(Frontend, "Unable to save suspended session: {}", error.what());
+                            } catch (...) {
+                                LOG_WARNING(Frontend, "Unable to save suspended session");
                             }
                         }
                         dispatch_async(dispatch_get_main_queue(), ^{ [self finishSuspendTask:task]; });
@@ -3292,6 +3308,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     self.window.rootViewController = [EmulatorController new];
     [self.window makeKeyAndVisible];
     for (UIOpenURLContext* context in options.URLContexts) [(EmulatorController*)self.window.rootViewController openExternalURL:context.URL];
+}
+- (void)sceneWillResignActive:(UIScene*)scene {
+    [(EmulatorController*)self.window.rootViewController sceneWillResignActive];
+}
+- (void)sceneDidBecomeActive:(UIScene*)scene {
+    [(EmulatorController*)self.window.rootViewController sceneDidBecomeActive];
 }
 - (void)scene:(UIScene*)scene openURLContexts:(NSSet<UIOpenURLContext*>*)contexts {
     for (UIOpenURLContext* context in contexts) [(EmulatorController*)self.window.rootViewController openExternalURL:context.URL];
