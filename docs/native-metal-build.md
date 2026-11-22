@@ -301,6 +301,30 @@ from emulated deadlines. Host compiler time remains wall time lost on a
 synchronous draw miss. A timing-model comparison needs a normal boot or a
 checkpoint without pending events.
 
+### Retaining PICA calls on iPad
+
+A second M4 iPad A/B replayed the same 900-refresh slot 4 route with the
+new Performance Mode deadlines enabled in both arms. Both used vertex MSL
+reuse, fresh Metal function names, and isolated app directories. The final
+BGRA captures matched byte for byte. The tested variant uses
+`CARA_METAL_KEEP_PICA_SUBROUTINE_CALLS=1` to leave generated calls intact
+in large vertex shaders. The option has its own on-device cache identity.
+
+| Slot 4 after guest timing refinement | Inline | Retained calls |
+| --- | ---: | ---: |
+| First refresh | 10,162.76 ms | 7,165.51 ms |
+| Worst later refresh | 601.78 ms | 488.21 ms |
+| Vertex library creation, 13 libraries total | 5,227.03 ms | 2,133.35 ms |
+| Render pipeline creation, 32 pipelines total | 3,616.53 ms | 3,691.04 ms |
+| Warm p99, refreshes 171–900 | 20.90 ms | 23.72 ms |
+
+The variant saves CPU compiler time on the initial scene but increases the
+warm refresh tail, so it stays opt-in. The 488 ms refresh still spent
+230 ms creating a vertex library and 214 ms creating a pipeline. Refresh 89
+still took 443 ms, including 346 ms building fragment libraries. The average
+after refresh 170 was 16.71 ms in both arms. No shaders from this replay
+are distributed.
+
 ## Cold shader work and command-list lead time
 
 On an M3 Pro, FastInterp Metal booted Dark Moon through Gadd's lab and the

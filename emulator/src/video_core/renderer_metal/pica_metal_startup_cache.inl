@@ -335,6 +335,8 @@ bool ConfigureNativeMetalLearning(const std::string& user, std::uint64_t title,
         (UseMetalRawIndices() ? "raw" : "decoded") + ':' +
         (UseMetalRawIndexConstants() ? "constants" : "buffer") + ':' +
         (ReuseRenderPipelines() ? "reuse" : "plain") + ':';
+    if (KeepPicaSubroutineCalls())
+        identity += "keep-pica-subroutine-calls-v1:";
     identity.append(reinterpret_cast<const char*>(game_hash.data()), game_hash.size());
     const auto name = SourceDigest(identity);
     auto directory = std::filesystem::path(user) / "metal-pipelines";

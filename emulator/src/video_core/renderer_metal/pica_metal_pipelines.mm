@@ -349,6 +349,14 @@ MTLBlendOperation Blend(unsigned value) {
     }
 }
 
+bool KeepPicaSubroutineCalls() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_METAL_KEEP_PICA_SUBROUTINE_CALLS");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
 id<MTLFunction> Compile(id<MTLDevice> device, std::string_view source, NSString* entry) {
     NSString* body = [[NSString alloc] initWithBytes:source.data() length:source.size()
                                             encoding:NSUTF8StringEncoding];
@@ -373,12 +381,8 @@ id<MTLFunction> Compile(id<MTLDevice> device, std::string_view source, NSString*
     const bool simd_vertex = source.find(SimdVertexMslTag) != source.npos;
     if (simd_vertex)
         options.languageVersion = MTLLanguageVersion2_3;
-    static const bool preserve_subroutine_calls = [] {
-        const char* value = std::getenv("CARA_METAL_KEEP_PICA_SUBROUTINE_CALLS");
-        return value && std::string_view(value) == "1";
-    }();
     NSString* modified_body = nil;
-    if (preserve_subroutine_calls && !simd_vertex && source.size() >= 32 * 1024 &&
+    if (!simd_vertex && source.size() >= 32 * 1024 && KeepPicaSubroutineCalls() &&
         [entry hasPrefix:@"cara_pica_vert"]) {
         // SPIRV-Cross force-inlines each PICA subroutine by default. Keep the
         // ABI and body of these generated helpers, while letting Metal use GPU
