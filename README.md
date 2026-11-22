@@ -81,6 +81,13 @@ as the cartridge. Open a matching update CIA while the game is stopped to
 install it for subsequent launches. Updates and DLC stay out of the playable
 library. System and DLC package installation is unsupported.
 
+On Apple Silicon macOS, the cartridge loader booted *Kirby: Planet Robobot*
+from Z3DS and executed authored ARM code from a 7z cartridge. The CIA launch
+test boots authored ARM code, installs a multi-block update, launches its
+replacement code, checks a failed update preserves the previous version and
+compares the existing save bytes. Run it against the native atlas host with
+`python3 tests/apple_cia_launch_test.py path/to/cara`.
+
 **Test status.** Cara played a Deflate ZIP of *Luigi’s Mansion: Dark Moon*
 on macOS and on a physical M4 iPad. On the iPad, selecting the original ZIP
 through **Add games → Open game from Files…** booted directly to the title
