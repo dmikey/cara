@@ -23,9 +23,15 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include <direct.h>
+#include <filesystem>
+#include <io.h>
+#include <windows.h>
+#else
 #include <dirent.h>
-#include <pwd.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <utility>
@@ -59,34 +65,55 @@ bool IsSafPath(const std::string& path) {
 
 // Remove any ending forward slashes from directory paths
 // Modifies argument.
-static int GetFileStat(const std::string& filename, struct stat* buf) {
+#ifdef _WIN32
+using FileStat = struct _stat64;
+static int PlatformStat(const std::string& filename, FileStat* stat_buffer) {
+    return _wstat64(Common::UTF8ToUTF16W(filename).c_str(), stat_buffer);
+}
+#else
+using FileStat = struct stat;
+static int PlatformStat(const std::string& filename, FileStat* stat_buffer) {
+    return stat(filename.c_str(), stat_buffer);
+}
+#endif
+
+static int GetFileStat(const std::string& filename, FileStat* buf) {
     std::size_t i = filename.length();
     if (i > 1 && filename[i - 1] == DIR_SEP_CHR) {
         while (i > 0 && filename[i - 1] == DIR_SEP_CHR) {
             --i;
         }
-        return stat(filename.substr(0, i).c_str(), buf);
+#ifdef _WIN32
+        // Keep the slash on a drive root.
+        if (i == 2 && filename[1] == ':')
+            ++i;
+#endif
+        return PlatformStat(filename.substr(0, i), buf);
     } else {
-        return stat(filename.c_str(), buf);
+        return PlatformStat(filename, buf);
     }
 }
 
 bool Exists(const std::string& filename) {
-    struct stat file_info;
+    FileStat file_info;
     return (GetFileStat(filename, &file_info) == 0);
 }
 
 bool IsDirectory(const std::string& filename) {
-    struct stat file_info;
+    FileStat file_info;
     if (GetFileStat(filename.c_str(), &file_info) != 0) {
         return false;
     }
+#ifdef _WIN32
+    return (file_info.st_mode & _S_IFMT) == _S_IFDIR;
+#else
     return S_ISDIR(file_info.st_mode);
+#endif
 }
 
 u64 GetSize(const std::string& filename) {
-    struct stat file_info;
-    if (stat(filename.c_str(), &file_info) != 0) {
+    FileStat file_info;
+    if (GetFileStat(filename, &file_info) != 0) {
         LOG_ERROR(Common_Filesystem, "failed {}: No such file", filename);
         return false;
     }
@@ -94,12 +121,14 @@ u64 GetSize(const std::string& filename) {
 }
 
 u64 GetFileModificationTimestamp(const std::string& filename) {
-    struct stat file_info;
-    if (stat(filename.c_str(), &file_info) != 0) {
+    FileStat file_info;
+    if (GetFileStat(filename, &file_info) != 0) {
         LOG_ERROR(Common_Filesystem, "failed {}: No such file", filename);
         return 0;
     }
-#ifdef __APPLE__
+#if defined(_WIN32)
+    return static_cast<u64>(file_info.st_mtime);
+#elif defined(__APPLE__)
     return static_cast<u64>(file_info.st_mtimespec.tv_sec);
 #else
     return static_cast<u64>(file_info.st_mtim.tv_sec);
@@ -122,7 +151,12 @@ bool Delete(const std::string& filename) {
         return false;
     }
 
-    if (unlink(filename.c_str()) == -1) {
+#ifdef _WIN32
+    const int result = _wunlink(Common::UTF8ToUTF16W(filename).c_str());
+#else
+    const int result = unlink(filename.c_str());
+#endif
+    if (result == -1) {
         LOG_ERROR(Common_Filesystem, "unlink failed on {}: {}", filename, GetLastErrorMsg());
         return false;
     }
@@ -132,7 +166,12 @@ bool Delete(const std::string& filename) {
 
 bool CreateDir(const std::string& path) {
     LOG_TRACE(Common_Filesystem, "directory {}", path);
-    if (mkdir(path.c_str(), 0755) == 0)
+#ifdef _WIN32
+    const int result = _wmkdir(Common::UTF8ToUTF16W(path).c_str());
+#else
+    const int result = mkdir(path.c_str(), 0755);
+#endif
+    if (result == 0)
         return true;
 
     int err = errno;
@@ -190,7 +229,12 @@ bool DeleteDir(const std::string& filename) {
         return false;
     }
 
-    if (rmdir(filename.c_str()) == 0)
+#ifdef _WIN32
+    const int result = _wrmdir(Common::UTF8ToUTF16W(filename).c_str());
+#else
+    const int result = rmdir(filename.c_str());
+#endif
+    if (result == 0)
         return true;
 
     LOG_ERROR(Common_Filesystem, "failed {}: {}", filename, GetLastErrorMsg());
@@ -200,11 +244,24 @@ bool DeleteDir(const std::string& filename) {
 
 bool Rename(const std::string& srcFilename, const std::string& destFilename) {
     LOG_TRACE(Common_Filesystem, "{} --> {}", srcFilename, destFilename);
+#ifdef _WIN32
+    if (MoveFileExW(Common::UTF8ToUTF16W(srcFilename).c_str(),
+                    Common::UTF8ToUTF16W(destFilename).c_str(), MOVEFILE_REPLACE_EXISTING))
+#else
     if (rename(srcFilename.c_str(), destFilename.c_str()) == 0)
+#endif
         return true;
     LOG_ERROR(Common_Filesystem, "failed {} --> {}: {}", srcFilename, destFilename,
               GetLastErrorMsg());
     return false;
+}
+
+static FILE* OpenNativeFile(const std::string& path, const char* mode) {
+#ifdef _WIN32
+    return _wfopen(Common::UTF8ToUTF16W(path).c_str(), Common::UTF8ToUTF16W(mode).c_str());
+#else
+    return std::fopen(path.c_str(), mode);
+#endif
 }
 
 bool Copy(const std::string& srcFilename, const std::string& destFilename) {
@@ -212,7 +269,7 @@ bool Copy(const std::string& srcFilename, const std::string& destFilename) {
     using CFilePointer = std::unique_ptr<FILE, decltype(&std::fclose)>;
 
     // Open input file
-    CFilePointer input{fopen(srcFilename.c_str(), "rb"), std::fclose};
+    CFilePointer input{OpenNativeFile(srcFilename, "rb"), std::fclose};
     if (!input) {
         LOG_ERROR(Common_Filesystem, "opening input failed {} --> {}: {}", srcFilename,
                   destFilename, GetLastErrorMsg());
@@ -220,7 +277,7 @@ bool Copy(const std::string& srcFilename, const std::string& destFilename) {
     }
 
     // open output file
-    CFilePointer output{fopen(destFilename.c_str(), "wb"), std::fclose};
+    CFilePointer output{OpenNativeFile(destFilename, "wb"), std::fclose};
     if (!output) {
         LOG_ERROR(Common_Filesystem, "opening output failed {} --> {}: {}", srcFilename,
                   destFilename, GetLastErrorMsg());
@@ -270,31 +327,37 @@ bool ForeachDirectoryEntry(u64* num_entries_out, const std::string& directory,
     // How many files + directories we found
     u64 found_entries = 0;
 
-    // Save the status of callback function
+#ifdef _WIN32
+    std::error_code error;
+    for (std::filesystem::directory_iterator it(Common::UTF8ToUTF16W(directory), error), end;
+         !error && it != end; it.increment(error)) {
+        u64 entries = 0;
+        if (!callback(&entries, directory, Common::UTF16ToUTF8(it->path().filename().wstring())))
+            return false;
+        found_entries += entries;
+    }
+    if (error)
+        return false;
+#else
     bool callback_error = false;
-
     DIR* dirp = opendir(directory.c_str());
     if (!dirp)
         return false;
-
-    // non windows loop
     while (struct dirent* result = readdir(dirp)) {
         const std::string virtual_name(result->d_name);
-
         if (virtual_name == "." || virtual_name == "..")
             continue;
-
-        u64 ret_entries = 0;
-        if (!callback(&ret_entries, directory, virtual_name)) {
+        u64 entries = 0;
+        if (!callback(&entries, directory, virtual_name)) {
             callback_error = true;
             break;
         }
-        found_entries += ret_entries;
+        found_entries += entries;
     }
     closedir(dirp);
-
     if (callback_error)
         return false;
+#endif
 
     // num_entries_out is allowed to be specified nullptr, in which case we shouldn't try to set it
     if (num_entries_out != nullptr)
@@ -375,30 +438,20 @@ void CopyDir(const std::string& source_path, const std::string& dest_path) {
     if (!FileUtil::Exists(dest_path))
         FileUtil::CreateFullPath(dest_path);
 
-    DIR* dirp = opendir(source_path.c_str());
-    if (!dirp)
-        return;
-
-    while (struct dirent* result = readdir(dirp)) {
-        const std::string virtualName(result->d_name);
-        // check for "." and ".."
-        if (((virtualName[0] == '.') && (virtualName[1] == '\0')) ||
-            ((virtualName[0] == '.') && (virtualName[1] == '.') && (virtualName[2] == '\0')))
-            continue;
-
-        std::string source, dest;
-        source = source_path + virtualName;
-        dest = dest_path + virtualName;
+    ForeachDirectoryEntry(nullptr, source_path, [&](u64*, const auto&, const std::string& name) {
+        auto source = source_path + name;
+        auto dest = dest_path + name;
         if (IsDirectory(source)) {
             source += '/';
             dest += '/';
             if (!FileUtil::Exists(dest))
                 FileUtil::CreateFullPath(dest);
             CopyDir(source, dest);
-        } else if (!FileUtil::Exists(dest))
+        } else if (!FileUtil::Exists(dest)) {
             FileUtil::Copy(source, dest);
-    }
-    closedir(dirp);
+        }
+        return true;
+    });
 }
 
 namespace {
@@ -579,6 +632,18 @@ public:
     std::size_t Write(const void* p, std::size_t size, std::size_t count) override {
         return std::fwrite(p, size, count, file);
     }
+#ifdef _WIN32
+    bool Seek(s64 offset, int whence) override { return _fseeki64(file, offset, whence) == 0; }
+    u64 Tell() override { const auto offset = _ftelli64(file); return offset < 0 ? 0 : offset; }
+    u64 GetSize() override {
+        FileStat info{};
+        return _fstat64(_fileno(file), &info) == 0 ? info.st_size : 0;
+    }
+    bool Resize(u64 size) override {
+        return size <= static_cast<u64>(std::numeric_limits<s64>::max()) &&
+               _chsize_s(_fileno(file), static_cast<s64>(size)) == 0;
+    }
+#else
     bool Seek(s64 offset, int whence) override { return fseeko(file, offset, whence) == 0; }
     u64 Tell() override { const auto offset = ftello(file); return offset < 0 ? 0 : offset; }
     u64 GetSize() override {
@@ -589,6 +654,7 @@ public:
         return size <= static_cast<u64>(std::numeric_limits<off_t>::max()) &&
                ftruncate(fileno(file), static_cast<off_t>(size)) == 0;
     }
+#endif
     bool Flush() override { return std::fflush(file) == 0; }
 private:
     std::FILE* file;
@@ -643,7 +709,7 @@ bool IOFile::Open(const std::string& filename, const char openmode[]) {
         m_file.reset();
     if (s_io_factory) {
         source = s_io_factory->Open(filename, native_mode);
-    } else if (auto* handle = std::fopen(filename.c_str(), native_mode)) {
+    } else if (auto* handle = OpenNativeFile(filename, native_mode)) {
         source = std::make_unique<NativeIOHandler>(handle);
     }
     // Keep the previous handle alive until we open the successor. It can

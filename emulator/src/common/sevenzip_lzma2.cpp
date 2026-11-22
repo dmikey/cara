@@ -12,11 +12,17 @@
 #include <mutex>
 #include <optional>
 #include <vector>
+#ifdef _WIN32
+#include <random>
+#include <windows.h>
+#include "common/string_util.h"
+#else
 #include <fcntl.h>
-#include <fmt/format.h>
-#include <lzma.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
+#include <fmt/format.h>
+#include <lzma.h>
 #include <zlib.h>
 #include "common/logging/log.h"
 
@@ -44,6 +50,27 @@ bool ReadAt(IOHandler& file, u64 at, void* data, std::size_t n) {
 }
 
 std::string SourceStamp(const std::string& path, IOHandler& file) {
+#ifdef _WIN32
+    const auto source = CreateFileW(Common::UTF8ToUTF16W(path).c_str(), FILE_READ_ATTRIBUTES,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                    nullptr, OPEN_EXISTING, 0, nullptr);
+    if (source == INVALID_HANDLE_VALUE)
+        return {};
+    BY_HANDLE_FILE_INFORMATION info{};
+    FILE_BASIC_INFO times{};
+    const bool got_info = GetFileInformationByHandle(source, &info) &&
+                          GetFileInformationByHandleEx(source, FileBasicInfo, &times, sizeof(times));
+    CloseHandle(source);
+    std::array<u8, 32> header;
+    const u64 physical = file.GetSize();
+    const u64 observed = (u64{info.nFileSizeHigh} << 32) | info.nFileSizeLow;
+    if (!got_info || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || observed != physical ||
+        !ReadAt(file, 0, header.data(), header.size()) || !file.Seek(0, SEEK_SET))
+        return {};
+    return fmt::format("win-{:x}-{:x}-{:x}-{:x}-{:x}-{:x}-{:x}", info.dwVolumeSerialNumber,
+                       info.nFileIndexHigh, info.nFileIndexLow, physical, times.LastWriteTime.QuadPart,
+                       times.ChangeTime.QuadPart, crc32(0, header.data(), header.size()));
+#else
     struct stat st{};
     std::array<u8, 32> header;
     const u64 physical = file.GetSize();
@@ -59,6 +86,7 @@ std::string SourceStamp(const std::string& path, IOHandler& file) {
     return fmt::format("{:x}-{:x}-{:x}-{:x}-{:x}-{:x}-{:x}-{:x}", st.st_dev, st.st_ino, physical,
                        modified.tv_sec, modified.tv_nsec, changed.tv_sec, changed.tv_nsec,
                        crc32(0, header.data(), header.size()));
+#endif
 }
 
 bool LoadIndex(const fs::path& path, const cara_lzma2_layout& layout, std::vector<Point>& points) {
@@ -89,17 +117,32 @@ void StoreIndex(const fs::path& path, const std::vector<Point>& points) {
     fs::create_directories(path.parent_path(), ec);
     if (ec)
         return;
+    const auto bytes = points.size() * sizeof(Point);
+    const IndexHeader h{IndexMagic, points.size(),
+                        crc32(0, reinterpret_cast<const Bytef*>(points.data()), bytes)};
+#ifdef _WIN32
+    auto temp = path;
+    temp += L".partial-" + std::to_wstring(std::random_device{}());
+    const auto handle = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return; // A concurrent writer will produce a valid index.
+    DWORD written = 0;
+    const bool ok = WriteFile(handle, &h, sizeof(h), &written, nullptr) && written == sizeof(h) &&
+                    WriteFile(handle, points.data(), static_cast<DWORD>(bytes), &written, nullptr) &&
+                    written == bytes;
+    if (!CloseHandle(handle) || !ok || !MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+        DeleteFileW(temp.c_str());
+#else
     auto temp = path.string() + ".partial-XXXXXX";
     int fd = mkstemp(temp.data());
     if (fd < 0)
         return;
-    const auto bytes = points.size() * sizeof(Point);
-    IndexHeader h{IndexMagic, points.size(),
-                  crc32(0, reinterpret_cast<const Bytef*>(points.data()), bytes)};
-    bool ok = write(fd, &h, sizeof(h)) == sizeof(h) &&
-              write(fd, points.data(), bytes) == static_cast<ssize_t>(bytes);
+    const bool ok = write(fd, &h, sizeof(h)) == sizeof(h) &&
+                    write(fd, points.data(), bytes) == static_cast<ssize_t>(bytes);
     if (close(fd) != 0 || !ok || rename(temp.c_str(), path.c_str()) != 0)
         unlink(temp.c_str());
+#endif
     // An index contains offsets only. Bound the directory even across many replaced archives.
     std::vector<std::pair<fs::file_time_type, fs::path>> candidates;
     for (fs::directory_iterator it(path.parent_path(), ec), end; !ec && it != end;
