@@ -7,6 +7,10 @@ on:
         description: Build an installable side-by-side preview
         type: boolean
         default: false
+      gpu_counters:
+        description: Build the isolated Mali GPU counter sampler
+        type: boolean
+        default: false
   pull_request:
     paths:
       - '.github/workflows/android.yml'
@@ -21,6 +25,7 @@ permissions:
 
 jobs:
   apk:
+    if: ${{ !inputs.gpu_counters }}
     name: APK (${{ matrix.renderer }})
     strategy:
       fail-fast: false
@@ -72,3 +77,26 @@ jobs:
           name: cara-android-arm64-${{ matrix.renderer }}-cpu-jit${{ inputs.preview && '-preview' || '' }}
           if-no-files-found: error
           path: emulator/src/android/app/build/outputs/apk/debug/app-debug.apk
+
+  gpu-counter-sampler:
+    if: ${{ inputs.gpu_counters }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ARM-software/libGPUCounters
+          ref: 847a04a1597d132a3746e9c6374d3977cea89a6d
+          path: libGPUCounters
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'ndk;29.0.14206865'
+      - run: tools/diagnostics/rg-mali-hwcounters/build-android.sh "$ANDROID_HOME/ndk/29.0.14206865" "$PWD/libGPUCounters" "$RUNNER_TEMP/rg-mali"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cara-mali-sample-arm64
+          if-no-files-found: error
+          path: ${{ runner.temp }}/rg-mali/cara-mali-sample
