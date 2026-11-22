@@ -5,9 +5,14 @@
 #include "common/common_types.h"
 
 namespace OpenGL {
+#ifdef CARA_ANDROID_GLES_ATLAS
+bool UseNativeLUTBuffers();
+#else
+inline constexpr bool UseNativeLUTBuffers() { return false; }
+#endif
 inline GLenum LUTTextureTarget() {
 #ifdef CARA_IOS_GLES
-    return GL_TEXTURE_2D;
+    return UseNativeLUTBuffers() ? GL_TEXTURE_BUFFER : GL_TEXTURE_2D;
 #else
     return GL_TEXTURE_BUFFER;
 #endif

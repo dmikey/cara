@@ -164,6 +164,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
     setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
 #ifdef CARA_ANDROID_GLES_ATLAS
+    const Config::ConfigInfo<bool> native_luts{{"Debug", "native_lut_buffers"}, false};
+    setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
@@ -315,13 +317,14 @@ void BootGame(const std::string& path) {
                                                          ? adaptive_clock.Percent()
                                                          : ReadPlayPolicy().guest_clock;
                             LOG_INFO(Frontend,
-                                "Android frame window: end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} waits_ms={:.2f}",
+                                "Android frame window: end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f}",
                                 frame, guest_clock,
                                 (frame_times[59] + frame_times[60]) / 2, frame_times[118],
                                 frame_times.back(), phases.pica_draw_requests,
                                 phases.vertex_upload_seconds * 1000, phases.draw_submit_seconds * 1000,
                                 phases.surface_download_seconds * 1000,
-                                phases.shader_compile_seconds * 1000, phases.gpu_wait_seconds * 1000);
+                                phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
+                                phases.gpu_wait_seconds * 1000);
                             reset_trace();
                         }
                     }
