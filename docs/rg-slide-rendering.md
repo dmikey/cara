@@ -325,6 +325,51 @@ All 24 programs linked successfully. The driver does not expose
 `GL_KHR_parallel_shader_compile`. These are program-link measurements,
 separate from app frame timings.
 
+The full-game comparison used the same isolated APK, RG Slide,
+Accuracy Mode, Dynarmic and 1× atlas settings. Each arm started with a
+fresh profile and empty Cara program cache. The two lab transitions
+each linked the same number of programs in both arms.
+
+| Cold phase | Baseline worst refresh | Single-call worst refresh | Baseline → single-call GL link time |
+| --- | ---: | ---: | ---: |
+| Title, 46 links | 48.09 s | 33.86 s | 71.14 → 50.83 s |
+| Gadd lab entrance, 21 links | 40.12 s | 29.69 s | 38.50 → 28.86 s |
+| Later lab transition, 16 links | 30.17 s | 22.07 s | 29.95 → 21.89 s |
+
+After both transitions, Gadd's lab reached p99 of 165.15–176.16 ms
+with one call site, compared with 69.85–72.39 ms in the same-APK baseline
+recheck. Worst refresh was 176.82 ms versus 75.52 ms. Both profiles had
+approximately 83,000–84,000 draws per 120 refreshes and no shader builds
+or downloads. In the settled windows the new variant spent 6.66–6.78 s
+per 120 refreshes in GL submission, against 0.90–0.94 s. An earlier
+transition placed the wait in LUT updates instead. Settled lab LUT work
+was only 13–16 ms per window in both arms.
+
+| Warm lab hardware counters | Baseline recheck | Single call |
+| --- | ---: | ---: |
+| Guest refreshes/s | 15.40 | 6.35 |
+| Non-fragment queue / GPU-active cycles | 90.5% | 99.7% |
+| Fragment queue / GPU-active cycles | 63.4% | 34.4% |
+| Tiler / GPU-active cycles | 78.9% | 96.0% |
+| External GPU reads | 1.29 GB/s | 2.64 GB/s |
+| External GPU writes | 1.49 GB/s | 3.56 GB/s |
+| Median external read / write stall rates | 5.0% / 11.0% | 17.2% / 30.5% |
+
+The hardware counters are device-wide and queue activity can overlap.
+The single call site forces the compiler to share one loop body across
+both vertex evaluations. It can prevent removal of work specific to the
+reference corner and extend register lifetimes. The measured bandwidth
+and queue pressure support a vertex-side regression. Register spilling
+in the shipping compiler remains unverified. Keep the probe disabled.
+
+Two follow-up EGL experiments retained the original call sites or removed
+the second vertex evaluation with exact hemisphere correction in a fixed
+geometry stage. A structured dispatch rewrite cut link time from
+1.85 to 1.58 s and 3.05 to 2.53 s on two pairs. The fixed geometry path
+cut it from 1.79 to 0.83 s and 2.97 to 1.15 s. Both geometry arms used
+ESSL 3.20. Verify actual frame timing and pixels before selecting a
+production route.
+
 ### Dark Moon, earlier RG Slide measurements
 
 - **Surface residency.** In a warmed native GLES 3.2 title-screen A/B/A,
