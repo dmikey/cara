@@ -228,6 +228,7 @@ void BootGame(const std::string& path) {
     s_is_running = true;
     Cara::AdaptiveClock adaptive_clock;
     auto sampled_frame = VideoCore::GetCurrentFrame();
+    bool discard_next_sample = false;
     const auto apply_play_policy = [&] {
         const auto policy = ReadPlayPolicy();
         Settings::values.use_frame_limit = policy.limit_speed;
@@ -262,14 +263,17 @@ void BootGame(const std::string& path) {
                 break;
             }
             const auto frame = VideoCore::GetCurrentFrame();
-            if (adaptive_clock.Enabled() && frame == sampled_frame + 1) {
-                using Seconds = std::chrono::duration<double>;
-                const auto timing = system.perf_stats->GetLastFrameTiming();
-                const auto previous = adaptive_clock.Percent();
-                const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
-                                                              Seconds(timing.elapsed).count());
-                if (next != previous)
-                    system.CoreTiming().UpdateClockSpeed(next);
+            if (adaptive_clock.Enabled() && frame != sampled_frame) {
+                if (!discard_next_sample && frame == sampled_frame + 1) {
+                    using Seconds = std::chrono::duration<double>;
+                    const auto timing = system.perf_stats->GetLastFrameTiming();
+                    const auto previous = adaptive_clock.Percent();
+                    const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
+                                                                  Seconds(timing.elapsed).count());
+                    if (next != previous)
+                        system.CoreTiming().UpdateClockSpeed(next);
+                }
+                discard_next_sample = false;
             }
             sampled_frame = frame;
             if (s_update_hid) {
@@ -285,10 +289,20 @@ void BootGame(const std::string& path) {
             s_running_cv.wait(lock, [] { return s_is_running || s_stop_running || s_pending_settings; });
             lock.unlock();
             adaptive_clock.ResetSamples();
-            sampled_frame = VideoCore::GetCurrentFrame() + 1;
+            sampled_frame = VideoCore::GetCurrentFrame();
+            discard_next_sample = true;
             s_render_window->PollEvents();
             Settings::values.audio_volume = volume;
         }
+    }
+
+    {
+        std::lock_guard lock{s_running_mutex};
+        if (s_pending_settings) {
+            ApplyRunningSettings(*s_pending_settings);
+            s_pending_settings.reset();
+        }
+        Config::Save();
     }
 
     // Shutdown the core emulation
@@ -298,11 +312,6 @@ void BootGame(const std::string& path) {
     s_render_window.reset();
     s_is_running = false;
     resetSearchResults();
-    {
-        std::lock_guard lock{s_running_mutex};
-        s_pending_settings.reset();
-        Config::Save();
-    }
 }
 
 static bool GetSMDHData(Loader::AppLoader* loader, Loader::SMDH* smdh) {
@@ -746,6 +755,8 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv
         return;
     {
         std::lock_guard lock{s_running_mutex};
+        if (s_stop_running)
+            return;
         s_pending_settings = settings;
     }
     s_running_cv.notify_all();
