@@ -54,7 +54,7 @@ def audit(build):
         raise RuntimeError('Excluded JIT facilities found: ' + repr(forbidden_objects + forbidden_symbols))
     # SDL2/SDL3 and libpng are expected dynamic developer dependencies. This is
     # deliberately separate from the system-libraries-only iOS product audit.
-    report = dict(source_revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(), binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), platform='mac-sdl', jit_enabled=cpu_jit, shader_jit_enabled=False, default_cpu='fastinterp', forbidden_objects=forbidden_objects,
+    report = dict(source_revision=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(), binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), platform='mac-sdl', jit_enabled=cpu_jit, shader_jit_enabled=False, default_cpu='jit' if cpu_jit else 'fastinterp', forbidden_objects=forbidden_objects,
                   forbidden_symbols=forbidden_symbols,
                   non_executable_journal_maps=journal_maps,
                   linkage=subprocess.check_output(['otool', '-L', str(binary)], text=True))
@@ -69,9 +69,9 @@ def main():
     parser.add_argument('--sdl-prefix', type=Path)
     parser.add_argument('--prefix-path', type=Path, help='Additional CMake dependency prefix, e.g. Homebrew')
     parser.add_argument('--jobs', type=int, choices=(1, 2), default=2)
-    parser.add_argument('--cpu-jit', action='store_true', help='Include the experimental M1 Dynarmic CPU backend; FastInterp remains default')
+    parser.add_argument('--cpu-jit', action=argparse.BooleanOptionalAction, default=platform.machine() == 'arm64', help='Use Dynarmic JIT by default on Apple Silicon')
     parser.add_argument('--lto', action='store_true')
-    parser.add_argument('--atlas', action='store_true', help='Build the explicit native GL4.1 atlas/render-queue developer path')
+    parser.add_argument('--atlas', action=argparse.BooleanOptionalAction, default=True, help='Use the native OpenGL atlas renderer')
     parser.add_argument('--compact-decoded', action='store_true', help='Opt in to experimental 16-byte interpreter records')
     args = parser.parse_args()
     if platform.system() != 'Darwin':

@@ -91,7 +91,7 @@ def main():
     deployment = max([minimum_os(path) for path in [binary, launcher, *dependencies.values()]], key=version_key)
     manifest = dict(minimum_macos=deployment, binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                     user_dir=args.user_dir, cpu_jit_available=cpu_jit,
-                    cpu_default='fastinterp', shader_jit=False, automatic_game=False, self_contained=True,
+                    cpu_default=audit['default_cpu'], shader_jit=False, automatic_game=False, self_contained=True,
                     source_url='https://github.com/dmikey/cara',
                     source_revision=revision)
     (resources / 'build.json').write_text(json.dumps(manifest, indent=2) + '\n')
