@@ -232,6 +232,32 @@ refreshes 3248–3367 at 16.67 ms per refresh and 100.26% speed. The signed
 and ad-hoc HUD-hidden captures matched byte for byte. The separate
 HUD-visible run averaged 97.67% with an 18.41 ms lab p99.
 
+## iPad Metal pipeline warmup on state load
+
+Cara warms learned render pipelines during game open and after an in-session
+state restore recreates the renderer. A normal preload keeps the existing
+125 ms startup budget and stops at the budget boundary between recipes. Before
+an in-session restore, Cara persists newly learned recipes. A game or state
+without matching learned recipes can still compile pipelines on first use.
+
+An M4 iPad replay used a copy of Dark Moon's slot 4 in the Front Yard. Both
+passes ran FastInterp Metal at 100% guest CPU with the same touch and movement
+inputs over 900 refreshes. The first pass had learned the initial view and
+encountered new recipes after answering Gadd's call. The second pass warmed
+all 70 learned recipes in 36 ms before starting the replay.
+
+| Front Yard replay | Draw-time translations | Draw-time pipeline builds | First 120 p99 | Overall p99 | Worst refresh |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Learn the extended route | 8 | 9 | 70.81 ms | 22.05 ms | 516.84 ms |
+| Replay with learned pipelines | 0 | 0 | 22.34 ms | 21.61 ms | 33.01 ms |
+
+The 33.01 ms refresh was the first after restore. The longest later refresh
+was 22.70 ms. These timings measure emulated refreshes.
+
+An in-session reload from a disposable state restored the recorded CPU and
+guest timing snapshot and continued with zero draw-time pipeline builds. Slot 4
+remained byte-identical and matched the new app's engine fingerprint.
+
 ## Cartridge gameplay checks
 
 Boot each local cartridge with a fresh user directory and FastInterp. Drive

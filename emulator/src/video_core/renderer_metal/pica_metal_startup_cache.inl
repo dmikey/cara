@@ -9,7 +9,6 @@ constexpr unsigned WarmupMaxFile = 64 * 1024 * 1024;
 constexpr unsigned WarmupRecord = 1;
 constexpr unsigned WarmupReplay = 2;
 constexpr unsigned WarmupLearn = 3;
-constexpr unsigned LearnPreloadLimit = 8;
 constexpr auto LearnPreloadBudget = std::chrono::milliseconds(125);
 constexpr unsigned LearnMaxDescriptors = 64;
 constexpr std::uintmax_t LearnMaxArchiveBytes = 128 * 1024 * 1024;
@@ -479,8 +478,7 @@ bool PicaMetalPipelines::LoadWarmup() {
             unsigned ready = 0;
             warming = true;
             for (const auto& recipe : warmup_recipes) {
-                if (!complete && (warmup_prepared == LearnPreloadLimit ||
-                    std::chrono::steady_clock::now() >= deadline))
+                if (!complete && std::chrono::steady_clock::now() >= deadline)
                     break;
                 ++warmup_prepared;
                 if (PrepareRecipe(recipe))

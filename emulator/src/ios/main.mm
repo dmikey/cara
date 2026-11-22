@@ -305,6 +305,7 @@ public:
     CAMetalLayer* __strong metal_lcd_layer = nil;
     id<MTLDevice> __strong metal_lcd_device = nil;
     bool native_metal_only = false;
+    unsigned metal_renderer_generation = 0; // Emulation worker only.
     std::atomic<bool> metal_lcd_foreground{false};
     std::function<void()> show_metal_lcd;
     std::optional<Layout::FramebufferLayout> metal_lcd_layout;
@@ -350,7 +351,7 @@ public:
         }
         VideoCore::SetNativeRendererFactory([this, layer, resources = *resources](
                                                 Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
-            return Cara::MakeNativeMetalRenderer(window, memory, layer, resources,
+            auto native = Cara::MakeNativeMetalRenderer(window, memory, layer, resources,
                 [this]() -> std::optional<Cara::NativeLcdTarget> {
                     if (!metal_lcd_foreground.load())
                         return std::nullopt;
@@ -373,6 +374,9 @@ public:
                         frames + 1 == static_cast<unsigned>(std::clamp(std::strtol(target, nullptr, 10),
                                                                      1L, 18000L));
                 }, [this](bool capturing) { return AdmitMetalPresentation(capturing); });
+            if (native.renderer)
+                ++metal_renderer_generation;
+            return native;
         });
     }
 #endif
@@ -2175,12 +2179,44 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 }
             }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
-            const bool learn_metal = result == Core::System::ResultStatus::Success &&
-                emuWindow->native_metal_only && Common::AppleMetalPipelineLearning(target_frames != 0) &&
-                Cara::ConfigureNativeMetalLearning(
+            const bool metal_learning_enabled = emuWindow->native_metal_only &&
+                Common::AppleMetalPipelineLearning(target_frames != 0);
+            const auto begin_metal_learning = [&] {
+                return metal_learning_enabled && Cara::ConfigureNativeMetalLearning(
                     user, system.GetTitleID(), system.StateGameHash(),
                     system.GetAppLoader().ReadOnlineGameVersion()) && Cara::BeginNativeMetalWarmup();
+            };
+            bool learn_metal = result == Core::System::ResultStatus::Success && begin_metal_learning();
+            const auto finish_metal_learning = [&] {
+                if (learn_metal && !Cara::FinishNativeMetalWarmup())
+                    LOG_WARNING(Frontend, "Unable to save the local Metal pipeline cache");
+            };
 #endif
+            const auto restore_play_state = [&](auto&& load) {
+                if (relayClient)
+                    relayClient->Disconnect();
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                const auto previous_renderer = emuWindow->metal_renderer_generation;
+                finish_metal_learning();
+                const auto prewarm_restored_renderer = [&] {
+                    if (emuWindow->metal_renderer_generation != previous_renderer) {
+                        learn_metal = false;
+                        if (system.IsPoweredOn())
+                            learn_metal = begin_metal_learning();
+                    }
+                };
+                try {
+                    load();
+                } catch (...) {
+                    prewarm_restored_renderer();
+                    throw;
+                }
+                prewarm_restored_renderer();
+#else
+                load();
+#endif
+                Cara::GuestGPUTrace::Arm(user + "guest-gpu-trace.csv");
+            };
             if (result==Core::System::ResultStatus::Success)
                 LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
             if (result==Core::System::ResultStatus::Success) Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
@@ -2466,8 +2502,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         }
                         if (state_saved && state_load_frame && !state_loaded && emuWindow->frames>=state_load_frame) {
                             AudioCore::SetIOSAudioPaused(true);
-                            if(relayClient) relayClient->Disconnect(); system.LoadStateFromPath(user+"device-test.carastate");
-                            Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
+                            restore_play_state([&] { system.LoadStateFromPath(user+"device-test.carastate"); });
                             if (execution_snapshot()!=saved_execution) throw std::runtime_error("CPU/timing did not match saved checkpoint");
                             state_loaded=true; state_test_report(""); reset_clock_samples();
                             reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
@@ -2481,7 +2516,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         try {
                             if (command==101) system.SaveStateToPath(user+"profile-comparison.carastate");
                             else if (command>0) { system.SaveState(unsigned(command)); [stateSync captureCommittedSave]; }
-                            else { if(relayClient) relayClient->Disconnect(); system.LoadState(unsigned(-command)); Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv"); }
+                            else restore_play_state([&] { system.LoadState(unsigned(-command)); });
                         } catch (const std::exception& error) { failure=error.what(); }
                         reset_clock_samples();
                         reset_pacing(std::chrono::steady_clock::now()); paced_frame=emuWindow->frames;
@@ -3079,9 +3114,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     LOG_ERROR(Frontend, "Guest GPU trace export failed: {}", Cara::GuestGPUTrace::output_path);
                 if(relayClient) relayClient->Disconnect();
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
-                if (learn_metal && result == Core::System::ResultStatus::Success &&
-                    !Cara::FinishNativeMetalWarmup())
-                    LOG_WARNING(Frontend, "Unable to save the local Metal pipeline cache");
+                if (result == Core::System::ResultStatus::Success)
+                    finish_metal_learning();
 #endif
                 system.Shutdown();
                 [saveSync captureCommittedSave];
