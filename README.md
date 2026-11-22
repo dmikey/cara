@@ -62,11 +62,14 @@ in-memory seek index at first open and decompresses data on demand. See the
 [ZIP cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
 
 **Test status.** Cara played a Deflate ZIP of *Luigi’s Mansion: Dark Moon*
-on macOS and on a physical M4 iPad. The iPad completed a 3,600-refresh
-FastInterp Metal replay from the indexed archive. The device test opened
-the archive programmatically. A separate 900-refresh mansion gate replay
-from ZIP averaged 59.70 refreshes/s on the M4 iPad. Manual selection through Files still needs
-verification.
+on macOS and on a physical M4 iPad. On the iPad, selecting the original ZIP
+through **Add games → Open game from Files…** booted directly to the title
+screen. The loader indexed the archive in 1.37 seconds. A before-and-after
+check of the app’s storage found no extracted cartridge file. A separate
+3,600-refresh FastInterp Metal replay reached Gadd’s lab from a normal boot
+with both formats. Lab p99 was 19.60 ms for raw and 19.99 ms for ZIP, and
+all three sampled frames matched. A 900-refresh mansion gate replay from
+ZIP averaged 59.70 refreshes/s on the M4 iPad.
 
 ## Platforms
 
