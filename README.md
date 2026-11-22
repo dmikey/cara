@@ -28,6 +28,14 @@ fixes and check their effects on gameplay, rendering, and saves.
   audio are built in. Per-game Accuracy and Performance settings let you choose
   whether to use adaptive guest CPU timing.
 
+### Performance Mode on Apple hardware
+
+Performance Mode models GPU busy flags and completion interrupts in guest time.
+On iPad, **Options → Display → Async Shaders** is enabled by default in this
+mode. Compatible draws can use a general shader compiled on-device while
+Metal builds a specialized pipeline. First visits to a scene can still hitch.
+See the [physical-device measurements](docs/native-metal-build.md#refresh-21-vertex-compilation-reuse).
+
 ## Play cartridge ROMs straight from ZIP
 
 Open a standard ZIP containing one `.3ds` cartridge image from the macOS
