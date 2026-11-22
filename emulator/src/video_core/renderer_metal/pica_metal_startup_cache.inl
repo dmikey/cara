@@ -10,7 +10,6 @@ constexpr unsigned WarmupRecord = 1;
 constexpr unsigned WarmupReplay = 2;
 constexpr unsigned WarmupLearn = 3;
 constexpr auto LearnPreloadBudget = std::chrono::milliseconds(125);
-constexpr unsigned LearnMaxDescriptors = 64;
 constexpr std::uintmax_t LearnMaxArchiveBytes = 128 * 1024 * 1024;
 
 struct WarmupConfiguration {
@@ -564,11 +563,13 @@ void PicaMetalPipelines::RememberLearnedPipeline(const PicaPipelineInputs& p, co
             recipe.vertex == p.vertex && recipe.fragment == p.fragment &&
             std::equal(recipe.key.begin() + 1, recipe.key.end(), key.begin() + 1);
     };
-    // The caller supplies a descriptor only when this pipeline missed the
-    // archive. Recipe coverage has its own larger budget; exhausting this
-    // session's archive-addition budget must not hide later observed recipes.
+    // Each accepted recipe can contribute at most one unique render descriptor.
+    // Depth, stencil and sampler changes reuse the same binary. Keep Metal's
+    // archive addition and serialization calls off the draw path in SaveWarmup.
     const auto remember_descriptor = [&] {
-        if (descriptor && warmup_descriptors.size() < LearnMaxDescriptors)
+        if (!descriptor || warmup_descriptors.size() >= WarmupMaxRecipes)
+            return;
+        if (warmup_descriptor_keys.insert(PicaMetalRenderPrefix(key)).second)
             warmup_descriptors.push_back([descriptor copy]);
     };
     if (std::any_of(warmup_recipes.begin(), warmup_recipes.end(), same_recipe)) {

@@ -8,11 +8,13 @@
 #include <deque>
 #include <future>
 #include <optional>
+#include <set>
 #include <string_view>
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include "pica_metal_draw.h"
+#include "pica_metal_render_pipeline_key.h"
 #include "pica_metal_tev_admission.h"
 #include "pica_metal_runtime_shader.h"
 #include "pica_metal_source_pool.h"
@@ -159,6 +161,7 @@ private:
     std::string warmup_path;
     std::vector<WarmupRecipe> warmup_recipes;
     std::vector<MTLRenderPipelineDescriptor*> warmup_descriptors;
+    std::set<PicaMetalRenderKey> warmup_descriptor_keys;
     id<MTLBinaryArchive> warmup_archive = nil;
     unsigned warmup_draw_misses{}, warmup_archive_hits{}, warmup_archive_misses{};
     mutable unsigned warmup_translation_misses{};

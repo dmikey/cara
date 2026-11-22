@@ -18,6 +18,15 @@ namespace Cara {
 inline constexpr std::size_t PicaMetalMaterialKeyFields = 28;
 inline constexpr std::size_t PicaMetalRenderKeyFields = 10;
 
+using PicaMetalRenderKey = std::array<unsigned, PicaMetalRenderKeyFields>;
+
+inline PicaMetalRenderKey PicaMetalRenderPrefix(
+    const std::array<unsigned, PicaMetalMaterialKeyFields>& key) {
+    PicaMetalRenderKey prefix;
+    std::copy_n(key.begin(), prefix.size(), prefix.begin());
+    return prefix;
+}
+
 template <std::size_t Fields>
 inline bool SamePicaMetalRenderPipeline(
     const std::array<unsigned, Fields>& a, const std::array<unsigned, Fields>& b) {
