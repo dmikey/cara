@@ -25,7 +25,7 @@ read. Android scoped storage can restrict direct paths on newer devices.
 Player accepted filename regex:
 
 ```regex
-(?i)^.+\.(3ds|3dsx|cci|cxi|app|axf|elf|zip|7z|z3ds|zcci|cia)$
+(?i)^(.+?)(?:\.(?:3ds|cci|cxi)(?=\.(?:zip|7z)$))?\.(?:3ds|3dsx|cci|cxi|app|axf|elf|zip|7z|z3ds|zcci|cia)$
 ```
 
 Daijishō manages library scanning, artwork, favorites, widgets and game
