@@ -70,15 +70,23 @@ PicaMetalCompletion PicaMetalValidationReceipt::Poll() const {
     const auto inspected = checked.load(std::memory_order_relaxed);
     if (inspected != PicaMetalCompletion::Pending)
         return inspected;
-    if (source) {
-        const auto source_status = source->Status();
-        if (source_status == MetalGuestWriteStatus::Pending)
-            return PicaMetalCompletion::Pending;
-        if (source_status == MetalGuestWriteStatus::Failed) {
+    const auto check_source = [&](const auto& writer) {
+        const auto status = writer ? writer->Status() : MetalGuestWriteStatus::Complete;
+        if (status == MetalGuestWriteStatus::Failed) {
             NativeMetalCost::Count(NativeMetalCost::AsyncDepthChecksFailed, 1);
             checked.store(PicaMetalCompletion::Failed, std::memory_order_release);
             return PicaMetalCompletion::Failed;
         }
+        return status == MetalGuestWriteStatus::Pending ? PicaMetalCompletion::Pending
+                                                       : PicaMetalCompletion::Complete;
+    };
+    const auto source_state = check_source(source);
+    if (source_state != PicaMetalCompletion::Complete)
+        return source_state;
+    for (const auto& writer : more_sources) {
+        const auto writer_state = check_source(writer);
+        if (writer_state != PicaMetalCompletion::Complete)
+            return writer_state;
     }
     {
         for (const auto& buffer : std::span(errors).first(error_count))
@@ -92,6 +100,7 @@ PicaMetalCompletion PicaMetalValidationReceipt::Poll() const {
         NativeMetalCost::Count(NativeMetalCost::AsyncDepthChecksPassed, 1);
         errors = {}; // Completed checks no longer retain their staging allocations.
         source.reset();
+        more_sources.clear();
         checked.store(PicaMetalCompletion::Complete, std::memory_order_release);
     }
     return PicaMetalCompletion::Complete;
@@ -108,11 +117,16 @@ PicaMetalCompletion PicaMetalValidationReceipt::Wait() const {
     // The GPU dependency precedes this command. Its host completion or
     // validation receipt may still need resolving at a guest-read boundary.
     std::shared_ptr<const MetalSurfaceWriter> pending_source;
+    Sources other_sources;
     {
         std::lock_guard lock(inspection);
         pending_source = source;
+        other_sources = more_sources;
     }
-    if (pending_source && !pending_source->ValidateProducerCompletion()) {
+    if ((pending_source && !pending_source->ValidateProducerCompletion()) ||
+        std::ranges::any_of(other_sources, [](const auto& writer) {
+            return !writer->ValidateProducerCompletion();
+        })) {
         checked.store(PicaMetalCompletion::Failed, std::memory_order_release);
         return PicaMetalCompletion::Failed;
     }

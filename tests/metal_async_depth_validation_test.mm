@@ -191,6 +191,14 @@ void CheckReceipt(id<MTLDevice> device,unsigned bad) {
     PicaMetalValidationReceipt single_dependent(successor, success, writer);
     Require(single_dependent.Wait() == (bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
             "Sample receipt lost the original producer's validation");
+    const auto valid_writer = std::make_shared<MetalSurfaceWriter>(
+        raw, successor, 2, base, base + 4,
+        [](id<MTLCommandQueue>, id<MTLResource>, u64, PAddr, PAddr, std::span<u8>) {
+            return true;
+        });
+    const PicaMetalValidationReceipt multiple(successor, success, valid_writer, {writer});
+    Require(multiple.Wait() == (bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
+            "A later source dependency escaped sample validation");
     std::array<u8,4> bytes{};
     if (bad) {
         Require(writer->Status()==MetalGuestWriteStatus::Failed,"Descendant blessed invalid checks");

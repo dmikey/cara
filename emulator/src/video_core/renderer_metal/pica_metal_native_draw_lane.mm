@@ -583,6 +583,7 @@ bool ValidatePresentationReceipts(const MetalProducerPredecessors& predecessors)
 struct JoinedDepthCheck {
     MetalGuestWriterRef producer;
     std::shared_ptr<const MetalSurfaceWriter> pending_source;
+    PicaMetalValidationReceipt::Sources more_sources;
     id<MTLBuffer> errors = nil;
 };
 thread_local JoinedDepthCheck* active_depth_check = nullptr;
@@ -653,7 +654,7 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     };
     const auto queue_depth_export = [&](const MetalGuestWrite& segment, PAddr first, PAddr last)
         -> id<MTLBuffer> {
-        if (!active_depth_check || active_depth_check->producer)
+        if (!active_depth_check || (active_depth_check->producer && !AsyncCheckedDepthImport()))
             return nil;
         const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
         if (!writer || writer->Queue() != queue)
@@ -673,22 +674,33 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         if (!proof || proof->texture != writer->Resource() ||
             proof->generation != writer->Generation() || !writer->Covers(first, last))
             return nil;
-        const auto errors = [queue.device newBufferWithLength:sizeof(u32)
-                                               options:MTLResourceStorageModeShared];
-        if (!errors)
-            submissions.Fail("Could not allocate queued depth export validation");
-        *static_cast<u32*>(errors.contents) = 0;
+        // All spans share the same command and atomically OR into one
+        // validation word. Keep each outstanding owner until that check retires.
+        auto& joined = *active_depth_check;
+        if (!joined.errors) {
+            joined.errors = [queue.device newBufferWithLength:sizeof(u32)
+                                                      options:MTLResourceStorageModeShared];
+            if (!joined.errors)
+                submissions.Fail("Could not allocate queued depth export validation");
+            *static_cast<u32*>(joined.errors.contents) = 0;
+        }
         const auto exported = EncodeQueuedCheckedDepthExport(command, proof->texture, proof->surface,
-            {first,last}, proof->tiled_export, proof->depth_pack, errors);
+            {first,last}, proof->tiled_export, proof->depth_pack, joined.errors);
         if (!exported)
             submissions.Fail("Could not encode certified queued depth export");
-        active_depth_check->producer = segment.writer;
+        if (!joined.producer)
+            joined.producer = segment.writer;
         if (pending) {
-            active_depth_check->pending_source =
-                std::shared_ptr<const MetalSurfaceWriter>(segment.writer, writer);
+            if (!joined.pending_source) {
+                joined.pending_source = {segment.writer, writer};
+            } else if (joined.pending_source.get() != writer &&
+                       std::ranges::none_of(joined.more_sources, [writer](const auto& source) {
+                           return source.get() == writer;
+                       })) {
+                joined.more_sources.emplace_back(segment.writer, writer);
+            }
             NativeMetalCost::Count(NativeMetalCost::QueuedPendingDepthExports, 1);
         }
-        active_depth_check->errors = errors;
         return exported;
     };
 
@@ -1646,7 +1658,7 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
     std::shared_ptr<const PicaMetalValidationReceipt> validation;
     if (joined.producer) {
         validation = std::make_shared<PicaMetalValidationReceipt>(command,
-            joined.errors, std::move(joined.pending_source));
+            joined.errors, std::move(joined.pending_source), std::move(joined.more_sources));
     }
     [command commit];
     Track(command, std::move(validation));
@@ -1958,7 +1970,7 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
             if (joined.producer) {
                 validation = std::make_shared<PicaMetalValidationReceipt>(command,
                     std::array<id<MTLBuffer>, 2>{errors, joined.errors},
-                    std::move(joined.pending_source));
+                    std::move(joined.pending_source), std::move(joined.more_sources));
             } else {
                 validation = std::make_shared<PicaMetalValidationReceipt>(command, errors);
             }

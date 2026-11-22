@@ -64,13 +64,19 @@ class MetalSurfaceWriter;
 // Retained by tickets and descendant writers independently of queue retirement.
 class PicaMetalValidationReceipt {
 public:
+    using Sources = std::vector<std::shared_ptr<const MetalSurfaceWriter>>;
+
     PicaMetalValidationReceipt(id<MTLCommandBuffer> command_,
                               std::array<id<MTLBuffer>, 2> errors_,
-                              std::shared_ptr<const MetalSurfaceWriter> source_ = {})
-        : command(command_), errors(errors_), source(std::move(source_)), error_count(2) {}
+                              std::shared_ptr<const MetalSurfaceWriter> source_ = {},
+                              Sources more_sources_ = {})
+        : command(command_), errors(errors_), source(std::move(source_)),
+          more_sources(std::move(more_sources_)), error_count(2) {}
     PicaMetalValidationReceipt(id<MTLCommandBuffer> command_, id<MTLBuffer> error_,
-                              std::shared_ptr<const MetalSurfaceWriter> source_ = {})
-        : command(command_), errors{error_, nil}, source(std::move(source_)), error_count(1) {}
+                              std::shared_ptr<const MetalSurfaceWriter> source_ = {},
+                              Sources more_sources_ = {})
+        : command(command_), errors{error_, nil}, source(std::move(source_)),
+          more_sources(std::move(more_sources_)), error_count(1) {}
     PicaMetalCompletion Poll() const;
     PicaMetalCompletion Wait() const;
     id<MTLCommandBuffer> Command() const { return command; }
@@ -78,6 +84,7 @@ private:
     const id<MTLCommandBuffer> command;
     mutable std::array<id<MTLBuffer>, 2> errors;
     mutable std::shared_ptr<const MetalSurfaceWriter> source;
+    mutable Sources more_sources;
     const std::size_t error_count;
     mutable std::atomic<PicaMetalCompletion> checked{PicaMetalCompletion::Pending};
     mutable std::mutex inspection;
