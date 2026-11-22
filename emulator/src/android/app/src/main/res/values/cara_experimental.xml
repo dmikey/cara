@@ -8,5 +8,4 @@
     <string name="cara_send_message">Send message</string>
     <string name="cara_message">Message</string>
     <string name="cara_amiibo_hint">Add your own .bin files to the amiibo folder.</string>
-    <attr name="nnf_list_item_divider" format="reference" />
 </resources>
