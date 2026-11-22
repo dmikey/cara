@@ -370,13 +370,37 @@ id<MTLFunction> Compile(id<MTLDevice> device, std::string_view source, NSString*
         body = [body stringByReplacingOccurrencesOfString:entry withString:named_entry];
         entry = named_entry;
     }
-    if (source.find(SimdVertexMslTag)!=source.npos) options.languageVersion=MTLLanguageVersion2_3;
+    const bool simd_vertex = source.find(SimdVertexMslTag) != source.npos;
+    if (simd_vertex)
+        options.languageVersion = MTLLanguageVersion2_3;
+    static const bool preserve_subroutine_calls = [] {
+        const char* value = std::getenv("CARA_METAL_KEEP_PICA_SUBROUTINE_CALLS");
+        return value && std::string_view(value) == "1";
+    }();
+    NSString* modified_body = nil;
+    if (preserve_subroutine_calls && !simd_vertex && source.size() >= 32 * 1024 &&
+        [entry hasPrefix:@"cara_pica_vert"]) {
+        // SPIRV-Cross force-inlines each PICA subroutine by default. Keep the
+        // ABI and body of these generated helpers, while letting Metal use GPU
+        // calls instead of duplicating the full call tree in the vertex entry.
+        modified_body = [body stringByReplacingOccurrencesOfString:
+            @"static inline __attribute__((always_inline))\nbool sub_"
+            withString:@"static __attribute__((noinline))\nbool sub_"];
+    }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     options.fastMathEnabled = NO;
 #pragma clang diagnostic pop
     NSError* error = nil;
-    id<MTLLibrary> library = [device newLibraryWithSource:body options:options error:&error];
+    id<MTLLibrary> library = nil;
+    if (modified_body && ![modified_body isEqualToString:body]) {
+        library = [device newLibraryWithSource:modified_body options:options error:&error];
+        if (!library)
+            LOG_WARNING(Render_OpenGL, "Metal did not accept PICA subroutine calls: {}",
+                        error.localizedDescription.UTF8String ?: "unknown Metal error");
+    }
+    if (!library)
+        library = [device newLibraryWithSource:body options:options error:&error];
     if (!library) {
         LOG_ERROR(Render_OpenGL, "Metal stage {} compile failed: {}",
                   entry.UTF8String, error.localizedDescription.UTF8String ?: "unknown Metal error");
