@@ -311,9 +311,14 @@ void FmtLogMessageImpl(Class log_class, Level log_level, const char* filename,
 }
 
 int64_t GetTimeNsec() {
+#ifdef _WIN32
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+#else
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (int64_t) now.tv_sec * 1000000000LL + now.tv_nsec;
+#endif
 }
 
 } // namespace Log
