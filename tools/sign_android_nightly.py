@@ -24,7 +24,9 @@ def digest(path):
 
 
 def run(*command, capture=False):
-    result = subprocess.run(command, check=True, text=True, capture_output=capture)
+    result = subprocess.run(command, text=True, capture_output=capture)
+    if result.returncode:
+        raise RuntimeError(f"{Path(command[0]).name} failed with status {result.returncode}")
     return result.stdout
 
 
