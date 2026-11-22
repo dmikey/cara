@@ -924,8 +924,8 @@ static UIImage* CaraThemePreview(NSInteger style) {
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
-        self.backgroundColor=[UIColor colorWithRed:.025 green:.035 blue:.025 alpha:.80];
-        self.layer.cornerRadius=9;
+        self.backgroundColor=[UIColor colorWithRed:.025 green:.035 blue:.025 alpha:1];
+        self.layer.cornerRadius=12;
         self.layer.borderWidth=.5;
         self.layer.borderColor=[UIColor colorWithRed:.23 green:.29 blue:.20 alpha:.78].CGColor;
         self.userInteractionEnabled=NO;
@@ -946,6 +946,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
         [batteryIcon.widthAnchor constraintEqualToConstant:22].active=YES;
         bar=[[UIStackView alloc] initWithArrangedSubviews:@[clockLabel,batteryIcon,batteryLabel]];
         bar.spacing=8;
+        bar.alignment=UIStackViewAlignmentCenter;
         [self addSubview:bar];
     }
     return self;

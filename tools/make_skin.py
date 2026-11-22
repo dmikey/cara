@@ -195,7 +195,6 @@ def main():
         c.setFillColor(HexColor(fill)); c.setStrokeColor(HexColor(stroke)); c.setLineWidth(line)
         c.circle(x, H-y, r, stroke=1, fill=1)
     box(0, 0, W, H, '#000000')
-    box(24, 24, W-48, H-48, '#000000', '#17231b', 54)
     for f in [TOP, BOTTOM]:
         box(f['x']-18, f['y']-18, f['width']+36, f['height']+36, '#000000', '#26362a', 24, 3)
         box(**dict(x=f['x'], y=f['y'], w=f['width'], h=f['height']), fill='#000000')
@@ -236,7 +235,7 @@ def main():
     draw.ellipse((8,8,504,504), fill='#17271b', outline='#657e52', width=8)
     draw.ellipse((45,45,467,467), fill='#1b2f20', outline='#3a5637', width=4)
     thumb.save(DEST/'thumbstick.png')
-    rep=dict(assets=dict(resizable=pdf.name), mappingSize=dict(width=W,height=H),items=items,
+    rep=dict(caraViewportBorder=True, assets=dict(resizable=pdf.name), mappingSize=dict(width=W,height=H),items=items,
              screens=[dict(inputFrame=dict(x=0,y=0,width=400,height=240),outputFrame=TOP),dict(inputFrame=dict(x=40,y=240,width=320,height=240),outputFrame=BOTTOM)],translucent=False,
              caraStatusFrame=dict(x=52,y=50,width=64,height=102),caraStatsFrame=dict(x=128,y=50,width=430,height=102))
     portrait_pad=tablet_portrait(1668,2420)
