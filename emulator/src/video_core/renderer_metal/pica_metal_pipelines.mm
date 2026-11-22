@@ -612,7 +612,8 @@ std::optional<DualSamplerRecipe> GateSamplerKey(const PicaSampleInputs& s) {
 }
 
 id<MTLSamplerState> BuildGateSampler(id<MTLDevice> device, const PicaSampleInputs& s) {
-    if (!GateSamplerKey(s))
+    if (!GateSamplerKey(s) ||
+        (s.opaque_black_border && ![device supportsFamily:MTLGPUFamilyApple7]))
         return nil;
     auto* desc = [MTLSamplerDescriptor new];
     desc.normalizedCoordinates = YES;
