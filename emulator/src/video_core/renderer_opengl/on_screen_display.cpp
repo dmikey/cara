@@ -14,6 +14,14 @@
 
 namespace OSD {
 
+#ifdef __ANDROID__
+static std::atomic<u32> s_guest_clock_percent{100};
+
+void SetGuestClockPercent(u32 percent) {
+    s_guest_clock_percent.store(percent, std::memory_order_relaxed);
+}
+#endif
+
 class RasterFont {
 public:
     bool Initialize();
@@ -344,9 +352,15 @@ void RasterFont::AddMessage(const std::string& message, MessageType type, u32 du
 
 void RasterFont::UpdateDebugInfo() {
     Core::PerfStats::Results stats = Core::System::GetInstance().GetAndResetPerfStats();
+#ifdef __ANDROID__
+    std::string text = fmt::format(
+        "FPS:{:>3.0f}  SPD:{:>3.0f}%  CLK:{:>3}%", stats.game_fps,
+        stats.emulation_speed * 100.0, s_guest_clock_percent.load(std::memory_order_relaxed));
+#else
     std::string text = fmt::format(
         "FPS:{:>2} - VPS:{:>2} - SPD:{:>2}", static_cast<int>(stats.game_fps),
         static_cast<int>(stats.system_fps), static_cast<int>(stats.emulation_speed * 100.0));
+#endif
 
     AddMessage(text, MessageType::FPS, Duration::FOREVER, Color::BLUE);
 }
