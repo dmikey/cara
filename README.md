@@ -74,6 +74,21 @@ can delay the first scene or later reads. Other supported compression methods
 use temporary storage for the uncompressed cartridge while the game is open.
 Password-protected and multi-cartridge archives are unsupported.
 
+On a physical iPhone 17e, FastInterp and GLES booted the same 4 GiB *Pokémon
+Ultra Moon* cartridge from both archives. Times below are from the emulator
+log clock to the guest loading its language-selection module. Each trial ran
+for 360 guest refreshes with fresh guest data. The repeat started a new app
+process. The OS file cache was uncontrolled.
+
+| Archive | File size | First launch | Repeat launch |
+| --- | ---: | ---: | ---: |
+| LZMA2 7z | 1.65 GiB | 18.41 s | 17.87 s |
+| DEFLATE ZIP (level 3) | 2.74 GiB | 9.29 s | 7.80 s |
+
+The previous full-extraction 7z path took 63.43 s to the same milestone.
+The new 7z reader persisted a 296-byte seek index for this archive. The ZIP
+reader rebuilt its in-memory index in 7.94 s and 6.50 s respectively.
+
 Cara also opens Azahar v1 cartridge images with the `.z3ds` or `.zcci` extension.
 The shared ROM reader uses
 the embedded Zstandard seek table to read individual frames on demand. Both
