@@ -242,10 +242,22 @@ int main(int argc,char** argv) { @autoreleasepool {try {
         auto imports = fixture.imports;
         imports.detile_depth = Compute(device, lib, @"DetilePicaDepth24");
         const auto tiled = Compute(device, lib, @"ExportPicaTiledDepth24");
-        const auto attachment = fixture.f.lane.AcquireTiledDepthStencil(
-            {address, address + size}, 16, 16, imports, tiled, fixture.pack,
-            fixture.f.Reader(), false);
+        const auto acquire = [&](PAddr start) {
+            return fixture.f.lane.AcquireTiledDepthStencil(
+                {start, start + size}, 16, 16, imports, tiled, fixture.pack,
+                fixture.f.Reader(), false);
+        };
+        const auto attachment = acquire(address);
         fixture.Publish(attachment);
+        fixture.f.lane.Drain();
+        (void)acquire(DepthFixture::b);
+        QueueGate gate(fixture.f.queue);
+        fixture.Publish(attachment);
+        PicaMetalNativeAttachment restored;
+        Require(Watchdog(gate, [&] { restored = acquire(address); }) != pending,
+                "Packed D24 reimport did not preserve queue ordering");
+        gate.Release();
+        fixture.Publish(restored);
         const auto partial = fixture.f.Read(address + 1, size - 3);
         Require(std::equal(partial.begin(), partial.end(), expected.begin() + 1),
                 "Guest D24 partial read changed packed bytes");

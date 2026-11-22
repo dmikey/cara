@@ -673,12 +673,6 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         if (!proof || proof->texture != writer->Resource() ||
             proof->generation != writer->Generation() || !writer->Covers(first, last))
             return nil;
-        // The checked GPU export emits four-byte D24S8. Packed D24 still
-        // uses the writer's exact three-byte export.
-        if (proof->surface.end - proof->surface.begin !=
-            proof->texture.width * proof->texture.height * sizeof(u32))
-            return nil;
-
         const auto errors = [queue.device newBufferWithLength:sizeof(u32)
                                                options:MTLResourceStorageModeShared];
         if (!errors)
@@ -1983,7 +1977,7 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
 
     }
 
-    if (has_stencil && !deferred_clear && JoinCheckedDepthImport())
+    if (!deferred_clear && JoinCheckedDepthImport())
         exporter = CheckedDepthExporter{std::move(exporter), proof};
     resident_depth = PicaMetalNativeAttachment{{texture, range, generation}, std::move(exporter),
                                               std::nullopt};
