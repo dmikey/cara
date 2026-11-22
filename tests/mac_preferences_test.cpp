@@ -22,6 +22,16 @@ int main() {
     assert(model.play.Policy().adaptive && model.play.Policy().guest_clock == 100);
     assert(model.play.Policy().limit_speed && model.play.Policy().maximum_speed == 100);
     assert(model.play.SkipHostFrames() && model.play.display_scale == DisplayScale::Fit);
+    assert(model.play.UseAsyncMetalShaders());
+    assert(!PlaySettings::AsyncShadersForMetalSession(Ini(original), nullptr));
+    assert(PlaySettings::AsyncShadersForMetalSession(Ini(original), "1"));
+    const Ini performance("[Play]\nmode=performance\n");
+    assert(PlaySettings::AsyncShadersForMetalSession(performance, nullptr));
+    assert(!PlaySettings::AsyncShadersForMetalSession(performance, "0"));
+    const Ini accuracy("[Play]\nmode=accuracy\n[Renderer]\nasync_metal_shaders=true\n");
+    assert(!PlaySettings::AsyncShadersForMetalSession(accuracy, "1"));
+    const Ini async_disabled("[Play]\nmode=performance\n[Renderer]\nasync_metal_shaders=false\n");
+    assert(!PlaySettings::AsyncShadersForMetalSession(async_disabled, "1"));
     model.play.fixed_guest_clock = true;
     model.play.guest_clock_percent = 145;
     model.play.limit_speed = false;
@@ -33,6 +43,7 @@ int main() {
     assert(!model.play.Policy().adaptive && model.play.Policy().guest_clock == 100);
     assert(model.play.Policy().limit_speed && model.play.Policy().maximum_speed == 100);
     assert(!model.play.SkipHostFrames());
+    assert(!model.play.UseAsyncMetalShaders() && model.play.async_metal_shaders);
     model.buttons[0].value = Keyboard(SDL_SCANCODE_Q);
     model.analogs[0].directions[2] = Keyboard(SDL_SCANCODE_F);
     model.analogs[1].controller = Common::ParamPackage{
@@ -56,6 +67,7 @@ int main() {
     assert(restored.play == model.play);
     restored.play.mode = Cara::PlayMode::Performance;
     assert(restored.play.Policy().guest_clock == 145 && !restored.play.Policy().limit_speed);
+    assert(restored.play.UseAsyncMetalShaders());
     restored.play.mode = Cara::PlayMode::Accuracy;
     auto invalid = PlaySettings::Read(Ini("[Play]\nguest_clock_percent=24\nmaximum_speed_percent=200x"
                                           "\nlimit_speed=wrong\n[Renderer]\noutput_scale=16\n"));

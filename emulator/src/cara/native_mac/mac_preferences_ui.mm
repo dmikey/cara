@@ -52,7 +52,7 @@ SDL_Scancode Key(NSEvent* e){
 NSTabView* tabs;
 NSButton* tab_buttons[3];
 NSPopUpButton *mode, *scale;
-NSButton *fixedClock, *limitSpeed, *frameSkip, *resetTuning;
+NSButton *fixedClock, *limitSpeed, *frameSkip, *resetTuning, *asyncShaders;
 NSSlider *guestClock, *maximumSpeed;
 NSTextField *guestClockValue, *maximumSpeedValue, *modeDescription;
 NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<InputCommon::Polling::DevicePoller>> pollers;
@@ -106,6 +106,8 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
     fixedClock.state = !performance || play.fixed_guest_clock ? NSControlStateValueOn : NSControlStateValueOff;
     limitSpeed.state = !performance || play.limit_speed ? NSControlStateValueOn : NSControlStateValueOff;
     frameSkip.state = play.SkipHostFrames() ? NSControlStateValueOn : NSControlStateValueOff;
+    asyncShaders.state = play.UseAsyncMetalShaders() ? NSControlStateValueOn : NSControlStateValueOff;
+    asyncShaders.enabled = performance;
     fixedClock.enabled = limitSpeed.enabled = frameSkip.enabled = resetTuning.enabled = performance;
     guestClock.enabled = performance && play.fixed_guest_clock;
     maximumSpeed.enabled = performance && play.limit_speed;
@@ -132,6 +134,8 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
         play.limit_speed = limitSpeed.state == NSControlStateValueOn;
     else if (sender == frameSkip)
         play.adaptive_frame_skip = frameSkip.state == NSControlStateValueOn;
+    else if (sender == asyncShaders)
+        play.async_metal_shaders = asyncShaders.state == NSControlStateValueOn;
     else if (sender == guestClock)
         play.guest_clock_percent = 5 * std::lround(guestClock.doubleValue / 5);
     else if (sender == maximumSpeed)
@@ -145,9 +149,11 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
     auto& play = model->play;
     const auto modeBefore = play.mode;
     const auto scaleBefore = play.display_scale;
+    const auto asyncBefore = play.async_metal_shaders;
     play = PlaySettings{};
     play.mode = modeBefore;
     play.display_scale = scaleBefore;
+    play.async_metal_shaders = asyncBefore;
     [self updatePlayControls];
 }
 -(void)selectSettingsTab:(NSButton*)sender {
@@ -272,6 +278,9 @@ CaraPreferencesActions* BuildPreferences(){
  [a->scale itemAtIndex:2].tag=static_cast<NSInteger>(DisplayScale::Lossless4x);
  a->scale.target=a;a->scale.action=@selector(changePlayOption:);[display addSubview:a->scale];
  [display addSubview:Label(@"Lossless modes center the screens at whole pixel multiples. Smaller windows use the largest whole multiple that fits. Below 1×, the screens fit the window.",NSMakeRect(15,205,528,59))];
+ a->asyncShaders=PlayCheckbox(@"Async Shaders",NSMakeRect(15,173,220,22),a);
+ [display addSubview:a->asyncShaders];
+ [display addSubview:Label(@"Build eligible shaders in the background when you open a game with Metal in Performance mode.",NSMakeRect(15,123,528,42))];
  [a updatePlayControls];
 
  [controls addSubview:Label(@"Select an action to change its keyboard key, controller button or stick.",NSMakeRect(15,283,528,25))];
@@ -337,6 +346,8 @@ int SelfTest(const std::string& out){
   require(a->mode.numberOfItems==2&&a->scale.numberOfItems==3,"play and scaling choices missing");
   snapshot(settings_window,"settings.png");
   [a->mode selectItemAtIndex:1];[a changePlayOption:a->mode];
+  require(a->asyncShaders.enabled && a->asyncShaders.state==NSControlStateValueOn,
+          "Performance async shaders default missing");
   a->fixedClock.state=NSControlStateValueOn;[a changePlayOption:a->fixedClock];
   a->guestClock.integerValue=155;[a changePlayOption:a->guestClock];
   a->limitSpeed.state=NSControlStateValueOn;[a changePlayOption:a->limitSpeed];
@@ -344,7 +355,8 @@ int SelfTest(const std::string& out){
   [a->mode selectItemAtIndex:0];[a changePlayOption:a->mode];
   require(!a->fixedClock.enabled && a->fixedClock.state==NSControlStateValueOn &&
           !a->guestClock.enabled && a->guestClock.integerValue==100 && !a->maximumSpeed.enabled &&
-          a->maximumSpeed.integerValue==100 && !a->frameSkip.enabled,"Accuracy controls not locked");
+          a->maximumSpeed.integerValue==100 && !a->frameSkip.enabled && !a->asyncShaders.enabled &&
+          a->asyncShaders.state==NSControlStateValueOff,"Accuracy controls not locked");
   [a->mode selectItemAtIndex:1];[a changePlayOption:a->mode];
   require(a->guestClock.enabled && a->maximumSpeed.enabled && a->guestClock.integerValue==155 &&
           a->maximumSpeed.integerValue==125,"Performance did not restore saved tuning");
@@ -353,6 +365,7 @@ int SelfTest(const std::string& out){
           a->tab_buttons[1].state==NSControlStateValueOn,"Display tab selection failed");
   [a->scale selectItemWithTag:static_cast<NSInteger>(DisplayScale::Lossless4x)];[a changePlayOption:a->scale];
   snapshot(settings_window,"display.png");
+  a->asyncShaders.state=NSControlStateValueOff;[a changePlayOption:a->asyncShaders];
   [a selectSettingsTab:a->tab_buttons[2]];
   require(a->tab_buttons[1].state==NSControlStateValueOff &&
           a->tab_buttons[2].state==NSControlStateValueOn,"Controls tab selection failed");
@@ -390,7 +403,8 @@ int SelfTest(const std::string& out){
       &&saved.buttons[1].value==button&&saved.analogs[0].controller==analog,"binding persistence failed");
   require(saved.backend==(MacPreferences::JitAvailable()?"jit":"fastinterp"),"backend persistence failed");
   require(saved.play.guest_clock_percent==155 && saved.play.maximum_speed_percent==125 &&
-          saved.play.display_scale==DisplayScale::Lossless4x,"play settings persistence failed");
+          saved.play.display_scale==DisplayScale::Lossless4x && !saved.play.async_metal_shaders,
+          "play settings persistence failed");
   const auto applied = TakeSavedPlaySettings();
   require(applied && *applied==saved.play,"Save did not publish the runtime play settings");
   CleanupPreferences(a);
@@ -398,7 +412,8 @@ int SelfTest(const std::string& out){
   require(a->model->play==saved.play,"control reset changed play settings");
   [a restorePlayTuning:nil];
   require(a->model->play.guest_clock_percent==100 && a->model->play.maximum_speed_percent==100 &&
-          a->model->play.display_scale==saved.play.display_scale,"reset tuning changed display settings");
+          a->model->play.display_scale==saved.play.display_scale &&
+          !a->model->play.async_metal_shaders,"reset tuning changed display settings");
   auto* cancel_timer=[NSTimer timerWithTimeInterval:.05 repeats:NO block:^(NSTimer*){[a cancel:nil];}];
   [[NSRunLoop mainRunLoop]addTimer:cancel_timer forMode:NSModalPanelRunLoopMode];
   [NSApp runModalForWindow:settings_window];CleanupPreferences(a);
