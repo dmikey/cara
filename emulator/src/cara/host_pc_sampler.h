@@ -26,6 +26,8 @@ public:
     HostPcSampler(const HostPcSampler&) = delete;
     HostPcSampler& operator=(const HostPcSampler&) = delete;
     void OnFrame(std::uint64_t frame);
+    // Let an active capture reach its own capacity or time limit and join.
+    void WaitForCompletion();
     // Joins before serializing; must run before the registered thread exits.
     bool StopAndWrite(const std::string& path, const std::string& source_fingerprint = "");
 private:

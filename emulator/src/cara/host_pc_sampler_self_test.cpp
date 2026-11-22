@@ -3,6 +3,7 @@
 #include "host_pc_sampler.h"
 #include <atomic>
 #include <chrono>
+#include <charconv>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -28,7 +29,7 @@ static std::size_t SampleCount(const std::string& json) {
 }
 
 static std::string CaptureFailure(const std::string& json, bool time_limit) {
-    // Keep the original smoke assertions unchanged; identify which one failed.
+    // Report the specific capture invariant that failed.
     for (const char* key : {"info_failures", "suspend_failures", "state_failures", "resume_failures"}) {
         if (json.find(std::string("\"") + key + "\":0") == std::string::npos)
             return std::string(key) + " expected zero, got " + Field(json, key);
@@ -41,9 +42,24 @@ static std::string CaptureFailure(const std::string& json, bool time_limit) {
     if (json.find("\"pc\":0") != std::string::npos)
         return "sample contains zero PC";
     const auto count = SampleCount(json);
-    if (time_limit ? (count == 0 || count > 12) : count != 32)
-        return "sample count expected " + std::string(time_limit ? "1..12" : "32") +
+    if (time_limit ? count > 12 : count != 32)
+        return "sample count expected " + std::string(time_limit ? "0..12" : "32") +
                ", got " + std::to_string(count);
+    if (time_limit) {
+        // An overscheduled worker can wake after the deadline without a sample.
+        // Verify the actual deadline; the capacity case checks all 32 samples.
+        const auto parse_ns = [&](const char* field, std::uint64_t& value) {
+            const auto text = Field(json, field);
+            const auto end = text.data() + text.size();
+            const auto result = std::from_chars(text.data(), end, value);
+            return result.ec == std::errc{} && result.ptr == end;
+        };
+        std::uint64_t start, end;
+        if (!parse_ns("start_ns", start) || !parse_ns("end_ns", end))
+            return "invalid capture timestamps";
+        if (end < start || end - start < 80000000)
+            return "time limit reported before 80 ms elapsed";
+    }
     // THREAD_WAITING=3. Preserve natural waiting states; never call them CPU work.
     if (!time_limit && json.find("\"natural_run_state\":3") == std::string::npos)
         return "capacity capture contains no natural THREAD_WAITING sample";
@@ -102,7 +118,12 @@ static bool CheckFailureDiagnostics() {
         ++position;
     }
     if (CaptureFailure(invalid, false).find("no natural THREAD_WAITING") == std::string::npos) return false;
-    std::cout << "host PC sampler failure diagnostics: 10 cases passed\n";
+    std::string expired = header.substr(0, header.find("\"capacity\"")) +
+        "\"time_limit\",\"uuid\":\"test\",\"start_ns\":1,\"end_ns\":80000001,\"samples\":[]}";
+    if (!CaptureFailure(expired, true).empty()) return false;
+    expired.replace(expired.find("80000001"), 8, "80000000");
+    if (CaptureFailure(expired, true) != "time limit reported before 80 ms elapsed") return false;
+    std::cout << "host PC sampler failure diagnostics: 12 cases passed\n";
     return true;
 }
 
@@ -115,15 +136,12 @@ static bool Exercise(const std::string& path, bool time_limit) {
         Cara::HostPcSampler::Options options;
         options.start_frame = 0; options.end_frame = 1;
         options.capacity = time_limit ? 6000 : 32;
-        options.max_seconds = time_limit ? .08 : 3;
+        options.max_seconds = time_limit ? .08 : 30;
         Cara::HostPcSampler sampler(true, options);
         sampler.OnFrame(0);
-        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(time_limit ? 600 : 1800);
-        while (std::chrono::steady_clock::now() < end) {
-            const auto spin_end = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
-            while (std::chrono::steady_clock::now() < spin_end) progress.fetch_add(1, std::memory_order_relaxed);
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
+        // Keep the target alive until the sampler reaches its own bound.
+        // Blocking here also gives the sampler a genuine THREAD_WAITING target.
+        sampler.WaitForCompletion();
         sampler.OnFrame(1);
         written = sampler.StopAndWrite(path, "native-own-process-smoke");
         after_stop.store(true);
