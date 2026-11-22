@@ -42,6 +42,8 @@ constexpr u32 FOREVER = -1;
 
 void Initialize();
 
+void SetShowFPS(bool enabled);
+
 void AddMessage(const std::string& message, MessageType type, u32 duration, u32 color);
 
 void DrawMessage(const Frontend::EmuWindow& window, const Layout::FramebufferLayout& layout);

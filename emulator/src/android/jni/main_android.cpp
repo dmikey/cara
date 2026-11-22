@@ -18,6 +18,7 @@
 #include "common/common_paths.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
+#include "video_core/renderer_opengl/on_screen_display.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
@@ -146,8 +147,9 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
     Config::Set(Config::FIXED_GUEST_CLOCK, settings[i++] != 0);
     Config::Set(Config::GUEST_CLOCK_PERCENT, static_cast<u16>(std::clamp(settings[i++], 25, 200)));
 
-    Settings::values.show_fps = settings[i++] != 0;
-    Config::Set(Config::SHOW_FPS, Settings::values.show_fps);
+    const bool show_fps = settings[i++] != 0;
+    Config::Set(Config::SHOW_FPS, show_fps);
+    OSD::SetShowFPS(show_fps);
     VideoCore::SettingUpdate();
 
 }

@@ -1,5 +1,6 @@
 #include "video_core/renderer_opengl/on_screen_display.h"
 
+#include <atomic>
 #include <memory>
 
 #include "common/timer.h"
@@ -408,27 +409,34 @@ void RasterFont::Draw(const Frontend::EmuWindow& window, const Layout::Framebuff
 }
 
 static std::unique_ptr<RasterFont> s_raster_font;
+static std::atomic<bool> s_show_fps{false};
+
+void SetShowFPS(bool enabled) {
+    s_show_fps.store(enabled, std::memory_order_relaxed);
+}
 
 void Initialize() {
     s_raster_font = std::make_unique<RasterFont>();
     s_raster_font->Initialize();
-    // fps placeholder
-    AddMessage("", MessageType::FPS, Duration::FOREVER, Color::BLUE);
+    // Keep the entry available if the user enables the HUD during play.
+    s_raster_font->AddMessage("", MessageType::FPS, Duration::FOREVER, Color::BLUE);
+    SetShowFPS(Settings::values.show_fps);
 }
 
 void AddMessage(const std::string& message, MessageType type, u32 duration, u32 color) {
-    if (Settings::values.show_fps) {
+    if (s_show_fps.load(std::memory_order_relaxed)) {
         s_raster_font->AddMessage(message, type, duration, color);
     }
 }
 
 void DrawMessage(const Frontend::EmuWindow& window, const Layout::FramebufferLayout& layout) {
-    if (Settings::values.show_fps) {
+    if (s_show_fps.load(std::memory_order_relaxed)) {
         s_raster_font->Draw(window, layout);
     }
 }
 
 void Shutdown() {
+    SetShowFPS(false);
     s_raster_font.reset();
 }
 
