@@ -11,6 +11,7 @@
 #include <vector>
 #include <unordered_map>
 #include "pica_metal_draw.h"
+#include "pica_metal_tev_admission.h"
 #include "pica_metal_runtime_shader.h"
 #include "pica_metal_source_pool.h"
 
@@ -111,6 +112,7 @@ class PicaMetalPipelines {
 public:
     explicit PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual = {});
     bool BeginWarmup();
+    bool ObserveTevPipelineMiss(const PicaPipelineInputs&, bool dual);
     bool FinishWarmup();
     PicaMetalPipelines(const PicaMetalPipelines&) = delete;
     PicaMetalPipelines& operator=(const PicaMetalPipelines&) = delete;
@@ -145,6 +147,7 @@ private:
     bool SaveWarmup();
     void RememberLearnedPipeline(const PicaPipelineInputs&, const Key&,
                                  MTLRenderPipelineDescriptor*);
+    PicaMetalTevAdmission tev_admission;
     std::size_t warmup_recipe_bytes{};
     unsigned warmup_prepared{}, warmup_new_recipes{};
     unsigned warmup_mode{};

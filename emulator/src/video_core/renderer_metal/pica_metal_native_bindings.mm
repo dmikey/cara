@@ -167,7 +167,16 @@ std::optional<PicaMetalPipelineSelection> SelectGeneralFragment(
     const std::optional<PicaSampleInputs>& third) {
     canonical.state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
     canonical.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
-    if (UseRuntimeTevFallback() && canonical.SupportsRuntimeTev()) {
+    static const bool adaptive = [] {
+        const char* value = std::getenv("CARA_METAL_RUNTIME_TEV");
+        return value && std::string_view(value) == "adaptive";
+    }();
+    if (adaptive) {
+        if (auto ready = pipelines.Select(draw, sampler, second, third))
+            return ready;
+    }
+    if (canonical.SupportsRuntimeTev() && (UseRuntimeTevFallback() ||
+        (adaptive && pipelines.ObserveTevPipelineMiss(draw, second.has_value())))) {
         auto dynamic = canonical;
         dynamic.state.tev_stages = {};
         dynamic.state.combiner_buffer_input = 0;
