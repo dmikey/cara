@@ -21,7 +21,9 @@ fixes and check their effects on gameplay, rendering, and saves.
 - **A library built for the big screen.** Browse your collection, favorites,
   and recently played games from an iPad sidebar. Add games through Files.
 - **Play your way.** Use touch controls, customize a Delta-compatible skin, or
-  connect a supported game controller.
+  connect a supported game controller. In **Settings → Controls**, choose Carbon Duo,
+  Meadow, Rose Ink, Silverline, Tideweave, Grin Garden, or Orbit Arcade
+  separately for portrait and landscape.
 - **Pick up where you left off.** Make per-game save states and sync in-game
   saves through a selected iCloud Drive folder.
 - **Per-game play settings.** Choose Accuracy for a fixed 100% guest CPU clock

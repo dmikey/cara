@@ -957,7 +957,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     skinBorder.userInteractionEnabled=NO;
     skinBorder.layer.borderColor=[UIColor colorWithRed:23./255 green:35./255 blue:27./255 alpha:1].CGColor;
     skinBorder.layer.borderWidth=1;
-    skinBorder.layer.cornerRadius=26;
+    skinBorder.layer.cornerRadius=40;
     skinBorder.layer.cornerCurve=kCACornerCurveContinuous;
     [self.view addSubview:skinBorder];
     skinControls=[[CaraSkinControls alloc] initWithFrame:CGRectZero]; [self.view addSubview:skinControls];
@@ -1018,12 +1018,13 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         }];
     }
 }
-- (void)layoutPadDeviceStatusForMetrics:(CGRect)metrics {
+- (void)layoutPadDeviceStatusForMetrics:(CGRect)metrics indicator:(CGRect)indicator {
     const CGRect safe=UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets);
     const CGFloat width=MIN(152,MAX(0,CGRectGetWidth(safe)-16));
     CGRect badge=CGRectMake(CGRectGetMaxX(safe)-8-width,CGRectGetMinY(safe)+6,width,26);
     if (!CGRectIsNull(metrics) && !CGRectIsEmpty(metrics)) {
-        const CGFloat inset=MAX(0,CGRectGetMinX(metrics)-CGRectGetMinX(safe));
+        // Mirror the outside edge of the complete FPS panel, including its status light.
+        const CGFloat inset=MAX(0,CGRectGetMinX(CGRectUnion(indicator,metrics))-CGRectGetMinX(safe));
         badge.origin.x=MAX(CGRectGetMinX(safe),CGRectGetMaxX(safe)-inset-width);
         badge.origin.y=CGRectGetMinY(metrics);
         badge.size.height=CGRectGetHeight(metrics);
@@ -1063,12 +1064,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     menuFallback.hidden=rep && !actionsEnabled && (!physicalSkin || CaraSkinHasTouchMenu(rep));
     if (actionsEnabled) menuFallback.frame=CGRectMake(self.view.safeAreaInsets.left+16,self.view.safeAreaInsets.top+8,100,44);
     skinBorder.hidden=actionsEnabled || ![rep[@"caraViewportBorder"] isEqual:@YES];
-    skinBorder.frame=self.view.bounds;
+    skinBorder.frame=CGRectInset(self.view.bounds,4,4);
     skinArt.hidden=actionsEnabled; actionControls.hidden=!actionsEnabled;
     if (!rep) {
         menuFallback.frame=CGRectMake(24,48,120,44);
         if (self.traitCollection.userInterfaceIdiom==UIUserInterfaceIdiomPad)
-            [self layoutPadDeviceStatusForMetrics:CGRectNull];
+            [self layoutPadDeviceStatusForMetrics:CGRectNull indicator:CGRectNull];
         else {
             deviceStatusHUD.hidden=YES;
             deviceStatusHUD.monitoring=NO;
@@ -1113,7 +1114,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSString* statsKey=landscape?@"landscapeStatsVisible":@"portraitStatsVisible";
     performanceHUD.hidden=[NSUserDefaults.standardUserDefaults objectForKey:statsKey] && ![NSUserDefaults.standardUserDefaults boolForKey:statsKey];
     if (self.traitCollection.userInterfaceIdiom==UIUserInterfaceIdiomPad) {
-        [self layoutPadDeviceStatusForMetrics:hud.metrics];
+        [self layoutPadDeviceStatusForMetrics:hud.metrics indicator:hud.indicator];
     } else if (deviceStatusHUD) {
         CGRect visibleMenu=menuFallback.hidden?phoneMenu:menuFallback.frame;
         const CGFloat right=CGRectIsNull(visibleMenu)?CGRectGetMaxX(canvas)-12:CGRectGetMinX(visibleMenu)-8;
@@ -1574,16 +1575,29 @@ static std::filesystem::path PedometerHistoryPath() {
         action(@"Reset emulation tuning",@"arrow.counterclockwise",tuning,^{ EmulatorController* c=owner; if (!c) return; for (NSString* key in @[@"fixedGuestClockEnabled",@"fixedGuestClockPercent",@"speedLimitEnabled",@"maximumSpeedPercent",@"adaptiveFrameSkipEnabled"]) [NSUserDefaults.standardUserDefaults removeObjectForKey:key]; [c applySavedPlayPolicy]; [c updateSyncFeedback]; [c resumeFromMenu]; }),
     ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 100%. Choose Performance to adjust these controls.":@"Guest clock and game speed apply when you resume. GPU timing follows your play mode the next time you open a game."}];
     for (NSString* orientation in @[@"Landscape",@"Portrait"]) {
-        NSString* key=[@"controllerSkin" stringByAppendingString:orientation];
-        NSString* selected=[NSUserDefaults.standardUserDefaults stringForKey:key];
+        CaraSkin* current=[orientation isEqual:@"Landscape"]?landscapeSkin:portraitSkin;
         NSString* statsKey=[orientation isEqual:@"Landscape"]?@"landscapeStatsVisible":@"portraitStatsVisible";
         BOOL showStats=![NSUserDefaults.standardUserDefaults objectForKey:statsKey] || [NSUserDefaults.standardUserDefaults boolForKey:statsKey];
         NSString* title=[orientation stringByAppendingString:@" skin"];
-        [sections addObject:@{@"title":title,@"rows":@[
-            @{@"title":@"Import skin…",@"subtitle":selected?:@"Built-in",@"symbol":[orientation isEqual:@"Portrait"]?@"rectangle.portrait":@"rectangle",@"action":^{ [owner pickSkinForOrientation:orientation controller:NO]; }},
-            action(@"Use built-in skin",@"sun.max",YES,^{ [owner resetSkinForOrientation:orientation controller:NO]; }),
-            @{@"title":@"Performance bar",@"subtitle":@"Game FPS, emulation speed, and guest CPU clock.",@"symbol":@"chart.bar",@"value":@(showStats),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:statsKey]; [owner.view setNeedsLayout]; }},
-        ],@"footer":@"Portrait and landscape keep their own skin and performance-bar settings."}];
+        NSMutableArray* rows=[NSMutableArray array];
+        for (NSString* name in @[@"Carbon Duo",@"Meadow",@"Rose Ink",@"Silverline",@"Tideweave",@"Grin Garden",@"Orbit Arcade"]) {
+            NSString* resource=[name stringByReplacingOccurrencesOfString:@" " withString:@""];
+            NSURL* url=[NSBundle.mainBundle URLForResource:resource withExtension:@"deltaskin"];
+            if (!url) continue;
+            const BOOL carbon=[resource isEqual:@"CarbonDuo"];
+            const BOOL selected=[current.info[@"name"] isEqual:carbon?@"Cara Carbon Duo":name];
+            [rows addObject:@{@"title":name,@"symbol":@"paintpalette",@"selected":@(selected),@"action":^{
+                EmulatorController* c=owner;
+                if (!c) return;
+                if (carbon) { [c resetSkinForOrientation:orientation controller:NO]; return; }
+                c->pickingSkinOrientation=orientation;
+                c->pickingControllerSkin=NO;
+                [c importSkin:url];
+            }}];
+        }
+        [rows addObject:@{@"title":@"Import skin…",@"symbol":@"doc.badge.plus",@"action":^{ [owner pickSkinForOrientation:orientation controller:NO]; }}];
+        [rows addObject:@{@"title":@"Performance bar",@"subtitle":@"Game FPS, emulation speed, and guest CPU clock.",@"symbol":@"chart.bar",@"value":@(showStats),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:statsKey]; [owner.view setNeedsLayout]; }}];
+        [sections addObject:@{@"title":title,@"rows":rows,@"footer":@"Portrait and landscape keep their own skin and performance-bar settings."}];
     }
     NSMutableArray* controllerRows=[NSMutableArray arrayWithArray:@[
         @{@"title":@"Button mappings",@"subtitle":inputHub.controllerName,@"symbol":@"gamecontroller",
@@ -2005,6 +2019,8 @@ static std::filesystem::path PedometerHistoryPath() {
     if (!rep || !check.artwork) { if (scoped) [url stopAccessingSecurityScopedResource]; [self skinError:[NSString stringWithFormat:@"This skin has no usable %@ layout. Your other skin is unchanged.",orientation.lowercaseString]]; return; }
     NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
     NSString* name=[NSString stringWithFormat:@"%@-%@.deltaskin",physicalController?@"physical-controller":@"controller",orientation.lowercaseString];
+    if ([url.URLByDeletingLastPathComponent isEqual:NSBundle.mainBundle.resourceURL])
+        name=[@"bundled-" stringByAppendingString:url.lastPathComponent];
     NSURL* destination=[NSURL fileURLWithPath:[documents stringByAppendingPathComponent:name]];
     NSData* data=[NSData dataWithContentsOfURL:url options:0 error:&error];
     BOOL saved=data && [data writeToURL:destination options:NSDataWritingAtomic error:&error];

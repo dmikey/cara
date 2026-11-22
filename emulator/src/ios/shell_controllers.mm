@@ -953,7 +953,9 @@ static UIImage* CaraThemePreview(NSInteger style) {
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
-    bar.frame=CGRectInset(self.bounds,9,1);
+    const CGSize fit=[bar systemLayoutSizeFittingSize:UILayoutFittingCompressedSize];
+    const CGFloat width=MIN(fit.width,MAX(0,CGRectGetWidth(self.bounds)-18));
+    bar.frame=CGRectMake((CGRectGetWidth(self.bounds)-width)/2,0,width,CGRectGetHeight(self.bounds));
 }
 - (void)updateStatus {
     NSString* time=[clockFormatter stringFromDate:NSDate.date];
@@ -969,6 +971,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
     batteryIcon.hidden=battery==nil;
     batteryLabel.hidden=battery==nil;
     batteryLabel.text=battery;
+    [self setNeedsLayout];
     NSString* power=device.batteryState==UIDeviceBatteryStateCharging?@", charging":@"";
     self.accessibilityLabel=battery
         ? [NSString stringWithFormat:@"%@, battery %@%@",time,battery,power] : time;
