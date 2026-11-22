@@ -691,6 +691,29 @@ workloads.
 
 ## Cartridge gameplay checks
 
+The M4 iPad library sweep on November 21 exercised 18 local files from
+the regular Cara app’s Roms directory. The collection showed 18 entries
+and the library search found Planet Robobot. Four games ran directly from
+ZIP: Cooking Mama 5, Kirby: Planet Robobot, Monster Hunter Stories and
+One Piece: Romance Dawn. The 14 raw cartridges were 7th Dragon III,
+Ever Oasis, Gravity Falls, Hyrule Warriors Legends, LEGO Batman 3,
+A Link Between Worlds, Ocarina of Time 3D, Dark Moon, Mario Kart 7,
+Monster Hunter 4 Ultimate, Paper Mario: Sticker Star, Persona Q2,
+Sonic Boom: Fire & Ice and Xenoblade Chronicles 3D.
+
+Each boot used a separate test save directory, FastInterp and native Metal.
+Fifteen titles completed the first 900-refresh input replay. Three stopped
+and passed the same replay after renderer fixes on the same device:
+
+| Game | First stop | Fix |
+| --- | ---: | --- |
+| Kirby: Planet Robobot | 330 | Filter arbitrary border colors at each mip level. |
+| Ocarina of Time 3D | 431 | Accept optimized-out sampler slots when reflecting translated shaders. |
+| Paper Mario: Sticker Star | 13 | Convert cropped, tiled RGB5A1 to linear RGB565 on display transfer. |
+
+These are boot and early-rendering checks. Later gameplay needs scene-specific
+input routes and longer captures.
+
 Boot each local cartridge with a fresh user directory and FastInterp. Drive
 menus and gameplay with the same inputs when comparing performance. Capture
 both screens after reaching a controllable scene and verify that directional
