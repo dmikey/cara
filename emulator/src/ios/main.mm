@@ -28,6 +28,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include "ios/session_overlay.h"
 #include "network/relay_client.h"
 #import "ios/state_catalog.h"
+#import "ios/suspend_checkpoint.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #ifdef CARA_IOS_GLES
 #import <OpenGLES/EAGL.h>
@@ -36,7 +37,6 @@ extern "C" int __llvm_profile_write_file(void);
 #include <glad/glad.h>
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
-#include "video_core/video_core.h"
 #include "ios/gpu_vertex_self_test.h"
 #include "ios/gpu_state_self_test.h"
 #include "ios/gpu_depth_self_test.h"
@@ -89,6 +89,8 @@ extern "C" int __llvm_profile_write_file(void);
 #include "core/hle/kernel/kernel.h"
 #include "core/hle/kernel/process.h"
 #include "core/memory.h"
+#include "video_core/rasterizer_interface.h"
+#include "video_core/video_core.h"
 
 static std::atomic<u64> displayLinkSequence{0};
 #ifdef CARA_IOS_GLES
@@ -616,6 +618,14 @@ static bool CaraMetalRendererRequested() {
 
 static NSDictionary* CaraGameOverrides;
 static id CaraEmulationValue(NSString* key) { return CaraGameOverrides[key]?:[NSUserDefaults.standardUserDefaults objectForKey:key]; }
+static Cara::GPUCompletionPolicy CaraSessionGPUCompletionPolicy(id playMode) {
+    return Cara::GetGPUCompletionPolicy(CaraCanTuneEmulation() && ![playMode isEqual:@"accuracy"]);
+}
+static NSURL* CaraSuspendDirectory() {
+    NSURL* support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                       inDomains:NSUserDomainMask].firstObject;
+    return [support URLByAppendingPathComponent:@"Cara/Suspended" isDirectory:YES];
+}
 static bool CaraAdaptiveFrameSkipAvailable() {
 #ifndef CARA_IOS_GLES
     return false;
@@ -713,6 +723,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     std::atomic<bool> stop;
     std::atomic<bool> running;
     std::atomic<bool> gameLoaded;
+    UIBackgroundTaskIdentifier suspendTask; // Main thread.
+    std::atomic<UIBackgroundTaskIdentifier> pendingSuspendTask;
+    dispatch_semaphore_t suspendGraphicsReady;
     NSString* sessionFailure;
     NSString* sessionNotice;
     std::atomic<bool> stretchAudio;
@@ -933,6 +946,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     menuFallback=[UIButton buttonWithType:UIButtonTypeSystem]; menuFallback.configuration=[UIButtonConfiguration filledButtonConfiguration];
     [menuFallback setTitle:@"Menu" forState:UIControlStateNormal]; [menuFallback addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:menuFallback];
     [self reloadSelectedSkins];
+    suspendTask = UIBackgroundTaskInvalid;
+    pendingSuspendTask = UIBackgroundTaskInvalid;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(background) name:UIApplicationWillResignActiveNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(foreground) name:UIApplicationDidBecomeActiveNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(syncFeedbackChanged:) name:CaraSaveSyncDidChangeNotification object:nil];
@@ -1521,6 +1536,18 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     BOOL access=[url startAccessingSecurityScopedResource]; NSDictionary* fileInfo=[url resourceValuesForKeys:@[NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil]; if(access) [url stopAccessingSecurityScopedResource];
     BOOL sameRevision=info[@"romModified"] && [info[@"romModified"] isEqual:fileInfo[NSURLContentModificationDateKey]] && [info[@"romSize"] isEqual:fileInfo[NSURLFileSizeKey]];
     NSMutableArray* records=[NSMutableArray new];
+    if (sameRevision) {
+        const auto timing = CaraSessionGPUCompletionPolicy(info[@"overrides"][@"playMode"] ?:
+            [NSUserDefaults.standardUserDefaults objectForKey:@"playMode"]);
+        const auto checkpoint = CaraSuspendCheckpointURL(CaraSuspendDirectory(), info[@"gameHash"],
+                                                         timing.render, timing.transfer);
+        NSDate* date = CaraCompatibleSuspendCheckpoint(checkpoint, info[@"gameHash"],
+            [NSString stringWithUTF8String:Core::GetSaveStateBuildFingerprint()], [info[@"new3DS"] boolValue],
+            std::strcmp(CaraSelectedCPUBackend(), "dyncom") == 0 ? 1 : 0);
+        if (date) [records addObject:@{@"filename":CaraSuspendSelection, @"suspended":@YES,
+            @"compatible":@YES, @"subtitle":[NSDateFormatter localizedStringFromDate:date
+                dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle]}];
+    }
     for(CaraStateRecord* state in catalog.records) [records addObject:@{@"title":state.name,@"filename":state.filename,@"compatible":@(state.compatible && sameRevision),@"subtitle":[NSString stringWithFormat:@"%@ · %@",[NSDateFormatter localizedStringFromDate:state.date dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle],!sameRevision?@"Open the game again to verify its revision":state.compatible?@"Ready to load":@"Incompatible with this build or game"]}];
     return records;
 }
@@ -1628,6 +1655,42 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #endif
     if(relayClient) relayClient->Disconnect(); backgroundAt = CFAbsoluteTimeGetCurrent(); paused = true;
     AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation];
+    [self checkpointSuspendedGame];
+}
+- (void)finishSuspendTask:(UIBackgroundTaskIdentifier)task {
+    if (task == UIBackgroundTaskInvalid || task != suspendTask) return;
+    auto pending = task;
+    pendingSuspendTask.compare_exchange_strong(pending, UIBackgroundTaskInvalid);
+    suspendTask = UIBackgroundTaskInvalid;
+    [UIApplication.sharedApplication endBackgroundTask:task];
+}
+- (void)checkpointSuspendedGame {
+    if (!running || !gameLoaded || stop || !paused || std::getenv("CARA_BENCHMARK_FRAMES") ||
+        suspendTask != UIBackgroundTaskInvalid) return;
+    __weak EmulatorController* owner = self;
+    __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+    task = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"Save suspended game"
+        expirationHandler:^{ [owner finishSuspendTask:task]; }];
+    if (task == UIBackgroundTaskInvalid) return;
+    suspendTask = task;
+    suspendGraphicsReady = dispatch_semaphore_create(0);
+    pendingSuspendTask = task;
+
+    // Metal and OpenGL ES cannot submit new work once UIKit backgrounds the
+    // app. Wait for the worker's graphics handoff while the scene is resigning
+    // active. Archive encoding and atomic disk publication happen afterward.
+    constexpr int64_t workerStartBudget = 150 * NSEC_PER_MSEC;
+    if (dispatch_semaphore_wait(suspendGraphicsReady,
+                                dispatch_time(DISPATCH_TIME_NOW, workerStartBudget))) {
+        auto pending = task;
+        if (pendingSuspendTask.compare_exchange_strong(pending, UIBackgroundTaskInvalid)) {
+            [self finishSuspendTask:task];
+            return;
+        }
+        // Once the worker claims the request it may already be issuing GPU
+        // exports. Let it complete that phase before UIKit can background us.
+        dispatch_semaphore_wait(suspendGraphicsReady, DISPATCH_TIME_FOREVER);
+    }
 }
 - (void)foreground {
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
@@ -1891,9 +1954,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     onlineGameIdentity=nil;
     [self hideLibrary];
     NSString* requestedState=pendingLibraryState; pendingLibraryState=nil;
-    const bool performance_gpu_timing = CaraCanTuneEmulation() &&
-        ![CaraEmulationValue(@"playMode") isEqual:@"accuracy"];
-    const auto gpu_timing = Cara::GetGPUCompletionPolicy(performance_gpu_timing);
+    const auto gpu_timing = CaraSessionGPUCompletionPolicy(CaraEmulationValue(@"playMode"));
     const unsigned session=++sessionGeneration;
     framePending[0]=false; framePending[1]=false;
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
@@ -2122,18 +2183,32 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 dispatch_async(dispatch_get_main_queue(), ^{ if (self->sessionGeneration!=session) return; self->sessionFailure=[@"Graphics error · " stringByAppendingString:message]; [self updateSessionPresentation]; UIApplication.sharedApplication.idleTimerDisabled = NO; });
                 return;
             }
+            NSURL* suspendCheckpoint = nil;
             auto result=system.Load(*emuWindow,rom);
             if(result==Core::System::ResultStatus::Success) {
                 NSString* titleID=[NSString stringWithFormat:@"%016llX",(unsigned long long)system.GetTitleID()];
                 NSData* hash=[NSData dataWithBytes:system.StateGameHash().data() length:32];
+                if (!target_frames)
+                    suspendCheckpoint = CaraSuspendCheckpointURL(CaraSuspendDirectory(), hash,
+                                                                  gpu_timing.render, gpu_timing.transfer);
                 BOOL new3DS=Settings::values.is_new_3ds;
                 NSMutableString* identity=[NSMutableString stringWithString:@"homebrew-"]; for(auto byte:system.StateGameHash()) [identity appendFormat:@"%02X",byte];
                 NSString* stateID=system.GetTitleID()?titleID:identity;
                 dispatch_async(dispatch_get_main_queue(),^{ if(self->sessionGeneration==session) { NSMutableDictionary* metadata=[@{@"titleID":titleID,@"stateID":stateID,@"gameHash":hash,@"new3DS":@(new3DS)} mutableCopy]; NSDictionary* fileInfo=[url resourceValuesForKeys:@[NSURLContentModificationDateKey,NSURLFileSizeKey] error:nil]; if(fileInfo[NSURLContentModificationDateKey]) metadata[@"romModified"]=fileInfo[NSURLContentModificationDateKey]; if(fileInfo[NSURLFileSizeKey]) metadata[@"romSize"]=fileInfo[NSURLFileSizeKey]; [self->libraryStore setMetadata:metadata forGame:url]; [self->libraryStore recordPlayed:url]; } });
                 if(requestedState.length) {
                     try {
-                        if(![requestedState.lastPathComponent isEqual:requestedState] || ![requestedState hasPrefix:[stateID stringByAppendingString:@"."]] || ![requestedState hasSuffix:@".carastate"]) throw std::runtime_error("Invalid state location");
-                        if(relayClient) relayClient->Disconnect(); system.LoadStateFromPath(FileUtil::GetUserPath(FileUtil::UserPath::StatesDir)+requestedState.UTF8String);
+                        if (relayClient) relayClient->Disconnect();
+                        if ([requestedState isEqualToString:CaraSuspendSelection]) {
+                            if (!suspendCheckpoint)
+                                throw std::runtime_error("Suspended session is unavailable");
+                            system.LoadStateFromPath(suspendCheckpoint.path.fileSystemRepresentation);
+                        } else {
+                            if (![requestedState.lastPathComponent isEqual:requestedState] ||
+                                ![requestedState hasPrefix:[stateID stringByAppendingString:@"."]] ||
+                                ![requestedState hasSuffix:@".carastate"])
+                                throw std::runtime_error("Invalid state location");
+                            system.LoadStateFromPath(FileUtil::GetUserPath(FileUtil::UserPath::StatesDir)+requestedState.UTF8String);
+                        }
                     } catch(const std::exception& error) {
                         NSString* message=[NSString stringWithUTF8String:error.what()];
                         dispatch_async(dispatch_get_main_queue(),^{ [self shellError:@"State couldn’t load" message:message]; });
@@ -2537,6 +2612,38 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                             } else [self resumeFromMenu];
                         });
                         if (!powered) { result=Core::System::ResultStatus::ErrorUnknown; break; }
+                    }
+                    if (const auto task = pendingSuspendTask.exchange(UIBackgroundTaskInvalid);
+                        task != UIBackgroundTaskInvalid) {
+                        bool canSave = paused && !stop && system.IsPoweredOn() && suspendCheckpoint;
+                        if (canSave) {
+                            try {
+                                Memory::RasterizerClearAll(true);
+                                if (auto* rasterizer = VideoCore::Rasterizer())
+                                    rasterizer->FlushDeferredDraws();
+#ifdef CARA_IOS_GLES
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                                if (!emuWindow->native_metal_only)
+#endif
+                                    glFinish();
+#endif
+                            } catch (const std::exception& error) {
+                                canSave = false;
+                                LOG_WARNING(Frontend, "Unable to flush suspended session: {}", error.what());
+                            } catch (...) {
+                                canSave = false;
+                                LOG_WARNING(Frontend, "Unable to flush suspended session");
+                            }
+                        }
+                        dispatch_semaphore_signal(suspendGraphicsReady);
+                        if (canSave) {
+                            try {
+                                system.SaveStateToPath(suspendCheckpoint.path.fileSystemRepresentation);
+                            } catch (const std::exception& error) {
+                                LOG_WARNING(Frontend, "Unable to save suspended session: {}", error.what());
+                            }
+                        }
+                        dispatch_async(dispatch_get_main_queue(), ^{ [self finishSuspendTask:task]; });
                     }
                     if (paused) {
                         if (!was_paused) pause_started = std::chrono::steady_clock::now();
@@ -3117,6 +3224,11 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 if (result == Core::System::ResultStatus::Success)
                     finish_metal_learning();
 #endif
+                const auto suspend = pendingSuspendTask.exchange(UIBackgroundTaskInvalid);
+                if (suspend != UIBackgroundTaskInvalid) {
+                    dispatch_semaphore_signal(suspendGraphicsReady);
+                    dispatch_async(dispatch_get_main_queue(), ^{ [self finishSuspendTask:suspend]; });
+                }
                 system.Shutdown();
                 [saveSync captureCommittedSave];
                 [stateSync captureCommittedSave];
