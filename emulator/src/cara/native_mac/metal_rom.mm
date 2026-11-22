@@ -26,6 +26,7 @@
 #include <string_view>
 #include <stdexcept>
 #include "cara/config.h"
+#include "cara/native_mac/mac_preferences.h"
 #include "cara/p3d_completion.h"
 #include "core/core_timing.h"
 #include "common/apple_fastinterp_policy.h"
@@ -317,6 +318,14 @@ void RunHostUi(SDL_Window* window, NSWindow* native, CAMetalLayer* layer, HostEv
 int RunEmulation(const char* path, unsigned limit, unsigned interval, const std::string& output,
                  const std::vector<InputEvent>& inputs, bool jit, CAMetalLayer* layer,
                  id<MTLDevice> device, NSURL* library, HostEvents& events) {
+    const auto* performance = std::getenv("CARA_MAC_METAL_PERFORMANCE_MODE");
+    std::string ini_text;
+    FileUtil::ReadFileToString(false, FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir) +
+        "sdl2-config.ini", ini_text);
+    Cara::ConfigureMetalGeneralFragment(Cara::MacPreferences::PlaySettings::AsyncShadersForMetalSession(
+        Cara::MacPreferences::Ini(std::move(ini_text)), performance));
+    std::cout << "METAL_ASYNC_SHADERS enabled=" << Cara::UseMetalGeneralFragment() << std::endl;
+
     NSError* error = nil;
     const auto assets = Cara::LoadPicaMetalResources(device, library, MTLPixelFormatBGRA8Unorm, &error);
     if (!assets)
@@ -338,8 +347,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
     SCOPE_EXIT({ VideoCore::SetNativeRendererFactory({}); });
     auto& core = Core::System::GetInstance();
     try {
-        // Compatibility runs stay isolated from saved play preferences.
-        const auto* performance = std::getenv("CARA_MAC_METAL_PERFORMANCE_MODE");
+        // Changing compatibility timing still requires an explicit request.
         Cara::gpu_completion_policy = Cara::GetGPUCompletionPolicy(
             performance && std::string_view(performance) == "1");
         const auto status = core.Load(host, path);

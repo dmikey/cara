@@ -295,7 +295,7 @@ void BindVertex(Stage& stage, RuntimeMetalVertexMode mode) {
 bool ReuseVertexMsl() {
     static const bool enabled = [] {
         const char* value = std::getenv("CARA_METAL_REUSE_VERTEX_MSL");
-        return value && std::string_view(value) == "1";
+        return !value || std::string_view(value) == "1";
     }();
     return enabled;
 }

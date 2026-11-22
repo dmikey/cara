@@ -564,7 +564,60 @@ In the matched 200% replays, it reused 198 of 259 vertex stages and cut
 draw-time translation from 8.96 s to 5.86 s. All 41 captured images,
 including the final capture, matched byte for byte. Overall refresh p99
 went from 35.62 ms to 29.40 ms. The slowest mansion-entrance refresh
-still took 543.22 ms, down from 847.79 ms. The experiment remains opt-in.
+still took 543.22 ms, down from 847.79 ms. Vertex MSL reuse now defaults on. Set `CARA_METAL_REUSE_VERTEX_MSL=0` for an exact translation control.
+
+### Mansion gate with Performance Mode defaults
+
+The M4 iPad replay restores a copy of Dark Moon slot 4, applies the same
+inputs for 900 refreshes and caps emulation at 100%. Async Shaders enables
+the compatible StageIn vertex fallback. Before a CPU vertex read, Metal
+flushes the index range and the attribute spans referenced by the draw.
+The shader worker builds the exact pipeline. The learned-cache replay
+needed zero runtime vertex library or pipeline builds.
+
+| FastInterp Metal | First refresh | Refresh 18 | Full p99 | Slowest after first |
+| --- | ---: | ---: | ---: | ---: |
+| Exact vertex path, cold control | 10,212.13 ms | 610.94 ms | 21.59 ms | 610.94 ms at 18 |
+| Async Shaders default, fresh shader namespace | 6,805.80 ms | 46.33 ms | 23.26 ms | 271.02 ms at 2 |
+| Same default, learned cache | 31.64 ms | 23.07 ms | 24.15 ms | 26.37 ms at 131 |
+
+The cold run recorded 99 vertex fallback draws, 2,326 general fragment
+draws and 20 linked vertex translation cache hits. Both passes matched exact-path
+pixels at refreshes 17–21 and 900. Refresh 18 still spent 24.76 ms in
+runtime shader translation. At refresh 2, pipeline creation took 158.11 ms,
+fragment library creation 56.55 ms and translation 28.92 ms. These long
+intervals can fall outside p99. Timing includes the diagnostic captures.
+The warm run delivered 59.68 refreshes/s. The slowest rolling 120-refresh
+window averaged 75.29 ms cold (1–120) and 16.78 ms warm (12–131).
+
+The GLES generator uses the same dead combiner-write analysis. The GLES
+shader cache reuses identical emitted source. GLES device tests can capture
+individual refreshes with `CARA_GLES_PARITY_START` and
+`CARA_GLES_PARITY_COUNT`. These benchmark captures read back the 400 × 480
+guest display in bottom-left RGBA8. Metal captures use top-left BGRA8 at
+the device presentation resolution.
+
+| FastInterp GLES, same replay | First refresh | Refresh 18 | Full p99 | Slowest after first |
+| --- | ---: | ---: | ---: | ---: |
+| First process, fresh Cara user directory | 5,864.91 ms | 234.65 ms | 25.43 ms | 346.09 ms at 2 |
+| Repeat process | 59.72 ms | 21.29 ms | 25.79 ms | 28.66 ms at 64 |
+
+GLES delivered 42.02 refreshes/s on the first pass and 59.70 on the repeat.
+The slowest rolling 120-refresh window averaged 69.79 ms on the first
+pass and 16.92 ms on the repeat (1–120 in both). All six raw GLES
+captures matched between passes. The test did not reset
+Apple’s GLES driver cache. Cross-backend byte equivalence was not tested.
+
+Using the same route with an indexed ZIP and warm caches, Metal averaged
+59.66 refreshes/s with 24.09 ms p99. GLES averaged 59.65 with 25.51 ms
+p99. Both matched their raw-ROM captures at refreshes 17–21. At refresh
+900 both differed from raw. The cause of that divergence remains open.
+
+On the M3 Mac, the AppKit options panel persists Async Shaders for the
+separate native Metal runner. Four 120-refresh Dark Moon boot checks
+verified the effective switch for a scratch profile (off), saved Performance
+(default on), Performance with the option off, and saved Accuracy (off).
+The AppKit gameplay renderer remains OpenGL.
 
 ## Cartridge gameplay checks
 

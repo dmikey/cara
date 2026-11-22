@@ -852,15 +852,17 @@ NativeShaderSource StageInVertexSource() {
 }
 
 bool AllowVertexFallbackOnThisRefresh() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("CARA_METAL_VERTEX_FALLBACK");
-        return value && std::string_view(value) == "1";
+    static const auto override_enabled = []() -> std::optional<bool> {
+        if (const char* value = std::getenv("CARA_METAL_VERTEX_FALLBACK"))
+            return std::string_view(value) == "1";
+        return std::nullopt;
     }();
     static const auto frame = [] {
         const char* value = std::getenv("CARA_METAL_VERTEX_FALLBACK_FRAME");
         return value ? std::strtoul(value, nullptr, 10) : 0;
     }();
-    return enabled && (!frame || frame == VideoCore::GetCurrentFrame() + 1);
+    return override_enabled.value_or(UseMetalGeneralFragment()) &&
+           (!frame || frame == VideoCore::GetCurrentFrame() + 1);
 }
 } // namespace
 
@@ -1154,7 +1156,6 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         assembler.IsEmpty() && r.pipeline.num_vertices % 3 == 0 &&
         r.pipeline.num_vertices <= 16384 &&
         pipelines.TryVertexFallback(pica, StageInVertexSource().bytes, sampler[0], second, third)) {
-        LOG_INFO(Render_OpenGL, "Interpreting PICA vertices while exact Metal vertex pipeline compiles");
         *interpret_vertices = true;
         return std::nullopt;
     }

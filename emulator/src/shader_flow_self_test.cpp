@@ -229,6 +229,8 @@ static void CheckGPU(const Fixture& f, const std::string& generated) {
     glDeleteProgram(program); glDeleteShader(vs); glDeleteShader(fs);
 }
 #endif
+void CheckCombinerBufferElision();
+
 int main(int argc, char** argv) {
     try {
         const bool gpu = argc == 2 && std::string(argv[1]) == "--gpu";
@@ -238,6 +240,8 @@ int main(int argc, char** argv) {
 #else
         Require(!gpu, "GPU execution test currently requires macOS CGL");
 #endif
+        CheckCombinerBufferElision();
+        std::cout << "PASS GLES combiner-buffer elision\n";
         const auto fixtures = Fixtures();
         for (const auto& f : fixtures) {
             CheckInterpreter(f); const auto generated = Generate(f);

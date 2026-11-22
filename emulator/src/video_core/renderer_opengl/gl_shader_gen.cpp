@@ -1509,7 +1509,10 @@ vec4 shadowTextureCube(vec2 uv, float w) {
 }
 
 std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader) {
-    return GenerateFragmentShader(config, separable_shader, {GLES, AllowShadow});
+    return GenerateFragmentShader(config, separable_shader,
+                                  {.gles = GLES,
+                                   .allow_shadow = AllowShadow,
+                                   .elide_dead_combiner_buffer = GLES});
 }
 
 std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader,
