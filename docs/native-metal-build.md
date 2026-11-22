@@ -642,6 +642,14 @@ The option remains diagnostic. Apple's size optimization level measured
 the default compiler optimization level. All six sampled images matched
 for both experiments. [Apple’s shader optimization guidance](https://developer.apple.com/documentation/metal/minimizing-the-binary-size-of-a-shader-library)
 
+Allowing a cached StageIn pipeline to cover an exact PSO miss with a
+resident vertex function still left refresh 2 at 271.58 ms, versus
+265.16 ms in the preceding control. This probe stayed out of the default
+path. Conservative control-flow analysis also found every emitted function
+and dispatcher case reachable in twelve large gate vertex programs. Folding
+the entry wrapper changed the median Mac PSO compile time by 0.08 ms
+over 24 matched pairs.
+
 A separate Mac FastInterp comparison booted the Dark Moon ZIP normally
 for 660 refreshes. All 11 captures matched. Before and after the combined
 changes, p99 measured 114.97 and 109.54 ms, with the worst interval at
