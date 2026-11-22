@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Cara contributors; GPL-2.0-or-later. -->
+<resources>
+    <string name="baidu_ocr_key">OCR API key</string>
+    <string name="baidu_ocr_secret">OCR API secret</string>
+    <string name="translate_settings">Translation</string>
+    <string name="combo_key_name">Combo %1$d</string>
+    <string name="cara_send_message">Send message</string>
+    <string name="cara_message">Message</string>
+    <string name="cara_amiibo_hint">Add your own .bin files to the amiibo folder.</string>
+    <attr name="nnf_list_item_divider" format="reference" />
+</resources>

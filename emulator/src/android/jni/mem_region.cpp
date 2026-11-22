@@ -94,7 +94,7 @@ void searchInResults(const SearchSession& session, std::vector<u32>& results) {
         u32 old_value = session.results[i + 1];
         u32 page_index = addr >> Memory::PAGE_BITS;
         u32 page_offset = addr & Memory::PAGE_MASK;
-        auto p = pagetable->pointers[page_index];
+        const u8* p = pagetable->pointers[page_index];
         if (p != nullptr) {
             u32 new_value = *reinterpret_cast<const T*>(p + page_offset);
             if (scan_handlers[session.scan_type](new_value, session.value)) {
@@ -119,7 +119,7 @@ void searchMemory(SearchSession& session) {
     auto pagetable = system.Memory().GetCurrentPageTable();
 
     for (u32 i = startPage; i <= stopPage; ++i) {
-        auto base_ptr = pagetable->pointers[i];
+        const u8* base_ptr = pagetable->pointers[i];
         if (base_ptr != nullptr) {
             const u8* startp = base_ptr + startOffset;
             const u8* stopp =
@@ -153,7 +153,7 @@ void compareInResults(const SearchSession& session, std::vector<u32>& results) {
         u32 old_value = session.results[i + 1];
         u32 page_index = addr >> Memory::PAGE_BITS;
         u32 page_offset = addr & Memory::PAGE_MASK;
-        auto p = pagetable->pointers[page_index];
+        const u8* p = pagetable->pointers[page_index];
         if (p != nullptr) {
             u32 new_value = *reinterpret_cast<const T*>(p + page_offset);
             if (scan_handlers[session.scan_type](new_value, old_value)) {
@@ -169,8 +169,8 @@ void compareMemory(SearchSession& session) {
     Core::System& system{Core::System::GetInstance()};
     auto pagetable = system.Memory().GetCurrentPageTable();
 
-    for (u32 i = 0; i < pagetable->pointers.size(); ++i) {
-        auto p = pagetable->pointers[i];
+    for (u32 i = 0; i < pagetable->GetPointerArray().size(); ++i) {
+        const u8* p = pagetable->pointers[i];
         auto q = session.pointers[i];
         if (p != nullptr) {
             if (q == nullptr) {
@@ -182,7 +182,7 @@ void compareMemory(SearchSession& session) {
                 const T* qT = reinterpret_cast<const T*>(q);
                 for (u32 j = 0; j < Memory::PAGE_SIZE; j += sizeof(T)) {
                     if (scan_handlers[session.scan_type](*pT, *qT)) {
-                        u32 addr = (i << Memory::PAGE_SIZE) + j;
+                        u32 addr = (i << Memory::PAGE_BITS) + j;
                         u32 value32 = *pT;
                         session.results.push_back(addr);
                         session.results.push_back(value32);

@@ -1,5 +1,6 @@
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
@@ -147,13 +148,13 @@ void BootGame(const std::string& path) {
             }
         } else {
             // Ensure no audio bleeds out while game is paused
-            const float volume = Settings::values.volume;
-            Settings::values.volume = 0;
+            const float volume = Settings::values.audio_volume;
+            Settings::values.audio_volume = 0;
 
             std::unique_lock lock{s_running_mutex};
             s_running_cv.wait(lock, [] { return s_is_running || s_stop_running; });
             s_render_window->PollEvents();
-            Settings::values.volume = volume;
+            Settings::values.audio_volume = volume;
         }
     }
 
@@ -307,7 +308,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SetUserPath(JNIEnv* env, 
     FileUtil::SetUserPath(path);
 
     // create user directory
-    FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::AmiiboDir));
+    FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "amiibo/");
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::CacheDir));
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir));
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::LogDir));
@@ -441,7 +442,11 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Config::Clear();
     Config::Load();
     // system
+#ifdef CARA_ENABLE_JIT
     Settings::values.use_cpu_jit = Config::Get(Config::USE_CPU_JIT);
+#else
+    Settings::values.use_cpu_jit = false;
+#endif
     Settings::values.is_new_3ds = Config::Get(Config::IS_NEW_3DS);
     Settings::values.use_virtual_sd = Config::Get(Config::USE_VIRTUAL_SD);
     Settings::values.region_value = Config::Get(Config::SYSTEM_REGION);
@@ -452,10 +457,10 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.accurate_rcp_rsq = false;
     Settings::values.skip_load_buffer = false;
     Settings::values.merge_framebuffer = false;
-    Settings::values.use_hw_gs = Config::Get(Config::USE_HW_GS);
-    Settings::values.use_gles = Config::Get(Config::USE_GLES);
+    Settings::values.hw_gs_mode = Config::Get(Config::HW_GS_MODE);
+    Settings::values.use_gles = true;
     Settings::values.show_fps = Config::Get(Config::SHOW_FPS);
-    Settings::values.use_hw_renderer = Config::Get(Config::USE_HW_RENDERER);
+    Settings::values.use_hw_renderer = true;
     Settings::values.use_hw_shader = Config::Get(Config::USE_HW_SHADER);
     Settings::values.use_shader_jit = Config::Get(Config::USE_SHADER_JIT);
     Settings::values.shaders_accurate_mul = Config::Get(Config::SHADERS_ACCURATE_MUL);
@@ -468,14 +473,16 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.remote_shader_host = Config::Get(Config::REMOTE_SHADER_HOST);
     // audio
     Settings::values.enable_dsp_lle = Config::Get(Config::ENABLE_DSP_LLE);
-    Settings::values.enable_dsp_lle_multithread = Config::Get(Config::DSP_LLE_MULTITHREAD);
-    Settings::values.volume = Config::Get(Config::AUDIO_VOLUME);
-    Settings::values.sink_id = Config::Get(Config::AUDIO_ENGINE);
-    Settings::values.audio_device_id = Config::Get(Config::AUDIO_DEVICE);
+    Settings::values.dsp_lle_multithread = Config::Get(Config::DSP_LLE_MULTITHREAD);
+    Settings::values.audio_volume = Config::Get(Config::AUDIO_VOLUME);
+    Settings::values.mic_volume = Config::Get(Config::MIC_VOLUME);
+    Settings::values.sink_id = (Config::Get(Config::AUDIO_OUTPUT_TYPE) == 2 ? "cubeb" : "null");
+    Settings::values.audio_device_id = Config::Get(Config::AUDIO_OUTPUT_DEVICE);
     Settings::values.enable_audio_stretching = Config::Get(Config::AUDIO_STRETCHING);
     // mic
-    Settings::values.mic_input_type = Config::Get(Config::MIC_INPUT_TYPE);
-    Settings::values.mic_input_device = Config::Get(Config::MIC_INPUT_DEVICE);
+    const auto mic_type = Config::Get(Config::AUDIO_INPUT_TYPE);
+    Settings::values.mic_input_type = mic_type == 3 ? Settings::MicInputType::Real : mic_type == 2 ? Settings::MicInputType::Static : Settings::MicInputType::None;
+    Settings::values.mic_input_device = Config::Get(Config::AUDIO_INPUT_DEVICE);
     // debug
     Settings::values.shadow_rendering = Config::Get(Config::SHADOW_RENDERING);
     Settings::values.use_present_thread = Config::Get(Config::USE_PRESENT_THREAD);
@@ -494,20 +501,21 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::SetLLEModules(Config::Get(Config::LLE_MODULES));
     // custom layout
     Settings::values.swap_screen = false;
-    Settings::values.custom_layout = Config::Get(Config::USE_CUSTOM_LAYOUT);
+    // UpdateDisplayRotation loads the orientation-specific layout below.
     UpdateDisplayRotation();
     //
     Settings::values.init_clock = Settings::InitClock::SystemTime;
     Settings::values.init_time = 946681277;
     Settings::values.core_ticks_hack = 0;
-    Settings::values.skip_slow_draw = false;
+    Settings::values.skip_slow_draw = Config::Get(Config::SKIP_SLOW_DRAW);
     Settings::values.display_transfer_hack = false;
-    Settings::values.skip_cpu_write = false;
-    Settings::values.skip_texture_copy = false;
+    Settings::values.skip_cpu_write = Config::Get(Config::SKIP_CPU_WRITE);
+    Settings::values.skip_texture_copy = Config::Get(Config::SKIP_TEXTURE_COPY);
     Settings::values.disable_clip_coef = false;
     Settings::values.y2r_perform_hack = false;
     Settings::values.y2r_event_delay = false;
-    Settings::values.force_texture_filter = 0;
+    Settings::values.force_texture_filter = Config::Get(Config::FORCE_TEXTURE_FILTER);
+    Settings::values.async_shader_compile = Config::Get(Config::ASYNC_SHADER_COMPILE);
     Settings::values.stream_buffer_hack = !Settings::values.use_present_thread;
     Settings::values.use_fence_sync = Config::Get(Config::USE_FENCE_SYNC);
 
@@ -556,10 +564,12 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_StopEmulation(JNIEnv* env
     s_running_cv.notify_all();
 }
 
+constexpr jsize RunningSettingsCount = 13;
+
 JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(JNIEnv* env,
                                                                                 jclass obj) {
     int i = 0;
-    int settings[13];
+    jint settings[RunningSettingsCount];
 
     // get settings
     settings[i++] = Settings::values.core_ticks_hack > 0;
@@ -567,7 +577,7 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(J
     settings[i++] = Settings::values.skip_cpu_write;
     settings[i++] = Settings::values.skip_texture_copy;
     settings[i++] = Settings::values.force_texture_filter;
-    settings[i++] = Settings::values.use_hw_gs;
+    settings[i++] = Settings::values.hw_gs_mode;
     settings[i++] = Settings::values.shadow_rendering;
     settings[i++] = Settings::values.async_shader_compile;
     settings[i++] = std::min(std::max(Settings::values.resolution_factor - 1, 0), 3);
@@ -584,7 +594,12 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(J
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv* env, jclass obj,
                                                                            jintArray array) {
     int i = 0;
-    jint* settings = env->GetIntArrayElements(array, nullptr);
+    if (!array || env->GetArrayLength(array) != RunningSettingsCount)
+        return;
+    jint settings[RunningSettingsCount];
+    env->GetIntArrayRegion(array, 0, RunningSettingsCount, settings);
+    if (env->ExceptionCheck())
+        return;
 
     // FMV Hack
     Settings::SetFMVHack(settings[i++] > 0);
@@ -602,12 +617,12 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv
     Config::Set(Config::SKIP_TEXTURE_COPY, Settings::values.skip_texture_copy);
 
     // Use Linear Filter
-    Settings::values.force_texture_filter = settings[i++];
+    Settings::values.force_texture_filter = std::clamp(settings[i++], 0, 2);
     Config::Set(Config::FORCE_TEXTURE_FILTER, Settings::values.force_texture_filter);
 
     // Use HW GS
-    Settings::values.use_hw_gs = settings[i++] > 0;
-    Config::Set(Config::USE_HW_GS, Settings::values.use_hw_gs);
+    Settings::values.hw_gs_mode = static_cast<u8>(std::clamp(settings[i++], 0, 2));
+    Config::Set(Config::HW_GS_MODE, Settings::values.hw_gs_mode);
 
     // Shadow Rendering
     Settings::values.shadow_rendering = settings[i++] > 0;
@@ -618,7 +633,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv
     Config::Set(Config::ASYNC_SHADER_COMPILE, Settings::values.async_shader_compile);
 
     // Scale Factor
-    Settings::values.resolution_factor = settings[i++] + 1;
+    Settings::values.resolution_factor = std::clamp(settings[i++], 0, 3) + 1;
     Config::Set(Config::RESOLUTION_FACTOR, Settings::values.resolution_factor);
 
     // Change Layout
@@ -635,14 +650,17 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv
 
     // Custom Layout
     Settings::values.custom_layout = settings[i++] > 0;
-    Config::Set(Config::USE_CUSTOM_LAYOUT, Settings::values.custom_layout);
+    if (NativeLibrary::IsPortrait())
+        Config::Set(Config::PORTRAIT_CUSTOM_LAYOUT, Settings::values.custom_layout);
+    else
+        Config::Set(Config::LANDSCAPE_CUSTOM_LAYOUT, Settings::values.custom_layout);
 
     // Frame Limit
-    Settings::values.frame_limit = std::max(settings[i++], 1);
+    Settings::values.frame_limit = std::clamp(settings[i++], 1, 200);
+    Config::Set(Config::FRAME_LIMIT, Settings::values.frame_limit);
 
     VideoCore::SettingUpdate();
 
-    env->ReleaseIntArrayElements(array, settings, 0);
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setCustomLayout(JNIEnv* env, jclass obj,
@@ -752,7 +770,7 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_loadPageTable(JNIEnv
     Core::System& system{Core::System::GetInstance()};
     auto pagetable = system.Memory().GetCurrentPageTable();
 
-    for (u32 i = 0; i < pagetable->pointers.size(); ++i) {
+    for (u32 i = 0; i < pagetable->GetPointerArray().size(); ++i) {
         auto p = pagetable->pointers[i];
         if (p != nullptr) {
             u32 addr = i << Memory::PAGE_BITS;

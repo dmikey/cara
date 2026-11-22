@@ -143,8 +143,6 @@ public final class SettingsFragment extends Fragment {
         Setting ocrKey = debugSection.getSetting(SettingsFile.KEY_BAIDU_OCR_KEY);
         Setting ocrSecret = debugSection.getSetting(SettingsFile.KEY_BAIDU_OCR_SECRET);
 
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_PRESENT_THREAD, Settings.SECTION_INI_DEBUG,
-                R.string.setting_use_present_thread, R.string.setting_use_present_thread_desc, true, presentThread));
         sl.add(new SingleChoiceSetting(
             SettingsFile.KEY_LAYOUT_OPTION, Settings.SECTION_INI_RENDERER, R.string.layout_option,
             0, R.array.layoutOptionEntries, R.array.layoutOptionValues, 0, layoutOption));
@@ -154,6 +152,13 @@ public final class SettingsFragment extends Fragment {
                                        R.array.internalResolutionValues, 1, resolution));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_SHOW_FPS, Settings.SECTION_INI_RENDERER,
                                    R.string.show_fps, 0, true, showFPS));
+        sl.add(new SingleChoiceSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER,
+                Settings.SECTION_INI_DEBUG, R.string.setting_force_texture_filter, 0,
+                R.array.textureFilterEntries, R.array.textureFilterValues, 0,
+                debugSection.getSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER)));
+        sl.add(new HeaderSetting(null, null, R.string.setting_header_advanced, 0));
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_PRESENT_THREAD, Settings.SECTION_INI_DEBUG,
+                R.string.setting_use_present_thread, R.string.setting_use_present_thread_desc, true, presentThread));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_HW_SHADER, Settings.SECTION_INI_RENDERER,
                                    R.string.setting_hw_shader, R.string.setting_hw_shader_desc, true, hwShader));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_SHADERS_ACCURATE_MUL,
@@ -189,7 +194,6 @@ public final class SettingsFragment extends Fragment {
         SettingSection coreSection = mSettings.getSection(Settings.SECTION_INI_CORE);
         Setting isNew3DS = coreSection.getSetting(SettingsFile.KEY_IS_NEW_3DS);
         Setting systemRegion = coreSection.getSetting(SettingsFile.KEY_SYSTEM_REGION);
-        Setting cpuJIT = coreSection.getSetting(SettingsFile.KEY_USE_CPU_JIT);
         Setting language = coreSection.getSetting(SettingsFile.KEY_SYSTEM_LANGUAGE);
         Setting font = coreSection.getSetting(SettingsFile.KEY_SHARED_FONT_TYPE);
         Setting theme = coreSection.getSetting(SettingsFile.KEY_THEME_PACKAGE);
@@ -201,8 +205,6 @@ public final class SettingsFragment extends Fragment {
         }
         sl.add(new CheckBoxSetting(SettingsFile.KEY_IS_NEW_3DS, Settings.SECTION_INI_CORE,
                 R.string.setting_is_new_3ds, R.string.setting_is_new_3ds_desc, false, isNew3DS));
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_CPU_JIT, Settings.SECTION_INI_CORE,
-                R.string.setting_enable_cpu_jit, 0, true, cpuJIT));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_SYSTEM_REGION, Settings.SECTION_INI_CORE,
                 R.string.setting_region_value, 0,
                 R.array.systemRegionEntries, R.array.systemRegionValues, -1,

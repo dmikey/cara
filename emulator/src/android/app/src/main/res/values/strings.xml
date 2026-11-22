@@ -37,7 +37,7 @@
     <string name="setting_skip_cpu_write">Skip CPU Access</string>
     <string name="setting_skip_texture_copy">Skip Texture Copy</string>
     <string name="setting_use_linear_filter">Use Linear Filter</string>
-    <string name="setting_force_texture_filter">Force Texture Filter</string>
+    <string name="setting_force_texture_filter">Texture filtering</string>
     <string name="setting_hw_gs_mode">Geometry Shader</string>
     <string name="setting_shadow_rendering">Enable Shadow Rendering</string>
     <string name="setting_async_shader_compile">Asynchronous Shader Compilation</string>
@@ -144,7 +144,8 @@
     <string name="add_directory_title">Add Folder to Library</string>
 
     <string name="setting_header_core">System</string>
-    <string name="setting_header_renderer">Renderer</string>
+    <string name="setting_header_renderer">Display</string>
+    <string name="setting_header_advanced">Advanced</string>
     <string name="setting_header_audio">Audio</string>
     <string name="setting_header_camera">Camera</string>
 
@@ -161,7 +162,7 @@
 
     <string name="show_fps">Show FPS</string>
     <string name="layout_option">Screen Layout</string>
-    <string name="internal_resolution">Internal Resolution</string>
+    <string name="internal_resolution">Internal resolution</string>
     <string name="setting_hw_shader">Enable Hardware Shader</string>
     <string name="setting_hw_shader_desc">Turn it on to improve performance, but some 2D games have display issues.</string>
     <string name="setting_shaders_accurate_mul">Accurate Multiplication</string>

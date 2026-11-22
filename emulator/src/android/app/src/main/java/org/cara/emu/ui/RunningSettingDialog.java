@@ -126,12 +126,11 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_HW_GS_MODE = 5;
         public static final int SETTING_SHADOW_RENDERING = 6;
         public static final int SETTING_ASYNC_SHADER_COMPILE = 7;
-        public static final int SETTING_USE_COMPATIBLE_MODE = 8;
-        public static final int SETTING_SCALE_FACTOR = 9;
-        public static final int SETTING_SCREEN_LAYOUT = 10;
-        public static final int SETTING_ACCURATE_MUL = 11;
-        public static final int SETTING_CUSTOM_LAYOUT = 12;
-        public static final int SETTING_FRAME_LIMIT = 13;
+        public static final int SETTING_SCALE_FACTOR = 8;
+        public static final int SETTING_SCREEN_LAYOUT = 9;
+        public static final int SETTING_ACCURATE_MUL = 10;
+        public static final int SETTING_CUSTOM_LAYOUT = 11;
+        public static final int SETTING_FRAME_LIMIT = 12;
 
         // pref
         public static final int SETTING_JOYSTICK_RELATIVE = 100;
@@ -351,13 +350,14 @@ public class RunningSettingDialog extends DialogFragment {
         public void bind(SettingsItem item) {
             mItem = item;
             mTextSettingName.setText(item.getName());
+            mCheckbox.setOnCheckedChangeListener(null);
             mCheckbox.setChecked(mItem.getValue() > 0);
+            mCheckbox.setOnCheckedChangeListener(this);
         }
 
         @Override
         public void onClick(View clicked) {
             mCheckbox.toggle();
-            mItem.setValue(mCheckbox.isChecked() ? 1 : 0);
         }
 
         @Override
@@ -394,7 +394,9 @@ public class RunningSettingDialog extends DialogFragment {
 
             mItem = item;
             mTextSettingName.setText(item.getName());
+            mRadioGroup.setOnCheckedChangeListener(null);
             mRadioGroup.check(checkIds[index]);
+            mRadioGroup.setOnCheckedChangeListener(this);
 
             if (item.getSetting() == SettingsItem.SETTING_SCREEN_LAYOUT) {
                 RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
@@ -598,7 +600,6 @@ public class RunningSettingDialog extends DialogFragment {
         }
 
         public void loadSettingsMenu() {
-            int i = 0;
             mRunningSettings = NativeLibrary.getRunningSettings();
             mSettings = new ArrayList<>();
 
@@ -631,46 +632,43 @@ public class RunningSettingDialog extends DialogFragment {
             // native settings
             mSettings.add(new SettingsItem(SettingsItem.SETTING_CORE_TICKS_HACK,
                     R.string.setting_core_ticks_hack,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_CORE_TICKS_HACK]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_SLOW_DRAW,
                     R.string.setting_skip_slow_draw,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_SLOW_DRAW]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_CPU_WRITE,
                     R.string.setting_skip_cpu_write,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_CPU_WRITE]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_TEXTURE_COPY,
                     R.string.setting_skip_texture_copy,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_TEXTURE_COPY]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_FORCE_TEXTURE_FILTER,
                     R.string.setting_force_texture_filter,
-                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[i++]));
+                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_FORCE_TEXTURE_FILTER]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_HW_GS_MODE,
                     R.string.setting_hw_gs_mode,
-                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[i++]));
+                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_HW_GS_MODE]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SHADOW_RENDERING,
                     R.string.setting_shadow_rendering,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SHADOW_RENDERING]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_ASYNC_SHADER_COMPILE,
                     R.string.setting_async_shader_compile,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_USE_COMPATIBLE_MODE,
-                    R.string.setting_use_compatible_mode,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_ASYNC_SHADER_COMPILE]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SCALE_FACTOR,
-                    R.string.running_resolution, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[i++]));
+                    R.string.internal_resolution, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_SCALE_FACTOR]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SCREEN_LAYOUT,
-                    R.string.running_layout, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[i++]));
+                    R.string.layout_option, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_SCREEN_LAYOUT]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURATE_MUL,
                     R.string.running_accurate_mul, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[i++]));
+                    mRunningSettings[SettingsItem.SETTING_ACCURATE_MUL]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_CUSTOM_LAYOUT,
                     R.string.running_custom_layout,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_CUSTOM_LAYOUT]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_FRAME_LIMIT,
                     R.string.running_frame_limit,
-                    SettingsItem.TYPE_SEEK_BAR, mRunningSettings[i++]));
+                    SettingsItem.TYPE_SEEK_BAR, mRunningSettings[SettingsItem.SETTING_FRAME_LIMIT]));
             notifyDataSetChanged();
         }
 
@@ -765,15 +763,11 @@ public class RunningSettingDialog extends DialogFragment {
             activity.refreshControls();
 
             // native settings
-            boolean isChanged = false;
-            int[] newSettings = new int[mRunningSettings.length];
-            for (int i = 0; i < mRunningSettings.length; ++i) {
-                newSettings[i] = mSettings.get(i).getValue();
-                if (newSettings[i] != mRunningSettings[i]) {
-                    isChanged = true;
-                }
+            int[] newSettings = mRunningSettings.clone();
+            for (SettingsItem setting : mSettings) {
+                newSettings[setting.getSetting()] = setting.getValue();
             }
-            if (isChanged) {
+            if (!java.util.Arrays.equals(newSettings, mRunningSettings)) {
                 NativeLibrary.setRunningSettings(newSettings);
             }
             mRunningSettings = null;

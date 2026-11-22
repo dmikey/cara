@@ -3306,18 +3306,28 @@ void RasterizerOpenGL::SamplerInfo::SyncWithConfig(const TextureConfig& config) 
     GLuint s = sampler.handle;
 
     using TextureFilter = Pica::TexturingRegs::TextureConfig::TextureFilter;
+    auto selected_mag = config.mag_filter.Value();
+    auto selected_min = config.min_filter.Value();
     bool use_linear_filter =
-        Settings::values.use_linear_filter && config.mag_filter == TextureFilter::Nearest;
+        Settings::values.use_linear_filter && selected_mag == TextureFilter::Nearest;
+#ifdef __ANDROID__
+    const auto filter = Settings::values.force_texture_filter;
+    if ((filter == 1 || filter == 2) &&
+        config.type != TextureConfig::Shadow2D && config.type != TextureConfig::ShadowCube) {
+        selected_mag = selected_min = filter == 1 ? TextureFilter::Nearest : TextureFilter::Linear;
+        use_linear_filter = false;
+    }
+#endif
 
     if (!use_linear_filter) {
-        if (mag_filter != config.mag_filter) {
-            mag_filter = config.mag_filter;
+        if (mag_filter != selected_mag) {
+            mag_filter = selected_mag;
             glSamplerParameteri(s, GL_TEXTURE_MAG_FILTER,
                                 PicaToGL::TextureMagFilterMode(mag_filter));
         }
 
-        if (min_filter != config.min_filter || mip_filter != config.mip_filter) {
-            min_filter = config.min_filter;
+        if (min_filter != selected_min || mip_filter != config.mip_filter) {
+            min_filter = selected_min;
             mip_filter = config.mip_filter;
             if (config.type == Pica::TexturingRegs::TextureConfig::TextureCube) {
                 // HACK: use mag filter converter for min filter because they are the same anyway
