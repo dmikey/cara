@@ -309,6 +309,22 @@ floating-point behavior. The fragment lighting ablation below also changes
 vertex varying liveness and fragment coverage, so it cannot isolate
 fragment ALU cost.
 
+### Dark Moon, single-call vertex probe
+
+The GLES atlas normally invokes its generated guest vertex program at two
+distinct GLSL call sites. The Android diagnostic switch
+`[Debug] gpu_vertex_single_call = True` generates a bounded loop with one
+call site. It evaluates the triangle's first corner before the current
+corner when sign correction needs both and resets guest registers before
+each evaluation. The experiment has a distinct persistent cache identity.
+
+A fresh EGL context on the RG Slide linked 12 captured lit vertex/fragment
+pairs in alternating baseline/probe order. Link time went from 27.60 s to
+18.51 s total, a 32.9% reduction. Individual links improved by 28.9–35.4%.
+All 24 programs linked successfully. The driver does not expose
+`GL_KHR_parallel_shader_compile`. These are program-link measurements,
+separate from app frame timings.
+
 ### Dark Moon, earlier RG Slide measurements
 
 - **Surface residency.** In a warmed native GLES 3.2 title-screen A/B/A,
