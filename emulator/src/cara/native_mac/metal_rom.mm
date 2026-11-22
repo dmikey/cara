@@ -257,6 +257,12 @@ int main(int argc, char** argv) {
             Settings::values.resolution_factor = 1;
             Settings::values.use_frame_limit = true;
             Settings::values.frame_limit = 100;
+            if (const auto* speed = std::getenv("CARA_MAX_SPEED_PERCENT")) {
+                const auto percent = ParseUnsigned(speed);
+                if (percent < 50 || percent > 200)
+                    throw std::runtime_error("Compatibility speed must be between 50% and 200%");
+                Settings::values.frame_limit = percent;
+            }
             Settings::values.sink_id = "sdl2";
             Settings::values.factor_3d = 0;
             Settings::values.shadow_rendering = false;

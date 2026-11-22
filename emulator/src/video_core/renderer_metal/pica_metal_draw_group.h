@@ -44,6 +44,7 @@ struct PicaMetalDrawViews {
     std::optional<PicaMetalSurfaceView> tertiary_sampled{};
     std::optional<std::array<PicaGuestRange, 6>> primary_cube_faces{};
     bool primary_color_snapshot = false;
+    unsigned depth_snapshot_slots = 0;
 };
 
 struct PicaMetalWriter {

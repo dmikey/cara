@@ -193,6 +193,13 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
          (draw.texture0.usage & MTLTextureUsageRenderTarget) ||
          !Overlaps(views.sampled.authoritative_bytes, views.color.authoritative_bytes)))
         return decline("primary color snapshot");
+    const auto compatible_depth_read = [&](const PicaMetalSurfaceView& sampled, unsigned slot) {
+        const bool alias = Overlaps(sampled.authoritative_bytes, views.depth_stencil.authoritative_bytes);
+        if (!(views.depth_snapshot_slots & (1u << slot)))
+            return !alias;
+        return alias && sampled.texture && sampled.texture != draw.depth_stencil &&
+               !(sampled.texture.usage & MTLTextureUsageRenderTarget);
+    };
     const auto compatible_cube_reads = [&](PicaGuestRange range) {
         return !views.primary_cube_faces ||
                std::all_of(views.primary_cube_faces->begin(), views.primary_cube_faces->end(),
@@ -206,7 +213,7 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
         // overlap, for example when one material reads more mip levels.
         if (!CompatibleView(queue.device,*s,draw.secondary_material->texture,MTLTextureUsageShaderRead) ||
             Overlaps(range,views.color.authoritative_bytes) ||
-            Overlaps(range,views.depth_stencil.authoritative_bytes) ||
+            !compatible_depth_read(*s, 1) ||
             !compatible_cube_reads(range))
             return decline("secondary view or alias");
     }
@@ -217,7 +224,7 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
         if (!views.secondary_sampled ||
             !CompatibleView(queue.device, *third, draw.tertiary_material->texture, MTLTextureUsageShaderRead) ||
             Overlaps(range, views.color.authoritative_bytes) ||
-            Overlaps(range, views.depth_stencil.authoritative_bytes) ||
+            !compatible_depth_read(*third, 2) ||
             !compatible_cube_reads(range))
             return decline("tertiary view or alias");
     }
@@ -235,7 +242,7 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
         if (!CompatibleView(queue.device, views.sampled, draw.texture0, MTLTextureUsageShaderRead) ||
             (!views.primary_color_snapshot &&
              Overlaps(views.sampled.authoritative_bytes, views.color.authoritative_bytes)) ||
-            Overlaps(views.sampled.authoritative_bytes, views.depth_stencil.authoritative_bytes))
+            !compatible_depth_read(views.sampled, 0))
             return decline("primary view or alias");
     } else if (views.sampled.texture || views.sampled.backing_generation ||
                views.sampled.authoritative_bytes.begin || views.sampled.authoritative_bytes.end) {

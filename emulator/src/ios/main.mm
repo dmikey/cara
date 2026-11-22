@@ -2309,6 +2309,28 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         }
                     }
                 }
+                struct TestButtonSegment { unsigned begin,end; unsigned button; };
+                std::vector<TestButtonSegment> test_button_segments;
+                if (target_frames) {
+                    if (const char* segments=std::getenv("CARA_TEST_BUTTON_SEGMENTS")) {
+                        std::istringstream stream(segments);
+                        std::string item;
+                        const auto& names=Settings::NativeButton::mapping;
+                        while (std::getline(stream,item,',')) {
+                            unsigned begin=0,end=0;
+                            char name[32]{}, trailing{};
+                            if (std::sscanf(item.c_str(),"%u:%u:%31[a-z_0-9]%c",&begin,&end,name,&trailing)!=3 ||
+                                begin>=end || end>target_frames)
+                                continue;
+                            const auto button=std::find_if(names.begin(),names.end(),
+                                [&](const char* candidate) { return std::string_view(candidate)==name; });
+                            if (button!=names.end())
+                                test_button_segments.push_back({begin,end,unsigned(button-names.begin())});
+                        }
+                    }
+                }
+                unsigned test_button_frame=~0u;
+                std::array<bool, Settings::NativeButton::NumButtons> test_button_pressed{};
                 unsigned test_touch_frame=~0u;
                 unsigned test_circle_frame=~0u;
                 size_t next_test_press = 0;
@@ -2501,6 +2523,27 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         emuWindow->frames >= test_press_frames[next_test_press]) {
                         buttons.Press(Settings::NativeButton::A);
                         active_test_press = emuWindow->frames; ++next_test_press;
+                    }
+                    if (!test_button_segments.empty() && test_button_frame!=emuWindow->frames) {
+                        test_button_frame=emuWindow->frames;
+                        std::array<bool, Settings::NativeButton::NumButtons> next_buttons{};
+                        for (const auto& segment:test_button_segments) {
+                            // The existing A and START scripts own those buttons when supplied.
+                            if ((segment.button==Settings::NativeButton::A && !test_press_frames.empty()) ||
+                                (segment.button==Settings::NativeButton::Start && test_start_frame))
+                                continue;
+                            if (test_button_frame>=segment.begin && test_button_frame<segment.end)
+                                next_buttons[segment.button]=true;
+                        }
+                        for (unsigned button=0;button<next_buttons.size();++button) {
+                            if (next_buttons[button]==test_button_pressed[button])
+                                continue;
+                            if (next_buttons[button])
+                                buttons.Press(button);
+                            else
+                                buttons.Release(button);
+                        }
+                        test_button_pressed=next_buttons;
                     }
                     if (!test_circle_segments.empty() && test_circle_frame!=emuWindow->frames) {
                         test_circle_frame=emuWindow->frames;
