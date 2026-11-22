@@ -719,8 +719,8 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         // VFP Register Transfer
         HANDLER(VmovArmToS),
         HANDLER(VmovSToArm),
-        HANDLER(VmovArmToD),
-        HANDLER(VmovDToArm),
+        HANDLER(VmovArmToVfpPair),
+        HANDLER(VmovVfpPairToArm),
         HANDLER(Vmrs),
         HANDLER(Vmsr),
 
@@ -1049,8 +1049,8 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         &&handle_Usada8_al,
         &&handle_VmovArmToS_al,
         &&handle_VmovSToArm_al,
-        &&handle_VmovArmToD_al,
-        &&handle_VmovDToArm_al,
+        &&handle_VmovArmToVfpPair_al,
+        &&handle_VmovVfpPairToArm_al,
         &&handle_Vmrs_al,
         &&handle_Vmsr_al,
         &&handle_VaddS_al,
