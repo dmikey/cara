@@ -8,7 +8,7 @@ include(CMakeDependentOption)
 
 project(cara)
 
-if (APPLE)
+if (APPLE OR ANDROID)
     # Boost 1.70 uses the C++14 function base classes removed from newer libc++.
     add_definitions(-D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION)
 endif()
