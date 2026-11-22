@@ -62,11 +62,26 @@ jobs:
           grep -F "package: name='org.cara.emu' versionCode='$CARA_BUILT_ANDROID_VERSION'" "$RUNNER_TEMP/cara-apk-metadata"
           grep -Fx "targetSdkVersion:'36'" "$RUNNER_TEMP/cara-apk-metadata"
           grep -Fx "native-code: 'arm64-v8a'" "$RUNNER_TEMP/cara-apk-metadata"
-          unzip -p "$apk" lib/arm64-v8a/libmain.so > "$RUNNER_TEMP/libmain.so"
-          unzip -p "$bundle" base/lib/arm64-v8a/libmain.so > "$RUNNER_TEMP/bundle-libmain.so"
-          cmp "$RUNNER_TEMP/libmain.so" "$RUNNER_TEMP/bundle-libmain.so"
-          "$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
-            -W -l "$RUNNER_TEMP/libmain.so" | gawk '$1=="LOAD" {if (strtonum($NF)<16384) bad=1; n++} END {exit (bad || !n)}'
+          bundletool="$RUNNER_TEMP/bundletool-all-1.18.3.jar"
+          curl --fail --silent --show-error --location --retry 2 \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
+            --output "$bundletool"
+          printf '%s  %s\n' a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29 "$bundletool" | sha256sum -c
+          java -jar "$bundletool" validate --bundle="$bundle" > "$RUNNER_TEMP/cara-bundle-validation"
+          package=$(java -jar "$bundletool" dump manifest --bundle="$bundle" --module=base --xpath=/manifest/@package)
+          test "$package" = org.cara.emu
+          java -jar "$bundletool" dump config --bundle="$bundle" > "$RUNNER_TEMP/cara-bundle-config"
+          grep -F 'PAGE_ALIGNMENT_16K' "$RUNNER_TEMP/cara-bundle-config"
+          readelf="$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          native_files=$(unzip -Z1 "$apk" | grep -E '^lib/arm64-v8a/[^/]+\.so$')
+          grep -qxF 'lib/arm64-v8a/libmain.so' <<< "$native_files"
+          while IFS= read -r native_path; do
+            unzip -p "$apk" "$native_path" > "$RUNNER_TEMP/cara-apk-native.so"
+            unzip -p "$bundle" "base/$native_path" > "$RUNNER_TEMP/cara-bundle-native.so"
+            cmp "$RUNNER_TEMP/cara-apk-native.so" "$RUNNER_TEMP/cara-bundle-native.so"
+            "$readelf" -W -l "$RUNNER_TEMP/cara-apk-native.so" |
+              gawk '$1=="LOAD" {if (strtonum($NF)<16384) bad=1; n++} END {exit (bad || !n)}'
+          done <<< "$native_files"
           cp "$apk" dist/Cara-Android-arm64-unsigned.apk
           cp "$bundle" dist/Cara-Android-arm64-unsigned.aab
           python3 - <<'PYCODE'

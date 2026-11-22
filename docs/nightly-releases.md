@@ -56,6 +56,12 @@ Connect or publish it to TestFlight.
 
 ## Android Play Console
 
+The production Android namespace and application ID are both
+`org.cara.emu`. Nightly APKs and Play App Bundles use that exact ID, and
+CI checks the manifest of each built package. Developer debug and
+Mali preview APKs use `org.cara.emu.debug` and `org.cara.emu.malipreview`
+respectively so they can be installed alongside the release app.
+
 Register the Android **upload certificate** for `org.cara.emu` in Play
 Console. Use the matching upload key for the signing secrets. Play App
 Signing uses its app signing key on APKs it serves. If that key differs
