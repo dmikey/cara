@@ -388,6 +388,69 @@ void BindFragment(Stage& stage, RuntimeMetalShaderPair& pair) {
     }
 }
 
+// Only reuse a contract established by a full two-stage link. The generator
+// emits its declarations and helpers before a single main function. Restrict
+// reuse to changes inside that function, never a new declaration or directive.
+std::string_view FragmentContract(std::string_view source) {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_METAL_REUSE_LINKED_VERTEX");
+        return !value || std::string_view(value) == "1";
+    }();
+    constexpr std::string_view main = "\nvoid main() {";
+    const auto offset = source.find(main);
+    if (!enabled || offset == source.npos)
+        return {};
+    const auto prefix = source.substr(0, offset + main.size());
+    const auto body = source.substr(prefix.size());
+    // Preprocessor branches, block comments and escaped line endings can hide
+    // scope boundaries. Such sources keep the regular two-stage link path.
+    if (body.find_first_of("#\\") != body.npos || body.find("/*") != body.npos)
+        return {};
+    unsigned depth = 1;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        if (body[i] == '/' && i + 1 < body.size() && body[i + 1] == '/') {
+            i = body.find('\n', i + 2);
+            if (i == body.npos)
+                return {};
+        } else if (body[i] == '{') {
+            ++depth;
+        } else if (body[i] == '}' && --depth == 0) {
+            return body.find_first_not_of(" \t\r\n", i + 1) == body.npos ? prefix : std::string_view{};
+        }
+    }
+    return {};
+}
+
+struct LinkedVertex {
+    std::string vertex, fragment_prefix, msl;
+    RuntimeMetalVertexMode mode;
+    bool raw, constants;
+    std::set<Interface> outputs;
+};
+thread_local std::deque<LinkedVertex> linked_vertices;
+constexpr unsigned MaxLinkedVertices = 8;
+constexpr std::size_t MaxLinkedVertexBytes = 512 * 1024;
+
+std::optional<RuntimeMetalShaderPair> CompileMatchingFragment(const LinkedVertex& vertex,
+                                                             const std::string& fragment) {
+    glslang::TShader shader(EShLangFragment);
+    Parse(shader, EShLangFragment, fragment);
+    glslang::TProgram program;
+    program.addShader(&shader);
+    constexpr auto flags = static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules);
+    if (!program.link(flags) || !program.mapIO())
+        return std::nullopt;
+    Stage stage(EmitSpirv(program, EShLangFragment), spv::ExecutionModelFragment);
+    const auto inputs = InterfaceElements(stage, stage.resources.stage_inputs);
+    if (!std::includes(vertex.outputs.begin(), vertex.outputs.end(), inputs.begin(), inputs.end()))
+        return std::nullopt;
+    RuntimeMetalShaderPair result;
+    BindFragment(stage, result);
+    result.fragment = stage.Compile();
+    result.vertex = vertex.msl;
+    return result;
+}
+
 } // namespace
 
 std::optional<RuntimeMetalShaderPair> TranslateRuntimeMetalShaders(
@@ -418,8 +481,26 @@ std::optional<RuntimeMetalShaderPair> TranslateRuntimeMetalShaders(
         Require(!user_clip || mode != RuntimeMetalVertexMode::StageIn,
                 "Metal user clip plane requires generated vertex inputs");
         const bool desktop_clip = user_clip || vs.find(MacAtlasClip) != std::string_view::npos;
-        const auto vertex = PrepareSource(vs, desktop_clip, raw_indices, raw_index_constants);
         const auto fragment = PrepareSource(fs, desktop_clip, false, false);
+        const auto prefix = FragmentContract(fs);
+        if (!prefix.empty()) {
+            for (auto it = linked_vertices.rbegin(); it != linked_vertices.rend(); ++it) {
+                if (it->mode == mode && it->raw == raw_indices && it->constants == raw_index_constants &&
+                    it->vertex == vs && it->fragment_prefix == prefix) {
+                    try {
+                        if (auto result = CompileMatchingFragment(*it, fragment)) {
+                            NativeMetalCost::Count(NativeMetalCost::RuntimeLinkedVertexHit, 1);
+                            return result;
+                        }
+                    } catch (const std::runtime_error&) {
+                        // Standalone binding assignment can differ from pair linking.
+                        // Report an error only if the original two-stage path also fails.
+                    }
+                    break;
+                }
+            }
+        }
+        const auto vertex = PrepareSource(vs, desktop_clip, raw_indices, raw_index_constants);
         glslang::TShader vertex_shader(EShLangVertex), fragment_shader(EShLangFragment);
         Parse(vertex_shader, EShLangVertex, vertex);
         Parse(fragment_shader, EShLangFragment, fragment);
@@ -439,10 +520,18 @@ std::optional<RuntimeMetalShaderPair> TranslateRuntimeMetalShaders(
         RuntimeMetalShaderPair result;
         BindVertex(metal_vs, mode);
         BindFragment(metal_fs, result);
+        auto outputs = prefix.empty() ? std::set<Interface>{} :
+                                        InterfaceElements(metal_vs, metal_vs.resources.stage_outputs);
         result.vertex = CompileVertex(metal_vs, std::move(vertex_key), mode);
         result.fragment = metal_fs.Compile();
         Require(!desktop_clip || result.vertex.find("[[clip_distance]]") != std::string::npos,
                 "Metal vertex stage lost the fixed PICA clip plane");
+        if (!prefix.empty() && vs.size() + prefix.size() + result.vertex.size() <= MaxLinkedVertexBytes) {
+            if (linked_vertices.size() == MaxLinkedVertices)
+                linked_vertices.pop_front();
+            linked_vertices.push_back({std::string(vs), std::string(prefix), result.vertex, mode,
+                                       raw_indices, raw_index_constants, std::move(outputs)});
+        }
         return result;
     } catch (const std::exception& failure) {
         error = failure.what();
