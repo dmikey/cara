@@ -5,7 +5,11 @@
 namespace Config {
 
 // core
+#ifdef CARA_ANDROID_CPU_JIT
+const ConfigInfo<bool> USE_CPU_JIT{{"Core", "use_cpu_jit"}, true};
+#else
 const ConfigInfo<bool> USE_CPU_JIT{{"Core", "use_cpu_jit"}, false};
+#endif
 const ConfigInfo<bool> IS_NEW_3DS{{"Core", "is_new_3ds"}, false};
 const ConfigInfo<bool> USE_GAME_CONFIG{{"Core", "use_game_config"}, false};
 const ConfigInfo<bool> USE_VIRTUAL_SD{{"Core", "use_virtual_sd"}, true};

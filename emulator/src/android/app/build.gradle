@@ -1,6 +1,8 @@
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 apply plugin: 'com.android.application'
 
+def caraCpuJit = (project.findProperty('caraCpuJit') ?: 'true').toBoolean()
+
 android {
     compileSdkVersion 35
     buildFeatures { buildConfig true }
@@ -13,6 +15,7 @@ android {
 
     defaultConfig {
         applicationId "org.cara.emu"
+        buildConfigField "boolean", "CPU_JIT_AVAILABLE", caraCpuJit.toString()
         minSdkVersion 24
         targetSdkVersion 33
         versionCode(getBuildVersionCode())
@@ -55,6 +58,7 @@ android {
             cmake {
                 arguments "-DCARA_ENABLE_JIT=OFF",
                         "-DCARA_ANDROID_GLES_ATLAS=${project.findProperty('caraGlesAtlas') ?: 'ON'}",
+                        "-DCARA_ANDROID_CPU_JIT=${caraCpuJit ? 'ON' : 'OFF'}",
                         "-DENABLE_QT=0", // Don't use QT
                         "-DENABLE_SDL2=0", // Don't use SDL
                         "-DENABLE_WEB_SERVICE=0", // Don't use web services

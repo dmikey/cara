@@ -503,7 +503,7 @@ if (ENABLE_WEB_SERVICE)
     target_link_libraries(core PRIVATE web_service)
 endif()
 
-if ((CARA_ENABLE_JIT OR CARA_MAC_CPU_JIT) AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
+if ((CARA_ENABLE_JIT OR CARA_NATIVE_CPU_JIT) AND (ARCHITECTURE_x86_64 OR ARCHITECTURE_ARM64))
     target_sources(core PRIVATE
         arm/dynarmic/arm_dynarmic.cpp
         arm/dynarmic/arm_dynarmic.h
@@ -535,8 +535,12 @@ set(CARA_STATE_SIGNATURE "cara-state-1;${CMAKE_SYSTEM_NAME};${CMAKE_CXX_COMPILER
 if (CARA_MAC_ATLAS_PIPELINE)
     string(APPEND CARA_STATE_SIGNATURE ";native-mac-atlas-gl41-v1")
 endif()
-if(CARA_MAC_CPU_JIT)
-    string(APPEND CARA_STATE_SIGNATURE ";native-mac-cpu-jit-dynarmic-a32-v1")
+if(CARA_NATIVE_CPU_JIT)
+    if(CARA_MAC_CPU_JIT)
+        string(APPEND CARA_STATE_SIGNATURE ";native-mac-cpu-jit-dynarmic-a32-v1")
+    else()
+        string(APPEND CARA_STATE_SIGNATURE ";native-android-cpu-jit-dynarmic-a32-v1")
+    endif()
     file(GLOB_RECURSE CARA_CPU_JIT_INPUTS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/externals/dynarmic/*")
     list(SORT CARA_CPU_JIT_INPUTS)
     foreach(INPUT IN LISTS CARA_CPU_JIT_INPUTS)

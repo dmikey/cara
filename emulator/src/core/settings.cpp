@@ -42,7 +42,7 @@ void ApplyInputProfile(const InputProfile& profile) {
 }
 
 void Apply() {
-#if !defined(CARA_ENABLE_JIT) && !defined(CARA_MAC_CPU_JIT)
+#if !defined(CARA_ENABLE_JIT) && !defined(CARA_NATIVE_CPU_JIT)
     values.use_cpu_jit = false;
 #endif
 #ifndef CARA_ENABLE_JIT
