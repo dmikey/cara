@@ -17,7 +17,11 @@
 #include <chrono>
 #include <fstream>
 #ifdef CARA_IOS_GLES
+#if defined(__APPLE__)
 #include <sys/sysctl.h>
+#elif defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
 #include "video_core/renderer_opengl/ios_pipeline_cache.h"
 #endif
 #include <cstring>
@@ -651,6 +655,11 @@ public:
         identity += "\ntwo-stage-store-v2";
 #ifdef CARA_MAC_ATLAS_PIPELINE
         identity += "\nbackend=native-mac-atlas-gl41";
+#elif defined(CARA_ANDROID_GLES_ATLAS)
+        identity += "\nbackend=android-gles-atlas";
+        const char* fetch_reuse = std::getenv("CARA_GPU_PACKED_FETCH_REUSE");
+        identity += fetch_reuse && std::strcmp(fetch_reuse, "1") == 0
+                        ? "\npacked-fetch-reuse=1" : "\npacked-fetch-reuse=0";
 #else
         identity += "\nbackend=ios-gles";
 #endif
@@ -662,9 +671,14 @@ public:
             identity += "\n";
             if (value) identity += reinterpret_cast<const char*>(value);
         }
+#if defined(__APPLE__)
         char os[256]{};
         size_t length = sizeof(os);
         if (sysctlbyname("kern.osversion", os, &length, nullptr, 0) == 0) identity += os;
+#elif defined(__ANDROID__)
+        char os[PROP_VALUE_MAX]{};
+        if (__system_property_get("ro.build.fingerprint", os) > 0) identity += os;
+#endif
         GLint count = 0;
         glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &count);
         if (count > 0 && count <= 64) {

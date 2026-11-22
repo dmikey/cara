@@ -62,8 +62,6 @@ private:
 EGLAndroid::EGLAndroid(bool use_shared_context) : use_shared_context(use_shared_context) {}
 
 bool EGLAndroid::Initialize(ANativeWindow* surface) {
-    // Reuse raster state only when presentation and emulation share one context.
-    setenv("CARA_GL_STATE_REUSE", use_shared_context ? "0" : "1", 1);
     setenv("CARA_VS_UNIFORM_REUSE", "1", 0);
 #ifdef CARA_ANDROID_GLES_ATLAS
     setenv("CARA_GPU_PACKED_INPUTS", "1", 0);
