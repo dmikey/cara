@@ -7,15 +7,40 @@
 
 **Apple-first Nintendo 3DS emulator core and emulator shell.**
 
-Cara builds a portable 3DS core for reuse in Delta alongside its own frontends
-for macOS, iOS, Android, and Linux. Apple hardware is the primary development
-and testing focus. On iPhone and iPad, Cara uses FastInterp to run games without
-CPU JIT.
+Cara is a Nintendo 3DS emulator designed around Apple hardware, with a portable
+core and frontends for macOS, iOS, Android, and Linux. On iPhone and iPad,
+FastInterp runs games without CPU JIT. Reuse in Delta is a development goal.
 
 Cara aims to improve speed while preserving emulation correctness and
 stability. Guest behavior guides timing and compatibility decisions, and
 measurements on real hardware guide host-side choices. We prioritize engine
 fixes and check their effects on gameplay, rendering, and saves.
+
+## Made for iPad
+
+- **A library built for the big screen.** Browse your collection, favorites,
+  and recently played games from an iPad sidebar. Add games through Files.
+- **Play your way.** Use touch controls, customize a Delta-compatible skin, or
+  connect a supported game controller.
+- **Pick up where you left off.** Make per-game save states and sync in-game
+  saves through a selected iCloud Drive folder.
+- **Choose how each game runs.** Hardware-accelerated graphics and native stereo
+  audio are built in. Per-game Accuracy and Performance settings let you choose
+  whether to use adaptive guest CPU timing.
+
+## Play cartridge ROMs straight from ZIP
+
+Open a standard ZIP containing one `.3ds` cartridge image from the macOS
+game picker or Cara’s Files picker on iPad. Cara reads the original archive in
+place, so you can keep the ROM compressed without extracting it or converting
+it to Z3DS. Stored entries are read directly. For Deflate, Cara builds an
+in-memory seek index at first open and decompresses data on demand. See the
+[ZIP cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
+
+**Test status.** A ZIP of *Luigi’s Mansion: Dark Moon* was tested on macOS.
+Testing on a physical iPad is still pending, including booting from Files,
+confirming that no full ROM is extracted, and comparing frame pacing in
+Gadd’s lab against the raw `.3ds`.
 
 ## Platforms
 
@@ -101,18 +126,6 @@ devices. Rockchip devices are a development target.
 See the [architecture](docs/technology.md), [FastInterp notes](docs/fastinterp.md),
 and [performance and validation results](docs/performance.md) for implementation
 details and benchmark methodology.
-
-## Made for playing
-
-The iOS frontend currently brings these features together:
-
-- **Your games, through Files.** Open extracted game files from the file browser.
-- **Your controls.** Touch controls and customizable Delta-compatible skins.
-- **Your progress.** Per-game save-state slots and in-game save syncing through a selected iCloud Drive folder.
-- **Your experience.** GPU-accelerated graphics, native stereo audio, and an optional adaptive guest CPU clock for demanding scenes.
-
-Desktop and Android frontends are being brought toward the same experience.
-Delta core integration remains a development target.
 
 ## Open source, built in the open
 
