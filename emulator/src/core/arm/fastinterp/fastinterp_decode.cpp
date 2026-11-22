@@ -169,8 +169,8 @@ static u8 ComputeTicks(const DecodedInst& inst, bool is_thumb) {
     // VFP register transfer
     case Opcode::VmovArmToS:
     case Opcode::VmovSToArm:
-    case Opcode::VmovArmToD:
-    case Opcode::VmovDToArm:
+    case Opcode::VmovArmToVfpPair:
+    case Opcode::VmovVfpPairToArm:
     case Opcode::Vmrs:
     case Opcode::Vmsr:
         return 2;
@@ -1031,7 +1031,7 @@ bool ARM_FastInterp::ReadsPcAsSource(const DecodedInst& inst) {
         return inst.vfp.rn == 15;
     case Opcode::VmovArmToS:
         return inst.vfp.rt == 15;
-    case Opcode::VmovArmToD:
+    case Opcode::VmovArmToVfpPair:
         return inst.vfp.rt == 15 || inst.vfp.rt2 == 15;
     case Opcode::Vmsr:
         return inst.vfp.rt == 15;
@@ -2649,21 +2649,26 @@ static void DecodeArmMediaOrLoadStoreReg(u32 inst, DecodedInst& out) {
 // Coprocessor space (op1 = 0b110/0b111): VFP transfers, load/store, data
 // processing, and CP15
 static void DecodeArmCoprocessor(u32 inst, DecodedInst& out) {
-    // ARM<->VFP 64-bit register transfer (MCRR/MRRC to cp10/cp11): bits[27:21] = 1100010.
-    // e.g. VMOV Dm,Rt,Rt2 (0xEC4..) and VMOV Rt,Rt2,Dm (0xEC5..). This encoding overlaps
-    // the coprocessor load/store mask below, so it must be decoded first; otherwise it is
-    // mis-decoded as VLDM/VSTM and performs a spurious memory access instead of the transfer.
-    if ((inst & 0x0FE00000) == 0x0C400000) {
-        const u32 cp = (inst >> 8) & 0xF;
-        if (cp == 0xB) { // cp11: double-precision transfer (the common case)
-            const bool from_coproc = (inst >> 20) & 1; // L bit: 1 = D->ARM, 0 = ARM->D
-            out.vfp.rt = (inst >> 12) & 0xF;
-            out.vfp.rt2 = (inst >> 16) & 0xF;
-            out.vfp.sd = (((inst >> 5) & 1) << 4) | (inst & 0xF); // Dm = M:Vm
-            out.SetOpcode(from_coproc ? Opcode::VmovDToArm : Opcode::VmovArmToD);
+    // VMOV between two ARM registers and either two singles (cp10) or one
+    // double (cp11). Decode before VFP load/store, which shares the prefix.
+    if ((inst & 0x0FE00ED0) == 0x0C400A10) {
+        const bool from_vfp = (inst & (1u << 20)) != 0;
+        const bool is_double = (inst & (1u << 8)) != 0;
+        const u32 rt = (inst >> 12) & 0xF;
+        const u32 rt2 = (inst >> 16) & 0xF;
+        const u32 vm = inst & 0xF;
+        const u32 m = (inst >> 5) & 1;
+        const u32 first_word = is_double ? 2 * ((m << 4) | vm) : (vm << 1) | m;
+        if (rt == 15 || rt2 == 15 || (from_vfp && rt == rt2) ||
+            (!is_double && first_word == 31)) {
+            out.SetOpcode(Opcode::Invalid);
             return;
         }
-        // cp10 (two single-precision registers) is rare on 3DS; fall through unchanged.
+        out.vfp.rt = rt;
+        out.vfp.rt2 = rt2;
+        out.vfp.sd = first_word;
+        out.SetOpcode(from_vfp ? Opcode::VmovVfpPairToArm : Opcode::VmovArmToVfpPair);
+        return;
     }
 
     // VFP Load/Store: bits[27:25] = 110, coprocessor 10 or 11

@@ -70,16 +70,16 @@ handle_VmovSToArm:
     state_.regs[inst->vfp.rt] = VFP_S_READ_U32(inst->vfp.sd);
     ADVANCE_AND_DISPATCH();
 
-handle_VmovArmToD:
-    CHECK_COND(VmovArmToD);
-    state_.vfp_regs[inst->vfp.sd * 2] = state_.regs[inst->vfp.rt];
-    state_.vfp_regs[inst->vfp.sd * 2 + 1] = state_.regs[inst->vfp.rt2];
+handle_VmovArmToVfpPair:
+    CHECK_COND(VmovArmToVfpPair);
+    state_.vfp_regs[inst->vfp.sd] = state_.regs[inst->vfp.rt];
+    state_.vfp_regs[inst->vfp.sd + 1] = state_.regs[inst->vfp.rt2];
     ADVANCE_AND_DISPATCH();
 
-handle_VmovDToArm:
-    CHECK_COND(VmovDToArm);
-    state_.regs[inst->vfp.rt] = state_.vfp_regs[inst->vfp.sd * 2];
-    state_.regs[inst->vfp.rt2] = state_.vfp_regs[inst->vfp.sd * 2 + 1];
+handle_VmovVfpPairToArm:
+    CHECK_COND(VmovVfpPairToArm);
+    state_.regs[inst->vfp.rt] = state_.vfp_regs[inst->vfp.sd];
+    state_.regs[inst->vfp.rt2] = state_.vfp_regs[inst->vfp.sd + 1];
     ADVANCE_AND_DISPATCH();
 
 handle_Vmrs:

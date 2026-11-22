@@ -203,8 +203,8 @@ enum class Opcode : u16 {
     // VFP Register Transfer
     VmovArmToS, // VMOV Sn, Rt (ARM to single)
     VmovSToArm, // VMOV Rt, Sn (single to ARM)
-    VmovArmToD, // VMOV Dn, Rt, Rt2 (ARM to double)
-    VmovDToArm, // VMOV Rt, Rt2, Dn (double to ARM)
+    VmovArmToVfpPair, // VMOV to two VFP words
+    VmovVfpPairToArm, // VMOV from two VFP words
     Vmrs,       // VMRS Rt, FPSCR
     Vmsr,       // VMSR FPSCR, Rt
 
@@ -633,7 +633,7 @@ struct DecodedInst {
 
         // VFP format
         struct {
-            u8 sd;      // Destination S/D register (0-31 for S, 0-15 for D)
+            u8 sd;      // S/D register, or first word of a VMOV pair
             u8 sn;      // First source register
             u8 sm;      // Second source register
             u8 rt;      // ARM register for transfers
