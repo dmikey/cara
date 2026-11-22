@@ -645,6 +645,7 @@ static BOOL CaraCanTuneEmulation() {
 }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
 static NSString* const CaraMetalRendererKey = @"metalRendererAfterBootRecovery";
+static NSString* const CaraFirstUseShadersKey = @"firstUseShaderFallback";
 static NSString* const CaraAsyncShadersKey = @"asyncMetalShaders";
 
 static bool CaraAsyncShadersPreference(id playMode) {
@@ -1481,6 +1482,13 @@ static std::filesystem::path PedometerHistoryPath() {
         @"change":^(BOOL enabled) {
             [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
         }}];
+    [display addObject:@{@"title":@"First-use shader fallback", @"symbol":@"cpu",
+        @"subtitle":@"Uses CPU vertices to reduce first-use shader stalls. Can slow gameplay. Reopen the game to apply.",
+        @"value":@([displayDefaults boolForKey:CaraFirstUseShadersKey]),
+        @"enabled":@(![displayPlayMode isEqual:@"accuracy"]),
+        @"change":^(BOOL enabled) {
+            [displayDefaults setBool:enabled forKey:CaraFirstUseShadersKey];
+        }}];
     if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
         const NSInteger scale = saved == 2 || saved == 4 ? saved : 0;
@@ -2279,10 +2287,18 @@ static std::filesystem::path PedometerHistoryPath() {
 #else
         false;
 #endif
-    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing,async_shaders] {
+    const bool first_use_fallback =
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        ![CaraEmulationValue(@"playMode") isEqual:@"accuracy"] &&
+        [NSUserDefaults.standardUserDefaults boolForKey:CaraFirstUseShadersKey];
+#else
+        false;
+#endif
+    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing,async_shaders,first_use_fallback] {
         Cara::gpu_completion_policy = gpu_timing;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
         Cara::ConfigureMetalGeneralFragment(async_shaders);
+        Cara::ConfigureMetalImmediateTev(async_shaders && first_use_fallback);
 #endif
         // Diagnostic only: requested QoS is not evidence of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
@@ -2323,7 +2339,7 @@ static std::filesystem::path PedometerHistoryPath() {
 #ifdef CARA_IOS_GLES
             s.use_gles = true;
             s.use_hw_renderer = true;
-            s.use_hw_shader = std::getenv("CARA_CPU_VERTEX") == nullptr;
+            s.use_hw_shader = !first_use_fallback && std::getenv("CARA_CPU_VERTEX") == nullptr;
             s.use_separable_shader = false;
             s.allow_shadow = false;
             s.shadow_rendering = false;

@@ -136,6 +136,8 @@ public:
     bool UseFragmentShader(const Pica::Regs& regs, bool native_nearest_borrow_tex0 = false);
 
 #ifdef CARA_IOS_GLES
+    using RuntimeTevWords = std::array<GLivec4, 6>;
+    bool TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words);
     u16 GetIOSVertexInputReadMask(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup);
     GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
                                        u16 ios_input_mask = 0xffff);

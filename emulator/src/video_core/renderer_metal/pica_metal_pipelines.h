@@ -18,6 +18,7 @@
 namespace Cara {
 
 void ConfigureMetalGeneralFragment(bool enabled);
+void ConfigureMetalImmediateTev(bool enabled);
 bool UseMetalGeneralFragment();
 bool UseMetalDeadCombinerElision();
 
@@ -112,7 +113,7 @@ class PicaMetalPipelines {
 public:
     explicit PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual = {});
     bool BeginWarmup();
-    bool ObserveTevPipelineMiss(const PicaPipelineInputs&, bool dual);
+    bool ObserveTevPipelineMiss(const PicaPipelineInputs&, bool dual, bool detect_burst);
     bool FinishWarmup();
     PicaMetalPipelines(const PicaMetalPipelines&) = delete;
     PicaMetalPipelines& operator=(const PicaMetalPipelines&) = delete;

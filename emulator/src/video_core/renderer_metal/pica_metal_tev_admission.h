@@ -8,12 +8,13 @@
 
 namespace Cara {
 
-enum class RuntimeTevMode { Off, Adaptive, Always };
+enum class RuntimeTevMode { Off, Adaptive, Burst, Always };
 
 inline RuntimeTevMode ParseRuntimeTevMode(const char* value) {
     const std::string_view option = value ? value : "";
     if (option == "0") return RuntimeTevMode::Off;
     if (option == "1") return RuntimeTevMode::Always;
+    if (option == "burst") return RuntimeTevMode::Burst;
     return RuntimeTevMode::Adaptive;
 }
 
@@ -48,7 +49,29 @@ public:
         return family->count == Minimum;
     }
 
+    // Count distinct eligible fragment sources across packed vertex programs.
+    // Each texture layout has its own generic shader. Expire at the next refresh.
+    bool ObserveBurst(const char* fragment, bool dual, std::uint64_t refresh) {
+        auto& burst = bursts[dual];
+        if (burst.refresh != refresh) {
+            burst.refresh = refresh;
+            burst.count = 0;
+        }
+        if (burst.count < burst.fragments.size()) {
+            const auto end = burst.fragments.begin() + burst.count;
+            if (std::find(burst.fragments.begin(), end, fragment) == end)
+                burst.fragments[burst.count++] = fragment;
+        }
+        return burst.count == burst.fragments.size();
+    }
+
 private:
+    struct Burst {
+        std::uint64_t refresh{};
+        std::array<const char*, 3> fragments{};
+        unsigned count{};
+    };
+    std::array<Burst, 2> bursts{};
     static constexpr unsigned Minimum = 6;
     static constexpr unsigned Window = 32;
     struct Family {

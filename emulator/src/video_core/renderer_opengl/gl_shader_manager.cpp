@@ -404,6 +404,53 @@ public:
         current_shaders.gs = &cached_shader;
     }
 
+#ifdef CARA_IOS_GLES
+    std::unordered_map<u64, OGLShaderStage*> runtime_tev_stages;
+
+    bool TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words) {
+        if (!GLES || !regs.texturing.main_config.texture0_enable)
+            return false;
+        auto config = PicaFSConfig::BuildFromRegs(regs);
+        auto& f = config.state;
+        if (f.lighting.enable || f.proctex.enable || f.shadow_rendering ||
+            f.texture0_type != Pica::TexturingRegs::TextureConfig::Texture2D ||
+            f.fog_mode != Pica::TexturingRegs::FogMode::None ||
+            f.alpha_test_func == Pica::FramebufferRegs::CompareFunc::Never ||
+            !config.SupportsRuntimeTev())
+            return false;
+
+        unsigned units = 1;
+        for (unsigned i = 0; i < words.size(); ++i) {
+            words[i] = config.RuntimeTevWords(i);
+            for (unsigned shift : {0u, 4u, 8u, 16u, 20u, 24u}) {
+                const auto source = (unsigned(words[i][0]) >> shift) & 15u;
+                using Source = Pica::TexturingRegs::TevStageConfig::Source;
+                if (source == unsigned(Source::Texture2) || source == unsigned(Source::Texture3))
+                    return false;
+                if (source == unsigned(Source::Texture1)) {
+                    if (!regs.texturing.main_config.texture1_enable)
+                        return false;
+                    units = 3;
+                }
+            }
+        }
+        f.tev_stages = {};
+        f.combiner_buffer_input = 0;
+        const u64 hash = Common::ComputeHash64(&config, sizeof(config)) ^ units;
+        auto& stage = runtime_tev_stages[hash];
+        if (!stage) {
+            auto source = GenerateFragmentShader(config, separable,
+                {.gles = true, .allow_shadow = AllowShadow, .metal_runtime_tev_units = units});
+            stage = GetShaderStageRef(source, GL_FRAGMENT_SHADER);
+            if (!stage)
+                return false;
+            LOG_INFO(Render_OpenGL, "GLES runtime TEV selected units={} stage={}", units, stage->GetHash());
+        }
+        current_shaders.fs = stage;
+        return true;
+    }
+#endif
+
     void UseFragmentShader(const Pica::Regs& regs, bool native_nearest_borrow_tex0) {
         auto key = PicaFSConfig::BuildFromRegs(regs, native_nearest_borrow_tex0);
         // Diagnostic feature ablation only: preserve guest registers and all other FS state.
@@ -1033,6 +1080,9 @@ bool ShaderProgramManager::UseFragmentShader(const Pica::Regs& regs,
 }
 
 #ifdef CARA_IOS_GLES
+bool ShaderProgramManager::TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words) {
+    return impl->TryRuntimeTev(regs, words);
+}
 u16 ShaderProgramManager::GetIOSVertexInputReadMask(const Pica::Regs& regs,
                                                    Pica::Shader::ShaderSetup& setup) {
     return impl->GetIOSVertexInputReadMask(regs, setup);

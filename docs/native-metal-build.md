@@ -858,3 +858,33 @@ and independently failing shader-side checks.
   and button combinations to ordinary 3DS input events, and carry session,
   video, audio, and save operations between the shell and core.
   [DeltaCore bridge](https://github.com/rileytestut/DeltaCore/blob/main/DeltaCore/Cores/EmulatorBridging.swift)
+
+### Kirby first-use shader fallback on iPad
+
+Display → First-use shader fallback opts a Performance Mode session into CPU
+vertex processing when the game next opens. On Metal, enable Async Shaders
+to also use the general texture combiner immediately for supported draws.
+The fallback starts off because CPU vertices can increase missed deadlines
+over a full session.
+
+Two 900-refresh normal boots per configuration on an M4 iPad used the same
+Kirby ZIP, FastInterp, 100% pacing, fresh guest storage and fresh shader
+identities. Both backends saw 93 draws at refresh 332 and 115 at refresh 523.
+
+| Renderer | Worst refresh (332) | Refresh 523 | p99 |
+| --- | ---: | ---: | ---: |
+| GLES | 1296–1308 ms | 890–899 ms | 60.5–60.6 ms |
+| GLES with fallback | 278–286 ms | 270–281 ms | 56.3–58.7 ms |
+| Metal | 2607–2643 ms | 2027–2030 ms | 170.3–172.8 ms |
+| Metal with fallback and Async Shaders | 1354–1386 ms | 1016–1040 ms | 155.2–155.5 ms |
+
+The Metal fallback still spent 992 ms building 14 fragment libraries at
+refresh 332 in one run. Both fallback paths matched their renderer's visible
+image at refresh 535 and final capture at 900. Metal recorded 105–108 late
+paced refreshes with the fallback versus 43 in the second control.
+
+For independent developer comparisons, `CARA_METAL_RUNTIME_TEV=burst`
+admits the shared fragment after three distinct eligible misses of one
+texture layout within a refresh. `CARA_GLES_RUNTIME_TEV=1` tests the shared
+combiner with GLES. Both experiments produced smaller gains than the
+vertex fallback and remain explicit launch overrides.

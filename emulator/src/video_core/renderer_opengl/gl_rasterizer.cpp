@@ -3371,6 +3371,24 @@ void RasterizerOpenGL::SetShader() {
     Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
                                            Common::FrameTiming::RenderBookkeepingProfileEnabled());
 #ifdef CARA_IOS_GLES
+    static const bool probe_runtime_tev = [] {
+        const char* value = std::getenv("CARA_GLES_RUNTIME_TEV");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (probe_runtime_tev) {
+        ShaderProgramManager::RuntimeTevWords next{};
+        if (!native_borrow_fragment_selected && shader_program_manager->TryRuntimeTev(Pica::g_state.regs, next)) {
+            if (runtime_tev_words != next) {
+                runtime_tev_words = next;
+                uniform_block_data.light_dirty = true;
+            }
+            return;
+        }
+        if (runtime_tev_words) {
+            runtime_tev_words.reset();
+            uniform_block_data.light_dirty = true;
+        }
+    }
     if(!shader_program_manager->UseFragmentShader(Pica::g_state.regs,native_borrow_fragment_selected))
         native_borrow_restart=true;
 #else
@@ -4218,6 +4236,15 @@ void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
 
     if (sync_light || invalidate) {
         std::memcpy(uniforms + used_bytes, &uniform_block_data.light_data, sizeof(UniformLightData));
+#ifdef CARA_IOS_GLES
+        // Mutate only this uploaded copy. The CPU's live light LUT offsets
+        // remain valid when the next draw switches back to exact lighting.
+        if (runtime_tev_words) {
+            static_assert(sizeof(*runtime_tev_words) == sizeof(UniformLightData::lighting_lut_offset));
+            std::memcpy(uniforms + used_bytes + offsetof(UniformLightData, lighting_lut_offset),
+                        runtime_tev_words->data(), sizeof(*runtime_tev_words));
+        }
+#endif
         glBindBufferRange(GL_UNIFORM_BUFFER, static_cast<GLuint>(UniformBindings::Light),
                           uniform_buffer.GetHandle(), offset + used_bytes, sizeof(UniformLightData));
         uniform_block_data.light_dirty = false;

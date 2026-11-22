@@ -5,6 +5,7 @@ int main() {
     using Mode = Cara::RuntimeTevMode;
     if (Cara::ParseRuntimeTevMode(nullptr) != Mode::Adaptive ||
         Cara::ParseRuntimeTevMode("adaptive") != Mode::Adaptive ||
+        Cara::ParseRuntimeTevMode("burst") != Mode::Burst ||
         Cara::ParseRuntimeTevMode("0") != Mode::Off ||
         Cara::ParseRuntimeTevMode("1") != Mode::Always)
         return 5;
@@ -21,5 +22,10 @@ int main() {
         return 3;
     if (policy.Observe(vs, fs + 6, false, 63) || policy.Observe(vs+1, fs + 5, false, 34))
         return 4;
+    if (policy.ObserveBurst(fs, false, 1) || policy.ObserveBurst(fs, false, 1) ||
+        policy.ObserveBurst(fs + 1, false, 1) || policy.ObserveBurst(fs + 2, true, 1) ||
+        !policy.ObserveBurst(fs + 2, false, 1) || !policy.ObserveBurst(fs, false, 1) ||
+        policy.ObserveBurst(fs + 3, false, 2))
+        return 6;
     return 0;
 }
