@@ -26,7 +26,7 @@
 - (void)testInGameSettingsNavigation {
  self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
  app.launchEnvironment=@{@"CARA_UI_SCENE":@"in-game-settings"}; [app launch];
- XCTAssertTrue([app.buttons[@"Game settings"] waitForExistenceWithTimeout:15]); [app.buttons[@"Game settings"] tap];
+ XCTAssertTrue([app.staticTexts[@"Game settings"] waitForExistenceWithTimeout:15]); [app.staticTexts[@"Game settings"] tap];
  XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
  [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
  [app.navigationBars.buttons[@"Save"] tap]; XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
@@ -35,7 +35,7 @@
  [app.navigationBars.buttons[@"Done"] tap]; XCTAssertTrue([app.staticTexts[@"Running fixture game"] waitForExistenceWithTimeout:5]);
  XCTAssertFalse(app.navigationBars[@"Fixture game settings"].exists);
  // The quick menu remains the presentation delegate even with the editor on its stack.
- [app terminate]; [app launch]; [app.buttons[@"Game settings"] tap]; [app.staticTexts[@"Controller Demapping"] tap];
+ [app terminate]; [app launch]; [app.staticTexts[@"Game settings"] tap]; [app.staticTexts[@"Controller Demapping"] tap];
  XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
  [app.navigationBars[@"Controller Demapping"] swipeDown];
  XCTAssertTrue([app.staticTexts[@"Running fixture game"] waitForExistenceWithTimeout:5]);

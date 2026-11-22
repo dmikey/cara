@@ -131,7 +131,8 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     settings.sections=@[
         @{@"title":@"Game library",@"rows":@[@{@"title":@"ROMs folder",@"subtitle":@"Roms",@"symbol":@"folder",@"action":^{ [owner showFilePicker:YES]; }},@{@"title":@"Open game from Files…",@"symbol":@"doc.badge.plus",@"action":^{ [owner showFilePicker:NO]; }}],@"footer":@"Keep games in Cara’s Roms folder, or choose your own location."},
         @{@"title":@"iCloud & Files",@"rows":@[@{@"title":@"In-game saves",@"subtitle":@"Folder updated\nToday, 2:45 PM",@"symbol":@"icloud"},@{@"title":@"Save states",@"subtitle":@"Waiting for iCloud\n2 of 3 files uploaded.",@"symbol":@"icloud"},@{@"title":@"Choose iCloud Drive folder…",@"symbol":@"folder.badge.gearshape",@"action":^{ [owner showFilePicker:YES]; }}],@"footer":@"Choose the same iCloud Drive folder on each device. Save states need a matching Cara build."},
-        @{@"title":@"Audio",@"rows":@[@{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@YES,@"change":toggle},@{@"title":@"Audio stretching",@"symbol":@"waveform",@"value":@NO,@"change":toggle}]},
+        @{@"title":@"General",@"rows":@[@{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@YES,@"change":toggle}]},
+        @{@"title":@"Audio",@"rows":@[@{@"title":@"Audio stretching",@"symbol":@"waveform",@"value":@NO,@"change":toggle}]},
         @{@"title":@"Emulation",@"rows":@[@{@"title":@"Adaptive guest CPU",@"subtitle":@"Adjust the guest clock when needed.",@"symbol":@"speedometer",@"value":@YES,@"change":toggle}]},
         @{@"title":@"Landscape skin",@"rows":@[@{@"title":@"Performance bar",@"subtitle":@"Game FPS, speed, and guest CPU.",@"symbol":@"chart.bar",@"value":@YES,@"change":toggle}]},
         @{@"title":@"Portrait skin",@"rows":@[@{@"title":@"Performance bar",@"subtitle":@"Independent of landscape.",@"symbol":@"chart.bar",@"value":@NO,@"change":toggle}]},
