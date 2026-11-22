@@ -29,6 +29,7 @@
 #include "core/hle/service/ptm/ptm.h"
 #include "core/loader/smdh.h"
 #include "core/settings.h"
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/video_core.h"
 
 #include "camera/ndk_camera.h"
@@ -179,8 +180,21 @@ void BootGame(const std::string& path) {
     phases.enabled = Config::Get(trace_timing);
     const auto gpu_policy = Cara::GetGPUCompletionPolicy(ReadPlayMode() == Cara::PlayMode::Performance);
     Cara::gpu_completion_policy = gpu_policy;
-    LOG_INFO(Frontend, "Android GPU completion: P3D={} PPF={} soft knee={}",
-             gpu_policy.render, gpu_policy.transfer, gpu_policy.soften_render);
+    if (phases.enabled) {
+#ifdef CARA_ANDROID_GLES_ATLAS
+        constexpr const char* renderer = "atlas";
+#else
+        constexpr const char* renderer = "gles32";
+#endif
+        const auto mode = ReadPlayMode() == Cara::PlayMode::Accuracy ? "accuracy" : "performance";
+        __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                            "session mode=%s cpu=%s renderer=%s native_luts=%d resolution=%d "
+                            "p3d=%d ppf=%d soft_knee=%d",
+                            mode, Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp",
+                            renderer, OpenGL::UseNativeLUTBuffers(),
+                            Settings::values.resolution_factor, gpu_policy.render,
+                            gpu_policy.transfer, gpu_policy.soften_render);
+    }
 
     Core::System& system{Core::System::GetInstance()};
 
@@ -252,8 +266,12 @@ void BootGame(const std::string& path) {
     bool discard_next_sample = true;
     std::array<double, 120> frame_times{};
     std::size_t frame_count = 0;
+    u64 worst_frame = 0;
+    double worst_time = 0;
     const auto reset_trace = [&] {
         frame_count = 0;
+        worst_frame = 0;
+        worst_time = 0;
         const bool enabled = phases.enabled;
         phases = {};
         phases.enabled = enabled;
@@ -310,21 +328,27 @@ void BootGame(const std::string& path) {
                             system.CoreTiming().UpdateClockSpeed(next);
                     }
                     if (phases.enabled) {
-                        frame_times[frame_count++] = Seconds(timing.elapsed).count() * 1000;
+                        const auto elapsed = Seconds(timing.elapsed).count() * 1000;
+                        frame_times[frame_count++] = elapsed;
+                        if (elapsed > worst_time) {
+                            worst_time = elapsed;
+                            worst_frame = frame;
+                        }
                         if (frame_count == frame_times.size()) {
                             std::sort(frame_times.begin(), frame_times.end());
                             const auto guest_clock = adaptive_clock.Enabled()
                                                          ? adaptive_clock.Percent()
                                                          : ReadPlayPolicy().guest_clock;
-                            LOG_INFO(Frontend,
-                                "Android frame window: end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f}",
+                            const auto message = fmt::format(
+                                "window end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} worst_frame={} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f}",
                                 frame, guest_clock,
                                 (frame_times[59] + frame_times[60]) / 2, frame_times[118],
-                                frame_times.back(), phases.pica_draw_requests,
+                                worst_time, worst_frame, phases.pica_draw_requests,
                                 phases.vertex_upload_seconds * 1000, phases.draw_submit_seconds * 1000,
                                 phases.surface_download_seconds * 1000,
                                 phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
                                 phases.gpu_wait_seconds * 1000);
+                            __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
                             reset_trace();
                         }
                     }
