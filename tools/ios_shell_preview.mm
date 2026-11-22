@@ -113,8 +113,8 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     nav.modalPresentationStyle=UIModalPresentationPageSheet;
     nav.presentationController.delegate=landing;
     if (inGame) {
-        CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=@"performance";
-        quick.actions=@[@{@"title":@"Game settings",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [weakNav pushViewController:landing animated:YES]; }}];
+        CaraSettingsController* quick=[CaraSettingsController new]; quick.categorized=YES;
+        quick.sections=@[@{@"title":@"Current game",@"rows":@[@{@"title":@"Game settings",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [weakNav pushViewController:landing animated:YES]; }}]}];
         quick.finished=finished; nav.viewControllers=@[quick]; nav.presentationController.delegate=quick;
     } else if (!stopped) {
         openEditor();
@@ -131,7 +131,8 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     settings.sections=@[
         @{@"title":@"Game library",@"rows":@[@{@"title":@"ROMs folder",@"subtitle":@"Roms",@"symbol":@"folder",@"action":^{ [owner showFilePicker:YES]; }},@{@"title":@"Open game from Files…",@"symbol":@"doc.badge.plus",@"action":^{ [owner showFilePicker:NO]; }}],@"footer":@"Keep games in Cara’s Roms folder, or choose your own location."},
         @{@"title":@"iCloud & Files",@"rows":@[@{@"title":@"In-game saves",@"subtitle":@"Folder updated\nToday, 2:45 PM",@"symbol":@"icloud"},@{@"title":@"Save states",@"subtitle":@"Waiting for iCloud\n2 of 3 files uploaded.",@"symbol":@"icloud"},@{@"title":@"Choose iCloud Drive folder…",@"symbol":@"folder.badge.gearshape",@"action":^{ [owner showFilePicker:YES]; }}],@"footer":@"Choose the same iCloud Drive folder on each device. Save states need a matching Cara build."},
-        @{@"title":@"Audio",@"rows":@[@{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@YES,@"change":toggle},@{@"title":@"Audio stretching",@"symbol":@"waveform",@"value":@NO,@"change":toggle}]},
+        @{@"title":@"General",@"rows":@[@{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@YES,@"change":toggle}]},
+        @{@"title":@"Audio",@"rows":@[@{@"title":@"Audio stretching",@"symbol":@"waveform",@"value":@NO,@"change":toggle}]},
         @{@"title":@"Emulation",@"rows":@[@{@"title":@"Adaptive guest CPU",@"subtitle":@"Adjust the guest clock when needed.",@"symbol":@"speedometer",@"value":@YES,@"change":toggle}]},
         @{@"title":@"Landscape skin",@"rows":@[@{@"title":@"Performance bar",@"subtitle":@"Game FPS, speed, and guest CPU.",@"symbol":@"chart.bar",@"value":@YES,@"change":toggle}]},
         @{@"title":@"Portrait skin",@"rows":@[@{@"title":@"Performance bar",@"subtitle":@"Independent of landscape.",@"symbol":@"chart.bar",@"value":@NO,@"change":toggle}]},
@@ -198,11 +199,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     if (pendingActionNavigation) { UINavigationController* nav=pendingActionNavigation; pendingActionNavigation=nil; [self presentViewController:nav animated:YES completion:nil]; }
     if ([Scenario() isEqual:@"settings"] && !self.presentedViewController) [self showSettings];
     if ([Scenario() isEqual:@"advanced"] && !self.presentedViewController) { [self showSettings]; settings.title=@"Advanced"; [self refreshAdvancedFixture]; }
-    if ([Scenario() isEqual:@"quick-settings"] && !self.presentedViewController) {
-        CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=@"performance"; quick.showFPS=YES;
-        quick.actions=@[@{@"title":@"Library & iCloud",@"symbol":@"folder",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Controllers",@"symbol":@"gamecontroller.fill",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [self showSettings]; }}];
-        UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:quick]; nav.modalPresentationStyle=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad?UIModalPresentationFormSheet:UIModalPresentationPageSheet; nav.preferredContentSize=CGSizeMake(620,850); nav.presentationController.delegate=quick; [self presentViewController:nav animated:YES completion:nil];
-    }
+    if ([Scenario() isEqual:@"quick-settings"] && !self.presentedViewController) [self showSettings];
     if ([Scenario() containsString:@"landscape"]) {
         UIWindowScene* scene=self.view.window.windowScene;
         [scene requestGeometryUpdateWithPreferences:[[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscapeLeft] errorHandler:^(NSError* error) { NSLog(@"Orientation: %@",error); }];
