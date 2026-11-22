@@ -339,6 +339,8 @@ bool ConfigureNativeMetalLearning(const std::string& user, std::uint64_t title,
         identity += "keep-pica-subroutine-calls-v1:";
     if (UseMetalGeneralFragment())
         identity += "general-fragment-alpha-scissor-v1:";
+    if (UseMetalDeadCombinerElision())
+        identity += "dead-combiner-elision-v1:";
     identity.append(reinterpret_cast<const char*>(game_hash.data()), game_hash.size());
     const auto name = SourceDigest(identity);
     auto directory = std::filesystem::path(user) / "metal-pipelines";

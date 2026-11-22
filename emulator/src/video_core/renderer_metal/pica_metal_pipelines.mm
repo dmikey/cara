@@ -797,6 +797,15 @@ bool UseMetalGeneralFragment() {
     return override.value_or(general_fragment_requested);
 }
 
+bool UseMetalDeadCombinerElision() {
+    static const auto override = []() -> std::optional<bool> {
+        if (const char* setting = std::getenv("CARA_METAL_ELIDE_DEAD_COMBINER"))
+            return std::string_view(setting) == "1";
+        return std::nullopt;
+    }();
+    return override.value_or(UseMetalGeneralFragment());
+}
+
 PicaMetalPipelines::PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual)
     : device(device_), dual_assets(std::move(dual)), gate_library(OpenGateLibrary(device_)),
       rgba8_dither_verified_host(VerifiedDitherHost(device_)) {}

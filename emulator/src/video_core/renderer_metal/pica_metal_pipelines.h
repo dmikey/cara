@@ -18,6 +18,7 @@ namespace Cara {
 
 void ConfigureMetalGeneralFragment(bool enabled);
 bool UseMetalGeneralFragment();
+bool UseMetalDeadCombinerElision();
 
 void ConfigureNativeMetalWarmup(const std::string& user, std::string_view rom_name);
 bool ConfigureNativeMetalLearning(const std::string& user, std::uint64_t title,

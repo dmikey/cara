@@ -132,6 +132,7 @@ struct PicaFragmentShaderTarget {
     bool honor_material_enable = false;
     bool emit_explicit_material_lod_bias = false;
     bool metal_general_fragment = false;
+    bool elide_dead_combiner_buffer = false;
 };
 
 /**

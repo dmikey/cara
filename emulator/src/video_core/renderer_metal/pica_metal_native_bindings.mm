@@ -114,12 +114,20 @@ NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool
     };
     auto target = NativeFragmentTarget();
     target.metal_general_fragment = general;
+    target.elide_dead_combiner_buffer = UseMetalDeadCombinerElision();
     struct Cache {
         std::array<std::optional<Entry>, 128> entries{};
         std::size_t recent = 0, next = 0;
+        bool elide_dead_combiner_buffer = false;
     };
     thread_local std::array<Cache, 2> caches;
-    auto& [entries, recent, next] = caches[general];
+    auto& [entries, recent, next, elide_dead_combiner_buffer] = caches[general];
+    if (elide_dead_combiner_buffer != target.elide_dead_combiner_buffer) {
+        for (auto& entry : entries)
+            entry.reset();
+        recent = next = 0;
+        elide_dead_combiner_buffer = target.elide_dead_combiner_buffer;
+    }
     const auto matches = [&](std::size_t i) {
         return entries[i] &&
                std::memcmp(&entries[i]->config.state, &config.state, sizeof(config.state)) == 0;
