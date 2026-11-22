@@ -13,6 +13,8 @@
 #include "common/common_paths.h"
 #include "common/file_util.h"
 #include "common/zip_rom.h"
+#include "common/z3ds_rom.h"
+#include "common/string_util.h"
 #include "common/logging/log.h"
 
 #include <cctype>
@@ -606,11 +608,17 @@ IOFile::IOFile(IOFile&& other) noexcept {
     std::swap(state_mode, other.state_mode);
 }
 
-// Keep the ZIP source kind in the existing serialized mode field so old
+// Keep the compressed source kind in the existing serialized mode field so old
 // native I/O save states continue to reopen with their original modes.
+static constexpr const char* Z3dsRomMode = "rb:z3ds";
 static constexpr const char* ZipRomMode = "rb:zip";
 
 bool IOFile::OpenRom(const std::string& filename) {
+    if (filename.size() >= 5) {
+        const auto suffix = Common::ToLower(filename.substr(filename.size() - 5));
+        if (suffix == ".z3ds" || suffix == ".zcci")
+            return Open(filename, Z3dsRomMode);
+    }
     return Open(filename, IsZipRomPath(filename) ? ZipRomMode : "rb");
 }
 
@@ -618,7 +626,8 @@ bool IOFile::Open(const std::string& filename, const char openmode[]) {
     state_filename = filename;
     state_mode = openmode;
     const bool zip_rom = state_mode == ZipRomMode;
-    const char* native_mode = zip_rom ? "rb" : openmode;
+    const bool z3ds_rom = state_mode == Z3dsRomMode;
+    const char* native_mode = zip_rom || z3ds_rom ? "rb" : openmode;
     std::unique_ptr<IOHandler> source;
     if (!zip_rom && !s_io_factory)
         m_file.reset();
@@ -629,6 +638,8 @@ bool IOFile::Open(const std::string& filename, const char openmode[]) {
     }
     // Keep the previous handle alive until we open the successor. It can
     // already own the shared ZIP index when a loader reopens the same path.
+    if (z3ds_rom && source)
+        source = OpenZ3dsRom(std::move(source));
     if (zip_rom && source)
         source = OpenIndexedZipRom(filename, std::move(source));
     m_file = std::move(source);

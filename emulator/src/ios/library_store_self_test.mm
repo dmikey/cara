@@ -75,6 +75,9 @@ int main() { @autoreleasepool {
     Check([store rememberGame:local error:&error] && Scan(store).count==4,@"explicit re-add restores hidden file");
     Check([store deleteGameFile:local error:&error] && ![NSFileManager.defaultManager fileExistsAtPath:local.path] && Scan(store).count==3,@"explicit delete removes only requested fixture ROM");
     Check([NSFileManager.defaultManager fileExistsAtPath:save.path] && [NSFileManager.defaultManager fileExistsAtPath:state.path],@"game removal and deletion preserve saves and states");
+    Put([store.defaultFolder URLByAppendingPathComponent:@"Nested/Compressed.Z3DS"]);
+    Put([store.defaultFolder URLByAppendingPathComponent:@"Second cartridge.zcci"]);
+    Check(Scan(store).count==5,@"case-insensitive Z3DS and ZCCI library discovery");
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     puts("PASS: Roms creation, nested/legacy discovery, bookmarks, external file registration, deduplication and non-destructive folder selection (local simulation)");
 } }

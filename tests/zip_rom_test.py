@@ -15,6 +15,22 @@ class StreamingBuffer(io.BytesIO):
         raise OSError("Use ZIP data descriptors")
 
 
+def z3ds_payload(payload):
+    # Portable fixture with raw Zstandard blocks in independent seekable frames.
+    frames, entries = [], []
+    for start in range(0, len(payload), 65536):
+        block = payload[start:start + 65536]
+        frame = (struct.pack("<IBI", 0xfd2fb528, 0xa0, len(block)) +
+                 ((len(block) << 3) | 1).to_bytes(3, "little") + block)
+        frames.append(frame)
+        entries.append(struct.pack("<II", len(frame), len(block)))
+    table = b"".join(entries) + struct.pack("<IBI", len(frames), 0, 0x8f92eab1)
+    stream = b"".join(frames) + struct.pack("<II", 0x184d2a5e, len(table)) + table
+    metadata = bytes(16)
+    return (struct.pack("<4s4sBBHIQQ", b"Z3DS", b"NCSD", 1, 0, 32,
+                        len(metadata), len(stream), len(payload)) + metadata + stream)
+
+
 def main():
     test = Path(sys.argv[1]).resolve()
     rng = random.Random(20261121)
@@ -62,8 +78,24 @@ def main():
         name_length, extras_length = struct.unpack_from("<HH", corrupt, 26)
         corrupt[30 + name_length + extras_length + 100] ^= 0x80
         checksum.write_bytes(corrupt)
-        subprocess.run([test,raw,stored,deflated,zip64,streamed,"--bad",malformed,bad_offset,
-                        checksum,ambiguous], check=True)
+        z3ds = folder / "seekable.Z3DS"
+        image = z3ds_payload(payload)
+        z3ds.write_bytes(image)
+        zcci = folder / "cartridge.zcci"
+        zcci.write_bytes(image)
+        bad_z3ds = []
+        for name, position, replacement in [
+            ("wrong-version", 8, b"\x02"), ("short-header", 10, bytes(2)),
+            ("oversize-metadata", 12, bytes([255]) * 4),
+            ("incorrect-size", 24, struct.pack("<Q", len(payload) + 1)),
+            ("bogus-count", len(image) - 9, bytes([255]) * 4),
+            ("bad-footer", len(image) - 1, bytes(1)),
+        ]:
+            member = folder / (name + ".z3ds")
+            member.write_bytes(image[:position] + replacement + image[position + len(replacement):])
+            bad_z3ds.append(member)
+        subprocess.run([test,raw,stored,deflated,zip64,streamed,z3ds,zcci,"--bad",malformed,bad_offset,
+                        checksum,ambiguous,*bad_z3ds], check=True)
 
 
 if __name__ == "__main__":

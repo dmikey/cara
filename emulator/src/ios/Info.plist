@@ -152,6 +152,8 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>3ds</string>
+					<string>z3ds</string>
+					<string>zcci</string>
 					<string>cci</string>
 					<string>cxi</string>
 					<string>3dsx</string>

@@ -56,14 +56,19 @@ replay. The first refresh and other cold stalls remained. See the
 [Gadd’s lab comparison](docs/native-metal-build.md#adaptive-metal-submissions)
 and [mansion gate frame times](docs/native-metal-build.md#mansion-gate-with-performance-mode-defaults).
 
-## Play cartridge ROMs straight from ZIP
+## Play compressed cartridge ROMs
 
 Open a standard ZIP containing one `.3ds` cartridge image from the macOS
 game picker or Cara’s Files picker on iPad. Cara reads the original archive in
-place, so you can keep the ROM compressed without extracting it or converting
-it to Z3DS. Stored entries are read directly. For Deflate, Cara builds an
+place. Stored entries are read directly. For Deflate, Cara builds an
 in-memory seek index at first open and decompresses data on demand. See the
 [ZIP cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
+
+Cara also opens Azahar v1 cartridge images with the `.z3ds` or `.zcci` extension.
+The shared ROM reader uses
+the embedded Zstandard seek table to read individual frames on demand. Both
+Apple game pickers and the iOS library accept the original compressed file.
+[Azahar format specification](https://github.com/azahar-emu/azahar/pull/1208).
 
 **Test status.** Cara played a Deflate ZIP of *Luigi’s Mansion: Dark Moon*
 on macOS and on a physical M4 iPad. On the iPad, selecting the original ZIP

@@ -41,7 +41,7 @@ static NSError* LibraryError(NSString* message) {
     return self;
 }
 + (BOOL)isGameURL:(NSURL*)url {
-    return [@[@"3ds",@"cci",@"cxi",@"3dsx",@"elf",@"zip"] containsObject:url.pathExtension.lowercaseString];
+    return [@[@"3ds",@"z3ds",@"zcci",@"cci",@"cxi",@"3dsx",@"elf",@"zip"] containsObject:url.pathExtension.lowercaseString];
 }
 - (NSString*)folderName { return selectedFolder.lastPathComponent?:@"Roms"; }
 - (BOOL)hasCustomFolder { return [preferences dataForKey:@"romsFolderBookmark"]!=nil; }

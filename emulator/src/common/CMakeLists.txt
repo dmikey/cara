@@ -60,6 +60,8 @@ add_library(common STATIC
     common_paths.h
     common_types.h
     file_util.cpp
+    z3ds_rom.cpp
+    z3ds_rom.h
     zip_rom.cpp
     zip_rom.h
     file_util.h
@@ -117,6 +119,11 @@ if (ARCHITECTURE_x86_64)
     target_link_libraries(common PRIVATE xbyak)
 endif()
 
+set(ZSTD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../externals/zstd")
+target_sources(common PRIVATE "${ZSTD_ROOT}/contrib/seekable_format/zstdseek_decompress.c")
+target_include_directories(common PRIVATE "${ZSTD_ROOT}/contrib/seekable_format")
+set_source_files_properties("${ZSTD_ROOT}/contrib/seekable_format/zstdseek_decompress.c"
+    PROPERTIES INCLUDE_DIRECTORIES "${ZSTD_ROOT}/lib/common")
 target_sources(common PRIVATE memory_ref.cpp zstd_compression.cpp)
 find_package(ZLIB REQUIRED)
 target_link_libraries(common PUBLIC Boost::serialization PRIVATE libzstd_static ZLIB::ZLIB)

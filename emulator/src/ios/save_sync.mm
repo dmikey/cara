@@ -17,7 +17,7 @@ BOOL CaraIsSavePath(NSString* relative) {
     if (![relative isKindOfClass:NSString.class] || relative.length>2048 || [relative hasPrefix:@"/"] || [relative containsString:@"\\"]) return NO;
     NSArray* p=relative.pathComponents;
     if ([p containsObject:@".."] || [p containsObject:@"."]) return NO;
-    if ([@[@"3ds",@"cci",@"cxi",@"cia",@"3dsx",@"nds",@"elf",@"zip",@"deltaskin"] containsObject:relative.pathExtension.lowercaseString]) return NO;
+    if ([@[@"3ds",@"z3ds",@"zcci",@"cci",@"cxi",@"cia",@"3dsx",@"nds",@"elf",@"zip",@"deltaskin"] containsObject:relative.pathExtension.lowercaseString]) return NO;
     if (p.count>=9 && [p[0] isEqual:@"sdmc"] && [p[1] isEqual:@"Nintendo 3DS"] && [p[4] isEqual:@"title"] && [p[7] isEqual:@"data"]) return YES;
     if (p.count>=8 && [p[0] isEqual:@"sdmc"] && [p[1] isEqual:@"Nintendo 3DS"] && [p[4] isEqual:@"extdata"]) return YES;
     return p.count>=7 && [p[0] isEqual:@"nand"] && [p[1] isEqual:@"data"] && [p[3] isEqual:@"extdata"];
