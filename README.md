@@ -45,10 +45,11 @@ it to Z3DS. Stored entries are read directly. For Deflate, Cara builds an
 in-memory seek index at first open and decompresses data on demand. See the
 [ZIP cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
 
-**Test status.** A ZIP of *Luigi’s Mansion: Dark Moon* was tested on macOS.
-Testing on a physical iPad is still pending, including booting from Files,
-confirming that no full ROM is extracted, and comparing frame pacing in
-Gadd’s lab against the raw `.3ds`.
+**Test status.** Cara played a Deflate ZIP of *Luigi’s Mansion: Dark Moon*
+on macOS and on a physical M4 iPad. The iPad completed a 3,600-refresh
+FastInterp Metal replay from the indexed archive. The device test opened
+the archive programmatically. Manual selection through Files still needs
+verification.
 
 ## Platforms
 
