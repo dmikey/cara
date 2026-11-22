@@ -275,9 +275,13 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
         !(draw.lighting_lut.usage & MTLTextureUsageShaderRead) ||
         draw.lighting_lut.hazardTrackingMode != MTLHazardTrackingModeTracked))
         return decline("lighting view");
+    const auto depth_range = views.depth_stencil.authoritative_bytes;
+    const bool depth_coverage = draw.unbacked_depth
+        ? depth_range.begin == 0 && depth_range.end == 0
+        : Valid(depth_range);
     if (!CompatibleView(queue.device, views.color, draw.color, MTLTextureUsageRenderTarget) ||
-        !CompatibleView(queue.device, views.depth_stencil, draw.depth_stencil,
-                        MTLTextureUsageRenderTarget) ||
+        !depth_coverage || !CompatibleTexture(queue.device, views.depth_stencil, draw.depth_stencil,
+                                              MTLTextureUsageRenderTarget) ||
         !Covers(views.color.authoritative_bytes, views.color_dirty) ||
         !Covers(views.depth_stencil.authoritative_bytes, views.depth_stencil_dirty) ||
         Overlaps(views.color.authoritative_bytes, views.depth_stencil.authoritative_bytes)) {

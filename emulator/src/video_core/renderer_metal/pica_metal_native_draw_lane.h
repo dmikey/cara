@@ -67,6 +67,7 @@ public:
         const PicaMetalTextureDecoder& decoder, id<MTLComputePipelineState> tiled_export,
         id<MTLComputePipelineState> detile_packed_color,
         const MetalGuestAuthority::GuestReader& ram);
+    PicaMetalNativeAttachment AcquireUnbackedDepthStencil(u32 width, u32 height);
     PicaMetalNativeAttachment AcquireTiledDepthStencil(
         MetalTransfer::GuestInterval bytes, u32 width, u32 height,
         const PicaMetalDepthImportPipelines& pipelines, id<MTLComputePipelineState> tiled_export,
@@ -110,6 +111,7 @@ private:
     u64 attachment_generation = 0;
     std::optional<PicaMetalNativeAttachment> resident_color;
     std::optional<PicaMetalNativeAttachment> resident_depth;
+    PicaMetalNativeAttachment unbacked_depth{};
     struct FlushReadback {
         static constexpr u32 BlockBytes = 4096;
         std::array<u8, BlockBytes> bytes;

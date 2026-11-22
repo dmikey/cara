@@ -337,7 +337,10 @@ void PicaMetalNativeDrawLane::Record(const TexturedMetalDraw& draw, const PicaMe
         NativeMetalCost::Scope retire(NativeMetalCost::RecordRetire);
         submissions.Retire(false);
     }
-    if (!color.exporter || !depth.exporter || !SameBacking(color.view, views.color) ||
+    const bool depth_owned = draw.unbacked_depth
+        ? !depth.exporter && SameBacking(depth.view, unbacked_depth.view) && depth.view.texture
+        : bool(depth.exporter);
+    if (!color.exporter || !depth_owned || !SameBacking(color.view, views.color) ||
         !SameBacking(depth.view, views.depth_stencil) || !ValidRgba8(color) || depth.rgba8)
         submissions.Fail("Invalid native Metal attachment ownership");
 
@@ -1859,6 +1862,28 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledColor(
     resident_color = PicaMetalNativeAttachment{{texture, range, generation}, std::move(export_bytes),
                                               rgba8 ? std::optional{layout} : std::nullopt};
     return *resident_color;
+}
+
+// The common render pipeline has a combined depth/stencil attachment format even
+// for guest framebuffers with no depth address. This target never owns guest RAM.
+PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireUnbackedDepthStencil(u32 width, u32 height) {
+    submissions.CheckThread();
+    const auto previous = unbacked_depth.view.texture;
+    if (previous && previous.width == width && previous.height == height)
+        return unbacked_depth;
+    if (!width || !height || attachment_generation == std::numeric_limits<u64>::max())
+        submissions.Fail("Invalid unbacked Metal depth dimensions or generation");
+    const auto descriptor = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float_Stencil8 width:width
+        height:height mipmapped:NO];
+    descriptor.storageMode = MTLStorageModePrivate;
+    descriptor.hazardTrackingMode = MTLHazardTrackingModeTracked;
+    descriptor.usage = MTLTextureUsageRenderTarget;
+    const auto texture = [queue.device newTextureWithDescriptor:descriptor];
+    if (!texture)
+        submissions.Fail("Could not allocate unbacked Metal depth attachment");
+    unbacked_depth.view = {texture, {}, ++attachment_generation};
+    return unbacked_depth;
 }
 
 PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
