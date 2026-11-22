@@ -17,7 +17,7 @@ int main() {
         "[Renderer]\nresolution_factor = 2\n[Storage]\nnand = /my saves/nand\n"
         "[Controls]\nbutton_a = engine:keyboard,code:4\n";
     Model model(original);
-    assert(model.backend == "fastinterp");
+    assert(model.backend == (JitAvailable() ? "jit" : "fastinterp"));
     assert(model.play.mode == Cara::PlayMode::Performance);
     assert(model.play.Policy().adaptive && model.play.Policy().guest_clock == 100);
     assert(model.play.Policy().limit_speed && model.play.Policy().maximum_speed == 100);

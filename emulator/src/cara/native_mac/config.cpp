@@ -122,7 +122,7 @@ void Config::ReadValues() {
 
     auto& v = Settings::values;
     const char* requested_backend=std::getenv("CARA_CPU_BACKEND");
-    const auto backend=sdl2_config->GetString("Core","cpu_backend",requested_backend?requested_backend:"fastinterp");
+    const auto backend=sdl2_config->GetString("Core","cpu_backend",requested_backend ? requested_backend : Cara::MacPreferences::DefaultBackend());
     Cara::MacPreferences::ValidateBackend(backend,Cara::MacPreferences::JitAvailable());
     v.use_cpu_jit = backend=="jit";
     setenv("CARA_CPU_BACKEND",backend.c_str(),1);

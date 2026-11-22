@@ -83,7 +83,7 @@ static bool NativeAuditHookConnected() {
            OpenGL::CommandQueue::ForwardsGetError(NativeAuditedGetError);
 }
 static void NativeCPUDefaults() {
-    for (const auto& item : {std::pair{"CARA_CPU_BACKEND", "fastinterp"},
+    for (const auto& item : {std::pair{"CARA_CPU_BACKEND", Cara::MacPreferences::DefaultBackend()},
                              {"CARA_FASTINTERP_ALU_OPERANDS", "1"},
                              {"CARA_FASTINTERP_TICK_BUCKETS", "1"},
                              {"CARA_FASTINTERP_CHAIN_BUDGET", "1"},

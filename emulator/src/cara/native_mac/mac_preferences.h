@@ -46,6 +46,7 @@ inline constexpr bool JitAvailable(){
  return false;
 #endif
 }
+inline const char* DefaultBackend() { return JitAvailable() ? "jit" : "fastinterp"; }
 inline void ValidateBackend(const std::string& name,bool jit) {
  if(name!="fastinterp"&&name!="dyncom"&&name!="jit")throw std::invalid_argument("Unknown CPU engine");
  if(name=="jit"&&!jit)throw std::invalid_argument("This build does not include the JIT CPU engine");
@@ -55,12 +56,12 @@ inline std::string AnalogKeys(const std::array<std::string,4>& keys){return Comm
 struct Button {std::string key,label,value;int default_key;};
 struct Analog {std::string key,label,controller,keyboard_package;std::array<std::string,4> directions;bool use_controller=false;};
 struct Model {
- std::string backend="fastinterp",original;
+ std::string backend=DefaultBackend(),original;
  PlaySettings play;
  std::vector<Button> buttons;
  std::array<Analog,2> analogs;
  explicit Model(const std::string& text={}):original(text){
-  Ini ini(text);backend=ini.Get("Core","cpu_backend","fastinterp");
+  Ini ini(text);backend=ini.Get("Core","cpu_backend",DefaultBackend());
   play=PlaySettings::Read(ini);
   const std::array<Button,15> defaults{{
    {"button_a","A","",SDL_SCANCODE_A},{"button_b","B","",SDL_SCANCODE_S},
