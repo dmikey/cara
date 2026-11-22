@@ -16,6 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", type=Path, required=True)
     parser.add_argument("--sdl", type=Path, required=True)
+    parser.add_argument("--zlib-license", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -36,6 +37,7 @@ def main():
         archive.write(args.exe, f"{PACKAGE}/cara.exe")
         archive.write(args.sdl, f"{PACKAGE}/SDL2.dll")
         archive.write(args.sdl.parents[2] / "LICENSE.txt", f"{PACKAGE}/SDL2-LICENSE.txt")
+        archive.write(args.zlib_license, f"{PACKAGE}/zlib-LICENSE.txt")
         for name in ("LICENSE", "NOTICE"):
             archive.write(ROOT / name, f"{PACKAGE}/{name}")
         for path in sorted((ROOT / "emulator" / "externals").rglob("*")):

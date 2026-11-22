@@ -35,6 +35,20 @@ jobs:
             throw "SDL2 archive SHA-256 mismatch"
           }
           Expand-Archive $archive work
+      - name: Build pinned static zlib
+        shell: pwsh
+        run: |
+          $archive = "work/zlib14.zip"
+          Invoke-WebRequest -Uri "https://github.com/madler/zlib/releases/download/v1.4/zlib14.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne "38BC7ED1C8AC3C870A159623DEACF74A46C393AE1AD23F1DCA1ED8E272DEB058") {
+            throw "zlib archive SHA-256 mismatch"
+          }
+          Expand-Archive $archive work
+          cmake -S work/zlib-1.4 -B work/build-zlib -G "Visual Studio 17 2022" -A x64 -T ClangCL `
+            "-DCMAKE_INSTALL_PREFIX=$pwd/work/zlib" `
+            -DZLIB_BUILD_SHARED=OFF -DZLIB_BUILD_TESTING=OFF
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build work/build-zlib --config Release --target INSTALL --parallel 3
       - name: Configure and build the OpenGL frontend
         shell: pwsh
         run: |
@@ -42,6 +56,7 @@ jobs:
           cmake -S emulator -B work/build-windows -G "Visual Studio 17 2022" -A x64 -T ClangCL `
             "-DBOOST_ROOT=$pwd/emulator/externals/boost" -DBoost_NO_SYSTEM_PATHS=ON `
             -DENABLE_SDL2=ON -DCARA_USE_BUNDLED_SDL2=OFF "-DSDL2_PATH=$sdl" `
+            "-DZLIB_INCLUDE_DIR=$pwd/work/zlib/include" "-DZLIB_LIBRARY_RELEASE=$pwd/work/zlib/lib/libzs.lib" `
             -DENABLE_QT=OFF -DCARA_ENABLE_JIT=OFF -DCARA_SOFTWARE_PRESENTATION=OFF `
             -DENABLE_WEB_SERVICE=OFF -DENABLE_CUBEB=OFF `
             -DENABLE_FFMPEG_AUDIO_DECODER=OFF -DENABLE_FFMPEG_VIDEO_DUMPER=OFF
@@ -60,7 +75,7 @@ jobs:
           if ((Get-AuthenticodeSignature $binary.FullName).Status -ne "NotSigned") {
             throw "Expected an unsigned Cara EXE"
           }
-          python tools/package_windows.py --exe $binary.FullName --sdl $sdl.FullName --output dist
+          python tools/package_windows.py --exe $binary.FullName --sdl $sdl.FullName --zlib-license work/zlib-1.4/LICENSE --output dist
       - uses: actions/upload-artifact@v4
         with:
           name: Cara-Windows-x86_64-OpenGL
