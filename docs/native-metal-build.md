@@ -581,7 +581,8 @@ needed zero runtime vertex library or pipeline builds.
 | Async Shaders default, fresh shader namespace | 6,805.80 ms | 46.33 ms | 23.26 ms | 271.02 ms at 2 |
 | Same default, learned cache | 31.64 ms | 23.07 ms | 24.15 ms | 26.37 ms at 131 |
 
-The defaults run used 99 fallback draws. Both passes matched exact-path
+The cold run recorded 99 vertex fallback draws, 2,326 general fragment
+draws and 20 linked vertex translation cache hits. Both passes matched exact-path
 pixels at refreshes 17–21 and 900. Refresh 18 still spent 24.76 ms in
 runtime shader translation. At refresh 2, pipeline creation took 158.11 ms,
 fragment library creation 56.55 ms and translation 28.92 ms. These long
