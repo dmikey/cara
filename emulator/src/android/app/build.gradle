@@ -16,7 +16,7 @@ android {
 
     defaultConfig {
         applicationId "org.cara.emu"
-        manifestPlaceholders = [caraAppLabel: caraPreview ? "Cara Mali Preview" : "Cara"]
+        manifestPlaceholders = [caraAppLabel: caraPreview ? "Cara Mali Readback Probe" : "Cara"]
         buildConfigField "boolean", "CPU_JIT_AVAILABLE", caraCpuJit.toString()
         minSdkVersion 24
         targetSdkVersion 33
@@ -35,7 +35,7 @@ android {
         // Signed by debug key disallowing distribution on Play Store.
         // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         debug {
-            applicationIdSuffix caraPreview ? ".malipreview" : ".debug"
+            applicationIdSuffix caraPreview ? ".malidepth" : ".debug"
             versionNameSuffix '-debug'
             jniDebuggable true
         }

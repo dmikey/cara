@@ -183,7 +183,10 @@ void BootGame(const std::string& path) {
 
     // This residency path was tested on Mali with both GLES backends.
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
-    setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> trace_surface_flushes{{"Debug", "trace_surface_flushes"}, false};
+    const bool surface_remap_enabled = Config::Get(surface_remap);
+    setenv("CARA_GPU_SURFACE_REMAP", surface_remap_enabled ? "1" : "0", 1);
+    setenv("CARA_SURFACE_FLUSH_TRACE", Config::Get(trace_surface_flushes) ? "1" : "0", 1);
 #ifdef CARA_ANDROID_GLES_ATLAS
     const Config::ConfigInfo<bool> native_luts{{"Debug", "native_lut_buffers"}, false};
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
@@ -209,11 +212,11 @@ void BootGame(const std::string& path) {
         const auto mode = ReadPlayMode() == Cara::PlayMode::Accuracy ? "accuracy" : "performance";
         __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
                             "session mode=%s cpu=%s renderer=%s native_luts=%d resolution=%d "
-                            "p3d=%d ppf=%d soft_knee=%d",
+                            "p3d=%d ppf=%d soft_knee=%d surface_remap=%d",
                             mode, Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp",
                             renderer, OpenGL::UseNativeLUTBuffers(),
                             Settings::values.resolution_factor, gpu_policy.render,
-                            gpu_policy.transfer, gpu_policy.soften_render);
+                            gpu_policy.transfer, gpu_policy.soften_render, surface_remap_enabled);
     }
 
     Core::System& system{Core::System::GetInstance()};
@@ -378,14 +381,16 @@ void BootGame(const std::string& path) {
                                 "gpu_vertex_entries={} guest_run_wall_ms={:.2f} draw_wall_ms={:.2f} "
                                 "vertex_prepare_wall_ms={:.2f} state_apply_wall_ms={:.2f} "
                                 "uniform_upload_wall_ms={:.2f} texture_acquire_wall_ms={:.2f} "
-                                "shader_setup_wall_ms={:.2f}",
+                                "shader_setup_wall_ms={:.2f} surface_remap_calls={} "
+                                "surface_download_calls={} surface_download_bytes={}",
                                 frame, frame_times.size(), phases.gpu_vertex_draws,
                                 phases.cpu_vertex_draws, phases.gpu_vertices,
                                 phases.guest_cpu_seconds * 1000, phases.draw_seconds * 1000,
                                 phases.vertex_prepare_seconds * 1000, phases.state_apply_seconds * 1000,
                                 phases.uniform_upload_seconds * 1000,
                                 phases.draw_texture_acquire_seconds * 1000,
-                                phases.draw_shader_setup_seconds * 1000);
+                                phases.draw_shader_setup_seconds * 1000, phases.surface_remap_calls,
+                                phases.surface_download_calls, phases.surface_download_bytes);
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", phase_message.c_str());
                             LogShaderDriverTiming("refresh", frame);
                             reset_trace();

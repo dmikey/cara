@@ -31,8 +31,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - renderer: atlas
-            atlas: 'ON'
           - renderer: gles32
             atlas: 'OFF'
     runs-on: ubuntu-24.04
