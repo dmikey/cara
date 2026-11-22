@@ -44,13 +44,26 @@ kernel void cara_scale_scanout(texture2d<float,access::read> src [[texture(0)]],
     uint x = dx*xy.x;
     float4 value = src.read(uint2(x,y));
     if (dx == 2) value = .5f*(value + src.read(uint2(x+1u,y)));
-    if (flags.y == 2) {
-        const uint3 levels(31u, 63u, 31u);
-        const uint3 bytes = uint3(round(value.rgb * 255.f));
-        const uint3 packed = (bytes * levels + 127u) / 255u;
-        value = float4(float3(packed) / float3(levels), 1.f);
-    } else if (flags.y == 3) {
-        value.a = 1.f;
-    }
+    if (flags.y == 3) value.a = 1.f;
     dst.write(value,xy);
+}
+
+inline uint3 scale_pack_rgb565(float3 value) {
+    return (uint3(round(value * 255.f)) * uint3(31, 63, 31) + 127u) / 255u;
+}
+
+// Write the guest-visible RGB565 bytes and capture the four enhanced
+// subpixels before the next draw can reuse the source surface.
+kernel void cara_scale_scanout_rgb565(texture2d<float,access::read> hi [[texture(0)]],
+    texture2d<float,access::write> dst [[texture(1)]], texture2d<float,access::read> native [[texture(2)]],
+    constant uint4& flags [[buffer(0)]], device ushort* guest [[buffer(1)]], uint2 xy [[thread_position_in_grid]]) {
+    if (xy.x >= dst.get_width() || xy.y >= dst.get_height()) return;
+    const uint2 source(xy.x, flags.z + (flags.x ? dst.get_height() - 1u - xy.y : xy.y));
+    const auto high = scale_pack_rgb565(hi.read(source).rgb);
+    dst.write(float4(float3(high) / float3(31,63,31), 1.f), xy);
+    if (((xy.x | xy.y) & 1u) == 0u) {
+        const uint3 rgb = scale_pack_rgb565(native.read(source / 2u).rgb);
+        guest[(xy.y / 2u) * (dst.get_width() / 2u) + xy.x / 2u] =
+            ushort((rgb.r << 11u) | (rgb.g << 5u) | rgb.b);
+    }
 }

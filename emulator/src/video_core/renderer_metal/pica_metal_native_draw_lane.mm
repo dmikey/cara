@@ -1294,6 +1294,31 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         }
         const auto command = [queue commandBuffer];
         const auto output = AllocateBytes(*dst);
+        if (group.Resolution().Factor() > 1 && layout_flags == 0x2004u &&
+            resident_color && resident_color->rgba8) {
+            const auto& layout = *resident_color->rgba8;
+            const auto texture = resident_color->view.texture;
+            // Only a tile-row-aligned view of the current resident owner can
+            // use its enhanced subpixels. RAM and mixed surfaces keep their
+            // byte-authoritative transfer. The unused tail of the nominal
+            // input rectangle need not be inside the render target.
+            const u32 tile_row_bytes = layout.width * 8u * 4u;
+            if (layout.tiled && layout.width == registers.input_width &&
+                texture.width == layout.width && texture.height == layout.height &&
+                layout.begin <= src->begin && src->begin < layout.end && tile_row_bytes &&
+                layout.end - layout.begin == u64{layout.width} * layout.height * 4u &&
+                (src->begin - layout.begin) % tile_row_bytes == 0) {
+                const u32 first_row = (src->begin - layout.begin) / tile_row_bytes * 8u;
+                const auto image = group.Resolution().SnapshotRgb565Crop(command, texture,
+                    registers.output_width, registers.output_height, first_row,
+                    bool(registers.flags & 1u), output);
+                if (image) {
+                    publish_display(command, output, *dst, image, registers.output_width,
+                                    registers.output_height, 2);
+                    return;
+                }
+            }
+        }
         auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer);
         if (command && !source) {
             // A linear view can reinterpret bytes just written in a tiled
@@ -1332,28 +1357,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         if (scaled_crop && scaled_crop->destination_bpp == 2u)
             NativeMetalCost::Count(NativeMetalCost::DisplayScaledCropRgb565, 1);
         [encoder endEncoding];
-        id<MTLTexture> image = nil;
-        if (group.Resolution().Factor() > 1 && layout_flags == 0x2004u &&
-            resident_color && resident_color->rgba8) {
-            const auto& layout = *resident_color->rgba8;
-            const auto texture = resident_color->view.texture;
-            // Only a tile-row-aligned view of the current resident owner can
-            // use its enhanced subpixels. RAM and mixed surfaces keep their
-            // byte-authoritative transfer. The unused tail of the nominal
-            // input rectangle need not be inside the render target.
-            const u32 tile_row_bytes = layout.width * 8u * 4u;
-            if (layout.tiled && layout.width == registers.input_width &&
-                texture.width == layout.width && texture.height == layout.height &&
-                layout.begin <= src->begin && src->begin < layout.end && tile_row_bytes &&
-                layout.end - layout.begin == u64{layout.width} * layout.height * 4u &&
-                (src->begin - layout.begin) % tile_row_bytes == 0) {
-                const u32 first_row = (src->begin - layout.begin) / tile_row_bytes * 8u;
-                image = group.Resolution().SnapshotRgb565Crop(command, texture, output_width,
-                    output_height, first_row, bool(registers.flags & 1u));
-            }
-        }
-        publish_display(command, output, *dst, image, output_width, output_height, 2);
-
+        PublishBytes(command, output, DenseRows(*dst));
         return;
     }
     if (const auto color = MetalTransfer::PlanNativeLinearColorTransfer(registers)) {

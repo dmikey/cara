@@ -91,15 +91,16 @@ fragment float4 checker(float4 p [[position]]) {
         auto guest_s=Read(command,depth,1,MTLBlitOptionStencilFromDepthStencil);
         auto pixels=Read(command,output,4);
         constexpr unsigned crop_w = 224, crop_h = 360, first_row = 24;
-        std::array<id<MTLBuffer>, 2> crops{};
+        std::array<id<MTLBuffer>, 2> crops{}, packed_crops{};
         for (unsigned flip = 0; flip < crops.size(); ++flip) {
-            auto crop = scale.SnapshotRgb565Crop(command, native, crop_w, crop_h, first_row, flip);
+            packed_crops[flip] = [device newBufferWithLength:crop_w*crop_h*2 options:MTLResourceStorageModeShared];
+            auto crop = scale.SnapshotRgb565Crop(command,native,crop_w,crop_h,first_row,flip,packed_crops[flip]);
             Check(crop && crop.width == 2*crop_w && crop.height == 2*crop_h, "RGB565 crop bounds");
             crops[flip] = Read(command, crop, 4);
         }
-        Check(!scale.SnapshotRgb565Crop(command,native,crop_w,crop_h,h-crop_h+1,false),
+        Check(!scale.SnapshotRgb565Crop(command,native,crop_w,crop_h,h-crop_h+1,false,packed_crops[0]),
               "crop outside resident height");
-        Check(!scale.SnapshotRgb565Crop(command,native,w+1,crop_h,0,false),
+        Check(!scale.SnapshotRgb565Crop(command,native,w+1,crop_h,0,false,packed_crops[0]),
               "crop outside resident width");
         [command commit];[command waitUntilCompleted];
         if (command.error) NSLog(@"%@",command.error);
@@ -123,7 +124,15 @@ fragment float4 checker(float4 p [[position]]) {
             for (unsigned y = 0; y < crop_h*2; ++y) {
                 const unsigned guest_y = first_row*2 + (flip ? crop_h*2-1-y : y);
                 const unsigned source_y = h*2-1-guest_y;
+                const auto* words = static_cast<const uint16_t*>(packed_crops[flip].contents);
                 for (unsigned x = 0; x < crop_w*2; ++x) {
+                    if ((x % 2 == 0) && (y % 2 == 0)) {
+                        const auto* guest_pixel = static_cast<const uint8_t*>(guest.contents) +
+                            1024*(source_y/2) + 4*(x/2);
+                        const unsigned expected = (((guest_pixel[0]*31u+127)/255) << 11) |
+                            (((guest_pixel[1]*63u+127)/255) << 5) | ((guest_pixel[2]*31u+127)/255);
+                        Check(words[(y/2)*crop_w + x/2] == expected, "incorrect native RGB565 guest word");
+                    }
                     const auto* p = static_cast<const uint8_t*>(crops[flip].contents) + pitch*y + 4*x;
                     Check(p[0] == (((x ^ source_y)&1) ? 255 : 0) &&
                           p[1] == quantized(source_y&255u,63) && p[2] == quantized(x&255u,31) &&
