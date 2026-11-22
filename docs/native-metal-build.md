@@ -258,6 +258,7 @@ window. Each comparison on the same device uses the same input script.
 | M3 Pro Mac, queued imports and fragmented exports | 26.02 | 48.89 ms | 4135–4254 | 39.35 ms |
 | M4 iPad, first queued depth-to-texture build | 11.04 | 107.06 ms | 4391–4510 | 90.75 ms |
 | M4 iPad, queued imports and fragmented exports | 30.24 | 39.87 ms | 4357–4476 | 33.45 ms |
+| M4 iPad, FastInterp GLES control | 46.96 | 26.76 ms | 4424–4543 | 21.37 ms |
 
 The Mac recorded 19,451 synchronous depth exports over refreshes 2001–3000
 before queueing all the eligible fragments and zero afterward. Over the same
@@ -267,7 +268,9 @@ The command trace retained about 216 tracked submissions per refresh over
 refreshes 2001–2600, whose GPU start/end intervals covered 13.72 ms per
 refresh after merging overlaps. CPU sampling showed PICA register handling,
 draw preparation, and queue backpressure on the emulation thread. The title
-still runs below full speed on both devices.
+still runs below full speed on both devices. The same Metal build replayed
+Dark Moon’s Gadd lab on the Mac at 59.92 refreshes per second over
+refreshes 3121–3600, with p99 of 18.13 ms.
 
 The Driver Renegade pursuit matched byte for byte at the final capture
 after cube reuse. Over refreshes 5721–6200, the mean moved from 20.87 to
