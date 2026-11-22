@@ -153,7 +153,8 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
 }
 - (void)refreshAdvancedFixture { settings.sections=@[[self advancedFixtureSection]]; [settings refresh]; }
 - (void)showSkin {
-    NSURL* url=[NSBundle.mainBundle URLForResource:@"CarbonDuo" withExtension:@"deltaskin"];
+    NSString* resource=NSProcessInfo.processInfo.environment[@"CARA_UI_SKIN"]?:@"CarbonDuo";
+    NSURL* url=[NSBundle.mainBundle URLForResource:resource withExtension:@"deltaskin"];
     CaraSkin* skin=[CaraSkin loadURL:url error:nil];
     CaraSkinControls* controls=[[CaraSkinControls alloc] initWithFrame:CGRectZero]; controls.skin=skin;
     const BOOL landscape=[Scenario() containsString:@"landscape"];
