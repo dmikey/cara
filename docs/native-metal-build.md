@@ -358,11 +358,16 @@ is ready. Reordering CPU-visible transfers would change guest behavior.
 ### Async Shaders on iPad Metal
 
 Options → Display → Async Shaders applies when a game opens. The option is
-on by default in Performance Mode. The proof of concept generalizes alpha
+on by default in Performance Mode. The renderer generalizes alpha
 comparison and scissor mode for unlit, fog-free 2D draws using texture 0
-and optionally texture 1. It retains the current vertex program, combiner,
-depth output, material slots, and fixed-function raster state. A copied
-uniform carries the two runtime modes. Other draws use the existing path.
+and optionally texture 1. The fallback keeps the vertex program, texture
+sampling, depth output, material slots and fixed-function raster state.
+Uniforms carry alpha and scissor modes. The diagnostic `CARA_METAL_RUNTIME_TEV=1` also enables a runtime
+combiner for supported TEV operations. Six four-word uniform records then
+describe the guest's six combiner stages.
+Their source, modifier, operation, multiplier and delayed buffer updates
+are evaluated per draw until the exact pipeline becomes available. Dot3
+and other unsupported combinations retain the specialized combiner. The default Async Shaders path retains its specialized combiner.
 
 Cara compiles the general shader on the device. Once that pipeline is ready,
 draws can use it while a bounded worker compiles the exact shader and
@@ -738,6 +743,33 @@ warm recipe availability from 67/214 to 214/214 but changed warm p99 by only
 0.05 ms and increased preload time from 55 to 88 ms. The experiment stayed
 out of the default. Disabling Async Shaders increased the largest cold
 interval to 4007 ms in the same opening.
+
+### Runtime TEV comparison
+
+The M4 iPad replayed 900 refreshes from the Kirby ZIP on FastInterp at the
+100% speed limit in Performance Mode. Matching cold runs captured both
+screens at refreshes 331–335. Each image matched byte-for-byte.
+
+| Cold Metal metric | Specialized combiner fallback | Runtime TEV fallback |
+| --- | ---: | ---: |
+| P99 refresh interval | 276.45 ms | 161.11 ms |
+| Worst refresh interval | 2788.9 ms | 2465.5 ms |
+| Slowest rolling 120-refresh mean | 62.59 ms | 49.41 ms |
+
+The warm runtime-TEV replay reached 59.25 refreshes/s with a 27.03 ms p99.
+An Apple GPU differential separately checked the generated TEV arithmetic
+against 77 specialized stage sequences extracted from 119 eligible cached
+Kirby fragments. All 78,848 RGBA8 outputs matched across randomized
+primary colors, post-sample texture values and combiner constants. This
+arithmetic test complements the frame captures, which also exercise texture
+sampling and rasterization.
+
+Fresh guest storage and compiler namespaces also exposed cold regressions in
+two other titles. Dark Moon fell from 32.10 to 30.98 refreshes/s and its
+worst interval grew from 9255 to 10042 ms. Ocarina of Time fell from 50.88
+to 50.34 refreshes/s and its worst interval grew from 1330 to 1681 ms,
+although p99 fell from 37.1 to 31.9 ms. Both games matched at refreshes
+429–432 and 900. These results keep runtime TEV opt-in.
 
 Boot each local cartridge with a fresh user directory and FastInterp. Drive
 menus and gameplay with the same inputs when comparing performance. Capture

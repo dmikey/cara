@@ -231,6 +231,7 @@ static void CheckGPU(const Fixture& f, const std::string& generated) {
 #endif
 void CheckCombinerBufferElision();
 void CheckMaterialBorderConfig();
+void CheckRuntimeTevFallback();
 
 int main(int argc, char** argv) {
     try {
@@ -241,6 +242,8 @@ int main(int argc, char** argv) {
 #else
         Require(!gpu, "GPU execution test currently requires macOS CGL");
 #endif
+        CheckRuntimeTevFallback();
+        std::cout << "PASS runtime TEV fallback\n";
         CheckMaterialBorderConfig();
         std::cout << "PASS material border shader configuration\n";
         CheckCombinerBufferElision();

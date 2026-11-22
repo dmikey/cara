@@ -107,7 +107,16 @@ constexpr OpenGL::PicaFragmentShaderTarget NativeFragmentTarget() {
     };
 }
 
-NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool general = false) {
+bool UseRuntimeTevFallback() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_METAL_RUNTIME_TEV");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
+NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool general = false,
+                                        unsigned tev_units = 0) {
     struct Entry {
         OpenGL::PicaFSConfig config;
         std::string source;
@@ -115,14 +124,15 @@ NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool
     };
     auto target = NativeFragmentTarget();
     target.metal_general_fragment = general;
+    target.metal_runtime_tev_units = tev_units;
     target.elide_dead_combiner_buffer = UseMetalDeadCombinerElision();
     struct Cache {
         std::array<std::optional<Entry>, 128> entries{};
         std::size_t recent = 0, next = 0;
         bool elide_dead_combiner_buffer = false;
     };
-    thread_local std::array<Cache, 2> caches;
-    auto& [entries, recent, next, elide_dead_combiner_buffer] = caches[general];
+    thread_local std::array<Cache, 4> caches;
+    auto& [entries, recent, next, elide_dead_combiner_buffer] = caches[tev_units ? (tev_units == 1 ? 2 : 3) : unsigned(general)];
     if (elide_dead_combiner_buffer != target.elide_dead_combiner_buffer) {
         for (auto& entry : entries)
             entry.reset();
@@ -149,6 +159,26 @@ NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool
     recent = next;
     next = (next + 1) % entries.size();
     return {slot->source, slot->revision};
+}
+
+std::optional<PicaMetalPipelineSelection> SelectGeneralFragment(
+    PicaMetalPipelines& pipelines, const PicaPipelineInputs& draw, OpenGL::PicaFSConfig canonical,
+    const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& second,
+    const std::optional<PicaSampleInputs>& third) {
+    canonical.state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
+    canonical.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
+    if (UseRuntimeTevFallback() && canonical.SupportsRuntimeTev()) {
+        auto dynamic = canonical;
+        dynamic.state.tev_stages = {};
+        dynamic.state.combiner_buffer_input = 0;
+        const auto fs = NativeFragmentSource(dynamic, true, second ? 3 : 1);
+        if (auto choice = pipelines.SelectWithGeneral(draw, fs.bytes, sampler, second, third)) {
+            choice->runtime_tev = choice->general_fragment;
+            return choice;
+        }
+    }
+    const auto fs = NativeFragmentSource(canonical, true);
+    return pipelines.SelectWithGeneral(draw, fs.bytes, sampler, second, third);
 }
 
 // The audited PC 230 rewrite selects only byte ranges from the runtime shader.
@@ -499,11 +529,7 @@ struct NativePipelineMemo {
         const auto third = triple ? std::optional{samplers[2]} : std::nullopt;
         auto result = pipelines.Select(draw, samplers[0], second, third);
         if (!result && general) {
-            auto canonical = *general;
-            canonical.state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
-            canonical.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
-            result = pipelines.SelectWithGeneral(draw, NativeFragmentSource(canonical, true).bytes,
-                                                 samplers[0], second, third);
+            result = SelectGeneralFragment(pipelines, draw, *general, samplers[0], second, third);
         }
         if (!result && pipelines.Prepare(draw, samplers[0], second, third))
             result = pipelines.Select(draw, samplers[0], second, third);
@@ -1160,11 +1186,24 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     // unless an earlier geometry emission left a winding change pending.
     const bool independent_triangles = topology == Topology::List ||
         (topology == Topology::Shader && !assembler.HasPendingWinding());
+    using Compare = Pica::FramebufferRegs::CompareFunc;
+    using Scissor = Pica::RasterizerRegs::ScissorMode;
+    const auto& f = fcfg.state;
+    const bool can_use_general = UseMetalGeneralFragment() && !pair_indices && !f.lighting.enable &&
+        !f.proctex.enable && f.fog_mode == Pica::TexturingRegs::FogMode::None &&
+        !f.native_nearest_borrow_tex0 && !f.shadow_rendering &&
+        f.alpha_test_func != Compare::Never && pica.sampled_unit == 0 &&
+        !third && (!second || pica.secondary_unit == 1) &&
+        f.texture0_type == TextureConfig::Texture2D &&
+        (f.scissor_test_mode == Scissor::Disabled ||
+         f.scissor_test_mode == Scissor::Include ||
+         f.scissor_test_mode == Scissor::Exclude);
     if (probe_fallback && !pica.clip1 && !pair_indices && !Settings::values.skip_slow_draw &&
         r.pipeline.use_gs == Pica::PipelineRegs::UseGS::No && independent_triangles &&
         assembler.IsEmpty() && r.pipeline.num_vertices % 3 == 0 &&
         r.pipeline.num_vertices <= 16384 &&
-        pipelines.TryVertexFallback(pica, StageInVertexSource().bytes, sampler[0], second, third)) {
+        pipelines.TryVertexFallback(pica, StageInVertexSource().bytes, sampler[0], second, third,
+                                    can_use_general && UseRuntimeTevFallback() && fcfg.SupportsRuntimeTev())) {
         *interpret_vertices = true;
         return std::nullopt;
     }
@@ -1172,27 +1211,11 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     // Only the opted-in general fragment interprets two of those fields as
     // modes. Its resource envelope and all fixed draw state must still match.
     const auto resolve_pipeline = [&]() -> std::optional<PicaMetalPipelineSelection> {
-        using Compare = Pica::FramebufferRegs::CompareFunc;
-        using Scissor = Pica::RasterizerRegs::ScissorMode;
-        const auto& f = fcfg.state;
-        const bool can_use_general = UseMetalGeneralFragment() && !pair_indices && !f.lighting.enable &&
-            !f.proctex.enable && f.fog_mode == Pica::TexturingRegs::FogMode::None &&
-            !f.native_nearest_borrow_tex0 && !f.shadow_rendering &&
-            f.alpha_test_func != Compare::Never && pica.sampled_unit == 0 &&
-            !third && (!second || pica.secondary_unit == 1) &&
-            f.texture0_type == TextureConfig::Texture2D &&
-            (f.scissor_test_mode == Scissor::Disabled ||
-             f.scissor_test_mode == Scissor::Include ||
-             f.scissor_test_mode == Scissor::Exclude);
         if (memo)
             return memo->Resolve(pipelines, vs, fs, pica, sampler, second.has_value(),
                                  third.has_value(), can_use_general ? &fcfg : nullptr);
         if (can_use_general) {
-            auto canonical = fcfg;
-            canonical.state.alpha_test_func = Compare::Always;
-            canonical.state.scissor_test_mode = Scissor::Disabled;
-            if (auto choice = pipelines.SelectWithGeneral(
-                    pica, NativeFragmentSource(canonical, true).bytes, sampler[0], second, third))
+            if (auto choice = SelectGeneralFragment(pipelines, pica, fcfg, sampler[0], second, third))
                 return choice;
         }
         auto result = pipelines.Select(pica, sampler[0], second, third);
@@ -1348,6 +1371,15 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         storage = std::make_shared<BindingStorage>();
     storage->uniforms = CapturePicaMetalUniforms(
         state, Settings::values.disable_clip_coef && !pica.clip1);
+    if (selection->runtime_tev) {
+        // Lighting is disabled for this path. Its six ivec4 slots carry the six
+        // TEV register groups without changing either uniform block's layout.
+        auto& words = storage->uniforms.light.lighting_lut_offset;
+        static_assert(std::size(OpenGL::PicaFSConfigState{}.tev_stages) ==
+                      std::extent_v<std::remove_reference_t<decltype(words)>>);
+        for (unsigned i = 0; i < fcfg.state.tev_stages.size(); ++i)
+            words[i] = fcfg.RuntimeTevWords(i);
+    }
     if (selection->general_fragment) {
         storage->uniforms.common.cara_tex0_crop[0] = s32(fcfg.state.alpha_test_func);
         storage->uniforms.common.cara_tex0_crop[1] = s32(fcfg.state.scissor_test_mode);

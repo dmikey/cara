@@ -115,3 +115,37 @@ void CheckMaterialBorderConfig() {
     regs.texturing.main_config.texture0_enable.Assign(0);
     Require(!config().state.material_borders[0].axes, "Ignore stale disabled sampler registers");
 }
+
+void CheckRuntimeTevFallback() {
+    OpenGL::PicaFSConfig config{};
+    auto& state = config.state;
+    state.texture0_type = Pica::TexturingRegs::TextureConfig::Texture2D;
+    state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
+    Stage stage{};
+    stage.color_source1.Assign(Stage::Source::Texture0);
+    stage.alpha_source1.Assign(Stage::Source::PreviousBuffer);
+    stage.alpha_modifier1.Assign(Stage::AlphaModifier::OneMinusSourceAlpha);
+    stage.color_scale.Assign(1);
+    state.tev_stages[0] = Raw(stage);
+    state.combiner_buffer_input = 0x11;
+    Require(config.SupportsRuntimeTev(), "Admit ordinary TEV arithmetic");
+    Require(config.RuntimeTevWords(0) ==
+                std::array<s32,4>{s32(stage.sources_raw), s32(stage.modifiers_raw), 0, 0x3012},
+            "Encode TEV operands, multipliers and delayed buffer updates");
+    OpenGL::PicaFragmentShaderTarget target{.gles=true, .allow_shadow=false,
+        .emit_explicit_material_lod_bias=true, .metal_general_fragment=true,
+        .metal_runtime_tev_units=1};
+    const auto single = OpenGL::GenerateFragmentShader(config,false,target);
+    Require(single.find("caraRunTev(rounded_primary_color, texcolor0, vec4(0))") != std::string::npos,
+            "Single-texture TEV path keeps its material envelope");
+    stage.color_op.Assign(Stage::Operation::MultiplyThenAdd);
+    state.tev_stages[0] = Raw(stage);
+    Require(single == OpenGL::GenerateFragmentShader(config,false,target),
+            "Different combiner operations share one fallback source");
+    target.metal_runtime_tev_units=3;
+    Require(OpenGL::GenerateFragmentShader(config,false,target) != single,
+            "Dual-texture fallback keeps separate bindings");
+    stage.color_op.Assign(Stage::Operation::Dot3_RGBA);
+    state.tev_stages[0] = Raw(stage);
+    Require(!config.SupportsRuntimeTev(), "Dot3 uses the exact shader path");
+}

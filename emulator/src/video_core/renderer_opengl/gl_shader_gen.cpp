@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/metal_runtime_tev_glsl.h"
 #include "gl_native_quaternion_geometry.h"
 #include "gl_shader_suffix_sharing.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
@@ -393,6 +394,26 @@ static bool IsPassThroughTevStage(const TevStageConfig& stage) {
             stage.color_modifier1 == TevStageConfig::ColorModifier::SourceColor &&
             stage.alpha_modifier1 == TevStageConfig::AlphaModifier::SourceAlpha &&
             stage.GetColorMultiplier() == 1 && stage.GetAlphaMultiplier() == 1);
+}
+
+bool PicaFSConfig::SupportsRuntimeTev() const {
+    using Op = TevStageConfig::Operation;
+    const auto supported = [](Op op) {
+        return op <= Op::AddThenMultiply && op != Op::Dot3_RGB && op != Op::Dot3_RGBA;
+    };
+    return std::all_of(state.tev_stages.begin(), state.tev_stages.end(), [&](const auto& raw) {
+        const auto stage = static_cast<TevStageConfig>(raw);
+        return supported(stage.color_op) && supported(stage.alpha_op);
+    });
+}
+
+std::array<s32, 4> PicaFSConfig::RuntimeTevWords(unsigned index) const {
+    const auto stage = static_cast<TevStageConfig>(state.tev_stages[index]);
+    const u32 control = stage.GetColorMultiplier() | (stage.GetAlphaMultiplier() << 4) |
+                        (u32(IsPassThroughTevStage(stage)) << 8) |
+                        (u32(TevStageUpdatesCombinerBufferColor(index)) << 12) |
+                        (u32(TevStageUpdatesCombinerBufferAlpha(index)) << 13);
+    return {s32(stage.sources_raw), s32(stage.modifiers_raw), s32(stage.ops_raw), s32(control)};
 }
 
 static std::string SampleExplicitMaterialLod(const PicaFSConfig& config, unsigned unit,
@@ -1713,6 +1734,9 @@ vec4 shadowTextureCube(vec2 uv, float w) {
     if (config.state.proctex.enable)
         AppendProcTexSampler(out, config);
 
+    if (target.metal_runtime_tev_units)
+        out += MetalRuntimeTevHelpers;
+
     // We round the interpolated primary color to the nearest 1/255th
     // This maintains the PICA's 8 bits of precision
     out += R"(
@@ -1776,7 +1800,14 @@ if (cara_tex0_crop.y != 0) {
 
     std::string tev_stages;
     bool declares_combiner_buffer = true;
-    if (target.elide_dead_combiner_buffer) {
+    if (target.metal_runtime_tev_units) {
+        s_use_texcolor0 = true;
+        s_use_texcolor1 = (target.metal_runtime_tev_units & 2) != 0;
+        declares_combiner_buffer = false;
+        tev_stages = s_use_texcolor1
+            ? "last_tex_env_out = caraRunTev(rounded_primary_color, texcolor0, texcolor1);\n"
+            : "last_tex_env_out = caraRunTev(rounded_primary_color, texcolor0, vec4(0));\n";
+    } else if (target.elide_dead_combiner_buffer) {
         std::string tev_without_updates;
         bool reads_combiner_buffer = false;
         for (u32 index = 0; index < state.tev_stages.size(); ++index) {

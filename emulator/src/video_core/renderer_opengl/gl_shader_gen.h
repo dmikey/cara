@@ -139,6 +139,7 @@ struct PicaFragmentShaderTarget {
     bool emit_explicit_material_lod_bias = false;
     bool emulate_material_border = false;
     bool metal_general_fragment = false;
+    unsigned metal_runtime_tev_units = 0; // Mask of bound ordinary 2D units (1 or 3).
     bool elide_dead_combiner_buffer = false;
 };
 
@@ -151,6 +152,9 @@ struct PicaFragmentShaderTarget {
  * two separate shaders sharing the same key.
  */
 struct PicaFSConfig {
+    bool SupportsRuntimeTev() const;
+    std::array<s32, 4> RuntimeTevWords(unsigned index) const;
+
     /// Construct a PicaFSConfig with the given Pica register configuration.
     // Unsupported explicit borrow requests fail; callers must restart with a real texture copy.
     static bool SupportsNativeNearestBorrow(const Pica::Regs& regs);
