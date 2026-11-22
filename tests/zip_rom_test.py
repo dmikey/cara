@@ -11,6 +11,9 @@ import tempfile
 import zipfile
 
 
+from cia_rom_test import test_cia_reader
+
+
 class StreamingBuffer(io.BytesIO):
     def seek(self, *args):
         raise OSError("Use ZIP data descriptors")
@@ -40,6 +43,7 @@ def main():
     payload = b"".join(rng.randbytes(32768) + tile for _ in range(48))
     with tempfile.TemporaryDirectory(prefix="cara-zip-test-") as tmp:
         folder = Path(tmp)
+        test_cia_reader(test, folder, payload)
         raw = folder / "oracle.3ds"
         raw.write_bytes(payload)
         stored = folder / "stored.zip"

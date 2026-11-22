@@ -62,6 +62,8 @@ add_library(common STATIC
     file_util.cpp
     sevenzip_rom.cpp
     sevenzip_rom.h
+    cia_rom.cpp
+    cia_rom.h
     z3ds_rom.cpp
     z3ds_rom.h
     zip_rom.cpp

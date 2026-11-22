@@ -126,6 +126,8 @@ std::unique_ptr<AppLoader> GetLoader(const std::string& filename) {
 
     FileType type = IdentifyFile(file);
     const auto extension = Common::ToLower(filename_extension);
+    if (extension == ".cia" && type == FileType::CXI)
+        return GetFileLoader(std::move(file), type, filename_filename, filename);
     if (extension == ".7z" || extension == ".zip" || extension == ".z3ds" || extension == ".zcci") {
         if (type != FileType::CCI && type != FileType::CXI) {
             LOG_ERROR(Loader, "Compressed file does not contain a Nintendo 3DS cartridge image");
