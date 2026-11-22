@@ -1954,9 +1954,14 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
         // Preserve both GPU checks and, for the queued path, the original
         // producer's transitive validity across retirement and guest reads.
         std::shared_ptr<const PicaMetalValidationReceipt> validation;
-        if (AsyncCheckedDepthImport() && joined.producer) {
-            validation = std::make_shared<PicaMetalValidationReceipt>(command,
-                std::array<id<MTLBuffer>, 2>{errors, joined.errors}, std::move(joined.pending_source));
+        if (AsyncCheckedDepthImport()) {
+            if (joined.producer) {
+                validation = std::make_shared<PicaMetalValidationReceipt>(command,
+                    std::array<id<MTLBuffer>, 2>{errors, joined.errors},
+                    std::move(joined.pending_source));
+            } else {
+                validation = std::make_shared<PicaMetalValidationReceipt>(command, errors);
+            }
             NativeMetalCost::Count(NativeMetalCost::AsyncDepthImports, 1);
         }
         [command commit];

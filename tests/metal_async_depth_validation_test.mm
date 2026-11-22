@@ -233,6 +233,16 @@ int main(int argc,char** argv) { @autoreleasepool {try {
     for(unsigned bad=0;bad<3;++bad)CheckReceipt(device,bad);
     {
         DepthFixture fixture(device, lib);
+        QueueGate gate(fixture.f.queue);
+        PicaMetalNativeAttachment attachment;
+        Require(Watchdog(gate, [&] { attachment = fixture.Acquire(DepthFixture::a); }) != async,
+                "RAM-backed depth import must validate through the queue in async mode");
+        gate.Release();
+        fixture.Publish(attachment);
+        fixture.f.lane.Drain();
+    }
+    {
+        DepthFixture fixture(device, lib);
         constexpr u32 size = 16 * 16 * 3;
         constexpr auto address = DepthFixture::a;
         auto* ram = fixture.f.ram.data() + address - base;
