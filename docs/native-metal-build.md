@@ -325,6 +325,36 @@ still took 443 ms, including 346 ms building fragment libraries. The average
 after refresh 170 was 16.71 ms in both arms. No shaders from this replay
 are distributed.
 
+### Default compiler cold and warm retest
+
+With the refined Performance Mode timing on, FastInterp at 100% guest CPU,
+and a 100% speed limit, an M4 iPad ran the same 900-refresh slot 4 replay
+twice. The first pass used an empty Cara cache and new Metal entry names.
+The second used the first pass's locally learned archive. Retained PICA
+calls stayed disabled. Final BGRA captures matched byte for byte.
+
+| Refresh time | Fresh caches | Learned archive |
+| --- | ---: | ---: |
+| First refresh | 10,100.74 ms | 27.10 ms |
+| Worst later refresh | 589.11 ms | 23.47 ms |
+| First 120 p99 | 589.11 ms | 22.37 ms |
+| Full replay p99 | 21.33 ms | 21.18 ms |
+| Slowest contiguous 120-refresh mean | 110.92 ms | 16.77 ms |
+
+The repeat prepared 70 recipes in 27.83 ms with 32 binary archive hits.
+It averaged 16.70 ms per refresh with zero draw-time shader translations,
+library builds, and render pipeline builds. The cold trace spent 3.56 s
+creating pipelines in total. The 589 ms interval at refresh 18 included
+414 ms of vertex library creation and 130 ms of pipeline creation. The
+440 ms interval at refresh 89 included 344 ms of fragment library creation.
+
+The native Metal queue already executes prepared draws independently. A
+shader miss occurs during pipeline selection before the draw reaches that
+queue. Host CPU execution can overlap prepared graphics work while keeping
+guest timing unchanged. First-use overlap also needs enough earlier work
+to compile, or a correct general shader to draw with until specialization
+is ready. Reordering CPU-visible transfers would change guest behavior.
+
 ## Cold shader work and command-list lead time
 
 On an M3 Pro, FastInterp Metal booted Dark Moon through Gadd's lab and the
