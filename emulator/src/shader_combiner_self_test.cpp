@@ -81,3 +81,37 @@ void CheckCombinerBufferElision() {
     Require(generate(writes) == OpenGL::GenerateFragmentShader(writes, false, {false, false}),
             "Desktop GL must preserve its generated source");
 }
+
+void CheckMaterialBorderConfig() {
+    using Texture = Pica::TexturingRegs::TextureConfig;
+    Pica::Regs regs{};
+    regs.texturing.main_config.texture0_enable.Assign(1);
+    auto& t = regs.texturing.texture0;
+    t.type.Assign(Texture::Texture2D);
+    t.wrap_s.Assign(Texture::ClampToBorder);
+    t.wrap_t.Assign(Texture::ClampToBorder);
+    t.min_filter.Assign(Texture::Linear);
+    t.mag_filter.Assign(Texture::Linear);
+    t.lod.max_level.Assign(1);
+    t.lod.bias.Assign(-180);
+    t.border_color.raw = 0x00f8a4fe;
+    const OpenGL::PicaFragmentShaderTarget target{
+        .gles = true, .allow_shadow = false, .emit_explicit_material_lod_bias = true,
+        .emulate_material_border = true};
+    const auto config = [&] { return OpenGL::PicaFSConfig::BuildFromRegs(regs, false, target); };
+    const auto state = config().state;
+    const auto& border = state.material_borders[0];
+    Require(border.axes == 3 && border.rgba == t.border_color.raw &&
+            border.min_level == 0 && border.max_level == 1 &&
+            border.min_linear && border.mag_linear && !border.mip_linear &&
+            state.material_lod_bias[0] == -180, "Preserve colored mip border and signed LOD");
+    Require(!OpenGL::PicaFSConfig::BuildFromRegs(regs, false, {true, false})
+                 .state.material_borders[0].axes, "GL retains hardware border sampling");
+    t.wrap_s.Assign(Texture::Repeat);
+    Require(config().state.material_borders[0].axes == 2, "Only T clamps to border");
+    t.border_color.raw = 0xff000000;
+    Require(!config().state.material_borders[0].axes, "Metal retains fixed opaque black sampler");
+    t.border_color.raw = 0x00f8a4fe;
+    regs.texturing.main_config.texture0_enable.Assign(0);
+    Require(!config().state.material_borders[0].axes, "Ignore stale disabled sampler registers");
+}
