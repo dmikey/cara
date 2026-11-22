@@ -788,8 +788,9 @@ could redirect cold draws to already resident StageIn pipelines. Both
 compiler namespaces at 100% with FastInterp, Performance Mode and Async
 Shaders. Only one of 28 eligible busy-worker draws found a matching resident
 StageIn pipeline. Its ordinary packed link took 0.093 ms. The largest missed
-opportunity used 4,395 vertices, lighting and three textures, and spent
-169 ms linking. At refresh 331 the control took 3175 ms and the probe
+draw without a resident fallback used 4,395 vertices, lighting and three
+textures. Vertex MSL digest `0bf34ed76ae5` and fragment digest
+`c4457036d70a` identified its 169 ms link. At refresh 331 the control took 3175 ms and the probe
 3165 ms; refresh 332 took 613 and 617 ms. P99 was 159.56 and 156.92 ms,
 respectively, and final pixels matched. Resident-only reuse offers little
 coverage of this cold burst, so the probe remains outside the default path.
