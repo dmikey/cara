@@ -782,6 +782,18 @@ Dark Moon measured 9235 ms versus 9255 ms. All sampled frames matched the
 corresponding control byte-for-byte. These measurements support adaptive
 admission as the default with Async Shaders.
 
+An M3 Pro Mac probe tested whether an unrelated busy specialization worker
+could redirect cold draws to already resident StageIn pipelines. Both
+900-refresh Kirby boots used the same ZIP, fresh guest storage and fresh
+compiler namespaces at 100% with FastInterp, Performance Mode and Async
+Shaders. Only one of 28 eligible busy-worker draws found a matching resident
+StageIn pipeline. Its ordinary packed link took 0.093 ms. The largest missed
+opportunity used 4,395 vertices, lighting and three textures, and spent
+169 ms linking. At refresh 331 the control took 3175 ms and the probe
+3165 ms; refresh 332 took 613 and 617 ms. P99 was 159.56 and 156.92 ms,
+respectively, and final pixels matched. Resident-only reuse offers little
+coverage of this cold burst, so the probe remains outside the default path.
+
 Boot each local cartridge with a fresh user directory and FastInterp. Drive
 menus and gameplay with the same inputs when comparing performance. Capture
 both screens after reaching a controllable scene and verify that directional
