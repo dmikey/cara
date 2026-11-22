@@ -32,7 +32,7 @@ Cara::NativeGameMenu::StateRequest state_request;
     panel.prompt = @"Open";
     panel.canChooseDirectories = NO;
     panel.allowsMultipleSelection = NO;
-    panel.allowedFileTypes = @[@"3ds", @"z3ds", @"zcci", @"7z", @"zip", @"cci", @"cxi", @"app", @"3dsx", @"elf", @"axf"];
+    panel.allowedFileTypes = @[@"3ds", @"cia", @"z3ds", @"zcci", @"7z", @"zip", @"cci", @"cxi", @"app", @"3dsx", @"elf", @"axf"];
     if ([panel runModal] != NSModalResponseOK || !panel.URL.isFileURL)
         return;
     const char* path = panel.URL.fileSystemRepresentation;

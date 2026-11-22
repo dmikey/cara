@@ -41,7 +41,7 @@ static NSError* LibraryError(NSString* message) {
     return self;
 }
 + (BOOL)isGameURL:(NSURL*)url {
-    return [@[@"3ds",@"z3ds",@"zcci",@"cci",@"cxi",@"3dsx",@"elf",@"7z", @"zip"] containsObject:url.pathExtension.lowercaseString];
+    return [@[@"3ds",@"cia", @"z3ds",@"zcci",@"cci",@"cxi",@"3dsx",@"elf",@"7z", @"zip"] containsObject:url.pathExtension.lowercaseString];
 }
 - (NSString*)folderName { return selectedFolder.lastPathComponent?:@"Roms"; }
 - (BOOL)hasCustomFolder { return [preferences dataForKey:@"romsFolderBookmark"]!=nil; }
@@ -66,7 +66,7 @@ static NSError* LibraryError(NSString* message) {
     [preferences removeObjectForKey:@"romsFolderBookmark"];
 }
 - (BOOL)rememberGame:(NSURL*)url error:(NSError**)error {
-    if (![CaraLibraryStore isGameURL:url]) { if (error) *error=LibraryError(@"Choose a 3DS game or a ZIP containing one .3ds ROM."); return NO; }
+    if (![CaraLibraryStore isGameURL:url] || ([url.pathExtension.lowercaseString isEqual:@"cia"] && (!self.canPlayCia || !self.canPlayCia(url)))) { if (error) *error=LibraryError(@"Choose a playable 3DS base game."); return NO; }
     NSMutableArray* hidden=[[preferences arrayForKey:@"libraryHiddenPaths"] mutableCopy]; [hidden removeObject:[self keyForGame:url]]; if (hidden) [preferences setObject:hidden forKey:@"libraryHiddenPaths"];
     BOOL scoped=[url startAccessingSecurityScopedResource];
     NSData* bookmark=[url bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:error];
@@ -137,6 +137,7 @@ static NSError* LibraryError(NSString* message) {
         NSArray* keys=@[NSURLIsRegularFileKey,NSURLIsDirectoryKey,NSURLIsSymbolicLinkKey,NSURLFileSizeKey,NSURLContentModificationDateKey];
         void (^add)(NSURL*,NSString*)=^(NSURL* file,NSString* source) {
             if (![CaraLibraryStore isGameURL:file]) return;
+            if ([file.pathExtension.lowercaseString isEqual:@"cia"] && (!self.canPlayCia || !self.canPlayCia(file))) return;
             NSDictionary* values=[file resourceValuesForKeys:keys error:nil];
             if (![values[NSURLIsRegularFileKey] boolValue] || [values[NSURLIsSymbolicLinkKey] boolValue]) return;
             NSString* identity=file.URLByResolvingSymlinksInPath.URLByStandardizingPath.path;

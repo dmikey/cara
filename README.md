@@ -75,6 +75,12 @@ the embedded Zstandard seek table to read individual frames on demand. Both
 Apple game pickers and the iOS library accept the original compressed file.
 [Azahar format specification](https://github.com/azahar-emu/azahar/pull/1208).
 
+Open a decrypted base-game `.cia` directly in either Apple frontend. Cara reads
+the executable and RomFS from the package and uses the same game ID for saves
+as the cartridge. Open a matching update CIA while the game is stopped to
+install it for subsequent launches. Updates and DLC stay out of the playable
+library. System and DLC package installation is unsupported.
+
 **Test status.** Cara played a Deflate ZIP of *Luigi’s Mansion: Dark Moon*
 on macOS and on a physical M4 iPad. On the iPad, selecting the original ZIP
 through **Add games → Open game from Files…** booted directly to the title

@@ -25,8 +25,8 @@ target_link_libraries(archive_static liblzma)
 target_include_directories(archive_static PRIVATE "${cara_xz_SOURCE_DIR}/src/liblzma/api")
 
 function(cara_bundle_sevenzip_licenses target)
-    set(notices "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/licenses/libarchive-COPYING.txt"
-                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/licenses/liblzma-COPYING.txt")
+    set(notices "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/licenses/COPYING-libarchive.txt"
+                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/licenses/COPYING-liblzma.txt")
     set_source_files_properties(${notices} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Licenses)
     target_sources(${target} PRIVATE ${notices})
 endfunction()

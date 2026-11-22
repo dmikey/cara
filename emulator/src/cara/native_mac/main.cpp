@@ -1,3 +1,4 @@
+#include "core/frontend/apple/cia_open.h"
 #include "cara/console_activity.h"
 #include <SDL.h>
 #include "cara/native_mac/native_command_policy.h"
@@ -270,6 +271,15 @@ static int RunNativeMain(int argc, char** argv) {
         if (!FileUtil::CreateFullPath(directory))
             throw std::runtime_error("Cannot create CARA_USER_DIR");
         FileUtil::SetUserPath(directory);
+        if (const auto cia = Frontend::Apple::OpenCia(argv[1]); cia.message) {
+            std::cerr << cia.message << std::endl;
+            if (std::getenv("CARA_NATIVE_GUI_OPEN")) {
+                SDL_ShowSimpleMessageBox(cia.success ? SDL_MESSAGEBOX_INFORMATION : SDL_MESSAGEBOX_ERROR,
+                                         "Cara", cia.message, nullptr);
+                return 92; // Return the interactive session to the chooser.
+            }
+            return cia.success ? 0 : 3;
+        }
         std::ofstream(directory + "native.pid") << getpid() << "\n";
         NativeCPUDefaults();
         (void)Cara::NativeDiagnosticClock::Get(); // validate explicit request before SDL/window/core load
@@ -735,6 +745,7 @@ int main(int argc, char** argv) {
     std::string chosen;
     char* startup_args[]={argv[0],nullptr,nullptr};
     if (argc<2 || ui_test) {
+        if (!ui_test) setenv("CARA_NATIVE_GUI_OPEN","1",1);
         if (!std::getenv("CARA_USER_DIR")) {
             const char* home=std::getenv("HOME");
             if(!home)return 2;
@@ -756,6 +767,11 @@ int main(int argc, char** argv) {
         } catch(const std::exception& e){InputCommon::Shutdown();SDL_Quit();std::cerr<<"Cara startup failed: "<<e.what()<<'\n';return 2;}
     }
     const int result = RunNativeMain(argc, argv);
+    if (result == 92) {
+        char* chooser_args[] = {argv[0], nullptr};
+        execv(argv[0], chooser_args);
+        return 2;
+    }
     if (result != 0)
         return result;
     std::string next_rom = Cara::NativeGameMenu::TakeRequestedROM();

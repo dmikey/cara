@@ -110,6 +110,11 @@ private:
 InstallStatus InstallCIA(const std::string& path,
                          std::function<ProgressCallback>&& update_callback = nullptr);
 
+#ifdef __APPLE__
+// Installs and validates an update in a private directory, then publishes it atomically.
+InstallStatus InstallGameUpdate(const std::string& path, u64 title);
+#endif
+
 /**
  * Get the mediatype for an installed title
  * @param titleId the installed title ID

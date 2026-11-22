@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #define SDL_MAIN_HANDLED
+#include "core/frontend/apple/cia_open.h"
 #include "cara/console_activity.h"
 #include <SDL.h>
 #include <SDL_metal.h>
@@ -528,6 +529,10 @@ int main(int argc, char** argv) {
             NSURL* library = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
 
             FileUtil::SetUserPath(output);
+            if (const auto cia = Frontend::Apple::OpenCia(argv[1]); cia.message) {
+                std::cerr << cia.message << std::endl;
+                return cia.success ? 0 : 3;
+            }
             const char* requested = std::getenv("CARA_CPU_BACKEND");
             const std::string_view backend = requested ? requested : "fastinterp";
             if (backend != "fastinterp" && backend != "jit")

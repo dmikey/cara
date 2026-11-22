@@ -15,6 +15,7 @@
 @property(copy,readonly,nonatomic) NSString* folderName;
 @property(readonly,nonatomic) BOOL hasCustomFolder;
 @property(copy,readonly,nonatomic) NSString* locationError;
+@property(copy,nonatomic) BOOL (^canPlayCia)(NSURL*);
 - (instancetype)initWithDocuments:(NSURL*)documents defaults:(NSUserDefaults*)defaults;
 - (BOOL)chooseFolder:(NSURL*)url error:(NSError**)error;
 - (void)useDefaultFolder;
