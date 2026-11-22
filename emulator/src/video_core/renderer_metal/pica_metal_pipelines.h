@@ -117,6 +117,9 @@ public:
     bool Prepare(const PicaPipelineInputs& pica, const PicaSampleInputs& sampler,
                  const std::optional<PicaSampleInputs>& secondary = std::nullopt,
                  const std::optional<PicaSampleInputs>& tertiary = std::nullopt);
+    bool TryVertexFallback(const PicaPipelineInputs& exact, std::string_view stage_in_vertex,
+                           const PicaSampleInputs&, const std::optional<PicaSampleInputs>&,
+                           const std::optional<PicaSampleInputs>&);
     std::optional<PicaMetalPipelineSelection> SelectWithGeneral(
         const PicaPipelineInputs& exact, std::string_view general_fragment,
         const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
@@ -181,6 +184,10 @@ private:
     std::vector<Entry> entries;
     // Storage remains stable for the stage cache's string_view keys.
     mutable std::deque<RuntimeEntry> runtime_pairs;
+    void PollSpecialization();
+    bool StartSpecialization(const Key&, unsigned runtime_index, const PicaPipelineInputs&,
+                             const PicaSampleInputs&, const std::optional<PicaSampleInputs>&,
+                             const std::optional<PicaSampleInputs>&);
     struct CompiledSpecialization {
         PicaMetalPipelineSelection selection;
         MTLRenderPipelineDescriptor* descriptor;

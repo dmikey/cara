@@ -2407,7 +2407,10 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     MetalCost::RuntimeShaderTranslate, MetalCost::RuntimeVertexLibrary,
                     MetalCost::RuntimeFragmentLibrary, MetalCost::RenderPipelineCreate,
                     MetalCost::ReserveWait, MetalCost::ArenaWait, MetalCost::FlushExportGuest,
-                    MetalCost::Record, MetalCost::Present, MetalCost::GeneralFragmentDraws};
+                    MetalCost::Record, MetalCost::Present, MetalCost::GeneralFragmentDraws,
+                    MetalCost::VertexUploadToDraw, MetalCost::VertexAnyUploadToDraw,
+                    MetalCost::VertexUploadUnobserved,
+                    MetalCost::VertexFallbackDraws};
                 const bool trace_shader_refresh = capture_refresh_timing && emuWindow->native_metal_only &&
                                                   MetalCost::Enabled();
                 struct MetalRefresh {

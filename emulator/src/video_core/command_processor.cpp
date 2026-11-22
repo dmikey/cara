@@ -237,6 +237,10 @@ static bool ShaderConfigNotification(u32 id) {
 
 static void WriteShaderWord(Shader::ShaderSetup& setup, u32 offset, u32 value, bool swizzle) {
     auto& word = swizzle ? setup.swizzle_data[offset] : setup.program_code[offset];
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    if (&setup == &g_state.vs)
+        Cara::NativeMetalCost::RecordVertexUpload(word != value);
+#endif
     if (Cara::GuestGPUTrace::DrawsEnabled() && word != value)
         Cara::GuestGPUTrace::ShaderWordChanged(&setup == &g_state.gs);
     if (!RepeatStateEnabled() && !CommandProfileEnabled()) {

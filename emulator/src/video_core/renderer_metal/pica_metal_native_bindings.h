@@ -19,7 +19,7 @@ public:
     std::optional<NativePicaDrawBindings> Prepare(
         PicaMetalNativeDrawLane& lane, const Pica::State& state, bool indexed,
         const MetalGuestAuthority::GuestReader& ram,
-        std::span<const PicaMetalStageVertex> stage_in = {});
+        std::span<const PicaMetalStageVertex> stage_in = {}, bool* interpret_vertices = nullptr);
 
 private:
     PicaMetalResources resources;

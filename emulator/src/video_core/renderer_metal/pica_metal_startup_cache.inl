@@ -587,6 +587,7 @@ void PicaMetalPipelines::RememberLearnedPipeline(const PicaPipelineInputs& p, co
 }
 
 bool PicaMetalPipelines::FinishWarmup() {
+    PollSpecialization();
     if (runtime_msl_disk.record)
         return SaveMslCache(runtime_pairs);
     if (!warmup_mode)

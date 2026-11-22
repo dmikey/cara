@@ -2348,6 +2348,7 @@ void ConnectNativePicaDispatch(VideoCore::RasterizerInterface& rasterizer,
             } else {
                 lane->Record(bindings->draw, bindings->views, bindings->color, bindings->depth);
             }
+            return true;
         });
 }
 

@@ -57,7 +57,7 @@ enum Phase : std::size_t {
     SimdReferenceRequests, SimdReferenceCompiled, SimdReferenceRejected, SimdReferenceFallbacks, SimdReferenceDraws, DisplayCropRgb8Candidates, DisplayCrop565Candidates, DisplayCropOwnerHits, DisplayCropOwnerMisses, DisplayCropFused, DisplayCropSourceBytesAvoided, DisplayRgb8RetileCandidates, DisplayRgb8RetileOwnerHits, DisplayLinearBufferOnly, DisplayLinearTextureBytesAvoided, LinearTextureAlignmentQueries, LinearTextureAlignmentHits, ShaderIdentityFullChecks, ShaderIdentityComparedBytes, ShaderIdentityFastHits, ShaderIdentityValidationFailures, AsyncDepthImports, AsyncDepthChecksPassed, AsyncDepthChecksFailed, QueuedPendingDepthExports,
     PicaListToFirstShaderTranslation, PicaFirstShaderWithin100us, PicaFirstShaderWithin1ms,
     PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
-    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, PhaseCount
+    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
     "color_acquire", "depth_acquire", "lut_refresh", "record_total", "encode_total",
@@ -119,7 +119,8 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "simd_reference_requests", "simd_reference_compiled", "simd_reference_rejected", "simd_reference_fallbacks", "simd_reference_draws", "display_crop_rgb8_candidates", "display_crop_rgb565_candidates", "display_crop_owner_hits", "display_crop_owner_misses", "display_crop_fused", "display_crop_source_bytes_avoided", "display_rgb8_retile_candidates", "display_rgb8_retile_owner_hits", "display_linear_buffer_only", "display_linear_texture_bytes_avoided", "linear_texture_alignment_queries", "linear_texture_alignment_hits", "shader_identity_full_checks", "shader_identity_compared_bytes", "shader_identity_fast_hits", "shader_identity_validation_failures", "async_depth_imports", "async_depth_checks_passed", "async_depth_checks_failed", "queued_pending_depth_exports",
     "pica_list_to_first_shader_translation", "pica_first_shader_within_100us",
     "pica_first_shader_within_1ms", "pica_first_shader_within_5ms", "pica_first_shader_after_5ms",
-    "runtime_vertex_spirv_msl_hit", "general_fragment_draws"};
+    "runtime_vertex_spirv_msl_hit", "general_fragment_draws",
+    "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {
@@ -321,6 +322,35 @@ inline void RecordFirstShaderTranslation() {
         : elapsed < 1'000'000 ? PicaFirstShaderWithin1ms
         : elapsed < 5'000'000 ? PicaFirstShaderWithin5ms : PicaFirstShaderAfter5ms;
     Count(bucket, 1);
+}
+inline thread_local Scope::Clock::time_point last_vertex_upload{}, last_vertex_change{},
+                                            native_draw_start{};
+inline void RecordVertexUpload(bool changed) {
+    if (Enabled()) {
+        last_vertex_upload = Scope::Clock::now();
+        if (changed)
+            last_vertex_change = last_vertex_upload;
+    }
+}
+struct NativeDrawScope {
+    NativeDrawScope() {
+        if (Enabled())
+            native_draw_start = Scope::Clock::now();
+    }
+    ~NativeDrawScope() { native_draw_start = {}; }
+};
+inline void RecordColdVertexDraw() {
+    if (native_draw_start == Scope::Clock::time_point{})
+        return;
+    if (last_vertex_upload == Scope::Clock::time_point{}) {
+        Count(VertexUploadUnobserved, 1);
+        return;
+    }
+    RecordNs(VertexAnyUploadToDraw, std::chrono::duration_cast<std::chrono::nanoseconds>(
+        native_draw_start - last_vertex_upload).count());
+    if (last_vertex_change != Scope::Clock::time_point{})
+        RecordNs(VertexUploadToDraw, std::chrono::duration_cast<std::chrono::nanoseconds>(
+            native_draw_start - last_vertex_change).count());
 }
 inline void Append(std::ostream& out) {
     if (!Enabled()) return;

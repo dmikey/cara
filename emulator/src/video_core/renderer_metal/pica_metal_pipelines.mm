@@ -1136,6 +1136,8 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                                                NSString* entry, NativeMetalCost::Phase phase) {
                     if (const auto found = stages.find(source); found != stages.end())
                         return found->second;
+                    if (phase == NativeMetalCost::RuntimeVertexLibrary)
+                        NativeMetalCost::RecordColdVertexDraw();
                     NativeMetalCost::Scope compile(phase);
                     const auto function = Compile(device,source,entry);
                     if (function)
@@ -1391,10 +1393,7 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
     return false;
 }
 
-std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::SelectWithGeneral(
-    const PicaPipelineInputs& exact, std::string_view general_fragment,
-    const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
-    const std::optional<PicaSampleInputs>& tertiary) {
+void PicaMetalPipelines::PollSpecialization() {
     if (specializer && specializer->result.wait_for(std::chrono::seconds(0)) ==
                            std::future_status::ready) {
         const auto key = specializer->key;
@@ -1413,6 +1412,13 @@ std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::SelectWithGeneral(
         }
         specializer.reset();
     }
+}
+
+std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::SelectWithGeneral(
+    const PicaPipelineInputs& exact, std::string_view general_fragment,
+    const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
+    const std::optional<PicaSampleInputs>& tertiary) {
+    PollSpecialization();
     if (auto ready = Select(exact, sampler, secondary, tertiary))
         return ready;
     const auto key = MakeKey(exact, sampler, secondary, tertiary);
@@ -1431,40 +1437,83 @@ std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::SelectWithGeneral(
     if (!result)
         return std::nullopt;
     result->general_fragment = true;
-    if (!specializer && std::find(failed_specializations.begin(), failed_specializations.end(),
-                                  *key) == failed_specializations.end()) {
-        // Independently owned compiler state. The worker sees no guest memory
-        // or renderer cache and publishes only a fully reflected pipeline.
-        try {
-            auto task = std::async(std::launch::async,
-                [device = device, request = exact, vertex = std::string(exact.vertex),
-                 fragment = std::string(exact.fragment), sampler, secondary, tertiary]() mutable
-                    -> std::optional<CompiledSpecialization> {
-                    @autoreleasepool {
-                        PicaMetalPipelines worker(device);
-                        worker.retain_compiled_descriptor = true;
-                        request.vertex = vertex;
-                        request.fragment = fragment;
-                        const auto units = worker.RuntimeMaterialUnits(vertex, fragment,
-                                                                     request.vertex_mode);
-                        if (!units || !worker.Prepare(request, sampler, secondary, tertiary))
-                            return std::nullopt;
-                        if (auto ready = worker.Select(request, sampler, secondary, tertiary))
-                            return CompiledSpecialization{std::move(*ready), worker.compiled_descriptor};
-                        return std::nullopt;
-                    }
-                });
-            auto archive_inputs = exact;
-            archive_inputs.vertex = runtime_pairs[*runtime_index].vertex_source;
-            archive_inputs.fragment = runtime_pairs[*runtime_index].fragment_source;
-            specializer.emplace(Specialization{*key, archive_inputs, std::move(task)});
-            LOG_INFO(Render_OpenGL, "Drawing with general fragment while exact pipeline compiles");
-        } catch (const std::system_error& error) {
-            LOG_WARNING(Render_OpenGL, "Unable to start Metal specialization worker: {}", error.what());
-            failed_specializations.push_back(*key);
-        }
-    }
+    StartSpecialization(*key, *runtime_index, exact, sampler, secondary, tertiary);
     return result;
+}
+
+bool PicaMetalPipelines::StartSpecialization(
+    const Key& key, unsigned runtime_index, const PicaPipelineInputs& exact,
+    const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
+    const std::optional<PicaSampleInputs>& tertiary) {
+    if (specializer)
+        return specializer->key == key;
+    if (std::find(failed_specializations.begin(), failed_specializations.end(), key) !=
+        failed_specializations.end())
+        return false;
+    // Independently owned compiler state. The worker sees no guest memory
+    // or renderer cache and publishes only a fully reflected pipeline.
+    try {
+        auto task = std::async(std::launch::async,
+            [device = device, request = exact, vertex = std::string(exact.vertex),
+             fragment = std::string(exact.fragment), sampler, secondary, tertiary]() mutable
+                -> std::optional<CompiledSpecialization> {
+                @autoreleasepool {
+                    PicaMetalPipelines worker(device);
+                    worker.retain_compiled_descriptor = true;
+                    request.vertex = vertex;
+                    request.fragment = fragment;
+                    const auto units = worker.RuntimeMaterialUnits(vertex, fragment,
+                                                                 request.vertex_mode);
+                    if (!units || !worker.Prepare(request, sampler, secondary, tertiary))
+                        return std::nullopt;
+                    if (auto ready = worker.Select(request, sampler, secondary, tertiary))
+                        return CompiledSpecialization{std::move(*ready), worker.compiled_descriptor};
+                    return std::nullopt;
+                }
+            });
+        auto archive_inputs = exact;
+        archive_inputs.vertex = runtime_pairs[runtime_index].vertex_source;
+        archive_inputs.fragment = runtime_pairs[runtime_index].fragment_source;
+        specializer.emplace(Specialization{key, archive_inputs, std::move(task)});
+        return true;
+    } catch (const std::system_error& error) {
+        LOG_WARNING(Render_OpenGL, "Unable to start Metal specialization worker: {}", error.what());
+        failed_specializations.push_back(key);
+    }
+    return false;
+}
+
+bool PicaMetalPipelines::TryVertexFallback(
+    const PicaPipelineInputs& exact, std::string_view stage_in_vertex,
+    const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
+    const std::optional<PicaSampleInputs>& tertiary) {
+    PollSpecialization();
+    if (warming || warmup_mode == WarmupReplay || warmup_mode == WarmupRecord ||
+        HasSimdVertexTag(exact.vertex))
+        return false;
+    const auto key = MakeKey(exact, sampler, secondary, tertiary);
+    const auto runtime_index = FindRuntime(exact.vertex, exact.fragment, exact.vertex_mode);
+    if (!key || !runtime_index || Find(*key) ||
+        vertex_functions.contains(runtime_pairs[*runtime_index].msl_vertex))
+        return false;
+    if (specializer && specializer->key != *key) {
+        if (std::getenv("CARA_METAL_VERTEX_FALLBACK_TRACE"))
+            LOG_INFO(Render_OpenGL, "Vertex fallback waiting on an unrelated compiler job");
+        return false;
+    }
+
+    auto stage_in = exact;
+    stage_in.vertex = stage_in_vertex;
+    stage_in.vertex_mode = PicaMetalVertexMode::StageIn;
+    stage_in.packed_arrays = false;
+    const auto units = RuntimeMaterialUnits(stage_in.vertex, stage_in.fragment, stage_in.vertex_mode);
+    if (!units || *units != std::array{exact.sampled_unit, exact.secondary_unit, exact.tertiary_unit} ||
+        !Prepare(stage_in, sampler, secondary, tertiary))
+        return false;
+    if (!StartSpecialization(*key, *runtime_index, exact, sampler, secondary, tertiary))
+        return false;
+    NativeMetalCost::RecordColdVertexDraw();
+    return true;
 }
 
 std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::Select(

@@ -58,6 +58,10 @@ struct PrimitiveAssembler {
      */
     PipelineRegs::TriangleTopology GetTopology() const;
 
+    bool HasPendingWinding() const {
+        return winding;
+    }
+
 private:
     PipelineRegs::TriangleTopology topology;
 

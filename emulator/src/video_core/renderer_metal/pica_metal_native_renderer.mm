@@ -67,12 +67,21 @@ public:
               return true;
           }) {
         InstallNativePicaDraw([this](bool indexed) {
+            NativeMetalCost::NativeDrawScope draw_scope;
             if (ApplyExistingIpadShadowPolicy())
-                return;
-            auto draw = bindings.Prepare(lane, Pica::g_state, indexed, read);
+                return true;
+            bool interpret_vertices = false;
+            auto draw = bindings.Prepare(lane, Pica::g_state, indexed, read, {}, &interpret_vertices);
+            if (interpret_vertices) {
+                // The CPU vertex loader reads guest RAM directly.
+                FlushAll();
+                NativeMetalCost::Count(NativeMetalCost::VertexFallbackDraws, 1);
+                return false;
+            }
             if (!draw)
                 throw std::runtime_error("Gate Metal catalog cannot bind this live PICA draw");
             lane.Record(draw->draw, draw->views, draw->color, draw->depth);
+            return true;
         }, true);
         RegisterNativeMetalTextureCopyBatch(lane);
     }

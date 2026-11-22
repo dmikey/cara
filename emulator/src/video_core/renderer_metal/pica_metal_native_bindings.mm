@@ -837,12 +837,32 @@ void ReportNativeMetalBindings(const std::string& path) {
     }
 }
 
+namespace {
+NativeShaderSource StageInVertexSource() {
+    static const auto source = OpenGL::GenerateTrivialVertexShader(false);
+    return {source, 1};
+}
+
+bool AllowVertexFallbackOnThisRefresh() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_METAL_VERTEX_FALLBACK");
+        return value && std::string_view(value) == "1";
+    }();
+    static const auto frame = [] {
+        const char* value = std::getenv("CARA_METAL_VERTEX_FALLBACK_FRAME");
+        return value ? std::strtoul(value, nullptr, 10) : 0;
+    }();
+    return enabled && (!frame || frame == VideoCore::GetCurrentFrame() + 1);
+}
+} // namespace
+
 PicaMetalNativeBindings::PicaMetalNativeBindings(const PicaMetalResources& resources_)
     : resources(resources_), pipelines(resources.queue.device), lighting(resources.queue) {}
 
 std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     PicaMetalNativeDrawLane& lane, const Pica::State& state, bool indexed,
-    const MetalGuestAuthority::GuestReader& ram, std::span<const PicaMetalStageVertex> stage_in) {
+    const MetalGuestAuthority::GuestReader& ram, std::span<const PicaMetalStageVertex> stage_in,
+    bool* interpret_vertices) {
     const ScopedNativeHostPhase total(0);
     const auto& r = state.regs;
     const auto& fb = r.framebuffer.framebuffer;
@@ -1002,10 +1022,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         }
     } else {
         pica.vertex_mode = Mode::StageIn;
-        vs = Measure(2, [] {
-            static const auto source = OpenGL::GenerateTrivialVertexShader(false);
-            return NativeShaderSource{source, 1};
-        });
+        vs = Measure(2, StageInVertexSource);
         units = Measure(4, [&] { return material_units(Mode::StageIn); });
     }
     if (!units) {
@@ -1106,6 +1123,33 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     sampler_plan.Stop();
     const auto second = ranges[1] ? std::optional{sampler[1]} : std::nullopt;
     const auto third = ranges[2] ? std::optional{sampler[2]} : std::nullopt;
+    const bool probe_fallback = interpret_vertices && stage_in.empty() && AllowVertexFallbackOnThisRefresh();
+    if (probe_fallback && std::getenv("CARA_METAL_VERTEX_FALLBACK_TRACE")) {
+        static thread_local u64 last_revision = 0;
+        if (last_revision != vs.revision) {
+            last_revision = vs.revision;
+            LOG_INFO(Render_OpenGL, "Vertex fallback admission frame={} topology={} clip1={} pair={} gs={} vertices={}",
+                     VideoCore::GetCurrentFrame() + 1, unsigned(state.primitive_assembler.GetTopology()),
+                     pica.clip1, bool(pair_indices), unsigned(r.pipeline.use_gs.Value()),
+                     u32(r.pipeline.num_vertices));
+        }
+    }
+    using Topology = Pica::PipelineRegs::TriangleTopology;
+    const auto& assembler = state.primitive_assembler;
+    const auto topology = assembler.GetTopology();
+    // With geometry shaders disabled, Shader topology assembles independent triangles
+    // unless an earlier geometry emission left a winding change pending.
+    const bool independent_triangles = topology == Topology::List ||
+        (topology == Topology::Shader && !assembler.HasPendingWinding());
+    if (probe_fallback && !pica.clip1 && !pair_indices && !Settings::values.skip_slow_draw &&
+        r.pipeline.use_gs == Pica::PipelineRegs::UseGS::No && independent_triangles &&
+        assembler.IsEmpty() && r.pipeline.num_vertices % 3 == 0 &&
+        r.pipeline.num_vertices <= 16384 &&
+        pipelines.TryVertexFallback(pica, StageInVertexSource().bytes, sampler[0], second, third)) {
+        LOG_INFO(Render_OpenGL, "Interpreting PICA vertices while exact Metal vertex pipeline compiles");
+        *interpret_vertices = true;
+        return std::nullopt;
+    }
     // The existing Metal shaders do not use the GL atlas crop fields.
     // Only the opted-in general fragment interprets two of those fields as
     // modes. Its resource envelope and all fixed draw state must still match.

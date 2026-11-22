@@ -394,6 +394,59 @@ The async repeat loaded 101 recipes in 32.18 ms and recorded zero runtime
 shader translations, library compiles, pipeline builds, and general draws.
 The large cold stalls are still outside the prototype's coverage.
 
+### Slot 4 vertex fallback probe
+
+The upload trace records guest PICA vertex program and swizzle writes and
+sampled host time to a cold vertex library's first draw attempt. A
+checkpoint restore is outside that measurement. At refresh 18, no program
+or swizzle write had occurred between restoring slot 4 and starting the
+cold draw, including writes of identical values. The two main costs were
+410.09 ms compiling the vertex library and 131.30 ms creating its pipeline.
+This replay offers no earlier in-stream upload to schedule against.
+
+`CARA_METAL_VERTEX_FALLBACK=1` enables the opt-in probe. It can reinterpret
+vertices on the CPU and use the existing Metal StageIn route for independent
+triangles with compatible draw state. A single background worker compiles the
+exact pipeline. The render owner flushes GPU writers before the CPU reads
+guest vertex data. Unsupported draws or unavailable fallback pipelines keep
+the exact rendering path. The probe does not ship precompiled game shaders.
+
+At 100% pacing in Performance Mode, admission limited to refresh 18 cut
+that interval from 597.81 ms to 55.70 ms, with two fallback draws. Captures
+at refreshes 17–19 and 900 matched the exact path byte for byte. A subsequent
+vertex compile took refresh 20 to 557.00 ms. The warm repeat had no runtime
+vertex library builds or fallback draws and averaged 16.71 ms per refresh
+with a p99 of 21.24 ms.
+
+A second comparison used the same build for both runs and allowed fallback
+throughout the 900-refresh replay. The CPU fallback drew 24 batches. The
+cold frame at refresh 18 improved from 597.72 ms to 53.94 ms, with
+byte-identical captures at refreshes 17–20 and 900. The largest later stall
+moved to refresh 21, where 376.71 ms went to a vertex library and 138.98 ms
+to pipeline creation. The cold p99 rose from 23.96 ms to 25.92 ms. The
+synchronous guest-memory flush alone took 7.04 ms at refresh 18 across
+both fallback batches. The learned-cache repeat averaged 16.71 ms per
+refresh, with a p99 of 24.23 ms and zero runtime library and pipeline builds.
+Its five captures matched the exact path. Keep this probe opt-in while
+cold stalls and CPU readback costs remain.
+
+### macOS cold-run window responsiveness
+
+A single native Metal test binary at `3948557` ran Dark Moon for 3,600
+refreshes each with FastInterp and four-core Dynarmic JIT. Both runs used
+100% guest CPU, Performance Mode timing, Async Shaders, and separate cold
+runtime shaders. The longest intervals were 15.51 s at refresh 310 with
+FastInterp and 16.83 s at refresh 294 with JIT. Runtime pipeline creation
+was logged during both gaps, and both runs completed. Checkpoints by
+refresh showed different game progression, so this pair measures launch
+behavior and gives no renderer pixel-parity claim.
+
+The `cara-metal-rom` harness runs emulation and services SDL window events
+on the main thread. A draw that waits for a Metal library or a pipeline
+can block event polling until the compiler returns. This accounts for the
+macOS wait cursor during the cold intervals. The trace captured durations
+and pipeline creation logs, with no main-thread sample of the stall.
+
 ## Cold shader work and command-list lead time
 
 On an M3 Pro, FastInterp Metal booted Dark Moon through Gadd's lab and the
