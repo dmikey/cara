@@ -28,7 +28,6 @@ std::string String(NSString* s){return s.UTF8String?:"";}
 void Alert(NSString* title,NSString* detail){NSAlert* a=[[[NSAlert alloc]init]autorelease];a.messageText=title;a.informativeText=detail;[a runModal];}
 NSTextField* Label(NSString* text,NSRect frame,CGFloat size=13){auto* f=[NSTextField labelWithString:text];f.frame=frame;f.font=[NSFont systemFontOfSize:size];f.lineBreakMode=NSLineBreakByWordWrapping;return f;}
 NSButton* Button(NSString* text,NSRect frame,id target,SEL action){auto* b=[NSButton buttonWithTitle:text target:target action:action];b.frame=frame;b.bezelStyle=NSBezelStyleRounded;return b;}
-std::string PickGame(){auto* p=[NSOpenPanel openPanel];p.title=@"Open Nintendo 3DS Game";p.prompt=@"Open";p.canChooseDirectories=NO;p.allowsMultipleSelection=NO;p.allowedFileTypes=@[@"3ds",@"cia", @"z3ds",@"zcci",@"7z", @"zip",@"cci",@"cxi",@"app",@"3dsx",@"elf",@"axf"];return [p runModal]==NSModalResponseOK&&p.URL.isFileURL?std::string(p.URL.fileSystemRepresentation):"";}
 std::string Description(const std::string& value){Common::ParamPackage p(value);const auto engine=p.Get("engine","");
  if(engine=="keyboard"){const int code=p.Get("code",0);const char* name=SDL_GetScancodeName(SDL_Scancode(code));return name&&*name?name:"Unbound";}
  if(engine=="sdl"){if(p.Has("axis_x"))return "Controller stick · axes "+p.Get("axis_x","")+" / "+p.Get("axis_y","");if(p.Has("button"))return "Controller button "+p.Get("button","");if(p.Has("hat"))return "Controller D-pad "+p.Get("direction","");return "Controller axis "+p.Get("axis","")+" "+p.Get("direction","");}
@@ -308,6 +307,24 @@ void CleanupPreferences(CaraPreferencesActions* a){[a stopBinding];if(a->key_mon
 namespace Cara::MacUI {
 std::optional<PlaySettings> TakeSavedPlaySettings(){return std::exchange(saved_play_settings,std::nullopt);}
 bool TakePreferencesClosed(){return std::exchange(preferences_closed,false);}
+std::string PickGame() {
+    NSOpenPanel* panel=[NSOpenPanel openPanel];
+    panel.title=@"Open Nintendo 3DS Game";
+    panel.prompt=@"Open";
+    panel.canChooseDirectories=NO;
+    panel.allowsMultipleSelection=NO;
+    panel.allowedFileTypes=@[@"3ds",@"cia",@"z3ds",@"zcci",@"7z",@"zip",@"cci",@"cxi",@"app",@"3dsx",@"elf",@"axf"];
+    if ([panel runModal]!=NSModalResponseOK || !panel.URL.isFileURL) return {};
+    if ([panel.URL.pathExtension.lowercaseString isEqual:@"7z"]) {
+        NSAlert* alert=[[[NSAlert alloc] init] autorelease];
+        alert.messageText=@"Open 7z archive?";
+        alert.informativeText=@"Games in 7z archives can take longer to start or load a scene. For faster loading, open the extracted cartridge file.";
+        [alert addButtonWithTitle:@"Open Game"];
+        [[alert addButtonWithTitle:@"Cancel"] setKeyEquivalent:@"\e"];
+        if ([alert runModal]!=NSAlertFirstButtonReturn) return {};
+    }
+    return panel.URL.fileSystemRepresentation;
+}
 bool HandleStartupOpen(){if(!welcome_window)return false;const auto rom=PickGame();if(!rom.empty()){startup_rom=rom;[NSApp stopModalWithCode:NSModalResponseOK];}return true;}
 void ShowPreferences(){
  if(settings_window){[settings_window makeKeyAndOrderFront:nil];return;}

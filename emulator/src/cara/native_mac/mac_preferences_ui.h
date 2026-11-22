@@ -5,6 +5,7 @@
 #include "cara/native_mac/play_settings.h"
 namespace Cara::MacUI {
 std::string Welcome(); // No Core or game load. Empty means cancel/quit.
+std::string PickGame();
 bool HandleStartupOpen();
 void ShowPreferences();
 std::optional<MacPreferences::PlaySettings> TakeSavedPlaySettings();

@@ -78,6 +78,7 @@ extern "C" int __llvm_profile_write_file(void);
 #include <sstream>
 #include "common/detached_tasks.h"
 #include "common/file_util.h"
+#include "common/sevenzip_rom.h"
 #include "common/frame_timing.h"
 #include "common/cpu_category_timing.h"
 #include "common/logging/backend.h"
@@ -725,6 +726,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #endif
 #endif
     UILabel* status;
+    UIStackView* archivePanel;
+    UILabel* archiveLabel;
+    UIProgressView* archiveProgress;
     UIImageView* skinArt;
     UIView* skinBorder;
     CaraSkinControls* skinControls;
@@ -747,6 +751,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     BOOL pickingControllerSkin;
     BOOL pickingSaveFolder;
     BOOL openingGame;
+    BOOL confirmingArchive;
     BOOL launchingOffline;
     CaraSaveSync* saveSync;
     CaraSaveSync* stateSync;
@@ -2085,7 +2090,31 @@ static std::filesystem::path PedometerHistoryPath() {
     [self openGameURL:url forOnlineRooms:NO];
 }
 - (void)openGameURL:(NSURL*)url forOnlineRooms:(BOOL)showOnlineRooms {
-    if (openingGame) return;
+    if (openingGame || confirmingArchive) return;
+    if ([url.pathExtension.lowercaseString isEqual:@"7z"] && !std::getenv("CARA_BENCHMARK_FRAMES")) {
+        confirmingArchive=YES;
+        UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Open 7z archive?"
+            message:@"Games in 7z archives can take longer to start or load a scene. For faster loading, open the extracted cartridge file."
+            preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction*) {
+            self->confirmingArchive=NO;
+            self->pendingLibraryState=nil;
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Open Game" style:UIAlertActionStyleDefault handler:^(UIAlertAction*) {
+            self->confirmingArchive=NO;
+            [self openPlayableGameURL:url forOnlineRooms:showOnlineRooms];
+        }]];
+        void (^present)(void)=^{
+            UIViewController* presenter=self;
+            while (presenter.presentedViewController) presenter=presenter.presentedViewController;
+            [presenter presentViewController:alert animated:YES completion:nil];
+        };
+        UIViewController* modal=self.presentedViewController;
+        if (modal.isBeingDismissed && modal.transitionCoordinator &&
+            [modal.transitionCoordinator animateAlongsideTransition:nil completion:^(id<UIViewControllerTransitionCoordinatorContext> context) { present(); }]) return;
+        present();
+        return;
+    }
     if ([url.pathExtension.lowercaseString isEqual:@"cia"]) {
         openingGame=YES;
         const BOOL scoped=[url startAccessingSecurityScopedResource];
@@ -2277,12 +2306,40 @@ static std::filesystem::path PedometerHistoryPath() {
     NSDictionary* result=@{@"passed":@(failures.count==0),@"checks":@(checks),@"failures":failures,@"skin":activeSkin.info[@"name"]?:@"none",@"scope":@"Same contact dispatch and HID/analog adapters used by UIKit; not physical finger input"};
     [[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingPrettyPrinted error:nil] writeToFile:[documents stringByAppendingPathComponent:@"skin-input-check.json"] atomically:YES];
 }
+- (void)showArchiveProgress:(float)fraction {
+    if (!archivePanel) {
+        archiveLabel=[UILabel new];
+        archiveLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+        archiveLabel.textColor=UIColor.whiteColor;
+        archiveLabel.textAlignment=NSTextAlignmentCenter;
+        archiveProgress=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+        archivePanel=[[UIStackView alloc] initWithArrangedSubviews:@[archiveLabel,archiveProgress]];
+        archivePanel.axis=UILayoutConstraintAxisVertical;
+        archivePanel.spacing=8;
+        archivePanel.layoutMarginsRelativeArrangement=YES;
+        archivePanel.directionalLayoutMargins=NSDirectionalEdgeInsetsMake(12,16,12,16);
+        archivePanel.backgroundColor=[UIColor colorWithWhite:.08 alpha:.94];
+        archivePanel.layer.cornerRadius=12;
+        archivePanel.userInteractionEnabled=NO;
+        archivePanel.translatesAutoresizingMaskIntoConstraints=NO;
+        [self.view addSubview:archivePanel];
+        [NSLayoutConstraint activateConstraints:@[
+            [archivePanel.centerXAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerXAnchor],
+            [archivePanel.centerYAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerYAnchor],
+            [archivePanel.widthAnchor constraintEqualToConstant:228]
+        ]];
+    }
+    archiveLabel.text=[NSString stringWithFormat:@"Opening archive · %.0f%%",MIN(99.,std::floor(100.*fraction))];
+    archiveProgress.progress=fraction;
+    archivePanel.hidden=NO;
+}
 - (void)startROM:(NSURL*)url showOnlineRooms:(BOOL)showOnlineRooms {
     onlineGameIdentity=nil;
     [self hideLibrary];
     NSString* requestedState=pendingLibraryState; pendingLibraryState=nil;
     const auto gpu_timing = CaraSessionGPUCompletionPolicy(CaraEmulationValue(@"playMode"));
     const unsigned session=++sessionGeneration;
+    archivePanel.hidden=YES;
     framePending[0]=false; framePending[1]=false;
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
     lastHUDTime = startedAt; lastHUDFrame = 0;
@@ -2529,7 +2586,31 @@ static std::filesystem::path PedometerHistoryPath() {
                 return;
             }
             NSURL* suspendCheckpoint = nil;
-            auto result=system.Load(*emuWindow,rom);
+            const auto loadStart=std::chrono::steady_clock::now();
+            auto result=[&] {
+                if (![url.pathExtension.lowercaseString isEqual:@"7z"])
+                    return system.Load(*emuWindow,rom);
+                NSURL* caches=[NSFileManager.defaultManager URLsForDirectory:NSCachesDirectory
+                                                                   inDomains:NSUserDomainMask].firstObject;
+                NSURL* directory=[caches URLByAppendingPathComponent:@"Cartridges/7z" isDirectory:YES];
+                FileUtil::SevenZipLoadScope archive(directory.fileSystemRepresentation?:"",
+                    [self,session](std::uint64_t done,std::uint64_t total) {
+                        if (!total || done>=total) return;
+                        const float fraction=static_cast<float>(double(done)/double(total));
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            if (self->sessionGeneration==session && self->running && !self->stop)
+                                [self showArchiveProgress:fraction];
+                        });
+                    });
+                return system.Load(*emuWindow,rom);
+            }();
+            if ([url.pathExtension.lowercaseString isEqual:@"7z"]) {
+                LOG_INFO(Frontend,"7z system load took {:.3f}s, result={}",
+                    std::chrono::duration<double>(std::chrono::steady_clock::now()-loadStart).count(),unsigned(result));
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (self->sessionGeneration==session) self->archivePanel.hidden=YES;
+                });
+            }
             if(result==Core::System::ResultStatus::Success) {
                 NSString* titleID=[NSString stringWithFormat:@"%016llX",(unsigned long long)system.GetTitleID()];
                 NSData* hash=[NSData dataWithBytes:system.StateGameHash().data() length:32];
