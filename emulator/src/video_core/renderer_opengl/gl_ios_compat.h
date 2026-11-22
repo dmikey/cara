@@ -19,7 +19,8 @@ inline GLenum LUTTextureTarget() {
 }
 inline GLenum StreamBufferTarget(GLenum target) {
 #ifdef CARA_IOS_GLES
-    if (target == GL_TEXTURE_BUFFER) return GL_ARRAY_BUFFER;
+    if (target == GL_TEXTURE_BUFFER && !UseNativeLUTBuffers())
+        return GL_ARRAY_BUFFER;
 #endif
     return target;
 }
