@@ -62,7 +62,7 @@ if (NOT CARA_INTERPRETER_GUEST_DEBUG)
     add_definitions(-DCARA_NO_GUEST_DEBUGGER=1)
 endif()
 
-option(CARA_IOS_HARDWARE_RENDERER "Experimental native iOS GLES3 graphics" OFF)
+option(CARA_IOS_HARDWARE_RENDERER "Native iOS GLES3 graphics" ON)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_definitions(-DCARA_IOS=1)
     if (CARA_IOS_HARDWARE_RENDERER)

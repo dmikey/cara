@@ -882,11 +882,11 @@ bool RasterizerCacheOpenGL::RunDepthCPUCoherenceSelfTest(std::string& error) {
     u64 cases=0,bulk_ownership_cases=0,alias_cases=0,failed_exports=0;
     try {
         for (auto format:{PixelFormat::D16,PixelFormat::D24,PixelFormat::D24S8}) {
-            for (bool tiled:{false,true}) for (bool retain:{false,true}) {
+            for (u16 scale:{1u,2u}) for (bool tiled:{false,true}) for (bool retain:{false,true}) {
                 for (u32 offset:{0u,1u,2u,3u,63u,127u,255u}) for (u32 count:{1u,3u,8u,9u,17u,33u}) {
                     retire();retain_small_cpu_writes=retain;
                     SurfaceParams params;params.addr=scratch;params.width=params.stride=16;params.height=16;
-                    params.pixel_format=format;params.is_tiled=tiled;params.res_scale=1;params.UpdateParams();
+                    params.pixel_format=format;params.is_tiled=tiled;params.res_scale=scale;params.UpdateParams();
                     std::vector<u8> expected(params.size);
                     for (u32 i=0;i<params.size;++i) expected[i]=u8(i*79+(i>>3)*17+23);
                     std::memcpy(memory,expected.data(),expected.size());
@@ -927,7 +927,7 @@ bool RasterizerCacheOpenGL::RunDepthCPUCoherenceSelfTest(std::string& error) {
                     FlushAll(); // Production save-state CPU publication boundary.
                     if (!std::equal(expected.begin(),expected.end(),memory)) {
                         error="depth CPU oracle partial write/FlushAll format="+std::to_string(unsigned(format))+
-                            " tiled="+std::to_string(tiled)+" retain_rgba8_option="+std::to_string(retain)+
+                            " scale="+std::to_string(scale)+" tiled="+std::to_string(tiled)+" retain_rgba8_option="+std::to_string(retain)+
                             " offset="+std::to_string(offset)+" count="+std::to_string(count);return false;
                     }
                     const auto saved=expected;
@@ -944,11 +944,11 @@ bool RasterizerCacheOpenGL::RunDepthCPUCoherenceSelfTest(std::string& error) {
                     // ownership or publishing the poisoned RAM as current.
                     InvalidateRegion(params.addr,params.size,restored);
                     std::fill_n(memory,params.size,0x7D);
-                    restored->res_scale=2;
+                    restored->stride+=8;
                     bool failed=false;
                     try { FlushRegion(params.addr,params.size,restored); }
                     catch (const std::exception&) { failed=true; }
-                    restored->res_scale=1;
+                    restored->stride-=8;
                     if (!failed || !boost::icl::contains(dirty_regions,params.GetInterval()) ||
                         !std::all_of(memory,memory+params.size,[](u8 b){return b==0x7D;})) {
                         error="depth CPU oracle failed export consumed ownership or RAM";return false;
@@ -1006,10 +1006,10 @@ bool RasterizerCacheOpenGL::RunDepthCPUCoherenceSelfTest(std::string& error) {
             if (cpu_count>8) {
                 const auto before_dirty=dirty_regions;
                 const std::vector<u8> before_ram(memory,memory+depth_params.size);
-                depth->res_scale=2;bool failed=false;
+                depth->stride+=8;bool failed=false;
                 try { FlushRegion(scratch+16,32,depth); }
                 catch (const std::exception&) { failed=true; }
-                depth->res_scale=1;
+                depth->stride-=8;
                 if (!failed || dirty_regions!=before_dirty ||
                     !std::equal(before_ram.begin(),before_ram.end(),memory)) {
                     error="depth CPU alias oracle partial failure changed owners or RAM tiled="+std::to_string(tiled)+

@@ -23,7 +23,7 @@ jobs:
           echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
           echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
       - name: Compile the opt-in atlas path and audit no-JIT linkage
-        run: python3 tools/build_mac_sdl.py --atlas --build-dir work/build-native-atlas --jobs 2
+        run: python3 tools/build_mac_sdl.py --atlas --no-cpu-jit --build-dir work/build-native-atlas --jobs 2
       - name: Check source policy, reader compilation and preserved save relocation
         run: |
           cmake --build work/build-native-atlas --target cara-shader-suffix-sharing-self-test cara-gl-host-latency-reader cara-save-archive-relocation-self-test -j2
@@ -53,7 +53,7 @@ jobs:
       - name: Validate bundled source without fetching
         run: python3 tools/prepare.py
       - name: Compile SDL frontend and audit linked no-JIT binary
-        run: python3 tools/build_mac_sdl.py --build-dir work/build-mac-sdl --jobs 2
+        run: python3 tools/build_mac_sdl.py --no-atlas --no-cpu-jit --build-dir work/build-mac-sdl --jobs 2
       - name: Check private relay configuration and diagnostic touch bounds without a GUI
         run: |
           cmake --build work/build-mac-sdl --target cara-native-relay-config-self-test cara-native-touch-command-self-test cara-mac-preferences-self-test -j2

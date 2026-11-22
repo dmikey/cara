@@ -2,8 +2,8 @@
 
 The explicit `CARA_MAC_SDL_DEV_HOST=ON` target selection uses `emulator/src/cara/native_mac/`
 without replacing the existing Windows/Linux SDL source files or their default selection.
-The build helper enables this selection. This separate SDL host defaults to FastInterp on macOS with keyboard/controller,
-mouse touchscreen input, SDL CoreAudio and desktop OpenGL LCD presentation.
+The build helper enables this selection. This SDL host defaults to Dynarmic JIT on Apple Silicon and uses the OpenGL atlas renderer.
+It supports keyboard, controller, mouse touchscreen input and SDL CoreAudio.
 It is a development frontend, not the iPad shell or a complete replacement for
 the old, incompatible SDL movie/network command line. Existing `tools/build.py
 mac` probe defaults remain unchanged.
@@ -24,7 +24,7 @@ binary/build graph for excluded CPU and host shader JIT facilities. SDL2/SDL3 an
 libpng are intentional external developer libraries, so the iOS system-only
 linkage audit does not apply to this host.
 
-For the native Settings window, empty startup screen and optional experimental M1 CPU JIT, see [Mac settings](mac-settings.md). `--cpu-jit` selects the separately audited CPU-only backend; shader JIT stays off.
+Use `--no-cpu-jit` for a FastInterp-only build or `--no-atlas` to build the baseline desktop OpenGL path. See [Mac settings](mac-settings.md) for switching CPU engines in a JIT-enabled build.
 
 ## Explicit diagnostic launch
 

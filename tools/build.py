@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('platform', choices=['mac', 'ios', 'simulator'])
-    parser.add_argument('--renderer', choices=['software', 'gles3'], default='software')
+    parser.add_argument('--renderer', choices=['software', 'gles3'], help='Defaults to GLES3 on iOS and software for the Mac test harness')
     parser.add_argument('--jobs', type=int, default=3)
     parser.add_argument('--guest-debugger', action='store_true', help='Include per-instruction guest GDB checks')
     parser.add_argument('--cpu', choices=['generic', 'apple-m4'], default='generic')
@@ -23,6 +23,8 @@ def main():
     pgo.add_argument('--pgo-use', type=Path)
     parser.add_argument('--build-dir', type=Path)
     args = parser.parse_args()
+    if args.renderer is None:
+        args.renderer = 'software' if args.platform == 'mac' else 'gles3'
     if args.cpu == 'apple-m4' and args.platform != 'ios':
         parser.error('apple-m4 requires a physical-device iOS build')
     if args.pgo_use and not args.pgo_use.is_file():

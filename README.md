@@ -143,9 +143,9 @@ you next open a game. The native Metal runner reads the saved Performance Mode
 and Async Shaders preferences.
 
 On iPhone and iPad, OpenGL ES is the default. The standard Mac launcher uses
-desktop OpenGL. In **Display**, turn on **2× internal resolution** to render
+the hardware OpenGL atlas renderer. In **Display**, turn on **2× internal resolution** to render
 geometry at twice its native width and height. Reopen the game to apply.
-For Metal, enable **Experimental Renderer** on mobile or use the separate
+For Metal, enable **Experimental Renderer** under **Advanced** on mobile or use the separate
 experimental Mac runner. Metal also offers **Texture filtering**.
 At 2×, supported 3D draws rasterize at twice the width and height. The renderer
 keeps compatible frames at that resolution through display and resolves to the
@@ -163,6 +163,9 @@ entry in Cara's settings on iPhone and iPad, or the **Cara** menu on Mac,
 shows where to change it in Apple's Game Overlay or Game menu.
 
 ## Graphics
+
+The iOS developer build defaults to OpenGL ES and FastInterp. The Apple Silicon
+Mac developer build defaults to the OpenGL atlas renderer and Dynarmic JIT.
 
 | Backend | Role in Cara |
 | --- | --- |

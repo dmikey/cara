@@ -1334,7 +1334,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         libraryController.syncTitle=(saveSync.cloudUploadVerified && stateSync.cloudUploadVerified)?@"Uploaded to iCloud":@"Saves & states";
         libraryController.syncDetail=[NSString stringWithFormat:@"Saves: %@ · States: %@",saveSync.status,stateSync.status];
     }
-    if (settingsController) { settingsController.sections=[self settingsSections]; [settingsController refresh]; }
+    [settingsController refresh];
 }
 // The guest RTC uses civil hours; preserve the local date across timezone offsets.
 static uint32_t PedometerHour(NSCalendar* calendar, NSDate* date) {
@@ -1530,27 +1530,25 @@ static std::filesystem::path PedometerHistoryPath() {
 #ifdef CARA_IOS_GLES
     NSUserDefaults* displayDefaults = NSUserDefaults.standardUserDefaults;
     NSMutableArray* display = [NSMutableArray array];
-    NSString* resolutionKey = @"glesSupersampling";
-#ifdef CARA_PRIVATE_IOS_METAL_LCD
-    if ([displayDefaults boolForKey:CaraMetalRendererKey])
-        resolutionKey = @"metalSupersampling";
-    [display addObject:@{@"title":@"Experimental Renderer", @"symbol":@"gpu",
-          @"subtitle":@"Use Metal. OpenGL ES is the default. Reopen the game to apply.",
-          @"value":@([displayDefaults boolForKey:CaraMetalRendererKey]),
-          @"change":^(BOOL enabled) {
-              [displayDefaults setBool:enabled forKey:CaraMetalRendererKey];
-              [owner updateSyncFeedback];
-          }}];
-#endif
     [display addObject:@{@"title":@"2× internal resolution", @"symbol":@"square.resize",
-        @"subtitle":@"Render geometry at twice the native resolution. Reopen the game to apply.",
-        @"value":@([displayDefaults boolForKey:resolutionKey]),
-        @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:resolutionKey]; }}];
+        @"subtitle":@"Render at twice the native resolution with OpenGL ES. Reopen the game to apply.",
+        @"value":@([displayDefaults boolForKey:@"glesSupersampling"]),
+        @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:@"glesSupersampling"]; }}];
+    [sections addObject:@{@"title":@"Display", @"rows":display}];
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
-    if ([displayDefaults boolForKey:CaraMetalRendererKey]) {
+    const BOOL experimentalEnabled = [displayDefaults boolForKey:CaraMetalRendererKey];
+    NSMutableArray* rendering = [NSMutableArray arrayWithObject:
+        @{@"title":@"Experimental Renderer", @"symbol":@"gpu",
+          @"subtitle":@"Use Metal the next time you open a game.",
+          @"value":@(experimentalEnabled),
+          @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:CaraMetalRendererKey]; }}];
+    if (experimentalEnabled) {
+        [rendering addObject:@{@"title":@"2× Metal internal resolution", @"symbol":@"square.resize",
+            @"value":@([displayDefaults boolForKey:@"metalSupersampling"]),
+            @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:@"metalSupersampling"]; }}];
         NSArray<NSString*>* filters = @[@"Game default", @"Nearest neighbor", @"Bilinear"];
         const auto selected = Cara::ParseMetalTextureFilter((int)[displayDefaults integerForKey:@"metalTextureFilter"]);
-        [display addObject:@{@"title":@"Texture filtering", @"symbol":@"slider.horizontal.3",
+        [rendering addObject:@{@"title":@"Texture filtering", @"symbol":@"slider.horizontal.3",
             @"subtitle":[filters[static_cast<NSUInteger>(selected)] stringByAppendingString:@" · Applies when you reopen the game."],
             @"keepOpen":@YES, @"action":^{
                 EmulatorController* controller = owner;
@@ -1569,46 +1567,44 @@ static std::filesystem::path PedometerHistoryPath() {
                 while (presenter.presentedViewController) presenter = presenter.presentedViewController;
                 [presenter presentViewController:choices animated:YES completion:nil];
             }}];
+        NSString* displayPlayMode = [displayDefaults stringForKey:@"playMode"];
+        [rendering addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
+            @"subtitle":@"Build eligible Metal shaders in the background. Applies when you reopen a game.",
+            @"value":@(CaraAsyncShadersPreference(displayPlayMode)),
+            @"enabled":@(![displayPlayMode isEqual:@"accuracy"]),
+            @"change":^(BOOL enabled) {
+                [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
+            }}];
+        if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+            const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
+            const NSInteger scale = saved == 2 || saved == 4 ? saved : 0;
+            for (NSInteger multiplier : {0, 2, 4}) {
+                NSString* name = multiplier ? [NSString stringWithFormat:@"Lossless %ld×", (long)multiplier]
+                                            : @"Native (Fit)";
+                [rendering addObject:@{@"title":name, @"symbol":scale == multiplier ? @"checkmark.circle.fill" : @"circle",
+                                      @"keepOpen":@YES, @"action":^{
+                    EmulatorController* controller = owner;
+                    if (!controller)
+                        return;
+                    [displayDefaults setInteger:multiplier forKey:@"losslessScreenScale"];
+                    [controller.view setNeedsLayout];
+                    [controller updateSyncFeedback];
+                }}];
+            }
+        }
     }
-    NSString* displayPlayMode = [displayDefaults stringForKey:@"playMode"];
-    NSMutableArray* rendering=[NSMutableArray array];
-    [rendering addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
-        @"subtitle":@"Build eligible Metal shaders in the background. Applies when you reopen a game.",
-        @"value":@(CaraAsyncShadersPreference(displayPlayMode)),
-        @"enabled":@([displayDefaults boolForKey:CaraMetalRendererKey] &&
-                     ![displayPlayMode isEqual:@"accuracy"]),
-        @"change":^(BOOL enabled) {
-            [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
-        }}];
-    [rendering addObject:@{@"title":@"First-use shader fallback", @"symbol":@"cpu",
+    [sections addObject:@{@"title":@"Rendering",@"rows":rendering,
+                          @"footer":@"Metal settings apply when you reopen a game."}];
+    NSMutableArray* shaderOptions=[NSMutableArray array];
+    NSString* playMode=[displayDefaults stringForKey:@"playMode"];
+    [shaderOptions addObject:@{@"title":@"First-use shader fallback", @"symbol":@"cpu",
         @"subtitle":@"Uses CPU vertices to reduce first-use shader stalls. Can slow gameplay. Reopen the game to apply.",
         @"value":@([displayDefaults boolForKey:CaraFirstUseShadersKey]),
-        @"enabled":@(![displayPlayMode isEqual:@"accuracy"]),
+        @"enabled":@(![playMode isEqual:@"accuracy"]),
         @"change":^(BOOL enabled) {
             [displayDefaults setBool:enabled forKey:CaraFirstUseShadersKey];
         }}];
-    [sections addObject:@{@"title":@"Shader options",@"rows":rendering}];
-    if ([displayDefaults boolForKey:CaraMetalRendererKey] && UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
-        const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
-        const NSInteger scale = saved == 2 || saved == 4 ? saved : 0;
-        for (NSInteger multiplier : {0, 2, 4}) {
-            NSString* name = multiplier ? [NSString stringWithFormat:@"Lossless %ld×", (long)multiplier]
-                                        : @"Native (Fit)";
-            [display addObject:@{@"title":name, @"symbol":scale == multiplier ? @"checkmark.circle.fill" : @"circle",
-                                  @"keepOpen":@YES, @"action":^{
-                EmulatorController* controller = owner;
-                if (!controller)
-                    return;
-                [displayDefaults setInteger:multiplier forKey:@"losslessScreenScale"];
-                [controller.view setNeedsLayout];
-                [controller updateSyncFeedback];
-            }}];
-        }
-    }
-    [sections addObject:@{@"title":@"Display", @"rows":display,
-                          @"footer":@"Renderer and resolution changes apply when you reopen a game."}];
-#else
-    [sections addObject:@{@"title":@"Display", @"rows":display}];
+    [sections addObject:@{@"title":@"Shader options",@"rows":shaderOptions}];
 #endif
 #endif
     NSMutableArray* general=[NSMutableArray array];
@@ -1867,8 +1863,11 @@ static std::filesystem::path PedometerHistoryPath() {
 }
 - (void)showFullSettings {
     if(self.presentedViewController) return;
-    CaraSettingsController* settings=[CaraSettingsController new]; settings.categorized=YES; settings.sections=[self settingsSections]; settingsController=settings;
-    __weak EmulatorController* owner=self; settings.finished=^{ EmulatorController* c=owner; if(c) [c->libraryController reloadLibrary]; [owner resumeFromMenu]; };
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.categorized=YES;
+    __weak EmulatorController* owner=self;
+    settings.sectionsProvider=^NSArray* { return [owner settingsSections]; };
+    settings.sections=settings.sectionsProvider();
+    settingsController=settings; settings.finished=^{ EmulatorController* c=owner; if(c) [c->libraryController reloadLibrary]; [owner resumeFromMenu]; };
     UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=menuVisible ? UIModalPresentationPageSheet : UIModalPresentationFullScreen;
     nav.preferredContentSize=CGSizeMake(900,780);
     nav.presentationController.delegate=settings;

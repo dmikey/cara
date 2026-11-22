@@ -5,7 +5,7 @@ Emulator and dependency source is bundled in the repository.
 
 ```sh
 python3 tools/prepare.py
-python3 tools/build.py ios --renderer gles3
+python3 tools/build.py ios
 python3 tools/audit_no_jit.py ios --renderer gles3
 ```
 
