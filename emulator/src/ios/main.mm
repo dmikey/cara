@@ -1305,7 +1305,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         @{@"title":@"Limit game speed",@"subtitle":@"Turn off to run as fast as the device allows.",@"symbol":@"gauge.with.dots.needle.67percent",@"value":@(speedLimitEnabled.load()),@"enabled":@(tuning),@"change":^(BOOL on) { [owner setEmulationPreference:@"speedLimitEnabled" value:@(on) refresh:YES]; }},
         @{@"title":@"Maximum speed",@"subtitle":@"50–200% · Default limit: 100%.",@"enabled":@(tuning && speedLimitEnabled.load()),@"slider":@{@"min":@50,@"max":@200,@"step":@5,@"value":@(maximumSpeedLimit.load())},@"sliderChange":^(double value) { [owner setMaximumSpeedPercent:NSUInteger(std::lround(value))]; }},
         action(@"Reset emulation tuning",@"arrow.counterclockwise",tuning,^{ EmulatorController* c=owner; if (!c) return; for (NSString* key in @[@"fixedGuestClockEnabled",@"fixedGuestClockPercent",@"speedLimitEnabled",@"maximumSpeedPercent",@"adaptiveFrameSkipEnabled"]) [NSUserDefaults.standardUserDefaults removeObjectForKey:key]; [c applySavedPlayPolicy]; [c updateSyncFeedback]; [c resumeFromMenu]; }),
-    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 100%. Choose Performance to adjust these controls.":@"Guest clock and game speed are separate controls. Changes take effect when you resume."}];
+    ],@"footer":accuracy?@"Accuracy locks the guest clock at 100% and speed at 100%. Choose Performance to adjust these controls.":@"Guest clock and game speed apply when you resume. GPU timing follows your play mode the next time you open a game."}];
     for (NSString* orientation in @[@"Landscape",@"Portrait"]) {
         NSString* key=[@"controllerSkin" stringByAppendingString:orientation];
         NSString* selected=[NSUserDefaults.standardUserDefaults stringForKey:key];
@@ -1887,6 +1887,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     onlineGameIdentity=nil;
     [self hideLibrary];
     NSString* requestedState=pendingLibraryState; pendingLibraryState=nil;
+    const bool performance_gpu_timing = CaraCanTuneEmulation() &&
+        ![CaraEmulationValue(@"playMode") isEqual:@"accuracy"];
+    const auto gpu_timing = Cara::GetGPUCompletionPolicy(performance_gpu_timing);
     const unsigned session=++sessionGeneration;
     framePending[0]=false; framePending[1]=false;
     frameCount = 0; startedAt = CFAbsoluteTimeGetCurrent();
@@ -1944,11 +1947,11 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #ifdef CARA_IOS_GLES
     [self.view layoutIfNeeded];
     emuWindow->drawable_layer = (CAEAGLLayer*)gpuSurface.layer;
-    emuWindow->frame_presented = [weakSelf,user,session](unsigned frame) {
+    emuWindow->frame_presented = [weakSelf,user,session,gpu_timing](unsigned frame) {
         if (frame % 60 != 0) return;
         const auto timing = Common::FrameTiming::counters;
         const auto title=Core::System::GetInstance().GetTitleID();
-        const double gameFPS=std::getenv("CARA_BENCHMARK_FRAMES")?-1.0:Core::System::GetInstance().GetAndResetPerfStats().game_fps;
+        const double gameFPS = Core::System::GetInstance().GetAndResetPerfStats().game_fps;
         dispatch_async(dispatch_get_main_queue(), ^{
             EmulatorController* controller = weakSelf;
             if (!controller || !controller->running || controller->sessionGeneration!=session) return;
@@ -1964,8 +1967,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                 report << "{\"title_id\":" << title << ",\"frame\":" << frame << ",\"display_fps\":" << fps
                        << ",\"factor_3d_percent\":" << unsigned(Settings::values.factor_3d.load())
                        << ",\"presentation_mode\":\"mono_left_top\""
-                       << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
-                       << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
+                       << ",\"experimental_ppf_dependency\":" << (gpu_timing.transfer?"true":"false")
+                       << ",\"experimental_p3d_completion\":" << (gpu_timing.render?"true":"false")
                        << ",\"guest_cpu_percent\":" << controller->guestClock.load()
                        << ",\"maximum_speed_percent\":" << controller->maximumSpeedLimit.load()
                        << ",\"adaptive_guest_cpu\":" << (controller->adaptiveCPU.load()?"true":"false")
@@ -1988,7 +1991,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     emuWindow->present = [weakSelf,session](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
-    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms] {
+    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing] {
+        Cara::gpu_completion_policy = gpu_timing;
         // Diagnostic only: requested QoS is not evidence of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
         const bool worker_interactive_qos = interactive_qos_env &&

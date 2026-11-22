@@ -1,9 +1,41 @@
 # Guest GPU completion investigation
 
-Private prototype based on Cara `abc3266`, 2026-11-13. P3D completion timing is
-experimental and defaults off. No title addresses, cap cheats, host sleeps or
-rendering skips are added. The read-only post-IRQ probe is separately selectable.
-New serialized model/event state requires a newly compatible checkpoint.
+## Performance Mode
+
+Performance Mode enables the shared P3D render and PPF transfer completion model
+when a game opens. Accuracy Mode and ordinary benchmark runs use immediate
+completion by default. Play-mode changes apply to GPU timing at the next game
+launch. The existing guest CPU clock and speed-limit controls apply independently.
+
+The model schedules guest IRQs in CoreTiming and exposes render and transfer
+busy bits through GPU register `0x34`, including GSP's byte reads. Each bit
+clears at its modeled deadline. The busy state and deadlines come from the same
+state that the interrupt queue serializes. Host submission and renderer resource
+validation continue using their existing paths. A save state with pending modeled
+completions requires a mode that can restore those events.
+
+For an isolated Mac Metal compatibility run, set
+`CARA_MAC_METAL_PERFORMANCE_MODE=1` to select the same completion policy. The
+explicit `CARA_EXPERIMENTAL_P3D_COMPLETION` and
+`CARA_EXPERIMENTAL_PPF_DEPENDENCY` overrides remain available for paired tests.
+
+A fixed-100%-clock Stories Secret Path replay improved from 26.02 to 60.24
+refreshes per second on the M3 Pro Mac (p99 48.88 to 20.85 ms). On the M4 iPad
+it improved from 30.24 to 59.75 (p99 39.87 to 35.01 ms). These captures replayed
+the same inputs. Guest timing changes how much work the game submits. One Mac
+run stopped at refresh 4132 with a Metal depth validation error. Subsequent
+adaptive and pinned 32-slot replays completed all 4800 refreshes.
+
+Dark Moon's separate Gadd lab replay with timing enabled measured 99.04% speed
+and 19.76 ms p99 on Mac, and 100.00% speed and 21.61 ms p99 on iPad. Use refreshes
+3121–3600 for this comparison. The iPad FPS meter reports guest game frames
+separately from emulation speed, including during a benchmark replay.
+
+## Prototype history
+
+The following investigation began from Cara `abc3266` on 2026-11-13. References
+to default-off timing describe the prototype at the time of those measurements.
+The read-only post-IRQ probe remains independently selectable.
 
 ## Implemented: post-IRQ logical-submission probe
 

@@ -58,6 +58,8 @@ PicaMetalCompletion PicaMetalValidationReceipt::Poll() const {
         return terminal;
     if (!command || command.status < MTLCommandBufferStatusCommitted ||
         command.status == MTLCommandBufferStatusError || command.error) {
+        LOG_ERROR(Render_OpenGL, "Metal depth validation command failed (status {}): {}",
+                  unsigned(command.status), command.error.localizedDescription.UTF8String ?: "no Metal error");
         checked.store(PicaMetalCompletion::Failed, std::memory_order_release);
         return PicaMetalCompletion::Failed;
     }
@@ -89,14 +91,21 @@ PicaMetalCompletion PicaMetalValidationReceipt::Poll() const {
             return writer_state;
     }
     {
-        for (const auto& buffer : std::span(errors).first(error_count))
-            if (!buffer || buffer.device != command.device || buffer.length < sizeof(u32) ||
-                buffer.storageMode != MTLStorageModeShared || !buffer.contents ||
-                *static_cast<const u32*>(buffer.contents) != 0) {
+        for (std::size_t i = 0; i < error_count; ++i) {
+            const auto& buffer = errors[i];
+            const bool valid_buffer = buffer && buffer.device == command.device &&
+                buffer.length >= sizeof(u32) && buffer.storageMode == MTLStorageModeShared &&
+                buffer.contents;
+            const auto error = valid_buffer ? *static_cast<const u32*>(buffer.contents) : 0;
+            if (!valid_buffer || error) {
+                LOG_ERROR(Render_OpenGL,
+                          "Metal depth validation failed at check {}/{} (buffer={}, bits=0x{:08x})",
+                          i + 1, error_count, valid_buffer, error);
                 NativeMetalCost::Count(NativeMetalCost::AsyncDepthChecksFailed, 1);
                 checked.store(PicaMetalCompletion::Failed, std::memory_order_release);
                 return PicaMetalCompletion::Failed;
             }
+        }
         NativeMetalCost::Count(NativeMetalCost::AsyncDepthChecksPassed, 1);
         errors = {}; // Completed checks no longer retain their staging allocations.
         source.reset();

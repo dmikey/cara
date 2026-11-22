@@ -943,6 +943,10 @@ GSP_GPU::~GSP_GPU() {
     }
 }
 
+u32 GSP_GPU::CompletionBusyFlags() const {
+    return p3d_completions.BusyFlags(Cara::GPUCompletionNow(system.CoreTiming()));
+}
+
 void GSP_GPU::CompleteP3D(u64 token) {
     const auto ready = p3d_completions.Peek(token);
     if (ready && FindRegisteredThreadData(ready->recipient)) {

@@ -2,6 +2,7 @@
 #include "cara/native_mac/native_command_policy.h"
 #include "cara/native_mac/game_menu.h"
 #include "cara/adaptive_clock.h"
+#include "cara/p3d_completion.h"
 #include "cara/native_mac/mac_preferences.h"
 #include "cara/native_mac/mac_preferences_ui.h"
 #include "cara/native_mac/controller_play_test.h"
@@ -378,6 +379,8 @@ static int RunNativeMain(int argc, char** argv) {
         SCOPE_EXIT({finish_query_census();});
         // LIFO: stop worker while audit/census hooks and all core owners still live.
         SCOPE_EXIT({if(!window.StopCommandQueue())shutdown_failed=true;});
+        Cara::gpu_completion_policy = Cara::GetGPUCompletionPolicy(
+            !diagnostics && play_settings.mode == Cara::PlayMode::Performance);
         core_load_started=true;
         const auto loaded = system.Load(window, argv[1]);
         std::cout << "Native load result: " << static_cast<unsigned>(loaded) << std::endl;

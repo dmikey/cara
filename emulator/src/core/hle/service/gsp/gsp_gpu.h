@@ -241,6 +241,8 @@ public:
      */
     FrameBufferUpdate* GetFrameBufferInfo(u32 thread_id, u32 screen_index);
 
+    u32 CompletionBusyFlags() const;
+
 private:
     /**
      * Signals that the specified interrupt type has occurred to userland code for the specified GSP
