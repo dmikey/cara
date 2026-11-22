@@ -8,7 +8,7 @@ prerelease packages from main**, and leave the existing release tag blank.
 | Platform | GitHub nightly package |
 | --- | --- |
 | macOS arm64 | Self-contained Cara app with Developer ID signing and notarization. Optional CPU JIT, with shader JIT disabled. |
-| iOS arm64 | GLES3 IPA with App Store distribution signing and both JITs disabled. App Store Connect handles distribution to devices. |
+| iOS arm64 | GLES3 IPA built with the iOS 26 SDK or newer, with App Store distribution signing and both JITs disabled. App Store Connect handles distribution to devices. |
 | Android arm64 | GLES atlas APK for direct installation and AAB for Play Console, both signed with the configured upload key. CPU JIT is included. |
 | Linux x86_64 | Unsigned desktop OpenGL tarball. Built on Ubuntu 24.04 with FastInterp. |
 | Windows x86_64 | Unsigned desktop OpenGL ZIP with SDL2. Requires the Microsoft Visual C++ x64 runtime and an OpenGL-capable driver. |

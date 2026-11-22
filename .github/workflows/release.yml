@@ -102,7 +102,7 @@ jobs:
   ios:
     needs: source
     name: iOS arm64 GLES3 / unsigned IPA / no JIT
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -115,6 +115,9 @@ jobs:
           work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
           echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
           echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${sdk%%.*}" -ge 26
+          xcodebuild -version
       - name: Build and audit the physical-device app without signing
         run: |
           python3 tools/prepare.py
