@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_metal/pica_metal_material_filter.h"
 #include "pica_metal_pipelines.h"
 #include "pica_metal_binding_names.h"
 #include "simd_vertex_source.h"
@@ -666,7 +667,7 @@ std::optional<DualSamplerRecipe> GateSamplerKey(const PicaSampleInputs& s) {
         (static_cast<unsigned>(s.opaque_black_border) << 23), s.wrap_s, s.wrap_t};
 }
 
-id<MTLSamplerState> BuildGateSampler(id<MTLDevice> device, const PicaSampleInputs& s) {
+id<MTLSamplerState> BuildGateSampler(id<MTLDevice> device, const PicaSampleInputs& s, MetalTextureFilter filter) {
     if (!GateSamplerKey(s) ||
         (s.opaque_black_border && ![device supportsFamily:MTLGPUFamilyApple7]))
         return nil;
@@ -674,6 +675,7 @@ id<MTLSamplerState> BuildGateSampler(id<MTLDevice> device, const PicaSampleInput
     desc.normalizedCoordinates = YES;
     desc.minFilter = (s.min_filter & 1) ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     desc.magFilter = (s.mag_filter & 1) ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
+    ApplyMaterialFilter(desc, filter);
     desc.mipFilter = (s.min_filter & 2) ? MTLSamplerMipFilterLinear : MTLSamplerMipFilterNearest;
     desc.lodMinClamp = s.min_lod;
     desc.lodMaxClamp = s.max_lod;
@@ -684,11 +686,12 @@ id<MTLSamplerState> BuildGateSampler(id<MTLDevice> device, const PicaSampleInput
     return [device newSamplerStateWithDescriptor:desc];
 }
 
-id<MTLSamplerState> BuildDualSampler(id<MTLDevice> device,const DualSamplerRecipe& r) {
+id<MTLSamplerState> BuildDualSampler(id<MTLDevice> device,const DualSamplerRecipe& r, MetalTextureFilter filter) {
     auto* s=[MTLSamplerDescriptor new];
     s.normalizedCoordinates=YES;
     s.minFilter=r.color_filter==0x2600 ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
     s.magFilter=s.minFilter;
+    ApplyMaterialFilter(s, filter);
     s.mipFilter=MTLSamplerMipFilterNotMipmapped;
     s.lodMinClamp=0;
     s.lodMaxClamp=0;
@@ -698,12 +701,13 @@ id<MTLSamplerState> BuildDualSampler(id<MTLDevice> device,const DualSamplerRecip
     return [device newSamplerStateWithDescriptor:s];
 }
 
-id<MTLSamplerState> BuildSampler(id<MTLDevice> device, bool material, unsigned unit) {
+id<MTLSamplerState> BuildSampler(id<MTLDevice> device, bool material, unsigned unit, MetalTextureFilter filter) {
     MTLSamplerDescriptor* sampler = [MTLSamplerDescriptor new];
     sampler.normalizedCoordinates = YES;
     sampler.minFilter = material ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
     sampler.magFilter = sampler.minFilter;
     if (material) {
+        ApplyMaterialFilter(sampler, filter);
         sampler.sAddressMode = MTLSamplerAddressModeRepeat;
         sampler.tAddressMode = MTLSamplerAddressModeRepeat;
         sampler.mipFilter = unit == 0 ? MTLSamplerMipFilterLinear : MTLSamplerMipFilterNotMipmapped;
@@ -818,8 +822,9 @@ bool UseMetalDeadCombinerElision() {
     return override.value_or(UseMetalGeneralFragment());
 }
 
-PicaMetalPipelines::PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual)
-    : device(device_), dual_assets(std::move(dual)), gate_library(OpenGateLibrary(device_)),
+PicaMetalPipelines::PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual,
+                                       MetalTextureFilter filter)
+    : device(device_), texture_filter(filter), dual_assets(std::move(dual)), gate_library(OpenGateLibrary(device_)),
       rgba8_dither_verified_host(VerifiedDitherHost(device_)) {}
 
 std::optional<unsigned> PicaMetalPipelines::FindRuntime(
@@ -1403,23 +1408,23 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                 selection.vertex_mode = raw_index_function ? MetalRawIndexMode : pair.vertex_mode;
             }
             selection.depth = [device newDepthStencilStateWithDescriptor:depth];
-            selection.texel_fetch = BuildSampler(device,false,p.sampled_unit);
+            selection.texel_fetch = BuildSampler(device,false,p.sampled_unit, texture_filter);
             selection.primary_unit = pair.sampled_unit;
             if (secondary) {
-                selection.material = (pair.precompiled || pair.runtime) ? BuildGateSampler(device, sampler)
-                                                      : BuildDualSampler(device, *ParityRecipe(sampler));
-                const auto other = (pair.precompiled || pair.runtime) ? BuildGateSampler(device, *secondary)
-                                                    : BuildDualSampler(device, *ParityRecipe(*secondary));
+                selection.material = (pair.precompiled || pair.runtime) ? BuildGateSampler(device, sampler, texture_filter)
+                                                      : BuildDualSampler(device, *ParityRecipe(sampler), texture_filter);
+                const auto other = (pair.precompiled || pair.runtime) ? BuildGateSampler(device, *secondary, texture_filter)
+                                                    : BuildDualSampler(device, *ParityRecipe(*secondary), texture_filter);
                 if (!other)
                     return false;
                 selection.secondary=SecondaryPicaMaterial{nil,other,pair.secondary_unit,
                     pair.secondary_texture_slot,pair.secondary_sampler_slot};
             } else if (p.sampled_unit != NoMaterialUnit) {
-                selection.material = (pair.precompiled || pair.runtime) ? BuildGateSampler(device, sampler)
-                                                      : BuildSampler(device, true, p.sampled_unit);
+                selection.material = (pair.precompiled || pair.runtime) ? BuildGateSampler(device, sampler, texture_filter)
+                                                      : BuildSampler(device, true, p.sampled_unit, texture_filter);
             }
             if (tertiary) {
-                const auto sampler_state = BuildGateSampler(device, *tertiary);
+                const auto sampler_state = BuildGateSampler(device, *tertiary, texture_filter);
                 if (!sampler_state)
                     return false;
                 selection.tertiary = SecondaryPicaMaterial{nil, sampler_state, pair.tertiary_unit,

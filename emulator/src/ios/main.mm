@@ -358,6 +358,7 @@ public:
             graphics_error = error.localizedDescription.UTF8String ?: "Missing Metal resources";
             return;
         }
+        resources->texture_filter = Cara::ParseMetalTextureFilter((int)[NSUserDefaults.standardUserDefaults integerForKey:@"metalTextureFilter"]);
         resources->internal_scale = [NSUserDefaults.standardUserDefaults boolForKey:@"metalSupersampling"] ? 2u : 1u;
         VideoCore::SetNativeRendererFactory([this, layer, resources = *resources](
                                                 Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
@@ -1525,6 +1526,29 @@ static std::filesystem::path PedometerHistoryPath() {
         @"value":@([displayDefaults boolForKey:@"metalSupersampling"]),
         @"enabled":@([displayDefaults boolForKey:CaraMetalRendererKey]),
         @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:@"metalSupersampling"]; }}];
+    if ([displayDefaults boolForKey:CaraMetalRendererKey]) {
+        NSArray<NSString*>* filters = @[@"Game default", @"Nearest neighbor", @"Bilinear"];
+        const auto selected = Cara::ParseMetalTextureFilter((int)[displayDefaults integerForKey:@"metalTextureFilter"]);
+        [display addObject:@{@"title":@"Texture filtering", @"symbol":@"slider.horizontal.3",
+            @"subtitle":[filters[static_cast<NSUInteger>(selected)] stringByAppendingString:@" · Applies when you reopen the game."],
+            @"keepOpen":@YES, @"action":^{
+                EmulatorController* controller = owner;
+                if (!controller) return;
+                UIAlertController* choices = [UIAlertController alertControllerWithTitle:@"Texture filtering"
+                    message:nil preferredStyle:UIAlertControllerStyleAlert];
+                for (NSUInteger i = 0; i < filters.count; ++i) {
+                    [choices addAction:[UIAlertAction actionWithTitle:filters[i] style:UIAlertActionStyleDefault
+                        handler:^(UIAlertAction*) {
+                            [displayDefaults setInteger:i forKey:@"metalTextureFilter"];
+                            [controller updateSyncFeedback];
+                        }]];
+                }
+                [choices addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+                UIViewController* presenter = controller;
+                while (presenter.presentedViewController) presenter = presenter.presentedViewController;
+                [presenter presentViewController:choices animated:YES completion:nil];
+            }}];
+    }
     NSString* displayPlayMode = [displayDefaults stringForKey:@"playMode"];
     [display addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
         @"subtitle":@"Build eligible Metal shaders in the background. Applies when you reopen a game.",

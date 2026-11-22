@@ -127,6 +127,17 @@ Play and display settings apply when you save. CPU engine changes apply when
 you next open a game. The native Metal runner reads the saved Performance Mode
 and Async Shaders preferences.
 
+On Mac, iPad and iPhone, select **Metal Render** and open **Display** to change
+**2× internal resolution** and **Texture filtering**. Reopen the game to apply.
+At 2×, supported 3D draws rasterize at twice the width and height. The renderer
+keeps compatible frames at that resolution through display and resolves to the
+3DS resolution when the guest needs to read pixels. Some games use display
+transfer layouts that currently present at native resolution.
+
+**Game default** honors the game's texture sampling. **Nearest neighbor** keeps
+texels sharp and **Bilinear** blends adjacent texels on 3D surfaces. These
+controls are independent of the lossless output sizing above.
+
 Cara opts into Apple Game Mode by default on supported devices. It activates
 automatically in full-screen play unless you turn it off. The **Game Mode**
 entry in Cara's settings on iPhone and iPad, or the **Cara** menu on Mac,
