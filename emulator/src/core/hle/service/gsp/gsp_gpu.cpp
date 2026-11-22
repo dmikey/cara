@@ -512,8 +512,13 @@ void GSP_GPU::SignalInterrupt(InterruptId interrupt_id, u64 transfer_ns) {
     if (delayed_p3d || delayed_ppf) {
         if (!FindRegisteredThreadData(active_thread_id)) return;
         const auto now = Cara::GPUSubmissionNow(system.CoreTiming());
-        const auto record = p3d_completions.Enqueue(now, Cara::P3DNanosecondsToTicks(delayed_ppf ? transfer_ns : p3d_ns),
-                                                   active_thread_id, delayed_ppf);
+        constexpr auto refresh_ns =
+            static_cast<u64>(1'000'000'000.0 / GPU::SCREEN_REFRESH_RATE);
+        const auto render_ns =
+            Cara::gpu_completion_policy.soften_render ? Cara::SoftenP3DLatency(p3d_ns, refresh_ns) : p3d_ns;
+        const auto latency = Cara::P3DNanosecondsToTicks(delayed_ppf ? transfer_ns : render_ns);
+        const auto record =
+            p3d_completions.Enqueue(now, latency, active_thread_id, delayed_ppf);
         if (Common::FrameTiming::counters.enabled) {
             auto& counters = Common::FrameTiming::counters;
             if (delayed_ppf) {

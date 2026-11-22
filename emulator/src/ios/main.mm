@@ -2304,8 +2304,10 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #endif
                 Cara::GuestGPUTrace::Arm(user + "guest-gpu-trace.csv");
             };
-            if (result==Core::System::ResultStatus::Success)
-                LOG_INFO(Frontend,"Cara session title {:016X}",system.GetTitleID());
+            if (result == Core::System::ResultStatus::Success) {
+                LOG_INFO(Frontend, "Cara session title {:016X}, guest GPU timing render={} transfer={} refresh_relative={}",
+                         system.GetTitleID(), gpu_timing.render, gpu_timing.transfer, gpu_timing.soften_render);
+            }
             if (result==Core::System::ResultStatus::Success) Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
             NSDictionary<NSString*, NSString*>* roomIdentity=nil;
             if (!target_frames && result==Core::System::ResultStatus::Success && system.GetTitleID()) {
@@ -2374,12 +2376,14 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     MetalCost::Record, MetalCost::Present};
                 const bool trace_shader_refresh = capture_refresh_timing && emuWindow->native_metal_only &&
                                                   MetalCost::Enabled();
-                struct ShaderRefresh {
+                struct MetalRefresh {
                     unsigned refresh;
+                    u64 pica_lists, pica_draws, top_swaps;
                     std::array<MetalCost::Span, shader_phases.size()> work;
                 };
-                std::vector<ShaderRefresh> shader_refreshes;
+                std::vector<MetalRefresh> shader_refreshes;
                 auto previous_shader_cost = previous_metal_cost;
+                auto previous_refresh_counters = previous_counters;
                 if (trace_shader_refresh)
                     shader_refreshes.reserve(target_frames);
 #endif
@@ -2794,7 +2798,16 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(now - last_frame_time).count());
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
                         if (trace_shader_refresh) {
-                            ShaderRefresh entry{emuWindow->frames, {}};
+                            const auto& counters = Common::FrameTiming::counters;
+                            MetalRefresh entry{
+                                emuWindow->frames,
+                                counters.pica_command_lists - previous_refresh_counters.pica_command_lists,
+                                counters.pica_draw_requests - previous_refresh_counters.pica_draw_requests,
+                                counters.top_buffer_swaps - previous_refresh_counters.top_buffer_swaps,
+                                {}};
+                            previous_refresh_counters.pica_command_lists = counters.pica_command_lists;
+                            previous_refresh_counters.pica_draw_requests = counters.pica_draw_requests;
+                            previous_refresh_counters.top_buffer_swaps = counters.top_buffer_swaps;
                             for (std::size_t i = 0; i < shader_phases.size(); ++i) {
                                 const auto phase = shader_phases[i];
                                 const auto current = MetalCost::spans[phase];
@@ -3094,6 +3107,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                           << ",\"used_input_attributes_requested\":" << ((std::getenv("CARA_GPU_USED_INPUTS") && std::string_view(std::getenv("CARA_GPU_USED_INPUTS")) == "1")?"true":"false")
                                           << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
                        << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
+                       << ",\"gpu_completion_soft_knee\":" << (Cara::gpu_completion_policy.soften_render?"true":"false")
                                           << ",\"engine_revision\":" << std::quoted(Common::g_scm_rev)
                                           << ",\"engine_build_fingerprint\":" << std::quoted(Core::GetSaveStateBuildFingerprint())
                                           << ",\"cpu_category_timing\":" << (category_timing?"true":"false")
@@ -3181,13 +3195,14 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
                     if (trace_shader_refresh) {
                         std::ofstream trace(user + "metal-refresh-cost.csv");
-                        trace << "refresh";
+                        trace << "refresh,pica_lists,pica_draws,top_swaps";
                         for (auto phase : shader_phases)
                             trace << ',' << MetalCost::names[phase] << "_calls,"
                                   << MetalCost::names[phase] << "_ns";
                         trace << '\n';
                         for (const auto& entry : shader_refreshes) {
-                            trace << entry.refresh;
+                            trace << entry.refresh << ',' << entry.pica_lists << ','
+                                  << entry.pica_draws << ',' << entry.top_swaps;
                             for (const auto& phase : entry.work)
                                 trace << ',' << phase.calls << ',' << phase.ns;
                             trace << '\n';
@@ -3214,6 +3229,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                            << ",\"presentation_mode\":\"mono_left_top\""
                            << ",\"experimental_ppf_dependency\":" << (Cara::ExperimentalPPFDependencyEnabled()?"true":"false")
                        << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
+                       << ",\"gpu_completion_soft_knee\":" << (Cara::gpu_completion_policy.soften_render?"true":"false")
 #ifdef CARA_IOS_GLES
                            << ",\"eagl_multithreaded\":" << (emuWindow->graphics_context.isMultiThreaded ? "true" : "false")
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws

@@ -316,7 +316,8 @@ int main(int argc, char** argv) {
                 }
                 std::cout << "GUEST_TIMING clock=" << guest_clock
                           << " p3d=" << Cara::ExperimentalP3DCompletionEnabled()
-                          << " ppf=" << Cara::ExperimentalPPFDependencyEnabled() << std::endl;
+                          << " ppf=" << Cara::ExperimentalPPFDependencyEnabled()
+                          << " soft_knee=" << Cara::gpu_completion_policy.soften_render << std::endl;
                 std::cout << "TITLE " << std::hex << core.GetTitleID() << std::dec << std::endl;
                 const auto* learning_setting = std::getenv("CARA_MAC_METAL_LEARN");
                 const bool learning_requested =

@@ -16,17 +16,21 @@ namespace Cara {
 struct GPUCompletionPolicy {
     bool render;
     bool transfer;
+    bool soften_render;
 };
 constexpr GPUCompletionPolicy ResolveGPUCompletionPolicy(bool performance, const char* render,
-                                                         const char* transfer) {
+                                                         const char* transfer,
+                                                         const char* soften = nullptr) {
     const bool render_enabled = render ? std::string_view(render) == "1" : performance;
     // An explicit render-only diagnostic retains the historical P3D-only behavior.
     return {render_enabled, render_enabled &&
-        (transfer ? std::string_view(transfer) == "1" : performance && !render)};
+        (transfer ? std::string_view(transfer) == "1" : performance && !render),
+        render_enabled && (soften ? std::string_view(soften) == "1" : performance)};
 }
 inline GPUCompletionPolicy GetGPUCompletionPolicy(bool performance = false) {
     return ResolveGPUCompletionPolicy(performance, std::getenv("CARA_EXPERIMENTAL_P3D_COMPLETION"),
-                                      std::getenv("CARA_EXPERIMENTAL_PPF_DEPENDENCY"));
+                                      std::getenv("CARA_EXPERIMENTAL_PPF_DEPENDENCY"),
+                                      std::getenv("CARA_GPU_COMPLETION_SOFT_KNEE"));
 }
 // The emulator owner selects this before loading the core and its timing events.
 extern thread_local GPUCompletionPolicy gpu_completion_policy;
@@ -64,6 +68,14 @@ struct P3DWorkEstimate {
     }
     template <class Archive> void serialize(Archive& ar, unsigned) { ar & fifth_ns; }
 };
+// Compress the tail of the approximate render latency. Short batches retain
+// their original deadlines, while long work remains ordered and can still span
+// more than one refresh. Nothing is aligned to a VBlank.
+constexpr std::uint64_t SoftenP3DLatency(std::uint64_t ns, std::uint64_t refresh_ns) {
+    const auto knee = refresh_ns / 2;
+    return ns <= knee ? ns : knee + (ns - knee) / 2;
+}
+
 inline std::int64_t P3DNanosecondsToTicks(std::uint64_t ns) {
     constexpr std::uint64_t hz = 268111856, billion = 1000000000;
     const auto seconds = ns / billion, remainder = ns % billion;

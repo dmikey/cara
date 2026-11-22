@@ -50,6 +50,12 @@ int main() {
         const auto accuracy_override = ResolveGPUCompletionPolicy(false, "1", "1");
         Require(performance.render && performance.transfer && !accuracy.render && !accuracy.transfer,
                 "Gameplay timing policy defaults");
+        const auto stock_render = ResolveGPUCompletionPolicy(true, nullptr, nullptr, "0");
+        const auto explicit_soften = ResolveGPUCompletionPolicy(false, "1", "1", "1");
+        Require(performance.soften_render && !accuracy.soften_render && !disabled.soften_render &&
+                    !accuracy_override.soften_render && !stock_render.soften_render &&
+                    explicit_soften.soften_render && stock_render.render && stock_render.transfer,
+                "Timing refinement defaults only to Performance Mode and can be disabled");
         Require(render_only.render && !render_only.transfer && !disabled.render && !disabled.transfer &&
                     accuracy_override.render && accuracy_override.transfer,
                 "Explicit timing diagnostic precedence");
@@ -60,6 +66,12 @@ int main() {
         estimate.Draw(5, 2); // 3 fan triangles.
         Require(estimate.TakeNanoseconds() == 300000 + 112 + 9 * 288, "Original PICA work estimate");
         Require(estimate.TakeNanoseconds() == 300000, "Work was not reset at completion");
+        constexpr u64 refresh_ns = 16'666'666;
+        Require(Cara::SoftenP3DLatency(6'000'000, refresh_ns) == 6'000'000 &&
+                    Cara::SoftenP3DLatency(8'333'333, refresh_ns) == 8'333'333 &&
+                    Cara::SoftenP3DLatency(23'500'000, refresh_ns) == 15'916'666 &&
+                    Cara::SoftenP3DLatency(40'000'000, refresh_ns) > refresh_ns,
+                "Soft knee preserves small work and long batches can span refreshes");
         Require(Cara::P3DNanosecondsToTicks(0) == 1 &&
                 Cara::P3DNanosecondsToTicks(1000000000) == 268111856, "Checked guest tick conversion");
         Require(Cara::P3DNanosecondsToTicks(UINT64_MAX) > 0, "Largest nanosecond duration wrapped");
