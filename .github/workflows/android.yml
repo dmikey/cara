@@ -7,6 +7,8 @@ on:
       - '.github/workflows/android.yml'
       - 'emulator/CMakeLists.txt'
       - 'emulator/src/android/**'
+      - 'emulator/src/cara/**'
+      - 'emulator/src/core/**'
       - 'emulator/src/video_core/renderer_opengl/**'
 
 permissions:
@@ -14,6 +16,15 @@ permissions:
 
 jobs:
   apk:
+    name: APK (${{ matrix.renderer }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - renderer: atlas
+            atlas: 'ON'
+          - renderer: gles32
+            atlas: 'OFF'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -32,7 +43,7 @@ jobs:
           gradle-version: '8.13'
       - name: Build ARM64 GLES and FastInterp debug APK
         working-directory: emulator/src/android
-        run: gradle --no-daemon --max-workers=3 :app:assembleDebug
+        run: gradle --no-daemon --max-workers=3 :app:assembleDebug -PcaraGlesAtlas=${{ matrix.atlas }}
       - name: Verify the APK
         run: |
           apk=emulator/src/android/app/build/outputs/apk/debug/app-debug.apk
@@ -40,6 +51,6 @@ jobs:
           unzip -l "$apk" | grep 'lib/arm64-v8a/libmain.so'
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-android-arm64-gles-fastinterp
+          name: cara-android-arm64-${{ matrix.renderer }}-fastinterp
           if-no-files-found: error
           path: emulator/src/android/app/build/outputs/apk/debug/app-debug.apk

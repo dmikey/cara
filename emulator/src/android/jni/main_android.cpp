@@ -157,6 +157,12 @@ void BootGame(const std::string& path) {
     // This residency path was tested on Mali with both GLES backends.
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
     setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
+    setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
+    LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
+             Config::Get(packed_fetch_reuse));
+#endif
     const auto gpu_policy = Cara::GetGPUCompletionPolicy(ReadPlayMode() == Cara::PlayMode::Performance);
     Cara::gpu_completion_policy = gpu_policy;
     LOG_INFO(Frontend, "Android GPU completion: P3D={} PPF={} soft knee={}",
