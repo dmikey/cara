@@ -1,5 +1,6 @@
 // Copyright 2026 Cara contributors. GPLv2 or later; see license.txt.
 #include "../emulator/src/video_core/renderer_opengl/ios_pipeline_cache.h"
+#include "../emulator/src/video_core/renderer_opengl/gl_native_quaternion_geometry.h"
 #include <cassert>
 #include <iostream>
 using namespace OpenGL::IOSPipelineCache;
@@ -38,6 +39,25 @@ int main() {
     const auto vs_digest = Digest(expected[0].vertex.data(), expected[0].vertex.size());
     const auto fs_digest = Digest(expected[0].fragment.data(), expected[0].fragment.size());
     assert(KeyFromDigests(vs_digest, fs_digest) == Key(expected[0].vertex, expected[0].fragment));
+    namespace Geometry = OpenGL::NativeQuaternionGeometry;
+    const auto es_vertex = std::string(Geometry::AndroidEsslMarker) + expected[0].vertex;
+    const auto es_fragment = std::string(Geometry::AndroidEsslMarker) + expected[0].fragment;
+    const auto geometry_vertex = std::string(Geometry::AndroidEsslMarker) +
+                                 std::string(Geometry::AndroidVertexMarker) + expected[0].vertex;
+    const auto geometry_identity = identity + "\n" + std::string(Geometry::AndroidCacheVariant);
+    const std::vector<Entry> geometry_entries{{es_vertex, es_fragment, 5, {4, 5, 6}},
+                                               {geometry_vertex, es_fragment, 0, {}}};
+    const auto geometry_bytes = Encode(geometry_identity, geometry_entries);
+    assert(!Decode(geometry_bytes, identity, decoded));
+    assert(Decode(geometry_bytes, geometry_identity, decoded));
+    assert(decoded.size() == 2 && decoded[1].binary.empty());
+    assert(!Geometry::HasAndroidGeometryVertex(decoded[0].vertex));
+    assert(Geometry::HasAndroidGeometryVertex(decoded[1].vertex));
+    assert(!Geometry::HasAndroidGeometryVertex(std::string(Geometry::AndroidVertexMarker)));
+    assert(Key(decoded[0].vertex, decoded[0].fragment) != Key(decoded[1].vertex, decoded[1].fragment));
+    assert(!Geometry::AndroidEsslSupported(3, 1) && Geometry::AndroidEsslSupported(3, 2));
+    assert(Geometry::Source().find("gl_ClipDistance[1]") != std::string::npos);
+    assert(Geometry::Source(false).find("gl_ClipDistance") == std::string::npos);
     int vs_a = 0, vs_b = 0, fs_a = 0, fs_b = 0, factories = 0;
     StagePairMemo<std::uint64_t, 1> memo; // Force every distinct pair to collide.
     const auto get = [&](const void* vs, const void* fs, std::uint64_t value) {

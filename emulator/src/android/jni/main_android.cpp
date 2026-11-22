@@ -169,6 +169,8 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> fixed_geometry{{"Debug", "gpu_fixed_quaternion_geometry"}, false};
+    setenv("CARA_GPU_FIXED_QUATERNION_GEOMETRY", Config::Get(fixed_geometry) ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
              Config::Get(packed_fetch_reuse));
 #endif
@@ -340,14 +342,14 @@ void BootGame(const std::string& path) {
                                                          ? adaptive_clock.Percent()
                                                          : ReadPlayPolicy().guest_clock;
                             const auto message = fmt::format(
-                                "window end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} worst_frame={} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f}",
+                                "window end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} worst_frame={} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f} geometry_programs={}",
                                 frame, guest_clock,
                                 (frame_times[59] + frame_times[60]) / 2, frame_times[118],
                                 worst_time, worst_frame, phases.pica_draw_requests,
                                 phases.vertex_upload_seconds * 1000, phases.draw_submit_seconds * 1000,
                                 phases.surface_download_seconds * 1000,
                                 phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
-                                phases.gpu_wait_seconds * 1000);
+                                phases.gpu_wait_seconds * 1000, phases.gpu_fixed_geometry_programs);
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
                             reset_trace();
                         }

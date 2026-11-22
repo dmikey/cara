@@ -27,6 +27,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
+#include "common/frame_timing.h"
 #include "core/cache_file.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_fragment_lighting_ablation.h"
@@ -222,6 +223,48 @@ public:
 #endif
     }
 
+    void ConfigureAndroidQuaternionGeometry() {
+#ifdef CARA_ANDROID_GLES_ATLAS
+        const char* flag = std::getenv("CARA_GPU_FIXED_QUATERNION_GEOMETRY");
+        if (!flag || std::strcmp(flag, "1") != 0 || !GLES || separable)
+            return;
+
+        NativeQuaternionGeometry::Limits limits;
+        glGetIntegerv(GL_MAJOR_VERSION, &limits.major);
+        glGetIntegerv(GL_MINOR_VERSION, &limits.minor);
+        if (!NativeQuaternionGeometry::AndroidEsslSupported(limits.major, limits.minor)) {
+            LOG_WARNING(Render_OpenGL, "Fixed quaternion geometry requires GLES 3.2");
+            return;
+        }
+        glGetIntegerv(GL_MAX_GEOMETRY_OUTPUT_VERTICES, &limits.vertices);
+        glGetIntegerv(GL_MAX_GEOMETRY_INPUT_COMPONENTS, &limits.input);
+        glGetIntegerv(GL_MAX_GEOMETRY_OUTPUT_COMPONENTS, &limits.output);
+        glGetIntegerv(GL_MAX_GEOMETRY_TOTAL_OUTPUT_COMPONENTS, &limits.total);
+        glGetIntegerv(GL_MAX_VERTEX_OUTPUT_COMPONENTS, &limits.vertex_output);
+        if (!NativeQuaternionGeometry::AndroidLimitsSupported(limits)) {
+            LOG_WARNING(Render_OpenGL, "Fixed quaternion geometry exceeds this device's limits");
+            return;
+        }
+
+        const auto source = std::string(NativeQuaternionGeometry::AndroidEsslMarker) +
+                            NativeQuaternionGeometry::Source(false);
+        native_geometry_shader.Create(source, GL_GEOMETRY_SHADER,
+                                      Common::ComputeHash64(source.data(), source.size()));
+        android_geometry_enabled = native_geometry_shader.IsValid();
+        if (android_geometry_enabled) {
+            LOG_INFO(Render_OpenGL, "Fixed quaternion geometry enabled on GLES {}.{}",
+                     limits.major, limits.minor);
+        } else {
+            LOG_WARNING(Render_OpenGL, "Fixed quaternion geometry shader failed; using baseline");
+        }
+#endif
+    }
+
+    void MarkAtlasEsslVersion(std::string& source) const {
+        if (android_geometry_enabled)
+            source.insert(0, NativeQuaternionGeometry::AndroidEsslMarker);
+    }
+
     explicit Impl(bool separable)
         : separable(separable), trivial_vertex_shader(separable),
           trivial_geometry_shader(separable), native_geometry_shader(separable) {
@@ -232,6 +275,7 @@ public:
             std::getenv("CARA_NATIVE_SHADER_SUFFIX_SHARING"), std::getenv("CARA_NATIVE_DIAGNOSTICS"));
 #endif
         ConfigureNativeQuaternionGeometry();
+        ConfigureAndroidQuaternionGeometry();
         if (separable) {
             pipeline.Create();
         }
@@ -259,7 +303,8 @@ public:
             vertex_provenance=std::make_unique<VertexProvenance::Ledger<>>(next_session.fetch_add(1));
         }
 #endif
-        const auto trivial = GenerateTrivialVertexShader(separable);
+        auto trivial = GenerateTrivialVertexShader(separable);
+        MarkAtlasEsslVersion(trivial);
         trivial_vertex_shader.Create(trivial, GL_VERTEX_SHADER, 0, CanDeferIOSStage(trivial));
     }
 
@@ -313,11 +358,19 @@ public:
     }
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     unsigned ios_indexed_inputs, u16 selected_input_mask) {
+                                     unsigned ios_indexed_inputs, u16 selected_input_mask,
+                                     bool try_android_geometry = true) {
         bool result = false;
         const bool native_geometry = NativeQuaternionGeometry::Selected(native_geometry_enabled,ios_indexed_inputs) &&
             regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No;
         native_geometry_selected=native_geometry;
+        if (android_geometry_inputs.regs)
+            android_geometry_inputs.regs = nullptr;
+        // Expanded lit triangles need the first corner's quaternion. Keep
+        // unlit, guest GS and alternate indexed/feedback paths on their usual shader.
+        const bool android_geometry = try_android_geometry &&
+            NativeQuaternionGeometry::Selected(android_geometry_enabled, ios_indexed_inputs) &&
+            !regs.lighting.disable && regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No;
         const bool native_dispatch = NativeQuaternionGeometry::Selected(native_dispatch_enabled,ios_indexed_inputs) &&
             regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No;
         native_dispatch_selected=native_dispatch;
@@ -332,18 +385,33 @@ public:
         key_hash ^= Common::ComputeHash64(&ios_indexed_inputs, sizeof(ios_indexed_inputs));
         // Output semantics are part of a fused ES vertex program, not a separate GS.
         key_hash ^= Common::ComputeHash64(&ios_output, sizeof(ios_output));
-        if(native_geometry) {const u32 option=NativeQuaternionGeometry::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
+        if(native_geometry || android_geometry) {const u32 option=NativeQuaternionGeometry::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
         if(native_dispatch) {const u32 option=0x4e494431;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
         if(native_suffix_sharing) {const u32 option=ShaderSuffixSharing::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
-        if (failed_ios_vertex_shaders.count(key_hash)) {native_geometry_selected=false;native_dispatch_selected=false;return false;}
+        if (failed_ios_vertex_shaders.count(key_hash)) {
+            native_geometry_selected = false;
+            native_dispatch_selected = false;
+            return android_geometry && UseProgrammableVertexShader(
+                regs, setup, ios_indexed_inputs, selected_input_mask, false);
+        }
 #endif
         const auto iter_ref = shaders_ref.find(key_hash);
         if (iter_ref == shaders_ref.end()) {
-            std::string vs_code = GenerateVertexShader(setup, key, separable
+            const auto generate = [&]([[maybe_unused]] bool optimize) {
+                auto source = GenerateVertexShader(setup, key, separable
 #ifdef CARA_IOS_GLES
-                , &ios_output, ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch, native_suffix_sharing
+                    , &ios_output, ios_input_mask, ios_indexed_inputs, optimize,
+                    native_geometry || android_geometry, native_dispatch, native_suffix_sharing
 #endif
-            );
+                );
+                if (!source.empty()) {
+                    if (android_geometry)
+                        source.insert(0, NativeQuaternionGeometry::AndroidVertexMarker);
+                    MarkAtlasEsslVersion(source);
+                }
+                return source;
+            };
+            std::string vs_code = generate(true);
             if (vs_code.empty()) {
 #ifdef CARA_IOS_GLES
                 if(native_geometry || native_dispatch) {
@@ -361,8 +429,7 @@ public:
                 // device; it never affects normal launches.
                 const char* force_retry = std::getenv("CARA_GPU_TEST_SHADER_RETRY");
                 if (force_retry && std::strcmp(force_retry, "1") == 0) {
-                    const auto baseline = GenerateVertexShader(setup, key, separable,
-                        &ios_output, ios_input_mask, ios_indexed_inputs, false, native_geometry, native_dispatch, native_suffix_sharing);
+                    const auto baseline = generate(false);
                     if (baseline != vs_code)
                         vs_code += "\n#error Cara optional shader retry test\n";
                 }
@@ -370,8 +437,7 @@ public:
                 current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER);
 #ifdef CARA_IOS_GLES
                 if (!current_shaders.vs) {
-                    auto baseline = GenerateVertexShader(setup, key, separable,
-                        &ios_output, ios_input_mask, ios_indexed_inputs, false, native_geometry, native_dispatch, native_suffix_sharing);
+                    auto baseline = generate(false);
                     if (!baseline.empty() && baseline != vs_code) {
                         LOG_WARNING(Render_OpenGL,
                             "Optional vertex optimization failed; retrying baseline GPU shader");
@@ -392,7 +458,14 @@ public:
             result = true;
         }
 #ifdef CARA_IOS_GLES
-        if (!result) failed_ios_vertex_shaders.insert(key_hash);
+        if (!result) {
+            failed_ios_vertex_shaders.insert(key_hash);
+            if (android_geometry)
+                return UseProgrammableVertexShader(regs, setup, ios_indexed_inputs,
+                                                   selected_input_mask, false);
+        } else if (android_geometry) {
+            android_geometry_inputs = {&regs, &setup, ios_indexed_inputs, selected_input_mask};
+        }
 #endif
         return result;
     }
@@ -446,6 +519,7 @@ public:
         if (!stage) {
             auto source = GenerateFragmentShader(config, separable,
                 {.gles = true, .allow_shadow = AllowShadow, .metal_runtime_tev_units = units});
+            MarkAtlasEsslVersion(source);
             stage = GetShaderStageRef(source, GL_FRAGMENT_SHADER);
             if (!stage)
                 return false;
@@ -467,6 +541,7 @@ public:
         auto iter_ref = shaders_ref.find(key_hash);
         if (iter_ref == shaders_ref.end()) {
             std::string fs_code = GenerateFragmentShader(key, separable);
+            MarkAtlasEsslVersion(fs_code);
             current_shaders.fs = GetShaderStageRef(fs_code, GL_FRAGMENT_SHADER);
             if (current_shaders.fs) {
                 shaders_ref[key_hash] = current_shaders.fs;
@@ -523,17 +598,28 @@ public:
 
     void UseTrivialVertexShader() {
         native_geometry_selected=false;
+        android_geometry_inputs.regs = nullptr;
         native_dispatch_selected=false;
         current_shaders.vs = &trivial_vertex_shader;
     }
 
     void UseTrivialGeometryShader() {
-        current_shaders.gs = native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
+        current_shaders.gs = native_geometry_selected || android_geometry_inputs.regs
+                                 ? &native_geometry_shader : &trivial_geometry_shader;
+    }
+
+    bool RetryWithBaselineVertex() {
+        // Re-select the exact baseline VS for this draw. The fragment source
+        // and all input registers, textures and guest geometry stay the same.
+        const auto inputs = android_geometry_inputs;
+        return inputs.regs && UseProgrammableVertexShader(
+            *inputs.regs, *inputs.setup, inputs.indexed_mode, inputs.input_mask, false);
     }
 
     void ApplyTo(OpenGLState& state) {
         // Also covers a programmable-mode change during feedback fallback.
-        if(native_geometry_enabled) current_shaders.gs=native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
+        if (native_geometry_enabled || android_geometry_enabled)
+            UseTrivialGeometryShader();
 #ifdef CARA_IOS_GLES
         if (!separable && NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
             ApplyIOSPipeline(state);
@@ -558,6 +644,10 @@ public:
             u64 hash = Common::ComputeHash64(bundle.data(), bundle.size() * sizeof(u64));
 #ifdef CARA_IOS_GLES
             if (failed_ios_programs.count(hash)) {
+                if (RetryWithBaselineVertex()) {
+                    ApplyTo(state);
+                    return;
+                }
                 if(native_geometry_selected || native_dispatch_selected) throw std::runtime_error("Native shader route program previously failed; no CPU fallback");
                 state.draw.shader_program = 0;
                 state.draw.program_pipeline = 0;
@@ -575,6 +665,15 @@ public:
                 else { if(native_geometry_selected || native_dispatch_selected) throw std::runtime_error("Native shader route program link failed; no CPU fallback"); failed_ios_programs.insert(hash); }
 #endif
             }
+#ifdef CARA_IOS_GLES
+            if (!cached_program.handle && RetryWithBaselineVertex()) {
+                ApplyTo(state);
+                return;
+            }
+#endif
+            if (cached_program.handle && android_geometry_inputs.regs &&
+                Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.gpu_fixed_geometry_programs;
             state.draw.shader_program = cached_program.handle;
             state.draw.program_pipeline = 0;
         }
@@ -661,6 +760,11 @@ public:
         const char* fetch_reuse = std::getenv("CARA_GPU_PACKED_FETCH_REUSE");
         identity += fetch_reuse && std::strcmp(fetch_reuse, "1") == 0
                         ? "\npacked-fetch-reuse=1" : "\npacked-fetch-reuse=0";
+        if (android_geometry_enabled) {
+            identity += '\n';
+            identity += NativeQuaternionGeometry::AndroidCacheVariant;
+            identity += fmt::format("\nfixed-stage={:016x}", native_geometry_shader.GetSourceDigest());
+        }
 #else
         identity += "\nbackend=ios-gles";
 #endif
@@ -697,8 +801,12 @@ public:
     }
     void LoadIOSPipelines() {
         ios_identity = IOSIdentity();
-        ios_cache_path = GetCacheFile() +
-                         (UseNativeLUTBuffers() ? ".native-lut.cara-pso1" : ".cara-pso1");
+        ios_cache_path = GetCacheFile();
+        if (android_geometry_enabled) {
+            ios_cache_path += '.';
+            ios_cache_path += NativeQuaternionGeometry::AndroidCacheVariant;
+        }
+        ios_cache_path += UseNativeLUTBuffers() ? ".native-lut.cara-pso1" : ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
         std::ifstream file(ios_cache_path, std::ios::binary | std::ios::ate);
@@ -711,6 +819,7 @@ public:
             !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries)) return;
         const auto start = std::chrono::steady_clock::now();
         unsigned binary_hits = 0, source_links = 0;
+        unsigned geometry_binary_hits = 0, geometry_source_links = 0;
         // A stage shared by several saved programs needs compiling only once.
         // Keys compare the complete source; separate maps retain stage type.
         // Lifetime ends after all saved programs have linked on this GL thread.
@@ -725,18 +834,27 @@ public:
             const auto key = IOSPipelineCache::Key(e.vertex, e.fragment);
             ios_entry_keys.push_back(key);
             auto& p = program_cache[key];
+            const bool fixed_geometry = NativeQuaternionGeometry::HasAndroidGeometryVertex(e.vertex);
+            if (fixed_geometry && !android_geometry_enabled)
+                continue;
             if (!e.binary.empty() && std::find(ios_formats.begin(), ios_formats.end(),
                                              static_cast<GLint>(e.format)) != ios_formats.end()) {
                 std::vector<GLbyte> binary(e.binary.begin(), e.binary.end());
                 p.Create(e.format, binary);
-                if (p.handle) ++binary_hits;
+                if (p.handle) {
+                    ++binary_hits;
+                    geometry_binary_hits += fixed_geometry;
+                }
             }
             if (!p.handle) {
                 // Same GL/context thread as ordinary compilation. No background GL context.
                 const auto vs = stage(prewarm_vertices, e.vertex, GL_VERTEX_SHADER);
                 const auto fs = stage(prewarm_fragments, e.fragment, GL_FRAGMENT_SHADER);
-                if (vs && fs) p.Create(false, {vs, fs});
-                if (p.handle) ++source_links;
+                LinkIOSProgram(p, vs, fs, fixed_geometry);
+                if (p.handle) {
+                    ++source_links;
+                    geometry_source_links += fixed_geometry;
+                }
                 e.binary.clear(); e.format = 0;
             }
             BindIOSProgram(p);
@@ -745,6 +863,21 @@ public:
                  binary_hits, source_links,
                  std::chrono::duration_cast<std::chrono::microseconds>(
                      std::chrono::steady_clock::now() - start).count(), ios_formats.size());
+        if (android_geometry_enabled) {
+            LOG_INFO(Render_OpenGL, "Fixed quaternion geometry prewarm: {} binary hits, {} source links",
+                     geometry_binary_hits, geometry_source_links);
+        }
+    }
+    void LinkIOSProgram(OGLProgram& program, GLuint vs, GLuint fs, bool fixed_geometry) {
+        if (!vs || !fs)
+            return;
+        if (fixed_geometry) {
+            const GLuint gs = native_geometry_shader.GetHandle();
+            if (gs)
+                program.Create(false, {vs, gs, fs});
+        } else {
+            program.Create(false, {vs, fs});
+        }
     }
     void SaveIOSPipelines() {
         const auto now = std::chrono::steady_clock::now();
@@ -786,7 +919,7 @@ public:
         auto& p = *pair.program;
         if (!p.handle && !failed_ios_programs.count(key)) {
             const auto vs = current_shaders.vs->GetHandle(), fs = current_shaders.fs->GetHandle();
-            if (vs && fs) p.Create(false, {vs, fs});
+            LinkIOSProgram(p, vs, fs, android_geometry_inputs.regs != nullptr);
             BindIOSProgram(p);
             if (!p.handle) failed_ios_programs.insert(key);
             else if (ios_entries.size() < IOSPipelineCache::MaxEntries &&
@@ -814,6 +947,12 @@ public:
                 }
             }
         }
+        if (!p.handle && RetryWithBaselineVertex()) {
+            ApplyTo(state);
+            return;
+        }
+        if (p.handle && android_geometry_inputs.regs && Common::FrameTiming::counters.enabled)
+            ++Common::FrameTiming::counters.gpu_fixed_geometry_programs;
         if (!p.handle && (native_geometry_selected || native_dispatch_selected))
             throw std::runtime_error("Native shader route cached program failed; no CPU fallback");
         // Checkpoint only after a quiet interval, keeping disk writes out of compile bursts.
@@ -1010,10 +1149,18 @@ public:
 private:
     bool separable;
     bool native_geometry_enabled=false;
+    bool android_geometry_enabled = false;
     bool native_dispatch_enabled=false;
     bool suffix_sharing_policy=false;
     bool native_geometry_selected=false;
     bool native_dispatch_selected=false;
+
+    struct AndroidGeometryInputs {
+        const Pica::Regs* regs = nullptr;
+        Pica::Shader::ShaderSetup* setup = nullptr;
+        unsigned indexed_mode = 0;
+        u16 input_mask = 0;
+    } android_geometry_inputs;
 
     struct {
         OGLShaderStage* vs;

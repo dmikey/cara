@@ -16,6 +16,7 @@
 #include "video_core/renderer_opengl/gl_shader_util.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
+#include "video_core/renderer_opengl/gl_native_quaternion_geometry.h"
 
 namespace OpenGL {
 
@@ -39,6 +40,10 @@ GLuint LoadShader(const char* source, GLenum type) {
 #ifdef CARA_IOS_GLES
 #ifdef CARA_MAC_ATLAS_PIPELINE
     version = "#version 410 core\n";
+#elif defined(CARA_ANDROID_GLES_ATLAS)
+    version = compatible_source.starts_with(NativeQuaternionGeometry::AndroidEsslMarker)
+                  ? "#version 320 es\n"
+                  : "#version 300 es\n";
 #else
     version = "#version 300 es\n";
 #endif
