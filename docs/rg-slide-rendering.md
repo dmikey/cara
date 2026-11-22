@@ -1,9 +1,9 @@
 # Cara rendering on the RG Slide
 
-The connected RG Slide reports **Arm Mali-G57, OpenGL ES 3.2**, with the Arm
-r40p0 driver. Its display exposes 1280 × 960 modes at 60 and 120 Hz. These
-measurements apply to that device and driver. A Mali-T820 needs its own test,
-including a check of the GLES version and extensions the device exposes.
+The Unisoc T820 in the connected RG Slide uses an **Arm Mali-G57** GPU.
+The device reports **OpenGL ES 3.2** with the Arm r40p0 driver and exposes
+1280 × 960 display modes at 60 and 120 Hz. These measurements apply to that
+device and driver.
 
 ## Rendering and play settings
 
@@ -32,6 +32,117 @@ native lighting LUT option is capability-gated and disabled by default. It
 uses buffer textures for lighting, fog, and procedural tables, with its own
 shader binary cache. Its ring invalidates and republishes resident tables when
 it wraps.
+
+## Shared main build on the RG Slide
+
+The Android APK used the source tree merged as `f0afef5`. It ran the shared
+GLES atlas and Dynarmic JIT in Accuracy Mode at 1× with threaded presentation
+and the original guest CPU clock. Logs confirmed that P3D pacing, the PPF
+dependency policy, and the soft knee were disabled. Apple and Android share
+the GLES renderer and guest timing core. Android ARM64 and macOS developer
+builds can use Dynarmic. iOS runs FastInterp. Android and iPad drive shared
+display coalescing from their native display callbacks.
+
+Each result uses consecutive 120-refresh samples. The p99 is the nearest
+rank within each sample and the maximum is an individual emulated system
+refresh. Emulation refresh wall time includes limiter sleep. Scenes were
+matched visually during normal play. Animated scenes were sampled with
+comparable inputs and without deterministic replay.
+
+| Warm scene | Native LUTs off p99 | Native LUTs on p99 | Worst off | Worst on |
+| --- | ---: | ---: | ---: | ---: |
+| Stories rendered forest opening | 114.13 ms | 78.28 ms | 115.17 ms | 82.73 ms |
+| Stories first walk in Secret Path | 180.28 ms | 96.73–99.91 ms | 184.92 ms | 104.85 ms |
+| Dark Moon first conversation in Gadd's lab | 67.96–71.28 ms | 71.84–73.43 ms | 73.45 ms | 81.26 ms |
+| Revelations first ship corridor | 38.50–40.35 ms | 35.37–37.10 ms | 44.96 ms | 38.20 ms |
+
+Stories' two representative walk windows each issued about 122,000 guest
+draw requests. Lighting table work fell from 8,565.47 to 54.44 ms across
+120 refreshes. Those warm windows recorded zero shader compilation and no
+surface downloads. With native lighting on, the emulation still falls
+short of the 16.71 ms target in this walk. Revelations averaged close to the
+59.834 Hz emulation cap in the sampled stationary corridor with native
+lighting, with tails over two refresh intervals. A separate 10 s Revelations
+trace recorded 7.10 CPU seconds on NativeEmulation and 2.61 on the Mali
+command backend thread. Scheduler sleep alone does not identify a GPU wait.
+
+Dark Moon's four warm windows per arm had identical draw counts in
+corresponding windows (83,062–83,760). After the lab's initial lighting
+transition, table work was already small in both arms. Native lighting
+slightly increased warm p99.
+
+First-use shaders stayed expensive in both configurations. The worst
+Stories forest refresh took 1,730.11 ms off and 1,769.14 ms on. The
+Revelations corridor load hit 6,337.46 ms off and 6,236.81 ms on. Dark
+Moon's initial title sequence hit 47,542.37 ms off and 47,494.78 ms on.
+The title windows recorded 80.94 s and 80.63 s of shader driver wall time,
+respectively. On entering Gadd's lab, the worst refresh was 41,119.64 ms
+off and 39,895.49 ms on. The aggregate shader timing covers compile, link,
+and cache operations. The timing does not identify the individual driver
+call responsible for the tail.
+
+A separate Stories boot in Performance Mode confirmed the shared P3D, PPF,
+and soft-knee policies were enabled while Dynarmic and the atlas stayed
+selected. Early prologue samples reported the guest clock at 75%, then
+85%, 95%, and 100%. The sampled wall-clock refresh rate returned to about
+59.834 Hz during this part of the prologue.
+
+[Shared GLES and JIT merge](https://github.com/dmikey/cara/pull/84) ·
+[Android timing instrumentation](https://github.com/dmikey/cara/pull/85)
+
+## Mali-G57 queue and shader driver measurements
+
+The same main APK ran Stories' first walk in Performance Mode with native
+lighting buffers and the original GLES atlas/JIT pairing. It settled at
+50% guest CPU clock. Five complete warm windows reached **54.64–55.35**
+system refreshes/s, roughly **91–93%** of the 59.834 Hz cap. Per-window p99
+was **26.00–36.48 ms** and the worst warm refresh was **45.48 ms**. A
+separate **217.86 ms** refresh included **190.57 ms** of shader activity.
+The performance policy changed the guest workload and reduced requests
+from about 122,000 to 26,000 draws per 120 refreshes.
+
+A separate diagnostic APK compared packed vertex fetch reuse in the same
+walk, with native lighting and Performance Mode set in both runs. Timing
+instrumentation adds overhead, so compare these rows directly.
+
+| Packed fetch reuse | Mean system refreshes/s | Warm p99 range | Worst warm refresh |
+| --- | ---: | ---: | ---: |
+| Off | 51.13 | 27.48–38.75 ms | 48.66 ms |
+| On | 54.02 | 26.33–31.26 ms | 40.60 ms |
+
+Matched movement windows processed roughly 515,000 GPU vertex entries per
+emulated refresh. Median texture acquisition wall time was 3.23 ms/refresh
+off and 2.85 ms on. Vertex preparation was about 1.15 ms/refresh in both.
+Timing includes driver work and waits within scopes. This is one A/B with
+live gameplay, and packed fetch reuse remains an opt-in.
+
+Arm hardware counters sampled simultaneously showed programmable cores
+active during about 93% of GPU-active cycles in the walk. The fragment and
+non-fragment queues accounted for 71.9% and 57.7% of GPU-active cycles
+in the baseline. Those queues overlap. Median external bus read and
+write stall rates were 4.5% and 6.1%. GPU and driver work are already
+substantial in this scene. These device-wide counters use GPU-active
+cycles as their denominator and omit time with the entire GPU idle.
+
+Dark Moon's diagnostic cold title run reached a **47,472.74 ms** maximum.
+That window recorded **70,753.93 ms** across 46 program links and status
+checks, **10,422.59 ms** across 56 shader stage compiles, and **3.74 ms**
+of binary extraction. The slowest individual link took **3,118.40 ms**.
+A six-second CPU profile collected during that burst attributed 93% of
+emulation thread samples to the Mali GLES library. On an immediate
+relaunch of the same APK, all 47 saved programs restored in **30.93 ms**.
+The matching title window still peaked at **2,196.57 ms**, with four
+vertex stage compiles and zero links.
+
+The stored title programs contain 47 pairs, 17 distinct vertex sources,
+and 37 distinct fragment sources. Comparing generated source with only
+the scissor-test lines removed reduces the count to 40 distinct pairs.
+This identifies a bounded GLSL permutation candidate. Exact scissor
+behavior and warm speed need physical checks before changing defaults.
+
+[Diagnostic APK build](https://github.com/dmikey/cara/actions/runs/45072818833) ·
+[Hardware counter sampler build](https://github.com/dmikey/cara/actions/runs/45074322844) ·
+[Arm Mali-G57 counter reference](https://arm-software.github.io/libGPUCounters/mali-g57_counter_reference.html)
 
 ## Physical device observations
 
@@ -132,6 +243,7 @@ RG Slide cost is still unmeasured. See
 
 The shared policy and presentation-guard self-tests passed. APK CI and the
 physical gameplay comparisons are separate checks. The current evidence does
-not establish sustained full speed on the RG Slide or any result on a T820.
+not establish sustained full speed across the tested RG Slide workloads.
+Mali-G52 and Mali-T820 devices require separate tests.
 
 [Arm framebuffer guidance](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-2-how-to-correctly-handle-framebuffers)
