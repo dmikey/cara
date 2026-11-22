@@ -258,6 +258,37 @@ An in-session reload from a disposable state restored the recorded CPU and
 guest timing snapshot and continued with zero draw-time pipeline builds. Slot 4
 remained byte-identical and matched the new app's engine fingerprint.
 
+## Cold shader work and command-list lead time
+
+On an M3 Pro, FastInterp Metal booted Dark Moon through Gadd's lab and the
+mansion entrance with the learned cache disabled. The guest CPU stayed at
+100%. Replaying with both GPU completion options enabled, the 100% and 200%
+host speed limits averaged 55.6 and 84.7 emulated refreshes per second.
+Both produced byte-identical pixels at 40 matching capture refreshes.
+The 200% diagnostic still had an 847.79 ms refresh interval during the
+entrance sequence. These are emulator refresh intervals. The run order also
+allowed the system Metal compiler cache to carry over between processes.
+
+With `CARA_METAL_FRAME_COST=1`, `pica_list_to_first_shader_translation`
+measures from PICA command-list entry to the first runtime translation miss
+in that list. In the 200% replay, 31 of 42 such lists reached their first miss
+in less than 1 ms, and all 42 in less than 5 ms. Runtime translation handled
+259 new pairs in 8.96 s total. A submission hook could inspect an immutable
+command-list snapshot. On this route, its head start would usually cover a
+small fraction of translation. Later misses within the same list can have
+more lead time, including time spent on earlier shader misses.
+
+`CARA_METAL_REUSE_VERTEX_MSL=1` tests a bounded reuse cache for identical
+linked vertex SPIR-V and vertex mode. Each pair still links and validates
+its resources and varyings. The cache skips the SPIRV-Cross MSL emission for
+a repeated vertex stage paired with a different fragment.
+
+In the matched 200% replays, it reused 198 of 259 vertex stages and cut
+draw-time translation from 8.96 s to 5.86 s. All 41 captured images,
+including the final capture, matched byte for byte. Overall refresh p99
+went from 35.62 ms to 29.40 ms. The slowest mansion-entrance refresh
+still took 543.22 ms, down from 847.79 ms. The experiment remains opt-in.
+
 ## Cartridge gameplay checks
 
 Boot each local cartridge with a fresh user directory and FastInterp. Drive

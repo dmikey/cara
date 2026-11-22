@@ -775,6 +775,7 @@ std::optional<std::array<unsigned, 3>> PicaMetalPipelines::RuntimeMaterialUnits(
     auto stages = [&] {
         if (auto cached = ReadMslDisk(vertex, fragment, unsigned(mode)))
             return cached;
+        NativeMetalCost::RecordFirstShaderTranslation();
         NativeMetalCost::Scope translate(NativeMetalCost::RuntimeShaderTranslate);
         return TranslateRuntimeMetalShaders(vertex, fragment, translate_mode, raw,
                                             raw && UseMetalRawIndexConstants(), error);

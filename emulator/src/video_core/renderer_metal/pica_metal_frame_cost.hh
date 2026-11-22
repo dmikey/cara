@@ -54,7 +54,10 @@ enum Phase : std::size_t {
     VertexArenaTransport, VertexArenaTransportBytes, VertexCacheRecentProbes, VertexCacheRecentHits,
     VertexTransformDedupCandidates, VertexTransformDedupHits, VertexTransformsAvoided,
     RuntimeSourceLogicalBytes, RuntimeSourceUniqueBytes, RuntimeSourceInternHits,
-    SimdReferenceRequests, SimdReferenceCompiled, SimdReferenceRejected, SimdReferenceFallbacks, SimdReferenceDraws, DisplayCropRgb8Candidates, DisplayCrop565Candidates, DisplayCropOwnerHits, DisplayCropOwnerMisses, DisplayCropFused, DisplayCropSourceBytesAvoided, DisplayRgb8RetileCandidates, DisplayRgb8RetileOwnerHits, DisplayLinearBufferOnly, DisplayLinearTextureBytesAvoided, LinearTextureAlignmentQueries, LinearTextureAlignmentHits, ShaderIdentityFullChecks, ShaderIdentityComparedBytes, ShaderIdentityFastHits, ShaderIdentityValidationFailures, AsyncDepthImports, AsyncDepthChecksPassed, AsyncDepthChecksFailed, QueuedPendingDepthExports, PhaseCount
+    SimdReferenceRequests, SimdReferenceCompiled, SimdReferenceRejected, SimdReferenceFallbacks, SimdReferenceDraws, DisplayCropRgb8Candidates, DisplayCrop565Candidates, DisplayCropOwnerHits, DisplayCropOwnerMisses, DisplayCropFused, DisplayCropSourceBytesAvoided, DisplayRgb8RetileCandidates, DisplayRgb8RetileOwnerHits, DisplayLinearBufferOnly, DisplayLinearTextureBytesAvoided, LinearTextureAlignmentQueries, LinearTextureAlignmentHits, ShaderIdentityFullChecks, ShaderIdentityComparedBytes, ShaderIdentityFastHits, ShaderIdentityValidationFailures, AsyncDepthImports, AsyncDepthChecksPassed, AsyncDepthChecksFailed, QueuedPendingDepthExports,
+    PicaListToFirstShaderTranslation, PicaFirstShaderWithin100us, PicaFirstShaderWithin1ms,
+    PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
+    RuntimeVertexSpirvMslHit, PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
     "color_acquire", "depth_acquire", "lut_refresh", "record_total", "encode_total",
@@ -113,7 +116,10 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "vertex_arena_transport", "vertex_arena_transport_bytes", "vertex_cache_recent_probes", "vertex_cache_recent_hits",
     "vertex_transform_dedup_candidates", "vertex_transform_dedup_hits", "vertex_transforms_avoided",
     "runtime_source_logical_bytes", "runtime_source_unique_bytes", "runtime_source_intern_hits",
-    "simd_reference_requests", "simd_reference_compiled", "simd_reference_rejected", "simd_reference_fallbacks", "simd_reference_draws", "display_crop_rgb8_candidates", "display_crop_rgb565_candidates", "display_crop_owner_hits", "display_crop_owner_misses", "display_crop_fused", "display_crop_source_bytes_avoided", "display_rgb8_retile_candidates", "display_rgb8_retile_owner_hits", "display_linear_buffer_only", "display_linear_texture_bytes_avoided", "linear_texture_alignment_queries", "linear_texture_alignment_hits", "shader_identity_full_checks", "shader_identity_compared_bytes", "shader_identity_fast_hits", "shader_identity_validation_failures", "async_depth_imports", "async_depth_checks_passed", "async_depth_checks_failed", "queued_pending_depth_exports"};
+    "simd_reference_requests", "simd_reference_compiled", "simd_reference_rejected", "simd_reference_fallbacks", "simd_reference_draws", "display_crop_rgb8_candidates", "display_crop_rgb565_candidates", "display_crop_owner_hits", "display_crop_owner_misses", "display_crop_fused", "display_crop_source_bytes_avoided", "display_rgb8_retile_candidates", "display_rgb8_retile_owner_hits", "display_linear_buffer_only", "display_linear_texture_bytes_avoided", "linear_texture_alignment_queries", "linear_texture_alignment_hits", "shader_identity_full_checks", "shader_identity_compared_bytes", "shader_identity_fast_hits", "shader_identity_validation_failures", "async_depth_imports", "async_depth_checks_passed", "async_depth_checks_failed", "queued_pending_depth_exports",
+    "pica_list_to_first_shader_translation", "pica_first_shader_within_100us",
+    "pica_first_shader_within_1ms", "pica_first_shader_within_5ms", "pica_first_shader_after_5ms",
+    "runtime_vertex_spirv_msl_hit"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {
@@ -288,6 +294,34 @@ struct Scope {
         start = {};
     }
 };
+// Only the first translation miss is timed. Later misses in the same list could
+// include waits for the earlier compiler work and overstate available lead time.
+inline thread_local Scope::Clock::time_point pica_list_started{};
+struct PicaListScope {
+    Scope::Clock::time_point previous{};
+    PicaListScope() {
+        if (Enabled()) {
+            previous = pica_list_started;
+            pica_list_started = Scope::Clock::now();
+        }
+    }
+    ~PicaListScope() {
+        if (Enabled())
+            pica_list_started = previous;
+    }
+};
+inline void RecordFirstShaderTranslation() {
+    if (pica_list_started == Scope::Clock::time_point{})
+        return;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Scope::Clock::now() - pica_list_started).count();
+    pica_list_started = {};
+    RecordNs(PicaListToFirstShaderTranslation, elapsed);
+    const Phase bucket = elapsed < 100'000 ? PicaFirstShaderWithin100us
+        : elapsed < 1'000'000 ? PicaFirstShaderWithin1ms
+        : elapsed < 5'000'000 ? PicaFirstShaderWithin5ms : PicaFirstShaderAfter5ms;
+    Count(bucket, 1);
+}
 inline void Append(std::ostream& out) {
     if (!Enabled()) return;
     for (std::size_t i = 0; i < names.size(); ++i)

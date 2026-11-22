@@ -44,6 +44,9 @@
 #include "video_core/regs_pipeline.h"
 #include "video_core/regs_texturing.h"
 #include "video_core/renderer_base.h"
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+#include "video_core/renderer_metal/pica_metal_frame_cost.hh"
+#endif
 #include "video_core/shader/shader.h"
 #include "video_core/vertex_loader.h"
 #include "video_core/video_core.h"
@@ -1026,6 +1029,9 @@ u64 TakeExperimentalP3DNanoseconds() {
 }
 
 void ProcessCommandList(PAddr list, u32 size) {
+#ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
+    Cara::NativeMetalCost::PicaListScope shader_lead_time;
+#endif
     if (PostIRQProfileEnabled()) post_irq_submission = {};
     if (Common::FrameTiming::counters.enabled)
         ++Common::FrameTiming::counters.pica_command_lists;
