@@ -161,6 +161,14 @@ NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool
     return {slot->source, slot->revision};
 }
 
+NativeShaderSource RuntimeTevSource(OpenGL::PicaFSConfig config, bool dual) {
+    config.state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
+    config.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
+    config.state.tev_stages = {};
+    config.state.combiner_buffer_input = 0;
+    return NativeFragmentSource(config, true, dual ? 3 : 1);
+}
+
 std::optional<PicaMetalPipelineSelection> SelectGeneralFragment(
     PicaMetalPipelines& pipelines, const PicaPipelineInputs& draw, OpenGL::PicaFSConfig canonical,
     const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& second,
@@ -168,10 +176,7 @@ std::optional<PicaMetalPipelineSelection> SelectGeneralFragment(
     canonical.state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
     canonical.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
     if (UseRuntimeTevFallback() && canonical.SupportsRuntimeTev()) {
-        auto dynamic = canonical;
-        dynamic.state.tev_stages = {};
-        dynamic.state.combiner_buffer_input = 0;
-        const auto fs = NativeFragmentSource(dynamic, true, second ? 3 : 1);
+        const auto fs = RuntimeTevSource(canonical, second.has_value());
         if (auto choice = pipelines.SelectWithGeneral(draw, fs.bytes, sampler, second, third)) {
             choice->runtime_tev = choice->general_fragment;
             return choice;
@@ -1203,7 +1208,8 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         assembler.IsEmpty() && r.pipeline.num_vertices % 3 == 0 &&
         r.pipeline.num_vertices <= 16384 &&
         pipelines.TryVertexFallback(pica, StageInVertexSource().bytes, sampler[0], second, third,
-                                    can_use_general && UseRuntimeTevFallback() && fcfg.SupportsRuntimeTev())) {
+                                    can_use_general && UseRuntimeTevFallback() && fcfg.SupportsRuntimeTev(),
+                                    [&] { return RuntimeTevSource(fcfg, second.has_value()).bytes; })) {
         *interpret_vertices = true;
         return std::nullopt;
     }

@@ -1571,7 +1571,8 @@ bool PicaMetalPipelines::StartSpecialization(
 bool PicaMetalPipelines::TryVertexFallback(
     const PicaPipelineInputs& exact, std::string_view stage_in_vertex,
     const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
-    const std::optional<PicaSampleInputs>& tertiary, bool prefer_general) {
+    const std::optional<PicaSampleInputs>& tertiary, bool prefer_general,
+    const std::function<std::string_view()>& runtime_tev_fragment) {
     PollSpecialization();
     if (warming || warmup_mode == WarmupReplay || warmup_mode == WarmupRecord ||
         HasSimdVertexTag(exact.vertex))
@@ -1596,10 +1597,25 @@ bool PicaMetalPipelines::TryVertexFallback(
             LOG_INFO(Render_OpenGL, "Vertex fallback waiting on an unrelated compiler job");
         return false;
     }
-    const auto units = RuntimeMaterialUnits(stage_in.vertex, stage_in.fragment, stage_in.vertex_mode);
-    if (!units || *units != std::array{exact.sampled_unit, exact.secondary_unit, exact.tertiary_unit} ||
-        !Prepare(stage_in, sampler, secondary, tertiary))
+    static const bool allow_shared_stage_in = [] {
+        const char* value = std::getenv("CARA_METAL_STAGEIN_RUNTIME_TEV");
+        return value && std::string_view(value) == "1";
+    }();
+    const auto prepare_stage_in = [&](std::string_view fragment) {
+        stage_in.fragment = fragment;
+        const auto units = RuntimeMaterialUnits(stage_in.vertex, stage_in.fragment, stage_in.vertex_mode);
+        return units && *units == std::array{exact.sampled_unit, exact.secondary_unit, exact.tertiary_unit} &&
+               Prepare(stage_in, sampler, secondary, tertiary);
+    };
+    // The second pass resolves this same StageIn descriptor using its current
+    // register state and the ordinary general-fragment uniform upload. The
+    // background worker still specializes the packed vertex/fragment pair.
+    const bool shared = allow_shared_stage_in && prefer_general &&
+                        prepare_stage_in(runtime_tev_fragment());
+    if (!shared && !prepare_stage_in(exact.fragment))
         return false;
+    if (shared && std::getenv("CARA_METAL_VERTEX_FALLBACK_TRACE"))
+        LOG_INFO(Render_OpenGL, "Vertex fallback prepared StageIn runtime TEV");
     if (!specializer && !StartSpecialization(*key, *runtime_index, exact, sampler, secondary, tertiary))
         return false;
     NativeMetalCost::RecordColdVertexDraw();
