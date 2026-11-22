@@ -2,14 +2,6 @@ name: Android GLES ARM64
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - '.github/workflows/android.yml'
-      - 'emulator/CMakeLists.txt'
-      - 'emulator/src/android/**'
-      - 'emulator/src/cara/**'
-      - 'emulator/src/core/**'
-      - 'emulator/src/video_core/renderer_opengl/**'
 
 permissions:
   contents: read
@@ -23,8 +15,6 @@ jobs:
         include:
           - renderer: atlas
             atlas: 'ON'
-          - renderer: gles32
-            atlas: 'OFF'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -62,6 +52,6 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-android-arm64-${{ matrix.renderer }}-cpu-jit
+          name: cara-android-arm64-atlas-jit-preview
           if-no-files-found: error
           path: emulator/src/android/app/build/outputs/apk/debug/app-debug.apk

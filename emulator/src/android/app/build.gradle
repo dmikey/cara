@@ -33,8 +33,7 @@ android {
         // Signed by debug key disallowing distribution on Play Store.
         // Attaches 'debug' suffix to version and package name, allowing installation alongside the release build.
         debug {
-            // TODO If this is ever modified, change application_id in debug/strings.xml
-            applicationIdSuffix ".debug"
+            applicationIdSuffix ".jitpreview"
             versionNameSuffix '-debug'
             jniDebuggable true
         }
