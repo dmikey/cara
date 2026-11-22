@@ -1208,12 +1208,15 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                     if (selection.simd_reference && ![device supportsFamily:MTLGPUFamilyApple7]) {
                         if (!fallback_simd()) return false;
                     } else {
-                        static const bool parallel_cold_stages = [] {
-                            const char* value = std::getenv("CARA_METAL_PARALLEL_COLD_STAGES");
-                            return value && std::string_view(value) == "1";
+                        static const auto parallel_override = []() -> std::optional<bool> {
+                            if (const char* value = std::getenv("CARA_METAL_PARALLEL_COLD_STAGES"))
+                                return std::string_view(value) == "1";
+                            return std::nullopt;
                         }();
-                        if (parallel_cold_stages && !vertex_functions.contains(pair.msl_vertex) &&
+                        if (parallel_override.value_or(UseMetalGeneralFragment()) &&
+                            !vertex_functions.contains(pair.msl_vertex) &&
                             !fragment_functions.contains(pair.msl_fragment)) {
+                            NativeMetalCost::RecordColdVertexDraw();
                             const auto vertex_job = [device = device, source = pair.msl_vertex] {
                                 @autoreleasepool {
                                     const auto start = std::chrono::steady_clock::now();
@@ -1223,7 +1226,8 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                                     return std::pair{function, duration.count()};
                                 }
                             };
-                            auto vertex_work = std::async(std::launch::async, vertex_job);
+                            auto vertex_work = std::async(std::launch::async | std::launch::deferred,
+                                                          vertex_job);
                             ps.fragmentFunction = prepare_stage(fragment_functions, pair.msl_fragment,
                                                                 @"cara_pica_frag",
                                                                 NativeMetalCost::RuntimeFragmentLibrary);
@@ -1475,8 +1479,9 @@ bool PicaMetalPipelines::StartSpecialization(
     if (std::find(failed_specializations.begin(), failed_specializations.end(), key) !=
         failed_specializations.end())
         return false;
-    // Copy the immutable stage objects. The worker sees no guest memory or
-    // renderer cache and publishes only a fully reflected pipeline.
+    // Copy the metadata and borrow the immutable, interned source text. The
+    // specialization future joins before the owner's source pool is destroyed.
+    // Each worker keeps its own mutable caches and publishes only a reflected pipeline.
     const auto& stages = runtime_pairs[runtime_index];
     const auto vertex = vertex_functions.find(stages.msl_vertex);
     const auto fragment = fragment_functions.find(stages.msl_fragment);
@@ -1484,19 +1489,16 @@ bool PicaMetalPipelines::StartSpecialization(
     const id<MTLFunction> cached_fragment = fragment == fragment_functions.end() ? nil : fragment->second;
     try {
         auto task = std::async(std::launch::async,
-            [device = device, request = exact, vertex = std::string(exact.vertex),
-             fragment = std::string(exact.fragment), sampler, secondary, tertiary,
-             cached_vertex, cached_fragment]() mutable
+            [device = device, request = exact, runtime = stages, sampler, secondary, tertiary,
+             async_shaders = UseMetalGeneralFragment(), cached_vertex, cached_fragment]() mutable
                 -> std::optional<CompiledSpecialization> {
                 @autoreleasepool {
+                    ConfigureMetalGeneralFragment(async_shaders);
                     PicaMetalPipelines worker(device);
                     worker.retain_compiled_descriptor = true;
-                    request.vertex = vertex;
-                    request.fragment = fragment;
-                    const auto units = worker.RuntimeMaterialUnits(vertex, fragment,
-                                                                 request.vertex_mode);
-                    if (!units)
-                        return std::nullopt;
+                    request.vertex = runtime.vertex_source;
+                    request.fragment = runtime.fragment_source;
+                    worker.runtime_pairs.push_back(std::move(runtime));
                     const auto& stages = worker.runtime_pairs.front();
                     if (cached_vertex)
                         worker.vertex_functions.emplace(stages.msl_vertex, cached_vertex);
