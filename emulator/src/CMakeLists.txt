@@ -225,9 +225,13 @@ if (CARA_SOFTWARE_PRESENTATION AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_include_directories(cara-vertex-input-usage-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(cara-vertex-input-usage-self-test PRIVATE common nihstro-headers ${PLATFORM_LIBRARIES})
     add_executable(cara-shader-flow-self-test shader_flow_self_test.cpp
-        video_core/renderer_opengl/gl_shader_decompiler.cpp)
-    target_compile_definitions(cara-shader-flow-self-test PRIVATE CARA_IOS_GLES=1)
-    target_link_libraries(cara-shader-flow-self-test PRIVATE core common nihstro-headers ${PLATFORM_LIBRARIES} Threads::Threads)
+        shader_combiner_self_test.cpp video_core/renderer_opengl/gl_shader_decompiler.cpp)
+    # Exercise Apple-style vertex decompilation without changing the linked
+    # fragment generator's PicaFSConfig layout in the combiner fixture.
+    set_property(SOURCE video_core/renderer_opengl/gl_shader_decompiler.cpp APPEND
+        PROPERTY COMPILE_DEFINITIONS
+        "$<$<STREQUAL:$<TARGET_PROPERTY:NAME>,cara-shader-flow-self-test>:CARA_IOS_GLES=1>")
+    target_link_libraries(cara-shader-flow-self-test PRIVATE core common glad nihstro-headers ${PLATFORM_LIBRARIES} Threads::Threads)
     if (APPLE)
         target_link_libraries(cara-shader-flow-self-test PRIVATE "-framework OpenGL")
     endif()
