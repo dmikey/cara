@@ -650,6 +650,38 @@ and dispatcher case reachable in twelve large gate vertex programs. Folding
 the entry wrapper changed the median Mac PSO compile time by 0.08 ms
 over 24 matched pairs.
 
+A trace of the three synchronous links at refresh 2 separated two inexpensive
+descriptors from the large multi-texture draw. The first refresh already
+encountered two of the exact pairs. Queueing them early saved one synchronous
+link but increased the first refresh by 641 ms. The remaining draw introduced
+a second texture sample that modulates alpha. Its exact fragment first became
+known at refresh 2.
+
+With Async Shaders enabled, eligible multi-texture draws with a resident
+vertex function and at least 32 KiB of vertex MSL can now use interpreted
+guest vertices and the exact fragment through Metal StageIn while the worker
+links their packed pipeline. Existing geometry, assembly and resource checks
+still apply. Allowing new StageIn descriptors also avoided a 98.77 ms cold
+link at refresh 99 seen when only resident descriptors were accepted.
+
+The following M4 iPad slot 4 replays used identical gate traversal inputs,
+FastInterp, native Metal, Performance Mode and a 100% speed limit for 900
+refreshes. Each cold run used a fresh pipeline archive and compiler namespace.
+P99 covers all 900 refresh intervals.
+
+| Run | Refresh 1 | Refresh 2 | Refresh 99 | P99 | Refreshes/s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Control, cold | 6454.52 ms | 265.68 ms | 23.73 ms | 23.65 ms | 41.35 |
+| Updated, cold | 6429.48 ms | 107.49 ms | 23.28 ms | 23.10 ms | 41.71 |
+| Control, warm | 31.27 ms | 20.42 ms | 24.01 ms | 24.15 ms | 59.68 |
+| Updated, warm | 19.66 ms | 26.56 ms | 23.74 ms | 23.08 ms | 59.69 |
+
+At refresh 2 the three foreground links took 12.480, 0.092 and 0.053 ms.
+Aggregate foreground link time fell from 157.60 to 12.63 ms. The remaining
+fragment library took 52.19 ms. BGRA captures at refreshes 2, 3 and 900
+matched byte-for-byte across all four runs. Set `CARA_METAL_TRACE_COLD_PSO=1`
+to log runtime pair discovery and synchronous descriptor link times.
+
 A separate Mac FastInterp comparison booted the Dark Moon ZIP normally
 for 660 refreshes. All 11 captures matched. Before and after the combined
 changes, p99 measured 114.97 and 109.54 ms, with the worst interval at
