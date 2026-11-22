@@ -290,7 +290,9 @@ void BootGame(const std::string& path) {
             adaptive_clock.SetEnabled(policy.adaptive);
         adaptive_clock.ResetSamples();
         system.perf_stats->ResetFramePacing();
-        system.CoreTiming().UpdateClockSpeed(policy.adaptive ? adaptive_clock.Percent() : policy.guest_clock);
+        const auto guest_clock = policy.adaptive ? adaptive_clock.Percent() : policy.guest_clock;
+        system.CoreTiming().UpdateClockSpeed(guest_clock);
+        OSD::SetGuestClockPercent(guest_clock);
         sampled_frame = VideoCore::GetCurrentFrame();
         discard_next_sample = true;
         reset_trace();
@@ -328,8 +330,10 @@ void BootGame(const std::string& path) {
                         const auto previous = adaptive_clock.Percent();
                         const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
                                                                       Seconds(timing.elapsed).count());
-                        if (next != previous)
+                        if (next != previous) {
                             system.CoreTiming().UpdateClockSpeed(next);
+                            OSD::SetGuestClockPercent(next);
+                        }
                     }
                     if (phases.enabled) {
                         const auto elapsed = Seconds(timing.elapsed).count() * 1000;
