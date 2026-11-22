@@ -208,11 +208,12 @@ static NSDictionary* CaptureProfileMemoryU32(Core::System& system, NSArray* prob
     return @{@"frame":@(frame),@"phase":phase,@"probes":values};
 }
 
-static bool CaptureBurst(unsigned frame) {
-    const char* start_env = std::getenv("CARA_CAPTURE_BURST_START");
+static bool CaptureBurst(unsigned frame, const char* start_key = "CARA_CAPTURE_BURST_START",
+                         const char* count_key = "CARA_CAPTURE_BURST_COUNT") {
+    const char* start_env = std::getenv(start_key);
     if (!start_env) return false;
     const unsigned start = unsigned(std::max(0L, std::strtol(start_env, nullptr, 10)));
-    const char* count_env = std::getenv("CARA_CAPTURE_BURST_COUNT");
+    const char* count_env = std::getenv(count_key);
     const unsigned count = count_env ? unsigned(std::clamp(std::strtol(count_env, nullptr, 10), 1L, 120L)) : 36;
     return frame >= start && frame - start < count;
 }
@@ -372,9 +373,13 @@ public:
                         frame_presented(frames);
                 }, [this]() {
                     const auto* target = std::getenv("CARA_BENCHMARK_FRAMES");
-                    return target && std::getenv("CARA_BENCHMARK_CAPTURE") &&
-                        frames + 1 == static_cast<unsigned>(std::clamp(std::strtol(target, nullptr, 10),
-                                                                     1L, 18000L));
+                    if (!target || !std::getenv("CARA_BENCHMARK_CAPTURE"))
+                        return false;
+                    const auto end = static_cast<unsigned>(
+                        std::clamp(std::strtol(target, nullptr, 10), 1L, 18000L));
+                    return frames + 1 == end ||
+                           CaptureBurst(frames + 1, "CARA_METAL_PARITY_START",
+                                        "CARA_METAL_PARITY_COUNT");
                 }, [this](bool capturing) { return AdmitMetalPresentation(capturing); });
             if (native.renderer)
                 ++metal_renderer_generation;
@@ -608,6 +613,14 @@ static BOOL CaraCanTuneEmulation() {
 }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
 static NSString* const CaraMetalRendererKey = @"metalRendererAfterBootRecovery";
+static NSString* const CaraAsyncShadersKey = @"asyncMetalShaders";
+
+static bool CaraAsyncShadersPreference(id playMode) {
+    NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+    const bool performance = ![playMode isEqual:@"accuracy"];
+    return performance && (![defaults objectForKey:CaraAsyncShadersKey] ||
+                           [defaults boolForKey:CaraAsyncShadersKey]);
+}
 
 static bool CaraMetalRendererRequested() {
     if (const auto* override = std::getenv("CARA_PRIVATE_IOS_METAL_ONLY"))
@@ -1279,6 +1292,15 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
               [displayDefaults setBool:enabled forKey:CaraMetalRendererKey];
               [owner updateSyncFeedback];
           }}];
+    NSString* displayPlayMode = [displayDefaults stringForKey:@"playMode"];
+    [display addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
+        @"subtitle":@"Build eligible Metal shaders in the background. Applies when you reopen a game.",
+        @"value":@(CaraAsyncShadersPreference(displayPlayMode)),
+        @"enabled":@([displayDefaults boolForKey:CaraMetalRendererKey] &&
+                     ![displayPlayMode isEqual:@"accuracy"]),
+        @"change":^(BOOL enabled) {
+            [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
+        }}];
     if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
         const NSInteger scale = saved == 2 || saved == 4 ? saved : 0;
@@ -2067,8 +2089,17 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     emuWindow->present = [weakSelf,session](unsigned s,unsigned w,unsigned h,const std::vector<u8>& p,unsigned frame) {
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
-    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing] {
+    const bool async_shaders =
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        emuWindow->native_metal_only && CaraAsyncShadersPreference(CaraEmulationValue(@"playMode"));
+#else
+        false;
+#endif
+    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing,async_shaders] {
         Cara::gpu_completion_policy = gpu_timing;
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        Cara::ConfigureMetalGeneralFragment(async_shaders);
+#endif
         // Diagnostic only: requested QoS is not evidence of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
         const bool worker_interactive_qos = interactive_qos_env &&
@@ -2307,6 +2338,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             if (result == Core::System::ResultStatus::Success) {
                 LOG_INFO(Frontend, "Cara session title {:016X}, guest GPU timing render={} transfer={} refresh_relative={}",
                          system.GetTitleID(), gpu_timing.render, gpu_timing.transfer, gpu_timing.soften_render);
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                LOG_INFO(Frontend, "Metal async shaders enabled={}", Cara::UseMetalGeneralFragment());
+#endif
             }
             if (result==Core::System::ResultStatus::Success) Cara::GuestGPUTrace::Arm(user+"guest-gpu-trace.csv");
             NSDictionary<NSString*, NSString*>* roomIdentity=nil;
@@ -2373,7 +2407,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                     MetalCost::RuntimeShaderTranslate, MetalCost::RuntimeVertexLibrary,
                     MetalCost::RuntimeFragmentLibrary, MetalCost::RenderPipelineCreate,
                     MetalCost::ReserveWait, MetalCost::ArenaWait, MetalCost::FlushExportGuest,
-                    MetalCost::Record, MetalCost::Present};
+                    MetalCost::Record, MetalCost::Present, MetalCost::GeneralFragmentDraws};
                 const bool trace_shader_refresh = capture_refresh_timing && emuWindow->native_metal_only &&
                                                   MetalCost::Enabled();
                 struct MetalRefresh {
@@ -2817,6 +2851,17 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                 previous = current;
                             }
                             shader_refreshes.push_back(entry);
+                        }
+#endif
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                        if (target_frames && emuWindow->native_metal_only &&
+                            CaptureBurst(emuWindow->frames, "CARA_METAL_PARITY_START",
+                                         "CARA_METAL_PARITY_COUNT")) {
+                            const auto sample_dir = user + "parity-" +
+                                std::to_string(emuWindow->frames) + '/';
+                            FileUtil::CreateFullPath(sample_dir);
+                            if (!Cara::WriteNativeMetalCapture(sample_dir))
+                                throw std::runtime_error("Could not retain Metal parity sample");
                         }
 #endif
                         last_frame_time = now;

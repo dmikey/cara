@@ -106,15 +106,20 @@ constexpr OpenGL::PicaFragmentShaderTarget NativeFragmentTarget() {
     };
 }
 
-NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config) {
+NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool general = false) {
     struct Entry {
         OpenGL::PicaFSConfig config;
         std::string source;
         u64 revision;
     };
-    constexpr auto target = NativeFragmentTarget();
-    thread_local std::array<std::optional<Entry>, 128> entries;
-    thread_local std::size_t recent = 0, next = 0;
+    auto target = NativeFragmentTarget();
+    target.metal_general_fragment = general;
+    struct Cache {
+        std::array<std::optional<Entry>, 128> entries{};
+        std::size_t recent = 0, next = 0;
+    };
+    thread_local std::array<Cache, 2> caches;
+    auto& [entries, recent, next] = caches[general];
     const auto matches = [&](std::size_t i) {
         return entries[i] &&
                std::memcmp(&entries[i]->config.state, &config.state, sizeof(config.state)) == 0;
@@ -469,7 +474,7 @@ struct NativePipelineMemo {
     std::optional<PicaMetalPipelineSelection> Resolve(
         PicaMetalPipelines& pipelines, NativeShaderSource vs, NativeShaderSource fs,
         const PicaPipelineInputs& draw, const std::array<PicaSampleInputs, 3>& samplers,
-        bool dual, bool triple) {
+        bool dual, bool triple, const OpenGL::PicaFSConfig* general = nullptr) {
         const Stages stages{vs.revision, fs.revision, draw.vertex_mode};
         const auto recipe = PipelineRecipeKey(draw);
         const std::array sampler_keys{SamplerRecipeKey(samplers[0]), SamplerRecipeKey(samplers[1]),
@@ -484,9 +489,16 @@ struct NativePipelineMemo {
         const auto second = dual ? std::optional{samplers[1]} : std::nullopt;
         const auto third = triple ? std::optional{samplers[2]} : std::nullopt;
         auto result = pipelines.Select(draw, samplers[0], second, third);
+        if (!result && general) {
+            auto canonical = *general;
+            canonical.state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
+            canonical.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
+            result = pipelines.SelectWithGeneral(draw, NativeFragmentSource(canonical, true).bytes,
+                                                 samplers[0], second, third);
+        }
         if (!result && pipelines.Prepare(draw, samplers[0], second, third))
             result = pipelines.Select(draw, samplers[0], second, third);
-        if (result) {
+        if (result && !result->general_fragment) {
             selections[next_selection] = Selection{stages, recipe, sampler_keys, dual, triple, *result};
             last_selection = next_selection;
             next_selection = (next_selection + 1) % selections.size();
@@ -1094,9 +1106,33 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     sampler_plan.Stop();
     const auto second = ranges[1] ? std::optional{sampler[1]} : std::nullopt;
     const auto third = ranges[2] ? std::optional{sampler[2]} : std::nullopt;
-    const auto resolve_pipeline = [&] {
+    // The existing Metal shaders do not use the GL atlas crop fields.
+    // Only the opted-in general fragment interprets two of those fields as
+    // modes. Its resource envelope and all fixed draw state must still match.
+    const auto resolve_pipeline = [&]() -> std::optional<PicaMetalPipelineSelection> {
+        using Compare = Pica::FramebufferRegs::CompareFunc;
+        using Scissor = Pica::RasterizerRegs::ScissorMode;
+        const auto& f = fcfg.state;
+        const bool can_use_general = UseMetalGeneralFragment() && !pair_indices && !f.lighting.enable &&
+            !f.proctex.enable && f.fog_mode == Pica::TexturingRegs::FogMode::None &&
+            !f.native_nearest_borrow_tex0 && !f.shadow_rendering &&
+            f.alpha_test_func != Compare::Never && pica.sampled_unit == 0 &&
+            !third && (!second || pica.secondary_unit == 1) &&
+            f.texture0_type == TextureConfig::Texture2D &&
+            (f.scissor_test_mode == Scissor::Disabled ||
+             f.scissor_test_mode == Scissor::Include ||
+             f.scissor_test_mode == Scissor::Exclude);
         if (memo)
-            return memo->Resolve(pipelines, vs, fs, pica, sampler, second.has_value(), third.has_value());
+            return memo->Resolve(pipelines, vs, fs, pica, sampler, second.has_value(),
+                                 third.has_value(), can_use_general ? &fcfg : nullptr);
+        if (can_use_general) {
+            auto canonical = fcfg;
+            canonical.state.alpha_test_func = Compare::Always;
+            canonical.state.scissor_test_mode = Scissor::Disabled;
+            if (auto choice = pipelines.SelectWithGeneral(
+                    pica, NativeFragmentSource(canonical, true).bytes, sampler[0], second, third))
+                return choice;
+        }
         auto result = pipelines.Select(pica, sampler[0], second, third);
         if (!result && pipelines.Prepare(pica, sampler[0], second, third))
             result = pipelines.Select(pica, sampler[0], second, third);
@@ -1248,6 +1284,11 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         storage = std::make_shared<BindingStorage>();
     storage->uniforms = CapturePicaMetalUniforms(
         state, Settings::values.disable_clip_coef && !pica.clip1);
+    if (selection->general_fragment) {
+        storage->uniforms.common.cara_tex0_crop[0] = s32(fcfg.state.alpha_test_func);
+        storage->uniforms.common.cara_tex0_crop[1] = s32(fcfg.state.scissor_test_mode);
+        NativeMetalCost::Count(NativeMetalCost::GeneralFragmentDraws, 1);
+    }
     if (vs.pc230_specialized && !storage->uniforms.vertex.uniforms.bools[14].b)
         throw std::runtime_error("Metal PC 230 draw uniforms changed after shader selection");
     out.draw.common_uniform = std::as_bytes(std::span(&storage->uniforms.common, 1));

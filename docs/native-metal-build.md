@@ -355,6 +355,45 @@ guest timing unchanged. First-use overlap also needs enough earlier work
 to compile, or a correct general shader to draw with until specialization
 is ready. Reordering CPU-visible transfers would change guest behavior.
 
+### Async Shaders on iPad Metal
+
+Options → Display → Async Shaders applies when a game opens. The option is
+on by default in Performance Mode. The proof of concept generalizes alpha
+comparison and scissor mode for unlit, fog-free 2D draws using texture 0
+and optionally texture 1. It retains the current vertex program, combiner,
+depth output, material slots, and fixed-function raster state. A copied
+uniform carries the two runtime modes. Other draws use the existing path.
+
+Cara compiles the general shader on the device. Once that pipeline is ready,
+draws can use it while a bounded worker compiles the exact shader and
+pipeline. The worker takes owned shader sources and render state. The
+render owner checks completion without waiting, adopts the validated
+pipeline, and records its descriptor in the local learned archive.
+Already queued draws retain their pipeline. The first general pipeline
+can still require a synchronous compile. No game-derived shader artifacts
+are added to the distributable.
+
+The physical M4 iPad comparison replayed a copy of Dark Moon slot 4 for
+900 refreshes per run with FastInterp Metal, Performance Mode guest timing,
+and 100% speed. Both cold runs started with empty Cara caches and unique
+Metal entry names. The async run used the general path on 2,862 draws.
+Intermediate captures at refreshes 2–4, containing 272, 32, and 272
+general draws respectively, matched the corresponding stock BGRA images
+byte for byte. Both final captures also matched. Intermediate capture
+drains occur in both runs and add diagnostic overhead to nearby refreshes.
+
+| Slot 4 metric | Async off | Async on |
+| --- | ---: | ---: |
+| Cold first refresh | 10.44 s | 10.02 s |
+| Cold worst later refresh | 599.47 ms | 608.09 ms |
+| Warm replay mean | 16.71 ms | 16.71 ms |
+| Warm replay p99 | 21.09 ms | 21.06 ms |
+| Warm worst after first refresh | 21.87 ms | 23.63 ms |
+
+The async repeat loaded 101 recipes in 32.18 ms and recorded zero runtime
+shader translations, library compiles, pipeline builds, and general draws.
+The large cold stalls are still outside the prototype's coverage.
+
 ## Cold shader work and command-list lead time
 
 On an M3 Pro, FastInterp Metal booted Dark Moon through Gadd's lab and the

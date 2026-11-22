@@ -780,6 +780,23 @@ bool FinishNativeMetalPipelineArchive() {
 
 #include "pica_metal_startup_cache.inl"
 
+namespace {
+thread_local bool general_fragment_requested = false;
+}
+
+void ConfigureMetalGeneralFragment(bool enabled) {
+    general_fragment_requested = enabled;
+}
+
+bool UseMetalGeneralFragment() {
+    static const auto override = []() -> std::optional<bool> {
+        if (const char* setting = std::getenv("CARA_METAL_GENERAL_FRAGMENT"))
+            return std::string_view(setting) == "1";
+        return std::nullopt;
+    }();
+    return override.value_or(general_fragment_requested);
+}
+
 PicaMetalPipelines::PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual)
     : device(device_), dual_assets(std::move(dual)), gate_library(OpenGateLibrary(device_)),
       rgba8_dither_verified_host(VerifiedDitherHost(device_)) {}
@@ -1317,6 +1334,8 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                     return false;
                 }
 #endif
+                if (retain_compiled_descriptor)
+                    compiled_descriptor = [ps copy];
                 if (warmup_mode == WarmupLearn && !archive_hit && (pair.precompiled || pair.runtime))
                     learned_descriptor = ps;
                 if (warmup_mode == WarmupRecord &&
@@ -1370,6 +1389,82 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
         }
     }
     return false;
+}
+
+std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::SelectWithGeneral(
+    const PicaPipelineInputs& exact, std::string_view general_fragment,
+    const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
+    const std::optional<PicaSampleInputs>& tertiary) {
+    if (specializer && specializer->result.wait_for(std::chrono::seconds(0)) ==
+                           std::future_status::ready) {
+        const auto key = specializer->key;
+        try {
+            if (auto ready = specializer->result.get()) {
+                entries.push_back({key, std::move(ready->selection)});
+                if (warmup_mode == WarmupLearn)
+                    RememberLearnedPipeline(specializer->inputs, key, ready->descriptor);
+                LOG_INFO(Render_OpenGL, "Exact Metal specialization ready from background worker");
+            } else {
+                failed_specializations.push_back(key);
+            }
+        } catch (const std::exception& error) {
+            LOG_WARNING(Render_OpenGL, "Background Metal specialization failed: {}", error.what());
+            failed_specializations.push_back(key);
+        }
+        specializer.reset();
+    }
+    if (auto ready = Select(exact, sampler, secondary, tertiary))
+        return ready;
+    const auto key = MakeKey(exact, sampler, secondary, tertiary);
+    const auto runtime_index = FindRuntime(exact.vertex, exact.fragment, exact.vertex_mode);
+    if (!key || !runtime_index || warming || warmup_mode == WarmupReplay ||
+        warmup_mode == WarmupRecord)
+        return std::nullopt;
+
+    auto fallback = exact;
+    fallback.fragment = general_fragment;
+    const auto units = RuntimeMaterialUnits(fallback.vertex, fallback.fragment, fallback.vertex_mode);
+    if (!units || *units != std::array{exact.sampled_unit, exact.secondary_unit, exact.tertiary_unit} ||
+        !Prepare(fallback, sampler, secondary, tertiary))
+        return std::nullopt;
+    auto result = Select(fallback, sampler, secondary, tertiary);
+    if (!result)
+        return std::nullopt;
+    result->general_fragment = true;
+    if (!specializer && std::find(failed_specializations.begin(), failed_specializations.end(),
+                                  *key) == failed_specializations.end()) {
+        // Independently owned compiler state. The worker sees no guest memory
+        // or renderer cache and publishes only a fully reflected pipeline.
+        try {
+            auto task = std::async(std::launch::async,
+                [device = device, request = exact, vertex = std::string(exact.vertex),
+                 fragment = std::string(exact.fragment), sampler, secondary, tertiary]() mutable
+                    -> std::optional<CompiledSpecialization> {
+                    @autoreleasepool {
+                        PicaMetalPipelines worker(device);
+                        worker.retain_compiled_descriptor = true;
+                        request.vertex = vertex;
+                        request.fragment = fragment;
+                        const auto units = worker.RuntimeMaterialUnits(vertex, fragment,
+                                                                     request.vertex_mode);
+                        if (!units || !worker.Prepare(request, sampler, secondary, tertiary))
+                            return std::nullopt;
+                        if (auto ready = worker.Select(request, sampler, secondary, tertiary))
+                            return CompiledSpecialization{std::move(*ready), worker.compiled_descriptor};
+                        return std::nullopt;
+                    }
+                });
+            auto archive_inputs = exact;
+            archive_inputs.vertex = runtime_pairs[*runtime_index].vertex_source;
+            archive_inputs.fragment = runtime_pairs[*runtime_index].fragment_source;
+            specializer.emplace(Specialization{*key, archive_inputs, std::move(task)});
+            LOG_INFO(Render_OpenGL, "Drawing with general fragment while exact pipeline compiles");
+        } catch (const std::system_error& error) {
+            LOG_WARNING(Render_OpenGL, "Unable to start Metal specialization worker: {}", error.what());
+            failed_specializations.push_back(*key);
+        }
+    }
+    return result;
 }
 
 std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::Select(

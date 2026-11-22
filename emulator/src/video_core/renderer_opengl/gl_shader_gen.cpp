@@ -1679,7 +1679,17 @@ vec4 secondary_fragment_color = vec4(0.0);
     }
 
     // Append the scissor test
-    if (state.scissor_test_mode != RasterizerRegs::ScissorMode::Disabled) {
+    if (target.metal_general_fragment) {
+        out += R"(
+if (cara_tex0_crop.y != 0) {
+    bool inside = gl_FragCoord.x >= float(scissor_x1) &&
+                  gl_FragCoord.y >= float(scissor_y1) &&
+                  gl_FragCoord.x < float(scissor_x2) &&
+                  gl_FragCoord.y < float(scissor_y2);
+    if (inside != (cara_tex0_crop.y == 3)) discard;
+}
+)";
+    } else if (state.scissor_test_mode != RasterizerRegs::ScissorMode::Disabled) {
         out += "if (";
         // Negate the condition if we have to keep only the pixels outside the scissor box
         if (state.scissor_test_mode == RasterizerRegs::ScissorMode::Include) {
@@ -1752,7 +1762,18 @@ vec4 secondary_fragment_color = vec4(0.0);
 
     out += tev_stages;
 
-    if (state.alpha_test_func != FramebufferRegs::CompareFunc::Always) {
+    if (target.metal_general_fragment) {
+        using Compare = FramebufferRegs::CompareFunc;
+        out += "switch (cara_tex0_crop.x) {\n";
+        for (auto compare : {Compare::Equal, Compare::NotEqual, Compare::LessThan,
+                             Compare::LessThanOrEqual, Compare::GreaterThan,
+                             Compare::GreaterThanOrEqual}) {
+            out += fmt::format("case {}: if (", unsigned(compare));
+            AppendAlphaTestCondition(out, compare);
+            out += ") discard; break;\n";
+        }
+        out += "default: break; }\n";
+    } else if (state.alpha_test_func != FramebufferRegs::CompareFunc::Always) {
         out += "if (";
         AppendAlphaTestCondition(out, state.alpha_test_func);
         out += ") discard;\n";

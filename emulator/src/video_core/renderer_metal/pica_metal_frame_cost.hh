@@ -57,7 +57,7 @@ enum Phase : std::size_t {
     SimdReferenceRequests, SimdReferenceCompiled, SimdReferenceRejected, SimdReferenceFallbacks, SimdReferenceDraws, DisplayCropRgb8Candidates, DisplayCrop565Candidates, DisplayCropOwnerHits, DisplayCropOwnerMisses, DisplayCropFused, DisplayCropSourceBytesAvoided, DisplayRgb8RetileCandidates, DisplayRgb8RetileOwnerHits, DisplayLinearBufferOnly, DisplayLinearTextureBytesAvoided, LinearTextureAlignmentQueries, LinearTextureAlignmentHits, ShaderIdentityFullChecks, ShaderIdentityComparedBytes, ShaderIdentityFastHits, ShaderIdentityValidationFailures, AsyncDepthImports, AsyncDepthChecksPassed, AsyncDepthChecksFailed, QueuedPendingDepthExports,
     PicaListToFirstShaderTranslation, PicaFirstShaderWithin100us, PicaFirstShaderWithin1ms,
     PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
-    RuntimeVertexSpirvMslHit, PhaseCount
+    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
     "color_acquire", "depth_acquire", "lut_refresh", "record_total", "encode_total",
@@ -119,7 +119,7 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "simd_reference_requests", "simd_reference_compiled", "simd_reference_rejected", "simd_reference_fallbacks", "simd_reference_draws", "display_crop_rgb8_candidates", "display_crop_rgb565_candidates", "display_crop_owner_hits", "display_crop_owner_misses", "display_crop_fused", "display_crop_source_bytes_avoided", "display_rgb8_retile_candidates", "display_rgb8_retile_owner_hits", "display_linear_buffer_only", "display_linear_texture_bytes_avoided", "linear_texture_alignment_queries", "linear_texture_alignment_hits", "shader_identity_full_checks", "shader_identity_compared_bytes", "shader_identity_fast_hits", "shader_identity_validation_failures", "async_depth_imports", "async_depth_checks_passed", "async_depth_checks_failed", "queued_pending_depth_exports",
     "pica_list_to_first_shader_translation", "pica_first_shader_within_100us",
     "pica_first_shader_within_1ms", "pica_first_shader_within_5ms", "pica_first_shader_after_5ms",
-    "runtime_vertex_spirv_msl_hit"};
+    "runtime_vertex_spirv_msl_hit", "general_fragment_draws"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {

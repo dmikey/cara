@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <future>
 #include <optional>
 #include <string_view>
 #include <string>
@@ -14,6 +15,9 @@
 #include "pica_metal_source_pool.h"
 
 namespace Cara {
+
+void ConfigureMetalGeneralFragment(bool enabled);
+bool UseMetalGeneralFragment();
 
 void ConfigureNativeMetalWarmup(const std::string& user, std::string_view rom_name);
 bool ConfigureNativeMetalLearning(const std::string& user, std::uint64_t title,
@@ -96,6 +100,7 @@ struct PicaMetalPipelineSelection {
     std::shared_ptr<const BatchedMetalVertexProgram> batched_vertex;
     bool simd_reference = false;
     bool primary_material_cube = false;
+    bool general_fragment = false;
 };
 
 // Same owner thread as the draw queue. Prepare is explicit startup/preparation
@@ -112,6 +117,10 @@ public:
     bool Prepare(const PicaPipelineInputs& pica, const PicaSampleInputs& sampler,
                  const std::optional<PicaSampleInputs>& secondary = std::nullopt,
                  const std::optional<PicaSampleInputs>& tertiary = std::nullopt);
+    std::optional<PicaMetalPipelineSelection> SelectWithGeneral(
+        const PicaPipelineInputs& exact, std::string_view general_fragment,
+        const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
+        const std::optional<PicaSampleInputs>& tertiary);
     std::optional<PicaMetalPipelineSelection> Select(
         const PicaPipelineInputs& pica, const PicaSampleInputs& sampler,
         const std::optional<PicaSampleInputs>& secondary = std::nullopt,
@@ -172,6 +181,20 @@ private:
     std::vector<Entry> entries;
     // Storage remains stable for the stage cache's string_view keys.
     mutable std::deque<RuntimeEntry> runtime_pairs;
+    struct CompiledSpecialization {
+        PicaMetalPipelineSelection selection;
+        MTLRenderPipelineDescriptor* descriptor;
+    };
+    struct Specialization {
+        Key key;
+        PicaPipelineInputs inputs;
+        std::future<std::optional<CompiledSpecialization>> result;
+    };
+    bool retain_compiled_descriptor = false;
+    MTLRenderPipelineDescriptor* compiled_descriptor = nil;
+    std::optional<Specialization> specializer;
+    std::vector<Key> failed_specializations;
+
 };
 
 } // namespace Cara
