@@ -465,6 +465,13 @@ for the CPU. Refresh 89 still spent 120.55 ms translating shaders and
 300.09 ms compiling fragment libraries. Keep CPU vertex fallback opt-in
 while the cold p99 and worst remaining intervals exceed the frame budget.
 
+A separate cold run enabled the existing materialized readback reuse
+probe. It reduced export calls at refresh 21 from 10,024 to 849, but
+export time fell only from 11.24 ms to 9.63 ms. The refresh took
+25.32 ms, and all seven captures still matched. The fallback still
+requests the whole guest address space, so the result supports narrowing
+it to vertex and index input ranges before considering default admission.
+
 ### macOS cold-run window responsiveness
 
 A single native Metal test binary at `3948557` ran Dark Moon for 3,600
@@ -476,11 +483,27 @@ was logged during both gaps, and both runs completed. Checkpoints by
 refresh showed different game progression, so this pair measures launch
 behavior and gives no renderer pixel-parity claim.
 
-The `cara-metal-rom` harness runs emulation and services SDL window events
-on the main thread. A draw that waits for a Metal library or a pipeline
-can block event polling until the compiler returns. This accounts for the
-macOS wait cursor during the cold intervals. The trace captured durations
-and pipeline creation logs, with no main-thread sample of the stall.
+The old `cara-metal-rom` harness ran emulation and serviced SDL window
+events on the main thread. A draw that waited for a Metal library or a
+pipeline could block event polling until the compiler returned. The
+updated harness keeps AppKit and SDL window work on the main thread and
+runs Metal setup, emulation, draw preparation, and capture on one owner
+thread. It queues input for that owner and joins it before UI teardown.
+
+A cold rerun on the M3 Max completed 1,200 refreshes with each CPU backend
+and matched the corresponding old frame 1,200 capture byte for byte.
+Samples taken during both runs placed actual library and pipeline creation
+on the emulation owner, with SDL and AppKit polling on the main thread.
+
+| Backend | Longest cold refresh | Window events delivered during it | Event delay p99 / max |
+| --- | ---: | ---: | ---: |
+| FastInterp | 15.71 s at 310 | 287 | 1 / 160 ms |
+| Dynarmic JIT | 16.80 s at 294 | 309 | 1 / 2 ms |
+
+Window responsiveness and game-frame latency are separate here. Cold
+exact shader compilation still delays gameplay until the draw is ready.
+The measured window path is the native Metal harness. The test did not
+cover manual closing or fullscreen transitions during a compile.
 
 ## Cold shader work and command-list lead time
 
