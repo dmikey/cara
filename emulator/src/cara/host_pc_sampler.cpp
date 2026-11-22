@@ -207,6 +207,9 @@ void HostPcSampler::OnFrame(std::uint64_t frame) {
     }
     if (p.started && frame >= p.options.end_frame) p.Stop();
 }
+void HostPcSampler::WaitForCompletion() {
+    if (impl->worker.joinable()) impl->worker.join();
+}
 bool HostPcSampler::StopAndWrite(const std::string& path, const std::string& fingerprint) {
     auto& p = *impl;
     p.Stop();
