@@ -31,7 +31,6 @@ def tablet_portrait(width, height):
     top = dict(x=234,y=150,width=1200,height=720)
     bottom = dict(x=434,y=930,width=800,height=600)
     box(0,0,width,height,'#000000',radius=0)
-    box(24,24,width-48,height-48,'#000000','#17231b',44)
     for f in [top,bottom]:
         box(f['x']-12,f['y']-12,f['width']+24,f['height']+24,'#000000','#26362a',20)
     shoulder_y=1570
@@ -235,7 +234,7 @@ def main():
     draw.ellipse((8,8,504,504), fill='#17271b', outline='#657e52', width=8)
     draw.ellipse((45,45,467,467), fill='#1b2f20', outline='#3a5637', width=4)
     thumb.save(DEST/'thumbstick.png')
-    rep=dict(caraViewportBorder=True, assets=dict(resizable=pdf.name), mappingSize=dict(width=W,height=H),items=items,
+    rep=dict(assets=dict(resizable=pdf.name), mappingSize=dict(width=W,height=H),items=items,
              screens=[dict(inputFrame=dict(x=0,y=0,width=400,height=240),outputFrame=TOP),dict(inputFrame=dict(x=40,y=240,width=320,height=240),outputFrame=BOTTOM)],translucent=False,
              caraStatusFrame=dict(x=52,y=50,width=64,height=102),caraStatsFrame=dict(x=128,y=50,width=430,height=102))
     portrait_pad=tablet_portrait(1668,2420)
