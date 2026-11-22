@@ -936,6 +936,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     using DepthFormat = Pica::FramebufferRegs::DepthFormat;
     const auto color_format = fb.color_format.Value();
     const auto depth_format = fb.depth_format.Value();
+    const auto depth_address = fb.GetDepthBufferPhysicalAddress();
     const bool has_stencil = depth_format == DepthFormat::D24S8;
     const bool packed_color = color_format == ColorFormat::RGB565 ||
                               color_format == ColorFormat::RGBA4 ||
@@ -943,7 +944,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     if (r.framebuffer.IsShadowRendering() ||
         (!packed_color && color_format != ColorFormat::RGBA8) ||
         (packed_color && ![resources.queue.device supportsFamily:MTLGPUFamilyApple2]) ||
-        (!has_stencil && depth_format != DepthFormat::D24) ||
+        (depth_address && !has_stencil && depth_format != DepthFormat::D24) ||
         Settings::values.custom_textures || Settings::values.use_linear_filter)
         return decline("framebuffer or configuration");
 
@@ -951,8 +952,9 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     const u32 height = fb.GetHeight();
     const auto color_range = TiledRange(fb.GetColorBufferPhysicalAddress(), width, height,
                                         packed_color ? 128 : 256);
-    const auto depth_range = TiledRange(fb.GetDepthBufferPhysicalAddress(), width, height,
-                                       has_stencil ? 256 : 192);
+    const auto depth_range = depth_address
+        ? TiledRange(depth_address, width, height, has_stencil ? 256 : 192)
+        : std::optional{MetalTransfer::GuestInterval{}};
     const auto view = r.rasterizer.GetViewportRect();
     if (!color_range || !depth_range || color_range->Overlaps(*depth_range) ||
         view.left < 0 || view.bottom < 0 || view.right <= view.left || view.top <= view.bottom ||
@@ -961,6 +963,12 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
 
     NativeMetalCost::Scope classify(NativeMetalCost::ClassifyHost);
     auto pica = ReadPipeline(r);
+    if (!depth_address) {
+        pica.depth_test = false;
+        pica.depth_write = false;
+        pica.stencil = false;
+        pica.stencil_write = 0;
+    }
     if (color_format == ColorFormat::RGB565) {
         pica.color_format = MTLPixelFormatB5G6R5Unorm;
         pica.color_mask &= 7;
@@ -1262,6 +1270,8 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
                                       parts.detile_packed_color, ram); });
     auto depth = Measure(5, [&] {
         NativeMetalCost::Scope cost(NativeMetalCost::Depth);
+        if (!depth_address)
+            return lane.AcquireUnbackedDepthStencil(width, height);
         return lane.AcquireTiledDepthStencil(*depth_range, width, height,
         {has_stencil ? parts.detile_depth : parts.detile_depth24, parts.unpack_depth},
         has_stencil ? parts.tiled_export : parts.tiled_depth24_export, parts.pack_depth, ram,
@@ -1310,6 +1320,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     out.views.depth_stencil = out.depth.view;
     out.draw.color = out.color.view.texture;
     out.draw.depth_stencil = out.depth.view.texture;
+    out.draw.unbacked_depth = !depth_address;
     out.draw.lighting_lut = selection->slots[0] == NSNotFound ? nil : lut;
     // Depth feedback misses publish through DecodeTexture before resolving
     // authoritative bytes. Recorded depth writes invalidate cached samples,

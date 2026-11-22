@@ -121,13 +121,14 @@ struct DepthFixture {
     PicaMetalNativeAttachment Acquire(PAddr address) {
         return f.lane.AcquireTiledDepthStencil({address,address+1024},16,16,imports,render.tiled,pack,f.Reader());
     }
-    void Publish(const PicaMetalNativeAttachment& depth) {
+    void Publish(const PicaMetalNativeAttachment& depth, bool unbacked = false) {
         auto color=f.lane.AcquireTiledColor({source,source+1024},16,16,MTLPixelFormatRGBA8Unorm,
                                            render.decoder,render.tiled,nil,f.Reader());
         std::array<PicaMetalStageVertex,3> vertices{};
         std::array<std::byte,288> common{};std::array<std::byte,1040> light{};
         TexturedMetalDraw draw{};draw.pipeline=render.pipeline;draw.depth_stencil_state=render.depth;
         draw.texel_fetch_sampler=render.sampler;draw.color=color.view.texture;draw.depth_stencil=depth.view.texture;
+        draw.unbacked_depth = unbacked;
         draw.vertex_mode=PicaMetalVertexMode::StageIn;draw.vertex_count=3;
         draw.common_uniform=common;draw.light_uniform=light;draw.packed_vertices=std::as_bytes(std::span(vertices));
         draw.lut_texture_slot=draw.lut_sampler_slot=draw.texture0_slot=draw.texture0_sampler_slot=NSNotFound;
@@ -239,6 +240,26 @@ int main(int argc,char** argv) { @autoreleasepool {try {
     auto lib=[device newLibraryWithURL:[NSURL fileURLWithPath:[NSString stringWithUTF8String:argv[1]]] error:nullptr];
     Require(lib!=nil,"No production library");
     for(unsigned bad=0;bad<3;++bad)CheckReceipt(device,bad);
+    {
+        DepthFixture reference(device, lib);
+        reference.Publish(reference.Acquire(DepthFixture::a));
+        const auto expected = reference.f.Read(source, 1024);
+        Require(expected != reference.f.Raw(source, 1024), "Reference draw must change color");
+
+        DepthFixture fixture(device, lib);
+        auto attachment = fixture.f.lane.AcquireUnbackedDepthStencil(16, 16);
+        Require(!attachment.exporter && !attachment.view.authoritative_bytes.begin &&
+                !attachment.view.authoritative_bytes.end, "Unbacked depth acquired guest ownership");
+        fixture.Publish(attachment, true);
+        Require(fixture.f.Read(source, 1024) == expected, "Color-only draw changed rendered pixels");
+        Require(fixture.f.lane.AcquireUnbackedDepthStencil(16, 16).view.texture ==
+                attachment.view.texture, "Unbacked depth was not reused");
+        const auto resized = fixture.f.lane.AcquireUnbackedDepthStencil(32, 16);
+        Require(resized.view.texture.width == 32 &&
+                resized.view.backing_generation != attachment.view.backing_generation,
+                "Unbacked depth resize did not replace the backing");
+        fixture.f.lane.Drain();
+    }
     {
         DepthFixture fixture(device, lib);
         QueueGate gate(fixture.f.queue);

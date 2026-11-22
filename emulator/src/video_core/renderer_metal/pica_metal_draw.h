@@ -64,6 +64,7 @@ struct TexturedMetalDraw {
     id<MTLDepthStencilState> depth_stencil_state;
     id<MTLSamplerState> texel_fetch_sampler;
     id<MTLTexture> color, depth_stencil, lighting_lut, texture0;
+    bool unbacked_depth = false;
     id<MTLSamplerState> texture0_sampler;
     NSUInteger lut_texture_slot, lut_sampler_slot, texture0_slot, texture0_sampler_slot;
     NSUInteger fragment_common_slot, fragment_light_slot;

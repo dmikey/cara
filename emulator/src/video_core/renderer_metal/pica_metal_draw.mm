@@ -425,11 +425,11 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
         pass.colorAttachments[0].storeAction = MTLStoreActionStore;
         pass.depthAttachment.texture = d.depth_stencil;
-        pass.depthAttachment.loadAction = MTLLoadActionLoad;
-        pass.depthAttachment.storeAction = MTLStoreActionStore;
+        pass.depthAttachment.loadAction = d.unbacked_depth ? MTLLoadActionDontCare : MTLLoadActionLoad;
+        pass.depthAttachment.storeAction = d.unbacked_depth ? MTLStoreActionDontCare : MTLStoreActionStore;
         pass.stencilAttachment.texture = d.depth_stencil;
-        pass.stencilAttachment.loadAction = MTLLoadActionLoad;
-        pass.stencilAttachment.storeAction = MTLStoreActionStore;
+        pass.stencilAttachment.loadAction = pass.depthAttachment.loadAction;
+        pass.stencilAttachment.storeAction = pass.depthAttachment.storeAction;
         auto* clear = allow_fused_clear ? active_depth_clear : nullptr;
         if (clear) {
             if (clear->encoded || clear->queue != commands.commandQueue ||
