@@ -41,11 +41,22 @@ struct PlaySettings {
     }
 
     template <typename Ini>
-    static bool AsyncShadersForMetalSession(const Ini& ini, const char* performance_override) {
+    static bool HasSavedPlayMode(const Ini& ini) {
+        const auto mode = ini.Get("Play", "mode");
+        return mode == "performance" || mode == "accuracy";
+    }
+
+    template <typename Ini>
+    static bool PerformanceTimingForMetalSession(const Ini& ini, const char* performance_override) {
         // A compatibility directory without saved play settings keeps its baseline.
-        const bool performance = performance_override ? std::string_view(performance_override) == "1"
-                                                       : ini.Get("Play", "mode") == "performance";
-        return performance && Read(ini).UseAsyncMetalShaders();
+        return performance_override ? std::string_view(performance_override) == "1"
+                                    : ini.Get("Play", "mode") == "performance";
+    }
+
+    template <typename Ini>
+    static bool AsyncShadersForMetalSession(const Ini& ini, const char* performance_override) {
+        return PerformanceTimingForMetalSession(ini, performance_override) &&
+               Read(ini).UseAsyncMetalShaders();
     }
 
     template <typename Ini>

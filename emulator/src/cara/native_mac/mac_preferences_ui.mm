@@ -120,7 +120,7 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
         ? @"Unlimited" : [NSString stringWithFormat:@"%ld%%", long(maximumSpeed.integerValue)];
     modeDescription.stringValue = performance
         ? @"Cara adjusts the guest clock under load unless you set a fixed clock. Guest GPU timing applies when you open a game."
-        : @"Runs the guest clock and speed limit at 100% with adaptive frame skip off.";
+        : @"Locks guest clock and speed to 100%. Guest GPU timing applies when you open a game.";
     supersampling.state = play.metal_supersampling ? NSControlStateValueOn : NSControlStateValueOff;
     [textureFilter selectItemAtIndex:static_cast<NSInteger>(play.texture_filter)];
     [scale selectItemWithTag:static_cast<NSInteger>(play.display_scale)];
@@ -264,17 +264,17 @@ CaraPreferencesActions* BuildPreferences(){
  a->modeDescription=Label(@"",NSMakeRect(15,172,528,28));
  [emulation addSubview:a->modeDescription];
 
- a->fixedClock=PlayCheckbox(@"Fixed Guest Clock",NSMakeRect(15,134,213,22),a);
+ a->fixedClock=PlayCheckbox(@"Use fixed guest clock",NSMakeRect(15,134,213,22),a);
  a->guestClock=PlaySlider(@"Guest Clock percentage",134,25,a);
  a->guestClockValue=Label(@"",NSMakeRect(486,134,78,22));
  a->limitSpeed=PlayCheckbox(@"Limit game speed",NSMakeRect(15,101,213,22),a);
  a->maximumSpeed=PlaySlider(@"Game speed limit percentage",101,50,a);
  a->maximumSpeedValue=Label(@"",NSMakeRect(486,101,78,22));
- a->frameSkip=PlayCheckbox(@"Adaptive Frame Skip",NSMakeRect(15,67,220,22),a);
+ a->frameSkip=PlayCheckbox(@"Adaptive frame skip",NSMakeRect(15,67,220,22),a);
  [emulation addSubview:a->fixedClock];[emulation addSubview:a->guestClock];[emulation addSubview:a->guestClockValue];
  [emulation addSubview:a->limitSpeed];[emulation addSubview:a->maximumSpeed];[emulation addSubview:a->maximumSpeedValue];
  [emulation addSubview:a->frameSkip];
- [emulation addSubview:Label(@"Presents at most one frame per display interval.",NSMakeRect(239,64,301,22))];
+ [emulation addSubview:Label(@"Limits screen updates without skipping guest GPU work.",NSMakeRect(239,64,301,22))];
  a->resetTuning=Button(@"Reset performance settings",NSMakeRect(15,16,213,32),a,@selector(restorePlayTuning:));
  [emulation addSubview:a->resetTuning];
 
