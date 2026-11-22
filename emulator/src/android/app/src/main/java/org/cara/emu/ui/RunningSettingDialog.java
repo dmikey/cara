@@ -131,6 +131,8 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_ACCURATE_MUL = 10;
         public static final int SETTING_CUSTOM_LAYOUT = 11;
         public static final int SETTING_FRAME_LIMIT = 12;
+        public static final int SETTING_ACCURACY_MODE = 13;
+        public static final int SETTING_LIMIT_SPEED = 14;
 
         // pref
         public static final int SETTING_JOYSTICK_RELATIVE = 100;
@@ -497,6 +499,7 @@ public class RunningSettingDialog extends DialogFragment {
         private TextView mTextSettingName;
         private TextView mTextSettingValue;
         private SeekBar mSeekBar;
+        private int mMinimum;
         private final SeekBar.OnSeekBarChangeListener mOnSeekBarChangeListener;
 
         public SeekBarSettingViewHolder(View itemView) {
@@ -504,7 +507,7 @@ public class RunningSettingDialog extends DialogFragment {
             mOnSeekBarChangeListener = new SeekBar.OnSeekBarChangeListener() {
                 @Override
                 public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    refreshProgress(progress);
+                    refreshProgress(progress + mMinimum);
                 }
 
                 @Override
@@ -531,12 +534,10 @@ public class RunningSettingDialog extends DialogFragment {
             mItem = item;
             mTextSettingName.setText(item.getName());
             mSeekBar.setOnSeekBarChangeListener(null);
-            if (mItem.getSetting() == SettingsItem.SETTING_FRAME_LIMIT) {
-                mSeekBar.setMax(200);
-            } else {
-                mSeekBar.setMax(100);
-            }
-            mSeekBar.setProgress(item.getValue());
+            boolean speed = mItem.getSetting() == SettingsItem.SETTING_FRAME_LIMIT;
+            mMinimum = speed ? 50 : 0;
+            mSeekBar.setMax(speed ? 150 : 100);
+            mSeekBar.setProgress(item.getValue() - mMinimum);
             mSeekBar.setOnSeekBarChangeListener(mOnSeekBarChangeListener);
             refreshProgress(item.getValue());
         }
@@ -674,8 +675,14 @@ public class RunningSettingDialog extends DialogFragment {
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURATE_MUL,
                     R.string.running_accurate_mul, SettingsItem.TYPE_RADIO_GROUP,
                     mRunningSettings[SettingsItem.SETTING_ACCURATE_MUL]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURACY_MODE,
+                    R.string.setting_accuracy_mode, SettingsItem.TYPE_CHECKBOX,
+                    mRunningSettings[SettingsItem.SETTING_ACCURACY_MODE]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_LIMIT_SPEED,
+                    R.string.setting_limit_speed, SettingsItem.TYPE_CHECKBOX,
+                    mRunningSettings[SettingsItem.SETTING_LIMIT_SPEED]));
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_FRAME_LIMIT,
-                    R.string.running_frame_limit,
+                    R.string.frame_limit_slider,
                     SettingsItem.TYPE_SEEK_BAR, mRunningSettings[SettingsItem.SETTING_FRAME_LIMIT]));
             notifyDataSetChanged();
         }

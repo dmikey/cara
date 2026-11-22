@@ -6,16 +6,27 @@ import org.cara.emu.settings.model.IntSetting;
 import org.cara.emu.settings.model.Setting;
 
 public final class SliderSetting extends SettingsItem {
-    private int mMax;
+    private final int mMin;
+    private final int mMax;
     private int mDefaultValue;
     private String mUnits;
 
     public SliderSetting(String key, String section, int titleId, int descriptionId, int max,
                          String units, int defaultValue, Setting setting) {
+        this(key, section, titleId, descriptionId, 0, max, units, defaultValue, setting);
+    }
+
+    public SliderSetting(String key, String section, int titleId, int descriptionId,
+                         int min, int max, String units, int defaultValue, Setting setting) {
         super(key, section, setting, titleId, descriptionId);
+        mMin = min;
         mMax = max;
         mUnits = units;
         mDefaultValue = defaultValue;
+    }
+
+    public int getMin() {
+        return mMin;
     }
 
     public int getMax() {

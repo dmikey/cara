@@ -24,6 +24,9 @@ extern const ConfigInfo<int> SYSTEM_REGION;
 extern const ConfigInfo<Service::CFG::SystemLanguage> SYSTEM_LANGUAGE;
 extern const ConfigInfo<Settings::SharedFontType> SHARED_FONT_TYPE;
 
+// play
+extern const ConfigInfo<bool> ACCURACY_MODE;
+
 // renderer
 extern const ConfigInfo<bool> USE_GLES;
 extern const ConfigInfo<bool> SHOW_FPS;

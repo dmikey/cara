@@ -15,6 +15,9 @@ const ConfigInfo<Service::CFG::SystemLanguage> SYSTEM_LANGUAGE{
 const ConfigInfo<Settings::SharedFontType> SHARED_FONT_TYPE{{"Core", "shared_font_type"},
                                                             Settings::SharedFontType::Auto};
 
+// play
+const ConfigInfo<bool> ACCURACY_MODE{{"Play", "accuracy_mode"}, false};
+
 // renderer
 const ConfigInfo<bool> USE_GLES{{"Renderer", "use_gles"}, true};
 const ConfigInfo<bool> SHOW_FPS{{"Renderer", "show_fps"}, true};

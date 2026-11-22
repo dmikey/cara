@@ -174,7 +174,10 @@
     <string name="cpu_usage_limit_description">When enabled, emulation cpu usage will be limited to a smaller time slice.</string>
     <string name="frame_limit_enable">Enable Speed Limit</string>
     <string name="frame_limit_enable_description">When enabled, emulation speed will be limited to a specified percentage of normal speed.</string>
-    <string name="frame_limit_slider">Speed Limit Percent</string>
+    <string name="setting_accuracy_mode">Accuracy mode</string>
+    <string name="setting_accuracy_mode_desc">Locks gameplay speed and guest CPU clock at 100%. GPU timing changes when you reopen the game.</string>
+    <string name="setting_limit_speed">Limit game speed</string>
+    <string name="frame_limit_slider">Maximum speed</string>
     <string name="frame_limit_slider_description">With the default of 100% emulation will be limited to normal speed. Values higher or lower will increase or decrease the speed limit.</string>
     <string name="setting_use_fence_sync">Enable Memory Reuse</string>
     <string name="setting_use_fence_sync_description">Turn it on to improve performance, but some games may have display issues or crash in game.</string>

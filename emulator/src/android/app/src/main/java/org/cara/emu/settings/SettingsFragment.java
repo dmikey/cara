@@ -182,8 +182,14 @@ public final class SettingsFragment extends Fragment {
                 R.string.cpu_usage_limit, R.string.cpu_usage_limit_description, false, cpuLimit));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_FENCE_SYNC, Settings.SECTION_INI_RENDERER,
                 R.string.setting_use_fence_sync, R.string.setting_use_fence_sync_description, false, useFenceSync));
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_ACCURACY_MODE, Settings.SECTION_INI_PLAY,
+                R.string.setting_accuracy_mode, R.string.setting_accuracy_mode_desc, false,
+                mSettings.getSection(Settings.SECTION_INI_PLAY).getSetting(SettingsFile.KEY_ACCURACY_MODE)));
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
+                R.string.setting_limit_speed, 0, true,
+                rendererSection.getSetting(SettingsFile.KEY_USE_FRAME_LIMIT)));
         sl.add(new SliderSetting(SettingsFile.KEY_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
-                R.string.frame_limit_slider, R.string.frame_limit_slider_description, 200, "",
+                R.string.frame_limit_slider, R.string.frame_limit_slider_description, 50, 200, "",
                 100, frameLimit));
         sl.add(new SliderSetting(SettingsFile.KEY_FACTOR_3D, Settings.SECTION_INI_RENDERER,
                 R.string.setting_factor_3d, 0, 10, "",
