@@ -191,9 +191,11 @@ private:
     struct CompiledSpecialization {
         PicaMetalPipelineSelection selection;
         MTLRenderPipelineDescriptor* descriptor;
+        bool reusable_stages;
     };
     struct Specialization {
         Key key;
+        unsigned runtime_index;
         PicaPipelineInputs inputs;
         std::future<std::optional<CompiledSpecialization>> result;
     };

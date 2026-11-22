@@ -430,6 +430,41 @@ refresh, with a p99 of 24.23 ms and zero runtime library and pipeline builds.
 Its five captures matched the exact path. Keep this probe opt-in while
 cold stalls and CPU readback costs remain.
 
+### Refresh 21 vertex compilation reuse
+
+The cold trace tied the 549.44 ms interval to a live render pipeline with
+an uncached vertex function. The bounded background worker was already
+building a different pipeline key with byte-identical translated vertex
+MSL. The old admission rule compared whole pipeline keys, then the live
+path compiled the vertex library a second time. The live vertex build
+and pipeline creation took 376.71 ms and 138.98 ms respectively.
+
+Eligible draws can now use StageIn while another pipeline sharing their
+translated vertex function is being built. Both lanes can reuse validated
+stage functions. The asynchronous worker only receives owned sources and
+immutable Metal objects. It returns a reflected pipeline and publishes
+stage functions only when they match the translated runtime inputs.
+
+Three 900-refresh physical M4 iPad runs used the same build and slot 4
+input replay at 100% FastInterp Metal with Performance Mode timing.
+The exact path and both candidate passes matched byte for byte at
+refreshes 17–22 and at refresh 900.
+
+| Refresh metric | Exact cold | Candidate cold | Candidate warm |
+| --- | ---: | ---: | ---: |
+| First refresh | 10,024.98 ms | 6,943.30 ms | 27.14 ms |
+| Refresh 18 | 611.49 ms | 54.55 ms | 23.47 ms |
+| Refresh 21 | 12.33 ms | 27.15 ms | 13.90 ms |
+| Largest later interval | 611.49 ms | 448.78 ms | 29.44 ms |
+| Full replay p99 | 23.76 ms | 31.31 ms | 24.46 ms |
+| Live vertex library builds | 13 | 7 | 0 |
+
+The candidate removed the duplicate compilation from refresh 21. Four
+StageIn draws remained there, including 11.24 ms exporting GPU-owned data
+for the CPU. Refresh 89 still spent 120.55 ms translating shaders and
+300.09 ms compiling fragment libraries. Keep CPU vertex fallback opt-in
+while the cold p99 and worst remaining intervals exceed the frame budget.
+
 ### macOS cold-run window responsiveness
 
 A single native Metal test binary at `3948557` ran Dark Moon for 3,600
