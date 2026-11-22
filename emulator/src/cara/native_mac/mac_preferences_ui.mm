@@ -50,7 +50,7 @@ SDL_Scancode Key(NSEvent* e){
 @public std::unique_ptr<Model> model;NSTableView* table;NSPopUpButton* engine;NSTextField* status;NSButton* bind;
 NSTabView* tabs;
 NSButton* tab_buttons[3];
-NSPopUpButton *mode, *scale;
+NSPopUpButton *mode, *scale, *textureFilter;
 NSButton *fixedClock, *limitSpeed, *frameSkip, *resetTuning, *asyncShaders, *supersampling;
 NSSlider *guestClock, *maximumSpeed;
 NSTextField *guestClockValue, *maximumSpeedValue, *modeDescription;
@@ -122,6 +122,7 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
         ? @"Cara adjusts the guest clock under load unless you set a fixed clock. Guest GPU timing applies when you open a game."
         : @"Runs the guest clock and speed limit at 100% with adaptive frame skip off.";
     supersampling.state = play.metal_supersampling ? NSControlStateValueOn : NSControlStateValueOff;
+    [textureFilter selectItemAtIndex:static_cast<NSInteger>(play.texture_filter)];
     [scale selectItemWithTag:static_cast<NSInteger>(play.display_scale)];
 }
 -(void)changePlayOption:(id)sender {
@@ -134,6 +135,8 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
         play.limit_speed = limitSpeed.state == NSControlStateValueOn;
     else if (sender == frameSkip)
         play.adaptive_frame_skip = frameSkip.state == NSControlStateValueOn;
+    else if (sender == textureFilter)
+        play.texture_filter = Cara::ParseMetalTextureFilter((int)textureFilter.indexOfSelectedItem);
     else if (sender == supersampling)
         play.metal_supersampling = supersampling.state == NSControlStateValueOn;
     else if (sender == asyncShaders)
@@ -150,11 +153,13 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
     (void)sender;
     auto& play = model->play;
     const auto modeBefore = play.mode;
+    const auto filterBefore = play.texture_filter;
     const auto scaleBefore = play.display_scale;
     const auto supersamplingBefore = play.metal_supersampling;
     const auto asyncBefore = play.async_metal_shaders;
     play = PlaySettings{};
     play.mode = modeBefore;
+    play.texture_filter = filterBefore;
     play.display_scale = scaleBefore;
     play.async_metal_shaders = asyncBefore;
     play.metal_supersampling = supersamplingBefore;
@@ -285,6 +290,12 @@ CaraPreferencesActions* BuildPreferences(){
  a->supersampling=PlayCheckbox(@"2× internal resolution",NSMakeRect(15,88,300,22),a);
  [display addSubview:a->supersampling];
  [display addSubview:Label(@"Render Metal geometry at twice the native resolution. Reopen the game to apply.",NSMakeRect(15,40,528,44))];
+ [display addSubview:Label(@"Texture filtering",NSMakeRect(15,13,125,22))];
+ a->textureFilter=[[[NSPopUpButton alloc]initWithFrame:NSMakeRect(141,9,194,30) pullsDown:NO]autorelease];
+ [a->textureFilter setAccessibilityLabel:@"Metal texture filtering"];
+ [a->textureFilter addItemsWithTitles:@[@"Game default",@"Nearest neighbor",@"Bilinear"]];
+ a->textureFilter.target=a;a->textureFilter.action=@selector(changePlayOption:);
+ [display addSubview:a->textureFilter];
  a->asyncShaders=PlayCheckbox(@"Async Shaders",NSMakeRect(15,173,220,22),a);
  [display addSubview:a->asyncShaders];
  [display addSubview:Label(@"Build eligible shaders in the background when you open a game with Metal in Performance mode.",NSMakeRect(15,123,528,42))];

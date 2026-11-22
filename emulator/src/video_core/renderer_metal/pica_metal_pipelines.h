@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cara/metal_texture_filter.h"
+
 #include <array>
 #include <cstdint>
 #include <deque>
@@ -111,7 +113,8 @@ struct PicaMetalPipelineSelection {
 // work. Select is read-only and never compiles during a live draw.
 class PicaMetalPipelines {
 public:
-    explicit PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual = {});
+    explicit PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual = {},
+                                MetalTextureFilter filter = MetalTextureFilter::Game);
     bool BeginWarmup();
     bool ObserveTevPipelineMiss(const PicaPipelineInputs&, bool dual, bool detect_burst);
     bool FinishWarmup();
@@ -179,6 +182,7 @@ private:
                                const std::optional<PicaSampleInputs>& tertiary) const;
     const Entry* Find(const Key&) const;
     const id<MTLDevice> device;
+    const MetalTextureFilter texture_filter;
     const std::vector<PicaMetalDualAsset> dual_assets;
     const id<MTLLibrary> gate_library;
     const bool rgba8_dither_verified_host;

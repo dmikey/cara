@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cara/metal_texture_filter.h"
+
 #include <charconv>
 #include <string>
 #include <string_view>
@@ -19,6 +21,7 @@ struct PlaySettings {
     unsigned maximum_speed_percent = 100;
     bool adaptive_frame_skip = true;
     bool async_metal_shaders = true;
+    MetalTextureFilter texture_filter = MetalTextureFilter::Game;
     bool metal_supersampling = false;
     DisplayScale display_scale = DisplayScale::Fit;
 
@@ -74,6 +77,9 @@ struct PlaySettings {
         result.adaptive_frame_skip = flag("Play", "adaptive_frame_skip", true);
         result.metal_supersampling = flag("Renderer", "metal_supersampling", false);
         result.async_metal_shaders = flag("Renderer", "async_metal_shaders", true);
+        const auto filter = ini.Get("Renderer", "texture_filter");
+        if (filter == "nearest") result.texture_filter = MetalTextureFilter::Nearest;
+        if (filter == "linear") result.texture_filter = MetalTextureFilter::Linear;
         const auto scale = ini.Get("Renderer", "output_scale");
         if (scale == "2")
             result.display_scale = DisplayScale::Lossless2x;
@@ -92,6 +98,8 @@ struct PlaySettings {
         ini.Set("Play", "adaptive_frame_skip", adaptive_frame_skip ? "true" : "false");
         ini.Set("Renderer", "async_metal_shaders", async_metal_shaders ? "true" : "false");
         ini.Set("Renderer", "metal_supersampling", metal_supersampling ? "true" : "false");
+        ini.Set("Renderer", "texture_filter", texture_filter == MetalTextureFilter::Nearest ? "nearest" :
+                                              texture_filter == MetalTextureFilter::Linear ? "linear" : "game");
         ini.Set("Renderer", "output_scale", std::to_string(static_cast<unsigned>(display_scale)));
     }
 };

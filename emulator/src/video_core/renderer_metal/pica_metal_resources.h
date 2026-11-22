@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "cara/metal_texture_filter.h"
+
 #include <memory>
 #include "video_core/renderer_metal/pica_metal_lcd_native.h"
 #include "video_core/renderer_metal/pica_metal_texture_decode.h"
@@ -25,6 +27,7 @@ struct PicaMetalResources {
     id<MTLCommandQueue> queue = nil;
     id<MTLLibrary> resolution_library = nil;
     unsigned internal_scale = 1;
+    MetalTextureFilter texture_filter = MetalTextureFilter::Game;
     ExactPackedMetalResources draw;
     MetalTransfer::Pipelines transfer;
     MetalLCD::Pipelines lcd;

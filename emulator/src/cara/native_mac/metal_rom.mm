@@ -332,6 +332,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
     if (!assets)
         throw std::runtime_error(error.localizedDescription.UTF8String ?: "Missing Metal assets");
 
+    assets->texture_filter = Cara::MacPreferences::PlaySettings::Read(ini).texture_filter;
     assets->internal_scale = scale;
     const auto should_capture = [&](unsigned frame) {
         return frame == limit || (interval && frame && frame % interval == 0);

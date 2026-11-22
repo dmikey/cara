@@ -916,7 +916,7 @@ bool AllowVertexFallbackOnThisRefresh() {
 } // namespace
 
 PicaMetalNativeBindings::PicaMetalNativeBindings(const PicaMetalResources& resources_)
-    : resources(resources_), pipelines(resources.queue.device), lighting(resources.queue) {}
+    : resources(resources_), pipelines(resources.queue.device, {}, resources.texture_filter), lighting(resources.queue) {}
 
 std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     PicaMetalNativeDrawLane& lane, const Pica::State& state, bool indexed,

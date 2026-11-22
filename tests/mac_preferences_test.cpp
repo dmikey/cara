@@ -36,6 +36,8 @@ int main() {
     model.play.guest_clock_percent = 145;
     model.play.limit_speed = false;
     model.play.maximum_speed_percent = 170;
+    assert(model.play.texture_filter == Cara::MetalTextureFilter::Game);
+    model.play.texture_filter = Cara::MetalTextureFilter::Linear;
     model.play.display_scale = DisplayScale::Lossless4x;
     assert(!model.play.Policy().adaptive && model.play.Policy().guest_clock == 145);
     assert(!model.play.Policy().limit_speed && model.play.Policy().maximum_speed == 170);
