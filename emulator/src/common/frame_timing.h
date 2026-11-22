@@ -25,6 +25,17 @@ struct TextureAcquisitionSamples {
     PhaseCPUSamples timing;
 };
 
+enum class ShaderDriverPhase { Compile, Link, BinaryRestore, BinaryExtract, Count };
+struct ShaderDriverTiming {
+    double wall_seconds = 0;
+    std::uint64_t calls = 0;
+};
+struct SlowShaderDriverEvent {
+    ShaderDriverPhase phase = ShaderDriverPhase::Count;
+    const char* detail = "none";
+    double wall_seconds = 0;
+};
+
 // Opt-in diagnostics on the emulation thread. No clocks are read during normal play.
 struct Counters {
     bool enabled = false;
@@ -151,6 +162,9 @@ struct Counters {
     double surface_read_pixels_seconds = 0;
     std::uint64_t surface_read_pixels_calls = 0;
     double shader_compile_seconds = 0;
+    std::array<ShaderDriverTiming, static_cast<std::size_t>(ShaderDriverPhase::Count)>
+        shader_driver_timing{};
+    SlowShaderDriverEvent slowest_shader_driver_event;
     double gpu_wait_seconds = 0;
     std::uint64_t surface_download_calls = 0;
     std::uint64_t surface_download_bytes = 0;
@@ -186,6 +200,39 @@ struct Counters {
     std::uint64_t cpu_vertex_draws = 0;
 };
 inline thread_local Counters counters;
+
+// Includes blocking GL status queries. These spans can overlap the enclosing
+// ShaderCompile phase and measure host wall time rather than compiler CPU time.
+class ShaderDriverScope {
+public:
+    explicit ShaderDriverScope(ShaderDriverPhase phase, const char* detail = "none")
+        : phase(phase), detail(detail), active(counters.enabled) {
+        if (active)
+            started = std::chrono::steady_clock::now();
+    }
+
+    ~ShaderDriverScope() {
+        if (!active)
+            return;
+
+        const double elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - started).count();
+        auto& timing = counters.shader_driver_timing[static_cast<std::size_t>(phase)];
+        timing.wall_seconds += elapsed;
+        ++timing.calls;
+        if (elapsed > counters.slowest_shader_driver_event.wall_seconds)
+            counters.slowest_shader_driver_event = {phase, detail, elapsed};
+    }
+
+    ShaderDriverScope(const ShaderDriverScope&) = delete;
+    ShaderDriverScope& operator=(const ShaderDriverScope&) = delete;
+
+private:
+    ShaderDriverPhase phase;
+    const char* detail;
+    bool active;
+    std::chrono::steady_clock::time_point started;
+};
 
 inline bool TextureAcquisitionProfileEnabled() {
     static const bool enabled = [] {
