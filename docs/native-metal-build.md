@@ -495,6 +495,13 @@ translation and 301.26 ms of fragment compilation both fell to zero.
 The next cold bottleneck was the vertex shader and pipeline at refresh 18
 (613.19 ms). The warm pass averaged 59.65 refreshes per second.
 
+Opening the Downloads Deflate ZIP on the same M4 iPad built a 1,024-entry
+seek index in 1.44 s. Its cartridge member matched the raw cartridge by
+SHA-256. The warm ZIP replay completed all 900 refreshes at 59.70 refreshes/s
+with a p99 of 21.19 ms. Refresh 89 took 17.61 ms. ZIP pixels matched the
+raw control at refreshes 88–90. Draw counts first differed at refresh 188
+and the final capture differed. The cause of the later divergence is open.
+
 ### macOS cold-run window responsiveness
 
 A single native Metal test binary at `3948557` ran Dark Moon for 3,600
