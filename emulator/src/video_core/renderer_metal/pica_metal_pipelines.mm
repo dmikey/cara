@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "pica_metal_pipelines.h"
+#include "pica_metal_binding_names.h"
 #include "simd_vertex_source.h"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "pica_metal_render_pipeline_key.h"
@@ -569,10 +570,12 @@ bool CheckReflection(MTLRenderPipelineReflection* reflection, const Pair& pair,
             fragment.emplace(texture,pair.secondary_texture_slot);
             fragment.emplace(sampler,pair.secondary_sampler_slot);
             const auto named=[&](MTLBindingType kind, NSUInteger index, NSString* name) -> bool {
-                for (id<MTLBinding> value in reflection.fragmentBindings)
-                    if (value.isUsed && value.type==kind && value.index==index)
-                        return [value.name isEqualToString:name];
-                return false;
+                const bool matches = MatchesMaterialBinding(reflection.fragmentBindings, kind, index,
+                                                            name, pair.runtime);
+                if (!matches)
+                    LOG_ERROR(Render_OpenGL, "Metal fragment binding mismatch: expected {} at kind={} slot={}",
+                              name.UTF8String, unsigned(kind), index);
+                return matches;
             };
             const auto primary = primary_material_cube ? @"tex_cube"
                 : [NSString stringWithFormat:@"tex%u", pair.sampled_unit];

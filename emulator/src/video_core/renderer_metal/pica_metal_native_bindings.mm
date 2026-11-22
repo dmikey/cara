@@ -1216,8 +1216,10 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         pica.vertex = vs.bytes;
         selection = Measure(4, resolve_pipeline);
     }
-    if (!selection || selection->primary_material_cube != primary_cube.has_value())
+    if (!selection)
         return decline("pipeline state or reflection");
+    if (selection->primary_material_cube != primary_cube.has_value())
+        return decline("reflected primary material texture type");
     if (raw_indices && selection->vertex_mode != MetalRawIndexMode) {
         ScopedNativeHostPhase timer(3);
         ExpandCapturedMetalRawIndices(*vertex_inputs);
