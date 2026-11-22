@@ -14,6 +14,7 @@
 #include <boost/archive/binary_oarchive.hpp>
 #include "common/cia_rom.h"
 #include "common/file_util.h"
+#include "common/sevenzip_rom.h"
 #include "common/logging/backend.h"
 
 namespace {
@@ -35,6 +36,28 @@ void Compare(FileUtil::IOFile& file, std::span<const u8> expected, u64 offset, s
 int main(int argc, char** argv) {
     try {
         Log::AddBackend(std::make_unique<Log::ColorConsoleBackend>());
+        if (argc >= 6 && std::string_view(argv[1]) == "--samples") {
+            std::uint64_t reported = 0, total = 0;
+            unsigned callbacks = 0;
+            FileUtil::SevenZipLoadScope scope(argv[3], [&](std::uint64_t bytes, std::uint64_t size) {
+                Require(size && bytes >= reported && bytes <= size && (!total || total == size),
+                        "Invalid 7z progress");
+                ++callbacks; total = size; reported = bytes;
+            });
+            FileUtil::IOFile rom;
+            Require(rom.OpenRom(argv[2]) && callbacks && reported == total, "7z preparation failed");
+            std::ofstream output(argv[4], std::ios::binary);
+            for (int i = 5; i < argc; ++i) {
+                const auto at = std::stoull(argv[i], nullptr, 0);
+                std::array<char, 32> bytes;
+                Require(rom.Seek(at, SEEK_SET) && rom.ReadBytes(bytes.data(), bytes.size()) == bytes.size(),
+                        "7z sample read failed");
+                output.write(bytes.data(), bytes.size());
+            }
+            Require(output.good(), "Cannot write samples");
+            std::cout << "7z progress callbacks " << callbacks << "\n";
+            return 0;
+        }
         Require(argc >= 4, "Pass raw fixture, valid ZIP, --bad, and invalid ZIPs");
         std::ifstream input(argv[1], std::ios::binary);
         const std::vector<u8> expected{std::istreambuf_iterator<char>(input), {}};

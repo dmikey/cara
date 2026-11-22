@@ -30,3 +30,11 @@ function(cara_bundle_sevenzip_licenses target)
     set_source_files_properties(${notices} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Licenses)
     target_sources(${target} PRIVATE ${notices})
 endfunction()
+
+# Extend the pinned reader in its own translation unit so Cara never guesses
+# private struct layouts or trusts raw payload signatures to identify codecs.
+set_source_files_properties("${cara_archive_SOURCE_DIR}/libarchive/archive_read_support_format_7zip.c"
+    TARGET_DIRECTORY archive_static PROPERTIES HEADER_FILE_ONLY TRUE)
+target_sources(archive_static PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/cara_7zip_format.c")
+target_include_directories(archive_static INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${cara_xz_SOURCE_DIR}/src/liblzma/api")

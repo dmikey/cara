@@ -27,17 +27,8 @@ Cara::NativeGameMenu::StateRequest state_request;
     if (Cara::MacUI::HandleStartupOpen()) return;
     if (closing_for_open)
         return;
-    NSOpenPanel* panel = [NSOpenPanel openPanel];
-    panel.title = @"Open Nintendo 3DS Game";
-    panel.prompt = @"Open";
-    panel.canChooseDirectories = NO;
-    panel.allowsMultipleSelection = NO;
-    panel.allowedFileTypes = @[@"3ds", @"cia", @"z3ds", @"zcci", @"7z", @"zip", @"cci", @"cxi", @"app", @"3dsx", @"elf", @"axf"];
-    if ([panel runModal] != NSModalResponseOK || !panel.URL.isFileURL)
-        return;
-    const char* path = panel.URL.fileSystemRepresentation;
-    if (!path || !path[0])
-        return;
+    const auto path=Cara::MacUI::PickGame();
+    if (path.empty()) return;
     // SDL_QUIT follows the normal event-loop shutdown path. Never replace a
     // live Core, cache, queue owner, or GL context from an AppKit callback.
     SDL_Event quit{};

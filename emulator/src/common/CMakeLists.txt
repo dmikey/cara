@@ -60,6 +60,8 @@ add_library(common STATIC
     common_paths.h
     common_types.h
     file_util.cpp
+    sevenzip_lzma2.cpp
+    sevenzip_lzma2.h
     sevenzip_rom.cpp
     sevenzip_rom.h
     cia_rom.cpp

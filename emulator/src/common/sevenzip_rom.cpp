@@ -2,17 +2,21 @@
 #include "common/sevenzip_rom.h"
 
 #include <algorithm>
-#include <archive.h>
-#include <archive_entry.h>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string_view>
+#include <archive.h>
+#include <archive_entry.h>
 #include <unistd.h>
 #include "common/file_util.h"
+#include "common/logging/log.h"
+#include "common/sevenzip_lzma2.h"
 #include "common/string_util.h"
 
 namespace FileUtil {
@@ -35,116 +39,201 @@ la_int64_t SeekSource(archive*, void* opaque, la_int64_t offset, int origin) {
 
 bool IsCartridge(archive_entry* entry) {
     const char* name = archive_entry_pathname_utf8(entry);
-    if (!name) name = archive_entry_pathname(entry);
+    if (!name)
+        name = archive_entry_pathname(entry);
     if (!name || archive_entry_filetype(entry) != AE_IFREG || archive_entry_hardlink(entry))
         return false;
     const std::filesystem::path path{name};
     for (const auto& part : path)
-        if (part == "__MACOSX") return false;
+        if (part == "__MACOSX")
+            return false;
     const auto extension = Common::ToLower(path.extension().string());
-    return !path.filename().string().starts_with("._") && (extension == ".3ds" || extension == ".cci");
+    return !path.filename().string().starts_with("._") &&
+           (extension == ".3ds" || extension == ".cci");
 }
 
-struct Cartridge {
+thread_local const SevenZipLoadScope* scope = nullptr;
+
+struct Cartridge final : SevenZipCartridge {
     int fd = -1;
-    u64 size = 0;
-    ~Cartridge() { if (fd >= 0) close(fd); }
+
+    ~Cartridge() {
+        if (fd >= 0)
+            close(fd);
+    }
+    std::size_t ReadAt(u64 position, void* buffer, std::size_t bytes) override {
+        std::size_t done = 0;
+        while (done < bytes) {
+            const auto n = pread(fd, static_cast<u8*>(buffer) + done,
+                                 std::min<u64>(bytes - done, 1U << 30), position + done);
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0)
+                break;
+            done += n;
+        }
+        return done;
+    }
 };
 
-std::shared_ptr<Cartridge> Extract(IOHandler& file) {
+std::shared_ptr<SevenZipCartridge> Extract(std::unique_ptr<IOHandler> handle,
+                                           const std::string& path, const std::string& directory,
+                                           const SevenZipLoadScope::Progress& progress) {
+    auto& file = *handle;
     ArchiveSource source{file, {}};
-    std::unique_ptr<archive, decltype(&archive_read_free)> reader{archive_read_new(), archive_read_free};
+    std::unique_ptr<archive, decltype(&archive_read_free)> reader{archive_read_new(),
+                                                                  archive_read_free};
     if (!reader || archive_read_support_format_7zip(reader.get()) != ARCHIVE_OK ||
         archive_read_set_seek_callback(reader.get(), SeekSource) != ARCHIVE_OK ||
         archive_read_open(reader.get(), &source, nullptr, ReadSource, nullptr) != ARCHIVE_OK)
         return {};
 
     std::shared_ptr<Cartridge> cartridge;
+    std::optional<cara_lzma2_layout> demand;
+    const auto start = std::chrono::steady_clock::now();
     archive_entry* entry;
     int status;
     while ((status = archive_read_next_header(reader.get(), &entry)) == ARCHIVE_OK) {
-        if (!IsCartridge(entry)) continue;
+        if (!IsCartridge(entry))
+            continue;
         const auto size = archive_entry_size(entry);
-        if (cartridge || archive_entry_is_encrypted(entry) || !archive_entry_size_is_set(entry) ||
-            size <= 0 || size > (8LL << 30))
+        if (cartridge || demand || archive_entry_is_encrypted(entry) ||
+            !archive_entry_size_is_set(entry) || size <= 0 || size > (8LL << 30))
             return {};
+        cara_lzma2_layout layout{};
+        if (cara_7zip_lzma2_layout(reader.get(), &layout) && layout.properties <= 30) {
+            demand = layout;
+            continue; // List all remaining headers to reject a second cartridge.
+        }
+        if (progress)
+            progress(0, size);
+        u64 last_report = 0;
         std::error_code error;
         auto directory = std::filesystem::temp_directory_path(error);
-        if (error) return {};
+        if (error)
+            return {};
         const auto space = std::filesystem::space(directory, error);
-        if (error || space.available < static_cast<u64>(size)) return {};
+        if (error || space.available < static_cast<u64>(size))
+            return {};
         auto path = (directory / "cara-cartridge-XXXXXX").string();
         cartridge = std::make_shared<Cartridge>();
         cartridge->fd = mkstemp(path.data());
-        if (cartridge->fd < 0 || unlink(path.c_str()) != 0) return {};
+        if (cartridge->fd < 0 || unlink(path.c_str()) != 0)
+            return {};
         std::array<u8, 64 * 1024> block;
         la_ssize_t bytes;
         while ((bytes = archive_read_data(reader.get(), block.data(), block.size())) > 0) {
-            if (bytes > size - static_cast<s64>(cartridge->size)) return {};
+            if (bytes > size - static_cast<s64>(cartridge->size))
+                return {};
             ssize_t written = 0;
             while (written < bytes) {
                 const auto n = write(cartridge->fd, block.data() + written, bytes - written);
-                if (n < 0 && errno == EINTR) continue;
-                if (n <= 0) return {};
+                if (n < 0 && errno == EINTR)
+                    continue;
+                if (n <= 0)
+                    return {};
                 written += n;
             }
             cartridge->size += bytes;
+            if (progress && cartridge->size - last_report >= (4U << 20)) {
+                progress(cartridge->size, size);
+                last_report = cartridge->size;
+            }
         }
-        if (bytes < 0 || cartridge->size != static_cast<u64>(size)) return {};
+        if (bytes < 0 || cartridge->size != static_cast<u64>(size))
+            return {};
     }
-    return status == ARCHIVE_EOF ? cartridge : nullptr;
+    if (status != ARCHIVE_EOF)
+        return {};
+    reader.reset();
+    if (demand)
+        return OpenIndexedLzma2(std::move(handle), *demand, path, directory, progress);
+    if (cartridge) {
+        if (progress)
+            progress(cartridge->size, cartridge->size);
+        LOG_INFO(Common_Filesystem, "7z temporary extraction: {} bytes, {:.3f}s", cartridge->size,
+                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+    }
+    return cartridge;
 }
 
 class Reader final : public IOHandler {
 public:
-    explicit Reader(std::shared_ptr<Cartridge> cart) : cartridge(std::move(cart)) {}
+    explicit Reader(std::shared_ptr<SevenZipCartridge> cart) : cartridge(std::move(cart)) {}
     std::size_t Read(void* buffer, std::size_t size, std::size_t count) override {
-        if (!size || count > std::numeric_limits<std::size_t>::max() / size) return 0;
+        if (!size || count > std::numeric_limits<std::size_t>::max() / size)
+            return 0;
         const auto bytes = std::min<u64>(size * count, cartridge->size - position);
-        std::size_t done = 0;
-        while (done < bytes) {
-            const auto n = pread(cartridge->fd, static_cast<u8*>(buffer) + done,
-                                 std::min<u64>(bytes - done, 1U << 30), position);
-            if (n < 0 && errno == EINTR) continue;
-            if (n <= 0) break;
-            position += n;
-            done += n;
-        }
+        const auto done = cartridge->ReadAt(position, buffer, bytes);
+        position += done;
         return done / size;
     }
     bool Seek(s64 offset, int origin) override {
         s64 base;
         switch (origin) {
-        case SEEK_SET: base = 0; break;
-        case SEEK_CUR: base = position; break;
-        case SEEK_END: base = cartridge->size; break;
-        default: return false;
+        case SEEK_SET:
+            base = 0;
+            break;
+        case SEEK_CUR:
+            base = position;
+            break;
+        case SEEK_END:
+            base = cartridge->size;
+            break;
+        default:
+            return false;
         }
-        if (offset < -base || offset > static_cast<s64>(cartridge->size) - base) return false;
+        if (offset < -base || offset > static_cast<s64>(cartridge->size) - base)
+            return false;
         position = base + offset;
         return true;
     }
-    u64 Tell() override { return position; }
-    u64 GetSize() override { return cartridge->size; }
-    std::size_t Write(const void*, std::size_t, std::size_t) override { return 0; }
-    bool Resize(u64) override { return false; }
-    bool Flush() override { return true; }
+    u64 Tell() override {
+        return position;
+    }
+    u64 GetSize() override {
+        return cartridge->size;
+    }
+    std::size_t Write(const void*, std::size_t, std::size_t) override {
+        return 0;
+    }
+    bool Resize(u64) override {
+        return false;
+    }
+    bool Flush() override {
+        return true;
+    }
+
 private:
-    std::shared_ptr<Cartridge> cartridge;
+    std::shared_ptr<SevenZipCartridge> cartridge;
     u64 position = 0;
 };
 } // namespace
 
-std::unique_ptr<IOHandler> OpenSevenZipRom(const std::string& path, std::unique_ptr<IOHandler> source) {
+SevenZipLoadScope::SevenZipLoadScope(std::string cache_directory, Progress progress)
+    : directory(std::move(cache_directory)), report(std::move(progress)), previous(scope) {
+    scope = this;
+}
+SevenZipLoadScope::~SevenZipLoadScope() {
+    scope = previous;
+}
+
+std::unique_ptr<IOHandler> OpenSevenZipRom(const std::string& path,
+                                           std::unique_ptr<IOHandler> source) {
     static std::mutex mutex;
-    static std::map<std::string, std::weak_ptr<Cartridge>> active;
+    static std::map<std::string, std::weak_ptr<SevenZipCartridge>> active;
     std::lock_guard lock{mutex};
     std::erase_if(active, [](const auto& item) { return item.second.expired(); });
-    auto cartridge = active[path].lock();
+    const auto key = path + ":" + SevenZipSourceStamp(path, *source);
+    auto cartridge = active[key].lock();
     if (!cartridge) {
-        cartridge = Extract(*source);
-        if (!cartridge) return {};
-        active[path] = cartridge;
+        cartridge = Extract(std::move(source), path, scope ? scope->directory : "",
+                            scope ? scope->report : SevenZipLoadScope::Progress{});
+        if (!cartridge)
+            return {};
+        active[key] = cartridge;
+    } else if (scope && scope->report) {
+        scope->report(cartridge->size, cartridge->size);
     }
     return std::make_unique<Reader>(std::move(cartridge));
 }
