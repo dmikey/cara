@@ -121,6 +121,12 @@ struct PicaFSConfigState {
 
     bool shadow_rendering;
     bool shadow_texture_orthographic;
+    struct MaterialBorder {
+        u32 rgba;
+        u8 axes, min_level, max_level;
+        bool min_linear, mag_linear, mip_linear;
+    };
+    std::array<MaterialBorder, 3> material_borders{};
     std::array<s32, 3> material_lod_bias{}; // Signed raw 1.4.8 values for explicit LOD.
 };
 
@@ -131,6 +137,7 @@ struct PicaFragmentShaderTarget {
     bool allow_shadow;
     bool honor_material_enable = false;
     bool emit_explicit_material_lod_bias = false;
+    bool emulate_material_border = false;
     bool metal_general_fragment = false;
     bool elide_dead_combiner_buffer = false;
 };
