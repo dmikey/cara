@@ -10,7 +10,6 @@ public:
     using ImageLoadedHandler = std::function<void(u32* pixels, u32 width, u32 height)>;
 
     static void Initialize(JNIEnv* env);
-    static void Shutdown(JNIEnv* env);
 
     static int SafOpen(const std::string& path, const std::string& mode);
     static u64 SafLastModified(const std::string& path);

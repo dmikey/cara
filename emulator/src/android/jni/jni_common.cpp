@@ -19,10 +19,6 @@ void NativeLibrary::Initialize(JNIEnv* env) {
     // todo
 }
 
-void NativeLibrary::Shutdown(JNIEnv* env) {
-    JniHelper::CallStaticMethod<void>(CLASS, "notifyGameShudown");
-}
-
 int NativeLibrary::SafOpen(const std::string& path, const std::string& mode) {
     return JniHelper::CallStaticMethod<int>(CLASS, "SafOpen", path, mode);
 }

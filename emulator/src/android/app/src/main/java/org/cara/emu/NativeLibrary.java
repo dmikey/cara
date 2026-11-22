@@ -78,8 +78,14 @@ public final class NativeLibrary {
                 return 0;
             }
         }
-        DocumentFile file = DocumentFile.fromTreeUri(context, Uri.parse(path));
-        return file.lastModified();
+        try {
+            Uri uri = Uri.parse(path);
+            DocumentFile file = DocumentFile.fromSingleUri(context, uri);
+            return file != null ? file.lastModified() : 0;
+        } catch (RuntimeException e) {
+            // Some providers do not expose a modification timestamp.
+            return 0;
+        }
     }
 
     public static int SafClose(int fd) {
@@ -152,13 +158,6 @@ public final class NativeLibrary {
             }
         }
         return context.getAssets();
-    }
-
-    public static void notifyGameShudown() {
-        Activity activity = EmulationActivity.get();
-        if (activity != null) {
-            activity.finish();
-        }
     }
 
     public static void showMessageDialog(int type, String msg) {

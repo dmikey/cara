@@ -53,6 +53,9 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
     private String mPath;
     private Surface mSurface;
     private EmulationState mState;
+    private Thread mEmulationThread;
+    private boolean mGuestReady;
+    private Runnable mAfterStop;
     private boolean mRunWhenSurfaceIsValid;
     private InputOverlay mInputOverlay;
     private ResizeOverlay mResizeOverlayTop;
@@ -332,10 +335,25 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
         mInputOverlay.setInEditMode(false);
     }
 
-    public void stopEmulation() {
-        if (mState != EmulationState.STOPPED) {
-            mState = EmulationState.STOPPED;
-            NativeLibrary.StopEmulation();
+    public boolean hasSession() {
+        return mEmulationThread != null;
+    }
+
+    public boolean canSwitchGame() {
+        return mGuestReady && mAfterStop == null;
+    }
+
+    public void stopEmulation(Runnable afterStop) {
+        mRunWhenSurfaceIsValid = false;
+        if (mEmulationThread == null) {
+            afterStop.run();
+        } else if (mAfterStop == null) {
+            mAfterStop = afterStop;
+            // Native code owns the window after BootGame reports readiness.
+            // If startup is still in progress, updateProgress will stop it.
+            if (mGuestReady) {
+                NativeLibrary.StopEmulation();
+            }
         }
     }
 
@@ -400,19 +418,54 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
     }
 
     public void updateProgress(String name, long written, long total) {
-        mProgressBar.setVisibility(written < total ? View.VISIBLE : View.INVISIBLE);
+        if (mProgressBar != null) {
+            mProgressBar.setVisibility(written < total ? View.VISIBLE : View.INVISIBLE);
+        }
+        if ("BootGame".equals(name) && total == 1 && written == total) {
+            mGuestReady = true;
+            if (mAfterStop != null) {
+                NativeLibrary.StopEmulation();
+            }
+        }
     }
 
     private void runWithValidSurface() {
         mRunWhenSurfaceIsValid = false;
+        if (mAfterStop != null) {
+            return;
+        }
         if (mState == EmulationState.STOPPED) {
             NativeLibrary.SurfaceChanged(mSurface);
-            new Thread(() -> NativeLibrary.Run(mPath), "NativeEmulation").start();
+            mGuestReady = false;
+            mEmulationThread = new Thread(() -> {
+                try {
+                    NativeLibrary.Run(mPath);
+                } finally {
+                    new Handler(getMainLooper()).post(this::onEmulationStopped);
+                }
+            }, "NativeEmulation");
+            mEmulationThread.start();
         } else if (mState == EmulationState.PAUSED) {
             NativeLibrary.SurfaceChanged(mSurface);
             NativeLibrary.ResumeEmulation();
         }
         mState = EmulationState.RUNNING;
+    }
+
+    private void onEmulationStopped() {
+        mGuestReady = false;
+        mEmulationThread = null;
+        Runnable afterStop = mAfterStop;
+        mAfterStop = null;
+        if (mState == EmulationState.RUNNING && mSurface != null) {
+            NativeLibrary.SurfaceDestroyed();
+        }
+        mState = EmulationState.STOPPED;
+        if (afterStop != null) {
+            afterStop.run();
+        } else if (getActivity() != null) {
+            getActivity().finish();
+        }
     }
 
     private enum EmulationState { STOPPED, RUNNING, PAUSED }

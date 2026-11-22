@@ -259,11 +259,10 @@ void BootGame(const std::string& path) {
     auto hid = system.ServiceManager()
                    .GetService<Service::HID::Module::Interface>("hid:USER")
                    ->GetModule();
-    NativeLibrary::UpdateProgress("BootGame", 1, 1);
-
     s_update_hid = false;
     s_stop_running = false;
     s_is_running = true;
+    NativeLibrary::UpdateProgress("BootGame", 1, 1);
     system.perf_stats->SetBoundedFramePacing(true);
     Cara::AdaptiveClock adaptive_clock;
     auto sampled_frame = VideoCore::GetCurrentFrame();
@@ -443,10 +442,8 @@ static const GameInfo& GetGameInfo(const std::string& path) {
     }
     auto [iter, is_new] = s_app_dict.emplace(path, GameInfo{});
     auto& game = iter->second;
-    if (!is_new) {
-        if (timestamp == game.timestamp) {
-            return game;
-        }
+    if (!is_new && !game.strid.empty() && timestamp == game.timestamp) {
+        return game;
     }
 
     auto app_loader = Loader::GetLoader(path);
@@ -581,8 +578,10 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceChanged(JNIEnv* en
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* env, jclass obj) {
-    ANativeWindow_release(s_surface);
-    s_surface = nullptr;
+    if (s_surface) {
+        ANativeWindow_release(s_surface);
+        s_surface = nullptr;
+    }
     if (s_render_window) {
         s_render_window->UpdateSurface(s_surface);
     }
@@ -774,9 +773,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     // run
     BootGame(JniHelper::Unwrap(jFile));
 
-    // shotdown
     InputManager::GetInstance().Shutdown();
-    NativeLibrary::Shutdown(env);
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_ResumeEmulation(JNIEnv* env, jclass obj) {
