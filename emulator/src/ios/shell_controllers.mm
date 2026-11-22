@@ -693,7 +693,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
     __weak CaraSettingsController* weakSettings=self;
     if(self.categorized) {
         selectedCategory=@"General"; sidebar=[UIStackView new]; sidebar.axis=UILayoutConstraintAxisVertical; sidebar.spacing=10;
-        for(NSString* category in [self settingCategories]) { UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* config=[UIButtonConfiguration tintedButtonConfiguration]; config.image=[UIImage systemImageNamed:@{@"General":@"gearshape",@"Appearance":@"paintpalette",@"Emulation":@"cpu",@"Display":@"display",@"Audio":@"speaker.wave.2",@"Controls":@"gamecontroller",@"Library & storage":@"externaldrive",@"Save data":@"sdcard",@"Local multiplayer":@"antenna.radiowaves.left.and.right",@"About Cara":@"info.circle"}[category]]; config.imagePadding=12; button.configuration=config; [button setTitle:category forState:UIControlStateNormal]; button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading; [button.heightAnchor constraintEqualToConstant:52].active=YES; [button addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraSettingsController* controller=weakSettings; if(controller) { CaraMenuSound(@"select"); controller->selectedCategory=category; [controller refresh]; } }] forControlEvents:UIControlEventTouchUpInside]; [sidebar addArrangedSubview:button]; } sidebarScroll=[UIScrollView new]; [sidebarScroll addSubview:sidebar]; [self.view addSubview:sidebarScroll];
+        for(NSString* category in [self settingCategories]) { UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* config=[UIButtonConfiguration tintedButtonConfiguration]; config.image=[UIImage systemImageNamed:@{@"General":@"gearshape",@"Appearance":@"paintpalette",@"Advanced":@"slider.horizontal.3",@"Display":@"display",@"Audio":@"speaker.wave.2",@"Controls":@"gamecontroller",@"Library & storage":@"externaldrive",@"Save data":@"sdcard",@"Local multiplayer":@"antenna.radiowaves.left.and.right",@"About Cara":@"info.circle"}[category]]; config.imagePadding=12; button.configuration=config; [button setTitle:category forState:UIControlStateNormal]; button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading; [button.heightAnchor constraintEqualToConstant:52].active=YES; [button addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraSettingsController* controller=weakSettings; if(controller) { CaraMenuSound(@"select"); controller->selectedCategory=category; [controller refresh]; } }] forControlEvents:UIControlEventTouchUpInside]; [sidebar addArrangedSubview:button]; } sidebarScroll=[UIScrollView new]; [sidebarScroll addSubview:sidebar]; [self.view addSubview:sidebarScroll];
         self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Categories" style:UIBarButtonItemStylePlain target:self action:@selector(chooseCategory)];
     }
     [self updateVisibleSections];
@@ -719,11 +719,11 @@ static UIImage* CaraThemePreview(NSInteger style) {
     self.tableView.frame=CGRectMake(left,0,self.view.bounds.size.width-left,self.view.bounds.size.height);
 }
 - (NSArray<NSString*>*)settingCategories {
-    NSMutableArray<NSString*>* names = [@[@"General", @"Appearance", @"Emulation", @"Audio",
-        @"Controls", @"Library & storage", @"Save data", @"Local multiplayer", @"About Cara"] mutableCopy];
+    NSMutableArray<NSString*>* names = [@[@"General", @"Appearance",
+        @"Controls", @"Library & storage", @"Local multiplayer", @"Advanced", @"About Cara"] mutableCopy];
     for (NSDictionary* section in self.sections) {
         if ([section[@"title"] isEqual:@"Display"]) {
-            [names insertObject:@"Display" atIndex:3];
+            [names insertObject:@"Display" atIndex:1];
             break;
         }
     }
@@ -796,9 +796,9 @@ static UIImage* CaraThemePreview(NSInteger style) {
         return;
     }
     if([selectedCategory isEqual:@"About Cara"]) { visibleSections=@[@{@"title":@"Cara",@"rows":@[@{@"title":@"Nintendo 3DS emulation",@"subtitle":@"Cara is built on the open-source Citra emulator. See the bundled source and license notices.",@"symbol":@"info.circle"},@{@"title":@"Version",@"subtitle":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"Development build",@"symbol":@"app"}]}]; return; }
-    visibleSections=[self.sections filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* b) { NSString* title=section[@"title"]; if([self->selectedCategory isEqual:@"General"]) return [title isEqual:@"Current game"] || [title isEqual:@"Play mode"]; if([self->selectedCategory isEqual:@"Controls"]) {
+    visibleSections=[self.sections filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* b) { NSString* title=section[@"title"]; if([self->selectedCategory isEqual:@"General"]) return [title isEqual:@"Current game"] || [title isEqual:@"General"]; if([self->selectedCategory isEqual:@"Advanced"]) return [@[@"Play mode",@"Emulation",@"Shader options",@"Audio"] containsObject:title]; if([self->selectedCategory isEqual:@"Controls"]) {
         return [title hasSuffix:@"skin"] || [title isEqual:@"Controllers"];
-    } if([self->selectedCategory isEqual:@"Library & storage"]) return [title isEqual:@"Game library"] || [title isEqual:@"3DS activity"]; if([self->selectedCategory isEqual:@"Save data"]) return [title isEqual:@"iCloud & Files"]; return [title isEqual:self->selectedCategory]; }]];
+    } if([self->selectedCategory isEqual:@"Library & storage"]) return [title isEqual:@"Game library"] || [title isEqual:@"3DS activity"] || [title isEqual:@"iCloud & Files"]; return [title isEqual:self->selectedCategory]; }]];
     if(!visibleSections.count) visibleSections=@[@{@"title":selectedCategory,@"rows":@[@{@"title":@"Ready to play",@"subtitle":@"Use Emulation to choose a play mode, or Library & storage to add your games.",@"symbol":@"checkmark.circle"}]}];
 }
 - (void)refresh {
@@ -1051,83 +1051,4 @@ static UIImage* CaraThemePreview(NSInteger style) {
     light.shadowOpacity=state==CaraStatusLightDim?0:.55;
     [CATransaction commit]; self.accessibilityValue=status;
 }
-@end
-
-@implementation CaraQuickSettingsController {
-    NSArray<UIButton*>* modeButtons;
-    BOOL completed;
-}
-- (void)setPerformanceDetail:(NSString*)value {
-    _performanceDetail=[value copy];
-    if (modeButtons.count>1) { UIButtonConfiguration* config=modeButtons[1].configuration; config.subtitle=_performanceDetail?:@"Adaptive CPU clock"; modeButtons[1].configuration=config; }
-}
-- (instancetype)init { if ((self=[super init])) _modeSelectionEnabled=YES; return self; }
-- (void)viewDidLoad {
-    [super viewDidLoad]; if (!self.title.length) self.title=@"Settings"; self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraOrange();
-    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
-    UIScrollView* scroll=[UIScrollView new]; scroll.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:scroll];
-    UIStackView* body=[UIStackView new]; body.axis=UILayoutConstraintAxisVertical; body.spacing=16; body.translatesAutoresizingMaskIntoConstraints=NO;
-    [scroll addSubview:body];
-    __weak CaraQuickSettingsController* weakSelf=self;
-    NSMutableArray* modes=[NSMutableArray new];
-    for (NSString* mode in @[@"accuracy",@"performance"]) {
-        const BOOL accuracy=[mode isEqual:@"accuracy"];
-        UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem];
-        UIButtonConfiguration* config=[UIButtonConfiguration borderedButtonConfiguration];
-        config.title=accuracy?@"Accuracy Mode":@"Performance Mode";
-        config.subtitle=accuracy?@"100% speed · 100% guest CPU":(self.performanceDetail?:@"Adaptive CPU clock");
-        config.image=[UIImage systemImageNamed:accuracy?@"scope":@"bolt.fill"];
-        config.imagePadding=18; config.titleAlignment=UIButtonConfigurationTitleAlignmentLeading;
-        config.contentInsets=NSDirectionalEdgeInsetsMake(25,22,25,22); config.cornerStyle=UIButtonConfigurationCornerStyleLarge;
-        config.titleTextAttributesTransformer=^NSDictionary*(NSDictionary* attributes) { NSMutableDictionary* result=[attributes mutableCopy]; result[NSFontAttributeName]=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2]; return result; };
-        config.subtitleTextAttributesTransformer=^NSDictionary*(NSDictionary* attributes) { NSMutableDictionary* result=[attributes mutableCopy]; result[NSFontAttributeName]=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; return result; };
-        button.configuration=config; button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading; button.enabled=self.modeSelectionEnabled;
-        [button addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraQuickSettingsController* owner=weakSelf; if (!owner) return; CaraMenuSound(@"select"); owner.playMode=mode; if (owner.chooseMode) owner.chooseMode(mode); }] forControlEvents:UIControlEventTouchUpInside];
-        button.accessibilityIdentifier=[@"mode-" stringByAppendingString:mode];
-        [body addArrangedSubview:button]; [modes addObject:button];
-    }
-    modeButtons=modes; [self updateMode];
-    UILabel* fpsLabel=[UILabel new]; fpsLabel.text=@"FPS meter"; fpsLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; fpsLabel.adjustsFontForContentSizeCategory=YES;
-    UISwitch* fpsToggle=[UISwitch new]; fpsToggle.on=self.showFPS; fpsToggle.onTintColor=CaraOrange(); fpsToggle.accessibilityLabel=@"FPS meter";
-    __weak UISwitch* weakToggle=fpsToggle;
-    [fpsToggle addAction:[UIAction actionWithHandler:^(UIAction* action) { CaraQuickSettingsController* owner=weakSelf; if (owner.toggleFPS) owner.toggleFPS(weakToggle.on); CaraMenuSound(@"toggle"); }] forControlEvents:UIControlEventValueChanged];
-    UIStackView* fpsRow=[[UIStackView alloc] initWithArrangedSubviews:@[fpsLabel,[UIView new],fpsToggle]]; fpsRow.spacing=12; fpsRow.alignment=UIStackViewAlignmentCenter; fpsRow.layoutMarginsRelativeArrangement=YES; fpsRow.directionalLayoutMargins=NSDirectionalEdgeInsetsMake(18,20,18,20); fpsRow.backgroundColor=UIColor.secondarySystemGroupedBackgroundColor; fpsRow.layer.cornerRadius=18; [body addArrangedSubview:fpsRow];
-    UILabel* detail=[UILabel new]; detail.text=@"Choose a mode, then leave the tuning to Cara. More controls are available in Advanced."; detail.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; detail.textColor=UIColor.secondaryLabelColor; detail.numberOfLines=0; detail.adjustsFontForContentSizeCategory=YES; [body addArrangedSubview:detail];
-    UIStackView* row=nil;
-    for (NSUInteger index=0;index<self.actions.count;++index) {
-        if (index%2==0) { row=[UIStackView new]; row.spacing=14; row.distribution=UIStackViewDistributionFillEqually; [body addArrangedSubview:row]; }
-        NSDictionary* item=self.actions[index];
-        UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* config=[UIButtonConfiguration tintedButtonConfiguration];
-        config.title=item[@"title"]; config.image=[UIImage systemImageNamed:item[@"symbol"]?:@"circle"]; config.imagePlacement=NSDirectionalRectEdgeTop; config.imagePadding=10;
-        config.contentInsets=NSDirectionalEdgeInsetsMake(22,10,22,10); config.cornerStyle=UIButtonConfigurationCornerStyleLarge;
-        config.titleTextAttributesTransformer=^NSDictionary*(NSDictionary* attributes) { NSMutableDictionary* result=[attributes mutableCopy]; result[NSFontAttributeName]=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; return result; };
-        button.configuration=config; button.enabled=!item[@"enabled"] || [item[@"enabled"] boolValue];
-        [button addAction:[UIAction actionWithHandler:^(UIAction* action) {
-            void(^run)(void)=item[@"action"]; if (!run) return; CaraMenuSound(@"select");
-            if ([item[@"keepOpen"] boolValue]) run();
-            else { CaraQuickSettingsController* owner=weakSelf; if (!owner) return; owner->completed=YES; [owner dismissViewControllerAnimated:YES completion:run]; }
-        }] forControlEvents:UIControlEventTouchUpInside];
-        [row addArrangedSubview:button];
-    }
-    if (self.actions.count%2) [row addArrangedSubview:[UIView new]];
-    [NSLayoutConstraint activateConstraints:@[
-        [scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],[scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
-        [body.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:22],[body.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],[body.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:22],[body.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-22],[body.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-44],
-    ]];
-}
-- (void)setPlayMode:(NSString*)mode { _playMode=[mode copy]; if (self.isViewLoaded) [self updateMode]; }
-- (void)updateMode {
-    NSUInteger index=0;
-    for (UIButton* button in modeButtons) {
-        BOOL selected=[self.playMode isEqual:index++==0?@"accuracy":@"performance"];
-        UIButtonConfiguration* config=button.configuration;
-        config.baseForegroundColor=selected?CaraOrange():UIColor.labelColor;
-        config.background.backgroundColor=selected?[CaraOrange() colorWithAlphaComponent:.12]:UIColor.secondarySystemGroupedBackgroundColor;
-        config.background.strokeColor=selected?CaraOrange():UIColor.separatorColor; config.background.strokeWidth=selected?2:1;
-        button.configuration=config;
-        button.accessibilityTraits=UIAccessibilityTraitButton|(selected?UIAccessibilityTraitSelected:0);
-    }
-}
-- (void)done { CaraMenuSound(@"back"); completed=YES; [self dismissViewControllerAnimated:YES completion:^{ if (self.finished) self.finished(); }]; }
-- (void)presentationControllerDidDismiss:(UIPresentationController*)controller { if (!completed && self.finished) self.finished(); completed=YES; }
 @end

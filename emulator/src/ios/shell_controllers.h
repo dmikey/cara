@@ -54,14 +54,3 @@ typedef NS_ENUM(NSUInteger,CaraStatusLight) {
 @interface CaraSessionIndicator : UIView
 - (void)updateLight:(CaraStatusLight)light accessibilityStatus:(NSString*)status;
 @end
-
-@interface CaraQuickSettingsController : UIViewController <UIAdaptivePresentationControllerDelegate>
-@property(copy,nonatomic) NSString* playMode;
-@property(copy,nonatomic) NSString* performanceDetail;
-@property(nonatomic) BOOL modeSelectionEnabled;
-@property(nonatomic) BOOL showFPS;
-@property(copy,nonatomic) void(^toggleFPS)(BOOL);
-@property(copy,nonatomic) void(^chooseMode)(NSString*);
-@property(copy,nonatomic) NSArray<NSDictionary*>* actions;
-@property(copy,nonatomic) void(^finished)(void);
-@end

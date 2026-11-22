@@ -113,8 +113,8 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     nav.modalPresentationStyle=UIModalPresentationPageSheet;
     nav.presentationController.delegate=landing;
     if (inGame) {
-        CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=@"performance";
-        quick.actions=@[@{@"title":@"Game settings",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [weakNav pushViewController:landing animated:YES]; }}];
+        CaraSettingsController* quick=[CaraSettingsController new]; quick.categorized=YES;
+        quick.sections=@[@{@"title":@"Current game",@"rows":@[@{@"title":@"Game settings",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [weakNav pushViewController:landing animated:YES]; }}]}];
         quick.finished=finished; nav.viewControllers=@[quick]; nav.presentationController.delegate=quick;
     } else if (!stopped) {
         openEditor();
@@ -198,11 +198,7 @@ static void FixtureGame(NSURL* url,NSString* title,unsigned seed) {
     if (pendingActionNavigation) { UINavigationController* nav=pendingActionNavigation; pendingActionNavigation=nil; [self presentViewController:nav animated:YES completion:nil]; }
     if ([Scenario() isEqual:@"settings"] && !self.presentedViewController) [self showSettings];
     if ([Scenario() isEqual:@"advanced"] && !self.presentedViewController) { [self showSettings]; settings.title=@"Advanced"; [self refreshAdvancedFixture]; }
-    if ([Scenario() isEqual:@"quick-settings"] && !self.presentedViewController) {
-        CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=@"performance"; quick.showFPS=YES;
-        quick.actions=@[@{@"title":@"Library & iCloud",@"symbol":@"folder",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Controllers",@"symbol":@"gamecontroller.fill",@"keepOpen":@YES,@"action":^{ [self showSettings]; }},@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [self showSettings]; }}];
-        UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:quick]; nav.modalPresentationStyle=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad?UIModalPresentationFormSheet:UIModalPresentationPageSheet; nav.preferredContentSize=CGSizeMake(620,850); nav.presentationController.delegate=quick; [self presentViewController:nav animated:YES completion:nil];
-    }
+    if ([Scenario() isEqual:@"quick-settings"] && !self.presentedViewController) [self showSettings];
     if ([Scenario() containsString:@"landscape"]) {
         UIWindowScene* scene=self.view.window.windowScene;
         [scene requestGeometryUpdateWithPreferences:[[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscapeLeft] errorHandler:^(NSError* error) { NSLog(@"Orientation: %@",error); }];

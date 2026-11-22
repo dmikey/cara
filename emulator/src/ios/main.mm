@@ -800,7 +800,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     std::atomic<unsigned> maximumSpeedLimit;
     std::atomic<bool> speedLimitEnabled;
     std::atomic<unsigned> fixedGuestClock;
-    NSString* settingsCategory;
     std::atomic<bool> framePending[2];
     unsigned frameCount;
     unsigned sessionGeneration;
@@ -1335,7 +1334,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         libraryController.syncTitle=(saveSync.cloudUploadVerified && stateSync.cloudUploadVerified)?@"Uploaded to iCloud":@"Saves & states";
         libraryController.syncDetail=[NSString stringWithFormat:@"Saves: %@ · States: %@",saveSync.status,stateSync.status];
     }
-    if (settingsController) { settingsController.sections=[self settingsForCategory:settingsCategory]; [settingsController refresh]; }
+    if (settingsController) { settingsController.sections=[self settingsSections]; [settingsController refresh]; }
 }
 // The guest RTC uses civil hours; preserve the local date across timezone offsets.
 static uint32_t PedometerHour(NSCalendar* calendar, NSDate* date) {
@@ -1478,15 +1477,25 @@ static std::filesystem::path PedometerHistoryPath() {
             action(@"Save state…",@"square.and.arrow.down",YES,^{ [owner showStateSlots:YES]; }),
             action(@"Load state…",@"arrow.counterclockwise",YES,^{ [owner showStateSlots:NO]; }),
         ]];
+        if (gameURL) {
+            NSURL* url=gameURL;
+            [game insertObject:@{@"title":@"Game settings",@"symbol":@"gamecontroller",@"keepOpen":@YES,
+                @"action":^{ [owner showGameSettings:url navigation:(UINavigationController*)owner.presentedViewController]; }} atIndex:0];
+        }
         if (std::getenv("CARA_PROFILE_CHECKPOINT")) [game addObject:action(@"Capture comparison checkpoint",@"camera.viewfinder",YES,^{ EmulatorController* controller=owner; if (controller) stateCommand.store(101,std::memory_order_release); })];
         NSMutableDictionary* stopRow=[action(@"Stop game",@"stop.circle",YES,^{ [owner stopGame]; [owner showLibrary]; }) mutableCopy]; stopRow[@"destructive"]=@YES; [game addObject:stopRow];
         [sections addObject:@{@"title":@"Current game",@"rows":game,@"footer":@"Keep using in-game saves. Save states require a matching Cara engine build, game revision, and system mode."}];
     }
-    [sections addObject:@{@"title":@"Local multiplayer",@"rows":@[@{
+    NSMutableArray* network=[NSMutableArray arrayWithObject:@{
         @"title":@"Private room",@"subtitle":@"Connect both players, then use local wireless in the game.",
         @"symbol":@"antenna.radiowaves.left.and.right",@"keepOpen":@YES,
         @"action":^{ [owner showNetworkSettings]; }
-    }]}];
+    }];
+    if (gameLoaded && running && !stop) {
+        [network addObject:@{@"title":@"Online Rooms",@"symbol":@"globe",@"keepOpen":@YES,
+            @"action":^{ [owner showOnlineRoomsInNavigation:(UINavigationController*)owner.presentedViewController]; }}];
+    }
+    [sections addObject:@{@"title":@"Local multiplayer",@"rows":network}];
     NSMutableArray* activity = [NSMutableArray arrayWithObjects:
         action(@"Export StreetPass messages…", @"square.and.arrow.up", available, ^{ [owner exportStreetPass]; }),
         action(@"Import StreetPass messages…", @"square.and.arrow.down", available, ^{ [owner chooseStreetPass]; }), nil];
@@ -1562,7 +1571,8 @@ static std::filesystem::path PedometerHistoryPath() {
             }}];
     }
     NSString* displayPlayMode = [displayDefaults stringForKey:@"playMode"];
-    [display addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
+    NSMutableArray* rendering=[NSMutableArray array];
+    [rendering addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
         @"subtitle":@"Build eligible Metal shaders in the background. Applies when you reopen a game.",
         @"value":@(CaraAsyncShadersPreference(displayPlayMode)),
         @"enabled":@([displayDefaults boolForKey:CaraMetalRendererKey] &&
@@ -1570,14 +1580,15 @@ static std::filesystem::path PedometerHistoryPath() {
         @"change":^(BOOL enabled) {
             [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
         }}];
-    [display addObject:@{@"title":@"First-use shader fallback", @"symbol":@"cpu",
+    [rendering addObject:@{@"title":@"First-use shader fallback", @"symbol":@"cpu",
         @"subtitle":@"Uses CPU vertices to reduce first-use shader stalls. Can slow gameplay. Reopen the game to apply.",
         @"value":@([displayDefaults boolForKey:CaraFirstUseShadersKey]),
         @"enabled":@(![displayPlayMode isEqual:@"accuracy"]),
         @"change":^(BOOL enabled) {
             [displayDefaults setBool:enabled forKey:CaraFirstUseShadersKey];
         }}];
-    if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+    [sections addObject:@{@"title":@"Shader options",@"rows":rendering}];
+    if ([displayDefaults boolForKey:CaraMetalRendererKey] && UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
         const NSInteger scale = saved == 2 || saved == 4 ? saved : 0;
         for (NSInteger multiplier : {0, 2, 4}) {
@@ -1595,13 +1606,25 @@ static std::filesystem::path PedometerHistoryPath() {
         }
     }
     [sections addObject:@{@"title":@"Display", @"rows":display,
-                          @"footer":@"Lossless output scaling requires the Experimental Renderer."}];
+                          @"footer":@"Renderer and resolution changes apply when you reopen a game."}];
 #else
     [sections addObject:@{@"title":@"Display", @"rows":display}];
 #endif
 #endif
+    NSMutableArray* general=[NSMutableArray array];
+    [general addObject:@{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@(!AudioCore::IsIOSAudioMuted()),@"change":^(BOOL on) { AudioCore::SetIOSAudioMuted(!on); [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"audioMuted"]; }}];
+    if (@available(iOS 18.0,*)) {
+        if (gameLoaded && running && !stop) [general addObject:@{@"title":@"Game Mode",@"symbol":@"speedometer",@"keepOpen":@YES,
+            @"action":^{
+                UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Game Mode"
+                    message:@"In Control Center, open Game Overlay → Controls to change Game Mode."
+                    preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]];
+                [owner.presentedViewController presentViewController:alert animated:YES completion:nil];
+            }}];
+    }
+    [sections addObject:@{@"title":@"General",@"rows":general}];
     [sections addObject:@{@"title":@"Audio",@"rows":@[
-        @{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@(!AudioCore::IsIOSAudioMuted()),@"change":^(BOOL on) { AudioCore::SetIOSAudioMuted(!on); [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"audioMuted"]; }},
         @{@"title":@"Audio stretching",@"subtitle":@"Adjust audio when emulation speed varies.",@"symbol":@"waveform",@"value":@(stretchAudio.load()),@"change":^(BOOL on) { EmulatorController* c=owner; if (!c) return; c->stretchAudio=on; c->stretchAudioDirty=true; [NSUserDefaults.standardUserDefaults setBool:on forKey:@"audioStretching"]; }},
     ]}];
     [sections addObject:@{@"title":@"Play mode",@"rows":@[@{@"title":@"Accuracy mode",@"subtitle":@"Locks game speed and guest clock at 100%.",@"symbol":@"scope",@"value":@([[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"] isEqual:@"accuracy"]),@"change":^(BOOL on) { [owner setPlayMode:on?@"accuracy":@"performance"]; [owner updateSyncFeedback]; }}]}];
@@ -1609,7 +1632,6 @@ static std::filesystem::path PedometerHistoryPath() {
     const BOOL tuning=CaraCanTuneEmulation() && !accuracy;
     const BOOL fixed=accuracy || [NSUserDefaults.standardUserDefaults boolForKey:@"fixedGuestClockEnabled"];
     [sections addObject:@{@"title":@"Emulation",@"rows":@[
-        @{@"title":@"Play mode",@"subtitle":accuracy?@"Accuracy · 100% guest CPU, 100% speed":@"Performance",@"symbol":@"speedometer"},
         @{@"title":@"Use fixed guest clock",@"subtitle":@"Turn off to let Cara adjust the guest clock automatically.",@"symbol":@"cpu",@"value":@(fixed),@"enabled":@(tuning),@"change":^(BOOL on) { [owner setEmulationPreference:@"fixedGuestClockEnabled" value:@(on) refresh:YES]; }},
         @{@"title":@"Guest clock",@"subtitle":@"25–200% · Normal guest clock: 100%.",@"enabled":@(tuning && fixed),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:std::clamp<NSInteger>([NSUserDefaults.standardUserDefaults integerForKey:@"fixedGuestClockPercent"],25,200))},@"sliderChange":^(double value) { [owner setEmulationPreference:@"fixedGuestClockPercent" value:@(std::lround(value)) refresh:NO]; }},
         @{@"title":@"Adaptive Frame Skip",@"subtitle":@"Coalesce host display updates while preserving all guest draws and transfers.",
@@ -1674,13 +1696,6 @@ static std::filesystem::path PedometerHistoryPath() {
         @"footer":@"Pair a game controller in Settings. Controller skins are separate from touch skins."}];
     return sections;
 }
-- (NSArray*)settingsForCategory:(NSString*)category {
-    NSArray* all=[self settingsSections];
-    if ([category isEqual:@"Library & iCloud"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [@[@"Game library",@"iCloud & Files",@"3DS activity"] containsObject:section[@"title"]]; }]];
-    if ([category isEqual:@"Skins"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [section[@"title"] hasSuffix:@"skin"]; }]];
-    if ([category isEqual:@"Controllers"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [section[@"title"] isEqual:@"Controllers"]; }]];
-    return all;
-}
 - (void)showInputMappings:(BOOL)keyboard {
     CaraMappingController* mappings=[CaraMappingController new];
     mappings.hub=inputHub;
@@ -1690,13 +1705,6 @@ static std::filesystem::path PedometerHistoryPath() {
     mappings.mappingActions=actions;
     UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
     if ([navigation isKindOfClass:UINavigationController.class]) [navigation pushViewController:mappings animated:YES];
-}
-- (void)showSettingsCategory:(NSString*)category {
-    settingsCategory=category;
-    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=category; settings.sections=[self settingsForCategory:category]; settingsController=settings;
-    __weak EmulatorController* owner=self; settings.finished=^{ [owner resumeFromMenu]; };
-    UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
-    if ([navigation isKindOfClass:UINavigationController.class]) [navigation pushViewController:settings animated:YES];
 }
 - (void)showOnlineRoomsForGame:(NSURL*)url navigation:(UINavigationController*)navigation {
     if (!navigation.topViewController.viewIfLoaded.window || openingGame) return;
@@ -1833,13 +1841,7 @@ static std::filesystem::path PedometerHistoryPath() {
     adaptiveCPU=policy.adaptive; fixedGuestClock=policy.guest_clock; maximumSpeedLimit=policy.maximum_speed; speedLimitEnabled=policy.limit_speed; adaptiveCPUDirty=true;
     if (emuWindow) emuWindow->adaptiveFrameSkip=CaraAdaptiveFrameSkipEnabled();
     [NSUserDefaults.standardUserDefaults setBool:policy.adaptive forKey:@"adaptiveGuestCPU"];
-    UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
-    if ([navigation isKindOfClass:UINavigationController.class] && [navigation.viewControllers.firstObject isKindOfClass:CaraQuickSettingsController.class])
-        ((CaraQuickSettingsController*)navigation.viewControllers.firstObject).performanceDetail=[self performanceModeDetail];
     [self updateSessionPresentation];
-}
-- (NSString*)performanceModeDetail {
-    return [NSUserDefaults.standardUserDefaults boolForKey:@"fixedGuestClockEnabled"]?[NSString stringWithFormat:@"Fixed guest clock · %ld%%",(long)[NSUserDefaults.standardUserDefaults integerForKey:@"fixedGuestClockPercent"]]:@"Adaptive CPU clock";
 }
 - (NSArray*)libraryStatesForGame:(NSURL*)url {
     NSDictionary* info=[libraryStore metadataForGame:url]; if(!info[@"stateID"] || !info[@"gameHash"]) return @[@{@"title":@"Open this game to check its states",@"subtitle":@"Cara needs the title identity and game revision before it can list compatible states.",@"compatible":@NO}];
@@ -1865,14 +1867,17 @@ static std::filesystem::path PedometerHistoryPath() {
 }
 - (void)showFullSettings {
     if(self.presentedViewController) return;
-    CaraSettingsController* settings=[CaraSettingsController new]; settings.categorized=YES; settings.sections=[self settingsSections]; settingsController=settings; settingsCategory=@"All";
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.categorized=YES; settings.sections=[self settingsSections]; settingsController=settings;
     __weak EmulatorController* owner=self; settings.finished=^{ EmulatorController* c=owner; if(c) [c->libraryController reloadLibrary]; [owner resumeFromMenu]; };
-    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=UIModalPresentationFullScreen; [self presentViewController:nav animated:YES completion:nil];
+    UINavigationController* nav=[[UINavigationController alloc] initWithRootViewController:settings]; nav.modalPresentationStyle=menuVisible ? UIModalPresentationPageSheet : UIModalPresentationFullScreen;
+    nav.preferredContentSize=CGSizeMake(900,780);
+    nav.presentationController.delegate=settings;
+    [self presentViewController:nav animated:YES completion:nil];
 }
 - (void)showGameSettings:(NSURL*)url navigation:(UINavigationController*)navigation {
     if (!url) return;
     [self ensureLibrary];
-    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings"; settings.usesLibraryAppearance=libraryVisible;
+    CaraSettingsController* settings=[CaraSettingsController new]; settings.title=@"Game settings"; settings.usesLibraryAppearance=YES;
     __weak CaraSettingsController* weakSettings=settings;
     NSMutableDictionary* values=[[[libraryStore metadataForGame:url] objectForKey:@"overrides"] mutableCopy]?:[NSMutableDictionary new];
     __weak EmulatorController* owner=self;
@@ -1881,7 +1886,7 @@ static std::filesystem::path PedometerHistoryPath() {
     settings.sectionsProvider=^NSArray* {
     BOOL accuracy=[value(@"playMode") isEqual:@"accuracy"];
     return @[@{@"title":@"Touch controls",@"rows":@[CaraActionLayoutSettingsRow(^{ EmulatorController* c=owner; if (c) [c editActionLayout:url navigation:weakSettings.navigationController]; })]},@{@"title":@"Emulation",@"rows":@[
-        @{@"title":@"Accuracy mode",@"subtitle":@"Locks guest clock and speed to 100%. Uses the same 100% guest clock and speed as global Accuracy mode.",@"value":@(accuracy),@"change":^(BOOL on) { save(@"playMode",on?@"accuracy":@"performance"); }},
+        @{@"title":@"Accuracy mode",@"subtitle":@"Use the standard game speed and guest clock.",@"value":@(accuracy),@"change":^(BOOL on) { save(@"playMode",on?@"accuracy":@"performance"); }},
         @{@"title":@"Fixed guest clock",@"value":@(accuracy || [value(@"fixedGuestClockEnabled") boolValue]),@"enabled":@(!accuracy),@"change":^(BOOL on) { save(@"fixedGuestClockEnabled",@(on)); }},
         @{@"title":@"Guest clock",@"enabled":@(!accuracy && [value(@"fixedGuestClockEnabled") boolValue]),@"slider":@{@"min":@25,@"max":@200,@"step":@5,@"value":@(accuracy?100:([value(@"fixedGuestClockPercent") integerValue]?:100))},@"sliderChange":^(double v) { save(@"fixedGuestClockPercent",@(lround(v))); }},
         @{@"title":@"Limit game speed",@"value":@(accuracy || [value(@"speedLimitEnabled") boolValue]),@"enabled":@(!accuracy),@"change":^(BOOL on) { save(@"speedLimitEnabled",@(on)); }},
@@ -1904,50 +1909,7 @@ static std::filesystem::path PedometerHistoryPath() {
     if (openingGame || self.presentedViewController) return;
     [self ensureLibrary]; menuVisible=YES; [self applyInterfacePausePolicy]; [self resetSkinInput];
     [self updateSessionPresentation];
-    CaraQuickSettingsController* quick=[CaraQuickSettingsController new]; quick.playMode=[NSUserDefaults.standardUserDefaults stringForKey:@"playMode"]?:@"performance";
-    quick.modeSelectionEnabled=CaraCanTuneEmulation(); quick.performanceDetail=[self performanceModeDetail];
-    __weak EmulatorController* owner=self;
-    quick.chooseMode=^(NSString* mode) { [owner setPlayMode:mode]; };
-    BOOL landscape=self.view.bounds.size.width>self.view.bounds.size.height;
-    NSString* meterKey=landscape?@"landscapeStatsVisible":@"portraitStatsVisible";
-    quick.showFPS=![NSUserDefaults.standardUserDefaults objectForKey:meterKey] || [NSUserDefaults.standardUserDefaults boolForKey:meterKey];
-    quick.toggleFPS=^(BOOL visible) { [NSUserDefaults.standardUserDefaults setBool:visible forKey:meterKey]; [owner.view setNeedsLayout]; };
-    NSMutableArray* actions=[NSMutableArray new];
-    if (gameURL && ([self sessionPresentation]==Cara::SessionPresentation::Paused || [self sessionPresentation]==Cara::SessionPresentation::Running)) {
-        NSURL* currentGame=gameURL;
-        [actions addObject:@{@"title":@"Game settings",@"subtitle":@"Controller Demapping and per-game preferences",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ EmulatorController* c=owner; if (c) [c showGameSettings:currentGame navigation:(UINavigationController*)c.presentedViewController]; }}];
-        [actions addObject:@{@"title":@"Save state",@"symbol":@"square.and.arrow.down",@"action":^{ [owner showStateSlots:YES]; }}];
-        [actions addObject:@{@"title":@"Load state",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner showStateSlots:NO]; }}];
-    }
-    [actions addObject:@{@"title":@"Library & iCloud",@"symbol":@"folder",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Library & iCloud"]; }}];
-    if (gameLoaded && running && !stop) {
-        [actions addObject:@{@"title":@"Online Rooms",@"symbol":@"globe",@"keepOpen":@YES,
-            @"action":^{ EmulatorController* c=owner; if (c) [c showOnlineRoomsInNavigation:(UINavigationController*)c.presentedViewController]; }}];
-    }
-    [actions addObject:@{@"title":@"Local multiplayer",@"symbol":@"antenna.radiowaves.left.and.right",@"keepOpen":@YES,@"action":^{ [owner showNetworkSettings]; }}];
-    [actions addObject:@{@"title":@"Skins",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Skins"]; }}];
-    [actions addObject:@{@"title":@"Controllers",@"symbol":@"gamecontroller",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Controllers"]; }}];
-    if (running) [actions addObject:@{@"title":@"Game library",@"symbol":@"square.grid.2x2",@"action":^{ [owner showLibrary]; }}];
-    if (@available(iOS 18.0, *)) {
-        if (gameLoaded && running && !stop) {
-            [actions addObject:@{@"title":@"Game Mode",@"symbol":@"speedometer",@"keepOpen":@YES,@"action":^{
-                UIViewController* settings=owner.presentedViewController;
-                UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Game Mode"
-                    message:@"Game Mode starts automatically in full screen. To turn it on or off, open Control Center and choose Game Overlay, Controls, then Game Mode."
-                    preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:nil]];
-                [settings presentViewController:alert animated:YES completion:nil];
-            }}];
-        }
-    }
-    [actions addObject:@{@"title":@"Advanced",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ [owner showSettingsCategory:@"Advanced"]; }}];
-    quick.actions=actions; quick.finished=^{ [owner resumeFromMenu]; };
-    UINavigationController* navigation=[[UINavigationController alloc] initWithRootViewController:quick]; navigation.view.tintColor=[UIColor colorWithRed:1 green:.48 blue:.24 alpha:1];
-    navigation.modalPresentationStyle=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad?UIModalPresentationFormSheet:UIModalPresentationPageSheet;
-    navigation.preferredContentSize=CGSizeMake(620,850);
-    if (@available(iOS 15.0,*)) { navigation.sheetPresentationController.detents=@[UISheetPresentationControllerDetent.largeDetent]; navigation.sheetPresentationController.prefersGrabberVisible=YES; navigation.sheetPresentationController.preferredCornerRadius=28; }
-    navigation.presentationController.delegate=quick;
-    [self presentViewController:navigation animated:YES completion:nil];
+    [self showFullSettings];
 }
 - (void)showStateSlots:(BOOL)saving {
     UIAlertController* slots=[UIAlertController alertControllerWithTitle:(saving?@"Save state":@"Load state") message:(saving?@"Saving replaces the selected slot. Keep using in-game saves too.":@"Loading returns to this slot. Unsaved progress since then is lost.") preferredStyle:UIAlertControllerStyleAlert];
