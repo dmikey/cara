@@ -31,6 +31,7 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
         with:
+          packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.31.6'
       - uses: gradle/actions/setup-gradle@v4
@@ -93,6 +94,20 @@ jobs:
                   receipt['assets'][path.name] = hashlib.file_digest(file, 'sha256').hexdigest()
           (root / 'android-build.json').write_text(json.dumps(receipt, indent=2) + '\n')
           PYCODE
+      - name: Verify signing with a disposable keystore
+        if: inputs.source_sha == ''
+        run: |
+          set -euo pipefail
+          export CARA_ANDROID_KEYSTORE_PASSWORD=Cara-CI-disposable
+          export CARA_ANDROID_KEY_PASSWORD=$CARA_ANDROID_KEYSTORE_PASSWORD
+          export CARA_ANDROID_KEY_ALIAS=cara-ci
+          keytool -genkeypair -alias "$CARA_ANDROID_KEY_ALIAS" -keyalg RSA -keysize 2048 \
+            -dname 'CN=Cara CI signing check' -validity 1 -keystore "$RUNNER_TEMP/cara-ci.p12" \
+            -storepass:env CARA_ANDROID_KEYSTORE_PASSWORD
+          export CARA_ANDROID_KEYSTORE_BASE64="$(base64 -w0 "$RUNNER_TEMP/cara-ci.p12")"
+          python3 tools/sign_android_nightly.py --artifact-dir dist --output "$RUNNER_TEMP/cara-ci-signed" \
+            --source-revision "$(git rev-parse HEAD)"
+          test -s "$RUNNER_TEMP/cara-ci-signed/android-signed.json"
       - uses: actions/upload-artifact@v4
         with:
           name: Cara-Android-arm64-unsigned

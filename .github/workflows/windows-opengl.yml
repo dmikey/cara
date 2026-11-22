@@ -52,15 +52,15 @@ jobs:
         run: |
           $binary = Get-Item work/build-windows/bin/Release/cara.exe
           $sdl = Get-Item work/SDL2-2.32.10/lib/x64/SDL2.dll
-          Copy-Item $sdl $binary.Directory
-          & $binary --version
+          Copy-Item $sdl.FullName $binary.DirectoryName
+          & $binary.FullName --version
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          & $binary --help
+          & $binary.FullName --help
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          if ((Get-AuthenticodeSignature $binary).Status -ne "NotSigned") {
+          if ((Get-AuthenticodeSignature $binary.FullName).Status -ne "NotSigned") {
             throw "Expected an unsigned Cara EXE"
           }
-          python tools/package_windows.py --exe $binary --sdl $sdl --output dist
+          python tools/package_windows.py --exe $binary.FullName --sdl $sdl.FullName --output dist
       - uses: actions/upload-artifact@v4
         with:
           name: Cara-Windows-x86_64-OpenGL

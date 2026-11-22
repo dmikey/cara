@@ -202,6 +202,7 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
         with:
+          packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - run: sdkmanager 'build-tools;36.0.0'
       - name: Sign matched APK and App Bundle
