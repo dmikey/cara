@@ -48,9 +48,12 @@ def main():
                                     stderr=subprocess.STDOUT, text=True, timeout=45)
             assert result.returncode == code and message in result.stdout, result.stdout
 
-        def package(name, title, image):
+        def package(name, title, image, encrypted=False):
             path = folder / name
-            data = bytearray(cia_payload([(0, 0, image)], title))
+            data = bytearray(cia_payload([(0, int(encrypted), image)], title))
+            if encrypted:
+                # A ticket may request a key the emulator does not provide.
+                data[0x2040 + 0x140 + 0xb1] = 0xff
             if title == UPDATE_TITLE:
                 # Span multiple installer blocks before the first NCCH byte.
                 data[0x2040:0x2040] = bytes(0x20000)
@@ -69,6 +72,7 @@ def main():
         run(update, "Game update installed")
         run(base, "Break reason: ASSERT")
         run(update, "Game update installed")  # Atomic replacement of an existing installation.
+        run(package("encrypted.cia", UPDATE_TITLE, executable(0), encrypted=True), "decrypt", 3)
         run(package("bad-update.cia", UPDATE_TITLE, bytes(0x200)), "invalid", 3)
         run(base, "Break reason: ASSERT")
         assert save.read_bytes() == b"existing base save"
