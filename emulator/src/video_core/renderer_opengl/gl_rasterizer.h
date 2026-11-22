@@ -419,6 +419,9 @@ private:
         bool proctex_diff_lut_dirty;
     } uniform_block_data{};
 
+#ifdef CARA_IOS_GLES
+    std::optional<ShaderProgramManager::RuntimeTevWords> runtime_tev_words;
+#endif
     std::unique_ptr<ShaderProgramManager> shader_program_manager;
 
     // clean surface/shader cache

@@ -916,6 +916,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
 @implementation CaraDeviceStatusView {
     UILabel* clockLabel;
     UILabel* batteryLabel;
+    UIImageView* batteryIcon;
     UIStackView* bar;
     NSDateFormatter* clockFormatter;
     NSTimer* minuteTimer;
@@ -939,7 +940,11 @@ static UIImage* CaraThemePreview(NSInteger style) {
             label.minimumScaleFactor=.75;
         }
         batteryLabel.textAlignment=NSTextAlignmentRight;
-        bar=[[UIStackView alloc] initWithArrangedSubviews:@[clockLabel,batteryLabel]];
+        batteryIcon=[UIImageView new];
+        batteryIcon.contentMode=UIViewContentModeScaleAspectFit;
+        batteryIcon.tintColor=batteryLabel.textColor;
+        [batteryIcon.widthAnchor constraintEqualToConstant:22].active=YES;
+        bar=[[UIStackView alloc] initWithArrangedSubviews:@[clockLabel,batteryIcon,batteryLabel]];
         bar.spacing=8;
         [self addSubview:bar];
     }
@@ -956,6 +961,11 @@ static UIImage* CaraThemePreview(NSInteger style) {
     const float level=device.batteryLevel;
     NSString* battery=level>=0 && level<=1
         ? [NSString localizedStringWithFormat:@"%.0f%%",double(level)*100] : nil;
+    NSString* symbol=device.batteryState==UIDeviceBatteryStateCharging ? @"battery.100percent.bolt" :
+        level<.125 ? @"battery.0percent" : level<.375 ? @"battery.25percent" :
+        level<.625 ? @"battery.50percent" : level<.875 ? @"battery.75percent" : @"battery.100percent";
+    batteryIcon.image=[UIImage systemImageNamed:symbol];
+    batteryIcon.hidden=battery==nil;
     batteryLabel.hidden=battery==nil;
     batteryLabel.text=battery;
     NSString* power=device.batteryState==UIDeviceBatteryStateCharging?@", charging":@"";

@@ -1476,17 +1476,20 @@ void PicaMetalPipelines::PollSpecialization() {
     }
 }
 
-bool PicaMetalPipelines::ObserveTevPipelineMiss(const PicaPipelineInputs& exact, bool dual) {
+bool PicaMetalPipelines::ObserveTevPipelineMiss(const PicaPipelineInputs& exact, bool dual,
+                                              bool detect_burst) {
     if (exact.vertex_mode != PicaMetalVertexMode::Packed)
         return false;
     const auto index = FindRuntime(exact.vertex, exact.fragment, exact.vertex_mode);
     if (!index)
         return false;
     const auto& stages = runtime_pairs[*index];
-    if (!vertex_functions.contains(stages.msl_vertex))
-        return false;
-    return tev_admission.Observe(stages.msl_vertex.data(), stages.msl_fragment.data(), dual,
-                                 VideoCore::GetCurrentFrame() + 1);
+    const auto refresh = VideoCore::GetCurrentFrame() + 1;
+    const bool burst = detect_burst &&
+        tev_admission.ObserveBurst(stages.msl_fragment.data(), dual, refresh);
+    const bool family = vertex_functions.contains(stages.msl_vertex) &&
+        tev_admission.Observe(stages.msl_vertex.data(), stages.msl_fragment.data(), dual, refresh);
+    return burst || family;
 }
 
 std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::SelectWithGeneral(

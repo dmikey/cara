@@ -645,6 +645,7 @@ static BOOL CaraCanTuneEmulation() {
 }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
 static NSString* const CaraMetalRendererKey = @"metalRendererAfterBootRecovery";
+static NSString* const CaraFirstUseShadersKey = @"firstUseShaderFallback";
 static NSString* const CaraAsyncShadersKey = @"asyncMetalShaders";
 
 static bool CaraAsyncShadersPreference(id playMode) {
@@ -981,11 +982,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     actionControls.inputChanged=^(NSSet<NSString*>* pressed,CGPoint circle,CGPoint cstick) { EmulatorController* c=weakSelf; if(c) [c->inputHub updateSurface:@"actions" buttons:pressed circle:circle cstick:cstick touch:CGPointMake(-1,-1)]; };
     inputHub.commandChanged=^(NSString* command,BOOL down) { if (down && [command isEqual:@"menu"]) [weakSelf showMenu]; };
     performanceHUD=[[CaraStatsView alloc] initWithFrame:CGRectZero]; [self.view addSubview:performanceHUD];
-    if (!std::getenv("CARA_BENCHMARK_FRAMES")) {
-        deviceStatusHUD=[CaraDeviceStatusView new];
-        deviceStatusHUD.hidden=YES;
-        [self.view addSubview:deviceStatusHUD];
-    }
+    deviceStatusHUD=[CaraDeviceStatusView new];
+    deviceStatusHUD.hidden=YES;
+    [self.view addSubview:deviceStatusHUD];
     status=[UILabel new]; status.text=@"Stopped";
     status.font=[UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightMedium]; status.textColor=[UIColor colorWithRed:.7 green:.8 blue:.7 alpha:1];
     status.numberOfLines=2; status.userInteractionEnabled=NO; status.hidden=YES;
@@ -1009,6 +1008,17 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             [controller->saveSync refreshCloudStatus]; [controller->stateSync refreshCloudStatus];
         }];
     }
+}
+- (void)layoutPadDeviceStatus {
+    const CGRect safe=UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets);
+    const CGFloat width=MIN(152,MAX(0,CGRectGetWidth(safe)-16));
+    CGRect badge=CGRectMake(CGRectGetMaxX(safe)-8-width,CGRectGetMinY(safe)+6,width,26);
+    if (!menuFallback.hidden && CGRectIntersectsRect(badge,menuFallback.frame))
+        badge.origin.y=CGRectGetMaxY(menuFallback.frame)+4;
+    deviceStatusHUD.frame=badge;
+    deviceStatusHUD.hidden=libraryVisible || menuVisible ||
+        [self sessionPresentation]!=Cara::SessionPresentation::Running;
+    deviceStatusHUD.monitoring=!deviceStatusHUD.hidden;
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
@@ -1035,8 +1045,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     skinArt.hidden=actionsEnabled; actionControls.hidden=!actionsEnabled;
     if (!rep) {
         menuFallback.frame=CGRectMake(24,48,120,44);
-        deviceStatusHUD.hidden=YES;
-        deviceStatusHUD.monitoring=NO;
+        if (self.traitCollection.userInterfaceIdiom==UIUserInterfaceIdiomPad)
+            [self layoutPadDeviceStatus];
+        else {
+            deviceStatusHUD.hidden=YES;
+            deviceStatusHUD.monitoring=NO;
+        }
         return;
     }
     if (rep!=currentRepresentation) {
@@ -1076,7 +1090,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     performanceHUD.frame=hud.metrics;
     NSString* statsKey=landscape?@"landscapeStatsVisible":@"portraitStatsVisible";
     performanceHUD.hidden=[NSUserDefaults.standardUserDefaults objectForKey:statsKey] && ![NSUserDefaults.standardUserDefaults boolForKey:statsKey];
-    if (deviceStatusHUD) {
+    if (self.traitCollection.userInterfaceIdiom==UIUserInterfaceIdiomPad) {
+        [self layoutPadDeviceStatus];
+    } else if (deviceStatusHUD) {
         CGRect visibleMenu=menuFallback.hidden?phoneMenu:menuFallback.frame;
         const CGFloat right=CGRectIsNull(visibleMenu)?CGRectGetMaxX(canvas)-12:CGRectGetMinX(visibleMenu)-8;
         CGRect badge=CGRectMake(right-124,MAX(CGRectGetMinY(canvas)+12,CGRectGetMinY(hud.metrics)),124,26);
@@ -1480,6 +1496,13 @@ static std::filesystem::path PedometerHistoryPath() {
                      ![displayPlayMode isEqual:@"accuracy"]),
         @"change":^(BOOL enabled) {
             [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
+        }}];
+    [display addObject:@{@"title":@"First-use shader fallback", @"symbol":@"cpu",
+        @"subtitle":@"Uses CPU vertices to reduce first-use shader stalls. Can slow gameplay. Reopen the game to apply.",
+        @"value":@([displayDefaults boolForKey:CaraFirstUseShadersKey]),
+        @"enabled":@(![displayPlayMode isEqual:@"accuracy"]),
+        @"change":^(BOOL enabled) {
+            [displayDefaults setBool:enabled forKey:CaraFirstUseShadersKey];
         }}];
     if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
@@ -2279,10 +2302,18 @@ static std::filesystem::path PedometerHistoryPath() {
 #else
         false;
 #endif
-    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing,async_shaders] {
+    const bool first_use_fallback =
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+        ![CaraEmulationValue(@"playMode") isEqual:@"accuracy"] &&
+        [NSUserDefaults.standardUserDefaults boolForKey:CaraFirstUseShadersKey];
+#else
+        false;
+#endif
+    worker = std::thread([self,rom,user,session,url,requestedState,showOnlineRooms,gpu_timing,async_shaders,first_use_fallback] {
         Cara::gpu_completion_policy = gpu_timing;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
         Cara::ConfigureMetalGeneralFragment(async_shaders);
+        Cara::ConfigureMetalImmediateTev(async_shaders && first_use_fallback);
 #endif
         // Diagnostic only: requested QoS is not evidence of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
@@ -2323,7 +2354,7 @@ static std::filesystem::path PedometerHistoryPath() {
 #ifdef CARA_IOS_GLES
             s.use_gles = true;
             s.use_hw_renderer = true;
-            s.use_hw_shader = std::getenv("CARA_CPU_VERTEX") == nullptr;
+            s.use_hw_shader = !first_use_fallback && std::getenv("CARA_CPU_VERTEX") == nullptr;
             s.use_separable_shader = false;
             s.allow_shadow = false;
             s.shadow_rendering = false;

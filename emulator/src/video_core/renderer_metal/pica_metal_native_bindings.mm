@@ -33,6 +33,14 @@
 
 namespace Cara {
 namespace {
+thread_local bool immediate_tev = false;
+}
+
+void ConfigureMetalImmediateTev(bool enabled) {
+    immediate_tev = enabled;
+}
+
+namespace {
 
 using HostClock = std::chrono::steady_clock;
 struct HostPhase {
@@ -108,8 +116,9 @@ constexpr OpenGL::PicaFragmentShaderTarget NativeFragmentTarget() {
 }
 
 RuntimeTevMode MetalRuntimeTevMode() {
-    static const auto mode = ParseRuntimeTevMode(std::getenv("CARA_METAL_RUNTIME_TEV"));
-    return mode;
+    static const char* override_mode = std::getenv("CARA_METAL_RUNTIME_TEV");
+    static const auto mode = ParseRuntimeTevMode(override_mode);
+    return !override_mode && immediate_tev ? RuntimeTevMode::Always : mode;
 }
 
 NativeShaderSource NativeFragmentSource(const OpenGL::PicaFSConfig& config, bool general = false,
@@ -165,13 +174,14 @@ std::optional<PicaMetalPipelineSelection> SelectGeneralFragment(
     canonical.state.alpha_test_func = Pica::FramebufferRegs::CompareFunc::Always;
     canonical.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
     const auto mode = MetalRuntimeTevMode();
-    const bool adaptive = mode == RuntimeTevMode::Adaptive;
+    const bool detect_burst = mode == RuntimeTevMode::Burst;
+    const bool adaptive = mode == RuntimeTevMode::Adaptive || detect_burst;
     if (adaptive) {
         if (auto ready = pipelines.Select(draw, sampler, second, third))
             return ready;
     }
     if (mode != RuntimeTevMode::Off && canonical.SupportsRuntimeTev() && (mode == RuntimeTevMode::Always ||
-        (adaptive && pipelines.ObserveTevPipelineMiss(draw, second.has_value())))) {
+        (adaptive && pipelines.ObserveTevPipelineMiss(draw, second.has_value(), detect_burst)))) {
         auto dynamic = canonical;
         dynamic.state.tev_stages = {};
         dynamic.state.combiner_buffer_input = 0;
