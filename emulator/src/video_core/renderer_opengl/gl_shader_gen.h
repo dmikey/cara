@@ -141,7 +141,11 @@ struct PicaFragmentShaderTarget {
     bool metal_general_fragment = false;
     unsigned metal_runtime_tev_units = 0; // Mask of bound ordinary 2D units (1 or 3).
     bool elide_dead_combiner_buffer = false;
+    bool gles_runtime_scissor = false;
 };
+
+// Process-latched GLES experiment. It shares generated code across scissor modes.
+bool GLESRuntimeScissorEnabled();
 
 /**
  * This struct contains all state used to generate the GLSL fragment shader that emulates the

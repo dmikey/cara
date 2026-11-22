@@ -2509,6 +2509,15 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
        (uniform_block_data.data.cara_tex0_view!=GLivec4{} || uniform_block_data.data.cara_tex0_crop!=GLivec4{})) {
         uniform_block_data.data.cara_tex0_view={};uniform_block_data.data.cara_tex0_crop={};uniform_block_data.dirty=true;
     }
+    if (GLESRuntimeScissorEnabled()) {
+        // GLES has no nearest-borrow crop, so reuse the same slot as the Metal scissor code.
+        const auto mode = static_cast<GLint>(regs.rasterizer.scissor_test.mode.Value());
+        auto& uniform_mode = uniform_block_data.data.cara_tex0_crop[1];
+        if (uniform_mode != mode) {
+            uniform_mode = mode;
+            uniform_block_data.dirty = true;
+        }
+    }
 #endif
     // Sync and bind the shader
     if (shader_dirty) {

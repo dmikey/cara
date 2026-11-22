@@ -42,6 +42,18 @@ using VSOutputAttributes = RasterizerRegs::VSOutputAttributes;
 
 namespace OpenGL {
 
+bool GLESRuntimeScissorEnabled() {
+#if defined(CARA_IOS_GLES) && !defined(CARA_MAC_ATLAS_PIPELINE)
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_GLES_RUNTIME_SCISSOR");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return GLES && enabled;
+#else
+    return false;
+#endif
+}
+
 constexpr std::string_view UniformBlockDef = R"(
 #define NUM_TEV_STAGES 6
 #define NUM_LIGHTS 8
@@ -1551,7 +1563,8 @@ std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_sh
     return GenerateFragmentShader(config, separable_shader,
                                   {.gles = GLES,
                                    .allow_shadow = AllowShadow,
-                                   .elide_dead_combiner_buffer = GLES});
+                                   .elide_dead_combiner_buffer = GLES,
+                                   .gles_runtime_scissor = GLESRuntimeScissorEnabled()});
 }
 
 std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader,
@@ -1757,7 +1770,7 @@ vec4 secondary_fragment_color = vec4(0.0);
     }
 
     // Append the scissor test
-    if (target.metal_general_fragment) {
+    if (target.metal_general_fragment || target.gles_runtime_scissor) {
         out += R"(
 if (cara_tex0_crop.y != 0) {
     bool inside = gl_FragCoord.x >= float(scissor_x1) &&

@@ -459,6 +459,9 @@ public:
 
     void UseFragmentShader(const Pica::Regs& regs, bool native_nearest_borrow_tex0) {
         auto key = PicaFSConfig::BuildFromRegs(regs, native_nearest_borrow_tex0);
+        if (GLESRuntimeScissorEnabled()) {
+            key.state.scissor_test_mode = Pica::RasterizerRegs::ScissorMode::Disabled;
+        }
         // Diagnostic feature ablation only: preserve guest registers and all other FS state.
         // Existing unlit generation leaves fragment colors zero; alpha coverage may change.
         if (FragmentLightingAblationEnabled()) {
@@ -660,6 +663,7 @@ public:
                                "\nnative-nearest-borrow-tex0-key1-common-ubo2";
         // Reject a different generator route before compiling any saved source.
         identity += "\ntwo-stage-store-v2";
+        if (GLESRuntimeScissorEnabled()) identity += "\nruntime-scissor=1";
 #ifdef CARA_MAC_ATLAS_PIPELINE
         identity += "\nbackend=native-mac-atlas-gl41";
 #elif defined(CARA_ANDROID_GLES_ATLAS)
@@ -703,7 +707,7 @@ public:
     }
     void LoadIOSPipelines() {
         ios_identity = IOSIdentity();
-        ios_cache_path = GetCacheFile() +
+        ios_cache_path = GetCacheFile() + (GLESRuntimeScissorEnabled() ? ".runtime-scissor" : "") +
                          (UseNativeLUTBuffers() ? ".native-lut.cara-pso1" : ".cara-pso1");
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());

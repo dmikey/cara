@@ -80,6 +80,22 @@ void CheckCombinerBufferElision() {
     OpenGL::GLES = false;
     Require(generate(writes) == OpenGL::GenerateFragmentShader(writes, false, {false, false}),
             "Desktop GL must preserve its generated source");
+
+    OpenGL::PicaFragmentShaderTarget runtime_scissor{
+        .gles = true, .allow_shadow = false, .gles_runtime_scissor = true};
+    auto scissor_config = no_writes;
+    const auto runtime_source = OpenGL::GenerateFragmentShader(scissor_config, false, runtime_scissor);
+    Require(runtime_source.find("if (cara_tex0_crop.y != 0)") != std::string::npos &&
+                runtime_source.find("if (inside != (cara_tex0_crop.y == 3)) discard;") !=
+                    std::string::npos,
+            "Runtime scissor must preserve disabled, exclude and include modes");
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        scissor_config.state.scissor_test_mode = static_cast<Pica::RasterizerRegs::ScissorMode>(mode);
+        Require(OpenGL::GenerateFragmentShader(scissor_config, false, runtime_scissor) == runtime_source,
+                "Runtime scissor modes must all share the same generated source");
+        Require(legacy(scissor_config) != runtime_source,
+                "Specialized and runtime scissor need distinct program identities");
+    }
 }
 
 void CheckMaterialBorderConfig() {

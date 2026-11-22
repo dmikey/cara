@@ -189,6 +189,9 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> runtime_scissor{{"Debug", "gles_runtime_scissor"}, false};
+    static const bool runtime_scissor_enabled = Config::Get(runtime_scissor);
+    setenv("CARA_GLES_RUNTIME_SCISSOR", runtime_scissor_enabled ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
              Config::Get(packed_fetch_reuse));
 #endif
@@ -205,15 +208,16 @@ void BootGame(const std::string& path) {
         constexpr const char* renderer = "atlas";
 #else
         constexpr const char* renderer = "gles32";
+        constexpr bool runtime_scissor_enabled = false;
 #endif
         const auto mode = ReadPlayMode() == Cara::PlayMode::Accuracy ? "accuracy" : "performance";
         __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
                             "session mode=%s cpu=%s renderer=%s native_luts=%d resolution=%d "
-                            "p3d=%d ppf=%d soft_knee=%d",
+                            "p3d=%d ppf=%d soft_knee=%d gles_runtime_scissor=%d",
                             mode, Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp",
                             renderer, OpenGL::UseNativeLUTBuffers(),
                             Settings::values.resolution_factor, gpu_policy.render,
-                            gpu_policy.transfer, gpu_policy.soften_render);
+                            gpu_policy.transfer, gpu_policy.soften_render, runtime_scissor_enabled);
     }
 
     Core::System& system{Core::System::GetInstance()};
