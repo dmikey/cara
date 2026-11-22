@@ -2066,7 +2066,8 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
                                  bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs,
                                  bool ios_source_optimizations, bool native_quaternion_geometry,
                                  bool native_isolated_dispatch, bool native_suffix_sharing,
-                                 const PackedVertexLayout* known_packed_layout) {
+                                 const PackedVertexLayout* known_packed_layout,
+                                 bool rolling_packed_fetch) {
     std::string out;
     if (native_isolated_dispatch && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
     if (native_quaternion_geometry && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
@@ -2231,19 +2232,26 @@ layout (std140) uniform vs_config {
             for (unsigned field=0;field<6;++field)
                 out+=fmt::format("out highp vec4 cara_feedback{};\n",field);
         out += UniformBlockDef;
+        bool reset_packed_fetch = false;
         if (ios_indexed_inputs >= 2) {
             const char* reuse_fetch = std::getenv("CARA_GPU_PACKED_FETCH_REUSE");
-            const char* decoder = ios_source_optimizations && reuse_fetch && std::string_view(reuse_fetch) == "1"
-                                      ? PackedVertexFetchReuseGLSL : PackedVertexDecoderGLSL;
+            const bool rolling_fetch = ios_source_optimizations && rolling_packed_fetch;
+            const bool reuse = ios_source_optimizations &&
+                               (rolling_fetch || (reuse_fetch && std::string_view(reuse_fetch) == "1"));
+            const auto* decoder = reuse ? PackedVertexFetchReuseGLSL : PackedVertexDecoderGLSL;
             const auto specialized = known_packed_layout
                 ? SpecializePackedVertexDecoder(decoder, *known_packed_layout) : std::string{};
-            out += specialized.empty() ? std::string_view(decoder) : std::string_view(specialized);
+            const std::string_view normal = specialized.empty() ? std::string_view(decoder) : specialized;
+            const auto rolling = rolling_fetch ? MakePackedVertexRollingFetchDecoder(normal) : std::string{};
+            reset_packed_fetch = !rolling.empty();
+            out += reset_packed_fetch ? std::string_view(rolling) : normal;
         }
         else out += "uniform highp sampler2D cara_vertex_inputs;\n";
         if (ios_indexed_inputs) out += "uniform highp usampler2D cara_vertex_indices;\n";
         out += program_source;
         out += quaternion_program;
         out += "void cara_load_vertex(int vertex_id) {\n";
+        if (reset_packed_fetch) out += "cara_packed_cached_texel = -1;\n";
         if (ios_indexed_inputs>=3) out += "int input_vertex_id = vertex_id;\n";
         else if (ios_indexed_inputs)
             out += fmt::format("int input_vertex_id = int(texelFetch(cara_vertex_indices, ivec2(vertex_id % {0}, vertex_id / {0}), 0).r);\n", IOS_VERTEX_INPUT_WIDTH);

@@ -249,7 +249,8 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
                                  bool native_quaternion_geometry = false,
                                  bool native_isolated_dispatch = false,
                                  bool native_suffix_sharing = false,
-                                 const PackedVertexLayout* known_packed_layout = nullptr);
+                                 const PackedVertexLayout* known_packed_layout = nullptr,
+                                 bool rolling_packed_fetch = false);
 
 /*
  * Generates the GLSL fixed geometry shader program source code for non-GS PICA pipeline

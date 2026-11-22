@@ -189,8 +189,10 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
-    LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
-             Config::Get(packed_fetch_reuse));
+    const Config::ConfigInfo<bool> rolling_packed_fetch{{"Debug", "gpu_packed_rolling_fetch"}, false};
+    setenv("CARA_GPU_PACKED_ROLLING_FETCH", Config::Get(rolling_packed_fetch) ? "1" : "0", 1);
+    LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}, rolling packed fetch={}",
+             Config::Get(packed_fetch_reuse), Config::Get(rolling_packed_fetch));
 #endif
     LOG_INFO(Frontend, "Android CPU engine: {}",
              Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");

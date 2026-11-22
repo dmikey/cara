@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 namespace OpenGL {
@@ -78,6 +79,41 @@ vec4 cara_decode_vertex(int vertex, int reg) {
     return value;
 }
 )";
+inline bool PackedVertexRollingFetchEnabled() {
+    const char* flag = std::getenv("CARA_GPU_PACKED_ROLLING_FETCH");
+    return flag && std::string_view{flag} == "1";
+}
+
+// Keep the existing byte extraction and layout specialization intact. Only the
+// two fetch sites gain a per-input-vertex, one-texel memo between attributes.
+inline std::string MakePackedVertexRollingFetchDecoder(std::string_view decoder) {
+    constexpr std::string_view declaration = "uniform highp ivec4 cara_vertex_layout[16];";
+    constexpr std::string_view fetch = "texelFetch(cara_vertex_inputs, ivec2(";
+    const auto layout = decoder.find(declaration);
+    if (layout == decoder.npos) return {};
+    std::string source(decoder);
+    for (const std::string_view texel : {"texel", "next"}) {
+        const std::string query = std::string(fetch) + std::string(texel) + " % 128, " +
+                                  std::string(texel) + " / 128), 0)";
+        const auto position = source.find(query);
+        if (position == source.npos) return {};
+        source.replace(position, query.size(), "cara_packed_fetch(" + std::string(texel) + ")");
+    }
+    source.insert(layout + declaration.size(), R"(
+highp int cara_packed_cached_texel;
+highp uvec4 cara_packed_cached_data;
+highp uvec4 cara_packed_fetch(highp int texel) {
+    if (texel != cara_packed_cached_texel) {
+        cara_packed_cached_texel = texel;
+        cara_packed_cached_data =
+            texelFetch(cara_vertex_inputs, ivec2(texel % 128, texel / 128), 0);
+    }
+    return cara_packed_cached_data;
+}
+)");
+    return source;
+}
+
 // Only descriptor integers are specialized. The original uniform remains live
 // for the raw-index header stored in register zero's high component-count bits.
 using PackedVertexLayout = std::array<std::array<std::int32_t, 4>, 16>;

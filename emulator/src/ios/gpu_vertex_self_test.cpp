@@ -180,7 +180,9 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     const PicaVSConfig config(regs, setup);
     const PicaFixedGSConfig output(regs);
     OGLShader vertex, fragment;
-    std::string vertex_source=GenerateVertexShader(setup, config, false, &output, input_mask, indexed_inputs, source_optimizations);
+    std::string vertex_source = GenerateVertexShader(
+        setup, config, false, &output, input_mask, indexed_inputs, source_optimizations,
+        false, false, false, nullptr, PackedVertexRollingFetchEnabled());
     const std::string direct_vertex_source=vertex_source;
     // Exercise the entire large atlas without relying on large feedback captures.
     for (size_t pos=0;(pos=vertex_source.find("gl_VertexID",pos))!=std::string::npos;) {
@@ -602,7 +604,8 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
 static bool RunPackedDecodeFixture(std::string& error,
                                    const char* decoder=OpenGL::PackedVertexDecoderGLSL,
                                    unsigned offset_bias=0, unsigned stride=24, bool boundary=false,
-                                   bool empty_attributes=false) {
+                                   bool empty_attributes=false,
+                                   bool rolling_interleaved=false, bool specialize_decoder=false) {
     using namespace OpenGL;
     const GLenum entry_error=glGetError();
     GLint old_draw=0,old_read=0;std::array<GLint,4> old_viewport{};
@@ -637,11 +640,13 @@ static bool RunPackedDecodeFixture(std::string& error,
         floats[patterns.size()]=Pica::float24::FromRaw(0x3f0001).ToFloat32();
         floats[patterns.size()+1]=Pica::float24::FromRaw(0xbf8001).ToFloat32();
     }
+    unsigned interleaved_offset = offset_bias;
     for (unsigned reg=0;reg<16;++reg) {
         const unsigned format=reg/4, components=empty_attributes?0:reg%4+1;
         const unsigned width=format==3?4:format==2?2:1;
         const unsigned offset=empty_attributes?unsigned(bytes.size()):
-            reg*per_attribute*32+(boundary?offset_bias:reg%4);
+            (rolling_interleaved ? interleaved_offset : reg*per_attribute*32+(boundary?offset_bias:reg%4));
+        interleaved_offset += width * components;
         layout[reg]={GLint(offset),GLint(stride),GLint(format),GLint(components)};
         for (unsigned v=0;v<per_attribute;++v) for (unsigned c=0;c<4;++c) {
             float value=c==3?1.f:0.f;
@@ -652,14 +657,45 @@ static bool RunPackedDecodeFixture(std::string& error,
                 if (format==0) { s8 x=static_cast<s8>(bits); std::memcpy(destination,&x,1); value=x; }
                 if (format==1) { u8 x=static_cast<u8>(bits); std::memcpy(destination,&x,1); value=x; }
                 if (format==2) { s16 x=static_cast<s16>(bits); std::memcpy(destination,&x,2); value=x; }
-                if (format==3) { value=floats[(sample+c)%floats.size()]; std::memcpy(destination,&value,4); }
+                if (format==3) {
+                    value=floats[(sample+c+(rolling_interleaved ? reg : 0))%floats.size()];
+                    std::memcpy(destination,&value,4);
+                }
             }
             expected[(v*16+reg)*4+c]=value;
         }
     }
     const unsigned rows=(bytes.size()+2047)/2048; bytes.resize(rows*2048);
     OGLShader vertex,fragment;
-    vertex.Create((std::string(decoder)+"out highp vec4 decoded; void main(){ decoded=cara_decode_vertex(gl_VertexID/16,gl_VertexID%16); gl_Position=vec4(0,0,0,1); }").c_str(),GL_VERTEX_SHADER);
+    std::string source(decoder);
+    if (rolling_interleaved) {
+        if (specialize_decoder) source = SpecializePackedVertexDecoder(source, layout);
+        source = MakePackedVertexRollingFetchDecoder(source);
+        if (source.empty()) { error = "rolling packed decoder generation failed"; return false; }
+        // Read a neighboring attribute first. Keep its x/z values observable so
+        // the test exercises both shared and distinct fetches in one invocation.
+        source += R"(
+out highp vec4 decoded;
+void main() {
+    int vertex = gl_VertexID / 16;
+    int reg = gl_VertexID % 16;
+    cara_packed_cached_texel = -1;
+    vec4 preceding = cara_decode_vertex(vertex, max(reg - 1, 0));
+    decoded = cara_decode_vertex(vertex, reg);
+    decoded.xz = preceding.xz;
+    gl_Position = vec4(0, 0, 0, 1);
+})";
+        for (unsigned v = 0; v < per_attribute; ++v) {
+            for (unsigned reg = 15; reg > 0; --reg) {
+                const unsigned current = (v * 16 + reg) * 4;
+                expected[current] = expected[current - 4];
+                expected[current + 2] = expected[current - 2];
+            }
+        }
+    } else {
+        source += "out highp vec4 decoded; void main(){ decoded=cara_decode_vertex(gl_VertexID/16,gl_VertexID%16); gl_Position=vec4(0,0,0,1); }";
+    }
+    vertex.Create(source.c_str(), GL_VERTEX_SHADER);
     fragment.Create("out vec4 color;void main(){color=vec4(1);}",GL_FRAGMENT_SHADER);
     GLuint program=glCreateProgram(); glAttachShader(program,vertex.handle); glAttachShader(program,fragment.handle);
     const char* varying="decoded"; glTransformFeedbackVaryings(program,1,&varying,GL_INTERLEAVED_ATTRIBS); glLinkProgram(program);
@@ -1040,6 +1076,15 @@ bool RunGPUVertexSelfTest(std::string& error) {
         // Empty attributes return defaults without accessing their unused address.
         for (const char* decoder : {OpenGL::PackedVertexDecoderGLSL,OpenGL::PackedVertexFetchReuseGLSL})
             if (!RunPackedDecodeFixture(error,decoder,0,0,true,true)) return false;
+    }
+    if (OpenGL::PackedVertexRollingFetchEnabled()) {
+        for (bool specialized : {false, true}) {
+            if (!RunPackedDecodeFixture(error, OpenGL::PackedVertexFetchReuseGLSL, 13, 113,
+                                        true, false, true, specialized)) {
+                error += specialized ? " rolling specialized layout" : " rolling uniform layout";
+                return false;
+            }
+        }
     }
     if (!RunFeedbackCaptureFixture(error)) return false;
     for (u16 mask : {u16(0xffff), u16(0x0083), u16(0x0003)}) {

@@ -333,6 +333,12 @@ public:
         key_hash ^= Common::ComputeHash64(&ios_indexed_inputs, sizeof(ios_indexed_inputs));
         // Output semantics are part of a fused ES vertex program, not a separate GS.
         key_hash ^= Common::ComputeHash64(&ios_output, sizeof(ios_output));
+        const bool use_rolling_packed_fetch = rolling_packed_fetch &&
+            (ios_indexed_inputs == 2 || ios_indexed_inputs == 3 || ios_indexed_inputs == 6);
+        if (use_rolling_packed_fetch) {
+            constexpr u32 option = 0x52504631; // Rolling packed fetch v1
+            key_hash ^= Common::ComputeHash64(&option, sizeof(option));
+        }
         if(native_geometry) {const u32 option=NativeQuaternionGeometry::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
         if(native_dispatch) {const u32 option=0x4e494431;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
         if(native_suffix_sharing) {const u32 option=ShaderSuffixSharing::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
@@ -342,7 +348,8 @@ public:
         if (iter_ref == shaders_ref.end()) {
             std::string vs_code = GenerateVertexShader(setup, key, separable
 #ifdef CARA_IOS_GLES
-                , &ios_output, ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch, native_suffix_sharing
+                , &ios_output, ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch, native_suffix_sharing,
+                  nullptr, use_rolling_packed_fetch
 #endif
             );
             if (vs_code.empty()) {
@@ -654,6 +661,8 @@ public:
         return false;
     }
 #ifdef CARA_IOS_GLES
+    const bool rolling_packed_fetch = PackedVertexRollingFetchEnabled();
+
     std::string IOSIdentity() {
         // Explicit key/UBO schema identity, independent of a possibly empty prototype SCM string.
         std::string identity = std::string(CARA_SHADER_CACHE_SIGNATURE) +
@@ -670,6 +679,7 @@ public:
 #else
         identity += "\nbackend=ios-gles";
 #endif
+        if (rolling_packed_fetch) identity += "\npacked-rolling-fetch-v1";
         identity += native_geometry_enabled ? "\ngeometry=1" : "\ngeometry=0";
         identity += native_dispatch_enabled ? "\nisolated-dispatch=1" : "\nisolated-dispatch=0";
         identity += suffix_sharing_policy ? "\nsuffix-sharing-policy-v1=1" : "\nsuffix-sharing-policy-v1=0";
@@ -705,6 +715,7 @@ public:
         ios_identity = IOSIdentity();
         ios_cache_path = GetCacheFile() +
                          (UseNativeLUTBuffers() ? ".native-lut.cara-pso1" : ".cara-pso1");
+        if (rolling_packed_fetch) ios_cache_path += ".rolling-fetch-v1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
         std::ifstream file(ios_cache_path, std::ios::binary | std::ios::ate);
