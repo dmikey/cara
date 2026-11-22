@@ -198,9 +198,40 @@ and emulated system timing were not matched to Cara. A prior separate
 comparison at Gadd's lab found that the shipped FMV and texture-copy
 overrides changed refresh and game-submission rates. Public MMJ source
 uses raw buffer uploads and preserves guest primitive topology. Cara's
-native GLES 3.2 path also does that. The warm counterexample shows that
-this route needs to retain render targets on GPU before testing it as a
-default.
+native GLES 3.2 path also does that. The diagnostic data below show how
+much the surface residency bug contributed to the gap.
+
+### Native GLES surface residency repair
+
+The Mali compiler rejected the shared remapper's native fragment shader
+because its helper had no default float precision. Atlas supplies that
+precision in its preamble. The native renderer fell through to the CPU
+readback path for the tiled RGBA8 source aliased as a linear image. The
+shared shader now supplies the GLES precision directly.
+
+The same Dark Moon title windows on the RG Slide had matching draw counts,
+1× Accuracy Mode, JIT, a 60 Hz panel, and threaded presentation.
+Per 120 warm refreshes, native GLES went from **240 downloads and zero
+GPU remaps** to **zero downloads and 720 GPU remaps**. Download wall time
+fell from **8.10–8.15 s** to zero in those windows. Core p99 fell from
+**124.72–129.44 ms** to **105.59–110.22 ms**, with maxima of 132.39 ms
+and 113.12 ms. SurfaceFlinger presentation rose from **8.27 to 10.02**
+presents/s, with p99 **149.92 to 116.66 ms**. The existing surface
+coherence fixture passed on the patched device build.
+
+The corrected native renderer reached 19.92 presents/s with Performance
+Mode. The tuned atlas reached 27.12 with native lighting and packed fetch
+enabled. Both settled at a 50% guest clock. Keep the atlas as the default.
+
+After fixing residency, the warm draw scope still spent about 69–70 ms
+per emulated refresh. A separate on-CPU sample attributed 35.6% of emulation
+thread samples to Mali GLES. The guest execution scope includes graphics work
+entered by guest callbacks, so its wall time cannot be attributed entirely
+to Dynarmic. The Stories scheduler capture showed 5.66 of 6.43 emulation
+thread CPU seconds on CPU 7, whose frequency policy allows up to 2.704 GHz.
+
+[GLES precision fix](https://github.com/dmikey/cara/pull/89) ·
+[RG Slide fixture and retest APK](https://github.com/dmikey/cara/actions/runs/45079489936)
 
 [MMJ public draw path](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/renderer_opengl/gl_rasterizer.cpp#L329-L501) ·
 [Prior MMJ Gadd lab investigation](https://github.com/dmikey/cara/blob/f41280d/docs/android-draw-processing.md#mmj-baseline-correction-and-live-transfer-probes)
