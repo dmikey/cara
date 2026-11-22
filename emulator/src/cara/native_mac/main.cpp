@@ -127,6 +127,10 @@ static void WriteNativeManifest(const std::string& directory, const EmuWindow_SD
     out << ",\"use_compatible_mode\":" << v.use_compatible_mode;
     out << ",\"disable_clip_coef\":" << v.disable_clip_coef;
     out << ",\"use_linear_filter\":" << v.use_linear_filter;
+    out << ",\"bounded_frame_pacing\":" << !diagnostics
+        << ",\"guest_render_timing\":" << Cara::gpu_completion_policy.render
+        << ",\"guest_transfer_timing\":" << Cara::gpu_completion_policy.transfer
+        << ",\"guest_render_soft_knee\":" << Cara::gpu_completion_policy.soften_render;
     out << ",\"use_frame_limit\":" << v.use_frame_limit;
     out << ",\"vsync_enabled\":" << v.vsync_enabled;
     out << ",\"actual_swap_interval\":" << SDL_GL_GetSwapInterval();
@@ -490,6 +494,12 @@ static int RunNativeMain(int argc, char** argv) {
             LOG_INFO(Frontend, "Session guest CPU policy: {}% ({})", clock,
                      policy.adaptive ? "adaptive" : "fixed");
         };
+        const auto resume_play_pacing = [&] {
+            adaptive_clock.ResetSamples();
+            system.perf_stats->ResetFramePacing();
+            window.ResetPresentationPacing();
+            discard_sample_at = VideoCore::GetCurrentFrame() + 1;
+        };
         const auto record_state = [&](const char* operation, unsigned slot = 1) {
             std::ofstream state(directory + "native-state-status.json");
             state << "{\"operation\":\"" << operation
@@ -515,6 +525,7 @@ static int RunNativeMain(int argc, char** argv) {
             Cara::NativeDiagnosticClock::ApplyAfterLoad(system.CoreTiming(),system.GetNumCores(),
                 Cara::NativeScriptOnlyInput::Enabled(),"startup-normal-load");
         } else {
+            system.perf_stats->SetBoundedFramePacing(true);
             apply_guest_policy();
         }
         const char* copy_trace_flag = std::getenv("CARA_TEXTURE_COPY_TRACE");
@@ -635,7 +646,7 @@ static int RunNativeMain(int argc, char** argv) {
                 if (Cara::MacUI::TakePreferencesClosed()) {
                     // PollEvents opens Settings after frame timing ends. The next sample
                     // includes the modal pause, which should never lower the guest clock.
-                    discard_sample_at = frame + 1;
+                    resume_play_pacing();
                 }
                 if (adaptive_clock.Enabled() && frame != adaptive_frame) {
                     if (frame == discard_sample_at) {
@@ -686,6 +697,7 @@ static int RunNativeMain(int argc, char** argv) {
                             Cara::NativeScriptOnlyInput::Enabled(),"runtime-state-load");
                     } else {
                         apply_guest_policy();
+                        system.perf_stats->SetBoundedFramePacing(true);
                     }
                     record_state("load", state_slot);
                     if (menu_state.action != Cara::NativeGameMenu::StateAction::None) window.StateCompleted(false, state_slot);
@@ -701,7 +713,14 @@ static int RunNativeMain(int argc, char** argv) {
                 if (menu_state.action == Cara::NativeGameMenu::StateAction::None) throw;
                 Cara::NativeGameMenu::StateFailure(error.what());
                 if (!system.IsPoweredOn()) break;
+                if (!diagnostics && state_command == EmuWindow_SDL2::StateCommand::Load) {
+                    // Rollback may have created a new core and timing statistics.
+                    apply_guest_policy();
+                    system.perf_stats->SetBoundedFramePacing(true);
+                }
             }
+            if (!diagnostics && state_command != EmuWindow_SDL2::StateCommand::None)
+                resume_play_pacing();
             if (window.TakeBenchmarkStop())
                 break;
         }

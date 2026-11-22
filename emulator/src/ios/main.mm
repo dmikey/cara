@@ -29,6 +29,7 @@ extern "C" int __llvm_profile_write_file(void);
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
 #import "ios/network_controller.h"
+#include "ios/display_scaling.h"
 #include "ios/device_sensors.h"
 #include "ios/session_overlay.h"
 #include "network/relay_client.h"
@@ -306,6 +307,11 @@ public:
     GLuint drawable_framebuffer = 0;
     GLuint drawable_renderbuffer = 0;
     GLint drawable_width = 0, drawable_height = 0;
+    GLuint lossless_framebuffer = 0;
+    GLuint lossless_renderbuffer = 0;
+    unsigned lossless_storage_scale = 0;
+    unsigned output_scale = 1;
+    u64 gles_lossless_presentations = 0;
     std::mutex display_mutex;
     CGRect display_rects[2]={CGRectMake(0,0,1,.5),CGRectMake(.1,.5,.8,.5)};
     int display_width=0,display_height=0;
@@ -400,6 +406,7 @@ public:
         std::lock_guard<std::mutex> lock(display_mutex);
         CGRect rects[]={upper,lower};
         for (unsigned i=0;i<2;++i) display_rects[i]=CGRectMake(rects[i].origin.x/size.width,rects[i].origin.y/size.height,rects[i].size.width/size.width,rects[i].size.height/size.height);
+        output_scale = upscale;
         display_width=int(std::lround(size.width*pixelScale)); display_height=int(std::lround(size.height*pixelScale));
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
         if (native_metal_only && metal_lcd_view) {
@@ -409,8 +416,6 @@ public:
                 [metal_lcd_view setDrawablePixelWidth:metal_lcd_layout->width
                                                height:metal_lcd_layout->height];
         }
-#else
-        (void)upscale;
 #endif
     }
 #endif
@@ -424,6 +429,8 @@ public:
         if (graphics_context && framebuffer) {
             EAGLContext* previous = EAGLContext.currentContext;
             [EAGLContext setCurrentContext:graphics_context];
+            glDeleteFramebuffers(1, &lossless_framebuffer);
+            glDeleteRenderbuffers(1, &lossless_renderbuffer);
             glDeleteFramebuffers(1, &drawable_framebuffer);
             glDeleteRenderbuffers(1, &drawable_renderbuffer);
             glDeleteFramebuffers(1, &framebuffer);
@@ -539,11 +546,11 @@ public:
 #ifdef CARA_IOS_GLES
         if (drawable_framebuffer) {
             if (presentation_guard.Admit(displayLinkSequence.load(std::memory_order_relaxed), adaptiveFrameSkip.load())) {
-            CGRect destinations[2]; int desired_width,desired_height;
+            CGRect destinations[2]; int desired_width,desired_height; unsigned upscale;
             {
                 std::lock_guard<std::mutex> lock(display_mutex);
                 destinations[0]=display_rects[0]; destinations[1]=display_rects[1];
-                desired_width=display_width; desired_height=display_height;
+                desired_width=display_width; desired_height=display_height; upscale=output_scale;
             }
             {
                 Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::Present);
@@ -560,14 +567,56 @@ public:
                 GLboolean mask[4]; glGetBooleanv(GL_COLOR_WRITEMASK,mask);
                 glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE); glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT);
                 glColorMask(mask[0],mask[1],mask[2],mask[3]);
-                for (unsigned screen=0;screen<2;++screen) {
-                    const CGRect r=destinations[screen];
-                    const GLint x0=GLint(std::lround(r.origin.x*drawable_width));
-                    const GLint x1=GLint(std::lround(CGRectGetMaxX(r)*drawable_width));
-                    const GLint y0=GLint(std::lround((1-CGRectGetMaxY(r))*drawable_height));
-                    const GLint y1=GLint(std::lround((1-r.origin.y)*drawable_height));
-                    glBlitFramebuffer((screen?40:0)*presentation_scale,(screen?0:240)*presentation_scale,
-                                      (screen?360:400)*presentation_scale,(screen?240:480)*presentation_scale,x0,y0,x1,y1,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+                struct ScreenBounds { GLint left, bottom, right, top; };
+                std::array<ScreenBounds, 2> bounds{};
+                bool needs_staging = false;
+                for (unsigned screen = 0; screen < bounds.size(); ++screen) {
+                    const CGRect rect = destinations[screen];
+                    bounds[screen] = {
+                        GLint(std::lround(rect.origin.x * drawable_width)),
+                        GLint(std::lround((1 - CGRectGetMaxY(rect)) * drawable_height)),
+                        GLint(std::lround(CGRectGetMaxX(rect) * drawable_width)),
+                        GLint(std::lround((1 - rect.origin.y) * drawable_height))};
+                    const auto& [left, bottom, right, top] = bounds[screen];
+                    const auto& source = Cara::LCDPresentationRects[screen];
+                    needs_staging |= !Cara::FinalScaleIsIntegral(source.width * presentation_scale,
+                        source.height * presentation_scale, right - left, top - bottom);
+                }
+                unsigned source_scale = presentation_scale;
+                if (upscale > presentation_scale && needs_staging) {
+                    if (!lossless_framebuffer) {
+                        glGenFramebuffers(1, &lossless_framebuffer);
+                        glGenRenderbuffers(1, &lossless_renderbuffer);
+                    }
+                    OpenGL::OpenGLState::BindDrawFramebuffer(lossless_framebuffer);
+                    if (lossless_storage_scale != upscale) {
+                        OpenGL::OpenGLState::BindRenderbuffer(lossless_renderbuffer);
+                        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 400 * upscale, 480 * upscale);
+                        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                                  GL_RENDERBUFFER, lossless_renderbuffer);
+                        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE)
+                            lossless_storage_scale = upscale;
+                    }
+                    if (lossless_storage_scale == upscale) {
+                        glBlitFramebuffer(0, 0, 400 * presentation_scale, 480 * presentation_scale,
+                                          0, 0, 400 * upscale, 480 * upscale,
+                                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                        OpenGL::OpenGLState::BindReadFramebuffer(lossless_framebuffer);
+                        source_scale = upscale;
+                        ++gles_lossless_presentations;
+                    }
+                    OpenGL::OpenGLState::BindDrawFramebuffer(drawable_framebuffer);
+                    OpenGL::OpenGLState::BindRenderbuffer(drawable_renderbuffer);
+                }
+                for (unsigned screen = 0; screen < bounds.size(); ++screen) {
+                    const auto& src = Cara::LCDPresentationRects[screen];
+                    const auto& [left, bottom, right, top] = bounds[screen];
+                    const bool integral = Cara::FinalScaleIsIntegral(src.width * source_scale,
+                        src.height * source_scale, right - left, top - bottom);
+                    const GLenum filter = upscale > 1 && !integral ? GL_LINEAR : GL_NEAREST;
+                    glBlitFramebuffer(src.x * source_scale, src.y * source_scale,
+                        (src.x + src.width) * source_scale, (src.y + src.height) * source_scale,
+                        left, bottom, right, top, GL_COLOR_BUFFER_BIT, filter);
                 }
                 if (scissor) glEnable(GL_SCISSOR_TEST);
                 RecordPresentation();
@@ -1150,14 +1199,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     statusIndicator.frame=hud.indicator;
     status.adjustsFontSizeToFitWidth=YES; status.minimumScaleFactor=0.7;
 #ifdef CARA_IOS_GLES
-    unsigned upscale = 1;
-#ifdef CARA_PRIVATE_IOS_METAL_LCD
-    if (emuWindow && emuWindow->native_metal_only) {
-        const auto saved = [NSUserDefaults.standardUserDefaults integerForKey:@"losslessScreenScale"];
-        if (saved == 2 || saved == 4)
-            upscale = static_cast<unsigned>(saved);
-    }
-#endif
+    const auto upscale = Cara::LCDUpscaleFactor(
+        [NSUserDefaults.standardUserDefaults integerForKey:@"losslessScreenScale"]);
     if (emuWindow) emuWindow->SetDisplayLayout(top.frame, bottom.frame, self.view.bounds.size,
                                               gpuSurface.contentScaleFactor, upscale);
 #endif
@@ -1530,11 +1573,24 @@ static std::filesystem::path PedometerHistoryPath() {
 #ifdef CARA_IOS_GLES
     NSUserDefaults* displayDefaults = NSUserDefaults.standardUserDefaults;
     NSMutableArray* display = [NSMutableArray array];
-    [display addObject:@{@"title":@"2× internal resolution", @"symbol":@"square.resize",
-        @"subtitle":@"Render at twice the native resolution with OpenGL ES. Reopen the game to apply.",
+    [display addObject:@{@"title":@"2× Native Resolution", @"symbol":@"square.resize",
+        @"subtitle":@"Decreases Performance for more Detail",
         @"value":@([displayDefaults boolForKey:@"glesSupersampling"]),
         @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:@"glesSupersampling"]; }}];
-    [sections addObject:@{@"title":@"Display", @"rows":display}];
+    const NSInteger outputScale = [displayDefaults integerForKey:@"losslessScreenScale"];
+    for (NSInteger multiplier : {0, 2, 4}) {
+        NSString* name = multiplier ? [NSString stringWithFormat:@"Lossless %ld×", (long)multiplier]
+                                    : @"Native (Fit)";
+        [display addObject:@{@"title":name, @"symbol":@"display",
+            @"selected":@(Cara::LCDUpscaleFactor(outputScale) == Cara::LCDUpscaleFactor(multiplier)),
+            @"keepOpen":@YES, @"action":^{
+                [displayDefaults setInteger:multiplier forKey:@"losslessScreenScale"];
+                [owner.view setNeedsLayout];
+                [owner updateSyncFeedback];
+            }}];
+    }
+    [sections addObject:@{@"title":@"Display", @"rows":display,
+                          @"footer":@"Reopen the game to apply a change to native resolution."}];
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     const BOOL experimentalEnabled = [displayDefaults boolForKey:CaraMetalRendererKey];
     NSMutableArray* rendering = [NSMutableArray arrayWithObject:
@@ -1575,23 +1631,7 @@ static std::filesystem::path PedometerHistoryPath() {
             @"change":^(BOOL enabled) {
                 [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
             }}];
-        if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) {
-            const NSInteger saved = [displayDefaults integerForKey:@"losslessScreenScale"];
-            const NSInteger scale = saved == 2 || saved == 4 ? saved : 0;
-            for (NSInteger multiplier : {0, 2, 4}) {
-                NSString* name = multiplier ? [NSString stringWithFormat:@"Lossless %ld×", (long)multiplier]
-                                            : @"Native (Fit)";
-                [rendering addObject:@{@"title":name, @"symbol":scale == multiplier ? @"checkmark.circle.fill" : @"circle",
-                                      @"keepOpen":@YES, @"action":^{
-                    EmulatorController* controller = owner;
-                    if (!controller)
-                        return;
-                    [displayDefaults setInteger:multiplier forKey:@"losslessScreenScale"];
-                    [controller.view setNeedsLayout];
-                    [controller updateSyncFeedback];
-                }}];
-            }
-        }
+
     }
     [sections addObject:@{@"title":@"Rendering",@"rows":rendering,
                           @"footer":@"Metal settings apply when you reopen a game."}];
@@ -3697,6 +3737,7 @@ static std::filesystem::path PedometerHistoryPath() {
                        << ",\"experimental_p3d_completion\":" << (Cara::ExperimentalP3DCompletionEnabled()?"true":"false")
                        << ",\"gpu_completion_soft_knee\":" << (Cara::gpu_completion_policy.soften_render?"true":"false")
 #ifdef CARA_IOS_GLES
+                           << ",\"gles_lossless_presentations\":" << emuWindow->gles_lossless_presentations
                            << ",\"eagl_multithreaded\":" << (emuWindow->graphics_context.isMultiThreaded ? "true" : "false")
                            << ",\"gpu_vertex_draws\":" << Common::FrameTiming::counters.gpu_vertex_draws
                            << ",\"gpu_vertices\":" << Common::FrameTiming::counters.gpu_vertices

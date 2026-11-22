@@ -27,9 +27,16 @@ int main() {
     assert(PlaySettings::AsyncShadersForMetalSession(Ini(original), "1"));
     const Ini performance("[Play]\nmode=performance\n");
     assert(PlaySettings::AsyncShadersForMetalSession(performance, nullptr));
+    assert(!PlaySettings::HasSavedPlayMode(Ini(original)));
+    assert(PlaySettings::HasSavedPlayMode(performance));
+    assert(PlaySettings::PerformanceTimingForMetalSession(performance, nullptr));
+    assert(!PlaySettings::PerformanceTimingForMetalSession(performance, "0"));
     assert(!PlaySettings::AsyncShadersForMetalSession(performance, "0"));
     const Ini accuracy("[Play]\nmode=accuracy\n[Renderer]\nasync_metal_shaders=true\n");
     assert(!PlaySettings::AsyncShadersForMetalSession(accuracy, "1"));
+    assert(PlaySettings::HasSavedPlayMode(accuracy));
+    assert(!PlaySettings::PerformanceTimingForMetalSession(accuracy, nullptr));
+    assert(PlaySettings::PerformanceTimingForMetalSession(accuracy, "1"));
     const Ini async_disabled("[Play]\nmode=performance\n[Renderer]\nasync_metal_shaders=false\n");
     assert(!PlaySettings::AsyncShadersForMetalSession(async_disabled, "1"));
     model.play.fixed_guest_clock = true;

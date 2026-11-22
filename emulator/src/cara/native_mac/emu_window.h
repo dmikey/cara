@@ -23,6 +23,7 @@ public:
     u32 GetIntegerOutputScale() const override { return integer_output_scale; }
     bool ShouldPresentFrame() override;
     void SetPresentationOptions(u32 output_scale, bool adaptive_frame_skip);
+    void ResetPresentationPacing() { presentation_guard.Reset(); }
 
     enum class StateCommand {
         None,

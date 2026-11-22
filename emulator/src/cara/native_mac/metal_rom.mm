@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <stdexcept>
+#include "cara/adaptive_clock.h"
 #include "cara/config.h"
 #include "cara/native_mac/mac_preferences.h"
 #include "cara/p3d_completion.h"
@@ -322,9 +323,12 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                  const std::vector<InputEvent>& inputs, bool jit, CAMetalLayer* layer,
                  id<MTLDevice> device, NSURL* library, HostEvents& events,
                  const Cara::MacPreferences::Ini& ini, unsigned scale) {
+    using Cara::MacPreferences::PlaySettings;
     const auto* performance = std::getenv("CARA_MAC_METAL_PERFORMANCE_MODE");
-    Cara::ConfigureMetalGeneralFragment(Cara::MacPreferences::PlaySettings::AsyncShadersForMetalSession(
-        ini, performance));
+    const auto play_settings = PlaySettings::Read(ini);
+    const bool saved_play_mode = PlaySettings::HasSavedPlayMode(ini);
+    Cara::ConfigureMetalGeneralFragment(
+        PlaySettings::AsyncShadersForMetalSession(ini, performance));
     std::cout << "METAL_ASYNC_SHADERS enabled=" << Cara::UseMetalGeneralFragment() << std::endl;
 
     NSError* error = nil;
@@ -332,7 +336,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
     if (!assets)
         throw std::runtime_error(error.localizedDescription.UTF8String ?: "Missing Metal assets");
 
-    assets->texture_filter = Cara::MacPreferences::PlaySettings::Read(ini).texture_filter;
+    assets->texture_filter = play_settings.texture_filter;
     assets->internal_scale = scale;
     const auto should_capture = [&](unsigned frame) {
         return frame == limit || (interval && frame && frame % interval == 0);
@@ -350,9 +354,8 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
     SCOPE_EXIT({ VideoCore::SetNativeRendererFactory({}); });
     auto& core = Core::System::GetInstance();
     try {
-        // Changing compatibility timing still requires an explicit request.
         Cara::gpu_completion_policy = Cara::GetGPUCompletionPolicy(
-            performance && std::string_view(performance) == "1");
+            PlaySettings::PerformanceTimingForMetalSession(ini, performance));
         const auto status = core.Load(host, path);
         if (status != Core::System::ResultStatus::Success) {
             std::cerr << "LOAD_STATUS " << unsigned(status) << '\n';
@@ -367,17 +370,29 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         std::cout << "CPU_BACKEND " << (jit ? "jit" : "fastinterp")
                   << " jit_cores=" << jit_cores << std::endl;
 #endif
-        unsigned guest_clock = 100;
-        if (const auto* value = std::getenv("CARA_PROFILE_GUEST_CPU_PERCENT")) {
-            guest_clock = ParseUnsigned(value);
+        const auto policy = play_settings.Policy();
+        const auto* diagnostic_clock = std::getenv("CARA_PROFILE_GUEST_CPU_PERCENT");
+        const auto* diagnostic_speed = std::getenv("CARA_MAX_SPEED_PERCENT");
+        unsigned guest_clock = saved_play_mode ? policy.guest_clock : 100;
+        Cara::AdaptiveClock adaptive_clock;
+        adaptive_clock.SetEnabled(saved_play_mode && policy.adaptive && !diagnostic_clock);
+        if (diagnostic_clock) {
+            guest_clock = ParseUnsigned(diagnostic_clock);
             if (guest_clock != 50 && guest_clock != 100)
                 throw std::runtime_error("Diagnostic guest clock must be 50% or 100%");
-            core.CoreTiming().UpdateClockSpeed(guest_clock);
         }
+        if (adaptive_clock.Enabled())
+            guest_clock = adaptive_clock.Percent();
+        core.CoreTiming().UpdateClockSpeed(guest_clock);
+        const bool bounded_frame_pacing = saved_play_mode && !diagnostic_speed;
+        core.perf_stats->SetBoundedFramePacing(bounded_frame_pacing);
         std::cout << "GUEST_TIMING clock=" << guest_clock
                   << " p3d=" << Cara::ExperimentalP3DCompletionEnabled()
                   << " ppf=" << Cara::ExperimentalPPFDependencyEnabled()
-                  << " soft_knee=" << Cara::gpu_completion_policy.soften_render << std::endl;
+                  << " soft_knee=" << Cara::gpu_completion_policy.soften_render
+                  << " bounded_pacing=" << bounded_frame_pacing
+                  << " speed_limit=" << Settings::values.use_frame_limit
+                  << " max_speed=" << Settings::values.frame_limit << std::endl;
         std::cout << "TITLE " << std::hex << core.GetTitleID() << std::dec << std::endl;
         const auto* learning_setting = std::getenv("CARA_MAC_METAL_LEARN");
         const bool learning_requested =
@@ -398,6 +413,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         size_t next_input = 0;
         unsigned previous_frame = VideoCore::GetCurrentFrame();
         Uint32 title_updated_at = SDL_GetTicks();
+        bool discard_clock_sample = false;
         while (!events.stop.load() && VideoCore::GetCurrentFrame() < limit) {
             while (next_input < inputs.size() && inputs[next_input].frame <= previous_frame)
                 host.ApplyInput(inputs[next_input++]);
@@ -407,11 +423,28 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                     throw std::runtime_error("Core run status " + std::to_string(unsigned(step)));
             }
             const unsigned frame = VideoCore::GetCurrentFrame();
+            if (adaptive_clock.Enabled() && frame != previous_frame) {
+                if (std::exchange(discard_clock_sample, false) || frame != previous_frame + 1) {
+                    adaptive_clock.ResetSamples();
+                } else {
+                    const auto timing = core.perf_stats->GetLastFrameTiming();
+                    using Seconds = std::chrono::duration<double>;
+                    const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
+                                                                  Seconds(timing.elapsed).count());
+                    if (guest_clock != next) {
+                        guest_clock = next;
+                        core.CoreTiming().UpdateClockSpeed(guest_clock);
+                    }
+                }
+            }
             if (frame != previous_frame && frame < limit && should_capture(frame)) {
                 const auto capture_dir = output + "frame-" + std::to_string(frame) + '/';
                 std::filesystem::create_directory(capture_dir);
                 if (!Cara::WriteNativeMetalCapture(capture_dir))
                     throw std::runtime_error("Could not retain Metal checkpoint");
+                if (bounded_frame_pacing)
+                    core.perf_stats->ResetFramePacing();
+                discard_clock_sample = true;
                 std::cout << "CAPTURE frame=" << frame << std::endl;
             }
             if (frame != previous_frame) {
@@ -562,12 +595,15 @@ int main(int argc, char** argv) {
             Settings::values.use_hw_shader = true;
             Settings::values.use_hw_renderer = true;
             Settings::values.resolution_factor = 1;
-            Settings::values.use_frame_limit = true;
-            Settings::values.frame_limit = 100;
+            const auto policy = Cara::MacPreferences::PlaySettings::Read(ini).Policy();
+            const bool saved_play_mode = Cara::MacPreferences::PlaySettings::HasSavedPlayMode(ini);
+            Settings::values.use_frame_limit = !saved_play_mode || policy.limit_speed;
+            Settings::values.frame_limit = saved_play_mode ? policy.maximum_speed : 100;
             if (const auto* speed = std::getenv("CARA_MAX_SPEED_PERCENT")) {
                 const auto percent = ParseUnsigned(speed);
                 if (percent < 50 || percent > 200)
                     throw std::runtime_error("Compatibility speed must be between 50% and 200%");
+                Settings::values.use_frame_limit = true;
                 Settings::values.frame_limit = percent;
             }
             Settings::values.sink_id = "sdl2";

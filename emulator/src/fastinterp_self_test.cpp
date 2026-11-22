@@ -1934,6 +1934,44 @@ int main() {
         std::cerr << "cross-page store failed\n";
         return 1;
     }
+    // The odd single-register pair is the encoding seen during Hyrule's battle load.
+    for (const bool thumb : {false, true}) {
+        for (const bool is_double : {false, true}) {
+            const u32 instruction = is_double ? 0xEC454B33 : 0xEC454A33;
+            const unsigned first_word = is_double ? 38 : 7;
+            const auto step = [&](u32 encoding) {
+                code[0] = thumb ? (encoding << 16) | (encoding >> 16) : encoding;
+                fast->ClearInstructionCache();
+                fast->SetCPSR(0x10);
+                fast->SetPC(0x1000 | unsigned(thumb));
+                fast->Step();
+            };
+            page_a.fill(0x5A);
+            fast->SetReg(4, 0x7FC01234);
+            fast->SetReg(5, 0x3200);
+            for (unsigned reg = 0; reg < 64; ++reg)
+                fast->SetVFPReg(reg, 0xABC00000 + reg);
+            step(instruction);
+            for (unsigned reg = 0; reg < 64; ++reg) {
+                const u32 expected = reg == first_word ? 0x7FC01234
+                                   : reg == first_word + 1 ? 0x3200
+                                   : 0xABC00000 + reg;
+                if (fast->GetVFPReg(reg) != expected) {
+                    std::cerr << "VMOV to VFP pair changed the wrong register\n";
+                    return 1;
+                }
+            }
+            fast->SetReg(4, 0);
+            fast->SetReg(5, 0x3204);
+            step(instruction | (1u << 20));
+            if (fast->GetReg(4) != 0x7FC01234 || fast->GetReg(5) != 0x3200 ||
+                !std::all_of(page_a.begin(), page_a.end(), [](u8 byte) { return byte == 0x5A; })) {
+                std::cerr << "VMOV from VFP pair changed RAM or returned incorrect bits\n";
+                return 1;
+            }
+        }
+    }
+    std::cout << "ARM and Thumb VMOV register pairs passed\n";
     // VFP multiple transfers: exact bit patterns, IA/DB, writeback, unaligned
     // inputs and separately allocated pages. Also verifies the burst fallback.
     unsigned transfers = 0;
