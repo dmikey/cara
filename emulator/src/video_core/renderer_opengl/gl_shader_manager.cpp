@@ -661,6 +661,9 @@ public:
         const char* fetch_reuse = std::getenv("CARA_GPU_PACKED_FETCH_REUSE");
         identity += fetch_reuse && std::strcmp(fetch_reuse, "1") == 0
                         ? "\npacked-fetch-reuse=1" : "\npacked-fetch-reuse=0";
+        const char* single_call = std::getenv("CARA_GPU_VERTEX_SINGLE_CALL");
+        if (single_call && std::strcmp(single_call, "1") == 0)
+            identity += "\nvertex-single-call=1";
 #else
         identity += "\nbackend=ios-gles";
 #endif

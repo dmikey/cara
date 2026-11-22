@@ -169,6 +169,8 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> vertex_single_call{{"Debug", "gpu_vertex_single_call"}, false};
+    setenv("CARA_GPU_VERTEX_SINGLE_CALL", Config::Get(vertex_single_call) ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
              Config::Get(packed_fetch_reuse));
 #endif
@@ -181,6 +183,10 @@ void BootGame(const std::string& path) {
     const auto gpu_policy = Cara::GetGPUCompletionPolicy(ReadPlayMode() == Cara::PlayMode::Performance);
     Cara::gpu_completion_policy = gpu_policy;
     if (phases.enabled) {
+#ifdef CARA_ANDROID_GLES_ATLAS
+        __android_log_print(ANDROID_LOG_INFO, "CaraPerf", "gpu_vertex_single_call=%d",
+                            Config::Get(vertex_single_call));
+#endif
 #ifdef CARA_ANDROID_GLES_ATLAS
         constexpr const char* renderer = "atlas";
 #else

@@ -2285,11 +2285,37 @@ layout (std140) uniform vs_config {
             out += "cara_run_vertex(int(pair_id.x)); normquat=" + quaternion + ";\n";
             out += "if(pair_id.x!=pair_id.y && dot(first_quat,normquat)<0.0) normquat=-normquat;\n";
         } else {
-        if (ios_indexed_inputs<3 && !native_quaternion_geometry) out += "if (gl_VertexID % 3 != 0) { " +
-            std::string(quaternion_program.empty()?"cara_run_vertex":"cara_run_quaternion")+
-            "(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
-        out += "cara_run_vertex(gl_VertexID);\n"+varying("normquat")+" = " + quaternion + ";\n";
-        if (ios_indexed_inputs<3 && !native_quaternion_geometry) out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
+            const bool fix_quaternion_sign = ios_indexed_inputs < 3 && !native_quaternion_geometry;
+            bool single_vertex_call = false;
+#ifdef CARA_ANDROID_GLES_ATLAS
+            const char* single_call = std::getenv("CARA_GPU_VERTEX_SINGLE_CALL");
+            single_vertex_call = fix_quaternion_sign && quaternion_program.empty() &&
+                                 ios_source_optimizations && single_call &&
+                                 std::string_view(single_call) == "1";
+#endif
+            if (single_vertex_call) {
+                // Let the GLES compiler inline the guest program at one call site.
+                // Both evaluations still reset registers and use the original vertex IDs.
+                out += "int corner = gl_VertexID % 3;\n"
+                       "int vertex = gl_VertexID - corner;\n"
+                       "for (;;) {\n"
+                       "    cara_run_vertex(vertex);\n"
+                       "    if (vertex == gl_VertexID) break;\n"
+                       "    first_quat = " + quaternion + ";\n"
+                       "    vertex = gl_VertexID;\n"
+                       "}\n";
+            } else {
+                if (fix_quaternion_sign)
+                    out += "if (gl_VertexID % 3 != 0) { " +
+                           std::string(quaternion_program.empty() ? "cara_run_vertex" :
+                                                                    "cara_run_quaternion") +
+                           "(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
+                out += "cara_run_vertex(gl_VertexID);\n";
+            }
+            out += varying("normquat") + " = " + quaternion + ";\n";
+            if (fix_quaternion_sign)
+                out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) "
+                       "normquat = -normquat;\n";
         }
         out += "gl_Position = " + vector("vec4", {VSOutputAttributes::POSITION_X, VSOutputAttributes::POSITION_Y,
             VSOutputAttributes::POSITION_Z, VSOutputAttributes::POSITION_W}) + ";\n";
