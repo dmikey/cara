@@ -105,12 +105,15 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
     GLuint shader_id = glCreateShader(type);
     LOG_DEBUG(Render_OpenGL, "Compiling {} shader: {}", debug_type, shader_id);
     glShaderSource(shader_id, static_cast<GLsizei>(src_arr.size()), src_arr.data(), nullptr);
-    glCompileShader(shader_id);
-
     GLint result = GL_FALSE;
     GLint info_log_length;
-    glGetShaderiv(shader_id, GL_COMPILE_STATUS, &result);
-    glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &info_log_length);
+    {
+        Common::FrameTiming::ShaderDriverScope event(Common::FrameTiming::ShaderDriverPhase::Compile,
+                                                    debug_type);
+        glCompileShader(shader_id);
+        glGetShaderiv(shader_id, GL_COMPILE_STATUS, &result);
+        glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &info_log_length);
+    }
 
     if (info_log_length > 1) {
         std::vector<char> shader_error(info_log_length);
@@ -165,13 +168,14 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
         if (formats > 0) glProgramParameteri(program_id, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
     }
 #endif
-    glLinkProgram(program_id);
-
-    // Check the program
     GLint result = GL_FALSE;
     GLint info_log_length;
-    glGetProgramiv(program_id, GL_LINK_STATUS, &result);
-    glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &info_log_length);
+    {
+        Common::FrameTiming::ShaderDriverScope event(Common::FrameTiming::ShaderDriverPhase::Link);
+        glLinkProgram(program_id);
+        glGetProgramiv(program_id, GL_LINK_STATUS, &result);
+        glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &info_log_length);
+    }
 
     if (info_log_length > 1) {
         std::vector<char> program_error(info_log_length);

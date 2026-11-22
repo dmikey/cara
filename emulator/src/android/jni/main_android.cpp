@@ -150,6 +150,26 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
 
 }
 
+static void LogShaderDriverTiming(const char* scope, u32 frame) {
+    const auto& phases = Common::FrameTiming::counters;
+    const auto& slowest = phases.slowest_shader_driver_event;
+    if (!phases.enabled || slowest.phase == Common::FrameTiming::ShaderDriverPhase::Count)
+        return;
+
+    constexpr std::array names{"compile", "link", "binary_restore", "binary_extract"};
+    const auto& [compile, link, restore, extract] = phases.shader_driver_timing;
+    const auto message = fmt::format(
+        "shader_driver scope={} end={} compile_status_ms={:.2f} compile_calls={} "
+        "link_status_ms={:.2f} link_calls={} restore_status_ms={:.2f} restore_calls={} "
+        "binary_extract_ms={:.2f} binary_extract_calls={} slowest_stage={} "
+        "slowest_detail={} slowest_ms={:.2f}",
+        scope, frame, compile.wall_seconds * 1000, compile.calls,
+        link.wall_seconds * 1000, link.calls, restore.wall_seconds * 1000, restore.calls,
+        extract.wall_seconds * 1000, extract.calls,
+        names[static_cast<std::size_t>(slowest.phase)], slowest.detail, slowest.wall_seconds * 1000);
+    __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
+}
+
 void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
@@ -206,6 +226,7 @@ void BootGame(const std::string& path) {
     // cfg->UpdateConfigNANDSavegame();
 
     Core::System::ResultStatus result = system.Load(*s_render_window, path);
+    LogShaderDriverTiming("load", 0);
     if (result != Core::System::ResultStatus::Success) {
         switch (result) {
         case Core::System::ResultStatus::ErrorGetLoader:
@@ -349,6 +370,24 @@ void BootGame(const std::string& path) {
                                 phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
                                 phases.gpu_wait_seconds * 1000);
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
+
+                            // These emulation-thread scopes can be nested. Their wall times
+                            // include any in-scope waits and cannot be added to find frame time.
+                            const auto phase_message = fmt::format(
+                                "phases end={} refreshes={} gpu_vertex_draws={} cpu_vertex_draws={} "
+                                "gpu_vertex_entries={} guest_run_wall_ms={:.2f} draw_wall_ms={:.2f} "
+                                "vertex_prepare_wall_ms={:.2f} state_apply_wall_ms={:.2f} "
+                                "uniform_upload_wall_ms={:.2f} texture_acquire_wall_ms={:.2f} "
+                                "shader_setup_wall_ms={:.2f}",
+                                frame, frame_times.size(), phases.gpu_vertex_draws,
+                                phases.cpu_vertex_draws, phases.gpu_vertices,
+                                phases.guest_cpu_seconds * 1000, phases.draw_seconds * 1000,
+                                phases.vertex_prepare_seconds * 1000, phases.state_apply_seconds * 1000,
+                                phases.uniform_upload_seconds * 1000,
+                                phases.draw_texture_acquire_seconds * 1000,
+                                phases.draw_shader_setup_seconds * 1000);
+                            __android_log_write(ANDROID_LOG_INFO, "CaraPerf", phase_message.c_str());
+                            LogShaderDriverTiming("refresh", frame);
                             reset_trace();
                         }
                     }

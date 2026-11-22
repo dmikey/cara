@@ -27,6 +27,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
+#include "common/frame_timing.h"
 #include "core/cache_file.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_fragment_lighting_ablation.h"
@@ -624,8 +625,13 @@ public:
         const char* varyings[]={"cara_feedback0","cara_feedback1","cara_feedback2",
                                 "cara_feedback3","cara_feedback4","cara_feedback5"};
         glTransformFeedbackVaryings(program,6,varyings,GL_INTERLEAVED_ATTRIBS);
-        glLinkProgram(program);
-        GLint linked=0; glGetProgramiv(program,GL_LINK_STATUS,&linked);
+        GLint linked = 0;
+        {
+            Common::FrameTiming::ShaderDriverScope event(Common::FrameTiming::ShaderDriverPhase::Link,
+                                                        "vertex_feedback");
+            glLinkProgram(program);
+            glGetProgramiv(program, GL_LINK_STATUS, &linked);
+        }
         if (!linked) { glDeleteProgram(program); return 0; }
         entry->second.handle=program;
         SetShaderUniformBlockBindings(program);

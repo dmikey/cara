@@ -5,6 +5,7 @@
 #include <utility>
 #include <glad/glad.h>
 #include "common/common_types.h"
+#include "common/frame_timing.h"
 #include "common/logging/log.h"
 #include "video_core/renderer_opengl/gl_resource_manager.h"
 #include "video_core/renderer_opengl/gl_shader_util.h"
@@ -95,11 +96,12 @@ void OGLProgram::Create(const char* compute_shader) {
 
 void OGLProgram::Create(GLenum format, const std::vector<GLbyte>& binary) {
     handle = glCreateProgram();
-    glProgramBinary(handle, format, binary.data(), binary.size());
-
-    // Check the link status. If this fails, it means the binary was invalid.
     GLint link_status;
-    glGetProgramiv(handle, GL_LINK_STATUS, &link_status);
+    {
+        Common::FrameTiming::ShaderDriverScope event(Common::FrameTiming::ShaderDriverPhase::BinaryRestore);
+        glProgramBinary(handle, format, binary.data(), binary.size());
+        glGetProgramiv(handle, GL_LINK_STATUS, &link_status);
+    }
     if (link_status != GL_TRUE) {
         LOG_DEBUG(Render_OpenGL, "OGLProgram failed to create GL program from program binary!");
         glDeleteProgram(handle);
@@ -114,6 +116,7 @@ void OGLProgram::GetProgramBinary(GLenum& format, std::vector<GLbyte>& binary,
         return;
     }
 
+    Common::FrameTiming::ShaderDriverScope event(Common::FrameTiming::ShaderDriverPhase::BinaryExtract);
     GLint program_size = 0;
     glGetProgramiv(handle, GL_PROGRAM_BINARY_LENGTH, &program_size);
     if (program_size <= 0 ||
