@@ -619,6 +619,44 @@ verified the effective switch for a scratch profile (off), saved Performance
 (default on), Performance with the option off, and saved Accuracy (off).
 The AppKit gameplay renderer remains OpenGL.
 
+### Concurrent cold Metal compilation
+
+When both shader libraries miss, Async Shaders starts the vertex library while
+the render owner compiles the fragment library. The background specialization
+worker takes the already translated pair and still reflects the resulting
+pipeline before publication. Accuracy mode keeps its previous behavior.
+No ROM-specific shaders or binary archives are shipped.
+
+On the M4 iPad, alternating the stage policy in fresh compiler namespaces
+gave first-refresh times of 6,773.50 ms serial and 6,372.15 ms concurrent.
+Refresh 2 measured 268.05 and 269.18 ms, respectively. Its trace contained
+one fragment library, three pipeline creations and zero vertex libraries.
+P99 was 23.16 and 23.00 ms. Raw captures matched at 17–21 and 900.
+
+A second slot 4 replay checked compiler options with the worker translation
+reuse active. At 100% pacing, keeping large PICA vertex subroutine calls
+out of line cut the first refresh from 6,331.76 to 4,566.62 ms but raised
+refresh 2 from 265.16 to 349.16 ms and p99 from 23.14 to 23.68 ms.
+The option remains diagnostic. Apple's size optimization level measured
+6,417.77 ms at refresh 1 and 267.26 ms at refresh 2, so the renderer keeps
+the default compiler optimization level. All six sampled images matched
+for both experiments. [Apple’s shader optimization guidance](https://developer.apple.com/documentation/metal/minimizing-the-binary-size-of-a-shader-library)
+
+Allowing a cached StageIn pipeline to cover an exact PSO miss with a
+resident vertex function still left refresh 2 at 271.58 ms, versus
+265.16 ms in the preceding control. This probe stayed out of the default
+path. Conservative control-flow analysis also found every emitted function
+and dispatcher case reachable in twelve large gate vertex programs. Folding
+the entry wrapper changed the median Mac PSO compile time by 0.08 ms
+over 24 matched pairs.
+
+A separate Mac FastInterp comparison booted the Dark Moon ZIP normally
+for 660 refreshes. All 11 captures matched. Before and after the combined
+changes, p99 measured 114.97 and 109.54 ms, with the worst interval at
+refresh 310 falling from 12.77 to 10.45 s. These are single runs with
+fresh compiler namespaces. The Mac boot and iPad checkpoint cover different
+workloads.
+
 ## Cartridge gameplay checks
 
 Boot each local cartridge with a fresh user directory and FastInterp. Drive
