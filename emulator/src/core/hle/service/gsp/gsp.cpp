@@ -3,10 +3,15 @@
 // Refer to the license.txt file included.
 
 #include <vector>
+#include "cara/p3d_completion.h"
 #include "core/core.h"
 #include "core/hle/kernel/event.h"
 #include "core/hle/kernel/shared_memory.h"
 #include "core/hle/service/gsp/gsp.h"
+
+namespace Cara {
+thread_local GPUCompletionPolicy gpu_completion_policy = GetGPUCompletionPolicy();
+}
 
 namespace Service::GSP {
 
@@ -16,6 +21,11 @@ void SignalInterrupt(InterruptId interrupt_id, u64 transfer_ns) {
     auto gpu = gsp_gpu.lock();
     ASSERT(gpu != nullptr);
     return gpu->SignalInterrupt(interrupt_id, transfer_ns);
+}
+
+u32 GPUCompletionBusyFlags() {
+    const auto gpu = gsp_gpu.lock();
+    return gpu ? gpu->CompletionBusyFlags() : 0;
 }
 
 void InstallInterfaces(Core::System& system) {

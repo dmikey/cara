@@ -22,6 +22,8 @@ namespace Service::GSP {
  */
 void SignalInterrupt(InterruptId interrupt_id, u64 transfer_ns = 0);
 
+u32 GPUCompletionBusyFlags();
+
 void InstallInterfaces(Core::System& system);
 
 void SetGlobalModule(Core::System& system);

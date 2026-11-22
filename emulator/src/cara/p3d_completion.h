@@ -7,26 +7,31 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 
 namespace Cara {
-inline bool ExperimentalP3DCompletionEnabled() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("CARA_EXPERIMENTAL_P3D_COMPLETION");
-        return value && std::strcmp(value, "1") == 0;
-    }();
-    return enabled;
+struct GPUCompletionPolicy {
+    bool render;
+    bool transfer;
+};
+constexpr GPUCompletionPolicy ResolveGPUCompletionPolicy(bool performance, const char* render,
+                                                         const char* transfer) {
+    const bool render_enabled = render ? std::string_view(render) == "1" : performance;
+    // An explicit render-only diagnostic retains the historical P3D-only behavior.
+    return {render_enabled, render_enabled &&
+        (transfer ? std::string_view(transfer) == "1" : performance && !render)};
 }
-inline bool ExperimentalPPFDependencyEnabled() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("CARA_EXPERIMENTAL_PPF_DEPENDENCY");
-        return value && std::strcmp(value, "1") == 0;
-    }();
-    return ExperimentalP3DCompletionEnabled() && enabled;
+inline GPUCompletionPolicy GetGPUCompletionPolicy(bool performance = false) {
+    return ResolveGPUCompletionPolicy(performance, std::getenv("CARA_EXPERIMENTAL_P3D_COMPLETION"),
+                                      std::getenv("CARA_EXPERIMENTAL_PPF_DEPENDENCY"));
 }
+// The emulator owner selects this before loading the core and its timing events.
+extern thread_local GPUCompletionPolicy gpu_completion_policy;
+inline bool ExperimentalP3DCompletionEnabled() { return gpu_completion_policy.render; }
+inline bool ExperimentalPPFDependencyEnabled() { return gpu_completion_policy.transfer; }
 // Pinned PR2095 measured TEX rates, not DMA rates. Integer rounding is upward.
 inline std::uint64_t PPFTransferNanoseconds(std::uint64_t bytes, bool input_vram, bool output_vram) {
     const std::uint64_t mibps = input_vram ? 5400 : (output_vram ? 3100 : 450);
@@ -86,6 +91,14 @@ struct P3DCompletionQueue {
     std::array<std::uint64_t, 4> generations{};
     std::uint64_t next_token = 1;
     std::int64_t render_deadline = 0, transfer_deadline = 0;
+    // GPU_BUSY at external register offset 0x34. Only the two modeled
+    // engines contribute here. Fills still complete synchronously.
+    static constexpr std::uint32_t RenderBusy = std::uint32_t{1} << 31;
+    static constexpr std::uint32_t TransferBusy = std::uint32_t{1} << 30;
+    std::uint32_t BusyFlags(std::int64_t now) const {
+        return (now < render_deadline ? RenderBusy : 0) |
+               (now < transfer_deadline ? TransferBusy : 0);
+    }
     void InvalidateRecipient(unsigned recipient) {
         if (recipient >= generations.size()) throw std::invalid_argument("Invalid P3D recipient");
         generations[recipient] = CheckedP3DAdd(generations[recipient], 1);

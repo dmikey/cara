@@ -118,7 +118,7 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
     maximumSpeedValue.stringValue = performance && !play.limit_speed
         ? @"Unlimited" : [NSString stringWithFormat:@"%ld%%", long(maximumSpeed.integerValue)];
     modeDescription.stringValue = performance
-        ? @"Cara adjusts the guest clock under load unless you set a fixed clock."
+        ? @"Cara adjusts the guest clock under load unless you set a fixed clock. Guest GPU timing applies when you open a game."
         : @"Runs the guest clock and speed limit at 100% with adaptive frame skip off.";
     [scale selectItemWithTag:static_cast<NSInteger>(play.display_scale)];
 }

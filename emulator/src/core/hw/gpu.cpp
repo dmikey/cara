@@ -43,6 +43,17 @@ inline void Read(T& var, const u32 raw_addr) {
     u32 addr = raw_addr - HW::VADDR_GPU;
     u32 index = addr / 4;
 
+    // GSP exposes this register through byte reads as well as word MMIO.
+    // Fetch all modeled status bits from the same timeline as the IRQ.
+    constexpr u32 busy_register = 0x34;
+    const u32 byte = addr % sizeof(u32);
+    if (index == busy_register / sizeof(u32) && byte % sizeof(T) == 0 &&
+        sizeof(T) <= sizeof(u32) && Cara::ExperimentalP3DCompletionEnabled()) {
+        const u32 busy = Service::GSP::GPUCompletionBusyFlags();
+        var = static_cast<T>(busy >> (byte * 8));
+        return;
+    }
+
     // Reads other than u32 are untested, so I'd rather have them abort than silently fail
     if (index >= Regs::NumIds() || !std::is_same<T, u32>::value) {
         LOG_ERROR(HW_GPU, "unknown Read{} @ {:#010X}", sizeof(var) * 8, addr);

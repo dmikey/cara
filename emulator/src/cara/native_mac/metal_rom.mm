@@ -20,6 +20,8 @@
 #include <string_view>
 #include <stdexcept>
 #include "cara/config.h"
+#include "cara/p3d_completion.h"
+#include "core/core_timing.h"
 #include "common/apple_fastinterp_policy.h"
 #include "common/apple_metal_policy.h"
 #include "common/detached_tasks.h"
@@ -287,6 +289,10 @@ int main(int argc, char** argv) {
             SCOPE_EXIT({ VideoCore::SetNativeRendererFactory({}); });
             auto& core = Core::System::GetInstance();
             try {
+                // Compatibility runs stay isolated from saved play preferences.
+                const auto* performance = std::getenv("CARA_MAC_METAL_PERFORMANCE_MODE");
+                Cara::gpu_completion_policy = Cara::GetGPUCompletionPolicy(
+                    performance && std::string_view(performance) == "1");
                 const auto status = core.Load(host, argv[1]);
                 if (status != Core::System::ResultStatus::Success) {
                     std::cerr << "LOAD_STATUS " << unsigned(status) << '\n';
@@ -301,6 +307,16 @@ int main(int argc, char** argv) {
                 std::cout << "CPU_BACKEND " << (jit ? "jit" : "fastinterp")
                           << " jit_cores=" << jit_cores << std::endl;
 #endif
+                unsigned guest_clock = 100;
+                if (const auto* value = std::getenv("CARA_PROFILE_GUEST_CPU_PERCENT")) {
+                    guest_clock = ParseUnsigned(value);
+                    if (guest_clock != 50 && guest_clock != 100)
+                        throw std::runtime_error("Diagnostic guest clock must be 50% or 100%");
+                    core.CoreTiming().UpdateClockSpeed(guest_clock);
+                }
+                std::cout << "GUEST_TIMING clock=" << guest_clock
+                          << " p3d=" << Cara::ExperimentalP3DCompletionEnabled()
+                          << " ppf=" << Cara::ExperimentalPPFDependencyEnabled() << std::endl;
                 std::cout << "TITLE " << std::hex << core.GetTitleID() << std::dec << std::endl;
                 const auto* learning_setting = std::getenv("CARA_MAC_METAL_LEARN");
                 const bool learning_requested =

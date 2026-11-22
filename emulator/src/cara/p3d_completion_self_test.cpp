@@ -42,6 +42,17 @@ static void RunUntilEmpty(Core::Timing& timing, Cara::P3DCompletionQueue& queue)
 }
 int main() {
     try {
+        using Cara::ResolveGPUCompletionPolicy;
+        const auto performance = ResolveGPUCompletionPolicy(true, nullptr, nullptr);
+        const auto accuracy = ResolveGPUCompletionPolicy(false, nullptr, nullptr);
+        const auto render_only = ResolveGPUCompletionPolicy(true, "1", nullptr);
+        const auto disabled = ResolveGPUCompletionPolicy(true, "0", "1");
+        const auto accuracy_override = ResolveGPUCompletionPolicy(false, "1", "1");
+        Require(performance.render && performance.transfer && !accuracy.render && !accuracy.transfer,
+                "Gameplay timing policy defaults");
+        Require(render_only.render && !render_only.transfer && !disabled.render && !disabled.transfer &&
+                    accuracy_override.render && accuracy_override.transfer,
+                "Explicit timing diagnostic precedence");
         Cara::P3DWorkEstimate estimate;
         for (unsigned i = 0; i < 5; ++i) estimate.Command();
         estimate.Draw(9, 0); // 3 list triangles, not expanded GLES vertices.
@@ -82,11 +93,19 @@ int main() {
         const auto overlapping_render = queue.Enqueue(0, 1, 0);
         Require(transfer.deadline == 101 && overlapping_render.deadline == 101,
                 "PPF dependency or independent later render deadline incorrect");
+        Require(queue.BusyFlags(99) == (queue.RenderBusy | queue.TransferBusy),
+                "Outstanding render and transfer must both be visible to a poller");
+        Require(queue.BusyFlags(101) == 0, "Modeled busy bits outlived both deadlines");
         queue.Validate();
         Reject<std::runtime_error>([&] { queue.Consume(transfer.token, 100); });
         queue.Consume(render.token, 100);
         queue.Consume(overlapping_render.token, 101);
         Require(queue.Consume(transfer.token, 110)->transfer, "PPF waiter woke before prior render");
+        queue = {};
+        queue.Enqueue(5, 10, 0);
+        queue.Enqueue(5, 25, 0, true);
+        Require(queue.BusyFlags(15) == queue.TransferBusy && queue.BusyFlags(30) == 0,
+                "Render and transfer busy bits must clear independently");
         // A producer gated by PPF cannot accumulate unbounded earlier P3D work.
         queue = {};
         s64 producer_time = 0;
