@@ -99,6 +99,7 @@ public:
     void Set3DSlider(float);
 
     SharedPageDef& GetSharedPage();
+    u64 GetSystemTimeSince2000() const;
 
     u8* GetPtr() override {
         return reinterpret_cast<u8*>(&shared_page);

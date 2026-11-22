@@ -269,6 +269,7 @@ add_library(core STATIC
     hle/service/cam/cam_u.cpp
     hle/service/cam/cam_u.h
     hle/service/cecd/cecd.cpp
+    hle/service/cecd/streetpass.cpp
     hle/service/cecd/cecd.h
     hle/service/cecd/cecd_ndm.cpp
     hle/service/cecd/cecd_ndm.h

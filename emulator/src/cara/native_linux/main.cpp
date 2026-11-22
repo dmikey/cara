@@ -1,5 +1,6 @@
 // Copyright 2026 Cara contributors. GPL-2.0-or-later.
 // Uses Cara's shared core; see NOTICE for the inherited SDL input conventions.
+#include "cara/console_activity.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -183,6 +184,7 @@ void Configure() {
 }
 }
 int main(int argc, char** argv) {
+    if (auto result = Cara::RunConsoleActivity(argc, argv)) return *result;
     try {
         bool self_test = false, fullscreen = false;
         unsigned frames = 0;

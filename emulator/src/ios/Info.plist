@@ -54,8 +54,12 @@
 	<string>Cara uses the camera when the 3DS game requests a live camera feed.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Cara uses the microphone when the 3DS game requests microphone input.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Nearby StreetPass finds other enabled Cara libraries to exchange public messages for your registered games.</string>
+	<key>NSBonjourServices</key>
+	<array><string>_cara-pass-v1._tcp</string></array>
 	<key>NSMotionUsageDescription</key>
-	<string>Cara uses device motion to control 3DS games that support tilt or gyro aiming.</string>
+	<string>Cara uses motion for tilt and gyro controls and imports today’s step counts when you choose Import Steps.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

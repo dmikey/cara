@@ -66,6 +66,9 @@ jobs:
           set -o pipefail
           work/build-linux/bin/cara --help
           work/build-linux/bin/cara --version
+          python3 tests/console_activity_test.py work/build-linux/bin/cara
+          c++ -std=c++20 -I emulator/src tests/pedometer_history_test.cpp -o "$RUNNER_TEMP/test-steps"
+          "$RUNNER_TEMP/test-steps" "$RUNNER_TEMP/pedometer-test/steps"
           xvfb-run -a -s '-screen 0 1280x1024x24' work/build-linux/bin/cara --self-test | tee work/opengl-smoke.log
           python3 tools/make_test_elf.py work/counter.elf
           timeout 90s xvfb-run -a -s '-screen 0 1280x1024x24' work/build-linux/bin/cara --frames 4 work/counter.elf 2>&1 | tee work/core-smoke.log

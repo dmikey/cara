@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #define SDL_MAIN_HANDLED
+#include "cara/console_activity.h"
 #include <SDL.h>
 #include <SDL_metal.h>
 #include <SDL_syswm.h>
@@ -464,6 +465,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
 } // namespace
 
 int main(int argc, char** argv) {
+    if (auto result = Cara::RunConsoleActivity(argc, argv)) return *result;
     @autoreleasepool {
         unsigned limit{};
         const char* directory = std::getenv("CARA_USER_DIR");

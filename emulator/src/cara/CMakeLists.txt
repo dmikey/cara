@@ -69,6 +69,10 @@ if (CARA_MAC_SDL_DEV_HOST)
     target_link_libraries(cara-mac-preferences-self-test PRIVATE common)
     enable_language(OBJCXX)
     set_target_properties(cara PROPERTIES OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
+    set(nearby_source "${PROJECT_SOURCE_DIR}/src/core/frontend/apple/nearby_streetpass.mm")
+    target_sources(cara PRIVATE "${nearby_source}")
+    target_link_libraries(cara PRIVATE "-framework MultipeerConnectivity")
+    set_source_files_properties("${nearby_source}" PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     set_source_files_properties(native_mac/relay_config.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     set_source_files_properties(native_mac/game_menu.mm native_mac/mac_preferences_ui.mm PROPERTIES COMPILE_FLAGS "-fno-objc-arc")
     target_link_libraries(cara PRIVATE "-framework AppKit")
@@ -112,10 +116,10 @@ if (CARA_PRIVATE_MAC_METAL_HOST)
         NOT CARA_PRIVATE_METAL_TRANSFERS)
         message(FATAL_ERROR "The native Mac Metal host requires the Mac SDL host and the Metal renderer")
     endif()
-    add_executable(cara-metal-rom MACOSX_BUNDLE native_mac/metal_rom.mm native_mac/config.cpp)
+    add_executable(cara-metal-rom MACOSX_BUNDLE native_mac/metal_rom.mm native_mac/config.cpp "${nearby_source}")
     target_link_libraries(cara-metal-rom PRIVATE common core video_core input_common inih glad
         nihstro-headers SDL2 Threads::Threads "-framework Metal" "-framework QuartzCore"
-        "-framework Foundation" "-framework AppKit")
+        "-framework Foundation" "-framework AppKit" "-framework MultipeerConnectivity")
     set_target_properties(cara-metal-rom PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/native_mac/metal_rom.plist"
         OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)

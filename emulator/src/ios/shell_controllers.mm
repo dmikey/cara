@@ -798,7 +798,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
     if([selectedCategory isEqual:@"About Cara"]) { visibleSections=@[@{@"title":@"Cara",@"rows":@[@{@"title":@"Nintendo 3DS emulation",@"subtitle":@"Cara is built on the open-source Citra emulator. See the bundled source and license notices.",@"symbol":@"info.circle"},@{@"title":@"Version",@"subtitle":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"Development build",@"symbol":@"app"}]}]; return; }
     visibleSections=[self.sections filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* b) { NSString* title=section[@"title"]; if([self->selectedCategory isEqual:@"General"]) return [title isEqual:@"Current game"] || [title isEqual:@"Play mode"]; if([self->selectedCategory isEqual:@"Controls"]) {
         return [title hasSuffix:@"skin"] || [title isEqual:@"Controllers"];
-    } if([self->selectedCategory isEqual:@"Library & storage"]) return [title isEqual:@"Game library"]; if([self->selectedCategory isEqual:@"Save data"]) return [title isEqual:@"iCloud & Files"]; return [title isEqual:self->selectedCategory]; }]];
+    } if([self->selectedCategory isEqual:@"Library & storage"]) return [title isEqual:@"Game library"] || [title isEqual:@"3DS activity"]; if([self->selectedCategory isEqual:@"Save data"]) return [title isEqual:@"iCloud & Files"]; return [title isEqual:self->selectedCategory]; }]];
     if(!visibleSections.count) visibleSections=@[@{@"title":selectedCategory,@"rows":@[@{@"title":@"Ready to play",@"subtitle":@"Use Emulation to choose a play mode, or Library & storage to add your games.",@"symbol":@"checkmark.circle"}]}];
 }
 - (void)refresh {

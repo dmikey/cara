@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <CoreMotion/CoreMotion.h>
+#include "core/hle/service/ptm/step_history.h"
+#include "core/hle/service/cecd/streetpass.h"
 #include "cara/guest_gpu_trace.h"
 #ifdef CARA_INTERNAL_HOST_PC_SAMPLER
 #include "cara/host_pc_sampler.h"
@@ -11,6 +14,7 @@
 #include <sys/resource.h>
 #include <time.h>
 #import "ios/skin_controls.h"
+#import "core/frontend/apple/nearby_streetpass.h"
 #import "ios/action_layout.h"
 #import "ios/input_hub.h"
 #import "ios/feature_controllers.h"
@@ -749,7 +753,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     __weak CaraSettingsController* settingsController;
     NSTimer* cloudFeedbackTimer;
     BOOL libraryVisible;
+    CaraNearbyStreetPass* nearbyPass;
     BOOL pickingROMsFolder;
+    BOOL pickingStreetPass, exportingStreetPass;
     NSURL* gameURL;
     BOOL gameScoped;
     BOOL modalPaused;
@@ -1234,7 +1240,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)hideLibrary {
     inputHub.active=NO;
-    libraryVisible=NO;
+    libraryVisible=NO; [nearbyPass stop];
     libraryNavigation.view.hidden=YES; [libraryController suspendArtwork];
     [self resumeFromMenu]; [self setNeedsStatusBarAppearanceUpdate];
     if (@available(iOS 16.0,*)) [self setNeedsUpdateOfSupportedInterfaceOrientations];
@@ -1256,6 +1262,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)updateSyncFeedback {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{ [self updateSyncFeedback]; }); return; }
+    [self refreshNearbyStreetPass];
     BOOL busy=saveSync.busy || stateSync.busy;
     CaraSaveSync* attention=nil;
     for (CaraSaveSync* channel in @[saveSync,stateSync]) if ([channel.phase isEqual:@"error"] || [channel.phase isEqual:@"conflict"]) { attention=channel; break; }
@@ -1273,6 +1280,135 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         libraryController.syncDetail=[NSString stringWithFormat:@"Saves: %@ · States: %@",saveSync.status,stateSync.status];
     }
     if (settingsController) { settingsController.sections=[self settingsForCategory:settingsCategory]; [settingsController refresh]; }
+}
+// The guest RTC uses civil hours; preserve the local date across timezone offsets.
+static uint32_t PedometerHour(NSCalendar* calendar, NSDate* date) {
+    using namespace std::chrono;
+    const auto c = [calendar components:NSCalendarUnitYear | NSCalendarUnitMonth |
+        NSCalendarUnitDay | NSCalendarUnitHour fromDate:date];
+    const auto days = sys_days{year{int(c.year)}/unsigned(c.month)/unsigned(c.day)} -
+                      sys_days{year{2000}/January/1};
+    return uint32_t(days.count() * 24 + c.hour);
+}
+static std::filesystem::path PedometerHistoryPath() {
+    NSURL* documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
+        inDomains:NSUserDomainMask].firstObject;
+    return std::filesystem::path(documents.fileSystemRepresentation) / "cara/nand/cara-steps.txt";
+}
+- (void)refreshNearbyStreetPass {
+    if (libraryVisible && !backgroundAt && !running && !openingGame && !saveSync.busy && !stateSync.busy &&
+        self.view.window.windowScene.activationState == UISceneActivationStateForegroundActive &&
+        [NSUserDefaults.standardUserDefaults boolForKey:@"nearbyStreetPass"]) {
+        if (!nearbyPass) nearbyPass = [CaraNearbyStreetPass new];
+        [nearbyPass startWithNand:[NSURL fileURLWithFileSystemRepresentation:
+            PedometerHistoryPath().parent_path().c_str() isDirectory:YES relativeToURL:nil]];
+    } else [nearbyPass stop];
+}
+- (void)exportStreetPass {
+    NSURL* packet = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
+        URLByAppendingPathComponent:@"Cara StreetPass.carapass"];
+    try {
+        const auto count = Service::CECD::ExportStreetPass(PedometerHistoryPath().parent_path(),
+            packet.fileSystemRepresentation);
+        if (!count) {
+            [self shellError:@"StreetPass" message:@"Enable StreetPass inside a game and prepare a public message before exporting."];
+            return;
+        }
+        exportingStreetPass = YES;
+        UIDocumentPickerViewController* picker = [[UIDocumentPickerViewController alloc]
+            initForExportingURLs:@[packet] asCopy:YES];
+        picker.delegate = self;
+        [self presentViewController:picker animated:YES completion:nil];
+    } catch (const std::exception& e) {
+        [self shellError:@"StreetPass export failed" message:[NSString stringWithUTF8String:e.what()]];
+    }
+}
+- (void)chooseStreetPass {
+    pickingStreetPass = YES;
+    UIDocumentPickerViewController* picker = [[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeData] asCopy:NO];
+    picker.delegate = self;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)importStreetPass:(NSURL*)url {
+    if (running || openingGame || saveSync.busy || stateSync.busy) {
+        [self shellError:@"StreetPass" message:@"Stop the game and let the save sync finish first."];
+        return;
+    }
+    [nearbyPass stop]; openingGame = YES;
+    const BOOL access = [url startAccessingSecurityScopedResource];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+        NSError* failure = nil;
+        __block NSString* detail = nil;
+        [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:url
+            options:0 error:&failure byAccessor:^(NSURL* file) {
+                try {
+                    const auto count = Service::CECD::ImportStreetPass(PedometerHistoryPath().parent_path(),
+                        file.fileSystemRepresentation, std::time(nullptr));
+                    detail = count ? [NSString stringWithFormat:@"%u new messages delivered.", count]
+                                   : @"No new messages for your registered games.";
+                } catch (const std::exception& e) {
+                    detail = [NSString stringWithUTF8String:e.what()];
+                }
+            }];
+        if (access) [url stopAccessingSecurityScopedResource];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->openingGame = NO; [self refreshNearbyStreetPass];
+            [self shellError:@"StreetPass" message:detail ?: failure.localizedDescription];
+        });
+    });
+}
+- (void)recordPedometerSteps {
+    NSCalendar* calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    try {
+        Service::PTM::StepHistory::Record(PedometerHistoryPath(), PedometerHour(calendar, NSDate.date), 100);
+        [self shellError:@"Steps recorded" message:@"100 simulated steps will be available on the next game launch."];
+    } catch (const std::exception& e) {
+        [self shellError:@"Steps unavailable" message:[NSString stringWithUTF8String:e.what()]];
+    }
+}
+- (void)importPedometerSteps {
+    CMPedometer* sensor = [CMPedometer new];
+    NSCalendar* calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    NSDate* now = NSDate.date;
+    NSDate* start = [calendar startOfDayForDate:now];
+    dispatch_group_t group = dispatch_group_create();
+    NSMutableDictionary<NSNumber*,NSNumber*>* counts = [NSMutableDictionary new];
+    __block NSError* failure = nil;
+    while ([start compare:now] == NSOrderedAscending) {
+        NSDate* end = [[start dateByAddingTimeInterval:3600] earlierDate:now];
+        NSNumber* hour = @(PedometerHour(calendar, start));
+        dispatch_group_enter(group);
+        [sensor queryPedometerDataFromDate:start toDate:end withHandler:^(CMPedometerData* sample, NSError* error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (error) failure = error;
+                else if (sample) counts[hour] = @([counts[hour] unsignedIntValue] + sample.numberOfSteps.unsignedIntValue);
+                dispatch_group_leave(group);
+            });
+        }];
+        start = end;
+    }
+    dispatch_group_notify(group,dispatch_get_main_queue(), ^{
+        (void)sensor; // Keep the pedometer alive through all hourly queries.
+        if (failure) { [self shellError:@"Steps unavailable" message:failure.localizedDescription]; return; }
+        try {
+            const auto path = PedometerHistoryPath();
+            Common::ProfileActivityLock lock(path.parent_path());
+            auto history = Service::PTM::StepHistory::Load(path);
+            uint32_t added = 0;
+            for (NSNumber* hour in counts) {
+                const unsigned count = std::min(65535u, counts[hour].unsignedIntValue);
+                if (!count) continue;
+                auto& previous = history.hours[hour.unsignedIntValue];
+                if (count > previous) { added += count - previous; previous = count; }
+            }
+            if (added > UINT32_MAX - history.total) throw std::runtime_error("Step total is full");
+            if (added) history.Save(path);
+            [self shellError:@"Pedometer" message:[NSString stringWithFormat:@"%u new steps for your next game launch.", added]];
+        } catch (const std::exception& e) {
+            [self shellError:@"Steps unavailable" message:[NSString stringWithUTF8String:e.what()]];
+        }
+    });
 }
 - (NSArray*)settingsSections {
     __weak EmulatorController* owner=self;
@@ -1295,6 +1431,22 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         @"symbol":@"antenna.radiowaves.left.and.right",@"keepOpen":@YES,
         @"action":^{ [owner showNetworkSettings]; }
     }]}];
+    NSMutableArray* activity = [NSMutableArray arrayWithObjects:
+        action(@"Export StreetPass messages…", @"square.and.arrow.up", available, ^{ [owner exportStreetPass]; }),
+        action(@"Import StreetPass messages…", @"square.and.arrow.down", available, ^{ [owner chooseStreetPass]; }), nil];
+    if (CMPedometer.isStepCountingAvailable) {
+        [activity addObject:action(@"Import today’s device steps", @"figure.walk", available, ^{ [owner importPedometerSteps]; })];
+    }
+    [activity insertObject:@{@"title":@"Nearby StreetPass", @"symbol":@"antenna.radiowaves.left.and.right",
+        @"subtitle":nearbyPass.statusText ?: @"Off",
+        @"value":@([NSUserDefaults.standardUserDefaults boolForKey:@"nearbyStreetPass"]),
+        @"change":^(BOOL on) {
+            [NSUserDefaults.standardUserDefaults setBool:on forKey:@"nearbyStreetPass"];
+            [owner refreshNearbyStreetPass];
+        }} atIndex:0];
+    [activity addObject:action(@"Record 100 simulated steps", @"shoeprints.fill", available, ^{ [owner recordPedometerSteps]; })];
+    [sections addObject:@{@"title":@"3DS activity", @"rows":activity,
+        @"footer":@"Nearby StreetPass shares registered title IDs and public game messages with other enabled Cara libraries while this library is open. Earn one coin per 100 steps, up to 10 per day and 300 in your wallet."}];
     NSMutableArray* locations=[NSMutableArray arrayWithObject:@{@"title":@"ROMs folder",@"subtitle":libraryStore.folderName?:@"Roms",@"symbol":@"folder",@"enabled":@(available),@"action":^{ [owner chooseROMsFolder]; }}];
     [locations addObject:action(@"Open game from Files…",@"doc.badge.plus",!openingGame,^{ EmulatorController* c=owner; if (c) { c->pickingSkin=NO; [c openROM]; } })];
     if (libraryStore.hasCustomFolder) [locations addObject:action(@"Use Cara’s Roms folder",@"folder.fill",available,^{ EmulatorController* c=owner; if (c) { [c->libraryStore useDefaultFolder]; [c->libraryController reloadLibrary]; [c resumeFromMenu]; } })];
@@ -1412,7 +1564,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (NSArray*)settingsForCategory:(NSString*)category {
     NSArray* all=[self settingsSections];
-    if ([category isEqual:@"Library & iCloud"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [@[@"Game library",@"iCloud & Files"] containsObject:section[@"title"]]; }]];
+    if ([category isEqual:@"Library & iCloud"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [@[@"Game library",@"iCloud & Files",@"3DS activity"] containsObject:section[@"title"]]; }]];
     if ([category isEqual:@"Skins"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [section[@"title"] hasSuffix:@"skin"]; }]];
     if ([category isEqual:@"Controllers"]) return [all filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* bindings) { return [section[@"title"] isEqual:@"Controllers"]; }]];
     return all;
@@ -1698,6 +1850,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)stopGame { if(relayClient) relayClient->Disconnect(); stop=true; sessionNotice=nil; AudioCore::SetIOSAudioPaused(true); [self resetSkinInput]; [self updateSessionPresentation]; }
 - (void)sceneWillResignActive {
+    [nearbyPass stop];
     if (backgroundAt > 0) return;
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     if (emuWindow) emuWindow->metal_lcd_foreground = false;
@@ -1767,6 +1920,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [self applyInterfacePausePolicy];
     [saveSync refreshCloudStatus]; [stateSync refreshCloudStatus];
     if (libraryVisible) [libraryController reloadLibrary];
+    [self refreshNearbyStreetPass];
 }
 - (void)openRecentGame {
     NSData* recent=[NSUserDefaults.standardUserDefaults dataForKey:@"recentGameBookmark"];
@@ -1811,10 +1965,12 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     [NSUserDefaults.standardUserDefaults setObject:name forKey:SkinPreferenceKey(orientation,physicalController)];
     [self reloadSelectedSkins]; [self resumeFromMenu];
 }
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { pickingSaveFolder=NO; pickingSkin=NO; pickingControllerSkin=NO; pickingROMsFolder=NO; pickingSkinOrientation=nil; [self resumeFromMenu]; }
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { pickingStreetPass=NO; exportingStreetPass=NO; pickingSaveFolder=NO; pickingSkin=NO; pickingControllerSkin=NO; pickingROMsFolder=NO; pickingSkinOrientation=nil; [self resumeFromMenu]; }
 - (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
     NSURL* url=urls.firstObject;
     if (!url) { [self documentPickerWasCancelled:picker]; return; }
+    if (exportingStreetPass) { exportingStreetPass=NO; [self resumeFromMenu]; return; }
+    if (pickingStreetPass) { pickingStreetPass=NO; [self importStreetPass:url]; return; }
     if (pickingROMsFolder) {
         pickingROMsFolder=NO; [self ensureLibrary]; NSError* error=nil;
         if (![libraryStore chooseFolder:url error:&error]) { [self shellError:@"ROMs folder unavailable" message:error.localizedDescription]; return; }
@@ -1869,7 +2025,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     if (![CaraLibraryStore isGameURL:url]) { status.text=@"Choose a 3DS game or a ZIP containing one .3ds ROM."; [self resumeFromMenu]; return; }
     [self ensureLibrary];
     if(relayClient && (gameURL || worker.joinable())) relayClient->Disconnect();
-    openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];
+    [nearbyPass stop]; openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];
     if (worker.joinable()) worker.join();
     if (gameScoped) [gameURL stopAccessingSecurityScopedResource];
     CaraGameOverrides=[libraryStore metadataForGame:url][@"overrides"];

@@ -8,6 +8,7 @@
 #include "common/file_util.h"
 #include "common/logging/log.h"
 #include "core/core.h"
+#include "core/hle/kernel/shared_page.h"
 #include "core/file_sys/archive_extsavedata.h"
 #include "core/file_sys/errors.h"
 #include "core/file_sys/file_backend.h"
@@ -80,12 +81,20 @@ void Module::Interface::GetStepHistory(Kernel::HLERequestContext& ctx) {
     u32 hours = rp.Pop<u32>();
     u64 start_time = rp.Pop<u64>();
     auto& buffer = rp.PopMappedBuffer();
-    ASSERT_MSG(sizeof(u16) * hours == buffer.GetSize(),
-               "Buffer for steps count has incorrect size");
+    if (u64{hours} * sizeof(u16) > buffer.GetSize()) {
+        auto rb = rp.MakeBuilder(1, 2);
+        rb.Push(ResultCode(ErrorDescription::InvalidSize, ErrorModule::PTM,
+                           ErrorSummary::InvalidArgument, ErrorLevel::Usage));
+        rb.PushMappedBuffer(buffer);
+        return;
+    }
 
-    // Stub: set zero steps count for every hour
+    const auto first_hour = start_time / 3600000;
     for (u32 i = 0; i < hours; ++i) {
-        const u16_le steps_per_hour = 0;
+        const auto hour = first_hour + i;
+        const auto& history = ptm->step_history.hours;
+        const auto entry = hour <= UINT32_MAX ? history.find(static_cast<u32>(hour)) : history.end();
+        const u16_le steps_per_hour = entry == history.end() ? 0 : entry->second;
         buffer.Write(&steps_per_hour, i * sizeof(u16), sizeof(u16));
     }
 
@@ -93,8 +102,7 @@ void Module::Interface::GetStepHistory(Kernel::HLERequestContext& ctx) {
     rb.Push(RESULT_SUCCESS);
     rb.PushMappedBuffer(buffer);
 
-    LOG_WARNING(Service_PTM, "(STUBBED) called, from time(raw): 0x{:x}, for {} hours", start_time,
-                hours);
+
 }
 
 void Module::Interface::GetTotalStepCount(Kernel::HLERequestContext& ctx) {
@@ -102,9 +110,14 @@ void Module::Interface::GetTotalStepCount(Kernel::HLERequestContext& ctx) {
 
     IPC::RequestBuilder rb = rp.MakeBuilder(2, 0);
     rb.Push(RESULT_SUCCESS);
-    rb.Push<u32>(0);
+    rb.Push<u32>(ptm->step_history.total);
+}
 
-    LOG_WARNING(Service_PTM, "(STUBBED) called");
+void Module::Interface::GetSystemTime(Kernel::HLERequestContext& ctx) {
+    IPC::RequestParser rp(ctx, 0x401, 0, 0);
+    auto rb = rp.MakeBuilder(3, 0);
+    rb.Push(RESULT_SUCCESS);
+    rb.Push(Core::System::GetInstance().Kernel().GetSharedPageHandler().GetSystemTimeSince2000());
 }
 
 void Module::Interface::GetSoftwareClosedFlag(Kernel::HLERequestContext& ctx) {
@@ -166,7 +179,7 @@ static void WriteGameCoinData(GameCoin gamecoin_data) {
     }
 }
 
-static GameCoin ReadGameCoinData() {
+static std::optional<GameCoin> ReadGameCoinData() {
     const std::string& nand_directory = FileUtil::GetUserPath(FileUtil::UserPath::NANDDir);
     FileSys::ArchiveFactory_ExtSaveData extdata_archive_factory(nand_directory, true);
 
@@ -174,7 +187,7 @@ static GameCoin ReadGameCoinData() {
     auto archive_result = extdata_archive_factory.Open(archive_path, 0);
     if (!archive_result.Succeeded()) {
         LOG_ERROR(Service_PTM, "Could not open the PTM SharedExtSaveData archive!");
-        return default_game_coin;
+        return std::nullopt;
     }
 
     FileSys::Path gamecoin_path("/gamecoin.dat");
@@ -184,12 +197,14 @@ static GameCoin ReadGameCoinData() {
     auto gamecoin_result = (*archive_result)->OpenFile(gamecoin_path, open_mode);
     if (!gamecoin_result.Succeeded()) {
         LOG_ERROR(Service_PTM, "Could not open the game coin data file!");
-        return default_game_coin;
+        return std::nullopt;
     }
 
     auto gamecoin = std::move(gamecoin_result).Unwrap();
-    GameCoin gamecoin_data;
-    gamecoin->Read(0, sizeof(GameCoin), reinterpret_cast<u8*>(&gamecoin_data));
+    GameCoin gamecoin_data{};
+    const auto read = gamecoin->Read(0, sizeof(GameCoin), reinterpret_cast<u8*>(&gamecoin_data));
+    if (read.Failed() || *read != sizeof(GameCoin) || gamecoin_data.magic != default_game_coin.magic)
+        return std::nullopt;
     gamecoin->Close();
     return gamecoin_data;
 }
@@ -205,18 +220,28 @@ Module::Module() {
     if (archive_result.Code() == FileSys::ERR_NOT_FORMATTED) {
         WriteGameCoinData(default_game_coin);
     }
+    try {
+        step_history = StepHistory::Load(std::filesystem::path(nand_directory) / "cara-steps.txt");
+        if (!step_history.hours.empty()) {
+            auto coin = ReadGameCoinData();
+            if (coin && step_history.AwardCoins(*coin)) WriteGameCoinData(*coin);
+        }
+    } catch (const std::exception& error) {
+        LOG_ERROR(Service_PTM, "Could not load pedometer activity: {}", error.what());
+    }
 }
 
 u16 Module::GetPlayCoins() {
-    return ReadGameCoinData().total_coins;
+    return ReadGameCoinData().value_or(default_game_coin).total_coins;
 }
 
 void Module::SetPlayCoins(u16 play_coins) {
-    GameCoin game_coin = ReadGameCoinData();
-    game_coin.total_coins = play_coins;
+    auto game_coin = ReadGameCoinData();
+    if (!game_coin) return;
+    game_coin->total_coins = std::min<u16>(300, play_coins);
     // TODO: This may introduce potential race condition if the game is reading the
     // game coin data at the same time
-    WriteGameCoinData(game_coin);
+    WriteGameCoinData(*game_coin);
 }
 
 Module::Interface::Interface(std::shared_ptr<Module> ptm, const char* name, u32 max_session)

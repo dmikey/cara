@@ -82,12 +82,16 @@ Handler::Handler(Core::Timing& timing) : timing(timing) {
 
 /// Gets system time in 3DS format. The epoch is Jan 1900, and the unit is millisecond.
 u64 Handler::GetSystemTime() const {
+    return 3155673600000ULL + GetSystemTimeSince2000();
+}
+
+u64 Handler::GetSystemTimeSince2000() const {
     std::chrono::milliseconds now =
         init_time + std::chrono::duration_cast<std::chrono::milliseconds>(timing.GetGlobalTimeUs());
 
     // 3DS system does't allow user to set a time before Jan 1 2000,
     // so we use it as an auxiliary epoch to calculate the console time.
-    std::tm epoch_tm;
+    std::tm epoch_tm{};
     epoch_tm.tm_sec = 0;
     epoch_tm.tm_min = 0;
     epoch_tm.tm_hour = 0;
@@ -97,16 +101,7 @@ u64 Handler::GetSystemTime() const {
     epoch_tm.tm_isdst = 0;
     u64 epoch = std::mktime(&epoch_tm) * 1000;
 
-    // 3DS console time uses Jan 1 1900 as internal epoch,
-    // so we use the milliseconds between 1900 and 2000 as base console time
-    u64 console_time = 3155673600000ULL;
-
-    // Only when system time is after 2000, we set it as 3DS system time
-    if (now.count() > epoch) {
-        console_time += (now.count() - epoch);
-    }
-
-    return console_time;
+    return now.count() > epoch ? now.count() - epoch : 0;
 }
 
 void Handler::UpdateTimeCallback(u64 userdata, int cycles_late) {

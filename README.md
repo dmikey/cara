@@ -27,6 +27,10 @@ fixes and check their effects on gameplay, rendering, and saves.
 - **Per-game play settings.** Choose Accuracy for a fixed 100% guest CPU clock
   and game speed, or Performance for adaptive tuning.
 
+**3DS activity** in Library & storage lets games receive Play Coins from
+recorded steps and exchange eligible StreetPass messages through Files or
+an opt-in nearby Cara library. [Setup and compatibility](docs/3ds-system-activity.md)
+
 ### What Performance Mode does on iPad
 
 - **Adaptive guest CPU.** Cara adjusts the emulated 3DS CPU clock under load

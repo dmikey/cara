@@ -101,6 +101,8 @@ def main():
                 CFBundleIdentifier='org.cara.mac', CFBundlePackageType='APPL',
                 CFBundleIconFile='cara.icns', CFBundleShortVersionString='0.2',
                 LSApplicationCategoryType='public.app-category.games', LSSupportsGameMode=True,
+                NSLocalNetworkUsageDescription='Nearby StreetPass exchanges public game messages with other enabled Cara libraries.',
+                NSBonjourServices=['_cara-pass-v1._tcp'],
                 CFBundleVersion='20261117.1', LSMinimumSystemVersion=deployment,
                 NSHighResolutionCapable=True)
     (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
