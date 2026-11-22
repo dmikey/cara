@@ -211,13 +211,20 @@ static bool IsVendorMali() {
     return gpu_vendor.find("ARM") != std::string::npos;
 }
 
+static GLsizeiptr LightingLUTBufferSize(std::size_t fallback) {
+    // Keep the whole ring addressable by the minimum GLES 3.2 RG32F buffer view.
+    if (UseNativeLUTBuffers())
+        return 65536 * sizeof(GLvec2);
+    return fallback;
+}
+
 RasterizerOpenGL::RasterizerOpenGL()
     : is_mali_gpu(IsVendorMali()), shader_dirty(true),
       vertex_buffer(GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE),
       uniform_buffer(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE),
       index_buffer(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE),
-      texture_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 11264 : TEXTURE_BUFFER_SIZE),
-      texture_lf_buffer(GL_TEXTURE_BUFFER, is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE) {
+      texture_buffer(GL_TEXTURE_BUFFER, (is_mali_gpu || UseNativeLUTBuffers()) ? 11264 : TEXTURE_BUFFER_SIZE),
+      texture_lf_buffer(GL_TEXTURE_BUFFER, LightingLUTBufferSize(is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE)) {
 
     SetPicaWriteHooksActive(SoftwareBatching::Active());
     DrawCostProfile::Reset();
@@ -344,22 +351,25 @@ RasterizerOpenGL::RasterizerOpenGL()
 
     glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
 #ifdef CARA_IOS_GLES
-    AllocateIOSLUT(GL_RG32F, texture_lf_buffer.GetSize());
-#else
-    glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_lf_buffer.GetHandle());
+    if (!UseNativeLUTBuffers())
+        AllocateIOSLUT(GL_RG32F, texture_lf_buffer.GetSize());
+    else
 #endif
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_lf_buffer.GetHandle());
     glActiveTexture(TextureUnits::TextureBufferLUT_RG.Enum());
 #ifdef CARA_IOS_GLES
-    AllocateIOSLUT(GL_RG32F, texture_buffer.GetSize());
-#else
-    glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_buffer.GetHandle());
+    if (!UseNativeLUTBuffers())
+        AllocateIOSLUT(GL_RG32F, texture_buffer.GetSize());
+    else
 #endif
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_buffer.GetHandle());
     glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
 #ifdef CARA_IOS_GLES
-    AllocateIOSLUT(GL_RGBA32F, texture_buffer.GetSize());
-#else
-    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, texture_buffer.GetHandle());
+    if (!UseNativeLUTBuffers())
+        AllocateIOSLUT(GL_RGBA32F, texture_buffer.GetSize());
+    else
 #endif
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, texture_buffer.GetHandle());
 
     // restore
     state.texture_units[0].texture_2d = 0;
@@ -2513,8 +2523,11 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     }
 #endif
     // Sync the LUTs within the texture buffer
-    SyncAndUploadLUTs();
-    SyncAndUploadLUTsLF();
+    {
+        Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::LUTUpload);
+        SyncAndUploadLUTs();
+        SyncAndUploadLUTsLF();
+    }
 
     // Sync the uniform data
     UploadUniforms(accelerate);
@@ -3306,18 +3319,28 @@ void RasterizerOpenGL::SamplerInfo::SyncWithConfig(const TextureConfig& config) 
     GLuint s = sampler.handle;
 
     using TextureFilter = Pica::TexturingRegs::TextureConfig::TextureFilter;
+    auto selected_mag = config.mag_filter.Value();
+    auto selected_min = config.min_filter.Value();
     bool use_linear_filter =
-        Settings::values.use_linear_filter && config.mag_filter == TextureFilter::Nearest;
+        Settings::values.use_linear_filter && selected_mag == TextureFilter::Nearest;
+#ifdef __ANDROID__
+    const auto filter = Settings::values.force_texture_filter;
+    if ((filter == 1 || filter == 2) &&
+        config.type != TextureConfig::Shadow2D && config.type != TextureConfig::ShadowCube) {
+        selected_mag = selected_min = filter == 1 ? TextureFilter::Nearest : TextureFilter::Linear;
+        use_linear_filter = false;
+    }
+#endif
 
     if (!use_linear_filter) {
-        if (mag_filter != config.mag_filter) {
-            mag_filter = config.mag_filter;
+        if (mag_filter != selected_mag) {
+            mag_filter = selected_mag;
             glSamplerParameteri(s, GL_TEXTURE_MAG_FILTER,
                                 PicaToGL::TextureMagFilterMode(mag_filter));
         }
 
-        if (min_filter != config.min_filter || mip_filter != config.mip_filter) {
-            min_filter = config.min_filter;
+        if (min_filter != selected_min || mip_filter != config.mip_filter) {
+            min_filter = selected_min;
             mip_filter = config.mip_filter;
             if (config.type == Pica::TexturingRegs::TextureConfig::TextureCube) {
                 // HACK: use mag filter converter for min filter because they are the same anyway
@@ -3793,11 +3816,14 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     bool invalidate;
     std::size_t bytes_used = 0;
 #ifdef CARA_IOS_GLES
-    std::tie(buffer, offset, invalidate) = texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
-#else
-    glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_lf_buffer.GetHandle());
-    std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
+    if (!UseNativeLUTBuffers()) {
+        std::tie(buffer, offset, invalidate) = texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
+    } else
 #endif
+    {
+        glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_lf_buffer.GetHandle());
+        std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
+    }
 
     // Sync the lighting luts
     if (uniform_block_data.lighting_lut_dirty_any || invalidate) {
@@ -3851,12 +3877,13 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     }
 
 #ifdef CARA_IOS_GLES
-    UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
-                 offset, buffer, bytes_used);
-    texture_lf_buffer.FinishStaging(bytes_used);
-#else
-    texture_lf_buffer.Unmap(bytes_used);
+    if (!UseNativeLUTBuffers()) {
+        UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
+                     offset, buffer, bytes_used);
+        texture_lf_buffer.FinishStaging(bytes_used);
+    } else
 #endif
+        texture_lf_buffer.Unmap(bytes_used);
 }
 
 void RasterizerOpenGL::SyncAndUploadLUTs() {
@@ -3876,11 +3903,14 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
     bool invalidate;
     std::size_t bytes_used = 0;
 #ifdef CARA_IOS_GLES
-    std::tie(buffer, offset, invalidate) = texture_buffer.MapStaging(max_size, sizeof(GLvec4));
-#else
-    glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_buffer.GetHandle());
-    std::tie(buffer, offset, invalidate) = texture_buffer.Map(max_size, sizeof(GLvec4));
+    if (!UseNativeLUTBuffers()) {
+        std::tie(buffer, offset, invalidate) = texture_buffer.MapStaging(max_size, sizeof(GLvec4));
+    } else
 #endif
+    {
+        glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_buffer.GetHandle());
+        std::tie(buffer, offset, invalidate) = texture_buffer.Map(max_size, sizeof(GLvec4));
+    }
 
     // helper function for SyncProcTexNoiseLUT/ColorMap/AlphaMap
     auto SyncProcTexValueLUT = [this, buffer, offset, invalidate, &bytes_used](
@@ -3973,14 +4003,15 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
     }
 
 #ifdef CARA_IOS_GLES
-    UploadIOSLUT(texture_buffer_lut_rg.handle, TextureUnits::TextureBufferLUT_RG.id, GL_RG,
-                 offset, buffer, bytes_used);
-    UploadIOSLUT(texture_buffer_lut_rgba.handle, TextureUnits::TextureBufferLUT_RGBA.id, GL_RGBA,
-                 offset, buffer, bytes_used);
-    texture_buffer.FinishStaging(bytes_used);
-#else
-    texture_buffer.Unmap(bytes_used);
+    if (!UseNativeLUTBuffers()) {
+        UploadIOSLUT(texture_buffer_lut_rg.handle, TextureUnits::TextureBufferLUT_RG.id, GL_RG,
+                     offset, buffer, bytes_used);
+        UploadIOSLUT(texture_buffer_lut_rgba.handle, TextureUnits::TextureBufferLUT_RGBA.id, GL_RGBA,
+                     offset, buffer, bytes_used);
+        texture_buffer.FinishStaging(bytes_used);
+    } else
 #endif
+        texture_buffer.Unmap(bytes_used);
 }
 
 // Cara GPU oracle: exercise the production upload/cache path before guest execution.

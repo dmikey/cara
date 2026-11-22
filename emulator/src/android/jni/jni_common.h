@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 
 #include "jni_helper.h"
 

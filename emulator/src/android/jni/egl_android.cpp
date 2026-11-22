@@ -62,6 +62,15 @@ private:
 EGLAndroid::EGLAndroid(bool use_shared_context) : use_shared_context(use_shared_context) {}
 
 bool EGLAndroid::Initialize(ANativeWindow* surface) {
+    setenv("CARA_VS_UNIFORM_REUSE", "1", 0);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    setenv("CARA_GPU_PACKED_INPUTS", "1", 0);
+    setenv("CARA_VERTEX_UPLOAD_REUSE", "1", 0);
+    setenv("CARA_VERTEX_INDEX_CACHE", "1", 0);
+    setenv("CARA_VERTEX_UPLOAD_BANK_MIB", "80", 0);
+    setenv("CARA_GPU_DEPTH_REINTERPRET", "1", 0);
+    setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", "1", 0);
+#endif
     host_window = surface;
     egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (!egl_display) {
@@ -176,7 +185,18 @@ EGLAndroid::~EGLAndroid() {
     DestroyContext();
 }
 
+bool EGLAndroid::ShouldPresentFrame() {
+    return presentation_guard.Admit(display_ticket.load(std::memory_order_relaxed),
+                                    adaptive_frame_skip);
+}
+
+void EGLAndroid::SetAdaptiveFrameSkip(bool enabled) {
+    adaptive_frame_skip = enabled;
+    presentation_guard.Reset();
+}
+
 void EGLAndroid::TryPresenting() {
+    display_ticket.fetch_add(1, std::memory_order_relaxed);
     if (presenting_state != PresentingState::Running) {
         if (presenting_state == PresentingState::Initial) {
             eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
@@ -212,6 +232,7 @@ void EGLAndroid::PollEvents() {
     DestroyWindowSurface();
     CreateWindowSurface();
     VideoCore::Renderer()->ResetPresent();
+    presentation_guard.Reset();
     if (use_shared_context) {
         presenting_state = PresentingState::Initial;
     }

@@ -1,10 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <vector>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
+#include "cara/presentation_guard.h"
 #include "core/frontend/emu_window.h"
 
 struct ANativeWindow;
@@ -24,6 +26,8 @@ public:
     void DoneCurrent() override;
     void PollEvents() override;
     void SwapBuffers() override;
+    bool ShouldPresentFrame() override;
+    void SetAdaptiveFrameSkip(bool enabled);
 
     void TryPresenting();
     void StopPresenting();
@@ -53,4 +57,7 @@ private:
     };
     PresentingState presenting_state{};
     bool use_shared_context;
+    bool adaptive_frame_skip = false;
+    std::atomic<std::uint64_t> display_ticket{0};
+    Cara::PresentationGuard presentation_guard;
 };

@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import org.cara.emu.BuildConfig;
 import org.cara.emu.R;
 import org.cara.emu.settings.model.Setting;
 import org.cara.emu.settings.model.SettingSection;
@@ -143,8 +144,6 @@ public final class SettingsFragment extends Fragment {
         Setting ocrKey = debugSection.getSetting(SettingsFile.KEY_BAIDU_OCR_KEY);
         Setting ocrSecret = debugSection.getSetting(SettingsFile.KEY_BAIDU_OCR_SECRET);
 
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_PRESENT_THREAD, Settings.SECTION_INI_DEBUG,
-                R.string.setting_use_present_thread, R.string.setting_use_present_thread_desc, true, presentThread));
         sl.add(new SingleChoiceSetting(
             SettingsFile.KEY_LAYOUT_OPTION, Settings.SECTION_INI_RENDERER, R.string.layout_option,
             0, R.array.layoutOptionEntries, R.array.layoutOptionValues, 0, layoutOption));
@@ -154,6 +153,18 @@ public final class SettingsFragment extends Fragment {
                                        R.array.internalResolutionValues, 1, resolution));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_SHOW_FPS, Settings.SECTION_INI_RENDERER,
                                    R.string.show_fps, 0, true, showFPS));
+        sl.add(new SingleChoiceSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER,
+                Settings.SECTION_INI_DEBUG, R.string.setting_force_texture_filter, 0,
+                R.array.textureFilterEntries, R.array.textureFilterValues, 0,
+                debugSection.getSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER)));
+        sl.add(new HeaderSetting(null, null, R.string.setting_header_advanced, 0));
+        if (BuildConfig.CPU_JIT_AVAILABLE) {
+            Setting jit = mSettings.getSection(Settings.SECTION_INI_CORE).getSetting(SettingsFile.KEY_USE_CPU_JIT);
+            sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_CPU_JIT, Settings.SECTION_INI_CORE,
+                    R.string.setting_enable_cpu_jit, R.string.setting_enable_cpu_jit_desc, true, jit));
+        }
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_PRESENT_THREAD, Settings.SECTION_INI_DEBUG,
+                R.string.setting_use_present_thread, R.string.setting_use_present_thread_desc, true, presentThread));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_HW_SHADER, Settings.SECTION_INI_RENDERER,
                                    R.string.setting_hw_shader, R.string.setting_hw_shader_desc, true, hwShader));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_SHADERS_ACCURATE_MUL,
@@ -177,8 +188,24 @@ public final class SettingsFragment extends Fragment {
                 R.string.cpu_usage_limit, R.string.cpu_usage_limit_description, false, cpuLimit));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_FENCE_SYNC, Settings.SECTION_INI_RENDERER,
                 R.string.setting_use_fence_sync, R.string.setting_use_fence_sync_description, false, useFenceSync));
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_ACCURACY_MODE, Settings.SECTION_INI_PLAY,
+                R.string.setting_accuracy_mode, R.string.setting_accuracy_mode_desc, false,
+                mSettings.getSection(Settings.SECTION_INI_PLAY).getSetting(SettingsFile.KEY_ACCURACY_MODE)));
+        SettingSection playSection = mSettings.getSection(Settings.SECTION_INI_PLAY);
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP, Settings.SECTION_INI_PLAY,
+                R.string.setting_adaptive_frame_skip, R.string.setting_adaptive_frame_skip_desc, true,
+                playSection.getSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP)));
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_FIXED_GUEST_CLOCK, Settings.SECTION_INI_PLAY,
+                R.string.setting_fixed_guest_clock, R.string.setting_fixed_guest_clock_desc, false,
+                playSection.getSetting(SettingsFile.KEY_FIXED_GUEST_CLOCK)));
+        sl.add(new SliderSetting(SettingsFile.KEY_GUEST_CLOCK_PERCENT, Settings.SECTION_INI_PLAY,
+                R.string.setting_guest_clock_percent, 0, 25, 200, "%", 100,
+                playSection.getSetting(SettingsFile.KEY_GUEST_CLOCK_PERCENT)));
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
+                R.string.setting_limit_speed, 0, true,
+                rendererSection.getSetting(SettingsFile.KEY_USE_FRAME_LIMIT)));
         sl.add(new SliderSetting(SettingsFile.KEY_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
-                R.string.frame_limit_slider, R.string.frame_limit_slider_description, 200, "",
+                R.string.frame_limit_slider, R.string.frame_limit_slider_description, 50, 200, "",
                 100, frameLimit));
         sl.add(new SliderSetting(SettingsFile.KEY_FACTOR_3D, Settings.SECTION_INI_RENDERER,
                 R.string.setting_factor_3d, 0, 10, "",
@@ -189,7 +216,6 @@ public final class SettingsFragment extends Fragment {
         SettingSection coreSection = mSettings.getSection(Settings.SECTION_INI_CORE);
         Setting isNew3DS = coreSection.getSetting(SettingsFile.KEY_IS_NEW_3DS);
         Setting systemRegion = coreSection.getSetting(SettingsFile.KEY_SYSTEM_REGION);
-        Setting cpuJIT = coreSection.getSetting(SettingsFile.KEY_USE_CPU_JIT);
         Setting language = coreSection.getSetting(SettingsFile.KEY_SYSTEM_LANGUAGE);
         Setting font = coreSection.getSetting(SettingsFile.KEY_SHARED_FONT_TYPE);
         Setting theme = coreSection.getSetting(SettingsFile.KEY_THEME_PACKAGE);
@@ -201,8 +227,6 @@ public final class SettingsFragment extends Fragment {
         }
         sl.add(new CheckBoxSetting(SettingsFile.KEY_IS_NEW_3DS, Settings.SECTION_INI_CORE,
                 R.string.setting_is_new_3ds, R.string.setting_is_new_3ds_desc, false, isNew3DS));
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_CPU_JIT, Settings.SECTION_INI_CORE,
-                R.string.setting_enable_cpu_jit, 0, true, cpuJIT));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_SYSTEM_REGION, Settings.SECTION_INI_CORE,
                 R.string.setting_region_value, 0,
                 R.array.systemRegionEntries, R.array.systemRegionValues, -1,

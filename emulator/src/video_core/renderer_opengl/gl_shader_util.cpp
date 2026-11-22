@@ -15,6 +15,7 @@
 #include "common/logging/log.h"
 #include "video_core/renderer_opengl/gl_shader_util.h"
 #include "video_core/renderer_opengl/gl_vars.h"
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 
 namespace OpenGL {
 
@@ -69,11 +70,18 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
     // uses a real buffer sampler and its native texelFetch signature.
     ReplaceAll("samplerBuffer texture_buffer_lut_", "sampler2D texture_buffer_lut_");
 #else
-    ReplaceAll("samplerBuffer", "sampler2D");
+    if (UseNativeLUTBuffers()) {
+        version = "#version 320 es\n#define CARA_GLES\nprecision highp int;\n"
+                  "precision highp float;\nprecision highp sampler2D;\n"
+                  "precision highp samplerBuffer;\n";
+    } else {
+        ReplaceAll("samplerBuffer", "sampler2D");
+    }
 #endif
     ReplaceAll("precision highp uimage2D;", "");
     ReplaceAll("#define fma_safe(x, y, z) fma(x, y, z)", "#define fma_safe(x, y, z) ((x) * (y) + (z))");
-    ReplaceAll("texelFetch(texture_buffer_lut_", "CaraLUTFetch(texture_buffer_lut_");
+    if (!UseNativeLUTBuffers())
+        ReplaceAll("texelFetch(texture_buffer_lut_", "CaraLUTFetch(texture_buffer_lut_");
 #endif
     const char* debug_type;
     switch (type) {

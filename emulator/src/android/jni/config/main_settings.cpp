@@ -5,7 +5,11 @@
 namespace Config {
 
 // core
+#ifdef CARA_ANDROID_CPU_JIT
 const ConfigInfo<bool> USE_CPU_JIT{{"Core", "use_cpu_jit"}, true};
+#else
+const ConfigInfo<bool> USE_CPU_JIT{{"Core", "use_cpu_jit"}, false};
+#endif
 const ConfigInfo<bool> IS_NEW_3DS{{"Core", "is_new_3ds"}, false};
 const ConfigInfo<bool> USE_GAME_CONFIG{{"Core", "use_game_config"}, false};
 const ConfigInfo<bool> USE_VIRTUAL_SD{{"Core", "use_virtual_sd"}, true};
@@ -14,6 +18,12 @@ const ConfigInfo<Service::CFG::SystemLanguage> SYSTEM_LANGUAGE{
     {"Core", "language"}, Service::CFG::SystemLanguage::LANGUAGE_EN};
 const ConfigInfo<Settings::SharedFontType> SHARED_FONT_TYPE{{"Core", "shared_font_type"},
                                                             Settings::SharedFontType::Auto};
+
+// play
+const ConfigInfo<bool> ACCURACY_MODE{{"Play", "accuracy_mode"}, false};
+const ConfigInfo<bool> ADAPTIVE_FRAME_SKIP{{"Play", "adaptive_frame_skip"}, true};
+const ConfigInfo<bool> FIXED_GUEST_CLOCK{{"Play", "fixed_guest_clock"}, false};
+const ConfigInfo<u16> GUEST_CLOCK_PERCENT{{"Play", "guest_clock_percent"}, 100};
 
 // renderer
 const ConfigInfo<bool> USE_GLES{{"Renderer", "use_gles"}, true};

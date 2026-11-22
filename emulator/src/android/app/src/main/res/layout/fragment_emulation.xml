@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Cara contributors; GPL-2.0-or-later. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="#000000">
+    <SurfaceView android:id="@+id/surface_emulation"
+        android:layout_width="match_parent" android:layout_height="match_parent" />
+    <org.cara.emu.overlay.InputOverlay android:id="@+id/surface_input_overlay"
+        android:layout_width="match_parent" android:layout_height="match_parent" />
+    <org.cara.emu.overlay.ResizeOverlay android:id="@+id/resize_overlay_top"
+        android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" />
+    <org.cara.emu.overlay.ResizeOverlay android:id="@+id/resize_overlay_bottom"
+        android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" />
+    <TextView android:id="@+id/translate_text" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:layout_gravity="center" android:textColor="#FFFFFF" android:visibility="gone" />
+    <TextView android:id="@+id/netplay_message" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:layout_gravity="top|center_horizontal" android:textColor="#FFFFFF" android:visibility="gone" />
+    <ProgressBar android:id="@+id/running_progress" android:layout_width="48dp"
+        android:layout_height="48dp" android:layout_gravity="center" android:visibility="gone" />
+    <Button android:id="@+id/done_control_config" android:layout_width="wrap_content"
+        android:layout_height="wrap_content" android:layout_gravity="top|end" android:text="@android:string/ok" android:visibility="gone" />
+    <LinearLayout android:id="@+id/chat_input" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:layout_gravity="bottom" android:orientation="horizontal" android:visibility="gone">
+        <EditText android:id="@+id/chat_text_input" android:layout_width="0dp"
+            android:layout_height="48dp" android:layout_weight="1" android:hint="@string/cara_message"
+            android:inputType="textShortMessage" android:textColor="#FFFFFF" android:textColorHint="#CCCCCC" />
+        <ImageButton android:id="@+id/chat_send_button" android:layout_width="48dp"
+            android:layout_height="48dp" android:src="@android:drawable/ic_menu_send" android:contentDescription="@string/cara_send_message" />
+    </LinearLayout>
+</FrameLayout>

@@ -11,8 +11,8 @@ target_include_directories(catch-single-include INTERFACE catch/single_include)
 # Crypto++
 add_subdirectory(cryptopp)
 
-# Optional Mac CPU backend uses only the reviewed, pinned local ARM64 dependency.
-if(CARA_MAC_CPU_JIT)
+# Optional native CPU backend uses only the reviewed, pinned local ARM64 dependency.
+if(CARA_NATIVE_CPU_JIT)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/dynarmic/CMakeLists.txt")
         message(FATAL_ERROR "CPU JIT requires the reviewed pinned local Dynarmic dependency")
     endif()
@@ -106,6 +106,9 @@ target_include_directories(enet INTERFACE ./enet/include)
 if (ENABLE_CUBEB)
     set(BUILD_TESTS OFF CACHE BOOL "")
     add_subdirectory(cubeb EXCLUDE_FROM_ALL)
+    if (ANDROID)
+        target_compile_definitions(cubeb PRIVATE CARA_CUBEB_JNI_CALLBACKS=1)
+    endif()
 endif()
 
 # DiscordRPC

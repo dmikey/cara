@@ -31,6 +31,17 @@
         <item>4</item>
     </integer-array>
 
+    <string-array name="textureFilterEntries">
+        <item>@string/auto</item>
+        <item>@string/nearest</item>
+        <item>@string/linear</item>
+    </string-array>
+    <integer-array name="textureFilterValues">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
+
     <!-- system region Preference -->
     <string-array name="systemRegionEntries" translatable="false">
         <item>@string/auto</item>

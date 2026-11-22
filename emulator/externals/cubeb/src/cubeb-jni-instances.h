@@ -15,6 +15,11 @@
  * and application's Context object.
  * */
 
+// Modified for Cara: Android supplies these callbacks in jni_common.cpp.
+#ifdef CARA_CUBEB_JNI_CALLBACKS
+JNIEnv * cubeb_get_jni_env_for_thread();
+jobject cubeb_jni_get_context_instance();
+#else
 JNIEnv *
 cubeb_get_jni_env_for_thread()
 {
@@ -26,5 +31,7 @@ cubeb_jni_get_context_instance()
 {
   return nullptr;
 }
+
+#endif // CARA_CUBEB_JNI_CALLBACKS
 
 #endif //_CUBEB_JNI_INSTANCES_H_

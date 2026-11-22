@@ -2,6 +2,8 @@
 package org.cara.emu.settings.view;
 
 import org.cara.emu.settings.model.BooleanSetting;
+import org.cara.emu.settings.model.FloatSetting;
+import org.cara.emu.settings.model.IntSetting;
 import org.cara.emu.settings.model.Setting;
 
 public final class CheckBoxSetting extends SettingsItem {
@@ -14,31 +16,31 @@ public final class CheckBoxSetting extends SettingsItem {
     }
 
     public boolean isChecked() {
-        boolean value = mDefaultValue;
-        if (getSetting() != null) {
-            BooleanSetting setting = (BooleanSetting)getSetting();
-            value = isInvertedSetting() != setting.getValue();
+        Setting setting = getSetting();
+        if (setting instanceof BooleanSetting) {
+            return ((BooleanSetting) setting).getValue();
         }
-        return value;
-    }
-
-    private boolean isInvertedSetting() {
-        return false;
+        // Cara's native INI reader also accepts numeric zero and one.
+        if (setting instanceof IntSetting) {
+            int value = ((IntSetting) setting).getValue();
+            return value == 1 || (value != 0 && mDefaultValue);
+        }
+        if (setting instanceof FloatSetting) {
+            float value = ((FloatSetting) setting).getValue();
+            return value == 1 || (value != 0 && mDefaultValue);
+        }
+        return mDefaultValue;
     }
 
     public BooleanSetting setChecked(boolean checked) {
-        if (isInvertedSetting())
-            checked = !checked;
-
-        if (getSetting() == null) {
-            BooleanSetting setting = new BooleanSetting(getKey(), getSection(), checked);
-            setSetting(setting);
-            return setting;
-        } else {
-            BooleanSetting setting = (BooleanSetting)getSetting();
-            setting.setValue(checked);
+        Setting existing = getSetting();
+        if (existing instanceof BooleanSetting) {
+            ((BooleanSetting) existing).setValue(checked);
             return null;
         }
+        BooleanSetting setting = new BooleanSetting(getKey(), getSection(), checked);
+        setSetting(setting);
+        return setting;
     }
 
     @Override

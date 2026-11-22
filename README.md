@@ -124,7 +124,7 @@ ZIP averaged 59.70 refreshes/s on the M4 iPad.
 |---|---|
 | **macOS** | Native desktop app and SDL development host. |
 | **iOS** | Native touch-first app for iPhone and iPad, without CPU JIT. |
-| **Android** | Native Android frontend with OpenGL ES rendering. |
+| **Android** | Native Android frontend with OpenGL ES rendering and ARM64 Dynarmic JIT. See the [RG Slide rendering notes](docs/rg-slide-rendering.md). |
 | **Linux** | SDL command-line frontend with desktop OpenGL. |
 
 **Platform stability and feature parity are still in progress.** Game

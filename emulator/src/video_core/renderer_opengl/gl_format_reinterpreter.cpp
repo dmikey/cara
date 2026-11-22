@@ -17,8 +17,8 @@ namespace OpenGL {
 
 using PixelFormat = SurfaceParams::PixelFormat;
 
-#if defined(CARA_IOS_GLES) || defined(__APPLE__)
-#ifdef CARA_IOS_GLES
+#if defined(CARA_IOS_GLES) || defined(__APPLE__) || defined(__ANDROID__)
+#if defined(CARA_IOS_GLES) || defined(__ANDROID__)
 static constexpr const char* depth_shader_precision=fragment_shader_precision_OES;
 #else
 // GLSL330 accepts highp qualifiers but has no uimage2D type in the ES preamble.
@@ -1252,7 +1252,7 @@ FormatReinterpreterOpenGL::~FormatReinterpreterOpenGL() = default;
 
 bool FormatReinterpreterOpenGL::EncodeDepthChecked(GLuint src,PixelFormat format,
     const Common::Rectangle<u32>& sr,GLuint dst,const Common::Rectangle<u32>& dr,u32 width,u32 height) {
-#if defined(CARA_IOS_GLES) || defined(__APPLE__)
+#if defined(CARA_IOS_GLES) || defined(__APPLE__) || defined(__ANDROID__)
 #if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
     if(!MacGPUReinterpretEnabled())return false;
 #endif
@@ -1265,7 +1265,7 @@ bool FormatReinterpreterOpenGL::EncodeDepthChecked(GLuint src,PixelFormat format
 
 bool FormatReinterpreterOpenGL::UploadDepthChecked(GLuint target,PixelFormat format,
     const Common::Rectangle<u32>& rect,const u8* canonical,size_t bytes,u32 stride,u32 width,u32 height) {
-#if defined(CARA_IOS_GLES) || defined(__APPLE__)
+#if defined(CARA_IOS_GLES) || defined(__APPLE__) || defined(__ANDROID__)
 #if defined(__APPLE__) && (!defined(CARA_IOS_GLES) || defined(CARA_MAC_ATLAS_PIPELINE))
     if(!MacGPUReinterpretEnabled())return false;
 #endif

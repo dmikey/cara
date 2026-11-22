@@ -1,15 +1,23 @@
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include <android/log.h>
 #include <android/native_window_jni.h>
 
+#include "cara/adaptive_clock.h"
+#include "cara/p3d_completion.h"
+#include "cara/play_profile.h"
 #include "common/common_paths.h"
 #include "common/file_util.h"
+#include "common/frame_timing.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
@@ -43,6 +51,21 @@ static std::atomic<bool> s_stop_running;
 static std::atomic<bool> s_is_running;
 static std::mutex s_running_mutex;
 static std::condition_variable s_running_cv;
+constexpr jsize RunningSettingsCount = 18;
+using RunningSettings = std::array<jint, RunningSettingsCount>;
+static std::optional<RunningSettings> s_pending_settings;
+
+static Cara::PlayMode ReadPlayMode() {
+    return Config::Get(Config::ACCURACY_MODE) ? Cara::PlayMode::Accuracy : Cara::PlayMode::Performance;
+}
+
+static Cara::PlayPolicy ReadPlayPolicy() {
+    return Cara::MakePlayPolicy(ReadPlayMode(), Config::Get(Config::FRAME_LIMIT),
+                                false, -1, Config::Get(Config::FIXED_GUEST_CLOCK),
+                                Config::Get(Config::GUEST_CLOCK_PERCENT),
+                                Config::Get(Config::USE_FRAME_LIMIT));
+}
+
 static std::unique_ptr<EGLAndroid> s_render_window;
 static std::shared_ptr<AndroidKeyboard> s_keyboard;
 
@@ -57,11 +80,107 @@ struct GameInfo {
 };
 static std::map<std::string, GameInfo> s_app_dict;
 
+static void ApplyRunningSettings(const RunningSettings& settings) {
+    int i = 0;
+
+    // FMV Hack
+    Settings::SetFMVHack(settings[i++] > 0);
+
+    // Skip Slow Draw
+    Settings::values.skip_slow_draw = settings[i++] > 0;
+    Config::Set(Config::SKIP_SLOW_DRAW, Settings::values.skip_slow_draw);
+
+    // Skip CPU Write
+    Settings::values.skip_cpu_write = settings[i++] > 0;
+    Config::Set(Config::SKIP_CPU_WRITE, Settings::values.skip_cpu_write);
+
+    // Skip Texture Copy
+    Settings::values.skip_texture_copy = settings[i++] > 0;
+    Config::Set(Config::SKIP_TEXTURE_COPY, Settings::values.skip_texture_copy);
+
+    // Use Linear Filter
+    Settings::values.force_texture_filter = std::clamp(settings[i++], 0, 2);
+    Config::Set(Config::FORCE_TEXTURE_FILTER, Settings::values.force_texture_filter);
+
+    // Use HW GS
+    Settings::values.hw_gs_mode = static_cast<u8>(std::clamp(settings[i++], 0, 2));
+    Config::Set(Config::HW_GS_MODE, Settings::values.hw_gs_mode);
+
+    // Shadow Rendering
+    Settings::values.shadow_rendering = settings[i++] > 0;
+    Config::Set(Config::SHADOW_RENDERING, Settings::values.shadow_rendering);
+
+    // Async Shader Compile
+    Settings::values.async_shader_compile = settings[i++] > 0;
+    Config::Set(Config::ASYNC_SHADER_COMPILE, Settings::values.async_shader_compile);
+
+    // Scale Factor
+    Settings::values.resolution_factor = std::clamp(settings[i++], 0, 3) + 1;
+    Config::Set(Config::RESOLUTION_FACTOR, Settings::values.resolution_factor);
+
+    // Change Layout
+    Settings::values.layout_option = static_cast<Settings::LayoutOption>(settings[i++]);
+    if (NativeLibrary::IsPortrait()) {
+        Config::Set(Config::LAYOUT_OPTION, Settings::values.layout_option);
+    } else {
+        Config::Set(Config::LANDSCAPE_LAYOUT_OPTION, Settings::values.layout_option);
+    }
+
+    // Accurate Mul
+    Settings::values.shaders_accurate_mul = static_cast<Settings::AccurateMul>(settings[i++]);
+    Config::Set(Config::SHADERS_ACCURATE_MUL, Settings::values.shaders_accurate_mul);
+
+    // Custom Layout
+    Settings::values.custom_layout = settings[i++] > 0;
+    if (NativeLibrary::IsPortrait())
+        Config::Set(Config::PORTRAIT_CUSTOM_LAYOUT, Settings::values.custom_layout);
+    else
+        Config::Set(Config::LANDSCAPE_CUSTOM_LAYOUT, Settings::values.custom_layout);
+
+    // Frame Limit
+    Config::Set(Config::FRAME_LIMIT, std::clamp(settings[i++], 50, 200));
+    Config::Set(Config::ACCURACY_MODE, settings[i++] != 0);
+    Config::Set(Config::USE_FRAME_LIMIT, settings[i++] != 0);
+    Config::Set(Config::ADAPTIVE_FRAME_SKIP, settings[i++] != 0);
+    Config::Set(Config::FIXED_GUEST_CLOCK, settings[i++] != 0);
+    Config::Set(Config::GUEST_CLOCK_PERCENT, static_cast<u16>(std::clamp(settings[i++], 25, 200)));
+
+    VideoCore::SettingUpdate();
+
+}
+
 void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
     s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
-    s_render_window->Initialize(s_surface);
+    if (!s_render_window->Initialize(s_surface)) {
+        LOG_ERROR(Frontend, "Could not initialize Android OpenGL ES");
+        NativeLibrary::ShowMessageDialog(0, "Could not initialize OpenGL ES on this device.");
+        s_render_window.reset();
+        return;
+    }
+
+    // This residency path was tested on Mali with both GLES backends.
+    const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
+    setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    const Config::ConfigInfo<bool> native_luts{{"Debug", "native_lut_buffers"}, false};
+    setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
+    setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
+    LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
+             Config::Get(packed_fetch_reuse));
+#endif
+    LOG_INFO(Frontend, "Android CPU engine: {}",
+             Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");
+    const Config::ConfigInfo<bool> trace_timing{{"Debug", "trace_renderer_timing"}, false};
+    auto& phases = Common::FrameTiming::counters;
+    phases = {};
+    phases.enabled = Config::Get(trace_timing);
+    const auto gpu_policy = Cara::GetGPUCompletionPolicy(ReadPlayMode() == Cara::PlayMode::Performance);
+    Cara::gpu_completion_policy = gpu_policy;
+    LOG_INFO(Frontend, "Android GPU completion: P3D={} PPF={} soft knee={}",
+             gpu_policy.render, gpu_policy.transfer, gpu_policy.soften_render);
 
     Core::System& system{Core::System::GetInstance()};
 
@@ -127,7 +246,43 @@ void BootGame(const std::string& path) {
     s_update_hid = false;
     s_stop_running = false;
     s_is_running = true;
+    system.perf_stats->SetBoundedFramePacing(true);
+    Cara::AdaptiveClock adaptive_clock;
+    auto sampled_frame = VideoCore::GetCurrentFrame();
+    bool discard_next_sample = true;
+    std::array<double, 120> frame_times{};
+    std::size_t frame_count = 0;
+    const auto reset_trace = [&] {
+        frame_count = 0;
+        const bool enabled = phases.enabled;
+        phases = {};
+        phases.enabled = enabled;
+    };
+    const auto apply_play_policy = [&] {
+        const auto policy = ReadPlayPolicy();
+        Settings::values.use_frame_limit = policy.limit_speed;
+        Settings::values.frame_limit = policy.maximum_speed;
+        s_render_window->SetAdaptiveFrameSkip(ReadPlayMode() == Cara::PlayMode::Performance &&
+                                              Config::Get(Config::ADAPTIVE_FRAME_SKIP));
+        if (adaptive_clock.Enabled() != policy.adaptive)
+            adaptive_clock.SetEnabled(policy.adaptive);
+        adaptive_clock.ResetSamples();
+        system.perf_stats->ResetFramePacing();
+        system.CoreTiming().UpdateClockSpeed(policy.adaptive ? adaptive_clock.Percent() : policy.guest_clock);
+        sampled_frame = VideoCore::GetCurrentFrame();
+        discard_next_sample = true;
+        reset_trace();
+    };
+    apply_play_policy();
     while (!s_stop_running) {
+        {
+            std::lock_guard lock{s_running_mutex};
+            if (s_pending_settings) {
+                ApplyRunningSettings(*s_pending_settings);
+                s_pending_settings.reset();
+                apply_play_policy();
+            }
+        }
         if (s_is_running) {
             result = system.RunLoop();
             if (result == Core::System::ResultStatus::ShutdownRequested) {
@@ -141,20 +296,71 @@ void BootGame(const std::string& path) {
                                                                 system.GetStatusDetails()));
                 break;
             }
+            const auto frame = VideoCore::GetCurrentFrame();
+            if (frame != sampled_frame) {
+                if (!discard_next_sample && frame == sampled_frame + 1 &&
+                    (adaptive_clock.Enabled() || phases.enabled)) {
+                    using Seconds = std::chrono::duration<double>;
+                    const auto timing = system.perf_stats->GetLastFrameTiming();
+                    if (adaptive_clock.Enabled()) {
+                        const auto previous = adaptive_clock.Percent();
+                        const auto next = adaptive_clock.ObserveFrame(Seconds(timing.work).count(),
+                                                                      Seconds(timing.elapsed).count());
+                        if (next != previous)
+                            system.CoreTiming().UpdateClockSpeed(next);
+                    }
+                    if (phases.enabled) {
+                        frame_times[frame_count++] = Seconds(timing.elapsed).count() * 1000;
+                        if (frame_count == frame_times.size()) {
+                            std::sort(frame_times.begin(), frame_times.end());
+                            const auto guest_clock = adaptive_clock.Enabled()
+                                                         ? adaptive_clock.Percent()
+                                                         : ReadPlayPolicy().guest_clock;
+                            LOG_INFO(Frontend,
+                                "Android frame window: end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f}",
+                                frame, guest_clock,
+                                (frame_times[59] + frame_times[60]) / 2, frame_times[118],
+                                frame_times.back(), phases.pica_draw_requests,
+                                phases.vertex_upload_seconds * 1000, phases.draw_submit_seconds * 1000,
+                                phases.surface_download_seconds * 1000,
+                                phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
+                                phases.gpu_wait_seconds * 1000);
+                            reset_trace();
+                        }
+                    }
+                }
+                discard_next_sample = false;
+            }
+            sampled_frame = frame;
             if (s_update_hid) {
                 hid->UpdatePad();
                 s_update_hid = false;
             }
         } else {
             // Ensure no audio bleeds out while game is paused
-            const float volume = Settings::values.volume;
-            Settings::values.volume = 0;
+            const float volume = Settings::values.audio_volume;
+            Settings::values.audio_volume = 0;
 
             std::unique_lock lock{s_running_mutex};
-            s_running_cv.wait(lock, [] { return s_is_running || s_stop_running; });
+            s_running_cv.wait(lock, [] { return s_is_running || s_stop_running || s_pending_settings; });
+            lock.unlock();
+            system.perf_stats->ResetFramePacing();
+            adaptive_clock.ResetSamples();
+            sampled_frame = VideoCore::GetCurrentFrame();
+            discard_next_sample = true;
+            reset_trace();
             s_render_window->PollEvents();
-            Settings::values.volume = volume;
+            Settings::values.audio_volume = volume;
         }
+    }
+
+    {
+        std::lock_guard lock{s_running_mutex};
+        if (s_pending_settings) {
+            ApplyRunningSettings(*s_pending_settings);
+            s_pending_settings.reset();
+        }
+        Config::Save();
     }
 
     // Shutdown the core emulation
@@ -164,7 +370,6 @@ void BootGame(const std::string& path) {
     s_render_window.reset();
     s_is_running = false;
     resetSearchResults();
-    Config::Save();
 }
 
 static bool GetSMDHData(Loader::AppLoader* loader, Loader::SMDH* smdh) {
@@ -307,7 +512,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SetUserPath(JNIEnv* env, 
     FileUtil::SetUserPath(path);
 
     // create user directory
-    FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::AmiiboDir));
+    FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "amiibo/");
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::CacheDir));
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir));
     FileUtil::CreateFullPath(FileUtil::GetUserPath(FileUtil::UserPath::LogDir));
@@ -441,7 +646,11 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Config::Clear();
     Config::Load();
     // system
+#if defined(CARA_ANDROID_CPU_JIT) || defined(CARA_ENABLE_JIT)
     Settings::values.use_cpu_jit = Config::Get(Config::USE_CPU_JIT);
+#else
+    Settings::values.use_cpu_jit = false;
+#endif
     Settings::values.is_new_3ds = Config::Get(Config::IS_NEW_3DS);
     Settings::values.use_virtual_sd = Config::Get(Config::USE_VIRTUAL_SD);
     Settings::values.region_value = Config::Get(Config::SYSTEM_REGION);
@@ -452,15 +661,16 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.accurate_rcp_rsq = false;
     Settings::values.skip_load_buffer = false;
     Settings::values.merge_framebuffer = false;
-    Settings::values.use_hw_gs = Config::Get(Config::USE_HW_GS);
-    Settings::values.use_gles = Config::Get(Config::USE_GLES);
+    Settings::values.hw_gs_mode = Config::Get(Config::HW_GS_MODE);
+    Settings::values.use_gles = true;
     Settings::values.show_fps = Config::Get(Config::SHOW_FPS);
-    Settings::values.use_hw_renderer = Config::Get(Config::USE_HW_RENDERER);
+    Settings::values.use_hw_renderer = true;
     Settings::values.use_hw_shader = Config::Get(Config::USE_HW_SHADER);
-    Settings::values.use_shader_jit = Config::Get(Config::USE_SHADER_JIT);
+    Settings::values.use_shader_jit = false;
     Settings::values.shaders_accurate_mul = Config::Get(Config::SHADERS_ACCURATE_MUL);
-    Settings::values.use_frame_limit = Config::Get(Config::USE_FRAME_LIMIT);
-    Settings::values.frame_limit = Config::Get(Config::FRAME_LIMIT);
+    const auto play_policy = ReadPlayPolicy();
+    Settings::values.use_frame_limit = play_policy.limit_speed;
+    Settings::values.frame_limit = play_policy.maximum_speed;
     Settings::values.resolution_factor = Config::Get(Config::RESOLUTION_FACTOR);
     Settings::values.factor_3d = Config::Get(Config::FACTOR_3D);
     Settings::values.custom_textures = Config::Get(Config::CUSTOM_TEXTURES);
@@ -468,14 +678,16 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.remote_shader_host = Config::Get(Config::REMOTE_SHADER_HOST);
     // audio
     Settings::values.enable_dsp_lle = Config::Get(Config::ENABLE_DSP_LLE);
-    Settings::values.enable_dsp_lle_multithread = Config::Get(Config::DSP_LLE_MULTITHREAD);
-    Settings::values.volume = Config::Get(Config::AUDIO_VOLUME);
-    Settings::values.sink_id = Config::Get(Config::AUDIO_ENGINE);
-    Settings::values.audio_device_id = Config::Get(Config::AUDIO_DEVICE);
+    Settings::values.dsp_lle_multithread = Config::Get(Config::DSP_LLE_MULTITHREAD);
+    Settings::values.audio_volume = Config::Get(Config::AUDIO_VOLUME);
+    Settings::values.mic_volume = Config::Get(Config::MIC_VOLUME);
+    Settings::values.sink_id = (Config::Get(Config::AUDIO_OUTPUT_TYPE) == 2 ? "cubeb" : "null");
+    Settings::values.audio_device_id = Config::Get(Config::AUDIO_OUTPUT_DEVICE);
     Settings::values.enable_audio_stretching = Config::Get(Config::AUDIO_STRETCHING);
     // mic
-    Settings::values.mic_input_type = Config::Get(Config::MIC_INPUT_TYPE);
-    Settings::values.mic_input_device = Config::Get(Config::MIC_INPUT_DEVICE);
+    const auto mic_type = Config::Get(Config::AUDIO_INPUT_TYPE);
+    Settings::values.mic_input_type = mic_type == 3 ? Settings::MicInputType::Real : mic_type == 2 ? Settings::MicInputType::Static : Settings::MicInputType::None;
+    Settings::values.mic_input_device = Config::Get(Config::AUDIO_INPUT_DEVICE);
     // debug
     Settings::values.shadow_rendering = Config::Get(Config::SHADOW_RENDERING);
     Settings::values.use_present_thread = Config::Get(Config::USE_PRESENT_THREAD);
@@ -494,20 +706,21 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::SetLLEModules(Config::Get(Config::LLE_MODULES));
     // custom layout
     Settings::values.swap_screen = false;
-    Settings::values.custom_layout = Config::Get(Config::USE_CUSTOM_LAYOUT);
+    // UpdateDisplayRotation loads the orientation-specific layout below.
     UpdateDisplayRotation();
     //
     Settings::values.init_clock = Settings::InitClock::SystemTime;
     Settings::values.init_time = 946681277;
     Settings::values.core_ticks_hack = 0;
-    Settings::values.skip_slow_draw = false;
+    Settings::values.skip_slow_draw = Config::Get(Config::SKIP_SLOW_DRAW);
     Settings::values.display_transfer_hack = false;
-    Settings::values.skip_cpu_write = false;
-    Settings::values.skip_texture_copy = false;
+    Settings::values.skip_cpu_write = Config::Get(Config::SKIP_CPU_WRITE);
+    Settings::values.skip_texture_copy = Config::Get(Config::SKIP_TEXTURE_COPY);
     Settings::values.disable_clip_coef = false;
     Settings::values.y2r_perform_hack = false;
     Settings::values.y2r_event_delay = false;
-    Settings::values.force_texture_filter = 0;
+    Settings::values.force_texture_filter = Config::Get(Config::FORCE_TEXTURE_FILTER);
+    Settings::values.async_shader_compile = Config::Get(Config::ASYNC_SHADER_COMPILE);
     Settings::values.stream_buffer_hack = !Settings::values.use_present_thread;
     Settings::values.use_fence_sync = Config::Get(Config::USE_FENCE_SYNC);
 
@@ -558,91 +771,56 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_StopEmulation(JNIEnv* env
 
 JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(JNIEnv* env,
                                                                                 jclass obj) {
+    std::lock_guard lock{s_running_mutex};
+    if (s_pending_settings) {
+        jintArray array = env->NewIntArray(RunningSettingsCount);
+        if (array)
+            env->SetIntArrayRegion(array, 0, RunningSettingsCount, s_pending_settings->data());
+        return array;
+    }
     int i = 0;
-    int settings[13];
+    RunningSettings settings{};
 
-    // get settings
     settings[i++] = Settings::values.core_ticks_hack > 0;
     settings[i++] = Settings::values.skip_slow_draw;
     settings[i++] = Settings::values.skip_cpu_write;
     settings[i++] = Settings::values.skip_texture_copy;
     settings[i++] = Settings::values.force_texture_filter;
-    settings[i++] = Settings::values.use_hw_gs;
+    settings[i++] = Settings::values.hw_gs_mode;
     settings[i++] = Settings::values.shadow_rendering;
     settings[i++] = Settings::values.async_shader_compile;
     settings[i++] = std::min(std::max(Settings::values.resolution_factor - 1, 0), 3);
     settings[i++] = static_cast<int>(Settings::values.layout_option);
     settings[i++] = static_cast<int>(Settings::values.shaders_accurate_mul);
     settings[i++] = Settings::values.custom_layout;
-    settings[i++] = Settings::values.frame_limit;
+    settings[i++] = Config::Get(Config::FRAME_LIMIT);
+    settings[i++] = Config::Get(Config::ACCURACY_MODE);
+    settings[i++] = Config::Get(Config::USE_FRAME_LIMIT);
+    settings[i++] = Config::Get(Config::ADAPTIVE_FRAME_SKIP);
+    settings[i++] = Config::Get(Config::FIXED_GUEST_CLOCK);
+    settings[i++] = Config::Get(Config::GUEST_CLOCK_PERCENT);
 
     jintArray array = env->NewIntArray(i);
-    env->SetIntArrayRegion(array, 0, i, settings);
+    if (array)
+        env->SetIntArrayRegion(array, 0, i, settings.data());
     return array;
 }
 
-JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv* env, jclass obj,
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setRunningSettings(JNIEnv* env, jclass,
                                                                            jintArray array) {
-    int i = 0;
-    jint* settings = env->GetIntArrayElements(array, nullptr);
-
-    // FMV Hack
-    Settings::SetFMVHack(settings[i++] > 0);
-
-    // Skip Slow Draw
-    Settings::values.skip_slow_draw = settings[i++] > 0;
-    Config::Set(Config::SKIP_SLOW_DRAW, Settings::values.skip_slow_draw);
-
-    // Skip CPU Write
-    Settings::values.skip_cpu_write = settings[i++] > 0;
-    Config::Set(Config::SKIP_CPU_WRITE, Settings::values.skip_cpu_write);
-
-    // Skip Texture Copy
-    Settings::values.skip_texture_copy = settings[i++] > 0;
-    Config::Set(Config::SKIP_TEXTURE_COPY, Settings::values.skip_texture_copy);
-
-    // Use Linear Filter
-    Settings::values.force_texture_filter = settings[i++];
-    Config::Set(Config::FORCE_TEXTURE_FILTER, Settings::values.force_texture_filter);
-
-    // Use HW GS
-    Settings::values.use_hw_gs = settings[i++] > 0;
-    Config::Set(Config::USE_HW_GS, Settings::values.use_hw_gs);
-
-    // Shadow Rendering
-    Settings::values.shadow_rendering = settings[i++] > 0;
-    Config::Set(Config::SHADOW_RENDERING, Settings::values.shadow_rendering);
-
-    // Async Shader Compile
-    Settings::values.async_shader_compile = settings[i++] > 0;
-    Config::Set(Config::ASYNC_SHADER_COMPILE, Settings::values.async_shader_compile);
-
-    // Scale Factor
-    Settings::values.resolution_factor = settings[i++] + 1;
-    Config::Set(Config::RESOLUTION_FACTOR, Settings::values.resolution_factor);
-
-    // Change Layout
-    Settings::values.layout_option = static_cast<Settings::LayoutOption>(settings[i++]);
-    if (NativeLibrary::IsPortrait()) {
-        Config::Set(Config::LAYOUT_OPTION, Settings::values.layout_option);
-    } else {
-        Config::Set(Config::LANDSCAPE_LAYOUT_OPTION, Settings::values.layout_option);
+    if (!array || env->GetArrayLength(array) != RunningSettingsCount)
+        return;
+    RunningSettings settings{};
+    env->GetIntArrayRegion(array, 0, RunningSettingsCount, settings.data());
+    if (env->ExceptionCheck())
+        return;
+    {
+        std::lock_guard lock{s_running_mutex};
+        if (s_stop_running)
+            return;
+        s_pending_settings = settings;
     }
-
-    // Accurate Mul
-    Settings::values.shaders_accurate_mul = static_cast<Settings::AccurateMul>(settings[i++]);
-    Config::Set(Config::SHADERS_ACCURATE_MUL, Settings::values.shaders_accurate_mul);
-
-    // Custom Layout
-    Settings::values.custom_layout = settings[i++] > 0;
-    Config::Set(Config::USE_CUSTOM_LAYOUT, Settings::values.custom_layout);
-
-    // Frame Limit
-    Settings::values.frame_limit = std::max(settings[i++], 1);
-
-    VideoCore::SettingUpdate();
-
-    env->ReleaseIntArrayElements(array, settings, 0);
+    s_running_cv.notify_all();
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setCustomLayout(JNIEnv* env, jclass obj,
@@ -752,7 +930,7 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_loadPageTable(JNIEnv
     Core::System& system{Core::System::GetInstance()};
     auto pagetable = system.Memory().GetCurrentPageTable();
 
-    for (u32 i = 0; i < pagetable->pointers.size(); ++i) {
+    for (u32 i = 0; i < pagetable->GetPointerArray().size(); ++i) {
         auto p = pagetable->pointers[i];
         if (p != nullptr) {
             u32 addr = i << Memory::PAGE_BITS;

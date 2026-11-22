@@ -171,7 +171,7 @@ public final class SettingsAdapter extends RecyclerView.Adapter<SettingViewHolde
     public void onSliderClick(SliderSetting item, int position) {
         mClickedItem = item;
         mClickedPosition = position;
-        int progress = item.getSelectedValue();
+        int progress = Math.max(item.getMin(), Math.min(item.getMax(), item.getSelectedValue()));
         AlertDialog.Builder builder = new AlertDialog.Builder(mActivity);
 
         LayoutInflater inflater = LayoutInflater.from(mActivity);
@@ -189,8 +189,8 @@ public final class SettingsAdapter extends RecyclerView.Adapter<SettingViewHolde
         units.setText(item.getUnits());
 
         SeekBar seekbar = view.findViewById(R.id.seekbar);
-        seekbar.setMax(item.getMax());
-        seekbar.setProgress(progress);
+        seekbar.setMax(item.getMax() - item.getMin());
+        seekbar.setProgress(progress - item.getMin());
         seekbar.setKeyProgressIncrement(5);
         seekbar.setOnSeekBarChangeListener(this);
     }
@@ -296,7 +296,7 @@ public final class SettingsAdapter extends RecyclerView.Adapter<SettingViewHolde
         } else if (mClickedItem instanceof SliderSetting) {
             SliderSetting sliderSetting = (SliderSetting)mClickedItem;
             SeekBar seekBar = mDialog.findViewById(R.id.seekbar);
-            int value = seekBar.getProgress();
+            int value = seekBar.getProgress() + sliderSetting.getMin();
             if (sliderSetting.getSelectedValue() != value)
                 mActivity.setSettingChanged();
 
@@ -337,7 +337,8 @@ public final class SettingsAdapter extends RecyclerView.Adapter<SettingViewHolde
 
     @Override
     public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-        mTextSliderValue.setText(String.valueOf(progress));
+        int minimum = ((SliderSetting) mClickedItem).getMin();
+        mTextSliderValue.setText(String.valueOf(progress + minimum));
     }
 
     @Override

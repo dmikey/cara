@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Cara contributors; GPL-2.0-or-later. -->
+<resources>
+    <integer name="BUTTON_A_X">90</integer>
+    <integer name="BUTTON_A_Y">77</integer>
+    <integer name="BUTTON_B_X">82</integer>
+    <integer name="BUTTON_B_Y">87</integer>
+    <integer name="BUTTON_X_X">82</integer>
+    <integer name="BUTTON_X_Y">67</integer>
+    <integer name="BUTTON_Y_X">74</integer>
+    <integer name="BUTTON_Y_Y">77</integer>
+    <integer name="BUTTON_HOME_X">50</integer>
+    <integer name="BUTTON_HOME_Y">94</integer>
+    <integer name="BUTTON_SELECT_X">43</integer>
+    <integer name="BUTTON_SELECT_Y">94</integer>
+    <integer name="BUTTON_START_X">57</integer>
+    <integer name="BUTTON_START_Y">94</integer>
+    <integer name="COMBO_KEY1_X">40</integer>
+    <integer name="COMBO_KEY1_Y">60</integer>
+    <integer name="COMBO_KEY2_X">50</integer>
+    <integer name="COMBO_KEY2_Y">60</integer>
+    <integer name="COMBO_KEY3_X">60</integer>
+    <integer name="COMBO_KEY3_Y">60</integer>
+    <integer name="PAD_MAIN_X">18</integer>
+    <integer name="PAD_MAIN_Y">87</integer>
+    <integer name="STICK_MAIN_X">18</integer>
+    <integer name="STICK_MAIN_Y">65</integer>
+    <integer name="STICK_RIGHT_X">91</integer>
+    <integer name="STICK_RIGHT_Y">54</integer>
+    <integer name="TRIGGER_L_X">8</integer>
+    <integer name="TRIGGER_L_Y">42</integer>
+    <integer name="TRIGGER_R_X">92</integer>
+    <integer name="TRIGGER_R_Y">42</integer>
+    <integer name="TRIGGER_ZL_X">8</integer>
+    <integer name="TRIGGER_ZL_Y">32</integer>
+    <integer name="TRIGGER_ZR_X">92</integer>
+    <integer name="TRIGGER_ZR_Y">32</integer>
+</resources>

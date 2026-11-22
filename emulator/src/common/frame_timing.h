@@ -140,6 +140,7 @@ struct Counters {
     std::uint64_t stream_unmap_calls = 0;
     std::uint64_t stream_mapped_bytes = 0;
     double uniform_upload_seconds = 0;
+    double draw_lut_upload_seconds = 0;
     double state_apply_seconds = 0;
     double draw_submit_seconds = 0;
     double surface_remap_seconds = 0;
@@ -265,7 +266,7 @@ inline bool RenderBookkeepingProfileEnabled() {
     return enabled;
 }
 
-enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
+enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, LUTUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
 class Scope {
 public:
     explicit Scope(Phase phase_, bool enabled = true) : phase(phase_), active(counters.enabled && enabled) {
@@ -317,6 +318,8 @@ public:
             counters.surface_pack_seconds += seconds;
         } else if (phase == Phase::UniformUpload) {
             counters.uniform_upload_seconds += seconds;
+        } else if (phase == Phase::LUTUpload) {
+            counters.draw_lut_upload_seconds += seconds;
         } else if (phase == Phase::StreamMap) {
             counters.stream_map_seconds += seconds;
             ++counters.stream_map_calls;

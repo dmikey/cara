@@ -106,12 +106,18 @@
       "tag": "v1.5.7"
     },
     {
+      "path": "externals/cubeb/cmake/sanitizers-cmake",
+      "source": "https://github.com/arsenm/sanitizers-cmake.git",
+      "revision": "f09151bc87ba210f955d58dffc07b0ee1e755234",
+      "bundled": true
+    },
+    {
       "name": "Dynarmic CPU-only optional backend",
       "path": "externals/dynarmic",
       "source": "https://github.com/azahar-emu/dynarmic.git",
       "revision": "b3a92ab54dadd26a0c2a87d2677b80249d2e1a5a",
       "bundled": true,
-      "note": "Recovered exact prepared M1 source with fmt6/ARM64 ABI/tick compatibility changes and MAP_FAILED correction; see docs/evidence/m1-dynarmic-source-manifest.json. Only explicit native Mac CPU-JIT builds link it."
+      "note": "Recovered exact prepared M1 source with fmt6/ARM64 ABI/tick compatibility changes and MAP_FAILED correction; see docs/evidence/m1-dynarmic-source-manifest.json. Apple Silicon macOS and Android ARM64 CPU-JIT builds share this prepared source."
     }
   ],
   "excluded_non_source": [

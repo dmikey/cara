@@ -3,9 +3,20 @@
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #ifdef CARA_IOS_GLES
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace OpenGL {
+#ifdef CARA_ANDROID_GLES_ATLAS
+bool UseNativeLUTBuffers() {
+    static const bool enabled = [] {
+        const char* requested = std::getenv("CARA_ANDROID_NATIVE_LUTS");
+        return requested && requested[0] == '1' && !requested[1] &&
+               GLAD_GL_ES_VERSION_3_2 && glTexBuffer;
+    }();
+    return enabled;
+}
+#endif
 constexpr unsigned LUT_WIDTH = 1024;
 void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
     const GLenum format = internal_format == GL_RG32F ? GL_RG : GL_RGBA;

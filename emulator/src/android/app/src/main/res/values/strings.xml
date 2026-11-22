@@ -37,7 +37,7 @@
     <string name="setting_skip_cpu_write">Skip CPU Access</string>
     <string name="setting_skip_texture_copy">Skip Texture Copy</string>
     <string name="setting_use_linear_filter">Use Linear Filter</string>
-    <string name="setting_force_texture_filter">Force Texture Filter</string>
+    <string name="setting_force_texture_filter">Texture filtering</string>
     <string name="setting_hw_gs_mode">Geometry Shader</string>
     <string name="setting_shadow_rendering">Enable Shadow Rendering</string>
     <string name="setting_async_shader_compile">Asynchronous Shader Compilation</string>
@@ -144,7 +144,8 @@
     <string name="add_directory_title">Add Folder to Library</string>
 
     <string name="setting_header_core">System</string>
-    <string name="setting_header_renderer">Renderer</string>
+    <string name="setting_header_renderer">Display</string>
+    <string name="setting_header_advanced">Advanced</string>
     <string name="setting_header_audio">Audio</string>
     <string name="setting_header_camera">Camera</string>
 
@@ -153,7 +154,8 @@
     <string name="setting_is_new_3ds">New 3DS Mode</string>
     <string name="setting_is_new_3ds_desc">The New 3DS has different memory and processor, and some games can only start on the New 3DS.</string>
     <string name="setting_use_virtual_sd">Use Virtual SD</string>
-    <string name="setting_enable_cpu_jit">Enable CPU JIT</string>
+    <string name="setting_enable_cpu_jit">Dynarmic JIT</string>
+    <string name="setting_enable_cpu_jit_desc">Turn off to use FastInterp. Reopen the game after changing this setting.</string>
     <string name="setting_region_value">Emulation Region</string>
     <string name="setting_system_language">System Language</string>
     <string name="setting_shared_font">System Font</string>
@@ -161,7 +163,7 @@
 
     <string name="show_fps">Show FPS</string>
     <string name="layout_option">Screen Layout</string>
-    <string name="internal_resolution">Internal Resolution</string>
+    <string name="internal_resolution">Internal resolution</string>
     <string name="setting_hw_shader">Enable Hardware Shader</string>
     <string name="setting_hw_shader_desc">Turn it on to improve performance, but some 2D games have display issues.</string>
     <string name="setting_shaders_accurate_mul">Accurate Multiplication</string>
@@ -173,7 +175,10 @@
     <string name="cpu_usage_limit_description">When enabled, emulation cpu usage will be limited to a smaller time slice.</string>
     <string name="frame_limit_enable">Enable Speed Limit</string>
     <string name="frame_limit_enable_description">When enabled, emulation speed will be limited to a specified percentage of normal speed.</string>
-    <string name="frame_limit_slider">Speed Limit Percent</string>
+    <string name="setting_accuracy_mode">Accuracy mode</string>
+    <string name="setting_accuracy_mode_desc">Locks gameplay speed and guest CPU clock at 100%. GPU timing changes when you reopen the game.</string>
+    <string name="setting_limit_speed">Limit game speed</string>
+    <string name="frame_limit_slider">Maximum speed</string>
     <string name="frame_limit_slider_description">With the default of 100% emulation will be limited to normal speed. Values higher or lower will increase or decrease the speed limit.</string>
     <string name="setting_use_fence_sync">Enable Memory Reuse</string>
     <string name="setting_use_fence_sync_description">Turn it on to improve performance, but some games may have display issues or crash in game.</string>
@@ -299,4 +304,9 @@
     <string name="nnf_new_folder_ok">@android:string/ok</string>
     <string name="nnf_new_folder_cancel">@android:string/cancel</string>
 
+    <string name="setting_adaptive_frame_skip">Adaptive frame skip</string>
+    <string name="setting_adaptive_frame_skip_desc">Coalesce display updates in Performance Mode while preserving guest rendering and timing.</string>
+    <string name="setting_fixed_guest_clock">Fixed guest CPU clock</string>
+    <string name="setting_fixed_guest_clock_desc">Choose a fixed CPU clock in Performance Mode. Accuracy Mode uses the original clock.</string>
+    <string name="setting_guest_clock_percent">Guest CPU clock</string>
 </resources>

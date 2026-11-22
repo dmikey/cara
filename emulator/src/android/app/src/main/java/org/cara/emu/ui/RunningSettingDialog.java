@@ -126,12 +126,16 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_HW_GS_MODE = 5;
         public static final int SETTING_SHADOW_RENDERING = 6;
         public static final int SETTING_ASYNC_SHADER_COMPILE = 7;
-        public static final int SETTING_USE_COMPATIBLE_MODE = 8;
-        public static final int SETTING_SCALE_FACTOR = 9;
-        public static final int SETTING_SCREEN_LAYOUT = 10;
-        public static final int SETTING_ACCURATE_MUL = 11;
-        public static final int SETTING_CUSTOM_LAYOUT = 12;
-        public static final int SETTING_FRAME_LIMIT = 13;
+        public static final int SETTING_SCALE_FACTOR = 8;
+        public static final int SETTING_SCREEN_LAYOUT = 9;
+        public static final int SETTING_ACCURATE_MUL = 10;
+        public static final int SETTING_CUSTOM_LAYOUT = 11;
+        public static final int SETTING_FRAME_LIMIT = 12;
+        public static final int SETTING_ACCURACY_MODE = 13;
+        public static final int SETTING_LIMIT_SPEED = 14;
+        public static final int SETTING_ADAPTIVE_FRAME_SKIP = 15;
+        public static final int SETTING_FIXED_GUEST_CLOCK = 16;
+        public static final int SETTING_GUEST_CLOCK_PERCENT = 17;
 
         // pref
         public static final int SETTING_JOYSTICK_RELATIVE = 100;
@@ -149,6 +153,7 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_MEMORY_VIEWER = 206;
         public static final int SETTING_EDIT_SCREEN = 207;
         public static final int SETTING_EXIT_GAME = 208;
+        public static final int SETTING_SHOW_ADVANCED = 209;
 
         public static final int SETTING_MULTIPLAYER_ROOM_TEXT = 400;
         public static final int SETTING_MULTIPLAYER_CREATE_ROOM = 401;
@@ -248,6 +253,9 @@ public class RunningSettingDialog extends DialogFragment {
             switch (mItem.getSetting()) {
             case SettingsItem.SETTING_LOAD_SUBMENU:
                 loadSubMenu(mItem.getValue());
+                break;
+            case SettingsItem.SETTING_SHOW_ADVANCED:
+                mAdapter.showAdvancedSettings();
                 break;
             case SettingsItem.SETTING_EDIT_BUTTONS:
                 activity.startConfiguringControls();
@@ -351,13 +359,14 @@ public class RunningSettingDialog extends DialogFragment {
         public void bind(SettingsItem item) {
             mItem = item;
             mTextSettingName.setText(item.getName());
+            mCheckbox.setOnCheckedChangeListener(null);
             mCheckbox.setChecked(mItem.getValue() > 0);
+            mCheckbox.setOnCheckedChangeListener(this);
         }
 
         @Override
         public void onClick(View clicked) {
             mCheckbox.toggle();
-            mItem.setValue(mCheckbox.isChecked() ? 1 : 0);
         }
 
         @Override
@@ -394,7 +403,9 @@ public class RunningSettingDialog extends DialogFragment {
 
             mItem = item;
             mTextSettingName.setText(item.getName());
+            mRadioGroup.setOnCheckedChangeListener(null);
             mRadioGroup.check(checkIds[index]);
+            mRadioGroup.setOnCheckedChangeListener(this);
 
             if (item.getSetting() == SettingsItem.SETTING_SCREEN_LAYOUT) {
                 RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
@@ -491,6 +502,7 @@ public class RunningSettingDialog extends DialogFragment {
         private TextView mTextSettingName;
         private TextView mTextSettingValue;
         private SeekBar mSeekBar;
+        private int mMinimum;
         private final SeekBar.OnSeekBarChangeListener mOnSeekBarChangeListener;
 
         public SeekBarSettingViewHolder(View itemView) {
@@ -498,7 +510,7 @@ public class RunningSettingDialog extends DialogFragment {
             mOnSeekBarChangeListener = new SeekBar.OnSeekBarChangeListener() {
                 @Override
                 public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                    refreshProgress(progress);
+                    refreshProgress(progress + mMinimum);
                 }
 
                 @Override
@@ -525,12 +537,11 @@ public class RunningSettingDialog extends DialogFragment {
             mItem = item;
             mTextSettingName.setText(item.getName());
             mSeekBar.setOnSeekBarChangeListener(null);
-            if (mItem.getSetting() == SettingsItem.SETTING_FRAME_LIMIT) {
-                mSeekBar.setMax(200);
-            } else {
-                mSeekBar.setMax(100);
-            }
-            mSeekBar.setProgress(item.getValue());
+            boolean speed = mItem.getSetting() == SettingsItem.SETTING_FRAME_LIMIT;
+            boolean guestClock = mItem.getSetting() == SettingsItem.SETTING_GUEST_CLOCK_PERCENT;
+            mMinimum = speed ? 50 : guestClock ? 25 : 0;
+            mSeekBar.setMax(speed || guestClock ? 200 - mMinimum : 100);
+            mSeekBar.setProgress(item.getValue() - mMinimum);
             mSeekBar.setOnSeekBarChangeListener(mOnSeekBarChangeListener);
             refreshProgress(item.getValue());
         }
@@ -556,6 +567,7 @@ public class RunningSettingDialog extends DialogFragment {
         private int mControllerScale;
         private int mControllerAlpha;
         private ArrayList<SettingsItem> mSettings;
+        private ArrayList<SettingsItem> mAdvancedSettings;
 
         public void loadMainMenu() {
             mSettings = new ArrayList<>();
@@ -598,7 +610,6 @@ public class RunningSettingDialog extends DialogFragment {
         }
 
         public void loadSettingsMenu() {
-            int i = 0;
             mRunningSettings = NativeLibrary.getRunningSettings();
             mSettings = new ArrayList<>();
 
@@ -628,49 +639,71 @@ public class RunningSettingDialog extends DialogFragment {
                     R.string.controller_alpha, SettingsItem.TYPE_SEEK_BAR,
                     mControllerAlpha));
 
-            // native settings
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_CORE_TICKS_HACK,
-                    R.string.setting_core_ticks_hack,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_SLOW_DRAW,
-                    R.string.setting_skip_slow_draw,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_CPU_WRITE,
-                    R.string.setting_skip_cpu_write,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_TEXTURE_COPY,
-                    R.string.setting_skip_texture_copy,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
+            // Display controls stay visible. Tuning is revealed on demand.
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SCREEN_LAYOUT,
+                    R.string.layout_option, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_SCREEN_LAYOUT]));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SCALE_FACTOR,
+                    R.string.internal_resolution, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_SCALE_FACTOR]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_FORCE_TEXTURE_FILTER,
                     R.string.setting_force_texture_filter,
-                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_HW_GS_MODE,
-                    R.string.setting_hw_gs_mode,
-                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SHADOW_RENDERING,
-                    R.string.setting_shadow_rendering,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_ASYNC_SHADER_COMPILE,
-                    R.string.setting_async_shader_compile,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_USE_COMPATIBLE_MODE,
-                    R.string.setting_use_compatible_mode,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SCALE_FACTOR,
-                    R.string.running_resolution, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SCREEN_LAYOUT,
-                    R.string.running_layout, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURATE_MUL,
-                    R.string.running_accurate_mul, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[i++]));
+                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_FORCE_TEXTURE_FILTER]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_CUSTOM_LAYOUT,
                     R.string.running_custom_layout,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[i++]));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_FRAME_LIMIT,
-                    R.string.running_frame_limit,
-                    SettingsItem.TYPE_SEEK_BAR, mRunningSettings[i++]));
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_CUSTOM_LAYOUT]));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SHOW_ADVANCED,
+                    R.string.setting_header_advanced, SettingsItem.TYPE_TEXT, 0));
+            mAdvancedSettings = new ArrayList<>();
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_CORE_TICKS_HACK,
+                    R.string.setting_core_ticks_hack,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_CORE_TICKS_HACK]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_SLOW_DRAW,
+                    R.string.setting_skip_slow_draw,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_SLOW_DRAW]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_CPU_WRITE,
+                    R.string.setting_skip_cpu_write,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_CPU_WRITE]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_TEXTURE_COPY,
+                    R.string.setting_skip_texture_copy,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_TEXTURE_COPY]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_HW_GS_MODE,
+                    R.string.setting_hw_gs_mode,
+                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_HW_GS_MODE]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SHADOW_RENDERING,
+                    R.string.setting_shadow_rendering,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SHADOW_RENDERING]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ASYNC_SHADER_COMPILE,
+                    R.string.setting_async_shader_compile,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_ASYNC_SHADER_COMPILE]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURATE_MUL,
+                    R.string.running_accurate_mul, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_ACCURATE_MUL]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURACY_MODE,
+                    R.string.setting_accuracy_mode, SettingsItem.TYPE_CHECKBOX,
+                    mRunningSettings[SettingsItem.SETTING_ACCURACY_MODE]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP,
+                    R.string.setting_adaptive_frame_skip,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_FIXED_GUEST_CLOCK,
+                    R.string.setting_fixed_guest_clock,
+                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_FIXED_GUEST_CLOCK]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_GUEST_CLOCK_PERCENT,
+                    R.string.setting_guest_clock_percent,
+                    SettingsItem.TYPE_SEEK_BAR, mRunningSettings[SettingsItem.SETTING_GUEST_CLOCK_PERCENT]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_LIMIT_SPEED,
+                    R.string.setting_limit_speed, SettingsItem.TYPE_CHECKBOX,
+                    mRunningSettings[SettingsItem.SETTING_LIMIT_SPEED]));
+            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_FRAME_LIMIT,
+                    R.string.frame_limit_slider,
+                    SettingsItem.TYPE_SEEK_BAR, mRunningSettings[SettingsItem.SETTING_FRAME_LIMIT]));
+            notifyDataSetChanged();
+        }
+
+        public void showAdvancedSettings() {
+            // Advanced is always the last row until it is expanded.
+            mSettings.remove(mSettings.size() - 1);
+            mSettings.addAll(mAdvancedSettings);
             notifyDataSetChanged();
         }
 
@@ -760,20 +793,19 @@ public class RunningSettingDialog extends DialogFragment {
             }
             mSettings.remove(0);
 
-            // applay prefs
+            // Apply preferences.
             editor.apply();
             activity.refreshControls();
 
             // native settings
-            boolean isChanged = false;
-            int[] newSettings = new int[mRunningSettings.length];
-            for (int i = 0; i < mRunningSettings.length; ++i) {
-                newSettings[i] = mSettings.get(i).getValue();
-                if (newSettings[i] != mRunningSettings[i]) {
-                    isChanged = true;
+            int[] newSettings = mRunningSettings.clone();
+            for (SettingsItem setting : mSettings) {
+                int key = setting.getSetting();
+                if (key < newSettings.length) {
+                    newSettings[key] = setting.getValue();
                 }
             }
-            if (isChanged) {
+            if (!java.util.Arrays.equals(newSettings, mRunningSettings)) {
                 NativeLibrary.setRunningSettings(newSettings);
             }
             mRunningSettings = null;
