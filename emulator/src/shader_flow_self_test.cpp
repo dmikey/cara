@@ -230,6 +230,7 @@ static void CheckGPU(const Fixture& f, const std::string& generated) {
 }
 #endif
 void CheckCombinerBufferElision();
+void CheckMaterialBorderConfig();
 
 int main(int argc, char** argv) {
     try {
@@ -240,6 +241,8 @@ int main(int argc, char** argv) {
 #else
         Require(!gpu, "GPU execution test currently requires macOS CGL");
 #endif
+        CheckMaterialBorderConfig();
+        std::cout << "PASS material border shader configuration\n";
         CheckCombinerBufferElision();
         std::cout << "PASS GLES combiner-buffer elision\n";
         const auto fixtures = Fixtures();
