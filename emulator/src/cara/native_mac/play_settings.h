@@ -19,6 +19,7 @@ struct PlaySettings {
     unsigned maximum_speed_percent = 100;
     bool adaptive_frame_skip = true;
     bool async_metal_shaders = true;
+    bool metal_supersampling = false;
     DisplayScale display_scale = DisplayScale::Fit;
 
     bool operator==(const PlaySettings&) const = default;
@@ -71,6 +72,7 @@ struct PlaySettings {
         result.limit_speed = flag("Play", "limit_speed", true);
         result.maximum_speed_percent = percent(ini.Get("Play", "maximum_speed_percent"), 50);
         result.adaptive_frame_skip = flag("Play", "adaptive_frame_skip", true);
+        result.metal_supersampling = flag("Renderer", "metal_supersampling", false);
         result.async_metal_shaders = flag("Renderer", "async_metal_shaders", true);
         const auto scale = ini.Get("Renderer", "output_scale");
         if (scale == "2")
@@ -89,6 +91,7 @@ struct PlaySettings {
         ini.Set("Play", "maximum_speed_percent", std::to_string(maximum_speed_percent));
         ini.Set("Play", "adaptive_frame_skip", adaptive_frame_skip ? "true" : "false");
         ini.Set("Renderer", "async_metal_shaders", async_metal_shaders ? "true" : "false");
+        ini.Set("Renderer", "metal_supersampling", metal_supersampling ? "true" : "false");
         ini.Set("Renderer", "output_scale", std::to_string(static_cast<unsigned>(display_scale)));
     }
 };

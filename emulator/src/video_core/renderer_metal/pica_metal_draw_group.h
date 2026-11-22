@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "pica_metal_draw.h"
+#include "pica_metal_resolution.h"
 
 #include <array>
 #include <cstdint>
@@ -119,7 +120,9 @@ class PicaMetalDrawGroup {
 public:
     enum class Result { Recorded, BoundaryRequired, Unsupported, Fault };
 
-    PicaMetalDrawGroup(id<MTLCommandQueue> owner_queue, NSUInteger upload_page_bytes);
+    PicaMetalDrawGroup(id<MTLCommandQueue> owner_queue, NSUInteger upload_page_bytes,
+                       id<MTLLibrary> scale_library = nil, unsigned scale = 1);
+    MetalRasterScale& Resolution() { return resolution; }
     ~PicaMetalDrawGroup();
     void Abort() noexcept;
     PicaMetalDrawGroup(const PicaMetalDrawGroup&) = delete;
@@ -139,6 +142,8 @@ private:
     PicaMetalDrawTicket pending;
     PicaMetalSurfaceView color;
     PicaMetalSurfaceView depth_stencil;
+    MetalRasterScale resolution;
+    bool scaled_group = false;
     bool faulted = false;
 };
 

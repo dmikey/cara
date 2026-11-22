@@ -23,6 +23,8 @@ struct ExactPackedMetalResources {
 
 struct PicaMetalResources {
     id<MTLCommandQueue> queue = nil;
+    id<MTLLibrary> resolution_library = nil;
+    unsigned internal_scale = 1;
     ExactPackedMetalResources draw;
     MetalTransfer::Pipelines transfer;
     MetalLCD::Pipelines lcd;

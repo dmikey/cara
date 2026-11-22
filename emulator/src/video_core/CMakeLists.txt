@@ -164,6 +164,7 @@ if (CARA_PRIVATE_METAL_DRAWS)
         renderer_metal/pica_metal_draw.mm
         renderer_metal/batched_vertex_source.cpp
         renderer_metal/simd_vertex_source.cpp
+        renderer_metal/pica_metal_resolution.mm
         renderer_metal/pica_metal_draw_group.mm
         renderer_metal/pica_metal_upload.mm
         renderer_metal/pica_metal_submission_queue.mm

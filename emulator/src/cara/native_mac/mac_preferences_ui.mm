@@ -51,7 +51,7 @@ SDL_Scancode Key(NSEvent* e){
 NSTabView* tabs;
 NSButton* tab_buttons[3];
 NSPopUpButton *mode, *scale;
-NSButton *fixedClock, *limitSpeed, *frameSkip, *resetTuning, *asyncShaders;
+NSButton *fixedClock, *limitSpeed, *frameSkip, *resetTuning, *asyncShaders, *supersampling;
 NSSlider *guestClock, *maximumSpeed;
 NSTextField *guestClockValue, *maximumSpeedValue, *modeDescription;
 NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<InputCommon::Polling::DevicePoller>> pollers;
@@ -121,6 +121,7 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
     modeDescription.stringValue = performance
         ? @"Cara adjusts the guest clock under load unless you set a fixed clock. Guest GPU timing applies when you open a game."
         : @"Runs the guest clock and speed limit at 100% with adaptive frame skip off.";
+    supersampling.state = play.metal_supersampling ? NSControlStateValueOn : NSControlStateValueOff;
     [scale selectItemWithTag:static_cast<NSInteger>(play.display_scale)];
 }
 -(void)changePlayOption:(id)sender {
@@ -133,6 +134,8 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
         play.limit_speed = limitSpeed.state == NSControlStateValueOn;
     else if (sender == frameSkip)
         play.adaptive_frame_skip = frameSkip.state == NSControlStateValueOn;
+    else if (sender == supersampling)
+        play.metal_supersampling = supersampling.state == NSControlStateValueOn;
     else if (sender == asyncShaders)
         play.async_metal_shaders = asyncShaders.state == NSControlStateValueOn;
     else if (sender == guestClock)
@@ -148,11 +151,13 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
     auto& play = model->play;
     const auto modeBefore = play.mode;
     const auto scaleBefore = play.display_scale;
+    const auto supersamplingBefore = play.metal_supersampling;
     const auto asyncBefore = play.async_metal_shaders;
     play = PlaySettings{};
     play.mode = modeBefore;
     play.display_scale = scaleBefore;
     play.async_metal_shaders = asyncBefore;
+    play.metal_supersampling = supersamplingBefore;
     [self updatePlayControls];
 }
 -(void)selectSettingsTab:(NSButton*)sender {
@@ -277,6 +282,9 @@ CaraPreferencesActions* BuildPreferences(){
  [a->scale itemAtIndex:2].tag=static_cast<NSInteger>(DisplayScale::Lossless4x);
  a->scale.target=a;a->scale.action=@selector(changePlayOption:);[display addSubview:a->scale];
  [display addSubview:Label(@"Lossless modes center the screens at whole pixel multiples. Smaller windows use the largest whole multiple that fits. Below 1×, the screens fit the window.",NSMakeRect(15,205,528,59))];
+ a->supersampling=PlayCheckbox(@"2× internal resolution",NSMakeRect(15,88,300,22),a);
+ [display addSubview:a->supersampling];
+ [display addSubview:Label(@"Render Metal geometry at twice the native resolution. Reopen the game to apply.",NSMakeRect(15,40,528,44))];
  a->asyncShaders=PlayCheckbox(@"Async Shaders",NSMakeRect(15,173,220,22),a);
  [display addSubview:a->asyncShaders];
  [display addSubview:Label(@"Build eligible shaders in the background when you open a game with Metal in Performance mode.",NSMakeRect(15,123,528,42))];

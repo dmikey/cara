@@ -163,8 +163,8 @@ private:
 
 class MetalWindow final : public Frontend::EmuWindow {
 public:
-    explicit MetalWindow(HostEvents& events_) : events(events_) {
-        UpdateFramebufferLayout(WindowWidth, WindowHeight);
+    MetalWindow(HostEvents& events_, unsigned scale_) : events(events_), scale(scale_) {
+        UpdateFramebufferLayout(WindowWidth * scale, WindowHeight * scale);
     }
     void MakeCurrent() override {}
     void DoneCurrent() override {}
@@ -182,10 +182,10 @@ public:
                 InputCommon::GetKeyboard()->ReleaseKey(event.scancode);
                 break;
             case LiveInputKind::PressTouch:
-                TouchPressed(event.x, event.y);
+                TouchPressed(event.x * scale, event.y * scale);
                 break;
             case LiveInputKind::MoveTouch:
-                TouchMoved(event.x, event.y);
+                TouchMoved(event.x * scale, event.y * scale);
                 break;
             case LiveInputKind::ReleaseTouch:
                 TouchReleased();
@@ -212,6 +212,7 @@ public:
 
 private:
     HostEvents& events;
+    unsigned scale;
 };
 
 void EnqueuePointer(SDL_Window* window, HostEvents& events, int x, int y, LiveInputKind kind) {
@@ -261,7 +262,7 @@ struct UiPumpSample {
 };
 
 void RunHostUi(SDL_Window* window, NSWindow* native, CAMetalLayer* layer, HostEvents& events,
-               const std::string& output) {
+               const std::string& output, unsigned scale) {
     constexpr auto ProbeIntervalMs = 50;
     constexpr std::size_t MaxSamples = 200'000;
     const bool trace = std::getenv("CARA_MAC_UI_PUMP_TIMING") != nullptr;
@@ -275,7 +276,7 @@ void RunHostUi(SDL_Window* window, NSWindow* native, CAMetalLayer* layer, HostEv
     const auto start = Clock::now();
     std::vector<UiPumpSample> samples;
     bool report_fullscreen = native != nil;
-    const auto size = CGSizeMake(WindowWidth, WindowHeight);
+    const auto size = CGSizeMake(WindowWidth * scale, WindowHeight * scale);
     while (!events.finished.load()) {
         @autoreleasepool {
             SDL_Event event{};
@@ -293,8 +294,8 @@ void RunHostUi(SDL_Window* window, NSWindow* native, CAMetalLayer* layer, HostEv
                     }
                 } while (SDL_PollEvent(&event));
             }
-            // SDL can resize the drawable on a Space transition; the
-            // compatibility capture uses a fixed native-pixel layout.
+            // SDL can resize the drawable on a Space transition. Keep its pixel
+            // dimensions synchronized with the emulation thread's capture layout.
             if (!CGSizeEqualToSize(layer.drawableSize, size))
                 layer.drawableSize = size;
             if (auto title = events.TakeTitle())
@@ -319,24 +320,23 @@ void RunHostUi(SDL_Window* window, NSWindow* native, CAMetalLayer* layer, HostEv
 
 int RunEmulation(const char* path, unsigned limit, unsigned interval, const std::string& output,
                  const std::vector<InputEvent>& inputs, bool jit, CAMetalLayer* layer,
-                 id<MTLDevice> device, NSURL* library, HostEvents& events) {
+                 id<MTLDevice> device, NSURL* library, HostEvents& events,
+                 const Cara::MacPreferences::Ini& ini, unsigned scale) {
     const auto* performance = std::getenv("CARA_MAC_METAL_PERFORMANCE_MODE");
-    std::string ini_text;
-    FileUtil::ReadFileToString(false, FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir) +
-        "sdl2-config.ini", ini_text);
     Cara::ConfigureMetalGeneralFragment(Cara::MacPreferences::PlaySettings::AsyncShadersForMetalSession(
-        Cara::MacPreferences::Ini(std::move(ini_text)), performance));
+        ini, performance));
     std::cout << "METAL_ASYNC_SHADERS enabled=" << Cara::UseMetalGeneralFragment() << std::endl;
 
     NSError* error = nil;
-    const auto assets = Cara::LoadPicaMetalResources(device, library, MTLPixelFormatBGRA8Unorm, &error);
+    auto assets = Cara::LoadPicaMetalResources(device, library, MTLPixelFormatBGRA8Unorm, &error);
     if (!assets)
         throw std::runtime_error(error.localizedDescription.UTF8String ?: "Missing Metal assets");
 
+    assets->internal_scale = scale;
     const auto should_capture = [&](unsigned frame) {
         return frame == limit || (interval && frame && frame % interval == 0);
     };
-    MetalWindow host(events);
+    MetalWindow host(events, scale);
     unsigned presentations = 0;
     VideoCore::SetNativeRendererFactory([&](Frontend::EmuWindow& w, Memory::MemorySystem& m) {
         return Cara::MakeNativeMetalRenderer(w, m, layer, *assets,
@@ -487,12 +487,19 @@ int main(int argc, char** argv) {
                 setenv("CARA_METAL_QUEUE_PENDING_DEPTH_EXPORT", "1", 0) != 0 ||
                 setenv("CARA_METAL_REUSE_UNIFORM_UPLOADS", "1", 0) != 0)
                 throw std::runtime_error("Could not initialize the Apple Metal policy");
+            FileUtil::SetUserPath(output);
+            std::string ini_text;
+            FileUtil::ReadFileToString(false, FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir) +
+                "sdl2-config.ini", ini_text);
+            const Cara::MacPreferences::Ini ini(std::move(ini_text));
+            const unsigned scale = Cara::MacPreferences::PlaySettings::Read(ini).metal_supersampling ? 2 : 1;
             SDL_SetMainReady();
             if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0)
                 throw std::runtime_error(SDL_GetError());
             SCOPE_EXIT({ SDL_Quit(); });
             SDL_Window* window = SDL_CreateWindow("Cara Metal compatibility",
-                SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WindowWidth, WindowHeight, SDL_WINDOW_METAL);
+                SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WindowWidth, WindowHeight,
+                SDL_WINDOW_METAL | (scale > 1 ? SDL_WINDOW_ALLOW_HIGHDPI : 0));
             if (!window)
                 throw std::runtime_error(SDL_GetError());
             SCOPE_EXIT({ SDL_DestroyWindow(window); });
@@ -504,7 +511,7 @@ int main(int argc, char** argv) {
             id<MTLDevice> device = MTLCreateSystemDefaultDevice();
             layer.device = device;
             layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-            layer.drawableSize = CGSizeMake(WindowWidth, WindowHeight);
+            layer.drawableSize = CGSizeMake(WindowWidth * scale, WindowHeight * scale);
             layer.framebufferOnly = NO;
             // The core already paces refreshes. A second sync to the Mac
             // display can stall the producer at a different refresh cadence.
@@ -528,7 +535,6 @@ int main(int argc, char** argv) {
             }
             NSURL* library = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
 
-            FileUtil::SetUserPath(output);
             if (const auto cia = Frontend::Apple::OpenCia(argv[1]); cia.message) {
                 std::cerr << cia.message << std::endl;
                 return cia.success ? 0 : 3;
@@ -574,7 +580,7 @@ int main(int argc, char** argv) {
                 @autoreleasepool {
                     try {
                         result = RunEmulation(argv[1], limit, interval, output, inputs, jit,
-                                              layer, device, library, events);
+                                              layer, device, library, events, ini, scale);
                     } catch (const std::exception& ex) {
                         std::cerr << "WORKER_ERROR " << ex.what() << std::endl;
                     }
@@ -586,7 +592,7 @@ int main(int argc, char** argv) {
                 if (emulation.joinable())
                     emulation.join();
             });
-            RunHostUi(window, native, layer, events, output);
+            RunHostUi(window, native, layer, events, output, scale);
             emulation.join();
             return result;
         } catch (const std::exception& ex) {
