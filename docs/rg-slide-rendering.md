@@ -113,8 +113,12 @@ instrumentation adds overhead, so compare these rows directly.
 Matched movement windows processed roughly 515,000 GPU vertex entries per
 emulated refresh. Median texture acquisition wall time was 3.23 ms/refresh
 off and 2.85 ms on. Vertex preparation was about 1.15 ms/refresh in both.
-Timing includes driver work and waits within scopes. This is one A/B with
-live gameplay, and packed fetch reuse remains an opt-in.
+Timing includes driver work and waits within scopes. A repeat A/B on the
+main APK showed a smaller mean gain, from 54.88 to 55.38 refreshes/s.
+The paired p99 ranges were 25.65–34.53 and 25.59–30.43 ms, and the maxima
+were 35.81 and 35.20 ms across seven warm windows each. The non-fragment
+queue share fell from 59.4% to 53.4% of GPU-active cycles. Packed fetch
+reuse remains an opt-in.
 
 Arm hardware counters sampled simultaneously showed programmable cores
 active during about 93% of GPU-active cycles in the walk. The fragment and
@@ -135,14 +139,71 @@ The matching title window still peaked at **2,196.57 ms**, with four
 vertex stage compiles and zero links.
 
 The stored title programs contain 47 pairs, 17 distinct vertex sources,
-and 37 distinct fragment sources. Comparing generated source with only
-the scissor-test lines removed reduces the count to 40 distinct pairs.
-This identifies a bounded GLSL permutation candidate. Exact scissor
-behavior and warm speed need physical checks before changing defaults.
+and 37 distinct fragment sources. Seven pairs can share a fragment source
+when scissor mode is a uniform. An opt-in GLES probe tested that route on
+the RG Slide. The cold title window dropped from 46 new links to 39 and
+70.56 s to 60.12 s of link wall time. Its p99 moved from 33.49 s to 28.29 s
+and the worst refresh from 47.32 s to 43.02 s. Both used separate empty
+Cara program caches, with the uniform arm running first. First-start
+screens offset the title window positions.
+
+With both cold shader sets built, the stock title windows and a uniform
+scissor relaunch had identical respective draw and vertex counts.
+Warm medians rose from 97.37–97.91 ms to 102.11–102.51 ms, p99 from
+101.64–108.27 ms to 106.91–111.59 ms, and the overall worst from 111.05 ms
+to 117.01 ms. The uniform route stays outside the shipping defaults.
+
+An independent packed-input probe reused the last integer texture fetch
+between vertex attributes. A GPU decode fixture confirmed exact output
+on the Mac. On the RG Slide's Stories first walk, packed fetch alone
+averaged 54.42 refreshes/s across six full warm windows. The added rolling
+cache averaged 50.79 refreshes/s. The per-window p99 ranges were
+26.17–37.23 ms and 26.88–35.87 ms. Non-fragment active cycles increased
+from about 23.8 million to 37.6 million per refresh despite similar
+position and varying thread counts. The rolling cache stays experimental.
+
+[Rolling fetch APK build](https://github.com/dmikey/cara/actions/runs/45075728414) ·
+[Runtime scissor APK build](https://github.com/dmikey/cara/actions/runs/45075090315)
 
 [Diagnostic APK build](https://github.com/dmikey/cara/actions/runs/45072818833) ·
 [Hardware counter sampler build](https://github.com/dmikey/cara/actions/runs/45074322844) ·
 [Arm Mali-G57 counter reference](https://arm-software.github.io/libGPUCounters/mali-g57_counter_reference.html)
+
+## Dark Moon comparison with Citra MMJ
+
+The installed MMJ build reports `3eb22034a`. Its saved global settings
+request native resolution, hardware vertex shaders, CPU JIT and a 100%
+speed cap. Cara used Accuracy Mode, JIT and 1×. Both Cara variants came
+from the same diagnostic source tree and ran without the scissor probe.
+An additional shipping-source atlas run confirmed the atlas result.
+Each measurement below counts actual game-layer buffer presentation on
+the RG Slide at 60 Hz after reaching the Dark Moon title.
+
+| Installed build | Presents/s | Presentation p99 | Worst present interval |
+| --- | ---: | ---: | ---: |
+| Citra MMJ | 59.47 | 33.15 ms | 33.41 ms |
+| Cara GLES atlas | 10.37 | 100.05 ms | 100.08 ms |
+| Cara native GLES 3.2 | 8.24 | 149.95 ms | 150.01 ms |
+
+The same-commit atlas at the device's 120 Hz panel mode measured 10.19
+presents/s, 108.34 ms p99, and 108.35 ms maximum. The Cara title refresh
+trace establishes the largest gles32 difference. Native GLES 3.2 spent
+about 8.0 s per 120 emulated refreshes in surface download, with no such
+time in the atlas windows. A native cold window completed 46 links in
+28.54 s compared with 70.56 s on atlas. Faster linking alone did not
+carry through to the warm title because of the downloads.
+
+MMJ presents measure observed output cadence. Installed game overrides
+and emulated system timing were not matched to Cara. A prior separate
+comparison at Gadd's lab found that the shipped FMV and texture-copy
+overrides changed refresh and game-submission rates. Public MMJ source
+uses raw buffer uploads and preserves guest primitive topology. Cara's
+native GLES 3.2 path also does that. The warm counterexample shows that
+this route needs to retain render targets on GPU before testing it as a
+default.
+
+[MMJ public draw path](https://github.com/weihuoya/citra/blob/302b0c3bc4312bc96489c11584a97664894b343f/src/video_core/renderer_opengl/gl_rasterizer.cpp#L329-L501) ·
+[Prior MMJ Gadd lab investigation](https://github.com/dmikey/cara/blob/f41280d/docs/android-draw-processing.md#mmj-baseline-correction-and-live-transfer-probes)
 
 ## Physical device observations
 
