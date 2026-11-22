@@ -37,6 +37,7 @@ struct Screen {
     bool solid = false;
     std::array<float, 4> color{};
     std::optional<Filter> filter = std::nullopt;
+    bool enhanced = false;
 };
 using LosslessBuffers = std::array<id<MTLTexture>, 2>;
 

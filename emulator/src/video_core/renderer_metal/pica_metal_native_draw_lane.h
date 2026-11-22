@@ -31,7 +31,8 @@ public:
     // the lane or submitted to Metal; return empty when unavailable.
     using GuestRamView = std::function<std::span<const u8>(PAddr, std::size_t)>;
     PicaMetalNativeDrawLane(id<MTLCommandQueue> queue, NSUInteger upload_page_bytes,
-                          GuestWriteNotice notice = {}, GuestRamView ram_view = {});
+                          GuestWriteNotice notice = {}, GuestRamView ram_view = {},
+                          id<MTLLibrary> scale_library = nil, unsigned internal_scale = 1);
     ~PicaMetalNativeDrawLane();
     void Abort() noexcept;
     void FlushGuest(PAddr begin, PAddr end,
@@ -112,6 +113,14 @@ private:
     std::optional<PicaMetalNativeAttachment> resident_color;
     std::optional<PicaMetalNativeAttachment> resident_depth;
     PicaMetalNativeAttachment unbacked_depth{};
+    struct EnhancedScanout {
+        MetalTransfer::GuestInterval bytes;
+        u32 width, height, bpp;
+        id<MTLBuffer> writer;
+        id<MTLTexture> image;
+    };
+    std::array<EnhancedScanout,4> enhanced_lcd{};
+    unsigned next_enhanced_lcd = 0;
     struct FlushReadback {
         static constexpr u32 BlockBytes = 4096;
         std::array<u8, BlockBytes> bytes;

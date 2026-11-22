@@ -352,12 +352,13 @@ public:
         }
         NSError* error = nil;
         NSURL* shaders = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
-        const auto resources = Cara::LoadPicaMetalResources(
+        auto resources = Cara::LoadPicaMetalResources(
             device, shaders, layer.pixelFormat, &error);
         if (!resources) {
             graphics_error = error.localizedDescription.UTF8String ?: "Missing Metal resources";
             return;
         }
+        resources->internal_scale = [NSUserDefaults.standardUserDefaults boolForKey:@"metalSupersampling"] ? 2u : 1u;
         VideoCore::SetNativeRendererFactory([this, layer, resources = *resources](
                                                 Frontend::EmuWindow& window, Memory::MemorySystem& memory) {
             auto native = Cara::MakeNativeMetalRenderer(window, memory, layer, resources,
@@ -1519,6 +1520,11 @@ static std::filesystem::path PedometerHistoryPath() {
               [displayDefaults setBool:enabled forKey:CaraMetalRendererKey];
               [owner updateSyncFeedback];
           }}];
+    [display addObject:@{@"title":@"2× internal resolution", @"symbol":@"square.resize",
+        @"subtitle":@"Render Metal geometry at twice the native resolution. Reopen the game to apply.",
+        @"value":@([displayDefaults boolForKey:@"metalSupersampling"]),
+        @"enabled":@([displayDefaults boolForKey:CaraMetalRendererKey]),
+        @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:@"metalSupersampling"]; }}];
     NSString* displayPlayMode = [displayDefaults stringForKey:@"playMode"];
     [display addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
         @"subtitle":@"Build eligible Metal shaders in the background. Applies when you reopen a game.",

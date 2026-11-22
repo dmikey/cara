@@ -58,7 +58,7 @@ std::optional<Screen> PrepareScreen(id<MTLCommandBuffer> commands, unsigned inde
                   static_cast<u32>(scanout->format));
         return std::nullopt;
     }
-    return Screen{texture, false, {}};
+    return Screen{texture, false, {}, std::nullopt, texture.width > scanout->width};
 }
 
 bool PrepareLossless(id<MTLCommandBuffer> commands, const Layout::FramebufferLayout& layout,
@@ -85,6 +85,8 @@ bool PrepareLossless(id<MTLCommandBuffer> commands, const Layout::FramebufferLay
         const auto& rect = rectangles[i];
         const bool integral = FinalScaleIsIntegral(height, width, rect.GetWidth(), rect.GetHeight());
         screens[i]->filter = integral ? Filter::Nearest : Filter::Linear;
+        if (screens[i]->enhanced)
+            continue;
         if (integral && source.width == unsigned(native.height) &&
             source.height == unsigned(native.width))
             continue;

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_opengl/gl_shader_manager.h"
+#include <cstring>
 #include "pica_metal_draw_group.h"
 #include "pica_metal_frame_cost.hh"
 #include "pica_metal_surface_writer.h"
@@ -170,8 +172,9 @@ PicaMetalCompletion PicaMetalDrawTicket::WaitUntilGuestRead() const {
     return Poll();
 }
 
-PicaMetalDrawGroup::PicaMetalDrawGroup(id<MTLCommandQueue> owner_queue, NSUInteger upload_page_bytes)
-    : queue(owner_queue), upload(owner_queue.device, upload_page_bytes) {}
+PicaMetalDrawGroup::PicaMetalDrawGroup(id<MTLCommandQueue> owner_queue, NSUInteger upload_page_bytes,
+                                     id<MTLLibrary> library, unsigned scale)
+    : queue(owner_queue), upload(owner_queue.device, upload_page_bytes), resolution(library, scale) {}
 
 PicaMetalDrawGroup::~PicaMetalDrawGroup() { Abort(); }
 
@@ -311,11 +314,35 @@ PicaMetalDrawGroup::Result PicaMetalDrawGroup::Append(const TexturedMetalDraw& d
         color = views.color;
         depth_stencil = views.depth_stencil;
     }
-    if (!EncodeGroupedMetalDraw(pending.command, upload, draw)) {
+    if (!HasRecordedDraws())
+        scaled_group = resolution.Factor() > 1 && resolution.Begin(
+            pending.command, draw.color, draw.depth_stencil, !draw.unbacked_depth);
+    const auto encode = [&] {
+        if (!scaled_group)
+            return EncodeGroupedMetalDraw(pending.command, upload, draw);
+        auto scaled = draw;
+        const unsigned factor = resolution.Factor();
+        scaled.color = resolution.Target().color;
+        scaled.depth_stencil = resolution.Target().depth;
+        scaled.viewport.originX *= factor; scaled.viewport.originY *= factor;
+        scaled.viewport.width *= factor; scaled.viewport.height *= factor;
+        scaled.scissor.x *= factor; scaled.scissor.y *= factor;
+        scaled.scissor.width *= factor; scaled.scissor.height *= factor;
+        OpenGL::UniformData common{};
+        if (draw.common_uniform.size_bytes() != sizeof(common))
+            return false;
+        std::memcpy(&common, draw.common_uniform.data(), sizeof(common));
+        common.scissor_x1 *= factor; common.scissor_y1 *= factor;
+        common.scissor_x2 *= factor; common.scissor_y2 *= factor;
+        scaled.common_uniform = std::as_bytes(std::span(&common, 1));
+        return EncodeGroupedMetalDraw(pending.command, upload, scaled);
+    };
+    if (!encode()) {
         // The shared encoder returns false before encoding any draw. Its
         // consumed upload ranges may be dropped with an empty command; bytes
         // leased to an already recorded prefix must survive through commit.
         if (!HasRecordedDraws()) {
+            resolution.Invalidate();
             AbortGroupedMetalDraw(pending.command);
             upload.Cancel();
             pending.command = nil;
@@ -335,7 +362,8 @@ std::optional<PicaMetalDrawTicket> PicaMetalDrawGroup::Commit() {
     if (!HasRecordedDraws()) {
         return std::nullopt;
     }
-    if (!CloseGroupedMetalDraw(pending.command) || !upload.Submit()) {
+    if (!CloseGroupedMetalDraw(pending.command) ||
+        (scaled_group && !resolution.Resolve(pending.command)) || !upload.Submit()) {
         // The pre-encoded prefix has no valid writer ticket and may not be
         // silently discarded or marked guest-visible.
         faulted = true;

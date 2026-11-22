@@ -20,6 +20,7 @@ set(CARA_PICA_METAL_SOURCES
     pica_fused_depth_export
     pica_fused_depth_import
     pica_metal_lcd
+    pica_metal_resolution
     pica_metal_mixed_alias
     pica_metal_surface_import
     pica_metal_transfers

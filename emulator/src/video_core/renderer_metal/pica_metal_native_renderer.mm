@@ -58,7 +58,7 @@ public:
               if (!ref || !ref.GetPtr() || size > ref.GetSize())
                   return {};
               return {ref.GetPtr(), size};
-          }),
+          }, resources.resolution_library, resources.internal_scale),
           bindings(resources),
           read([this](PAddr address, std::span<u8> bytes) {
               const auto ref = memory.GetPhysicalRef(address);

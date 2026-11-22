@@ -305,12 +305,20 @@ void ReportNativeMetalTextureResidency(const std::string& path) {
 
 PicaMetalNativeDrawLane::PicaMetalNativeDrawLane(id<MTLCommandQueue> owner_queue,
                                                NSUInteger upload_page_bytes,
-                                               GuestWriteNotice notice, GuestRamView ram_view_)
+                                               GuestWriteNotice notice, GuestRamView ram_view_,
+                                               id<MTLLibrary> scale_library, unsigned internal_scale)
     : queue(owner_queue), write_notice(std::move(notice)), ram_view(std::move(ram_view_)),
       submissions(queue, [this] { authority.RejectSubmittedWrites(); }),
-      group(queue, upload_page_bytes) {}
+      group(queue, upload_page_bytes, scale_library, internal_scale) {}
 
-PicaMetalNativeDrawLane::~PicaMetalNativeDrawLane() { Abort(); }
+PicaMetalNativeDrawLane::~PicaMetalNativeDrawLane() {
+    if (group.Resolution().Factor() > 1) {
+        const auto& stats = group.Resolution().Stats();
+        LOG_INFO(Render_OpenGL, "2x Metal resolution: {} raster groups, {} enhanced transfers, {} enhanced LCD scanouts",
+                 stats.resolved_groups, stats.captured_transfers, stats.displayed_scanouts);
+    }
+    Abort();
+}
 
 void PicaMetalNativeDrawLane::Abort() noexcept {
     // Group cleanup enforces the same owner thread as normal encoding. Reject
@@ -1348,6 +1356,17 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                     submissions.Fail("Could not import scaled native Metal color source");
             }
             const auto width = color->destination.Size() / color->destination_bpp / color->height;
+            const auto publish = [&](id<MTLBuffer> buffer) {
+                const auto image = group.Resolution().Factor() > 1 ?
+                    group.Resolution().SnapshotLinear(command, src, width, color->height,
+                        color->destination_bpp, color->source_tiled != color->flip) : nil;
+                PublishBytes(command, buffer, DenseRows(color->destination));
+                if (image) {
+                    enhanced_lcd[next_enhanced_lcd] = {color->destination, width, color->height,
+                        color->destination_bpp, buffer, image};
+                    next_enhanced_lcd = (next_enhanced_lcd+1) % enhanced_lcd.size();
+                }
+            };
             const auto bytes_pipeline = linear_bytes_only &&
                 valid_rgba_source(src, color->width, color->height) ? optional_kernel(false) : nil;
             if (bytes_pipeline && bytes_pipeline.maxTotalThreadsPerThreadgroup >= 64) {
@@ -1368,7 +1387,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                 NativeMetalCost::Count(NativeMetalCost::DisplayLinearBufferOnly, 1);
                 NativeMetalCost::Count(NativeMetalCost::DisplayLinearTextureBytesAvoided,
                     u64{width} * color->height * 4u);
-                PublishBytes(command, buffer, DenseRows(color->destination));
+                publish(buffer);
                 return;
             }
             const auto dst = make_texture(width);
@@ -1377,7 +1396,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                 !MetalTransfer::EncodeLinearColorTransfer(command, pipelines, registers, src, dst,
                                                            buffer))
                 submissions.Fail("Could not encode native Metal color conversion");
-            PublishBytes(command, buffer, DenseRows(color->destination));
+            publish(buffer);
             return;
         }
     }
@@ -1735,6 +1754,24 @@ MetalLCD::Receipt PicaMetalNativeDrawLane::Present(
     }
     auto result = MetalLCD::PresentNative(queue, layer, layout, pipelines, filter, edge,
         [&](id<MTLCommandBuffer> command, const MetalLCD::Scanout& scanout) -> id<MTLTexture> {
+            if (group.Resolution().Factor() > 1) {
+                for (const auto& image : enhanced_lcd) {
+                    const auto bytes = scanout.rows.footprint;
+                    if (!image.image || image.bytes.begin != bytes.begin || image.bytes.end != bytes.end ||
+                        image.width != scanout.width || image.height != scanout.height ||
+                        scanout.rows.stride_bytes != image.width*image.bpp ||
+                        scanout.format != (image.bpp == 3 ? MetalLCD::Format::RGB8 : MetalLCD::Format::RGBA8))
+                        continue;
+                    const auto owners = authority.NativeSegments(bytes.begin, bytes.end);
+                    if (owners.size() != 1 || owners[0].begin != bytes.begin || owners[0].end != bytes.end)
+                        continue;
+                    const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(owners[0].writer.get());
+                    if (writer && writer->RawGuestBuffer() == image.writer && writer->RawGuestBegin() == bytes.begin) {
+                        group.Resolution().CountPresentation();
+                        return image.image;
+                    }
+                }
+            }
             const auto source = ResolveBytes(command, scanout.rows, 1, ram);
             if (!source) {
                 LOG_ERROR(Render_OpenGL, "Metal LCD guest bytes unavailable first=0x{:08x} last=0x{:08x}",
@@ -1760,8 +1797,10 @@ void PicaMetalNativeDrawLane::InvalidateAttachments(PicaGuestRange bytes,
         if (!attachment || (same_view && SameBacking(attachment->view, *same_view)))
             return;
         const auto backing = attachment->view.authoritative_bytes;
-        if (bytes.begin < bytes.end && bytes.begin < backing.end && backing.begin < bytes.end)
+        if (bytes.begin < bytes.end && bytes.begin < backing.end && backing.begin < bytes.end) {
+            group.Resolution().InvalidateBacking(attachment->view.texture);
             attachment.reset();
+        }
     };
     invalidate(resident_color);
     invalidate(resident_depth);
@@ -1879,6 +1918,8 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireUnbackedDepthStencil(u
     descriptor.storageMode = MTLStorageModePrivate;
     descriptor.hazardTrackingMode = MTLHazardTrackingModeTracked;
     descriptor.usage = MTLTextureUsageRenderTarget;
+    if (group.Resolution().Factor() > 1)
+        descriptor.usage |= MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView;
     const auto texture = [queue.device newTextureWithDescriptor:descriptor];
     if (!texture)
         submissions.Fail("Could not allocate unbacked Metal depth attachment");
@@ -1912,7 +1953,7 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     }
 
     PublishPending();
-    const bool allow_fuse = has_stencil && NativeMetalCost::FuseDepthClear();
+    const bool allow_fuse = group.Resolution().Factor() == 1 && has_stencil && NativeMetalCost::FuseDepthClear();
     if (!allow_fuse)
         submissions.Reserve();
     const auto clear_word = has_stencil ? FullDepthFill(queue, authority, bytes, submissions)
@@ -1942,6 +1983,8 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     descriptor.storageMode = MTLStorageModePrivate;
     descriptor.hazardTrackingMode = MTLHazardTrackingModeTracked;
     descriptor.usage = MTLTextureUsageRenderTarget;
+    if (group.Resolution().Factor() > 1)
+        descriptor.usage |= MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView;
     const auto texture = [queue.device newTextureWithDescriptor:descriptor];
     if ((!deferred_clear && !command) || !texture || (!clear_word && !source))
         submissions.Fail("Could not allocate native Metal depth import");

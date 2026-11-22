@@ -324,15 +324,17 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
     std::string ini_text;
     FileUtil::ReadFileToString(false, FileUtil::GetUserPath(FileUtil::UserPath::ConfigDir) +
         "sdl2-config.ini", ini_text);
+    const Cara::MacPreferences::Ini ini(std::move(ini_text));
     Cara::ConfigureMetalGeneralFragment(Cara::MacPreferences::PlaySettings::AsyncShadersForMetalSession(
-        Cara::MacPreferences::Ini(std::move(ini_text)), performance));
+        ini, performance));
     std::cout << "METAL_ASYNC_SHADERS enabled=" << Cara::UseMetalGeneralFragment() << std::endl;
 
     NSError* error = nil;
-    const auto assets = Cara::LoadPicaMetalResources(device, library, MTLPixelFormatBGRA8Unorm, &error);
+    auto assets = Cara::LoadPicaMetalResources(device, library, MTLPixelFormatBGRA8Unorm, &error);
     if (!assets)
         throw std::runtime_error(error.localizedDescription.UTF8String ?: "Missing Metal assets");
 
+    assets->internal_scale = Cara::MacPreferences::PlaySettings::Read(ini).metal_supersampling ? 2u : 1u;
     const auto should_capture = [&](unsigned frame) {
         return frame == limit || (interval && frame && frame % interval == 0);
     };

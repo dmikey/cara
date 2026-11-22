@@ -34,6 +34,7 @@ std::optional<PicaMetalResources> LoadPicaMetalResources(
     if (!library)
         return std::nullopt;
     PicaMetalResources resources{};
+    resources.resolution_library = library;
     resources.queue = [device newCommandQueue];
     if (!resources.queue) {
         MissingResource(error, @"Could not create the Metal PICA command queue");
