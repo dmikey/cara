@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 
 
+from sevenzip_demand_test import test_demand
 from cia_rom_test import test_cia_reader
 
 
@@ -99,6 +100,7 @@ def main():
             member = folder / (name + ".z3ds")
             member.write_bytes(image[:position] + replacement + image[position + len(replacement):])
             bad_z3ds.append(member)
+        demand, bad_packet = test_demand(test, folder, payload)
         seven_good, seven_bad = [], []
         if tar := shutil.which("bsdtar") or (shutil.which("tar") if sys.platform == "darwin" else None):
             member = folder / "Cart.3ds"
@@ -112,7 +114,7 @@ def main():
             truncated = folder / "truncated.7z"
             truncated.write_bytes(seven_good[0].read_bytes()[:-19])
             seven_bad.append(truncated)
-        subprocess.run([test,raw,stored,deflated,zip64,streamed,z3ds,zcci,*seven_good,"--bad",*seven_bad,malformed,bad_offset,
+        subprocess.run([test,raw,stored,deflated,zip64,streamed,z3ds,zcci,demand,*seven_good,"--bad",bad_packet,*seven_bad,malformed,bad_offset,
                         checksum,ambiguous,*bad_z3ds], check=True)
 
 
