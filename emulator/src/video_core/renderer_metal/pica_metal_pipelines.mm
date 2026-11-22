@@ -580,17 +580,19 @@ bool SupportedSampler(unsigned unit, const PicaSampleInputs& s) {
 std::optional<DualSamplerRecipe> ParityRecipe(const PicaSampleInputs& s) {
     if (!s.rgba8 || !s.normalized || !s.identity_swizzle || s.compare || s.base_level ||
         s.max_level || s.levels!=1 || s.min_lod!=0 || s.max_lod!=0 || s.lod_bias!=0 ||
-        s.anisotropy!=1)
+        s.anisotropy!=1 || s.opaque_black_border)
         return std::nullopt;
     return ResolveDualSampler(s.min_filter,s.mag_filter,s.wrap_s,s.wrap_t);
 }
 
-std::optional<MTLSamplerAddressMode> GateAddressMode(unsigned mode) {
+std::optional<MTLSamplerAddressMode> GateAddressMode(unsigned mode, bool opaque_black_border = false) {
     switch (mode) {
     case 0x2901: return MTLSamplerAddressModeRepeat;
     case 0x8370: return MTLSamplerAddressModeMirrorRepeat;
     case 0x812f: return MTLSamplerAddressModeClampToEdge;
-    case 0x812d: return MTLSamplerAddressModeClampToZero; // RGBA8 transparent border
+    case 0x812d:
+        return opaque_black_border ? MTLSamplerAddressModeClampToBorderColor
+                                   : MTLSamplerAddressModeClampToZero;
     default: return std::nullopt;
     }
 }
@@ -605,11 +607,13 @@ std::optional<DualSamplerRecipe> GateSamplerKey(const PicaSampleInputs& s) {
         !GateAddressMode(s.wrap_s) || !GateAddressMode(s.wrap_t))
         return std::nullopt;
     return DualSamplerRecipe{s.min_filter | ((s.mag_filter & 1) << 16) |
-        (static_cast<unsigned>(s.min_lod) << 17) | (s.max_level << 20), s.wrap_s, s.wrap_t};
+        (static_cast<unsigned>(s.min_lod) << 17) | (s.max_level << 20) |
+        (static_cast<unsigned>(s.opaque_black_border) << 23), s.wrap_s, s.wrap_t};
 }
 
 id<MTLSamplerState> BuildGateSampler(id<MTLDevice> device, const PicaSampleInputs& s) {
-    if (!GateSamplerKey(s))
+    if (!GateSamplerKey(s) ||
+        (s.opaque_black_border && ![device supportsFamily:MTLGPUFamilyApple7]))
         return nil;
     auto* desc = [MTLSamplerDescriptor new];
     desc.normalizedCoordinates = YES;
@@ -618,8 +622,10 @@ id<MTLSamplerState> BuildGateSampler(id<MTLDevice> device, const PicaSampleInput
     desc.mipFilter = (s.min_filter & 2) ? MTLSamplerMipFilterLinear : MTLSamplerMipFilterNearest;
     desc.lodMinClamp = s.min_lod;
     desc.lodMaxClamp = s.max_lod;
-    desc.sAddressMode = *GateAddressMode(s.wrap_s);
-    desc.tAddressMode = *GateAddressMode(s.wrap_t);
+    desc.sAddressMode = *GateAddressMode(s.wrap_s, s.opaque_black_border);
+    desc.tAddressMode = *GateAddressMode(s.wrap_t, s.opaque_black_border);
+    if (s.opaque_black_border)
+        desc.borderColor = MTLSamplerBorderColorOpaqueBlack;
     return [device newSamplerStateWithDescriptor:desc];
 }
 

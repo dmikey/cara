@@ -268,6 +268,7 @@ std::optional<PicaSampleInputs> ReplaySampler(unsigned word, unsigned s, unsigne
     result.wrap_t = t;
     result.min_lod = (word >> 17) & 7;
     result.max_lod = result.max_level = (word >> 20) & 7;
+    result.opaque_black_border = (word >> 23) & 1;
     result.levels = result.max_level + 1;
     result.rgba8 = result.normalized = result.identity_swizzle = true;
     const auto key = GateSamplerKey(result);

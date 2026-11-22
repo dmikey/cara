@@ -35,13 +35,15 @@ std::optional<Screen> PrepareScreen(id<MTLCommandBuffer> commands, unsigned inde
                                     framebuffer.stride,
                                     static_cast<u32>(framebuffer.color_format.Value()));
     if (!scanout) {
-        // The GLES upload rejects this transient format/stride mismatch and
-        // keeps the previous texture. No guest bytes are valid for this upload.
-        if (previous && *previous && address && framebuffer.height.Value() &&
-            framebuffer.width.Value() == 240 && framebuffer.stride == 720 &&
+        // The GLES upload skips this transient format/stride mismatch. Keep
+        // that LCD's last image, or display black until its first valid scanout.
+        if (address && framebuffer.height.Value() && framebuffer.width.Value() == 240 &&
+            framebuffer.stride == 720 &&
             framebuffer.color_format == GPU::Regs::PixelFormat::RGBA8) {
-            LOG_DEBUG(Render_OpenGL, "Keeping previous Metal LCD image for short RGBA8 stride");
-            return *previous;
+            LOG_DEBUG(Render_OpenGL, "Skipping Metal LCD upload with short RGBA8 stride");
+            if (previous && *previous)
+                return *previous;
+            return Screen{nil, true, {0.0f, 0.0f, 0.0f, 1.0f}};
         }
         LOG_ERROR(Render_OpenGL, "Metal LCD plan rejected screen={} address=0x{:08x} width={} height={} stride={} format={}",
                   index, address, framebuffer.width.Value(), framebuffer.height.Value(), framebuffer.stride,

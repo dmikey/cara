@@ -401,11 +401,12 @@ auto PipelineRecipeKey(const PicaPipelineInputs& input) {
 
 auto SamplerRecipeKey(const PicaSampleInputs& input) {
     const auto& [min_filter, mag_filter, wrap_s, wrap_t, compare, base_level, max_level, levels,
-                 min_lod, max_lod, lod_bias, anisotropy, rgba8, normalized, identity_swizzle] = input;
+                 min_lod, max_lod, lod_bias, anisotropy, rgba8, normalized, identity_swizzle,
+                 opaque_black_border] = input;
     return std::tuple{
         min_filter, mag_filter, wrap_s, wrap_t, compare, base_level, max_level, levels,
         std::bit_cast<u32>(min_lod), std::bit_cast<u32>(max_lod), std::bit_cast<u32>(lod_bias),
-        std::bit_cast<u32>(anisotropy), rgba8, normalized, identity_swizzle,
+        std::bit_cast<u32>(anisotropy), rgba8, normalized, identity_swizzle, opaque_black_border,
     };
 }
 
@@ -527,7 +528,8 @@ std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned uni
     using Mode = TextureConfig::WrapMode;
     const auto supported_wrap = [&](Mode mode) {
         return mode == Mode::Repeat || mode == Mode::MirroredRepeat || mode == Mode::ClampToEdge ||
-               (mode == Mode::ClampToBorder && t.border_color.raw == 0);
+               (mode == Mode::ClampToBorder &&
+                (t.border_color.raw == 0 || t.border_color.raw == 0xff000000));
     };
     // Runtime shaders apply the full signed bias in explicit Texture2D LOD.
     if (!NativeFragmentTarget().emit_explicit_material_lod_bias && t.lod.bias != 0)
@@ -543,6 +545,8 @@ std::optional<PicaSampleInputs> ReadSampler(const TextureConfig& t, unsigned uni
     out.mag_filter = PicaToGL::TextureMagFilterMode(t.mag_filter);
     out.wrap_s = PicaToGL::WrapMode(t.wrap_s);
     out.wrap_t = PicaToGL::WrapMode(t.wrap_t);
+    out.opaque_black_border = t.border_color.raw == 0xff000000 &&
+                              (t.wrap_s == Mode::ClampToBorder || t.wrap_t == Mode::ClampToBorder);
     out.min_lod = t.lod.min_level.Value();
     out.max_lod = t.lod.max_level.Value();
     out.max_level = t.lod.max_level;
@@ -1015,6 +1019,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     std::array<std::optional<TextureMipPlan>, 3> ranges;
     std::optional<MetalTransfer::CubePlan> primary_cube;
     bool primary_color_snapshot = false;
+    unsigned depth_snapshot_slots = 0;
     for (unsigned i = 0; i < units->size(); ++i) {
         const auto unit = (*units)[i];
         if (unit == NoMaterialUnit)
@@ -1054,8 +1059,12 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         if (i == 0 && color_alias && !packed_color && t.lod.max_level == 0 &&
             info.format == Pica::TexturingRegs::TextureFormat::RGBA8)
             primary_color_snapshot = true;
+        const bool depth_alias = ranges[i] && ranges[i]->bytes.Overlaps(*depth_range);
+        if (depth_alias && !color_alias && t.type == TextureConfig::Texture2D &&
+            t.lod.max_level == 0 && info.format == Pica::TexturingRegs::TextureFormat::RGBA8)
+            depth_snapshot_slots |= 1u << i;
         if (!recipe || !ranges[i] || (color_alias && !(i == 0 && primary_color_snapshot)) ||
-            ranges[i]->bytes.Overlaps(*depth_range)) {
+            (depth_alias && !(depth_snapshot_slots & (1u << i)))) {
             throw std::runtime_error(fmt::format(
                 "Native PICA sampler unit={} format={} type={} addr=0x{:08x} dims={}x{} "
                 "min_filter={} mag_filter={} mip_filter={} wrap_s={} wrap_t={} "
@@ -1066,8 +1075,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
                 unsigned(t.mag_filter.Value()), unsigned(t.mip_filter.Value()),
                 unsigned(t.wrap_s.Value()), unsigned(t.wrap_t.Value()),
                 u32(t.lod.min_level), u32(t.lod.max_level), s32(t.lod.bias), t.border_color.raw,
-                ranges[i].has_value(), ranges[i] && ranges[i]->bytes.Overlaps(*color_range),
-                ranges[i] && ranges[i]->bytes.Overlaps(*depth_range)));
+                ranges[i].has_value(), color_alias, depth_alias));
         }
         sampler[i] = *recipe;
     }
@@ -1175,11 +1183,13 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     out.draw.color = out.color.view.texture;
     out.draw.depth_stencil = out.depth.view.texture;
     out.draw.lighting_lut = selection->slots[0] == NSNotFound ? nil : lut;
-    // Match OpenGL's pre-draw snapshot for attachment feedback. DecodeTexture
-    // reads authoritative guest bytes into a separate sampled-only texture.
+    // Depth feedback misses publish through DecodeTexture before resolving
+    // authoritative bytes. Recorded depth writes invalidate cached samples,
+    // so a cache hit can keep the current render group open.
     if (primary_color_snapshot)
         lane.PublishPending();
     out.views.primary_color_snapshot = primary_color_snapshot;
+    out.views.depth_snapshot_slots = depth_snapshot_slots;
     for (unsigned i = 0; i < ranges.size(); ++i) {
         if (i == 0 && primary_cube) {
             const auto cube = Measure(6, [&] {

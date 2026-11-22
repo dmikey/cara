@@ -245,6 +245,8 @@ id<MTLBuffer> EncodeQueuedCheckedDepthExport(
     id<MTLBuffer> errors) {
     const auto width = texture.width, height = texture.height;
     const auto device = command.device;
+    const bool packed_d24 = physical_surface.end - physical_surface.begin == width * height * 3;
+    const unsigned pixel_bytes = packed_d24 ? 3 : 4;
     if (!command || command.status != MTLCommandBufferStatusNotEnqueued ||
         !command.retainedReferences || !texture || texture.device != device ||
         texture.pixelFormat != MTLPixelFormatDepth32Float_Stencil8 ||
@@ -255,12 +257,12 @@ id<MTLBuffer> EncodeQueuedCheckedDepthExport(
         !errors || errors.device != device || errors.length < 4 ||
         !tiled_pack || tiled_pack.device != device || !depth_pack || depth_pack.device != device ||
         physical_surface.begin >= physical_surface.end ||
-        physical_surface.end - physical_surface.begin != width * height * 4 ||
+        physical_surface.end - physical_surface.begin != width * height * pixel_bytes ||
         requested.begin < physical_surface.begin || requested.end > physical_surface.end ||
         requested.begin >= requested.end)
         return nil;
 
-    constexpr NSUInteger tile_bytes = 64 * 4;
+    const NSUInteger tile_bytes = 64 * pixel_bytes;
     const auto first_tile = (requested.begin - physical_surface.begin) / tile_bytes;
     const auto last_tile = (requested.end - 1 - physical_surface.begin) / tile_bytes;
     const auto per_row = width / 8;
@@ -269,7 +271,9 @@ id<MTLBuffer> EncodeQueuedCheckedDepthExport(
     const auto y = height - guest_end_row;
     const auto rows = guest_end_row - guest_first_row;
     const auto depth_pitch = Pitch(width * 4), stencil_pitch = Pitch(width);
-    const auto fused = FusedDepthPipeline(device);
+    // The fused shader writes four-byte D24S8 pixels. Packed D24 uses the
+    // existing three-byte tiling kernel after the same checked depth pack.
+    const auto fused = packed_d24 ? nil : FusedDepthPipeline(device);
     const auto canonical = fused ? nil :
         [device newBufferWithLength:depth_pitch*height options:gpu_scratch];
     const auto depth = [device newBufferWithLength:depth_pitch*height options:gpu_scratch];
@@ -299,7 +303,7 @@ id<MTLBuffer> EncodeQueuedCheckedDepthExport(
         static_cast<u32>(stencil_pitch), 24};
     if (!PackDepthRows(command, depth_pack, canonical, depth, stencil, errors, layout) ||
         !EncodePicaTiledExport(command, tiled_pack, canonical, requested_bytes,
-            width, height, depth_pitch, physical_surface, requested, 4))
+            width, height, depth_pitch, physical_surface, requested, pixel_bytes))
         throw std::runtime_error("Could not encode queued checked depth export");
     return requested_bytes;
 }

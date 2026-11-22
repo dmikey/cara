@@ -185,6 +185,20 @@ void CheckReceipt(id<MTLDevice> device,unsigned bad) {
     PicaMetalValidationReceipt dependent(successor, {success,success}, writer);
     Require(dependent.Wait()==(bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
             "Joined consumer lost the original producer's validation");
+    PicaMetalValidationReceipt single(successor, bad == 1 ? first : second);
+    Require(single.Wait() == (bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
+            "Single-buffer sample receipt accepted the wrong result");
+    PicaMetalValidationReceipt single_dependent(successor, success, writer);
+    Require(single_dependent.Wait() == (bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
+            "Sample receipt lost the original producer's validation");
+    const auto valid_writer = std::make_shared<MetalSurfaceWriter>(
+        raw, successor, 2, base, base + 4,
+        [](id<MTLCommandQueue>, id<MTLResource>, u64, PAddr, PAddr, std::span<u8>) {
+            return true;
+        });
+    const PicaMetalValidationReceipt multiple(successor, success, valid_writer, {writer});
+    Require(multiple.Wait() == (bad ? PicaMetalCompletion::Failed : PicaMetalCompletion::Complete),
+            "A later source dependency escaped sample validation");
     std::array<u8,4> bytes{};
     if (bad) {
         Require(writer->Status()==MetalGuestWriteStatus::Failed,"Descendant blessed invalid checks");
@@ -227,6 +241,16 @@ int main(int argc,char** argv) { @autoreleasepool {try {
     for(unsigned bad=0;bad<3;++bad)CheckReceipt(device,bad);
     {
         DepthFixture fixture(device, lib);
+        QueueGate gate(fixture.f.queue);
+        PicaMetalNativeAttachment attachment;
+        Require(Watchdog(gate, [&] { attachment = fixture.Acquire(DepthFixture::a); }) != async,
+                "RAM-backed depth import must validate through the queue in async mode");
+        gate.Release();
+        fixture.Publish(attachment);
+        fixture.f.lane.Drain();
+    }
+    {
+        DepthFixture fixture(device, lib);
         constexpr u32 size = 16 * 16 * 3;
         constexpr auto address = DepthFixture::a;
         auto* ram = fixture.f.ram.data() + address - base;
@@ -236,10 +260,22 @@ int main(int argc,char** argv) { @autoreleasepool {try {
         auto imports = fixture.imports;
         imports.detile_depth = Compute(device, lib, @"DetilePicaDepth24");
         const auto tiled = Compute(device, lib, @"ExportPicaTiledDepth24");
-        const auto attachment = fixture.f.lane.AcquireTiledDepthStencil(
-            {address, address + size}, 16, 16, imports, tiled, fixture.pack,
-            fixture.f.Reader(), false);
+        const auto acquire = [&](PAddr start) {
+            return fixture.f.lane.AcquireTiledDepthStencil(
+                {start, start + size}, 16, 16, imports, tiled, fixture.pack,
+                fixture.f.Reader(), false);
+        };
+        const auto attachment = acquire(address);
         fixture.Publish(attachment);
+        fixture.f.lane.Drain();
+        (void)acquire(DepthFixture::b);
+        QueueGate gate(fixture.f.queue);
+        fixture.Publish(attachment);
+        PicaMetalNativeAttachment restored;
+        Require(Watchdog(gate, [&] { restored = acquire(address); }) != pending,
+                "Packed D24 reimport did not preserve queue ordering");
+        gate.Release();
+        fixture.Publish(restored);
         const auto partial = fixture.f.Read(address + 1, size - 3);
         Require(std::equal(partial.begin(), partial.end(), expected.begin() + 1),
                 "Guest D24 partial read changed packed bytes");

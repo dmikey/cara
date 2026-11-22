@@ -6,6 +6,7 @@
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cstdio>
@@ -98,7 +99,7 @@ std::vector<InputEvent> ReadInputs(const std::string& dir, unsigned limit) {
 
 class MetalWindow final : public Frontend::EmuWindow {
 public:
-    MetalWindow() {
+    explicit MetalWindow(SDL_Window* window_) : window(window_) {
         UpdateFramebufferLayout(400, 480);
     }
     void MakeCurrent() override {}
@@ -116,6 +117,13 @@ public:
                 else
                     InputCommon::GetKeyboard()->ReleaseKey(key);
             }
+            if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT)
+                PointerTouch(event.button.x, event.button.y, false);
+            if (event.type == SDL_MOUSEMOTION && (event.motion.state & SDL_BUTTON_LMASK))
+                PointerTouch(event.motion.x, event.motion.y, true);
+            if ((event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) ||
+                (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_FOCUS_LOST))
+                TouchReleased();
         }
     }
     void ApplyInput(const InputEvent& event) {
@@ -135,6 +143,23 @@ public:
                   << event.key << ' ' << event.x << ' ' << event.y << std::endl;
     }
     bool closed{};
+
+private:
+    void PointerTouch(int x, int y, bool move) {
+        int width = 0, height = 0;
+        SDL_GetWindowSize(window, &width, &height);
+        if (width <= 0 || height <= 0)
+            return;
+        const auto& layout = GetFramebufferLayout();
+        const auto px = static_cast<unsigned>(std::clamp(x, 0, width - 1)) * layout.width / width;
+        const auto py = static_cast<unsigned>(std::clamp(y, 0, height - 1)) * layout.height / height;
+        if (move)
+            TouchMoved(px, py);
+        else
+            TouchPressed(px, py);
+    }
+
+    SDL_Window* const window;
 };
 }
 
@@ -232,12 +257,18 @@ int main(int argc, char** argv) {
             Settings::values.resolution_factor = 1;
             Settings::values.use_frame_limit = true;
             Settings::values.frame_limit = 100;
+            if (const auto* speed = std::getenv("CARA_MAX_SPEED_PERCENT")) {
+                const auto percent = ParseUnsigned(speed);
+                if (percent < 50 || percent > 200)
+                    throw std::runtime_error("Compatibility speed must be between 50% and 200%");
+                Settings::values.frame_limit = percent;
+            }
             Settings::values.sink_id = "sdl2";
             Settings::values.factor_3d = 0;
             Settings::values.shadow_rendering = false;
             Settings::Apply();
             Frontend::RegisterDefaultApplets();
-            MetalWindow host;
+            MetalWindow host(window);
             unsigned presentations = 0;
             VideoCore::SetNativeRendererFactory([&](Frontend::EmuWindow& w, Memory::MemorySystem& m) {
                 return Cara::MakeNativeMetalRenderer(w, m, layer, *assets,

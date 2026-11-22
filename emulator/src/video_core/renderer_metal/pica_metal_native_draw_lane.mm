@@ -583,6 +583,7 @@ bool ValidatePresentationReceipts(const MetalProducerPredecessors& predecessors)
 struct JoinedDepthCheck {
     MetalGuestWriterRef producer;
     std::shared_ptr<const MetalSurfaceWriter> pending_source;
+    PicaMetalValidationReceipt::Sources more_sources;
     id<MTLBuffer> errors = nil;
 };
 thread_local JoinedDepthCheck* active_depth_check = nullptr;
@@ -653,7 +654,7 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     };
     const auto queue_depth_export = [&](const MetalGuestWrite& segment, PAddr first, PAddr last)
         -> id<MTLBuffer> {
-        if (!active_depth_check || active_depth_check->producer)
+        if (!active_depth_check || (active_depth_check->producer && !AsyncCheckedDepthImport()))
             return nil;
         const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
         if (!writer || writer->Queue() != queue)
@@ -673,23 +674,33 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         if (!proof || proof->texture != writer->Resource() ||
             proof->generation != writer->Generation() || !writer->Covers(first, last))
             return nil;
-
-        const auto errors = [queue.device newBufferWithLength:sizeof(u32)
-                                               options:MTLResourceStorageModeShared];
-        if (!errors)
-            submissions.Fail("Could not allocate queued depth export validation");
-        *static_cast<u32*>(errors.contents) = 0;
+        // All spans share the same command and atomically OR into one
+        // validation word. Keep each outstanding owner until that check retires.
+        auto& joined = *active_depth_check;
+        if (!joined.errors) {
+            joined.errors = [queue.device newBufferWithLength:sizeof(u32)
+                                                      options:MTLResourceStorageModeShared];
+            if (!joined.errors)
+                submissions.Fail("Could not allocate queued depth export validation");
+            *static_cast<u32*>(joined.errors.contents) = 0;
+        }
         const auto exported = EncodeQueuedCheckedDepthExport(command, proof->texture, proof->surface,
-            {first,last}, proof->tiled_export, proof->depth_pack, errors);
+            {first,last}, proof->tiled_export, proof->depth_pack, joined.errors);
         if (!exported)
             submissions.Fail("Could not encode certified queued depth export");
-        active_depth_check->producer = segment.writer;
+        if (!joined.producer)
+            joined.producer = segment.writer;
         if (pending) {
-            active_depth_check->pending_source =
-                std::shared_ptr<const MetalSurfaceWriter>(segment.writer, writer);
+            if (!joined.pending_source) {
+                joined.pending_source = {segment.writer, writer};
+            } else if (joined.pending_source.get() != writer &&
+                       std::ranges::none_of(joined.more_sources, [writer](const auto& source) {
+                           return source.get() == writer;
+                       })) {
+                joined.more_sources.emplace_back(segment.writer, writer);
+            }
             NativeMetalCost::Count(NativeMetalCost::QueuedPendingDepthExports, 1);
         }
-        active_depth_check->errors = errors;
         return exported;
     };
 
@@ -1616,7 +1627,21 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
             return true;
         };
     }
-    const auto source = ResolveBytes(command, DenseRows(bytes), 256, read);
+    // Resolve a depth-owned sample on the same queue and keep its validity
+    // tied to the texture decode. Until the receipt retires, a failed export
+    // cannot become visible to presentation or a guest read.
+    static const bool queue_depth_texture_export = [] {
+        const auto* value = std::getenv("CARA_METAL_QUEUE_DEPTH_TEXTURE_EXPORT");
+        return !value || std::string_view(value) == "1";
+    }();
+    JoinedDepthCheck joined;
+    std::optional<MetalTransfer::ByteView> source;
+    {
+        const ScopedJoinedDepthCheck scope(queue_depth_texture_export &&
+                                          AsyncCheckedDepthImport() && JoinCheckedDepthImport()
+                                              ? &joined : nullptr);
+        source = ResolveBytes(command, DenseRows(bytes), 256, read);
+    }
     if (!source)
         submissions.Fail("Could not resolve native Metal texture bytes");
     const auto descriptor = [MTLTextureDescriptor
@@ -1630,8 +1655,13 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
                         texture, MTLOriginMake(0, 0, 0), MTLSizeMake(width, height, 1), format,
                         disable_alpha))
         submissions.Fail("Could not decode native Metal texture");
+    std::shared_ptr<const PicaMetalValidationReceipt> validation;
+    if (joined.producer) {
+        validation = std::make_shared<PicaMetalValidationReceipt>(command,
+            joined.errors, std::move(joined.pending_source), std::move(joined.more_sources));
+    }
     [command commit];
-    Track(command);
+    Track(command, std::move(validation));
     if (tracked) {
         resident->Insert(key, texture);
         ++resident->vram_decodes;
@@ -1936,9 +1966,14 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
         // Preserve both GPU checks and, for the queued path, the original
         // producer's transitive validity across retirement and guest reads.
         std::shared_ptr<const PicaMetalValidationReceipt> validation;
-        if (AsyncCheckedDepthImport() && joined.producer) {
-            validation = std::make_shared<PicaMetalValidationReceipt>(command,
-                std::array<id<MTLBuffer>, 2>{errors, joined.errors}, std::move(joined.pending_source));
+        if (AsyncCheckedDepthImport()) {
+            if (joined.producer) {
+                validation = std::make_shared<PicaMetalValidationReceipt>(command,
+                    std::array<id<MTLBuffer>, 2>{errors, joined.errors},
+                    std::move(joined.pending_source), std::move(joined.more_sources));
+            } else {
+                validation = std::make_shared<PicaMetalValidationReceipt>(command, errors);
+            }
             NativeMetalCost::Count(NativeMetalCost::AsyncDepthImports, 1);
         }
         [command commit];
@@ -1959,7 +1994,7 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
 
     }
 
-    if (has_stencil && !deferred_clear && JoinCheckedDepthImport())
+    if (!deferred_clear && JoinCheckedDepthImport())
         exporter = CheckedDepthExporter{std::move(exporter), proof};
     resident_depth = PicaMetalNativeAttachment{{texture, range, generation}, std::move(exporter),
                                               std::nullopt};
