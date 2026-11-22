@@ -143,8 +143,10 @@ you next open a game. The native Metal runner reads the saved Performance Mode
 and Async Shaders preferences.
 
 On iPhone and iPad, OpenGL ES is the default. The standard Mac launcher uses
-the hardware OpenGL atlas renderer. In **Display**, turn on **2× internal resolution** to render
+the hardware OpenGL atlas renderer. In **Display**, turn on **2× Native Resolution** to render
 geometry at twice its native width and height. Reopen the game to apply.
+**Lossless 2×** and **Lossless 4×** also work with OpenGL ES on iPhone and iPad.
+They change how the final image is scaled inside the skin.
 For Metal, enable **Experimental Renderer** under **Advanced** on mobile or use the separate
 experimental Mac runner. Metal also offers **Texture filtering**.
 At 2×, supported 3D draws rasterize at twice the width and height. The renderer
