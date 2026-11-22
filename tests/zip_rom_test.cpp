@@ -12,6 +12,7 @@
 #include <sstream>
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
+#include "common/cia_rom.h"
 #include "common/file_util.h"
 #include "common/logging/backend.h"
 
@@ -42,23 +43,37 @@ int main(int argc, char** argv) {
         unsigned archives = 0;
         for (int i = 2; i < argc; ++i) {
             const std::string_view path = argv[i];
+            if (path == "--invalid-cia") {
+                Require(++i < argc && !FileUtil::GetCiaTitleId(argv[i]), "Malformed CIA classified");
+                continue;
+            }
+            if (path == "--update-cia") {
+                Require(++i < argc && FileUtil::GetCiaTitleId(argv[i]) == 0x0004000e0ffac000ULL,
+                        "Update CIA classification failed");
+                FileUtil::IOFile update;
+                Require(!update.OpenRom(argv[i]), "Update accepted as a launchable game");
+                continue;
+            }
             if (path == "--bad") {
                 invalid = true;
                 continue;
             }
             FileUtil::IOFile first;
             if (invalid) {
-                Require(!first.OpenRom(argv[i]), "Malformed or ambiguous ZIP accepted");
+                Require(!first.OpenRom(argv[i]), "Malformed or ambiguous compressed ROM accepted");
                 continue;
             }
             Require(first.OpenRom(argv[i]) && first.GetSize() == expected.size(),
-                    "ZIP ROM open failed for " + std::string(path));
+                    "Compressed ROM open failed for " + std::string(path));
             FileUtil::IOFile other;
-            Require(other.OpenRom(argv[i]), "ZIP ROM reopen failed");
+            Require(other.OpenRom(argv[i]), "Compressed ROM reopen failed");
             FileUtil::IOFile raw_archive(argv[i], "rb");
             std::array<u8, 4> signature{};
             Require(raw_archive.ReadBytes(signature.data(), signature.size()) == signature.size() &&
-                        signature == std::array<u8, 4>{0x50, 0x4b, 3, 4},
+                        (signature == std::array<u8, 4>{0x20, 0x20, 0, 0} ||
+                         signature == std::array<u8, 4>{0x50, 0x4b, 3, 4} ||
+                         signature == std::array<u8, 4>{0x37, 0x7a, 0xbc, 0xaf} ||
+                         signature == std::array<u8, 4>{'Z', '3', 'D', 'S'}),
                     "Plain archive open returned ROM content");
             const u64 boundary = 1024 * 1024;
             for (u64 offset : {u64{0}, boundary - 16, boundary, 3 * boundary + 5,
@@ -96,7 +111,7 @@ int main(int argc, char** argv) {
             Require(!first.Seek(-1, SEEK_SET), "Negative absolute seek accepted");
             ++archives;
         }
-        std::cout << "PASS " << archives << " ZIP variants with byte-exact independent random reads\n";
+        std::cout << "PASS " << archives << " compressed ROM variants with byte-exact independent random reads\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

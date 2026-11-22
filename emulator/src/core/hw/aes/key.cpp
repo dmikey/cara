@@ -527,8 +527,10 @@ AESKey GetNormalKey(std::size_t slot_id) {
     return key_slots.at(slot_id).normal.value_or(AESKey{});
 }
 
-void SelectCommonKeyIndex(u8 index) {
-    key_slots[KeySlotID::TicketCommonKey].SetKeyY(common_key_y_slots.at(index));
+bool SelectCommonKeyIndex(u8 index) {
+    if (index >= common_key_y_slots.size()) return false;
+    key_slots[KeySlotID::TicketCommonKey].SetKeyY(common_key_y_slots[index]);
+    return true;
 }
 
 } // namespace HW::AES

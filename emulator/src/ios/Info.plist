@@ -27,6 +27,8 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.dmikey.cara.game-file</string>
+				<string>public.zip-archive</string>
+				<string>org.7-zip.7-zip-archive</string>
 			</array>
 		</dict>
 	</array>
@@ -152,6 +154,9 @@
 				<key>public.filename-extension</key>
 				<array>
 					<string>3ds</string>
+					<string>cia</string>
+					<string>z3ds</string>
+					<string>zcci</string>
 					<string>cci</string>
 					<string>cxi</string>
 					<string>3dsx</string>

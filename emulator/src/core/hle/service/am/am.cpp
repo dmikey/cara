@@ -7,6 +7,9 @@
 #include <cinttypes>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
+#include <mutex>
+#include "common/scope_exit.h"
 #include <cryptopp/aes.h>
 #include <cryptopp/modes.h>
 #include <fmt/format.h>
@@ -43,6 +46,12 @@ constexpr u16 CATEGORY_DLP = 0x0001;
 constexpr u8 VARIATION_SYSTEM = 0x02;
 constexpr u32 TID_HIGH_UPDATE = 0x0004000E;
 constexpr u32 TID_HIGH_DLC = 0x0004008C;
+
+#ifdef __APPLE__
+// Only the installer thread sees the pending tree. Readers keep the live update until publish.
+static thread_local std::string pending_update;
+static thread_local u64 pending_title = 0;
+#endif
 
 struct TitleInfo {
     u64_le tid;
@@ -185,7 +194,8 @@ ResultVal<std::size_t> CIAFile::WriteContentData(u64 offset, std::size_t length,
                 decryption_state->content[i].ProcessData(temp.data(), temp.data(), temp.size());
             }
 
-            file.WriteBytes(temp.data(), temp.size());
+            if (file.WriteBytes(temp.data(), temp.size()) != temp.size() || !file.Flush())
+                return FileSys::ERROR_INSUFFICIENT_SPACE;
 
             // Keep tabs on how much of this content ID has been written so new range_min
             // values can be calculated.
@@ -211,11 +221,10 @@ ResultVal<std::size_t> CIAFile::Write(u64 offset, std::size_t length, bool flush
     // content sizes so it ends up becoming a problem of keeping track of how much has been
     // written and what we have been able to pick up.
     if (install_state == CIAInstallState::InstallStarted) {
-        std::size_t buf_copy_size = std::min(length, FileSys::CIA_HEADER_SIZE);
-        std::size_t buf_max_size =
-            std::min(static_cast<std::size_t>(offset + length), FileSys::CIA_HEADER_SIZE);
-        data.resize(buf_max_size);
-        memcpy(data.data() + offset, buffer, buf_copy_size);
+        if (offset != data.size())
+            return FileSys::ERR_WRITE_BEYOND_END;
+        const auto bytes = std::min(length, FileSys::CIA_HEADER_SIZE - data.size());
+        data.insert(data.end(), buffer, buffer + bytes);
 
         // We have enough data to load a CIA header and parse it.
         if (written >= FileSys::CIA_HEADER_SIZE) {
@@ -232,15 +241,12 @@ ResultVal<std::size_t> CIAFile::Write(u64 offset, std::size_t length, bool flush
     // If we have been given data before (or including) .app content, pull it into
     // our buffer, but only pull *up to* the content offset, no further.
     if (offset < container.GetContentOffset()) {
-        std::size_t buf_loaded = data.size();
-        std::size_t copy_offset = std::max(static_cast<std::size_t>(offset), buf_loaded);
-        std::size_t buf_offset = buf_loaded - offset;
-        std::size_t buf_copy_size =
-            std::min(length, static_cast<std::size_t>(container.GetContentOffset() - offset)) -
-            buf_loaded;
-        std::size_t buf_max_size = std::min(offset + length, container.GetContentOffset());
-        data.resize(buf_max_size);
-        memcpy(data.data() + copy_offset, buffer + buf_offset, buf_copy_size);
+        const auto first = std::max<u64>(offset, data.size());
+        const auto end = std::min<u64>(offset + length, container.GetContentOffset());
+        if (first > data.size())
+            return FileSys::ERR_WRITE_BEYOND_END;
+        if (first < end)
+            data.insert(data.end(), buffer + (first - offset), buffer + (end - offset));
     }
 
     // TODO(shinyquagsire23): Write out .tik files to nand?
@@ -278,6 +284,7 @@ bool CIAFile::SetSize(u64 size) const {
 }
 
 void CIAFile::Close() const {
+    if (install_state != CIAInstallState::TMDLoaded) return;
     bool complete = true;
     for (std::size_t i = 0; i < container.GetTitleMetadata().GetContentCount(); i++) {
         if (content_written[i] < container.GetContentSize(static_cast<u16>(i)))
@@ -337,6 +344,10 @@ InstallStatus InstallCIA(const std::string& path,
 
     FileSys::CIAContainer container;
     if (container.Load(path) == Loader::ResultStatus::Success) {
+#ifdef __APPLE__
+        if (pending_title && container.GetTitleMetadata().GetTitleID() != pending_title)
+            return InstallStatus::ErrorInvalid;
+#endif
         Service::AM::CIAFile installFile(
             Service::AM::GetTitleMediaType(container.GetTitleMetadata().GetTitleID()));
 
@@ -359,6 +370,8 @@ InstallStatus InstallCIA(const std::string& path,
         std::size_t total_bytes_read = 0;
         while (total_bytes_read != file.GetSize()) {
             std::size_t bytes_read = file.ReadBytes(buffer.data(), buffer.size());
+            if (!bytes_read)
+                return InstallStatus::ErrorAborted;
             auto result = installFile.Write(static_cast<u64>(total_bytes_read), bytes_read, true,
                                             static_cast<u8*>(buffer.data()));
 
@@ -411,6 +424,49 @@ InstallStatus InstallCIA(const std::string& path,
     LOG_ERROR(Service_AM, "CIA file {} is invalid!", path);
     return InstallStatus::ErrorInvalid;
 }
+
+#ifdef __APPLE__
+InstallStatus InstallGameUpdate(const std::string& path, u64 title) {
+    if ((title >> 32) != TID_HIGH_UPDATE || GetTitleMediaType(title) != Service::FS::MediaType::SDMC)
+        return InstallStatus::ErrorInvalid;
+    static std::mutex install_mutex;
+    std::lock_guard lock(install_mutex);
+    const std::filesystem::path destination =
+        std::filesystem::path(GetTitlePath(Service::FS::MediaType::SDMC, title)) / "content";
+    std::error_code ec;
+    std::filesystem::create_directories(destination.parent_path(), ec);
+    if (ec) return InstallStatus::ErrorFailedToOpenFile;
+    auto staging = (destination.parent_path() / ".cara-update-XXXXXX").string();
+    if (!mkdtemp(staging.data())) return InstallStatus::ErrorFailedToOpenFile;
+    pending_title = title;
+    pending_update = staging + "/";
+    SCOPE_EXIT({
+        pending_title = 0;
+        pending_update.clear();
+        std::filesystem::remove_all(staging, ec);
+    });
+    auto result = InstallCIA(path);
+    if (result != InstallStatus::Success) return result;
+    // Verify the boot content is readable before replacing the active copy.
+    FileSys::NCCHContainer main(GetTitleContentPath(Service::FS::MediaType::SDMC, title));
+    const auto status = main.Load();
+    if (status != Loader::ResultStatus::Success)
+        return status == Loader::ResultStatus::ErrorEncrypted ? InstallStatus::ErrorEncrypted :
+                                                                InstallStatus::ErrorInvalid;
+    u64_le program_id;
+    if (main.ReadProgramId(program_id) != Loader::ResultStatus::Success ||
+        (program_id != title && program_id != (title & ~(u64{0xe} << 32))))
+        return InstallStatus::ErrorInvalid;
+    const auto prepared = std::filesystem::path(staging) / "content";
+    if (std::filesystem::exists(destination, ec)) {
+        if (renamex_np(prepared.c_str(), destination.c_str(), RENAME_SWAP) != 0)
+            return InstallStatus::ErrorAborted;
+    } else if (ec || std::rename(prepared.c_str(), destination.c_str()) != 0) {
+        return InstallStatus::ErrorAborted;
+    }
+    return InstallStatus::Success;
+}
+#endif
 
 Service::FS::MediaType GetTitleMediaType(u64 titleId) {
     u16 platform = static_cast<u16>(titleId >> 48);
@@ -502,6 +558,10 @@ std::string GetTitleContentPath(Service::FS::MediaType media_type, u64 tid, u16 
 }
 
 std::string GetTitlePath(Service::FS::MediaType media_type, u64 tid) {
+#ifdef __APPLE__
+    if (pending_title && tid == pending_title)
+        return pending_update;
+#endif
     u32 high = static_cast<u32>(tid >> 32);
     u32 low = static_cast<u32>(tid & 0xFFFFFFFF);
 

@@ -125,9 +125,12 @@ std::unique_ptr<AppLoader> GetLoader(const std::string& filename) {
     Common::SplitPath(filename, nullptr, &filename_filename, &filename_extension);
 
     FileType type = IdentifyFile(file);
-    if (Common::ToLower(filename_extension) == ".zip") {
+    const auto extension = Common::ToLower(filename_extension);
+    if (extension == ".cia" && type == FileType::CXI)
+        return GetFileLoader(std::move(file), type, filename_filename, filename);
+    if (extension == ".7z" || extension == ".zip" || extension == ".z3ds" || extension == ".zcci") {
         if (type != FileType::CCI && type != FileType::CXI) {
-            LOG_ERROR(Loader, "ZIP member is not a Nintendo 3DS cartridge image");
+            LOG_ERROR(Loader, "Compressed file does not contain a Nintendo 3DS cartridge image");
             return nullptr;
         }
         return GetFileLoader(std::move(file), type, filename_filename, filename);

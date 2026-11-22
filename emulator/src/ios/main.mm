@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <CoreMotion/CoreMotion.h>
+#include "core/frontend/apple/cia_open.h"
 #include "core/hle/service/ptm/step_history.h"
 #include "core/hle/service/cecd/streetpass.h"
 #include "cara/guest_gpu_trace.h"
@@ -1243,6 +1244,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     if (libraryStore) return;
     NSURL* documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
     libraryStore=[[CaraLibraryStore alloc] initWithDocuments:documents defaults:NSUserDefaults.standardUserDefaults];
+    libraryStore.canPlayCia=^BOOL(NSURL* file) {
+        return Frontend::Apple::InspectCia(file.fileSystemRepresentation).kind == Frontend::Apple::CiaKind::Game;
+    };
 }
 - (void)showLibrary {
     if (openingGame) return;
@@ -2082,7 +2086,53 @@ static std::filesystem::path PedometerHistoryPath() {
 }
 - (void)openGameURL:(NSURL*)url forOnlineRooms:(BOOL)showOnlineRooms {
     if (openingGame) return;
-    if (![CaraLibraryStore isGameURL:url]) { status.text=@"Choose a 3DS game or a ZIP containing one .3ds ROM."; [self resumeFromMenu]; return; }
+    if ([url.pathExtension.lowercaseString isEqual:@"cia"]) {
+        openingGame=YES;
+        const BOOL scoped=[url startAccessingSecurityScopedResource];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+            __block Frontend::Apple::CiaSelection selection{Frontend::Apple::CiaKind::Unsupported,0,"Choose an accessible copy of the CIA in Files."};
+            [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:url options:0 error:nil byAccessor:^(NSURL* file) {
+                selection=Frontend::Apple::InspectCia(file.fileSystemRepresentation);
+            }];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (selection.kind==Frontend::Apple::CiaKind::Update) {
+                    if (self->running || self->saveSync.busy || self->stateSync.busy) {
+                        self->openingGame=NO;
+                        if (scoped) [url stopAccessingSecurityScopedResource];
+                        [self shellError:@"Game update" message:@"Stop the game and let save sync finish, then open this update again."];
+                        return;
+                    }
+                    if (self->worker.joinable()) self->worker.join();
+                    self->status.text=@"Installing game update…";
+                    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+                        NSURL* documents=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+                        FileUtil::SetUserPath(std::string(documents.fileSystemRepresentation)+"/cara/");
+                        __block NSString* failure=@"Choose an accessible copy of the update in Files.";
+                        [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:url options:0 error:nil byAccessor:^(NSURL* file) {
+                            const char* error=Frontend::Apple::InstallUpdate(file.fileSystemRepresentation,selection.title);
+                            failure=error ? [NSString stringWithUTF8String:error] : nil;
+                        }];
+                        if (scoped) [url stopAccessingSecurityScopedResource];
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            self->openingGame=NO;
+                            [self shellError:(failure ? @"Update unavailable" : @"Game update installed") message:(failure ?: @"Open the matching base game to play with the update.")];
+                        });
+                    });
+                    return;
+                }
+                self->openingGame=NO;
+                if (selection.kind==Frontend::Apple::CiaKind::Game)
+                    [self openPlayableGameURL:url forOnlineRooms:showOnlineRooms];
+                else [self shellError:@"CIA unavailable" message:[NSString stringWithUTF8String:selection.message]];
+                if (scoped) [url stopAccessingSecurityScopedResource];
+            });
+        });
+        return;
+    }
+    [self openPlayableGameURL:url forOnlineRooms:showOnlineRooms];
+}
+- (void)openPlayableGameURL:(NSURL*)url forOnlineRooms:(BOOL)showOnlineRooms {
+    if (![CaraLibraryStore isGameURL:url]) { status.text=@"Choose a 3DS game, cartridge archive or game update."; [self resumeFromMenu]; return; }
     [self ensureLibrary];
     if(relayClient && (gameURL || worker.joinable())) relayClient->Disconnect();
     [nearbyPass stop]; openingGame=YES; launchingOffline=NO; sessionFailure=nil; sessionNotice=nil; stop=true; [self resumeFromMenu];
@@ -2612,7 +2662,9 @@ static std::filesystem::path PedometerHistoryPath() {
                 if (self->sessionGeneration!=session) return;
                 self->onlineGameIdentity=roomIdentity;
                 if (result != Core::System::ResultStatus::Success)
-                    self->sessionFailure = [NSString stringWithFormat:@"Load failed (code %u)",unsigned(result)];
+                    self->sessionFailure = result==Core::System::ResultStatus::ErrorLoader_ErrorEncrypted ?
+                        @"The game content is encrypted. Open a decrypted dump or configure your console keys." :
+                        [NSString stringWithFormat:@"Load failed (code %u)",unsigned(result)];
                 [self updateSessionPresentation];
                 if (showOnlineRooms && !self.presentedViewController)
                     [self showOnlineRoomsInNavigation:nil];

@@ -45,8 +45,8 @@ std::optional<std::array<u8, 16>> Ticket::GetTitleKey() const {
     HW::AES::InitKeys();
     std::array<u8, 16> ctr{};
     std::memcpy(ctr.data(), &ticket_body.title_id, sizeof(u64));
-    HW::AES::SelectCommonKeyIndex(ticket_body.common_key_index);
-    if (!HW::AES::IsNormalKeyAvailable(HW::AES::KeySlotID::TicketCommonKey)) {
+    if (!HW::AES::SelectCommonKeyIndex(ticket_body.common_key_index) ||
+        !HW::AES::IsNormalKeyAvailable(HW::AES::KeySlotID::TicketCommonKey)) {
         LOG_ERROR(Service_FS, "CommonKey {} missing", ticket_body.common_key_index);
         return {};
     }

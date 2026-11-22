@@ -58,14 +58,37 @@ replay. The first refresh and other cold stalls remained. See the
 [Gadd’s lab comparison](docs/native-metal-build.md#adaptive-metal-submissions)
 and [mansion gate frame times](docs/native-metal-build.md#mansion-gate-with-performance-mode-defaults).
 
-## Play cartridge ROMs straight from ZIP
+## Play compressed cartridge ROMs
 
 Open a standard ZIP containing one `.3ds` cartridge image from the macOS
 game picker or Cara’s Files picker on iPad. Cara reads the original archive in
-place, so you can keep the ROM compressed without extracting it or converting
-it to Z3DS. Stored entries are read directly. For Deflate, Cara builds an
+place. Stored entries are read directly. For Deflate, Cara builds an
 in-memory seek index at first open and decompresses data on demand. See the
 [ZIP cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
+
+Cara opens a 7z archive containing one regular `.3ds` or `.cci` file. At launch,
+it expands the cartridge to private temporary storage and shares it across
+ROM readers until the game closes. Allow free space for the uncompressed
+image. Password-protected and multi-cartridge archives are unsupported.
+
+Cara also opens Azahar v1 cartridge images with the `.z3ds` or `.zcci` extension.
+The shared ROM reader uses
+the embedded Zstandard seek table to read individual frames on demand. Both
+Apple game pickers and the iOS library accept the original compressed file.
+[Azahar format specification](https://github.com/azahar-emu/azahar/pull/1208).
+
+Open a decrypted base-game `.cia` directly in either Apple frontend. Cara reads
+the executable and RomFS from the package and uses the same game ID for saves
+as the cartridge. Open a matching update CIA while the game is stopped to
+install it for subsequent launches. Updates and DLC stay out of the playable
+library. System and DLC package installation is unsupported.
+
+On Apple Silicon macOS, the cartridge loader booted *Kirby: Planet Robobot*
+from Z3DS and executed authored ARM code from a 7z cartridge. The CIA launch
+test boots authored ARM code, installs a multi-block update, launches its
+replacement code, checks a failed update preserves the previous version and
+compares the existing save bytes. Run it against the native atlas host with
+`python3 tests/apple_cia_launch_test.py path/to/cara`.
 
 **Test status.** Cara played a Deflate ZIP of *Luigi’s Mansion: Dark Moon*
 on macOS and on a physical M4 iPad. On the iPad, selecting the original ZIP

@@ -62,6 +62,6 @@ void SetNormalKey(std::size_t slot_id, const AESKey& key);
 bool IsNormalKeyAvailable(std::size_t slot_id);
 AESKey GetNormalKey(std::size_t slot_id);
 
-void SelectCommonKeyIndex(u8 index);
+bool SelectCommonKeyIndex(u8 index);
 
 } // namespace HW::AES

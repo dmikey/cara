@@ -75,6 +75,17 @@ int main() { @autoreleasepool {
     Check([store rememberGame:local error:&error] && Scan(store).count==4,@"explicit re-add restores hidden file");
     Check([store deleteGameFile:local error:&error] && ![NSFileManager.defaultManager fileExistsAtPath:local.path] && Scan(store).count==3,@"explicit delete removes only requested fixture ROM");
     Check([NSFileManager.defaultManager fileExistsAtPath:save.path] && [NSFileManager.defaultManager fileExistsAtPath:state.path],@"game removal and deletion preserve saves and states");
+    Put([store.defaultFolder URLByAppendingPathComponent:@"Nested/Compressed.Z3DS"]);
+    Put([store.defaultFolder URLByAppendingPathComponent:@"Second cartridge.zcci"]);
+    Put([store.defaultFolder URLByAppendingPathComponent:@"Third cartridge.7Z"]);
+    Check(Scan(store).count==6,@"case-insensitive Z3DS, ZCCI and 7z library discovery");
+    NSURL* baseCIA=[store.defaultFolder URLByAppendingPathComponent:@"Base.CIA"];
+    NSURL* updateCIA=[store.defaultFolder URLByAppendingPathComponent:@"Update.cia"];
+    Put(baseCIA); Put(updateCIA);
+    store.canPlayCia=^BOOL(NSURL* item) { return [item.lastPathComponent isEqual:baseCIA.lastPathComponent]; };
+    Check(Scan(store).count==7,@"the library includes only CIAs classified as playable");
+    Check(![store rememberGame:updateCIA error:&error] && [store rememberGame:baseCIA error:&error],
+          @"only playable CIAs can be bookmarked as games");
     [NSFileManager.defaultManager removeItemAtURL:root error:nil];
     puts("PASS: Roms creation, nested/legacy discovery, bookmarks, external file registration, deduplication and non-destructive folder selection (local simulation)");
 } }
