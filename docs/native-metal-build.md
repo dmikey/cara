@@ -714,6 +714,31 @@ and passed the same replay after renderer fixes on the same device:
 These are boot and early-rendering checks. Later gameplay needs scene-specific
 input routes and longer captures.
 
+### Kirby shader translation on the M4 iPad
+
+Planet Robobot was launched from its ZIP at 100% with Performance Mode and
+FastInterp. With different fresh compiler namespaces and empty per-run archives,
+the same binary replayed the same 900 refreshes with linked vertex reuse off
+and on. The optimization reuses a validated vertex program when only the
+fragment main body changes. It still validates the fragment inputs.
+
+| Native Metal | Foreground translation, total | Refresh 332 | Refresh 523 | P99 | Slowest 120-refresh mean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Control | 788.9 ms | 2699.3 ms | 2098.2 ms | 242.30 ms | 62.05 ms |
+| Linked vertex reuse | 462.8 ms | 2664.3 ms | 2046.2 ms | 229.27 ms | 60.97 ms |
+
+Final cold BGRA captures matched byte for byte. Even with reuse, refresh 332
+spent 1406.7 ms in fragment library builds. The warm replay reached 58.49
+refreshes/s with a 28.93 ms p99. A warm GLES control on the same route reached
+59.77 refreshes/s with a 27.15 ms p99. Booting with fresh guest storage and
+relaunching with the game's saved data can exercise different shaders.
+
+In a separate experiment, storing more unique render descriptors increased
+warm recipe availability from 67/214 to 214/214 but changed warm p99 by only
+0.05 ms and increased preload time from 55 to 88 ms. The experiment stayed
+out of the default. Disabling Async Shaders increased the largest cold
+interval to 4007 ms in the same opening.
+
 Boot each local cartridge with a fresh user directory and FastInterp. Drive
 menus and gameplay with the same inputs when comparing performance. Capture
 both screens after reaching a controllable scene and verify that directional
