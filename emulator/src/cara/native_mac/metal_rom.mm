@@ -426,7 +426,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                 if (now - title_updated_at >= 2000) {
                     const auto stats = core.GetAndResetPerfStats();
                     char title[96];
-                    std::snprintf(title, sizeof(title), "%.0f FPS | %.0f%% speed | Cara Metal",
+                    std::snprintf(title, sizeof(title), "%.0f FPS | %.0f%% speed | Experimental Renderer",
                                   stats.game_fps, stats.emulation_speed * 100.0);
                     events.PostTitle(title);
                     title_updated_at = now;
@@ -498,7 +498,7 @@ int main(int argc, char** argv) {
             if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0)
                 throw std::runtime_error(SDL_GetError());
             SCOPE_EXIT({ SDL_Quit(); });
-            SDL_Window* window = SDL_CreateWindow("Cara Metal compatibility",
+            SDL_Window* window = SDL_CreateWindow("Cara · Experimental Renderer",
                 SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WindowWidth, WindowHeight,
                 SDL_WINDOW_METAL | (scale > 1 ? SDL_WINDOW_ALLOW_HIGHDPI : 0));
             if (!window)

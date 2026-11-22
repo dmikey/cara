@@ -289,7 +289,7 @@ CaraPreferencesActions* BuildPreferences(){
  [display addSubview:Label(@"Lossless modes center the screens at whole pixel multiples. Smaller windows use the largest whole multiple that fits. Below 1×, the screens fit the window.",NSMakeRect(15,205,528,59))];
  a->supersampling=PlayCheckbox(@"2× internal resolution",NSMakeRect(15,88,300,22),a);
  [display addSubview:a->supersampling];
- [display addSubview:Label(@"Render Metal geometry at twice the native resolution. Reopen the game to apply.",NSMakeRect(15,40,528,44))];
+ [display addSubview:Label(@"Render geometry at twice the native resolution. Reopen the game to apply.",NSMakeRect(15,40,528,44))];
  [display addSubview:Label(@"Texture filtering",NSMakeRect(15,13,125,22))];
  a->textureFilter=[[[NSPopUpButton alloc]initWithFrame:NSMakeRect(141,9,194,30) pullsDown:NO]autorelease];
  [a->textureFilter setAccessibilityLabel:@"Metal texture filtering"];

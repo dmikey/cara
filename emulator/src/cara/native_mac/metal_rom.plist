@@ -7,7 +7,7 @@
     <key>CFBundleIdentifier</key>
     <string>org.cara.mac.metal</string>
     <key>CFBundleName</key>
-    <string>Cara Metal</string>
+    <string>Cara Experimental Renderer</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
