@@ -56,7 +56,8 @@ bool MetalRasterScale::Prepare(MTLPixelFormat format) {
 bool MetalRasterScale::Begin(id<MTLCommandBuffer> command, id<MTLTexture> color,
                              id<MTLTexture> depth, bool backed) {
     if (factor == 1 || !color || !depth || color.width != depth.width ||
-        color.height != depth.height || color.width * color.height > 1024u*1024u ||
+        color.height != depth.height || color.width > 4096 || color.height > 4096 ||
+        color.width * color.height > 1024u * 1024u ||
         depth.pixelFormat != MTLPixelFormatDepth32Float_Stencil8 ||
         !(depth.usage & MTLTextureUsagePixelFormatView) || !Prepare(color.pixelFormat)) {
         Invalidate();
