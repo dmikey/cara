@@ -362,13 +362,12 @@ on by default in Performance Mode. The renderer generalizes alpha
 comparison and scissor mode for unlit, fog-free 2D draws using texture 0
 and optionally texture 1. The fallback keeps the vertex program, texture
 sampling, depth output, material slots and fixed-function raster state.
-Uniforms carry alpha and scissor modes. For supported TEV operations, six
-four-word uniform records describe the guest's six combiner stages.
+Uniforms carry alpha and scissor modes. The diagnostic `CARA_METAL_RUNTIME_TEV=1` also enables a runtime
+combiner for supported TEV operations. Six four-word uniform records then
+describe the guest's six combiner stages.
 Their source, modifier, operation, multiplier and delayed buffer updates
 are evaluated per draw until the exact pipeline becomes available. Dot3
-and other unsupported combinations retain the specialized combiner. Set
-`CARA_METAL_RUNTIME_TEV=0` to keep Async Shaders with the earlier
-specialized combiner for comparisons.
+and other unsupported combinations retain the specialized combiner. The default Async Shaders path retains its specialized combiner.
 
 Cara compiles the general shader on the device. Once that pipeline is ready,
 draws can use it while a bounded worker compiles the exact shader and
@@ -764,6 +763,13 @@ Kirby fragments. All 78,848 RGBA8 outputs matched across randomized
 primary colors, post-sample texture values and combiner constants. This
 arithmetic test complements the frame captures, which also exercise texture
 sampling and rasterization.
+
+Fresh guest storage and compiler namespaces also exposed cold regressions in
+two other titles. Dark Moon fell from 32.10 to 30.98 refreshes/s and its
+worst interval grew from 9255 to 10042 ms. Ocarina of Time fell from 50.88
+to 50.34 refreshes/s and its worst interval grew from 1330 to 1681 ms,
+although p99 fell from 37.1 to 31.9 ms. Both games matched at refreshes
+429–432 and 900. These results keep runtime TEV opt-in.
 
 Boot each local cartridge with a fresh user directory and FastInterp. Drive
 menus and gameplay with the same inputs when comparing performance. Capture
