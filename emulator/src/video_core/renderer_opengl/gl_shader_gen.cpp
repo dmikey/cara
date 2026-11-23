@@ -24,7 +24,6 @@
 #include "video_core/regs_lighting.h"
 #include "video_core/regs_rasterizer.h"
 #include "video_core/regs_texturing.h"
-#include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_shader_decompiler.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_packed_vertex.h"

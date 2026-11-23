@@ -223,10 +223,13 @@ endif()
 
 # Cache ABI covers shader generation, binding/layout and GL source preparation. Reconfigure
 # on edits so an iOS cache can never silently outlive a changed packed vertex layout.
+# Keep this list scoped to generated stage source, its link/UBO contract and cache encoding.
+# Host-only draw staging and surface caches can change without changing a GLES program.
 file(GLOB CARA_SHADER_CACHE_INPUTS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_shader*"
     "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_packed_vertex.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_rasterizer.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_native_quaternion_geometry.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/metal_runtime_tev_glsl.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_vars.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/regs*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/renderer_opengl/gl_vertex_input_layout.h"
