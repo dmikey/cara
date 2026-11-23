@@ -120,3 +120,14 @@ broader draw and guest-loop timings. The lab issued 248 lighting-enabled
 draws per refresh. These observations preserve lighting and do not
 identify GPU fragment shader execution time. A native Metal comparison
 requires a separate same-device benchmark and stage counters.
+
+## RG Slide integration review
+
+Main `268f049` contains the fog lifetime handoff at `ac8a372` and
+the threaded/instanced branch tip at `b13d858`. The separate packet
+prototype reduced recorded jobs per Gadd draw from 27.53 to 18.42. It
+shifted CPU from the worker to the producer. Its worst refresh after
+lab entry rose from 48.57 to 80.87 ms, and the trial ran one boot per
+arm. Retain those results as evidence for the next controlled test.
+The prototype remains outside the default path.
+[Packet census and trial](https://github.com/dmikey/cara/blob/1fb11c0ba1ac1c169c59be2b44a09f0c12eee92f/docs/rg-slide-mali-handoff/ordered-gles-worker.md)
