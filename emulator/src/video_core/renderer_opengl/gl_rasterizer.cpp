@@ -720,7 +720,8 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
         return value && std::strcmp(value, "1") == 0;
     }();
     const bool lit_list = try_more_lit_lists &&
-        regs.pipeline.triangle_topology == Pica::PipelineRegs::TriangleTopology::List &&
+        Pica::g_state.primitive_assembler.GetTopology() ==
+            Pica::PipelineRegs::TriangleTopology::List &&
         !regs.framebuffer.IsShadowRendering();
     ios_lit_pair_vertex_reuse = lit_pair_reuse && ios_indexed_vertex_inputs == 2 &&
         !regs.lighting.disable && (!AllowShadow || lit_list) &&
@@ -2528,6 +2529,10 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     if (paired_framebuffer) {
         state.draw.draw_framebuffer = paired_framebuffer;
     } else {
+        if (color_surface) {
+            framebuffer_info.color_width = color_surface->width;
+            framebuffer_info.color_height = color_surface->height;
+        }
         OpenGLState::BindDrawFramebuffer(framebuffer.handle);
         DiscardExpiredFramebufferAttachments();
     }

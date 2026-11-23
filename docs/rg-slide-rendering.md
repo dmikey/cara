@@ -383,4 +383,28 @@ physical gameplay comparisons are separate checks. The current evidence does
 not establish sustained full speed across the tested RG Slide workloads.
 Mali-G52 and Mali-T820 devices require separate tests.
 
+## Follow-up probes for the Gadd render budget
+
+Enable `trace_renderer_timing` in a disposable profile, use JIT and Atlas
+at 1× with a fixed 100% guest clock, and enable one candidate per launch.
+For VRR gameplay, record guest game submissions and actual display
+presentation separately. The target for the game output is 24–40 FPS.
+System-refresh p99, worst refresh and guest speed describe emulator
+throughput and pacing separately.
+
+| Debug option | Candidate | What to measure |
+| --- | --- | --- |
+| `atlas_draw_framebuffer_cache` | Reuse an FBO with the same live color/depth owners, texture names and stencil format | Cache hits and builds, attachment calls, CPU time, and exact color/depth output |
+| `atlas_lit_indexed_lists` with `atlas_indexed_draws` | Admit more lit triangle lists whose model predicts no extra vertex invocations | Lit indexed draw count, position requests, and matching lighting and frame times |
+| `vertex_index_identity_reuse` with `atlas_indexed_draws` | Carry the verified index-cache identity to both indexed uploads | CPU compare samples and avoided upload comparisons |
+| `atlas_async_stage_reuse` with `atlas_indexed_draws` | Reuse exact compiled vertex and fragment sources on the Android EGL worker | Cold transitions and indexed fallback draws using matched empty caches |
+
+Draw-FBO reuse applies to accelerated draws with both attachments. It keeps
+the existing surface validation and write invalidation. Cache identities
+cover the immutable packed upload and are invalidated when the owner
+resets. The live guest-byte comparison is still required until a write
+proof covers JIT writes, DMA and state restore. The shader worker reuses
+stages for indexed programs. Required regular draws still wait on their
+exact program when it first appears.
+
 [Arm framebuffer guidance](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-2-how-to-correctly-handle-framebuffers)
