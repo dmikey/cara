@@ -146,6 +146,10 @@ struct Counters {
     double surface_remap_seconds = 0;
     std::uint64_t surface_remap_calls = 0;
     std::uint64_t surface_remap_bytes = 0;
+    std::uint64_t depth_alias_calls = 0;
+    std::uint64_t depth_alias_bytes = 0;
+    std::uint64_t depth_cpu_export_calls = 0;
+    std::uint64_t depth_cpu_export_bytes = 0;
     double surface_pack_seconds = 0;
     double surface_download_seconds = 0;
     double surface_read_pixels_seconds = 0;

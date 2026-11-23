@@ -5,6 +5,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
+#include <exception>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -18,6 +20,7 @@
 #include "common/common_paths.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
+#include "common/scope_exit.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
@@ -30,6 +33,9 @@
 #include "core/loader/smdh.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
+#ifdef CARA_ANDROID_GLES_ATLAS
+#include "video_core/renderer_opengl/gl_rasterizer.h"
+#endif
 #include "video_core/video_core.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
 
@@ -169,6 +175,23 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
     setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
 #ifdef CARA_ANDROID_GLES_ATLAS
+    const Config::ConfigInfo<bool> depth_reinterpret{{"Debug", "gpu_depth_reinterpret"}, true};
+    const bool override_depth = Config::GetLayer().Exists(depth_reinterpret.location);
+    std::optional<std::string> original_depth_setting;
+    if (override_depth) {
+        if (const auto* setting = std::getenv("CARA_GPU_DEPTH_REINTERPRET"))
+            original_depth_setting = setting;
+        setenv("CARA_GPU_DEPTH_REINTERPRET", Config::Get(depth_reinterpret) ? "1" : "0", 1);
+    }
+    SCOPE_EXIT({
+        if (override_depth) {
+            if (original_depth_setting) {
+                setenv("CARA_GPU_DEPTH_REINTERPRET", original_depth_setting->c_str(), 1);
+            } else {
+                unsetenv("CARA_GPU_DEPTH_REINTERPRET");
+            }
+        }
+    });
     const Config::ConfigInfo<bool> native_luts{{"Debug", "native_lut_buffers"}, false};
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
@@ -252,6 +275,35 @@ void BootGame(const std::string& path) {
                                              "Error while loading ROM! An unknown error occured.");
             break;
         }
+        s_render_window.reset();
+        return;
+    }
+
+    const Config::ConfigInfo<bool> depth_self_test{{"Debug", "verify_gles_depth"}, false};
+    if (Config::Get(depth_self_test)) {
+        std::string detail;
+        bool passed = false;
+#ifdef CARA_ANDROID_GLES_ATLAS
+        try {
+            auto* rasterizer = dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
+            if (rasterizer) {
+                passed = rasterizer->RunDepthCoherenceSelfTest(detail);
+            } else {
+                detail = "GLES rasterizer unavailable";
+            }
+        } catch (const std::exception& exception) {
+            detail = exception.what();
+        } catch (...) {
+            detail = "Unexpected GLES depth fixture error";
+        }
+#else
+        detail = "The shared depth fixture requires an Android GLES Atlas build";
+#endif
+        __android_log_print(ANDROID_LOG_INFO, "CaraPerf", "depth_coherence passed=%d detail=%s",
+                            passed, detail.c_str());
+        // The standalone fixture runs before guest execution on a fresh cache.
+        system.Shutdown();
+        s_render_window->DoneCurrent();
         s_render_window.reset();
         return;
     }
@@ -357,6 +409,15 @@ void BootGame(const std::string& path) {
                                 phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
                                 phases.gpu_wait_seconds * 1000);
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
+                            const auto surface_message = fmt::format(
+                                "surface_window end={} clock={} depth_aliases={} depth_alias_bytes={} "
+                                "depth_exports={} depth_export_bytes={} color_remaps={} color_remap_bytes={} "
+                                "downloads={} download_bytes={}",
+                                frame, guest_clock, phases.depth_alias_calls, phases.depth_alias_bytes,
+                                phases.depth_cpu_export_calls, phases.depth_cpu_export_bytes,
+                                phases.surface_remap_calls, phases.surface_remap_bytes,
+                                phases.surface_download_calls, phases.surface_download_bytes);
+                            __android_log_write(ANDROID_LOG_INFO, "CaraPerf", surface_message.c_str());
                             reset_trace();
                         }
                     }

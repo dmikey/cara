@@ -228,7 +228,7 @@ public:
     bool RunNativeShaderCopySelfTest(std::string& error); // compatibility alias
     bool RunNativeRequiredCopySelfTest(std::string& error);
     bool RunTextureLookupSelfTest(std::string& error);
-    bool RunDepthCPUCoherenceSelfTest(std::string& error);
+    bool RunDepthCoherenceSelfTest(std::string& error);
 
     /// Blit one surface's texture to another
     bool BlitSurfaces(const Surface& src_surface, const Common::Rectangle<u32>& src_rect,
@@ -326,6 +326,7 @@ public:
     void SetScaleFactor(u16 scale);
 
 private:
+    bool RunDepthCPUCoherenceSelfTest(std::string& error);
     void ObserveFramebufferSelection(const SurfaceParams& original, const SurfaceParams& effective,
         const Surface& legacy, const Surface& depth, const Common::Rectangle<u32>& color_rect,
         const Common::Rectangle<u32>& depth_rect, SurfaceInterval viewport, bool depth_requested);

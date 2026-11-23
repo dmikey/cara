@@ -221,10 +221,14 @@ bool RasterizerCacheOpenGL::RunTextureLookupSelfTest(std::string& error) {
     return true;
 }
 
+bool RasterizerCacheOpenGL::RunDepthCoherenceSelfTest(std::string& error) {
+    return RunDepthReinterpretSelfTest(error) && RunDepthCPUCoherenceSelfTest(error);
+}
+
 bool RasterizerCacheOpenGL::RunSmallWriteSelfTest(std::string& error) {
-    const char* depth_test=std::getenv("CARA_GPU_DEPTH_SELF_TEST");
-    if(depth_test&&std::strcmp(depth_test,"1")==0&&!RunDepthReinterpretSelfTest(error))return false;
-    if(depth_test&&std::strcmp(depth_test,"1")==0&&!RunDepthCPUCoherenceSelfTest(error))return false;
+    const char* depth_test = std::getenv("CARA_GPU_DEPTH_SELF_TEST");
+    if (depth_test && std::strcmp(depth_test, "1") == 0 && !RunDepthCoherenceSelfTest(error))
+        return false;
     if ((texture_lookup_reuse || texture_exact_prefilter) && !RunTextureLookupSelfTest(error)) return false;
     if (const GLenum initial_error = glGetError(); initial_error != GL_NO_ERROR) {
         error = "surface coherence entered with GL error=" + std::to_string(initial_error);
@@ -842,9 +846,10 @@ bool RasterizerCacheOpenGL::RunDepthCPUCoherenceSelfTest(std::string& error) {
     constexpr PAddr scratch=Memory::VRAM_PADDR_END-scratch_bytes;
     const SurfaceInterval scratch_interval(scratch,scratch+scratch_bytes);
     const auto cached=surface_cache.equal_range(scratch_interval);
-    const auto dirty=dirty_regions.equal_range(scratch_interval);
-    if (cached.first!=cached.second || dirty.first!=dirty.second) {
-        error="depth CPU oracle requires unused scratch VRAM"; return false;
+    // FlushAll is part of the fixture. A live cache could publish unrelated guest bytes.
+    if (cached.first != cached.second || !dirty_regions.empty()) {
+        error = "depth CPU oracle requires unused scratch VRAM and no outstanding GPU owners";
+        return false;
     }
     u8* memory=VideoCore::Memory()->GetPhysicalPointer(scratch);
     if (!memory || glGetError()!=GL_NO_ERROR) { error="depth CPU oracle initial state"; return false; }
@@ -896,7 +901,15 @@ bool RasterizerCacheOpenGL::RunDepthCPUCoherenceSelfTest(std::string& error) {
                     std::fill(producer->gl_buffer.begin(),producer->gl_buffer.end(),0x2C);
                     // A genuine cache CPU-read/export request must recover GPU
                     // bytes, not the poisoned RAM or poisoned staging buffer.
+                    const auto& counters = Common::FrameTiming::counters;
+                    const auto export_calls = counters.depth_cpu_export_calls;
+                    const auto export_bytes = counters.depth_cpu_export_bytes;
                     FlushRegion(params.addr,params.size,producer);
+                    if (counters.depth_cpu_export_calls != export_calls + 1 ||
+                        counters.depth_cpu_export_bytes != export_bytes + params.size) {
+                        error = "depth CPU oracle did not record the successful guest-byte export";
+                        return false;
+                    }
                     if (!std::equal(expected.begin(),expected.end(),memory)) {
                         error="depth CPU oracle initial GPU export format="+std::to_string(unsigned(format));return false;
                     }
@@ -1105,11 +1118,19 @@ bool RasterizerCacheOpenGL::RunDepthCPUCoherenceSelfTest(std::string& error) {
                 // A nonzero start also checks copying valid source neighbors
                 // before the requested partial row/tile span.
                 const u32 offset=neighbor?0u:(tiled?256u:60u);
-                const auto before=Common::FrameTiming::counters.surface_download_calls;
+                const auto& counters = Common::FrameTiming::counters;
+                const auto downloads_before = counters.surface_download_calls;
+                const auto aliases_before = counters.depth_alias_calls;
+                const auto alias_bytes_before = counters.depth_alias_bytes;
                 const std::vector<u8> before_ram(memory,memory+c.params.size);
                 ValidateSurface(c.destination,scratch+offset,view.size-offset);
                 const SurfaceInterval requested(scratch+offset,scratch+view.size);
-                if(Common::FrameTiming::counters.surface_download_calls!=before ||
+                if (counters.depth_alias_calls == aliases_before ||
+                    counters.depth_alias_bytes - alias_bytes_before < view.size - offset) {
+                    error = "broader copy oracle did not record a successful depth alias";
+                    return false;
+                }
+                if(counters.surface_download_calls!=downloads_before ||
                     !c.destination->IsRegionValid(requested) ||
                     !std::equal(before_ram.begin(),before_ram.end(),memory)) {
                     error="broader copy oracle used RAM/readback or failed progress";return false;

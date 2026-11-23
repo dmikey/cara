@@ -312,6 +312,76 @@ uploads. These are wall-clock phase measurements from iPad. The equivalent
 RG Slide cost is still unmeasured. See
 [the earlier hardware investigation](hardware-investigation.md#monster-hunter-stories-current-leads).
 
+## Verifying the GLES depth path at CLK100
+
+The Android Atlas build uses the same checked D24S8-to-RGBA8 shader and
+ownership checks as iPad GLES. The earlier RG Slide residency retest measured
+tiled-to-linear RGBA8 remaps. Its zero warm downloads do not show whether a
+depth alias occurred.
+
+Use an isolated debug Atlas APK and an app-owned test copy of the game. In
+that install's `cara-emu/config/config-mmj.ini`, set the following options
+before launching. Use the same CPU engine, render scale, panel refresh rate and
+shader-cache state for all arms. Accuracy Mode also holds the original guest
+clock if it is selected in every arm.
+
+```ini
+[Core]
+use_cpu_jit = True
+
+[Play]
+accuracy_mode = False
+fixed_guest_clock = True
+guest_clock_percent = 100
+adaptive_frame_skip = False
+
+[Renderer]
+resolution_factor = 1
+use_frame_limit = True
+frame_limit = 100
+
+[Debug]
+gpu_surface_remap = True
+gpu_depth_reinterpret = True
+verify_gles_depth = True
+trace_renderer_timing = True
+```
+
+Launch a supported local title. The verifier initializes its GLES context and
+guest memory, runs generated data through the shared depth oracle before
+executing guest instructions, and returns to the library. Use logcat to collect
+the result and the fixture case counts.
+
+```sh
+adb logcat -v brief -s CaraPerf:I cara:I | grep -E 'depth_coherence|Depth (CPU coherence|broader-copy) oracle|surface_window| window end='
+```
+
+Require `depth_coherence passed=1` for the ON arm. The fixture checks depth
+and stencil bytes, mixed CPU/GPU writes, invalid neighbors, failed exports,
+and successful GPU aliases with no cache downloads. Repeat the fixture with
+`gpu_depth_reinterpret = False` to check the CPU ownership fallback. The
+GPU-only broader-copy cases run in the ON arm.
+
+For gameplay, set `verify_gles_depth = False` in both arms. Restart the preview
+process between arms after changing only `gpu_depth_reinterpret`. Replay the
+same moving-grass checkpoint and inputs in Monster Hunter Stories, the workload
+that exercised the alias on iPad. Collect matching warm windows in an
+ON/OFF/OFF/ON sequence, keeping cold shader results separate.
+
+Each `surface_window` matches the timing line with the same window end.
+`depth_aliases` counts successful D24S8-to-RGBA8 validations, and
+`depth_exports` counts completed GPU-depth publications to guest RAM.
+`color_remaps` counts the ordinary GPU byte-surface remaps. Their byte
+counts refer to guest intervals. `downloads` counts all cache downloads
+and includes the readback inside a CPU depth export.
+
+Keep only comparisons with `clock=100` throughout. Record p99, worst refresh,
+draw count and output pixels at the same guest checkpoint. A measured depth
+workload requires nonzero `depth_aliases` in the ON arm and none in the OFF
+arm. A decrease in `depth_exports` measures avoided CPU depth transfers. If
+both arms have zero aliases, use another checkpoint before making a claim
+about runtime depth residency. Disable the debug options after testing.
+
 ## Reproducing and extending the measurements
 
 1. Keep **Accuracy Mode, native resolution and JIT** for the first comparison.

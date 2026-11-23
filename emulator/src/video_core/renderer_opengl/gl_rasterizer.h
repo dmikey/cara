@@ -49,6 +49,7 @@ public:
     bool RunSoftwareBatchVisibilitySelfTest(std::string& error);
     bool RunLUTEffectiveChangeSelfTest(std::string& error);
     bool RunSurfaceCoherenceSelfTest(std::string& error) { return res_cache.RunSmallWriteSelfTest(error); }
+    bool RunDepthCoherenceSelfTest(std::string& error) { return res_cache.RunDepthCoherenceSelfTest(error); }
     bool RunNativeRGBA8RemapSelfTest(std::string& error) { return res_cache.RunNativeRGBA8RemapSelfTest(error); }
     bool RunNativeShaderCopySelfTest(std::string& error) { return res_cache.RunNativeShaderCopySelfTest(error); }
     bool RunNativeRequiredCopySelfTest(std::string& error) { return res_cache.RunNativeRequiredCopySelfTest(error); }

@@ -3867,6 +3867,12 @@ bool RasterizerCacheOpenGL::ValidateByReinterpretation(const Surface& surface,
         if (!entity.reinterpreter->ReinterpretChecked(source->texture.handle, src_rect,
                 g_read_framebuffer.handle, surface->texture.handle, dst_rect,
                 g_draw_framebuffer.handle, source->GetScaledWidth(), source->GetScaledHeight())) continue;
+        auto& counters = Common::FrameTiming::counters;
+        if (counters.enabled && entity.src_format == PixelFormat::D24S8 &&
+            entity.dst_format == PixelFormat::RGBA8) {
+            ++counters.depth_alias_calls;
+            counters.depth_alias_bytes += boost::icl::length(copied);
+        }
         if (copied_interval) *copied_interval = copied;
         return true;
     }
@@ -3953,6 +3959,11 @@ bool RasterizerCacheOpenGL::ExportDepthForCPU(const Surface& surface, const Surf
     if (trace_flushes) surface->last_download_pack_seconds=
         std::chrono::duration<double>(std::chrono::steady_clock::now()-pack_started).count();
     surface->FlushGLBuffer(start,end); // Exact owned bytes only, preserving CPU-written neighbors.
+    auto& counters = Common::FrameTiming::counters;
+    if (counters.enabled) {
+        ++counters.depth_cpu_export_calls;
+        counters.depth_cpu_export_bytes += end - start;
+    }
     return true;
 }
 
