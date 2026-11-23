@@ -154,298 +154,298 @@ struct Dispatch {
 inline thread_local const Dispatch* overrides = nullptr;
 }
 #undef glActiveTexture
-#define glActiveTexture (CaraGL::overrides ? CaraGL::overrides->entry_glActiveTexture : glad_glActiveTexture)
+#define glActiveTexture static_cast<PFNGLACTIVETEXTUREPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glActiveTexture : glad_glActiveTexture)
 #undef glAttachShader
-#define glAttachShader (CaraGL::overrides ? CaraGL::overrides->entry_glAttachShader : glad_glAttachShader)
+#define glAttachShader static_cast<PFNGLATTACHSHADERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glAttachShader : glad_glAttachShader)
 #undef glBeginTransformFeedback
-#define glBeginTransformFeedback (CaraGL::overrides ? CaraGL::overrides->entry_glBeginTransformFeedback : glad_glBeginTransformFeedback)
+#define glBeginTransformFeedback static_cast<PFNGLBEGINTRANSFORMFEEDBACKPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBeginTransformFeedback : glad_glBeginTransformFeedback)
 #undef glBindBuffer
-#define glBindBuffer (CaraGL::overrides ? CaraGL::overrides->entry_glBindBuffer : glad_glBindBuffer)
+#define glBindBuffer static_cast<PFNGLBINDBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindBuffer : glad_glBindBuffer)
 #undef glBindBufferBase
-#define glBindBufferBase (CaraGL::overrides ? CaraGL::overrides->entry_glBindBufferBase : glad_glBindBufferBase)
+#define glBindBufferBase static_cast<PFNGLBINDBUFFERBASEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindBufferBase : glad_glBindBufferBase)
 #undef glBindBufferRange
-#define glBindBufferRange (CaraGL::overrides ? CaraGL::overrides->entry_glBindBufferRange : glad_glBindBufferRange)
+#define glBindBufferRange static_cast<PFNGLBINDBUFFERRANGEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindBufferRange : glad_glBindBufferRange)
 #undef glBindFramebuffer
-#define glBindFramebuffer (CaraGL::overrides ? CaraGL::overrides->entry_glBindFramebuffer : glad_glBindFramebuffer)
+#define glBindFramebuffer static_cast<PFNGLBINDFRAMEBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindFramebuffer : glad_glBindFramebuffer)
 #undef glBindImageTexture
-#define glBindImageTexture (CaraGL::overrides ? CaraGL::overrides->entry_glBindImageTexture : glad_glBindImageTexture)
+#define glBindImageTexture static_cast<PFNGLBINDIMAGETEXTUREPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindImageTexture : glad_glBindImageTexture)
 #undef glBindProgramPipeline
-#define glBindProgramPipeline (CaraGL::overrides ? CaraGL::overrides->entry_glBindProgramPipeline : glad_glBindProgramPipeline)
+#define glBindProgramPipeline static_cast<PFNGLBINDPROGRAMPIPELINEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindProgramPipeline : glad_glBindProgramPipeline)
 #undef glBindRenderbuffer
-#define glBindRenderbuffer (CaraGL::overrides ? CaraGL::overrides->entry_glBindRenderbuffer : glad_glBindRenderbuffer)
+#define glBindRenderbuffer static_cast<PFNGLBINDRENDERBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindRenderbuffer : glad_glBindRenderbuffer)
 #undef glBindSampler
-#define glBindSampler (CaraGL::overrides ? CaraGL::overrides->entry_glBindSampler : glad_glBindSampler)
+#define glBindSampler static_cast<PFNGLBINDSAMPLERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindSampler : glad_glBindSampler)
 #undef glBindTexture
-#define glBindTexture (CaraGL::overrides ? CaraGL::overrides->entry_glBindTexture : glad_glBindTexture)
+#define glBindTexture static_cast<PFNGLBINDTEXTUREPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindTexture : glad_glBindTexture)
 #undef glBindVertexArray
-#define glBindVertexArray (CaraGL::overrides ? CaraGL::overrides->entry_glBindVertexArray : glad_glBindVertexArray)
+#define glBindVertexArray static_cast<PFNGLBINDVERTEXARRAYPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBindVertexArray : glad_glBindVertexArray)
 #undef glBlendColor
-#define glBlendColor (CaraGL::overrides ? CaraGL::overrides->entry_glBlendColor : glad_glBlendColor)
+#define glBlendColor static_cast<PFNGLBLENDCOLORPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBlendColor : glad_glBlendColor)
 #undef glBlendEquationSeparate
-#define glBlendEquationSeparate (CaraGL::overrides ? CaraGL::overrides->entry_glBlendEquationSeparate : glad_glBlendEquationSeparate)
+#define glBlendEquationSeparate static_cast<PFNGLBLENDEQUATIONSEPARATEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBlendEquationSeparate : glad_glBlendEquationSeparate)
 #undef glBlendFuncSeparate
-#define glBlendFuncSeparate (CaraGL::overrides ? CaraGL::overrides->entry_glBlendFuncSeparate : glad_glBlendFuncSeparate)
+#define glBlendFuncSeparate static_cast<PFNGLBLENDFUNCSEPARATEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBlendFuncSeparate : glad_glBlendFuncSeparate)
 #undef glBlitFramebuffer
-#define glBlitFramebuffer (CaraGL::overrides ? CaraGL::overrides->entry_glBlitFramebuffer : glad_glBlitFramebuffer)
+#define glBlitFramebuffer static_cast<PFNGLBLITFRAMEBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBlitFramebuffer : glad_glBlitFramebuffer)
 #undef glBufferData
-#define glBufferData (CaraGL::overrides ? CaraGL::overrides->entry_glBufferData : glad_glBufferData)
+#define glBufferData static_cast<PFNGLBUFFERDATAPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBufferData : glad_glBufferData)
 #undef glBufferStorage
-#define glBufferStorage (CaraGL::overrides ? CaraGL::overrides->entry_glBufferStorage : glad_glBufferStorage)
+#define glBufferStorage static_cast<PFNGLBUFFERSTORAGEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBufferStorage : glad_glBufferStorage)
 #undef glBufferStorageEXT
-#define glBufferStorageEXT (CaraGL::overrides ? CaraGL::overrides->entry_glBufferStorageEXT : glad_glBufferStorageEXT)
+#define glBufferStorageEXT static_cast<PFNGLBUFFERSTORAGEEXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBufferStorageEXT : glad_glBufferStorageEXT)
 #undef glBufferSubData
-#define glBufferSubData (CaraGL::overrides ? CaraGL::overrides->entry_glBufferSubData : glad_glBufferSubData)
+#define glBufferSubData static_cast<PFNGLBUFFERSUBDATAPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBufferSubData : glad_glBufferSubData)
 #undef glCheckFramebufferStatus
-#define glCheckFramebufferStatus (CaraGL::overrides ? CaraGL::overrides->entry_glCheckFramebufferStatus : glad_glCheckFramebufferStatus)
+#define glCheckFramebufferStatus static_cast<PFNGLCHECKFRAMEBUFFERSTATUSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glCheckFramebufferStatus : glad_glCheckFramebufferStatus)
 #undef glClear
-#define glClear (CaraGL::overrides ? CaraGL::overrides->entry_glClear : glad_glClear)
+#define glClear static_cast<PFNGLCLEARPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glClear : glad_glClear)
 #undef glClearBufferfi
-#define glClearBufferfi (CaraGL::overrides ? CaraGL::overrides->entry_glClearBufferfi : glad_glClearBufferfi)
+#define glClearBufferfi static_cast<PFNGLCLEARBUFFERFIPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glClearBufferfi : glad_glClearBufferfi)
 #undef glClearBufferfv
-#define glClearBufferfv (CaraGL::overrides ? CaraGL::overrides->entry_glClearBufferfv : glad_glClearBufferfv)
+#define glClearBufferfv static_cast<PFNGLCLEARBUFFERFVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glClearBufferfv : glad_glClearBufferfv)
 #undef glClearBufferiv
-#define glClearBufferiv (CaraGL::overrides ? CaraGL::overrides->entry_glClearBufferiv : glad_glClearBufferiv)
+#define glClearBufferiv static_cast<PFNGLCLEARBUFFERIVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glClearBufferiv : glad_glClearBufferiv)
 #undef glClearColor
-#define glClearColor (CaraGL::overrides ? CaraGL::overrides->entry_glClearColor : glad_glClearColor)
+#define glClearColor static_cast<PFNGLCLEARCOLORPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glClearColor : glad_glClearColor)
 #undef glClientWaitSync
-#define glClientWaitSync (CaraGL::overrides ? CaraGL::overrides->entry_glClientWaitSync : glad_glClientWaitSync)
+#define glClientWaitSync static_cast<PFNGLCLIENTWAITSYNCPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glClientWaitSync : glad_glClientWaitSync)
 #undef glColorMask
-#define glColorMask (CaraGL::overrides ? CaraGL::overrides->entry_glColorMask : glad_glColorMask)
+#define glColorMask static_cast<PFNGLCOLORMASKPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glColorMask : glad_glColorMask)
 #undef glCompileShader
-#define glCompileShader (CaraGL::overrides ? CaraGL::overrides->entry_glCompileShader : glad_glCompileShader)
+#define glCompileShader static_cast<PFNGLCOMPILESHADERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glCompileShader : glad_glCompileShader)
 #undef glCopyImageSubData
-#define glCopyImageSubData (CaraGL::overrides ? CaraGL::overrides->entry_glCopyImageSubData : glad_glCopyImageSubData)
+#define glCopyImageSubData static_cast<PFNGLCOPYIMAGESUBDATAPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glCopyImageSubData : glad_glCopyImageSubData)
 #undef glCopyTexSubImage2D
-#define glCopyTexSubImage2D (CaraGL::overrides ? CaraGL::overrides->entry_glCopyTexSubImage2D : glad_glCopyTexSubImage2D)
+#define glCopyTexSubImage2D static_cast<PFNGLCOPYTEXSUBIMAGE2DPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glCopyTexSubImage2D : glad_glCopyTexSubImage2D)
 #undef glCreateProgram
-#define glCreateProgram (CaraGL::overrides ? CaraGL::overrides->entry_glCreateProgram : glad_glCreateProgram)
+#define glCreateProgram static_cast<PFNGLCREATEPROGRAMPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glCreateProgram : glad_glCreateProgram)
 #undef glCreateShader
-#define glCreateShader (CaraGL::overrides ? CaraGL::overrides->entry_glCreateShader : glad_glCreateShader)
+#define glCreateShader static_cast<PFNGLCREATESHADERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glCreateShader : glad_glCreateShader)
 #undef glCullFace
-#define glCullFace (CaraGL::overrides ? CaraGL::overrides->entry_glCullFace : glad_glCullFace)
+#define glCullFace static_cast<PFNGLCULLFACEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glCullFace : glad_glCullFace)
 #undef glDebugMessageCallback
-#define glDebugMessageCallback (CaraGL::overrides ? CaraGL::overrides->entry_glDebugMessageCallback : glad_glDebugMessageCallback)
+#define glDebugMessageCallback static_cast<PFNGLDEBUGMESSAGECALLBACKPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDebugMessageCallback : glad_glDebugMessageCallback)
 #undef glDebugMessageCallbackAMD
-#define glDebugMessageCallbackAMD (CaraGL::overrides ? CaraGL::overrides->entry_glDebugMessageCallbackAMD : glad_glDebugMessageCallbackAMD)
+#define glDebugMessageCallbackAMD static_cast<PFNGLDEBUGMESSAGECALLBACKAMDPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDebugMessageCallbackAMD : glad_glDebugMessageCallbackAMD)
 #undef glDebugMessageCallbackARB
-#define glDebugMessageCallbackARB (CaraGL::overrides ? CaraGL::overrides->entry_glDebugMessageCallbackARB : glad_glDebugMessageCallbackARB)
+#define glDebugMessageCallbackARB static_cast<PFNGLDEBUGMESSAGECALLBACKARBPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDebugMessageCallbackARB : glad_glDebugMessageCallbackARB)
 #undef glDebugMessageCallbackKHR
-#define glDebugMessageCallbackKHR (CaraGL::overrides ? CaraGL::overrides->entry_glDebugMessageCallbackKHR : glad_glDebugMessageCallbackKHR)
+#define glDebugMessageCallbackKHR static_cast<PFNGLDEBUGMESSAGECALLBACKKHRPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDebugMessageCallbackKHR : glad_glDebugMessageCallbackKHR)
 #undef glDeleteBuffers
-#define glDeleteBuffers (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteBuffers : glad_glDeleteBuffers)
+#define glDeleteBuffers static_cast<PFNGLDELETEBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteBuffers : glad_glDeleteBuffers)
 #undef glDeleteFramebuffers
-#define glDeleteFramebuffers (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteFramebuffers : glad_glDeleteFramebuffers)
+#define glDeleteFramebuffers static_cast<PFNGLDELETEFRAMEBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteFramebuffers : glad_glDeleteFramebuffers)
 #undef glDeleteProgram
-#define glDeleteProgram (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteProgram : glad_glDeleteProgram)
+#define glDeleteProgram static_cast<PFNGLDELETEPROGRAMPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteProgram : glad_glDeleteProgram)
 #undef glDeleteProgramPipelines
-#define glDeleteProgramPipelines (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteProgramPipelines : glad_glDeleteProgramPipelines)
+#define glDeleteProgramPipelines static_cast<PFNGLDELETEPROGRAMPIPELINESPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteProgramPipelines : glad_glDeleteProgramPipelines)
 #undef glDeleteRenderbuffers
-#define glDeleteRenderbuffers (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteRenderbuffers : glad_glDeleteRenderbuffers)
+#define glDeleteRenderbuffers static_cast<PFNGLDELETERENDERBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteRenderbuffers : glad_glDeleteRenderbuffers)
 #undef glDeleteSamplers
-#define glDeleteSamplers (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteSamplers : glad_glDeleteSamplers)
+#define glDeleteSamplers static_cast<PFNGLDELETESAMPLERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteSamplers : glad_glDeleteSamplers)
 #undef glDeleteShader
-#define glDeleteShader (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteShader : glad_glDeleteShader)
+#define glDeleteShader static_cast<PFNGLDELETESHADERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteShader : glad_glDeleteShader)
 #undef glDeleteSync
-#define glDeleteSync (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteSync : glad_glDeleteSync)
+#define glDeleteSync static_cast<PFNGLDELETESYNCPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteSync : glad_glDeleteSync)
 #undef glDeleteTextures
-#define glDeleteTextures (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteTextures : glad_glDeleteTextures)
+#define glDeleteTextures static_cast<PFNGLDELETETEXTURESPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteTextures : glad_glDeleteTextures)
 #undef glDeleteVertexArrays
-#define glDeleteVertexArrays (CaraGL::overrides ? CaraGL::overrides->entry_glDeleteVertexArrays : glad_glDeleteVertexArrays)
+#define glDeleteVertexArrays static_cast<PFNGLDELETEVERTEXARRAYSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteVertexArrays : glad_glDeleteVertexArrays)
 #undef glDepthFunc
-#define glDepthFunc (CaraGL::overrides ? CaraGL::overrides->entry_glDepthFunc : glad_glDepthFunc)
+#define glDepthFunc static_cast<PFNGLDEPTHFUNCPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDepthFunc : glad_glDepthFunc)
 #undef glDepthMask
-#define glDepthMask (CaraGL::overrides ? CaraGL::overrides->entry_glDepthMask : glad_glDepthMask)
+#define glDepthMask static_cast<PFNGLDEPTHMASKPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDepthMask : glad_glDepthMask)
 #undef glDetachShader
-#define glDetachShader (CaraGL::overrides ? CaraGL::overrides->entry_glDetachShader : glad_glDetachShader)
+#define glDetachShader static_cast<PFNGLDETACHSHADERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDetachShader : glad_glDetachShader)
 #undef glDisable
-#define glDisable (CaraGL::overrides ? CaraGL::overrides->entry_glDisable : glad_glDisable)
+#define glDisable static_cast<PFNGLDISABLEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDisable : glad_glDisable)
 #undef glDisableVertexAttribArray
-#define glDisableVertexAttribArray (CaraGL::overrides ? CaraGL::overrides->entry_glDisableVertexAttribArray : glad_glDisableVertexAttribArray)
+#define glDisableVertexAttribArray static_cast<PFNGLDISABLEVERTEXATTRIBARRAYPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDisableVertexAttribArray : glad_glDisableVertexAttribArray)
 #undef glDrawArrays
-#define glDrawArrays (CaraGL::overrides ? CaraGL::overrides->entry_glDrawArrays : glad_glDrawArrays)
+#define glDrawArrays static_cast<PFNGLDRAWARRAYSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDrawArrays : glad_glDrawArrays)
 #undef glDrawElements
-#define glDrawElements (CaraGL::overrides ? CaraGL::overrides->entry_glDrawElements : glad_glDrawElements)
+#define glDrawElements static_cast<PFNGLDRAWELEMENTSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDrawElements : glad_glDrawElements)
 #undef glDrawRangeElementsBaseVertex
-#define glDrawRangeElementsBaseVertex (CaraGL::overrides ? CaraGL::overrides->entry_glDrawRangeElementsBaseVertex : glad_glDrawRangeElementsBaseVertex)
+#define glDrawRangeElementsBaseVertex static_cast<PFNGLDRAWRANGEELEMENTSBASEVERTEXPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDrawRangeElementsBaseVertex : glad_glDrawRangeElementsBaseVertex)
 #undef glEnable
-#define glEnable (CaraGL::overrides ? CaraGL::overrides->entry_glEnable : glad_glEnable)
+#define glEnable static_cast<PFNGLENABLEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glEnable : glad_glEnable)
 #undef glEnableVertexAttribArray
-#define glEnableVertexAttribArray (CaraGL::overrides ? CaraGL::overrides->entry_glEnableVertexAttribArray : glad_glEnableVertexAttribArray)
+#define glEnableVertexAttribArray static_cast<PFNGLENABLEVERTEXATTRIBARRAYPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glEnableVertexAttribArray : glad_glEnableVertexAttribArray)
 #undef glEndTransformFeedback
-#define glEndTransformFeedback (CaraGL::overrides ? CaraGL::overrides->entry_glEndTransformFeedback : glad_glEndTransformFeedback)
+#define glEndTransformFeedback static_cast<PFNGLENDTRANSFORMFEEDBACKPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glEndTransformFeedback : glad_glEndTransformFeedback)
 #undef glFenceSync
-#define glFenceSync (CaraGL::overrides ? CaraGL::overrides->entry_glFenceSync : glad_glFenceSync)
+#define glFenceSync static_cast<PFNGLFENCESYNCPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glFenceSync : glad_glFenceSync)
 #undef glFinish
-#define glFinish (CaraGL::overrides ? CaraGL::overrides->entry_glFinish : glad_glFinish)
+#define glFinish static_cast<PFNGLFINISHPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glFinish : glad_glFinish)
 #undef glFlush
-#define glFlush (CaraGL::overrides ? CaraGL::overrides->entry_glFlush : glad_glFlush)
+#define glFlush static_cast<PFNGLFLUSHPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glFlush : glad_glFlush)
 #undef glFlushMappedBufferRange
-#define glFlushMappedBufferRange (CaraGL::overrides ? CaraGL::overrides->entry_glFlushMappedBufferRange : glad_glFlushMappedBufferRange)
+#define glFlushMappedBufferRange static_cast<PFNGLFLUSHMAPPEDBUFFERRANGEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glFlushMappedBufferRange : glad_glFlushMappedBufferRange)
 #undef glFramebufferParameteri
-#define glFramebufferParameteri (CaraGL::overrides ? CaraGL::overrides->entry_glFramebufferParameteri : glad_glFramebufferParameteri)
+#define glFramebufferParameteri static_cast<PFNGLFRAMEBUFFERPARAMETERIPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glFramebufferParameteri : glad_glFramebufferParameteri)
 #undef glFramebufferRenderbuffer
-#define glFramebufferRenderbuffer (CaraGL::overrides ? CaraGL::overrides->entry_glFramebufferRenderbuffer : glad_glFramebufferRenderbuffer)
+#define glFramebufferRenderbuffer static_cast<PFNGLFRAMEBUFFERRENDERBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glFramebufferRenderbuffer : glad_glFramebufferRenderbuffer)
 #undef glFramebufferTexture2D
-#define glFramebufferTexture2D (CaraGL::overrides ? CaraGL::overrides->entry_glFramebufferTexture2D : glad_glFramebufferTexture2D)
+#define glFramebufferTexture2D static_cast<PFNGLFRAMEBUFFERTEXTURE2DPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glFramebufferTexture2D : glad_glFramebufferTexture2D)
 #undef glFrontFace
-#define glFrontFace (CaraGL::overrides ? CaraGL::overrides->entry_glFrontFace : glad_glFrontFace)
+#define glFrontFace static_cast<PFNGLFRONTFACEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glFrontFace : glad_glFrontFace)
 #undef glGenBuffers
-#define glGenBuffers (CaraGL::overrides ? CaraGL::overrides->entry_glGenBuffers : glad_glGenBuffers)
+#define glGenBuffers static_cast<PFNGLGENBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenBuffers : glad_glGenBuffers)
 #undef glGenFramebuffers
-#define glGenFramebuffers (CaraGL::overrides ? CaraGL::overrides->entry_glGenFramebuffers : glad_glGenFramebuffers)
+#define glGenFramebuffers static_cast<PFNGLGENFRAMEBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenFramebuffers : glad_glGenFramebuffers)
 #undef glGenProgramPipelines
-#define glGenProgramPipelines (CaraGL::overrides ? CaraGL::overrides->entry_glGenProgramPipelines : glad_glGenProgramPipelines)
+#define glGenProgramPipelines static_cast<PFNGLGENPROGRAMPIPELINESPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenProgramPipelines : glad_glGenProgramPipelines)
 #undef glGenRenderbuffers
-#define glGenRenderbuffers (CaraGL::overrides ? CaraGL::overrides->entry_glGenRenderbuffers : glad_glGenRenderbuffers)
+#define glGenRenderbuffers static_cast<PFNGLGENRENDERBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenRenderbuffers : glad_glGenRenderbuffers)
 #undef glGenSamplers
-#define glGenSamplers (CaraGL::overrides ? CaraGL::overrides->entry_glGenSamplers : glad_glGenSamplers)
+#define glGenSamplers static_cast<PFNGLGENSAMPLERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenSamplers : glad_glGenSamplers)
 #undef glGenTextures
-#define glGenTextures (CaraGL::overrides ? CaraGL::overrides->entry_glGenTextures : glad_glGenTextures)
+#define glGenTextures static_cast<PFNGLGENTEXTURESPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenTextures : glad_glGenTextures)
 #undef glGenVertexArrays
-#define glGenVertexArrays (CaraGL::overrides ? CaraGL::overrides->entry_glGenVertexArrays : glad_glGenVertexArrays)
+#define glGenVertexArrays static_cast<PFNGLGENVERTEXARRAYSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenVertexArrays : glad_glGenVertexArrays)
 #undef glGenerateMipmap
-#define glGenerateMipmap (CaraGL::overrides ? CaraGL::overrides->entry_glGenerateMipmap : glad_glGenerateMipmap)
+#define glGenerateMipmap static_cast<PFNGLGENERATEMIPMAPPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenerateMipmap : glad_glGenerateMipmap)
 #undef glGetActiveUniformBlockiv
-#define glGetActiveUniformBlockiv (CaraGL::overrides ? CaraGL::overrides->entry_glGetActiveUniformBlockiv : glad_glGetActiveUniformBlockiv)
+#define glGetActiveUniformBlockiv static_cast<PFNGLGETACTIVEUNIFORMBLOCKIVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetActiveUniformBlockiv : glad_glGetActiveUniformBlockiv)
 #undef glGetAttachedShaders
-#define glGetAttachedShaders (CaraGL::overrides ? CaraGL::overrides->entry_glGetAttachedShaders : glad_glGetAttachedShaders)
+#define glGetAttachedShaders static_cast<PFNGLGETATTACHEDSHADERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetAttachedShaders : glad_glGetAttachedShaders)
 #undef glGetAttribLocation
-#define glGetAttribLocation (CaraGL::overrides ? CaraGL::overrides->entry_glGetAttribLocation : glad_glGetAttribLocation)
+#define glGetAttribLocation static_cast<PFNGLGETATTRIBLOCATIONPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetAttribLocation : glad_glGetAttribLocation)
 #undef glGetBooleanv
-#define glGetBooleanv (CaraGL::overrides ? CaraGL::overrides->entry_glGetBooleanv : glad_glGetBooleanv)
+#define glGetBooleanv static_cast<PFNGLGETBOOLEANVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetBooleanv : glad_glGetBooleanv)
 #undef glGetBufferSubData
-#define glGetBufferSubData (CaraGL::overrides ? CaraGL::overrides->entry_glGetBufferSubData : glad_glGetBufferSubData)
+#define glGetBufferSubData static_cast<PFNGLGETBUFFERSUBDATAPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetBufferSubData : glad_glGetBufferSubData)
 #undef glGetError
-#define glGetError (CaraGL::overrides ? CaraGL::overrides->entry_glGetError : glad_glGetError)
+#define glGetError static_cast<PFNGLGETERRORPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetError : glad_glGetError)
 #undef glGetFramebufferAttachmentParameteriv
-#define glGetFramebufferAttachmentParameteriv (CaraGL::overrides ? CaraGL::overrides->entry_glGetFramebufferAttachmentParameteriv : glad_glGetFramebufferAttachmentParameteriv)
+#define glGetFramebufferAttachmentParameteriv static_cast<PFNGLGETFRAMEBUFFERATTACHMENTPARAMETERIVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetFramebufferAttachmentParameteriv : glad_glGetFramebufferAttachmentParameteriv)
 #undef glGetInteger64i_v
-#define glGetInteger64i_v (CaraGL::overrides ? CaraGL::overrides->entry_glGetInteger64i_v : glad_glGetInteger64i_v)
+#define glGetInteger64i_v static_cast<PFNGLGETINTEGER64I_VPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetInteger64i_v : glad_glGetInteger64i_v)
 #undef glGetIntegeri_v
-#define glGetIntegeri_v (CaraGL::overrides ? CaraGL::overrides->entry_glGetIntegeri_v : glad_glGetIntegeri_v)
+#define glGetIntegeri_v static_cast<PFNGLGETINTEGERI_VPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetIntegeri_v : glad_glGetIntegeri_v)
 #undef glGetIntegerv
-#define glGetIntegerv (CaraGL::overrides ? CaraGL::overrides->entry_glGetIntegerv : glad_glGetIntegerv)
+#define glGetIntegerv static_cast<PFNGLGETINTEGERVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetIntegerv : glad_glGetIntegerv)
 #undef glGetPointerv
-#define glGetPointerv (CaraGL::overrides ? CaraGL::overrides->entry_glGetPointerv : glad_glGetPointerv)
+#define glGetPointerv static_cast<PFNGLGETPOINTERVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetPointerv : glad_glGetPointerv)
 #undef glGetPointervKHR
-#define glGetPointervKHR (CaraGL::overrides ? CaraGL::overrides->entry_glGetPointervKHR : glad_glGetPointervKHR)
+#define glGetPointervKHR static_cast<PFNGLGETPOINTERVKHRPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetPointervKHR : glad_glGetPointervKHR)
 #undef glGetProgramBinary
-#define glGetProgramBinary (CaraGL::overrides ? CaraGL::overrides->entry_glGetProgramBinary : glad_glGetProgramBinary)
+#define glGetProgramBinary static_cast<PFNGLGETPROGRAMBINARYPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetProgramBinary : glad_glGetProgramBinary)
 #undef glGetProgramInfoLog
-#define glGetProgramInfoLog (CaraGL::overrides ? CaraGL::overrides->entry_glGetProgramInfoLog : glad_glGetProgramInfoLog)
+#define glGetProgramInfoLog static_cast<PFNGLGETPROGRAMINFOLOGPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetProgramInfoLog : glad_glGetProgramInfoLog)
 #undef glGetProgramiv
-#define glGetProgramiv (CaraGL::overrides ? CaraGL::overrides->entry_glGetProgramiv : glad_glGetProgramiv)
+#define glGetProgramiv static_cast<PFNGLGETPROGRAMIVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetProgramiv : glad_glGetProgramiv)
 #undef glGetShaderInfoLog
-#define glGetShaderInfoLog (CaraGL::overrides ? CaraGL::overrides->entry_glGetShaderInfoLog : glad_glGetShaderInfoLog)
+#define glGetShaderInfoLog static_cast<PFNGLGETSHADERINFOLOGPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetShaderInfoLog : glad_glGetShaderInfoLog)
 #undef glGetShaderSource
-#define glGetShaderSource (CaraGL::overrides ? CaraGL::overrides->entry_glGetShaderSource : glad_glGetShaderSource)
+#define glGetShaderSource static_cast<PFNGLGETSHADERSOURCEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetShaderSource : glad_glGetShaderSource)
 #undef glGetShaderiv
-#define glGetShaderiv (CaraGL::overrides ? CaraGL::overrides->entry_glGetShaderiv : glad_glGetShaderiv)
+#define glGetShaderiv static_cast<PFNGLGETSHADERIVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetShaderiv : glad_glGetShaderiv)
 #undef glGetString
-#define glGetString (CaraGL::overrides ? CaraGL::overrides->entry_glGetString : glad_glGetString)
+#define glGetString static_cast<PFNGLGETSTRINGPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetString : glad_glGetString)
 #undef glGetTexLevelParameteriv
-#define glGetTexLevelParameteriv (CaraGL::overrides ? CaraGL::overrides->entry_glGetTexLevelParameteriv : glad_glGetTexLevelParameteriv)
+#define glGetTexLevelParameteriv static_cast<PFNGLGETTEXLEVELPARAMETERIVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetTexLevelParameteriv : glad_glGetTexLevelParameteriv)
 #undef glGetUniformBlockIndex
-#define glGetUniformBlockIndex (CaraGL::overrides ? CaraGL::overrides->entry_glGetUniformBlockIndex : glad_glGetUniformBlockIndex)
+#define glGetUniformBlockIndex static_cast<PFNGLGETUNIFORMBLOCKINDEXPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetUniformBlockIndex : glad_glGetUniformBlockIndex)
 #undef glGetUniformLocation
-#define glGetUniformLocation (CaraGL::overrides ? CaraGL::overrides->entry_glGetUniformLocation : glad_glGetUniformLocation)
+#define glGetUniformLocation static_cast<PFNGLGETUNIFORMLOCATIONPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetUniformLocation : glad_glGetUniformLocation)
 #undef glGetVertexAttribiv
-#define glGetVertexAttribiv (CaraGL::overrides ? CaraGL::overrides->entry_glGetVertexAttribiv : glad_glGetVertexAttribiv)
+#define glGetVertexAttribiv static_cast<PFNGLGETVERTEXATTRIBIVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetVertexAttribiv : glad_glGetVertexAttribiv)
 #undef glIsEnabled
-#define glIsEnabled (CaraGL::overrides ? CaraGL::overrides->entry_glIsEnabled : glad_glIsEnabled)
+#define glIsEnabled static_cast<PFNGLISENABLEDPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glIsEnabled : glad_glIsEnabled)
 #undef glIsTexture
-#define glIsTexture (CaraGL::overrides ? CaraGL::overrides->entry_glIsTexture : glad_glIsTexture)
+#define glIsTexture static_cast<PFNGLISTEXTUREPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glIsTexture : glad_glIsTexture)
 #undef glLinkProgram
-#define glLinkProgram (CaraGL::overrides ? CaraGL::overrides->entry_glLinkProgram : glad_glLinkProgram)
+#define glLinkProgram static_cast<PFNGLLINKPROGRAMPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glLinkProgram : glad_glLinkProgram)
 #undef glLogicOp
-#define glLogicOp (CaraGL::overrides ? CaraGL::overrides->entry_glLogicOp : glad_glLogicOp)
+#define glLogicOp static_cast<PFNGLLOGICOPPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glLogicOp : glad_glLogicOp)
 #undef glMapBufferRange
-#define glMapBufferRange (CaraGL::overrides ? CaraGL::overrides->entry_glMapBufferRange : glad_glMapBufferRange)
+#define glMapBufferRange static_cast<PFNGLMAPBUFFERRANGEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glMapBufferRange : glad_glMapBufferRange)
 #undef glMemoryBarrier
-#define glMemoryBarrier (CaraGL::overrides ? CaraGL::overrides->entry_glMemoryBarrier : glad_glMemoryBarrier)
+#define glMemoryBarrier static_cast<PFNGLMEMORYBARRIERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glMemoryBarrier : glad_glMemoryBarrier)
 #undef glPixelStorei
-#define glPixelStorei (CaraGL::overrides ? CaraGL::overrides->entry_glPixelStorei : glad_glPixelStorei)
+#define glPixelStorei static_cast<PFNGLPIXELSTOREIPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glPixelStorei : glad_glPixelStorei)
 #undef glProgramBinary
-#define glProgramBinary (CaraGL::overrides ? CaraGL::overrides->entry_glProgramBinary : glad_glProgramBinary)
+#define glProgramBinary static_cast<PFNGLPROGRAMBINARYPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glProgramBinary : glad_glProgramBinary)
 #undef glProgramParameteri
-#define glProgramParameteri (CaraGL::overrides ? CaraGL::overrides->entry_glProgramParameteri : glad_glProgramParameteri)
+#define glProgramParameteri static_cast<PFNGLPROGRAMPARAMETERIPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glProgramParameteri : glad_glProgramParameteri)
 #undef glProgramUniform4iv
-#define glProgramUniform4iv (CaraGL::overrides ? CaraGL::overrides->entry_glProgramUniform4iv : glad_glProgramUniform4iv)
+#define glProgramUniform4iv static_cast<PFNGLPROGRAMUNIFORM4IVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glProgramUniform4iv : glad_glProgramUniform4iv)
 #undef glReadBuffer
-#define glReadBuffer (CaraGL::overrides ? CaraGL::overrides->entry_glReadBuffer : glad_glReadBuffer)
+#define glReadBuffer static_cast<PFNGLREADBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glReadBuffer : glad_glReadBuffer)
 #undef glReadPixels
-#define glReadPixels (CaraGL::overrides ? CaraGL::overrides->entry_glReadPixels : glad_glReadPixels)
+#define glReadPixels static_cast<PFNGLREADPIXELSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glReadPixels : glad_glReadPixels)
 #undef glRenderbufferStorage
-#define glRenderbufferStorage (CaraGL::overrides ? CaraGL::overrides->entry_glRenderbufferStorage : glad_glRenderbufferStorage)
+#define glRenderbufferStorage static_cast<PFNGLRENDERBUFFERSTORAGEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glRenderbufferStorage : glad_glRenderbufferStorage)
 #undef glSamplerParameterf
-#define glSamplerParameterf (CaraGL::overrides ? CaraGL::overrides->entry_glSamplerParameterf : glad_glSamplerParameterf)
+#define glSamplerParameterf static_cast<PFNGLSAMPLERPARAMETERFPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glSamplerParameterf : glad_glSamplerParameterf)
 #undef glSamplerParameterfv
-#define glSamplerParameterfv (CaraGL::overrides ? CaraGL::overrides->entry_glSamplerParameterfv : glad_glSamplerParameterfv)
+#define glSamplerParameterfv static_cast<PFNGLSAMPLERPARAMETERFVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glSamplerParameterfv : glad_glSamplerParameterfv)
 #undef glSamplerParameteri
-#define glSamplerParameteri (CaraGL::overrides ? CaraGL::overrides->entry_glSamplerParameteri : glad_glSamplerParameteri)
+#define glSamplerParameteri static_cast<PFNGLSAMPLERPARAMETERIPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glSamplerParameteri : glad_glSamplerParameteri)
 #undef glScissor
-#define glScissor (CaraGL::overrides ? CaraGL::overrides->entry_glScissor : glad_glScissor)
+#define glScissor static_cast<PFNGLSCISSORPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glScissor : glad_glScissor)
 #undef glShaderSource
-#define glShaderSource (CaraGL::overrides ? CaraGL::overrides->entry_glShaderSource : glad_glShaderSource)
+#define glShaderSource static_cast<PFNGLSHADERSOURCEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glShaderSource : glad_glShaderSource)
 #undef glStencilFunc
-#define glStencilFunc (CaraGL::overrides ? CaraGL::overrides->entry_glStencilFunc : glad_glStencilFunc)
+#define glStencilFunc static_cast<PFNGLSTENCILFUNCPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glStencilFunc : glad_glStencilFunc)
 #undef glStencilFuncSeparate
-#define glStencilFuncSeparate (CaraGL::overrides ? CaraGL::overrides->entry_glStencilFuncSeparate : glad_glStencilFuncSeparate)
+#define glStencilFuncSeparate static_cast<PFNGLSTENCILFUNCSEPARATEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glStencilFuncSeparate : glad_glStencilFuncSeparate)
 #undef glStencilMask
-#define glStencilMask (CaraGL::overrides ? CaraGL::overrides->entry_glStencilMask : glad_glStencilMask)
+#define glStencilMask static_cast<PFNGLSTENCILMASKPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glStencilMask : glad_glStencilMask)
 #undef glStencilMaskSeparate
-#define glStencilMaskSeparate (CaraGL::overrides ? CaraGL::overrides->entry_glStencilMaskSeparate : glad_glStencilMaskSeparate)
+#define glStencilMaskSeparate static_cast<PFNGLSTENCILMASKSEPARATEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glStencilMaskSeparate : glad_glStencilMaskSeparate)
 #undef glStencilOp
-#define glStencilOp (CaraGL::overrides ? CaraGL::overrides->entry_glStencilOp : glad_glStencilOp)
+#define glStencilOp static_cast<PFNGLSTENCILOPPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glStencilOp : glad_glStencilOp)
 #undef glStencilOpSeparate
-#define glStencilOpSeparate (CaraGL::overrides ? CaraGL::overrides->entry_glStencilOpSeparate : glad_glStencilOpSeparate)
+#define glStencilOpSeparate static_cast<PFNGLSTENCILOPSEPARATEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glStencilOpSeparate : glad_glStencilOpSeparate)
 #undef glTexBuffer
-#define glTexBuffer (CaraGL::overrides ? CaraGL::overrides->entry_glTexBuffer : glad_glTexBuffer)
+#define glTexBuffer static_cast<PFNGLTEXBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glTexBuffer : glad_glTexBuffer)
 #undef glTexImage2D
-#define glTexImage2D (CaraGL::overrides ? CaraGL::overrides->entry_glTexImage2D : glad_glTexImage2D)
+#define glTexImage2D static_cast<PFNGLTEXIMAGE2DPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glTexImage2D : glad_glTexImage2D)
 #undef glTexParameteri
-#define glTexParameteri (CaraGL::overrides ? CaraGL::overrides->entry_glTexParameteri : glad_glTexParameteri)
+#define glTexParameteri static_cast<PFNGLTEXPARAMETERIPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glTexParameteri : glad_glTexParameteri)
 #undef glTexStorage2D
-#define glTexStorage2D (CaraGL::overrides ? CaraGL::overrides->entry_glTexStorage2D : glad_glTexStorage2D)
+#define glTexStorage2D static_cast<PFNGLTEXSTORAGE2DPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glTexStorage2D : glad_glTexStorage2D)
 #undef glTexSubImage2D
-#define glTexSubImage2D (CaraGL::overrides ? CaraGL::overrides->entry_glTexSubImage2D : glad_glTexSubImage2D)
+#define glTexSubImage2D static_cast<PFNGLTEXSUBIMAGE2DPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glTexSubImage2D : glad_glTexSubImage2D)
 #undef glTextureBarrierNV
-#define glTextureBarrierNV (CaraGL::overrides ? CaraGL::overrides->entry_glTextureBarrierNV : glad_glTextureBarrierNV)
+#define glTextureBarrierNV static_cast<PFNGLTEXTUREBARRIERNVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glTextureBarrierNV : glad_glTextureBarrierNV)
 #undef glTextureView
-#define glTextureView (CaraGL::overrides ? CaraGL::overrides->entry_glTextureView : glad_glTextureView)
+#define glTextureView static_cast<PFNGLTEXTUREVIEWPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glTextureView : glad_glTextureView)
 #undef glTransformFeedbackVaryings
-#define glTransformFeedbackVaryings (CaraGL::overrides ? CaraGL::overrides->entry_glTransformFeedbackVaryings : glad_glTransformFeedbackVaryings)
+#define glTransformFeedbackVaryings static_cast<PFNGLTRANSFORMFEEDBACKVARYINGSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glTransformFeedbackVaryings : glad_glTransformFeedbackVaryings)
 #undef glUniform1f
-#define glUniform1f (CaraGL::overrides ? CaraGL::overrides->entry_glUniform1f : glad_glUniform1f)
+#define glUniform1f static_cast<PFNGLUNIFORM1FPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniform1f : glad_glUniform1f)
 #undef glUniform1i
-#define glUniform1i (CaraGL::overrides ? CaraGL::overrides->entry_glUniform1i : glad_glUniform1i)
+#define glUniform1i static_cast<PFNGLUNIFORM1IPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniform1i : glad_glUniform1i)
 #undef glUniform1ui
-#define glUniform1ui (CaraGL::overrides ? CaraGL::overrides->entry_glUniform1ui : glad_glUniform1ui)
+#define glUniform1ui static_cast<PFNGLUNIFORM1UIPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniform1ui : glad_glUniform1ui)
 #undef glUniform2f
-#define glUniform2f (CaraGL::overrides ? CaraGL::overrides->entry_glUniform2f : glad_glUniform2f)
+#define glUniform2f static_cast<PFNGLUNIFORM2FPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniform2f : glad_glUniform2f)
 #undef glUniform2i
-#define glUniform2i (CaraGL::overrides ? CaraGL::overrides->entry_glUniform2i : glad_glUniform2i)
+#define glUniform2i static_cast<PFNGLUNIFORM2IPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniform2i : glad_glUniform2i)
 #undef glUniform4f
-#define glUniform4f (CaraGL::overrides ? CaraGL::overrides->entry_glUniform4f : glad_glUniform4f)
+#define glUniform4f static_cast<PFNGLUNIFORM4FPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniform4f : glad_glUniform4f)
 #undef glUniform4i
-#define glUniform4i (CaraGL::overrides ? CaraGL::overrides->entry_glUniform4i : glad_glUniform4i)
+#define glUniform4i static_cast<PFNGLUNIFORM4IPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniform4i : glad_glUniform4i)
 #undef glUniform4iv
-#define glUniform4iv (CaraGL::overrides ? CaraGL::overrides->entry_glUniform4iv : glad_glUniform4iv)
+#define glUniform4iv static_cast<PFNGLUNIFORM4IVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniform4iv : glad_glUniform4iv)
 #undef glUniformBlockBinding
-#define glUniformBlockBinding (CaraGL::overrides ? CaraGL::overrides->entry_glUniformBlockBinding : glad_glUniformBlockBinding)
+#define glUniformBlockBinding static_cast<PFNGLUNIFORMBLOCKBINDINGPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniformBlockBinding : glad_glUniformBlockBinding)
 #undef glUniformMatrix3x2fv
-#define glUniformMatrix3x2fv (CaraGL::overrides ? CaraGL::overrides->entry_glUniformMatrix3x2fv : glad_glUniformMatrix3x2fv)
+#define glUniformMatrix3x2fv static_cast<PFNGLUNIFORMMATRIX3X2FVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUniformMatrix3x2fv : glad_glUniformMatrix3x2fv)
 #undef glUnmapBuffer
-#define glUnmapBuffer (CaraGL::overrides ? CaraGL::overrides->entry_glUnmapBuffer : glad_glUnmapBuffer)
+#define glUnmapBuffer static_cast<PFNGLUNMAPBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUnmapBuffer : glad_glUnmapBuffer)
 #undef glUseProgram
-#define glUseProgram (CaraGL::overrides ? CaraGL::overrides->entry_glUseProgram : glad_glUseProgram)
+#define glUseProgram static_cast<PFNGLUSEPROGRAMPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUseProgram : glad_glUseProgram)
 #undef glUseProgramStages
-#define glUseProgramStages (CaraGL::overrides ? CaraGL::overrides->entry_glUseProgramStages : glad_glUseProgramStages)
+#define glUseProgramStages static_cast<PFNGLUSEPROGRAMSTAGESPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glUseProgramStages : glad_glUseProgramStages)
 #undef glVertexAttrib4f
-#define glVertexAttrib4f (CaraGL::overrides ? CaraGL::overrides->entry_glVertexAttrib4f : glad_glVertexAttrib4f)
+#define glVertexAttrib4f static_cast<PFNGLVERTEXATTRIB4FPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glVertexAttrib4f : glad_glVertexAttrib4f)
 #undef glVertexAttribPointer
-#define glVertexAttribPointer (CaraGL::overrides ? CaraGL::overrides->entry_glVertexAttribPointer : glad_glVertexAttribPointer)
+#define glVertexAttribPointer static_cast<PFNGLVERTEXATTRIBPOINTERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glVertexAttribPointer : glad_glVertexAttribPointer)
 #undef glViewport
-#define glViewport (CaraGL::overrides ? CaraGL::overrides->entry_glViewport : glad_glViewport)
+#define glViewport static_cast<PFNGLVIEWPORTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glViewport : glad_glViewport)
 #undef glWaitSync
-#define glWaitSync (CaraGL::overrides ? CaraGL::overrides->entry_glWaitSync : glad_glWaitSync)
+#define glWaitSync static_cast<PFNGLWAITSYNCPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glWaitSync : glad_glWaitSync)

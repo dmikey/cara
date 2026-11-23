@@ -203,7 +203,7 @@ for name in sorted(used):
  dispatch.append(f'    {entries[name][0]} entry_{name};\n')
 dispatch += ['};\n', 'inline thread_local const Dispatch* overrides = nullptr;\n}\n']
 for name in sorted(used):
- dispatch.append(f'#undef {name}\n#define {name} (CaraGL::overrides ? CaraGL::overrides->entry_{name} : glad_{name})\n')
+ dispatch.append(f'#undef {name}\n#define {name} static_cast<{entries[name][0]}>(CaraGL::overrides ? CaraGL::overrides->entry_{name} : glad_{name})\n')
 lines.append('#ifdef CARA_GL_CONTEXT_DISPATCH\nstatic CaraGL::Dispatch producer_dispatch{};\n#endif\n')
 lines.append('static void CaptureAndInstall(){\n')
 lines.append('#ifdef CARA_GL_CONTEXT_DISPATCH\n')
