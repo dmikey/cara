@@ -1812,6 +1812,15 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     auto* instance_pair = Cara::RepeatInstances::pending;
     const bool instance = instance_pair && instance_pair->allowed && !ios_feedback_vertex_reuse &&
                           !state.draw.program_pipeline && !native_borrow_lease && !runtime_tev_words;
+    const bool elide_duplicate = instance && Cara::RepeatInstances::ElideDepthDuplicates() &&
+                                 instance_pair->depth_idempotent;
+    const bool issue_instances = instance && !Cara::RepeatInstances::ElideDepthDuplicates();
+    const auto record_elision = [&] {
+        if (elide_duplicate) {
+            instance_pair->issued = true;
+            instance_pair->elided = true;
+        }
+    };
 #endif
     if (ShaderProgramManager::VertexProvenanceEnabled())
         shader_program_manager->ObserveBoundVertexProgram(state.draw.shader_program,
@@ -1835,12 +1844,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                         trace_batch(mode, count);
 #endif
 #ifdef CARA_ANDROID_GLES_ATLAS
-                        if (instance) {
+                        if (issue_instances) {
                             glDrawElementsInstanced(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr, 2);
                             instance_pair->issued = true;
                         } else
 #endif
-                        glDrawElements(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr);
+                        {
+                            glDrawElements(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr);
+#ifdef CARA_ANDROID_GLES_ATLAS
+                            record_elision();
+#endif
+                        }
                     }
                     if (native_elements && Common::FrameTiming::counters.enabled) {
                         ++Common::FrameTiming::counters.gpu_native_element_draws;
@@ -1868,12 +1882,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                 trace_batch(GL_TRIANGLES, triangles.size());
 #endif
 #ifdef CARA_ANDROID_GLES_ATLAS
-                if (instance) {
+                if (issue_instances) {
                     glDrawArraysInstanced(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()), 2);
                     instance_pair->issued = true;
                 } else
 #endif
-                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
+                {
+                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
+#ifdef CARA_ANDROID_GLES_ATLAS
+                    record_elision();
+#endif
+                }
             }
         }
     }
@@ -2572,6 +2591,13 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         return range.Valid() && clear(color_surface) && clear(depth_surface);
     };
     if (pair) {
+        // An identical opaque draw can add no fragments after a strict depth
+        // comparison and write. Keep the full proof of identical inputs and
+        // disjoint read/write ranges before eliding the second host draw.
+        pair->depth_idempotent = depth_surface && state.depth.test_enabled &&
+            state.depth.write_mask && !state.stencil.test_enabled && !state.blend.enabled &&
+            state.logic_op == GL_COPY &&
+            (state.depth.test_func == GL_LESS || state.depth.test_func == GL_GREATER);
         pair->allowed = pair->allowed && is_mali_gpu && accelerate && !shadow_rendering &&
             !native_plan && ios_indexed_vertex_inputs == 2 && pair->count != 0 &&
             (!color_surface || pair->Independent({color_surface->addr,color_surface->end})) &&

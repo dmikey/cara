@@ -637,7 +637,10 @@ static const u32* FindRepeatedTrigger(u32 trigger) {
     const bool rendered = VideoCore::Rasterizer()->AccelerateDrawBatch(indexed);
     if (pair.issued) {
         skip = next;
-        if (timing.enabled) ++timing.repeat_issued;
+        if (timing.enabled) {
+            ++timing.repeat_issued;
+            timing.repeat_elided += pair.elided;
+        }
     }
     return rendered;
 }
