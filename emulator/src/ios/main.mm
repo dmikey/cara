@@ -2364,6 +2364,8 @@ static std::filesystem::path PedometerHistoryPath() {
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     emuWindow->native_metal_only = CaraMetalRendererRequested();
     if (emuWindow->native_metal_only) {
+        if (!Common::ApplyAppleMetalDefaults(true))
+            LOG_WARNING(Frontend, "Could not initialize every Apple Metal tuning option");
         if (!metalLcdSurface)
             metalLcdSurface = [[CaraNativeMetalLcdView alloc] initWithFrame:self.view.bounds];
         [self.view insertSubview:metalLcdSurface belowSubview:gpuSurface];
