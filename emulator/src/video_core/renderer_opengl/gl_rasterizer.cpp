@@ -728,8 +728,12 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
         const auto topology = Pica::g_state.primitive_assembler.GetTopology();
         if (timing.enabled)
             ++selection.topology[static_cast<u32>(topology)];
+        using Topology = Pica::PipelineRegs::TriangleTopology;
+        // The programmable geometry stage was rejected above. In Shader
+        // topology the CPU assembler still produces complete triangles.
+        // Both draw paths use that same triangle order and reference vertex.
         const bool lit_list = try_more_lit_lists &&
-            topology == Pica::PipelineRegs::TriangleTopology::List &&
+            (topology == Topology::List || topology == Topology::Shader) &&
             !regs.framebuffer.IsShadowRendering();
         const auto count = [&](std::uint64_t& counter) {
             if (timing.enabled)

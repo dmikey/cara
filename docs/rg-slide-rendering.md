@@ -395,7 +395,7 @@ throughput and pacing separately.
 | Debug option | Candidate | What to measure |
 | --- | --- | --- |
 | `atlas_draw_framebuffer_cache` | Reuse an FBO with the same live color/depth owners, texture names and stencil format | Cache hits and builds, attachment calls, CPU time, and exact color/depth output |
-| `atlas_lit_indexed_lists` with `atlas_indexed_draws` | Admit more lit triangle lists whose model predicts no extra vertex invocations | Lit indexed draw count, position requests, and matching lighting and frame times |
+| `atlas_lit_indexed_lists` with `atlas_indexed_draws` | Admit assembled lit triangle lists, including Shader topology with the guest geometry stage disabled, whose model predicts no extra vertex invocations | Lit indexed draw count, position requests, and matching lighting and frame times |
 | `vertex_index_identity_reuse` with `atlas_indexed_draws` | Carry the verified index-cache identity to both indexed uploads | CPU compare samples and avoided upload comparisons |
 | `atlas_async_stage_reuse` with `atlas_indexed_draws` | Reuse exact compiled vertex and fragment sources on the Android EGL worker | Cold transitions and indexed fallback draws using matched empty caches |
 
