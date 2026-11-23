@@ -492,9 +492,6 @@ private:
 
     OGLTexture texture_null;
     OGLTexture texture_buffer_lut_lf;
-#ifdef CARA_ANDROID_GLES_ATLAS
-    OGLTexture texture_fog_lut;
-#endif
     OGLTexture texture_buffer_lut_rg;
     OGLTexture texture_buffer_lut_rgba;
 

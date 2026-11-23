@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <stdexcept>
-#include <string_view>
 
 namespace OpenGL {
 #ifdef CARA_ANDROID_GLES_ATLAS
@@ -15,16 +14,6 @@ bool UseNativeLUTBuffers() {
         const char* requested = std::getenv("CARA_ANDROID_NATIVE_LUTS");
         return requested && requested[0] == '1' && !requested[1] &&
                GLAD_GL_ES_VERSION_3_2 && glTexBuffer;
-    }();
-    return enabled;
-}
-bool UseSeparateFogLUT() {
-    static const bool enabled = [] {
-        const char* requested = std::getenv("CARA_GLES_SEPARATE_FOG_LUT");
-        if (!requested || requested[0] != '1' || requested[1] || UseNativeLUTBuffers())
-            return false;
-        const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
-        return renderer && std::string_view(renderer).find("Mali") != std::string_view::npos;
     }();
     return enabled;
 }

@@ -92,12 +92,6 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
         ReplaceAll("samplerBuffer", "sampler2D");
     }
 #endif
-    if (UseSeparateFogLUT()) {
-        ReplaceAll("uniform sampler2D texture_buffer_lut_lf;",
-                   "uniform sampler2D texture_buffer_lut_lf;\nuniform sampler2D cara_fog_lut;");
-        ReplaceAll("texelFetch(texture_buffer_lut_lf, int(fog_i) + fog_lut_offset)",
-                   "texelFetch(cara_fog_lut, ivec2(int(fog_i), 0), 0)");
-    }
     ReplaceAll("precision highp uimage2D;", "");
     ReplaceAll("#define fma_safe(x, y, z) fma(x, y, z)", "#define fma_safe(x, y, z) ((x) * (y) + (z))");
     if (!UseNativeLUTBuffers())

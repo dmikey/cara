@@ -7,10 +7,8 @@
 namespace OpenGL {
 #ifdef CARA_ANDROID_GLES_ATLAS
 bool UseNativeLUTBuffers();
-bool UseSeparateFogLUT();
 #else
 inline constexpr bool UseNativeLUTBuffers() { return false; }
-inline constexpr bool UseSeparateFogLUT() { return false; }
 #endif
 inline GLenum LUTTextureTarget() {
 #ifdef CARA_IOS_GLES

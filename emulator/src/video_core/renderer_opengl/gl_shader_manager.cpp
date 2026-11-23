@@ -93,8 +93,6 @@ static void SetShaderSamplerBindings(GLuint shader) {
     SetShaderSamplerBinding(shader, "texture_buffer_lut_lf", TextureUnits::TextureBufferLUT_LF);
     SetShaderSamplerBinding(shader, "texture_buffer_lut_rg", TextureUnits::TextureBufferLUT_RG);
     SetShaderSamplerBinding(shader, "texture_buffer_lut_rgba", TextureUnits::TextureBufferLUT_RGBA);
-    if (UseSeparateFogLUT())
-        SetShaderSamplerBinding(shader, "cara_fog_lut", TextureUnits::FogLUT);
 
     SetShaderImageBinding(shader, "shadow_buffer", ImageUnits::ShadowBuffer);
     SetShaderImageBinding(shader, "shadow_texture_px", ImageUnits::ShadowTexturePX);
@@ -735,8 +733,6 @@ public:
     void LoadIOSPipelines() {
         ios_identity = IOSIdentity();
         std::string suffix = UseNativeLUTBuffers() ? ".native-lut" : "";
-        if (UseSeparateFogLUT())
-            suffix += ".separate-fog";
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
         const char* expanded = std::getenv("CARA_MALI_EXTENDED_PROGRAM_CACHE");
         const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));

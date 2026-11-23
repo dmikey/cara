@@ -265,11 +265,6 @@ void OpenGLState::Apply() const {
         glBindTexture(LUTTextureTarget(), texture_buffer_lut_rgba.texture_buffer);
     }
 
-    if (fog_lut_texture != cur_state.fog_lut_texture) {
-        glActiveTexture(TextureUnits::FogLUT.Enum());
-        glBindTexture(GL_TEXTURE_2D, fog_lut_texture);
-    }
-
     // Shadow Images
     if (AllowShadow) {
         if (image_shadow_buffer != cur_state.image_shadow_buffer) {
@@ -527,12 +522,6 @@ GLuint OpenGLState::BindShaderProgram(GLuint program) {
 }
 
 void OpenGLState::ResetTexture(GLuint handle) {
-    if (cur_state.fog_lut_texture == handle) {
-        cur_state.fog_lut_texture = 0;
-        glActiveTexture(TextureUnits::FogLUT.Enum());
-        glBindTexture(GL_TEXTURE_2D, 0);
-    }
-
     for (unsigned i = 0; i < ARRAY_SIZE(cur_state.texture_units); ++i) {
         if (cur_state.texture_units[i].texture_2d == handle) {
             cur_state.texture_units[i].texture_2d = 0;
