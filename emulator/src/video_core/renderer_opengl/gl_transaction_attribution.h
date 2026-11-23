@@ -1,6 +1,9 @@
 // Source-only diagnostic prototype. Host spans, never guest or GPU time.
 #pragma once
 #include <array>
+#ifdef _WIN32
+#include <chrono>
+#endif
 #include <cstdint>
 #include <ctime>
 #include <limits>
@@ -21,11 +24,17 @@ struct Snapshot {
 };
 using Clock = U(*)(bool thread_cpu) noexcept;
 inline U HostClock(bool cpu) noexcept {
+#ifdef _WIN32
+ if (cpu) return 0;
+ return static_cast<U>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+     std::chrono::steady_clock::now().time_since_epoch()).count());
+#else
  timespec t{};
  if(clock_gettime(cpu?CLOCK_THREAD_CPUTIME_ID:CLOCK_MONOTONIC,&t)||t.tv_sec<0||t.tv_nsec<0||t.tv_nsec>=1000000000)return 0;
  constexpr U max=std::numeric_limits<U>::max();
  if(U(t.tv_sec)>(max-U(t.tv_nsec))/1000000000)return 0;
  return U(t.tv_sec)*1000000000+U(t.tv_nsec);
+#endif
 }
 // Each worker writes only the local record. Existing future completion orders
 // these writes before producer aggregation; no global worker diagnostics.
