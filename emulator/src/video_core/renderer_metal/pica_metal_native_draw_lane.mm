@@ -607,7 +607,7 @@ struct ScopedJoinedDepthCheck {
 
 std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
-    const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
+    const MetalGuestAuthority::GuestReader& ram, ByteUse use, bool raw_retile) {
     const bool display_transfer = use == ByteUse::DisplayTransfer;
     NativeMetalCost::Scope cost(NativeMetalCost::ResolveBytesHost);
     const auto bytes = rows.footprint;
@@ -772,10 +772,18 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     // Use ordered Metal blits for aligned raw leases. Other pieces must be
     // exported by their authoritative producer into private staging, never
     // reconstructed from underlying RAM or written back into guest memory.
+    static const bool coalesce_retile = [] {
+        const auto* value = std::getenv("CARA_METAL_COALESCE_RAW_RETILE");
+        return value && std::string_view(value) == "1";
+    }();
+    const bool coalesce_raw = raw_retile && coalesce_retile;
+    const bool count_raw = raw_retile && NativeMetalCost::Enabled();
     struct Copy {
         id<MTLBuffer> source;
         NSUInteger from, to, size;
+        bool raw;
     };
+    std::uint64_t raw_spans = 0, raw_bytes = 0, merged = 0;
     std::vector<Copy> copies;
     auto owner = current.begin();
     const auto read_gap = [&](PAddr begin, PAddr end) {
@@ -796,7 +804,22 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             const NSUInteger size = last - first;
             const NSUInteger from = writer ? first - writer->RawGuestBegin() : 0;
             if (writer && ((from | to | size) & 3u) == 0) {
-                copies.push_back({writer->RawGuestBuffer(), from, to, size});
+                const auto source = writer->RawGuestBuffer();
+                if (count_raw) {
+                    ++raw_spans;
+                    raw_bytes += size;
+                }
+                auto* previous = coalesce_raw && !copies.empty() ? &copies.back() : nullptr;
+                // Validate each writer and range as before. Only replace two
+                // adjacent raw copies with their exact contiguous union.
+                if (previous && previous->raw && previous->source == source &&
+                    previous->from + previous->size == from &&
+                    previous->to + previous->size == to) {
+                    previous->size += size;
+                    ++merged;
+                } else {
+                    copies.push_back({source, from, to, size, true});
+                }
             } else {
                 auto exported = ((to | size) & 3u) == 0
                     ? queue_texture_export(*owner, first, last) : nil;
@@ -806,7 +829,7 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
                 if (exported) {
                     if (color_exported)
                         NativeMetalCost::Count(NativeMetalCost::QueuedColorExportHost, 1);
-                    copies.push_back({exported, 0, to, size});
+                    copies.push_back({exported, 0, to, size, false});
                 } else {
                     // Unaligned and depth spans retain the certified checked CPU read.
                     NativeMetalCost::Scope cost(NativeMetalCost::ExportSpanHost);
@@ -865,6 +888,14 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             [blit copyFromBuffer:copy.source sourceOffset:copy.from
                        toBuffer:buffer destinationOffset:copy.to size:copy.size];
         [blit endEncoding];
+    }
+    if (count_raw) {
+        using namespace NativeMetalCost;
+        Count(RetileRawStageSpans, raw_spans);
+        Count(RetileRawStageBytes, raw_bytes);
+        Count(RetileRawCoalesced, merged);
+        Count(RetileRawEncodedBlits, raw_spans - merged);
+        Count(RetileRawEncodedBytes, raw_bytes);
     }
     return MetalTransfer::ByteView{buffer, bytes, 0};
 }
@@ -1327,7 +1358,8 @@ void PicaMetalNativeDrawLane::TransferDisplay(
             }
         }
         NativeMetalCost::Scope resolve(NativeMetalCost::RetileResolveHost, trace_retile);
-        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer);
+        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer,
+                                   linear_to_tiles && !rgb8_retile && !scaled_crop);
         resolve.Stop();
         if (command && !source) {
             // A linear view can reinterpret bytes just written in a tiled
