@@ -88,3 +88,45 @@ covered by the optimization. Start with a narrow watched range and log
 write epochs alongside live comparisons before allowing a compare to
 be skipped. Keep GPU work and PICA timing counters separate from
 emulation-thread CPU and graphics worker CPU.
+
+### First Mali stage measurements
+
+APK `a036217` passed Android ARM64 CI and reached the title in 75.65 s and
+the matched lab checkpoint in 170.44 s from a normal boot. Both used an
+empty Cara cache and the existing driver cache. The linked-program
+diagnostic APK `7a0d1bc` reached those checkpoints in 105.29 s and
+332.45 s in its separate cold run. The input harness held the title for
+24 s in both runs. The first measured lab-entry burst dropped from
+41.63 s to 8.26 s. These are single cold controls on different builds,
+with the separate-stage configuration opt-in.
+
+The shader census counted 22 standalone vertex links costing 42.78 s by
+the title and 37 standalone fragment links costing 3.06 s. Shader stages
+linked successfully and the renderer debug observer reported no API
+errors. This identifies vertex-stage link as the larger remaining
+startup cost on this route. Four later lab refresh medians were
+29.26–29.70 ms, p99 ranged from 34.31 to 52.34 ms and the worst refresh
+was 70.63 ms. The HUD showed 27 FPS at 55% SPD. Device pixel/depth
+equivalence and durable stage caching remain open.
+
+[Exact Android stage APK](https://github.com/dmikey/cara/actions/runs/45210827729)
+
+## Apple GLES paths on the Slide
+
+Android Atlas already uses the iPad's packed vertex inputs, prepared
+indexed input cache, 80 MiB per-bank upload limit, byte-validated resident
+upload reuse, surface remap and checked depth reinterpretation. The
+native-depth and surface-remap repairs removed the measured GPU-to-CPU
+downloads from the relevant Slide traces. Warm Gadd measurements show
+zero timed downloads. Removing more CPU work there needs a different
+target.
+
+One default differs. Android EGL requests VS uniform reuse, but JNI
+then applies `atlas_reuse_vs_uniforms` with a false default. iPad enables
+the same path by default. An earlier Android run combined it with raster
+state reuse and did not establish a warm Gadd speedup. An isolated test
+can measure its emulation-thread and upload cost directly. The
+quaternion-only reference slice is present in the shared GLSL generator,
+and the current Android settings do not expose it. Earlier device tests
+showed a small isolated effect. Used-input pruning reduced logical
+register counts on iPad while leaving staged bytes and CPU time similar.
