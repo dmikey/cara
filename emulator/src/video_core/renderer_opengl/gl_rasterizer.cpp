@@ -982,9 +982,15 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
         return value && std::strcmp(value,"1")==0;
     }();
     bool capture_failed=false;
-    if (snapshot_lease_enabled && ios_cached_index_data) {
+    static const bool resident_order_enabled = [] {
+        const char* reuse = std::getenv("CARA_VERTEX_UPLOAD_REUSE");
+        const char* order = std::getenv("CARA_VERTEX_UPLOAD_ORDER_REUSE");
+        return reuse && order && !std::strcmp(reuse, "1") && !std::strcmp(order, "1");
+    }();
+    const bool probe_ordinal = is_mali_gpu && resident_order_enabled && !snapshot_lease_enabled;
+    if ((snapshot_lease_enabled || probe_ordinal) && ios_cached_index_data) {
         // Capture CPU bytes at the original snapshot boundary. The later GPU
-        // selector still validates/selects/uploads normally using this byte view.
+        // selector must still identify the live owner before skipping an upload.
         const auto frame=VideoCore::GetCurrentFrame();
         auto& bank=ios_vertex_frame_uploads[frame%ios_vertex_frame_uploads.size()];
         static const auto limit=[] {
@@ -996,7 +1002,10 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
         if (token.state==PackedPoolObserver::State::Pending) {
             token.ordinal=frame==ios_vertex_upload_frame?bank.used[token.size_class]:0;
             auto& pool=bank.sizes[token.size_class];
-            if (token.ordinal<pool.size()) {
+            const size_t logical = rows * IOS_VERTEX_INPUT_WIDTH * sizeof(GLvec4);
+            if (token.ordinal < pool.size() && (!probe_ordinal ||
+                (pool[token.ordinal].texture.handle && pool[token.ordinal].indices.handle &&
+                 pool[token.ordinal].rows == token.rows && pool[token.ordinal].input_shadow.size() == logical))) {
                 std::array<MemoryRef,16> owners{};
                 std::array<PackedSnapshotCompare::Segment,17> spans{};
                 spans[0]={reinterpret_cast<const u8*>(constants.data()),sizeof(constants),0,sizeof(constants)};
@@ -1007,8 +1016,18 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
                     if (!memory || memory.GetSize()<length) {token.state=PackedPoolObserver::State::Sources; break;}
                     spans[count++]={memory.GetPtr(),memory.GetSize(),range.destination,length};
                 }
-                PackedPoolObserver::Probe(token,pool,spans.data(),count,
-                    ios_cached_index_data->packed.data(),ios_cached_index_data->packed.size());
+                if (probe_ordinal && token.state == PackedPoolObserver::State::Pending) {
+                    auto& shadow = pool[token.ordinal].input_shadow;
+                    auto& timing = Common::FrameTiming::counters;
+                    if (timing.enabled) ++timing.packed_ordinal_checks;
+                    const auto comparison = PackedSnapshotCompare::Compare(spans.data(), count, logical,
+                        PackedSnapshotCompare::Padding::Zero, shadow.data(), shadow.size());
+                    token.match.selected = token.ordinal;
+                    token.match.input_equal = comparison.decision == PackedSnapshotCompare::Decision::Equal;
+                } else if (!probe_ordinal) {
+                    PackedPoolObserver::Probe(token,pool,spans.data(),count,
+                        ios_cached_index_data->packed.data(),ios_cached_index_data->packed.size());
+                }
                 if (token.state==PackedPoolObserver::State::Pending && token.match.input_equal) {
                     ios_packed_snapshot_lease=pool[token.match.selected].input_shadow.CaptureLease();
                     if (snapshot_lease_trace && !ios_packed_snapshot_lease) capture_failed=true;
@@ -1486,7 +1505,26 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             // Only swap unused entries within this exact format/height class.
             // Complete entries move together: textures, shadows and ownership.
             // No GL resource is changed; each entry remains single-use this frame.
-            if (order_reuse_enabled && upload_reuse_enabled && raw_inputs &&
+            // The held immutable bytes pin this allocation even across bank changes.
+            // Only the current entry can consume the proof, in the original packed format.
+            const auto& resident = pool[ordinal];
+            const bool exact_ordinal = is_mali_gpu && ios_packed_snapshot_lease && raw_inputs &&
+                !ios_direct_vertex_reuse && !ios_lit_pair_vertex_reuse && !ios_feedback_vertex_reuse &&
+                !resize_storage && resident.rows == rows && resident.texture.handle && resident.indices.handle &&
+                resident.input_shadow.size() == input_bytes && resident.input_shadow.data() == input_data;
+            if (exact_ordinal && order_reuse_enabled && upload_reuse_enabled) {
+                order_reuse_checked = true;
+                order_reuse_input = true;
+                size_t comparisons = 0;
+                const size_t bytes = input_indices.size() * sizeof(u16);
+                order_reuse_index = IndexPayloadReuse::Enabled() ?
+                    IOSVertexUploadOrderReuse::EqualIndexIdentity(resident.index_shadow,
+                        input_indices.data(), bytes, current_index_identity, comparisons, false) :
+                    IOSVertexUploadOrderReuse::Equal(resident.index_shadow, input_indices.data(),
+                                                     bytes, comparisons, false);
+                if (Common::FrameTiming::counters.enabled)
+                    ++Common::FrameTiming::counters.packed_ordinal_submissions;
+            } else if (order_reuse_enabled && upload_reuse_enabled && raw_inputs &&
                 !ios_direct_vertex_reuse && !ios_lit_pair_vertex_reuse &&
                 !ios_feedback_vertex_reuse && !resize_storage) {
                 Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);

@@ -107,6 +107,8 @@ struct Counters {
     std::uint64_t packed_vertices_constant_copy_bytes = 0;
     std::uint64_t packed_vertices_resize_zero_bytes = 0;
     std::uint64_t packed_vertices_clear_bytes = 0;
+    std::uint64_t packed_ordinal_checks = 0;
+    std::uint64_t packed_ordinal_submissions = 0;
     std::uint64_t packed_vertices_leased_bytes = 0;
     double texture_feedback_copy_seconds = 0;
     std::uint64_t texture_feedback_copies = 0;
