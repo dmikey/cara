@@ -166,3 +166,20 @@ more repeated table values. This experiment stays outside the integration
 branch. The original APK and checked profile files were restored.
 
 [Exact Android test APK](https://github.com/dmikey/cara/actions/runs/45225133190)
+
+### PICA lookup tables and coverage
+
+PICA uses a programmable 128-entry depth fog table with a value and
+difference per entry. Fragment lighting has curves for two specular
+distributions, Fresnel and RGB reflectance, plus per-light spot and
+distance attenuation. Texture unit 3 has separate procedural noise,
+RGB and alpha mappings, and color and color-difference tables.
+The gas registers provide a separate 16-entry color table. Cara's
+GLES source currently reports gas mode as unimplemented. A hardware
+reference for that mode is an accuracy task. The measured Dark Moon LUT
+stall comes from Cara's existing lighting and conventional fog upload
+scope. Procedural LUT time was zero in those measured windows.
+
+[3DS register reference](https://docs.mikage.app/GPU/Internal_Registers/)
+· [Hardware fog encoding](https://github.com/devkitPro/citro3d/blob/master/source/fog.c)
+· [Hardware gas-table upload](https://github.com/devkitPro/citro3d/blob/master/source/gas.c)

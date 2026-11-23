@@ -266,3 +266,42 @@ The Slide advertises GLES base-vertex drawing, coherent framebuffer
 fetch and `GL_EXT_buffer_storage`. It lacks the queried multidraw
 extensions and `GL_KHR_parallel_shader_compile`. Keep host scheduling
 and shader compilation tests tied to these driver capabilities.
+
+A seeded Stories control on the same profiler build restored 74 of 74
+program binaries and reached the opening movie at 30 FPS and 100% SPD.
+It measured one 512 KiB feedback snapshot at 0.71 ms during startup and
+none during the sampled movie. This is opening coverage. The first
+playable walk remains outside this comparison.
+
+### Comparing before staging
+
+The baseline `f202e4e` and isolated `84c8ae7` test APKs both restored
+197 binaries from the same cache and booted normally to Gadd. The test
+enabled the existing packed snapshot lease and self-equality check.
+The test retained an exact source comparison and re-used an owned CPU
+snapshot when it matched. The same window ends, 2641 through 3001, were
+used in each arm. Guest draw counts differed by about 0.2% on average.
+
+| Warm Gadd, four 120-refresh windows | Baseline | Snapshot before staging |
+| --- | ---: | ---: |
+| CPU staging writes per refresh | 13.29 MB | 5.63 MB |
+| Driver upload bytes per refresh | 51.94 KB | 51.75 KB |
+| Vertex preparation per refresh | 1.87 ms | 3.36 ms |
+| PICA and graphics thread CPU per refresh | 19.10 ms | 19.71 ms |
+| Window median range | 28.95–29.28 ms | 28.25–28.72 ms |
+| Window p99 range | 35.85–52.16 ms | 33.14–50.05 ms |
+| Worst refresh | 61.75 ms | 59.57 ms |
+
+The byte reduction is real. CPU staging writes above sum the guest vertex
+copy, default attribute copy, vector initialization and explicit clear.
+The candidate spends more CPU in preparation searching and comparing valid
+payload candidates. The small wall-time difference in this single live
+pair does not establish a throughput win and the test branch stays isolated.
+A faster candidate should do a bounded exact check on a known matching
+resource first, and pass that identity into submission so it avoids a
+second search. Sample candidate selection and payload comparison separately.
+The original APK and checked profile files match after restoration.
+ASan/UBSan passed the lease integration, pool observer, and guest index
+range fixtures.
+
+[Exact snapshot test APK](https://github.com/dmikey/cara/actions/runs/45228289864)
