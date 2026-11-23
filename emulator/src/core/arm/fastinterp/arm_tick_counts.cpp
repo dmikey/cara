@@ -2,6 +2,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the misc/licenses/gplv2.txt file included.
 
+#include <array>
 #include <bit>
 #include <cstdlib>
 #include <cstring>
