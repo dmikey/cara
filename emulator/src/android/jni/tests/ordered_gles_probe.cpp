@@ -255,6 +255,15 @@ void Run(EGLDisplay display, EGLConfig config) {
     rendering.Bind();
     Check(gladLoadGLES2Loader(reinterpret_cast<GLADloadproc>(eglGetProcAddress)), "GLES loader");
     std::printf("renderer: %s\n", glGetString(GL_RENDERER));
+    if (GLAD_GL_EXT_disjoint_timer_query && glGetQueryivEXT) {
+        GLint elapsed_bits = 0, timestamp_bits = 0;
+        glGetQueryivEXT(GL_TIME_ELAPSED_EXT, GL_QUERY_COUNTER_BITS_EXT, &elapsed_bits);
+        glGetQueryivEXT(GL_TIMESTAMP_EXT, GL_QUERY_COUNTER_BITS_EXT, &timestamp_bits);
+        Check(glGetError() == GL_NO_ERROR, "timer query counter capabilities");
+        std::printf("GLES GPU timer counter bits: elapsed=%d timestamp=%d\n", elapsed_bits, timestamp_bits);
+    } else {
+        std::puts("GLES disjoint GPU timer unavailable");
+    }
     driver_draw = glad_glDrawArrays;
     glad_glDrawArrays = CountDraw;
     const auto direct = Draw();
