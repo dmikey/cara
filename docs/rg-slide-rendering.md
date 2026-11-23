@@ -339,3 +339,22 @@ not establish sustained full speed across the tested RG Slide workloads.
 Mali-G52 and Mali-T820 devices require separate tests.
 
 [Arm framebuffer guidance](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-2-how-to-correctly-handle-framebuffers)
+
+
+### Structured vertex jump dispatch
+
+The Android Atlas probe reuses the existing GLSL switch lowering and keeps the
+reference and actual vertex evaluations at their original call sites. Set
+`structured_shader_dispatch = True` in the `[Debug]` section of
+`config/config-mmj.ini` before launching a game. The probe defaults to off and
+uses its own pipeline cache so an A/B does not overwrite the standard cache.
+
+On the RG Slide's Mali-G57 r40p0 driver, four captured Dark Moon shader pairs
+linked successfully in both forms. EGL blob-cache callbacks were set to return
+misses. The two forms were alternated within the same process. Total
+`glLinkProgram` plus link-status time was 8.61 s for the standard dispatch and
+8.51 s for the switch dispatch, a 1.2% reduction in this sample. Individual
+results ranged from a 3.7% reduction to a 0.8% increase. The driver reported no
+`GL_KHR_parallel_shader_compile` extension. This link-only sample establishes
+neither gameplay speed nor pixel equivalence. Keep the probe off pending
+normal-boot cold and warm comparisons in Gadd's lab.
