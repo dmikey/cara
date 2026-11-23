@@ -24,6 +24,8 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           log-accepted-android-sdk-licenses: false
+          packages: platform-tools
+
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;29.0.14206865' 'cmake;3.31.6'
       - uses: gradle/actions/setup-gradle@v4
         with:
