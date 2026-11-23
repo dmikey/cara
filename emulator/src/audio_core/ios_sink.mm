@@ -302,8 +302,7 @@ void WriteIOSAudioDiagnostics(const std::string& path, u64 requested, u64 suppli
             @"frames_submitted":@(state->frames_submitted.load()),@"nonzero_frames":@(state->nonzero_frames.load()),
             @"changing_frames":@(state->changing_frames.load()),@"peak_pcm":@(state->peak.load()),
             @"last_error":@(state->error.load()),@"hardware_sample_rate":@(session.sampleRate),
-            @"output_volume":@(session.outputVolume),@"output_port_type":route,
-            @"uptime_seconds":@(NSProcessInfo.processInfo.systemUptime)};
+            @"output_volume":@(session.outputVolume),@"output_port_type":route};
         NSData* data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
         [data writeToFile:[NSString stringWithUTF8String:path.c_str()] options:NSDataWritingAtomic error:nil];
     }

@@ -389,12 +389,17 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         VERBATIM)
     add_custom_target(cara-ios-icons DEPENDS "${CARA_ICON_STAMP}")
     add_dependencies(cara-ios cara-ios-icons)
-    set_property(TARGET cara-ios APPEND PROPERTY LINK_DEPENDS "${CARA_ICON_STAMP}")
+    set(CARA_IOS_PRIVACY_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/ios/PrivacyInfo.xcprivacy")
+    set_property(TARGET cara-ios APPEND PROPERTY LINK_DEPENDS
+        "${CARA_ICON_STAMP}" "${CARA_IOS_PRIVACY_MANIFEST}"
+        "${CMAKE_SOURCE_DIR}/../tools/merge_icon_plist.py")
     add_custom_command(TARGET cara-ios POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CARA_IOS_PRIVACY_MANIFEST}" "$<TARGET_BUNDLE_DIR:cara-ios>/PrivacyInfo.xcprivacy"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CARA_ICON_OUTPUT}" "$<TARGET_BUNDLE_DIR:cara-ios>"
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/../tools/merge_icon_plist.py"
-            "$<TARGET_BUNDLE_DIR:cara-ios>/Info.plist" "${CARA_ICON_INFO}"
+            "$<TARGET_BUNDLE_DIR:cara-ios>/Info.plist" "${CARA_ICON_INFO}" "${CARA_ICON_PLATFORM}"
         VERBATIM)
 endif()
 
