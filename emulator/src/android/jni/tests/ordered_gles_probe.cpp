@@ -16,6 +16,7 @@
 #include "common/host_render_queue.h"
 #include "video_core/renderer_opengl/gl_command_queue.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
+#include "video_core/renderer_opengl/gl_state.h"
 
 namespace {
 namespace Queue = OpenGL::CommandQueue;
@@ -297,6 +298,28 @@ void CheckRemapQueue() {
 }
 #endif
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+void CheckDeletedTextureBindings() {
+    GLuint textures[2]{};
+    glGenTextures(2, textures);
+    OpenGL::OpenGLState::BindTexture2D(0, textures[0]);
+    OpenGL::OpenGLState::BindTexture2D(1, textures[1]);
+    OpenGL::OpenGLState::BindTexture2D(2, textures[0]);
+    glDeleteTextures(1, textures);
+    const auto state = OpenGL::OpenGLState::GetCurState();
+    Check(state.texture_units[0].texture_2d == 0 && state.texture_units[2].texture_2d == 0,
+          "deleted GLES texture survived in producer state");
+    Check(state.texture_units[1].texture_2d == textures[1],
+          "unrelated texture binding was discarded");
+    GLint binding = -1;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
+    Check(binding == 0 && glGetError() == GL_NO_ERROR, "driver retained a deleted texture binding");
+    glDeleteTextures(1, textures + 1);
+    glActiveTexture(GL_TEXTURE0);
+    std::puts("queued texture deletion cleared producer and driver bindings");
+}
+#endif
+
 Pixels Draw() {
     const GLuint vs = Compile(GL_VERTEX_SHADER, R"(#version 300 es
 const vec2 positions[3] = vec2[3](vec2(-1,-1),vec2(3,-1),vec2(-1,3));
@@ -523,6 +546,9 @@ void Run(EGLDisplay display, EGLConfig config) {
     Queue::Install(worker);
     try {
         const auto queued = Draw();
+#ifdef CARA_ANDROID_GLES_ATLAS
+        CheckDeletedTextureBindings();
+#endif
         Queue::Drain();
         Check(queued == direct && direct_draws == 3 && queued_draws == 3,
               "driver ownership or pixel mismatch");

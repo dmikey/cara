@@ -96,6 +96,13 @@ for name in sorted(used):
  cleanup=''
  if name=='glDeleteBuffers':cleanup='''    for(GLsizei i=0;i<n;++i){const auto id=buffers[i];if(!id)continue;known_buffers.erase(id);if(array_buffer==id)array_buffer=0;if(unpack_buffer==id)unpack_buffer=0;for(auto& v:vaos)if(v.second.element==id)v.second.element=0;}'''
  elif name=='glDeleteVertexArrays':cleanup='''    for(GLsizei i=0;i<n;++i){if(!arrays[i])continue;known_vaos.erase(arrays[i]);vaos.erase(arrays[i]);if(current_vao==arrays[i])current_vao=0;}'''
+ elif name=='glDeleteTextures':cleanup='''#ifdef CARA_ANDROID_GLES_ATLAS
+    for (GLsizei i = 0; i < n; ++i) {
+        if (textures[i] != 0) {
+            OpenGLState::ForgetDeletedPicaTexture(textures[i]);
+        }
+    }
+#endif'''
  define(name,f'''    auto fn=raw_{name};std::size_t bytes=0;
     if({count}<0 || !{ptr} || !Small(std::size_t({count}),sizeof(GLuint),bytes)){{Sync([=]{{fn({args});}},true);if({count}>0 && {ptr}){{
 {cleanup}

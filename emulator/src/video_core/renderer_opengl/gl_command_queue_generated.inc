@@ -435,9 +435,21 @@ static void APIENTRY Wrap_glDeleteTextures(GLsizei n, const GLuint *textures) {
     Producer();
     auto fn=raw_glDeleteTextures;std::size_t bytes=0;
     if(n<0 || !textures || !Small(std::size_t(n),sizeof(GLuint),bytes)){SyncApi(RpcApi::api_glDeleteTextures, [=]{fn(n, textures);},true);if(n>0 && textures){
-
+#ifdef CARA_ANDROID_GLES_ATLAS
+    for (GLsizei i = 0; i < n; ++i) {
+        if (textures[i] != 0) {
+            OpenGLState::ForgetDeletedPicaTexture(textures[i]);
+        }
+    }
+#endif
 }return;}
-
+#ifdef CARA_ANDROID_GLES_ATLAS
+    for (GLsizei i = 0; i < n; ++i) {
+        if (textures[i] != 0) {
+            OpenGLState::ForgetDeletedPicaTexture(textures[i]);
+        }
+    }
+#endif
     OwnedCopyScope payload_scope;auto owned_value=std::vector<GLuint>(textures,textures+n);bytes=owned_value.capacity()*sizeof(GLuint);RecordApi(RpcApi::api_glDeleteTextures, [=,owned_value=std::move(owned_value)]{fn(n,owned_value.data());},bytes);
 }
 static void APIENTRY Wrap_glDeleteVertexArrays(GLsizei n, const GLuint *arrays) {

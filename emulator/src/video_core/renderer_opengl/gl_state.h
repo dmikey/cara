@@ -184,7 +184,7 @@ public:
 
     /// Resets any references to the given resource
     static void ResetTexture(GLuint handle);
-#if defined(CARA_ANDROID_GLES_ATLAS) && defined(CARA_GL_CONTEXT_DISPATCH)
+#ifdef CARA_ANDROID_GLES_ATLAS
     static void ForgetDeletedPicaTexture(GLuint handle);
 #endif
     static void ResetSampler(GLuint handle);

@@ -521,7 +521,7 @@ GLuint OpenGLState::BindShaderProgram(GLuint program) {
     return previous;
 }
 
-#if defined(CARA_ANDROID_GLES_ATLAS) && defined(CARA_GL_CONTEXT_DISPATCH)
+#ifdef CARA_ANDROID_GLES_ATLAS
 void OpenGLState::ForgetDeletedPicaTexture(GLuint handle) {
     // GLES clears these bindings on deletion in the worker context. Keep the
     // producer's state in step before a later allocation can reuse the name.
