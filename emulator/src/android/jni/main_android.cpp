@@ -1,4 +1,5 @@
 #include "video_core/renderer_opengl/gl_backlog_profile.h"
+#include "video_core/renderer_opengl/gl_remap_origin_profile.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 
 #include <algorithm>
@@ -174,6 +175,7 @@ void BootGame(const std::string& path) {
     };
     select_probe("pica_shader_stream_batch", "CARA_PICA_SHADER_STREAM_BATCH");
     select_probe("lut_effective_change", "CARA_LUT_EFFECTIVE_CHANGE");
+    select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
     select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");
     select_probe("checked_remap_packet", "CARA_CHECKED_REMAP_PACKET");
     select_probe("texture_lookup_reuse", "CARA_TEXTURE_LOOKUP_REUSE");
@@ -470,6 +472,20 @@ void BootGame(const std::string& path) {
                                     rpc(RpcApi::api_glUnmapBuffer), rpc(RpcApi::api_glCreateProgram),
                                     rpc(RpcApi::api_glCreateShader), rpc(RpcApi::api_glGetIntegerv),
                                     static_cast<unsigned long long>(q.transaction_lut_calls));
+                                if (OpenGL::RemapOriginProfile::Enabled()) {
+                                    auto& rows = OpenGL::RemapOriginProfile::rows;
+                                    for (const auto& [key, count] : rows) {
+                                        const auto& [origin, entry, covered, src_bpp, dst_bpp, tiled_src, tiled_dst] = key;
+                                        __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                            "remap_owner end=%u origin=%u vs_entry=%d covers=%d "
+                                            "src_bpp=%u dst_bpp=%u src_tiled=%d dst_tiled=%d calls=%llu bytes=%llu",
+                                            static_cast<unsigned>(frame), origin, entry, int(covered),
+                                            src_bpp, dst_bpp, int(tiled_src), int(tiled_dst),
+                                            static_cast<unsigned long long>(count.calls),
+                                            static_cast<unsigned long long>(count.bytes));
+                                    }
+                                    rows.clear();
+                                }
                                 if (Backlog::Enabled()) {
                                     for (const auto& row : Backlog::Take()) {
                                         __android_log_print(ANDROID_LOG_INFO, "CaraPerf",

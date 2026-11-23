@@ -3580,6 +3580,10 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                 if (!surface_remapper->RemapRGBA8(source->texture.handle, *source,
                                                   destination->texture.handle, *destination,
                                                   destination->GetSubRect(params), !GLES)) continue;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+                if (RemapOriginProfile::Enabled())
+                    RemapOriginProfile::Observe(*source, *destination, boost::icl::first(interval), boost::icl::last_next(interval));
+#endif
                 destination->InvalidateAllWatcher();
                 if (Common::FrameTiming::counters.enabled) {
                     ++Common::FrameTiming::counters.surface_remap_calls;
@@ -3626,6 +3630,10 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                 if (!surface_remapper->RemapBytes(source->texture.handle, *source,
                                                   destination->texture.handle, *destination,
                                                   destination->GetSubRect(copy_params), !GLES)) continue;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+                if (RemapOriginProfile::Enabled())
+                    RemapOriginProfile::Observe(*source, *destination, span.begin, span.end);
+#endif
                 destination->InvalidateAllWatcher();
                 if (Common::FrameTiming::counters.enabled) {
                     ++Common::FrameTiming::counters.surface_remap_calls;
@@ -4106,6 +4114,15 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
         return;
     }
 
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (region_owner && RemapOriginProfile::Enabled()) {
+        const bool draw = origin == SurfaceInvalidationOrigin::DrawColor ||
+                          origin == SurfaceInvalidationOrigin::DrawDepth;
+        region_owner->last_remap_owner = {origin,
+            draw ? static_cast<int>(Pica::g_state.regs.vs.main_offset.Value()) : -1,
+            addr, std::uint64_t(addr) + size};
+    }
+#endif
     const SurfaceInterval invalid_interval(addr, addr + size);
     std::optional<ValidationCopyTrace::Provenance> invalidation_event;
     if (validation_copy_trace)

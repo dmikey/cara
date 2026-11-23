@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "video_core/renderer_opengl/gl_remap_origin_profile.h"
 #include <array>
 #include <optional>
 #include <span>
@@ -126,6 +127,9 @@ struct CachedSurface : SurfaceParams, std::enable_shared_from_this<CachedSurface
     u32 fill_size = 0; /// Number of bytes to read from fill_data
     std::array<u8, 4> fill_data;
 
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    RemapOriginProfile::Owner last_remap_owner;
+#endif
     OGLTexture texture;
     OGLTexture texture_copy;
 
