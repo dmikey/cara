@@ -44,6 +44,8 @@ A cached input lookup still needs an exact backing identity and a live lease. Ke
 
 The next check is a matched repeat on a second draw workload and the physical iPhone 13 using the same guest work and audio. Continue recording owner-thread CPU, full-process CPU, queue waits, missed deadlines and both displays. Do not promote from one M1 opening or a paced frame-time average. Local receipts are in the workspace output `cara-m1-metal-fastinterp-retire-20261123`.
 
+A separate optimization shared one immutable attachment exporter per generation to avoid cloning callable state per draw. Each case had 77,856 resident color acquisitions and 77,856 resident depth acquisitions in the opening. Owner CPU was 7.098 and 7.398 ms per refresh in the controls and 7.100 ms with shared exporters. Outputs and required work matched. The shared-exporter option stays off. The result does not show that allocator or reference-count overhead is a dominant attachment cost. Local receipts are in the workspace output `cara-m1-metal-fastinterp-attachment-exporter-20261123`.
+
 ## Preserve the backend boundary
 
 Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
