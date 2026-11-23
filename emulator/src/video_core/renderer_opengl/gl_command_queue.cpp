@@ -42,6 +42,11 @@ struct AtomicStats {
  std::atomic<std::uint64_t> worker_rejected_calls{0},uniform_location_cache_hits{0},attrib_location_cache_hits{0},uniform_block_index_cache_hits{0};
 } stats;
 std::array<std::atomic<std::uint64_t>,RpcApiCount> rpc_counts{};
+#ifdef CARA_GL_CONTEXT_DISPATCH
+bool record_api_counts = false;
+// Only the emulation producer records commands and takes interval snapshots.
+std::array<std::uint64_t, RpcApiCount> recorded_by_api{};
+#endif
 struct StringHash {using is_transparent=void;std::size_t operator()(std::string_view s) const noexcept{return std::hash<std::string_view>{}(s);}};
 template<class T> using QueryNames=std::unordered_map<std::string,T,StringHash,std::equal_to<>>;
 struct ProgramQueries {bool linked=false;QueryNames<GLint> uniforms,attributes;QueryNames<GLuint> blocks;};
@@ -126,6 +131,10 @@ void Record(std::function<void()> job,std::size_t bytes=0,RpcApi api=RpcApi::Int
  }
  pending.emplace_back(std::move(job));pending_bytes+=footprint;
  if(pending.size()==1)pending_slots->MarkQueued();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+ if (record_api_counts)
+   ++recorded_by_api[std::size_t(api)];
+#endif
  ++stats.recorded_commands;stats.owned_payload_bytes+=bytes;
  stats.pending_commands=pending.size();stats.pending_bytes=pending_bytes;
  if(pending.size()>=MaxBatchCommands || pending_bytes>=MaxBatchBytes) Flush();
@@ -322,6 +331,11 @@ void Install(Common::HostRenderQueue& queue) {
  {std::lock_guard lock(budget_mutex);if(budget_live)throw std::logic_error("Leaked payload reservation at Install");budget_high=0;}
 
  if(queue.IsWorkerThread())throw std::logic_error("Install must run on the producer after GLAD load");
+#ifdef CARA_GL_CONTEXT_DISPATCH
+ const char* census = std::getenv("CARA_GL_QUEUE_API_CENSUS");
+ record_api_counts = census && std::strcmp(census, "1") == 0;
+ recorded_by_api.fill(0);
+#endif
  producer=std::this_thread::get_id();pending.clear();pending.reserve(MaxBatchCommands);pending_bytes=0;
  vaos.clear();vaos.emplace(0,VAO{});known_vaos.clear();known_buffers.clear();current_vao=array_buffer=unpack_buffer=0;unpack={};
  CaptureAndInstall();
@@ -368,6 +382,10 @@ void Install(Common::HostRenderQueue& queue) {
 #endif
 }
 #ifdef CARA_GL_CONTEXT_DISPATCH
+std::array<std::uint64_t, RpcApiCount> TakeRecordedAPICounts() {
+    Producer();
+    return std::exchange(recorded_by_api, {});
+}
 void QueueLUT(DriverTransactions::LUTBody body, GLuint texture, unsigned unit, GLenum format,
               std::size_t offset, const std::uint8_t* data, std::size_t bytes) {
     TransactionLUT(body, texture, unit, format, offset, data, bytes);

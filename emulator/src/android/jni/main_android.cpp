@@ -278,6 +278,9 @@ void BootGame(const std::string& path) {
     // cfg->UpdateConfigNANDSavegame();
 
 #ifdef CARA_GL_CONTEXT_DISPATCH
+    const Config::ConfigInfo<bool> queue_api_census{{"Debug", "trace_ordered_gles_apis"}, false};
+    const bool trace_queue_apis = Config::Get(queue_api_census);
+    setenv("CARA_GL_QUEUE_API_CENSUS", trace_queue_apis ? "1" : "0", 1);
     const Config::ConfigInfo<bool> ordered_worker{{"Debug", "ordered_gles_worker"}, false};
     if (Config::Get(ordered_worker)) {
         setenv("CARA_GL_QUEUE_NATIVE_MAP_UPLOAD", "1", 1);
@@ -446,6 +449,15 @@ void BootGame(const std::string& path) {
                             if (OpenGL::CommandQueue::Enabled()) {
                                 using namespace OpenGL::CommandQueue;
                                 const auto q = SnapshotStats();
+                                if (trace_queue_apis) {
+                                    const auto recorded = TakeRecordedAPICounts();
+                                    auto line = fmt::format("ordered_api end={}", frame);
+                                    for (std::size_t i = 0; i < recorded.size(); ++i) {
+                                        if (recorded[i])
+                                            line += fmt::format(" {}={}", RpcApiNames[i], recorded[i]);
+                                    }
+                                    __android_log_write(ANDROID_LOG_INFO, "CaraPerf", line.c_str());
+                                }
                                 const auto rpc = [&](RpcApi api) {
                                     return static_cast<unsigned long long>(q.rpc_by_api[static_cast<size_t>(api)]);
                                 };
