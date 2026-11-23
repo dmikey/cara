@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_metal/pica_metal_lighting_cache.h"
 
-#include "common/logging/log.h"
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -41,8 +41,9 @@ PicaMetalLightingCache::PicaMetalLightingCache(id<MTLCommandQueue> queue)
 
 PicaMetalLightingCache::~PicaMetalLightingCache() {
     if (LutProfileEnabled())
-        LOG_INFO(Render_OpenGL, "CARA_METAL_LUT_IMAGES requests={} hits={} uploaded_bytes={}",
-                 requests, hits, uploaded_bytes);
+        std::fprintf(stderr, "CARA_METAL_LUT_IMAGES requests=%llu hits=%llu uploaded_bytes=%llu\n",
+                     static_cast<unsigned long long>(requests), static_cast<unsigned long long>(hits),
+                     static_cast<unsigned long long>(uploaded_bytes));
 }
 
 id<MTLTexture> PicaMetalLightingCache::Resolve(id<MTLCommandQueue> queue,
