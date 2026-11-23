@@ -1,0 +1,281 @@
+# Renderer performance notes for a future Vulkan backend
+
+The goal is to leave more CPU time for FastInterp while preserving guest timing, audio, and all PICA rendering and transfers. These notes distinguish changes already observed in Cara from designs a Vulkan backend would need to validate. The current measurements come from private Metal and public desktop OpenGL on an Apple M1.
+
+## What the Metal measurements tell us
+
+The Xenoblade Chronicles 3D replay starts from a normal boot, presses A at refreshes 660 and 1120 and completes 2,400 guest refreshes. The opening window is 1200–2200. FastInterp runs at 100% guest CPU with SDL audio and no CPU vertex fallback. Each Metal comparison uses the same binary and isolated game data.
+
+| Opening window | Tuned desktop OpenGL | Metal off 1 | Metal in-place export | Metal off 2 |
+| --- | ---: | ---: | ---: | ---: |
+| Mean host ms per refresh | 17.107 | 16.793 | 18.116 | 16.980 |
+| p99 host ms per refresh | — | 36.651 | 63.583 | 38.931 |
+| Queued RGBA8 exports | — | 6,750 | 6,750 | 6,750 |
+| Temporary copy payload avoided | — | 0 | 1.80 GB | 0 |
+
+The older FastInterp profile attributed 2.99 seconds of host elapsed time to synchronous CPU exports in this window, including waiting. The later private build queued those exports on Metal with zero observed CPU export fallbacks. Different source revisions and options prevent attributing their whole-run timing difference to that change alone.
+
+In the later comparison, writing the RGBA8 export straight into the consumer buffer removed 6,750 scratch copies. The in-place arm still took 6.7–7.9% longer per refresh than both controls, with a worse p99. The result supports keeping the optional path off. Logical copy bytes measure work bypassed. They do not measure physical memory traffic. Adding writes to the same destination buffer can change the driver's scheduling and resource dependencies. A trace would be needed to establish the cause here.
+
+Both LCDs matched at all 12 sampled frames across the Metal cases, along with guest SD files and selected work. A top-screen red/blue discrepancy remains against desktop OpenGL. The OpenGL run completed with zero GL errors. This near-60 Hz test measures normal paced behavior. Uncapped performance and iPhone 13 performance require separate runs.
+
+The same Metal controls recorded 79,664 draws in 2,849 draw groups. Draw groups accounted for the largest total recorded command span among producers, with substantial variation between controls. The existing one-entry vertex uniform memo hit 14,736 of 79,664 uploads, leaving 120,506,368 bytes copied. This is a concrete CPU-side cost to measure. A larger memo trades copies for extra byte comparisons, so owner-thread CPU time is the deciding metric.
+
+### Upload reuse and actual CPU time
+
+A separate private Metal run tested a second exact vertex-uniform memo entry within the same command and upload lease. It directly sampled the emulation/render owner thread's CPU clock after captures at refreshes 1200 and 2200. This includes emulation and render preparation on that thread, plus capture CPU. It excludes scheduler waits and work on other threads.
+
+| Opening window | One entry, first | Two entries | One entry, last |
+| --- | ---: | ---: | ---: |
+| Owner-thread CPU ms per refresh | 6.760 | 7.048 | 6.527 |
+| Mean wall ms per refresh | 17.093 | 17.029 | 16.746 |
+| Vertex-uniform bytes copied | 120,506,368 | 93,540,544 | 120,506,368 |
+| Reuses from the second entry | 0 | 14,529 | 0 |
+
+Both LCDs, guest SD files, and recorded draws, transfers and presentations matched. Copy payload fell 22.4% while measured owner CPU time rose by 0.289–0.521 ms per refresh. The two controls differed by 0.233 ms of CPU time per refresh. Keep the candidate off. Replaying fewer memory copies is useful only when it buys measured headroom.
+
+For Vulkan and Metal, investigate an exact state identity at draw preparation, before rebuilding and copying the packed block. The starting points are [PICA uniform writes](../emulator/src/video_core/command_processor.cpp) and [Metal uniform capture](../emulator/src/video_core/renderer_metal/pica_metal_native_uniforms.cpp). A revision can certify consecutive unchanged state only if every contributing write and state restoration invalidates it. Shader layout and any fields derived outside the register bank still matter. Repeated A→B→A workloads require a separately proven exact identity. Measure invalidation frequency and compare against serialized bytes before using an identity to bypass the existing path. The uniform experiment receipts are in the workspace output `cara-m1-metal-fastinterp-uniform-20261123`.
+
+### Poll submission retirement at the consumer
+
+An isolated Metal replay moved nonblocking retirement polls out of cached input acquisition and into the already existing draw record check. On the M1 with FastInterp and 100% guest CPU, owner-thread CPU per refresh was 6.673 and 6.701 ms in the two controls and 6.573 ms in the candidate. The 0.100–0.129 ms reduction exceeded the 0.028 ms control difference. Wall time remained inside the control range. Both LCDs at 12 checkpoints, SD files, and draw, grouped submission, transfer, color export and presentation counts matched. The option remains default-off.
+
+A cached input lookup still needs an exact backing identity and a live lease. Keep CPU-visible reads, attachment imports, submission admission, error retirement and publication validations on their existing dependency paths. The timed replay preserved those checks and changed only where duplicate nonblocking polls run. In Vulkan, explicit submission completion can similarly be checked at the renderer's real consumers and admission points, provided resource reuse, queue-family ownership and externally observable completion remain correct.
+
+The M1 Luigi check below follows the Xenoblade result. A physical iPhone 13 comparison remains pending. Continue recording owner-thread CPU, full-process CPU, queue waits, missed deadlines and both displays. Do not promote from one M1 opening or a paced frame-time average. Local receipts are in the workspace output `cara-m1-metal-fastinterp-retire-20261123`.
+
+A separate optimization shared one immutable attachment exporter per generation to avoid cloning callable state per draw. Each case had 77,856 resident color acquisitions and 77,856 resident depth acquisitions in the opening. Owner CPU was 7.098 and 7.398 ms per refresh in the controls and 7.100 ms with shared exporters. Outputs and required work matched. The shared-exporter option stays off. The result does not show that allocator or reference-count overhead is a dominant attachment cost. Local receipts are in the workspace output `cara-m1-metal-fastinterp-attachment-exporter-20261123`.
+
+In the M1 Luigi replay, the candidate used 25.759 ms of owner-thread CPU per refresh against 23.227 ms in the first control. The two runs matched both LCDs at 15 checkpoints and the selected work and guest file checks. A separate Xcode build interrupted the final control, so the replay cannot establish a gain across titles. The first control recorded 12.909 s of pipeline and catalog host spans, including 8.294 s nested in runtime fragment library creation. These instrumented spans include host waits and do not give GPU duration. Local receipts are in `cara-m1-metal-fastinterp-retire-luigi-20261123`.
+
+A separate Xenoblade replay skipped 499,694 of 637,312 Metal raster state setter calls. Its host time was 16.814 ms per refresh against 16.825 and 17.595 ms in the controls. Owner-thread CPU was 6.687 ms against 6.609 and 7.866 ms. Both LCDs at 12 checkpoints, guest SD files and selected work counts matched. Leave this option off: the 0.010 ms host margin is below control drift and owner CPU exceeded the lower control. Call counts alone are an insufficient reason to adopt more state tracking in another backend. Local receipts are in `cara-m1-metal-fastinterp-raster-reuse-20261123`.
+
+### Luigi display transfer fragmentation
+
+On the M1, a private Luigi's Mansion: Dark Moon replay at 100% FastInterp
+matched both LCDs at 15 checkpoints, selected work, and guest SD files.
+Over refreshes 2401–2800, 795 linear-to-tiled transfers spent 704 ms of
+host time inside the retile path. Resolving the source interval accounted
+for 661 ms, or 1.65 ms per refresh. No shader libraries or render
+pipelines were built in that window.
+
+A finer trace found that all 795 source intervals were fully covered by
+multiple native buffer owners. They issued 661,440 staged raw-buffer
+copies, averaging 832 spans per transfer and 256 bytes per span, for
+169,328,640 logical bytes. The retile resolver recorded no guest RAM reads
+or synchronous texture exports in this window. A global queued-color
+counter happened to equal the retile count because it covered other
+operations. Use route-specific counters to attribute a transfer path.
+
+The finer trace recorded 861 ms of owner-thread CPU across the window.
+Raw backing checks and blit encoding accounted for 274 and 291 ms
+respectively. The finer trace sampled clocks at each span and adds
+measurable overhead. These numbers locate the work and are unsuitable
+as a baseline for the cost without diagnostics.
+
+An exact single-texture fusion matched all 22 cases in the Metal byte
+fixture but failed the source coverage admission for every gameplay
+transfer. It stayed off. This workload points to processing fewer
+independent copy commands while preserving every authoritative writer,
+source and destination range, queue dependency and guest-visible byte.
+Report useful copy reductions and unprofiled owner-thread CPU separately.
+
+A private same-buffer coalescer validated all 661,440 raw spans and
+preserved all 169,328,640 copied bytes. It found zero consecutive copies
+with the same Metal buffer and contiguous source and destination offsets.
+Both LCDs and the selected work matched. The replay closed after one
+admission case. The separate source and destination offset checks were
+combined in this gate, so the result leaves the exact backing pattern
+unknown. Reordering or widening copied guest intervals would require
+independent authority and dependency proofs.
+
+A following shape trace found exactly two native buffers and two writers in
+each of the 795 transfers. Six sampled requests showed the same 128×416
+RGBA8 surface: alternating spans from two raw buffers, with a 512-byte
+row stride and destination starts at offsets 0 and 32. This explains
+why joining neighboring copies could not help. Validate the full row
+partition and each writer's nonoverlapping bounds before binding two
+sources to a single compute pass. With two inputs, ordinary Metal buffer
+bindings suffice. Indirect resource tables would add complexity without
+addressing the observed workload.
+
+The [OpenGL display-transfer path](../emulator/src/video_core/renderer_opengl/gl_rasterizer.cpp)
+looks up valid source and destination views in its texture cache, then
+blits surface rectangles and updates destination ownership. For GL ES an
+eligible transfer reaches the driver as one framebuffer blit after
+attachment setup. Keep the surface-oriented operation where an exact
+view exists. For fragmented backing, preserve the same authoritative
+bytes and combine their GPU reads before issuing the layout write. The
+number of GL calls says nothing about the driver's internal commands.
+
+The earlier M4 Luigi lab replay in [native Metal measurements](native-metal-build.md)
+averaged 16.71 ms per refresh on GLES and 24.00 ms on Metal with equal guest
+ticks and draw requests. A separate queue trace moved waiting from the
+submission queue to the upload arena by widening the submission window,
+and frame time worsened. Measure time at both wait sites before treating a
+smaller queue wait as a renderer improvement. These M4 results and the M1
+retile diagnostics cover different scenes and builds.
+
+### Two-buffer gather and retile
+
+The private kernel binds the two raw Metal buffers directly and writes
+the tiled destination in one dispatch. It keeps the original raw
+writer checks and verifies every span's offset, row stride, coverage,
+and length. Other inputs keep the original resolver. On the M1, a
+production Metal fixture matched 871,936 bytes against the original
+two-pass GPU path and an independent CPU oracle with both flip states,
+nonzero source offsets, and destination guards.
+
+Four same-binary FastInterp replays kept guest CPU at 100%, SDL sound
+on, and CPU vertex fallback off. Both LCDs at all 15 checkpoints,
+selected work, and guest files matched. Both enabled runs eliminated
+the 661,440 staging blits and 169,328,640 staging bytes across the same
+795 transfers. Shader library and render-pipeline builds were zero in
+the measured window.
+
+| Refreshes 2401–2800, ms/refresh | On 1 | Off 1 | Off 2 | On 2 |
+| --- | ---: | ---: | ---: | ---: |
+| Retile host span | 1.064 | 1.715 | 1.741 | 0.900 |
+| Owner-thread CPU | 28.749 | 25.995 | 26.302 | 23.094 |
+| Whole refresh mean | 32.484 | 26.960 | 27.477 | 23.291 |
+| Presentation host span | 2.837 | 0.700 | 0.712 | 0.690 |
+
+The retile host span improved by at least 0.651 ms per refresh. Whole
+owner CPU and frame time did not move consistently. The slower enabled
+run spent more time in other scopes, including presentation and draw
+recording. Its presentation span was elevated in both halves of the
+window. Separately time validation receipt waits, drawable acquisition,
+scanout resolution, and encode or commit before attributing the change
+to a synchronization mechanism. The candidate remains private and off
+by default. This comparison uses the M1 only and does not establish a
+GLES-relative gain.
+
+### LCD presentation and receipt waits
+
+One instrumented M1 Luigi replay with the two-buffer retile enabled
+split presentation into its existing stages. Presentation took
+1.705 ms elapsed and 0.788 ms of owner-thread CPU per refresh in
+refreshes 2401–2800. The 108 checked receipt waits accounted for
+0.868 ms elapsed and 0.004 ms of CPU per refresh. Resolving both
+LCD sources accounted for 0.652 ms elapsed and 0.621 ms of CPU.
+Drawable acquisition accounted for 0.021 ms elapsed. The receipt
+and LCD measurements are within the total presentation scope.
+Both LCDs matched at 15 checkpoints, along with the selected work
+and guest SD files. The window presented 400 drawables with no misses.
+
+A separate M1 replay tested whether a single tracked raw buffer could
+supply every pixel row without staging. The 800 LCD source resolutions
+in the selected window split into 400 existing direct reads and 400
+staged reads. Staging issued 320,000 raw Metal buffer blits for
+115,200,000 bytes. Guest RAM gaps and queued or synchronous exports
+were zero. The single-writer option had zero hits. The replay matched
+both LCDs at all 15 checkpoints, guest SD files, and selected work.
+The option stays off and has no measured speedup.
+
+Before testing direct decode from multiple raw buffers, confirm that
+the same few validated leases cover each consumed row with a stable
+split. The aggregate counts alone cannot establish the split or writer
+identities. Preserve the original receipt checks and retain staging
+for layouts or ownership that the decoder cannot prove.
+
+### Direct LCD decode from two current buffers
+
+The padded-row candidate completed four same-binary M1 Luigi replays in
+ON/OFF/OFF/ON order. Each ran 3,000 refreshes with FastInterp at 100%
+guest CPU, SDL audio, and no CPU vertex fallback. Both LCDs matched at
+all 15 checkpoints, along with guest SD files and selected draw,
+transfer, and presentation counts. Every owned process exited cleanly.
+
+| Refreshes 2401–2800 | ON1 | OFF1 | OFF2 | ON2 |
+| --- | ---: | ---: | ---: | ---: |
+| LCD staging blits | 0 | 320,000 | 320,000 | 0 |
+| LCD staged bytes | 0 | 115,200,000 | 115,200,000 | 0 |
+| LCD source resolution CPU, ms/ref | 0.113 | 0.573 | 0.561 | 0.113 |
+| LCD decode encoding CPU, ms/ref | 0.044 | 0.033 | 0.033 | 0.043 |
+| Presentation CPU, ms/ref | 0.234 | 0.681 | 0.666 | 0.231 |
+| Owner-thread CPU, ms/ref | 22.656 | 22.892 | 22.806 | 22.524 |
+| Whole refresh elapsed, ms/ref | 23.039 | 23.336 | 23.022 | 22.841 |
+| Whole refresh elapsed p99, ms/ref | 38.173 | 33.648 | 31.648 | 30.122 |
+
+Each enabled run decoded directly from two existing buffers in 400
+of the 800 LCD source resolutions. The existing one-buffer path served
+the other 400. The paired path checks current ownership, buffer
+identity, row pitch, whole-pixel split, bounds, queue, and tracked
+producer status before decoding. It samples no padding. The CPU saving
+inside presentation was 0.432–0.450 ms per refresh across every
+ON/OFF comparison. The owner thread saved 0.150–0.368 ms per refresh,
+compared with 0.086 ms between controls. The enabled and control
+elapsed timings overlap. The p99 values varied, so the replay does
+not establish a frame-time or hitch improvement. Keep this private
+option off by default. These are Metal host measurements on the M1.
+
+### Remaining M1 Luigi CPU cost with direct LCD reads
+
+The 3,000-refresh replay enabled direct LCD reads and used FastInterp at
+100% guest CPU with SDL audio. Both LCDs matched at 15 checkpoints.
+Guest SD files and selected draw and transfer work matched. The process
+exited cleanly. In refreshes 2401–2800, direct reads still avoided all
+320,000 LCD staging blits. The measured window issued 277,455 draws in
+6,360 groups, with zero shader library or pipeline builds.
+
+The owner averaged **22.834 ms of CPU per refresh** against **23.025 ms
+elapsed**. The 16.7 ms target requires recovering at least 6.13 ms of
+owner CPU at this workload and the observed instrumentation. The
+first and second 200-refresh halves averaged 22.828 and 22.841 ms of
+owner CPU, respectively.
+
+| Owner thread scope | Exclusive CPU ms/refresh |
+| --- | ---: |
+| Guest CPU execution and memory | 11.276 |
+| Metal draw binding | 3.484 |
+| Metal draw encoding | 2.099 |
+| Metal transfers | 1.965 |
+| PICA command handling outside the nested scopes | 1.129 |
+| Metal publication and submission | 1.090 |
+| Metal draw recording | 0.606 |
+| Metal presentation | 0.221 |
+| Other tracked and untracked CPU | 0.964 |
+| Total | 22.834 |
+
+The exclusive CPU tracker charged nested scopes separately. The guest
+CPU category includes memory accesses. In the same window, submission
+pressure contributed 0.012 ms elapsed per refresh and upload-arena wait
+was zero. This identifies owner CPU time as the frame-budget constraint
+in this run. It does not measure GPU utilization. The category clocks
+add overhead and the exact split is diagnostic. The earlier direct-read
+runs averaged 22.524 and 22.656 ms of owner CPU.
+
+Draw binding and encoding together account for 5.583 ms of owner CPU,
+before draw recording. The binding scopes report 0.983 ms elapsed in
+vertex inputs, 0.947 ms in attachment and LUT setup, and 0.613 ms in
+sampled texture setup. The encoding upload scope reports 0.956 ms
+elapsed. These are child spans, so adding them to the parent CPU
+numbers would count work twice. They identify where to test reuse
+while preserving the original guest memory and draw order.
+
+## Preserve the backend boundary
+
+Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
+
+Carry these invariants into the backend interfaces:
+
+- **Track bytes and versions.** Associate each guest interval with the authoritative producer, format, layout, byte coverage and resource generation. A partial overwrite replaces only the affected interval. A sampled-view cache must observe any overlapping write, including through another guest view of the same bytes.
+- **Make dependencies explicit.** Render-target writes feed later sampling, copies or scanout. The backend records the required execution and memory visibility before those consumers run. A mixed-owner read may compose several GPU sources and RAM spans into one buffer, with each interval bounded and written once. A direct view is eligible only if a producer covers the full interval and its layout and alignment fit the exact consumer.
+- **Give uploads a bounded lifetime.** Keep command-local uniform or vertex snapshots immutable until all consumers retire. A valid hit requires exact payload and layout identity, plus a live allocation. Release memoized ranges on lease rollover, abort or reset. Log copied bytes, comparison cost, peak storage and wait sites together.
+- **Preserve draw order.** Group draws when attachments, load/store behavior and dependencies allow it. Keep blending, depth, stencil, scissor and intervening transfers intact. Track which dependency or capacity limit ends a group. Pipeline lookup, shader compilation and queue retirement need separate counters.
+- **Keep synchronization and correctness fallback paths.** Unsupported views, unaligned intervals, and guest-visible reads retain the exact resolver until an equivalent implementation passes. Validate produced bytes before a failed or incomplete host operation can appear in the LCDs or guest RAM.
+
+## A Vulkan implementation order
+
+1. Start with one graphics-capable queue. Record producer and consumer access, buffer range or image subresource, and current layout. Use precise barriers and image transitions where required. Add extra queues only after showing a whole-window benefit and handling queue-family ownership where applicable. Tie arena reuse to confirmed submission retirement. [Vulkan synchronization and cache control](https://docs.vulkan.org/spec/latest/chapters/synchronization.html)
+2. Use a persistently mapped, bounded upload arena. Honor device buffer-offset limits and noncoherent atom alignment. Flush noncoherent writes before device consumption and invalidate before host reads when required. Compare direct host-visible reads against staging to device-local memory on the actual device. [Khronos synchronization examples](https://docs.vulkan.org/guide/latest/synchronization_examples.html)
+3. Map compatible attachment groups to render passes or dynamic rendering based on supported features. Supply the correct attachment layouts and load/store operations. Dynamic rendering provides rendering scope information. Establish synchronization separately. [Khronos dynamic rendering proposal](https://docs.vulkan.org/features/latest/features/proposals/VK_KHR_dynamic_rendering.html)
+4. Cache pipelines using the translated shaders, vertex layout, fixed render state and attachment compatibility. Record initial compilation, first use, and repeat visits separately. Keep device-specific pipeline caches distinct from portable PICA state. Preserve correct first-use drawing when a pipeline has yet to finish.
+
+## Validation on iPhone 13
+
+Compare private Metal and tuned GLES builds with FastInterp, 100% guest CPU, frame skip and adaptive clock off, native resolution, and sound on. Test Xenoblade opening and Luigi Gate with a fixed input script. Verify both LCDs, save data, deterministic work counts, audio continuity and guest completion ordering. Run Mario Kart as a separate check that draw-heavy scenes still benefit.
+
+Report emulation-thread CPU time per guest second, whole-process CPU time, host refresh median and p99, missed display deadlines, allocation and residency, and GPU timing where available. Count first-play shader waits separately from warmed gameplay. A lower owner-thread CPU number with worse pacing or higher CPU elsewhere is insufficient. Use matched runs with the same instrumentation, report the control spread, and log thermal and power conditions for longer phone tests. At a paced 60 Hz the wall-time mean can hide CPU headroom. Measure thread CPU and missed deadlines directly.
+
+Source anchors: [pica_metal_guest_authority.cpp](../emulator/src/video_core/renderer_metal/pica_metal_guest_authority.cpp) for byte ownership, [pica_metal_native_draw_lane.mm](../emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm) for resolve/record ordering, [pica_metal_draw.mm](../emulator/src/video_core/renderer_metal/pica_metal_draw.mm) for group and uniform reuse, [pica_metal_upload.mm](../emulator/src/video_core/renderer_metal/pica_metal_upload.mm) for command-owned upload pages, and [pica_metal_frame_cost.hh](../emulator/src/video_core/renderer_metal/pica_metal_frame_cost.hh) for host and queue instrumentation. Local M1 receipts are in the workspace output `cara-m1-metal-fastinterp-direct-export-20261123`, including the source diff, compiler audit, three Metal replays and the OpenGL reference.
