@@ -64,3 +64,59 @@ gameplay mode and guest clock fixed, then capture `adb logcat -v epoch -s CaraPe
 
 Use a trace-disabled comparison for final performance claims. Keep
 GPU sampler measurements separate from CPU phase wall times.
+
+## Active lit indexing on the Slide
+
+APK `b62bfdc` passed Android ARM64 CI. The opt-in admitted the prepared
+Shader-topology candidates. Once the EGL worker had linked the matching
+programs, it issued 25,492–27,528 lit indexed draws in each of three later
+Gadd windows. Before those programs were ready the regular path continued
+drawing. The earlier Gadd windows showed zero executed lit indexed draws,
+so their timings cannot measure the active path.
+
+| Later Gadd, refresh windows 3841 / 3961 / 4081 | Regular | Lit indexed |
+| --- | ---: | ---: |
+| Guest PICA command lists | 2,160 | 2,160 |
+| Guest draw requests | 139,064 | 139,224 |
+| Emulation-thread CPU per refresh | 29.45 ms | 32.91 ms |
+| PICA and graphics CPU per refresh | 20.61 ms | 23.20 ms |
+| Per-window p99 range | 32.05–43.70 ms | 38.67–41.43 ms |
+| Worst refresh | 44.79 ms | 79.53 ms |
+| Sampled Mali position requests per 1,000 primitives | 525.7 | 506.2 |
+
+Draw counts differed by 0.12%. Per-draw coverage, frame composition, and
+worker activity can still differ. The evidence supports higher CPU cost
+on the measured opt-in run and a small reduction in Mali position work.
+It does not establish an exact per-draw CPU penalty. Keep the mode opt-in.
+The raw comparison is in [the 120-refresh logs](mali-lit-active-comparison.log.txt).
+The host assembler and pair-cache fixture passed 3,000 cases, including
+Shader winding and guest memory mutation. Exact device color/depth output
+has not been verified.
+
+## Lighting and fog transfer result
+
+APK `f27f71c` passed Android ARM64 CI and captured the same normal boot at
+fixed CLK 100%. The trace-disabled performance baselines remain separate.
+The phase trace found zero procedural LUT time in these windows.
+
+| Phase | 2D LUT transfer wall time per refresh | Observed upload traffic |
+| --- | ---: | --- |
+| Warm title, windows 721–961 | 17.08–18.18 ms | 480 uploads and about 5.35 MB per 120 refreshes |
+| Early opening, window 1681 | 0.99 ms | 96 uploads of 1 KiB, matching fog-only table size |
+| Quiet opening, windows 1801–1921 | 0 ms | No uploads |
+| Entry to lab, windows 2401 and 2521 | 4.49 ms and 7.05 ms | 74 / 111 uploads, totaling 84,992 / 162,816 bytes |
+| Warm lab, window 2641 | 0 ms | No uploads |
+
+Title GL setup and restore together took about 0.03 ms per refresh. The
+bulk was inside the `glTexSubImage2D` scope, despite small transfers.
+This locates the stall at the transfer API boundary. It does not identify
+the internal driver work. Rotating the destination texture or using a
+separate fenced buffer for fog can test whether reusing a texture sampled
+by earlier draws is responsible. Use the existing native texture-buffer
+path as a control. Its earlier all-table test accelerated the title and
+slowed warm Gadd. A persistently mapped PBO alone would change the source
+staging while retaining the destination texture hazard.
+
+See [phase windows](mali-render-phases.log.txt) and
+[Android CI](https://github.com/dmikey/cara/actions/runs/45202872936).
+The original signed APK and profile were restored after the tests.
