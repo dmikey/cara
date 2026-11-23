@@ -37,6 +37,29 @@ Use `CARA_CPU_BACKEND=fastinterp` for the interpreter. The iOS build includes
 FastInterp and retains its GLES option. The existing release and signing
 workflows continue to package their current configurations.
 
+## Optional Apple Silicon diagnostics
+
+The build helper can audit ThinLTO with `--lto` and instrument only the
+FastInterp dispatcher with `--fastinterp-pgo-generate`. Both options default
+to off. Use `--fastinterp-pgo-kind ir` to select LLVM IR instrumentation or
+omit it for frontend instrumentation. Keep training output within an isolated
+directory using `LLVM_PROFILE_FILE`. Feed the merged profile back into the same
+compiler and source with `--fastinterp-pgo-use PATH` and the same profile kind.
+The build audit records the generated compiler and linker policy.
+
+`CARA_FASTINTERP_LDR_PAIRS=1` enables the experimental paired ARM load handler.
+`CARA_FASTINTERP_LDR_CMP_BRANCH=1` independently enables the experimental fused
+load, compare and conditional branch handler. Both remain disabled by default.
+`CARA_METAL_STAGEIN_RUNTIME_TEV=1` permits the general runtime TEV shader on
+eligible interpreted-vertex fallback draws when runtime TEV is forced on.
+Run each experiment in a separate process before comparing it with the default
+path. The existing Apple GPU timing and renderer defaults apply.
+
+The local learned pipeline cache deduplicates new Metal binary archive
+descriptors by render pipeline identity. Distinct depth, stencil and sampler
+state still gets its own recipe. The preload time and archive byte limits
+continue to apply.
+
 ## Runtime shader compiler sources
 
 The build helper fetches two pinned Khronos source revisions as needed.

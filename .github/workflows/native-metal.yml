@@ -9,6 +9,14 @@ on:
       - 'NOTICE'
       - 'tests/metal_queue_policy_test.cpp'
       - 'tests/metal_tev_admission_test.cpp'
+      - 'tests/metal_render_pipeline_key_test.cpp'
+      - 'tests/apple_fastinterp_policy_test.cpp'
+      - 'tests/apple_metal_policy_test.cpp'
+      - 'tests/metal_index_scan_memo_test.cpp'
+      - 'tests/metal_simd_token_test.cpp'
+      - 'tests/packed_vertex_layout_specialization_test.cpp'
+      - 'tests/test_native_metal_lto.py'
+      - 'tests/test_native_metal_pgo.py'
       - 'tests/metal_display_transfer_startup_test.mm'
       - 'tests/metal_async_depth_validation_test.mm'
       - 'tests/run_metal_async_depth_validation_test.py'
@@ -23,6 +31,14 @@ on:
       - 'NOTICE'
       - 'tests/metal_queue_policy_test.cpp'
       - 'tests/metal_tev_admission_test.cpp'
+      - 'tests/metal_render_pipeline_key_test.cpp'
+      - 'tests/apple_fastinterp_policy_test.cpp'
+      - 'tests/apple_metal_policy_test.cpp'
+      - 'tests/metal_index_scan_memo_test.cpp'
+      - 'tests/metal_simd_token_test.cpp'
+      - 'tests/packed_vertex_layout_specialization_test.cpp'
+      - 'tests/test_native_metal_lto.py'
+      - 'tests/test_native_metal_pgo.py'
       - 'tests/metal_display_transfer_startup_test.mm'
       - 'tests/metal_async_depth_validation_test.mm'
       - 'tests/run_metal_async_depth_validation_test.py'
@@ -76,6 +92,15 @@ jobs:
           "$RUNNER_TEMP/metal-queue-policy"
           xcrun clang++ -std=c++20 -I emulator/src tests/metal_tev_admission_test.cpp -o "$RUNNER_TEMP/metal-tev-admission"
           "$RUNNER_TEMP/metal-tev-admission"
+      - name: Check PSO archive keys and compiler-policy audits
+        if: matrix.artifact == 'mac-fastinterp'
+        run: |
+          for fixture in metal_render_pipeline_key_test apple_fastinterp_policy_test apple_metal_policy_test \
+                         metal_index_scan_memo_test metal_simd_token_test packed_vertex_layout_specialization_test; do
+            xcrun clang++ -std=c++20 -O2 -pthread -I emulator/src "tests/$fixture.cpp" -o "$RUNNER_TEMP/$fixture"
+            "$RUNNER_TEMP/$fixture"
+          done
+          python3 -m unittest discover -s tests -p 'test_native_metal_*.py'
       - name: Check exact display-transfer planning without a ROM
         if: matrix.artifact == 'mac-fastinterp'
         run: |

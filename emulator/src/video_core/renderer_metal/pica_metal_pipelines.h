@@ -7,12 +7,15 @@
 #include <cstdint>
 #include <deque>
 #include <future>
+#include <functional>
 #include <optional>
+#include <set>
 #include <string_view>
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include "pica_metal_draw.h"
+#include "pica_metal_render_pipeline_key.h"
 #include "pica_metal_tev_admission.h"
 #include "pica_metal_runtime_shader.h"
 #include "pica_metal_source_pool.h"
@@ -127,7 +130,8 @@ public:
                  const std::optional<PicaSampleInputs>& tertiary = std::nullopt);
     bool TryVertexFallback(const PicaPipelineInputs& exact, std::string_view stage_in_vertex,
                            const PicaSampleInputs&, const std::optional<PicaSampleInputs>&,
-                           const std::optional<PicaSampleInputs>&, bool prefer_general);
+                           const std::optional<PicaSampleInputs>&, bool prefer_general,
+                           const std::function<std::string_view()>& runtime_tev_fragment);
     std::optional<PicaMetalPipelineSelection> SelectWithGeneral(
         const PicaPipelineInputs& exact, std::string_view general_fragment,
         const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
@@ -159,6 +163,7 @@ private:
     std::string warmup_path;
     std::vector<WarmupRecipe> warmup_recipes;
     std::vector<MTLRenderPipelineDescriptor*> warmup_descriptors;
+    std::set<PicaMetalRenderKey> warmup_descriptor_keys;
     id<MTLBinaryArchive> warmup_archive = nil;
     unsigned warmup_draw_misses{}, warmup_archive_hits{}, warmup_archive_misses{};
     mutable unsigned warmup_translation_misses{};
