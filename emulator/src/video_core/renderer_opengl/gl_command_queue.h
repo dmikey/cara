@@ -43,6 +43,7 @@ bool NativeMapUploadActive();
 Common::HostRenderQueue* Queue();
 #ifdef CARA_GL_CONTEXT_DISPATCH
 std::array<std::uint64_t, RpcApiCount> TakeRecordedAPICounts();
+std::uint64_t TakeFusedTextureCommandCount();
 void QueueLUT(DriverTransactions::LUTBody body, GLuint texture, unsigned unit, GLenum format,
               std::size_t offset, const std::uint8_t* data, std::size_t bytes);
 #endif

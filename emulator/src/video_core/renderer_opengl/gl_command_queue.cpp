@@ -44,6 +44,17 @@ struct AtomicStats {
 std::array<std::atomic<std::uint64_t>,RpcApiCount> rpc_counts{};
 #ifdef CARA_GL_CONTEXT_DISPATCH
 bool record_api_counts = false;
+bool pack_texture_commands = false;
+std::uint64_t fused_texture_commands = 0;
+struct TextureTail {
+ enum class Kind { None, Active, Bound, ActiveBound };
+ Kind kind = Kind::None;
+ GLenum unit = 0, target = 0;
+ GLuint texture = 0;
+} texture_tail;
+void RecordActiveTexture(GLenum unit);
+void RecordBindTexture(GLenum target, GLuint texture);
+void RecordBindSampler(GLuint unit, GLuint sampler);
 // Only the emulation producer records commands and takes interval snapshots.
 std::array<std::uint64_t, RpcApiCount> recorded_by_api{};
 #endif
@@ -115,6 +126,9 @@ void Record(std::function<void()> job,std::size_t bytes=0,RpcApi api=RpcApi::Int
  auto& q=Owner();
  if(q.IsWorkerThread()) { ++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer; backend uses captured raw entrypoints"); }
  Producer();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+ texture_tail.kind = TextureTail::Kind::None;
+#endif
  if(bytes>MaxBatchBytes-sizeof(std::function<void()>)) {
   // Oversize synchronous execution keeps an already-owned payload alive, without
   // bypassing byte admission with an oversized asynchronous job.
@@ -204,6 +218,47 @@ bool TextureSpan(GLsizei width,GLsizei height,GLenum format,GLenum type,std::siz
 }
 // Raw pointers and wrappers are generated from the vendored GLAD declarations.
 #include "gl_command_queue_generated.inc"
+#ifdef CARA_GL_CONTEXT_DISPATCH
+// Only extend the newest closure while the producer still owns its batch. Every
+// other Record invalidates the tail, and Flush transfers the batch to the worker.
+void CountFusedTextureCommand(RpcApi api) {
+ ++fused_texture_commands;
+ if (record_api_counts) ++recorded_by_api[std::size_t(api)];
+}
+void RecordActiveTexture(GLenum unit) {
+ Record([unit] { raw_glActiveTexture(unit); }, 0, RpcApi::api_glActiveTexture);
+ if (pack_texture_commands && !pending.empty())
+   texture_tail = {TextureTail::Kind::Active, unit};
+}
+void RecordBindTexture(GLenum target, GLuint texture) {
+ if (texture_tail.kind == TextureTail::Kind::Active && !pending.empty()) {
+   const auto unit = texture_tail.unit;
+   pending.back() = [=] { raw_glActiveTexture(unit); raw_glBindTexture(target, texture); };
+   texture_tail = {TextureTail::Kind::ActiveBound, unit, target, texture};
+   CountFusedTextureCommand(RpcApi::api_glBindTexture);
+   return;
+ }
+ Record([=] { raw_glBindTexture(target, texture); }, 0, RpcApi::api_glBindTexture);
+ if (pack_texture_commands && !pending.empty())
+   texture_tail = {TextureTail::Kind::Bound, 0, target, texture};
+}
+void RecordBindSampler(GLuint unit, GLuint sampler) {
+ if (!pending.empty() && (texture_tail.kind == TextureTail::Kind::Bound ||
+                         texture_tail.kind == TextureTail::Kind::ActiveBound)) {
+   const auto active = texture_tail.unit;
+   const auto target = texture_tail.target;
+   const auto texture = texture_tail.texture;
+   if (texture_tail.kind == TextureTail::Kind::ActiveBound)
+     pending.back() = [=] { raw_glActiveTexture(active); raw_glBindTexture(target, texture); raw_glBindSampler(unit, sampler); };
+   else
+     pending.back() = [=] { raw_glBindTexture(target, texture); raw_glBindSampler(unit, sampler); };
+   texture_tail.kind = TextureTail::Kind::None;
+   CountFusedTextureCommand(RpcApi::api_glBindSampler);
+   return;
+ }
+ Record([=] { raw_glBindSampler(unit, sampler); }, 0, RpcApi::api_glBindSampler);
+}
+#endif
 // Diagnostic-only raw adapters: invoked by the existing driver-owner calls.
 std::unique_ptr<PipelineCapture::Recorder> pipeline_capture;
 std::unique_ptr<HostLatency::Recorder> host_latency;
@@ -335,6 +390,10 @@ void Install(Common::HostRenderQueue& queue) {
  const char* census = std::getenv("CARA_GL_QUEUE_API_CENSUS");
  record_api_counts = census && std::strcmp(census, "1") == 0;
  recorded_by_api.fill(0);
+ const char* packets = std::getenv("CARA_GL_QUEUE_TEXTURE_PACKETS");
+ pack_texture_commands = packets && std::strcmp(packets, "1") == 0;
+ texture_tail = {};
+ fused_texture_commands = 0;
 #endif
  producer=std::this_thread::get_id();pending.clear();pending.reserve(MaxBatchCommands);pending_bytes=0;
  vaos.clear();vaos.emplace(0,VAO{});known_vaos.clear();known_buffers.clear();current_vao=array_buffer=unpack_buffer=0;unpack={};
@@ -382,6 +441,10 @@ void Install(Common::HostRenderQueue& queue) {
 #endif
 }
 #ifdef CARA_GL_CONTEXT_DISPATCH
+std::uint64_t TakeFusedTextureCommandCount() {
+ Producer();
+ return std::exchange(fused_texture_commands, 0);
+}
 std::array<std::uint64_t, RpcApiCount> TakeRecordedAPICounts() {
     Producer();
     return std::exchange(recorded_by_api, {});

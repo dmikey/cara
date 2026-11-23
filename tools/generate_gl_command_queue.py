@@ -28,6 +28,14 @@ def argnames(args):
  for p in args.split(','):
   m=re.search(r'([A-Za-z_]\w*)\s*(?:\[[^]]*\])?$',p.strip());assert m,p;result.append(m[1])
  return result
+for name, helper, args in [('glActiveTexture', 'RecordActiveTexture', 'texture'),
+                           ('glBindTexture', 'RecordBindTexture', 'target, texture'),
+                           ('glBindSampler', 'RecordBindSampler', 'unit, sampler')]:
+ define(name, f"""#ifdef CARA_GL_CONTEXT_DISPATCH
+    {helper}({args});
+#else
+    auto fn=raw_{name};Record([=]{{fn({args});}});
+#endif""")
 define('glGenBuffers','''    auto fn=raw_glGenBuffers;Sync([=]{fn(n,buffers);},true);
     if(n>0 && buffers)for(GLsizei i=0;i<n;++i)if(buffers[i])known_buffers.insert(buffers[i]);''')
 define('glGenVertexArrays','''    auto fn=raw_glGenVertexArrays;Sync([=]{fn(n,arrays);},true);

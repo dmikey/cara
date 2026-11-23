@@ -281,6 +281,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> queue_api_census{{"Debug", "trace_ordered_gles_apis"}, false};
     const bool trace_queue_apis = Config::Get(queue_api_census);
     setenv("CARA_GL_QUEUE_API_CENSUS", trace_queue_apis ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> texture_packets{{"Debug", "ordered_gles_texture_packets"}, false};
+    setenv("CARA_GL_QUEUE_TEXTURE_PACKETS", Config::Get(texture_packets) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> ordered_worker{{"Debug", "ordered_gles_worker"}, false};
     if (Config::Get(ordered_worker)) {
         setenv("CARA_GL_QUEUE_NATIVE_MAP_UPLOAD", "1", 1);
@@ -451,7 +453,7 @@ void BootGame(const std::string& path) {
                                 const auto q = SnapshotStats();
                                 if (trace_queue_apis) {
                                     const auto recorded = TakeRecordedAPICounts();
-                                    auto line = fmt::format("ordered_api end={}", frame);
+                                    auto line = fmt::format("ordered_api end={} fused={}", frame, TakeFusedTextureCommandCount());
                                     for (std::size_t i = 0; i < recorded.size(); ++i) {
                                         if (recorded[i])
                                             line += fmt::format(" {}={}", RpcApiNames[i], recorded[i]);

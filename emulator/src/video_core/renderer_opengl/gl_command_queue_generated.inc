@@ -150,7 +150,11 @@ static PFNGLWAITSYNCPROC raw_glWaitSync=nullptr;
 static void APIENTRY Wrap_glActiveTexture(GLenum texture) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glActiveTexture(texture);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    RecordActiveTexture(texture);
+#else
     auto fn=raw_glActiveTexture;RecordApi(RpcApi::api_glActiveTexture, [=]{fn(texture);});
+#endif
 }
 static void APIENTRY Wrap_glAttachShader(GLuint program, GLuint shader) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glAttachShader(program, shader);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
@@ -210,12 +214,20 @@ static void APIENTRY Wrap_glBindRenderbuffer(GLenum target, GLuint renderbuffer)
 static void APIENTRY Wrap_glBindSampler(GLuint unit, GLuint sampler) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glBindSampler(unit, sampler);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    RecordBindSampler(unit, sampler);
+#else
     auto fn=raw_glBindSampler;RecordApi(RpcApi::api_glBindSampler, [=]{fn(unit, sampler);});
+#endif
 }
 static void APIENTRY Wrap_glBindTexture(GLenum target, GLuint texture) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glBindTexture(target, texture);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    RecordBindTexture(target, texture);
+#else
     auto fn=raw_glBindTexture;RecordApi(RpcApi::api_glBindTexture, [=]{fn(target, texture);});
+#endif
 }
 static void APIENTRY Wrap_glBindVertexArray(GLuint array) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glBindVertexArray(array);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}

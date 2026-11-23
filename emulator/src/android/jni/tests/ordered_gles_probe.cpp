@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <future>
 #include <stdexcept>
 #include <string>
@@ -248,6 +249,46 @@ bool CheckHelperCall(const char* name, F call) {
     }
 }
 
+#ifdef CARA_GL_CONTEXT_DISPATCH
+void CheckTexturePackets(bool queued) {
+    GLuint textures[2]{}, sampler{};
+    glGenTextures(2, textures);
+    glGenSamplers(1, &sampler);
+    if (queued) Queue::TakeFusedTextureCommandCount();
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+    glBindSampler(2, sampler);
+    GLint value{};
+    glGetIntegerv(GL_SAMPLER_BINDING, &value);
+    Check(static_cast<GLuint>(value) == sampler, "texture packet sampler binding");
+    glActiveTexture(GL_TEXTURE3);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &value);
+    Check(value == GL_TEXTURE3, "texture query must observe active unit before bind");
+    glBindTexture(GL_TEXTURE_2D, textures[1]);
+    glBindSampler(3, 0);
+    glActiveTexture(0);  // An invalid unit leaves the previous unit active.
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+    Check(glGetError() == GL_INVALID_ENUM, "texture packet lost driver error");
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &value);
+    Check(static_cast<GLuint>(value) == textures[0], "bind after invalid unit");
+    glActiveTexture(GL_TEXTURE2);
+    if (queued) Queue::Flush(); // A producer may never modify an already submitted batch.
+    glBindTexture(GL_TEXTURE_2D, textures[1]);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &value);
+    Check(static_cast<GLuint>(value) == textures[1], "texture bind across flush");
+    glActiveTexture(GL_TEXTURE0);
+    glDeleteSamplers(1, &sampler);
+    glDeleteTextures(2, textures);
+    Check(glGetError() == GL_NO_ERROR, "texture packet cleanup");
+    if (queued) {
+        auto fused = Queue::TakeFusedTextureCommandCount();
+        Check(fused >= 4, "expected active/bind/sampler groups");
+        std::printf("texture packets: %llu commands folded, binding, error, and flush ordering match direct\n",
+                    static_cast<unsigned long long>(fused));
+    }
+}
+#endif
+
 void Run(EGLDisplay display, EGLConfig config) {
     Context rendering(display, config, EGL_NO_CONTEXT);
     Context helper(display, config, rendering.context);
@@ -267,12 +308,19 @@ void Run(EGLDisplay display, EGLConfig config) {
     const auto raw_create = glad_glCreateShader;
     const auto raw_delete = glad_glDeleteShader;
     const auto raw_error = glad_glGetError;
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    CheckTexturePackets(false);
+    setenv("CARA_GL_QUEUE_TEXTURE_PACKETS", "1", 1);
+#endif
     rendering.Release();
     Common::HostRenderQueue worker(128, 8 * 1024 * 1024,
         [&] { rendering.Bind(); submission_worker = true; },
         [&] { rendering.Release(); });
     Queue::Install(worker);
     try {
+#ifdef CARA_GL_CONTEXT_DISPATCH
+        CheckTexturePackets(true);
+#endif
         const auto queued = Draw();
         Queue::Drain();
         Check(queued == direct && direct_draws == 3 && queued_draws == 3,
