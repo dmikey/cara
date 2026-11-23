@@ -326,6 +326,7 @@
       .build-availability { justify-content: flex-start; }
     }
   </style>
+  <script src="assets/release-downloads.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#content">Skip to content</a>
@@ -359,8 +360,8 @@
         <div class="section-heading">
           <h2 id="downloads-heading">Downloads</h2>
           <div class="download-links">
-            <a href="https://github.com/dmikey/cara/releases/tag/experimental-2026-11-13">Release notes</a>
-            <a href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/SHA256SUMS.txt">SHA-256 checksums</a>
+            <a id="candidate-notes" href="https://github.com/dmikey/cara/releases/tag/Cara.RC.2026112301">Cara.RC.2026112301 release notes</a>
+            <a id="candidate-checksums" href="https://github.com/dmikey/cara/releases/download/Cara.RC.2026112301/SHA256SUMS.txt">SHA-256 checksums</a>
           </div>
         </div>
         <ul class="build-list">
@@ -368,22 +369,21 @@
             <span class="build-platform">macOS</span>
             <div class="build-availability">
               <span class="build-note">Apple silicon preview. Signed and notarized, with optional JIT.</span>
-              <a href="https://github.com/dmikey/cara/releases/download/Cara.RC.2026112301/Cara-macOS-arm64-JIT-signed.zip">Download for Mac</a>
-              <a href="https://github.com/dmikey/cara/releases/download/mac-preview-9a99f46/SHA256SUMS.txt">Mac checksum</a>
+              <a id="candidate-mac" href="https://github.com/dmikey/cara/releases/download/Cara.RC.2026112301/Cara-macOS-arm64-JIT-signed.zip">Download for Mac</a>
             </div>
           </li>
           <li>
             <span class="build-platform">iPhone and iPad</span>
             <div class="build-availability">
-              <span class="build-note">Supported iPhones start with iPhone 13 and iPhone SE (3rd generation). For sideloading, re-sign for your device. Public TestFlight invite pending.</span>
-              <a href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/Cara-iOS-gles3-Derek-Anderson-signed.ipa">Download IPA</a>
+              <span class="build-note">Supported iPhones start with iPhone 13 and iPhone SE (3rd generation). Re-sign the unsigned IPA for your device before sideloading. Public TestFlight invite pending.</span>
+              <a id="candidate-ios" href="https://github.com/dmikey/cara/releases/download/Cara.RC.2026112301/Cara-iOS-arm64-GLES3-unsigned.ipa">Download unsigned IPA</a>
             </div>
           </li>
           <li>
             <span class="build-platform">Android</span>
             <div class="build-availability">
-              <span class="build-note">Experimental ARM64 build, debug-signed</span>
-              <a href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/Cara-Android-arm64-GLES-Dynarmic-experimental.apk">Download APK</a>
+              <span class="build-note" id="android-download-note">Older experimental ARM64 build, debug-signed.</span>
+              <a id="candidate-android" href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/Cara-Android-arm64-GLES-Dynarmic-experimental.apk">Download experimental APK</a>
             </div>
           </li>
         </ul>
