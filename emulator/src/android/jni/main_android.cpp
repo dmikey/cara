@@ -176,12 +176,16 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> prepared_indices{{"Debug", "prepared_vertex_indices"}, true};
     const Config::ConfigInfo<bool> index_identity{{"Debug", "vertex_index_identity_reuse"}, false};
     const Config::ConfigInfo<bool> clear_padding_only{{"Debug", "packed_vertex_padding_only"}, false};
+    const Config::ConfigInfo<bool> indexed_draws{{"Debug", "atlas_indexed_draws"}, false};
     const bool retain_uploads = Config::Get(resident_uploads);
     setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
     setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", retain_uploads ? "1" : "0", 1);
     setenv("CARA_VERTEX_INDEX_CACHE", Config::Get(prepared_indices) ? "1" : "0", 1);
     setenv("CARA_VERTEX_INDEX_IDENTITY_REUSE", Config::Get(index_identity) ? "1" : "0", 1);
     setenv("CARA_PACKED_PADDING_ONLY_ZERO", Config::Get(clear_padding_only) ? "1" : "0", 1);
+    const char* indexed_draws_value = Config::Get(indexed_draws) ? "1" : "0";
+    setenv("CARA_GPU_VERTEX_REUSE", indexed_draws_value, 1);
+    setenv("CARA_GPU_LIT_PAIR_REUSE", indexed_draws_value, 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
              Config::Get(packed_fetch_reuse));
 #endif
@@ -368,12 +372,15 @@ void BootGame(const std::string& path) {
                             const auto reuse = fmt::format(
                                 "reuse end={} prep_ms={:.2f} draw_ms={:.2f} "
                                 "index_hits={} index_misses={} index_bytes={} "
-                                "reused_upload_bytes={} vertex_upload_bytes={} index_upload_bytes={} packed_draws={}",
+                                "reused_upload_bytes={} vertex_upload_bytes={} index_upload_bytes={} packed_draws={} "
+                                "indexed_direct={} indexed_lit={} indexed_lit_vertices={} indexed_lit_ids={}",
                                 frame, phases.vertex_prepare_seconds * 1000, phases.draw_seconds * 1000,
                                 phases.vertex_index_cache_hits, phases.vertex_index_cache_misses,
                                 phases.vertex_index_cache_bytes, phases.vertex_upload_reused_bytes,
                                 phases.vertex_upload_bytes, phases.vertex_index_upload_bytes,
-                                phases.gpu_packed_input_draws);
+                                phases.gpu_packed_input_draws, phases.gpu_direct_vertex_draws,
+                                phases.gpu_lit_pair_draws, phases.gpu_lit_pair_vertices,
+                                phases.gpu_lit_pair_ids);
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", reuse.c_str());
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
                             reset_trace();
