@@ -370,6 +370,33 @@ cut it from 1.79 to 0.83 s and 2.97 to 1.15 s. Both geometry arms used
 ESSL 3.20. Verify actual frame timing and pixels before selecting a
 production route.
 
+The corrected geometry APK was verified from normal boot. The first
+preview had reused the baseline because the vertex generator rejected
+fixed geometry on non-Mac builds. The corrected trace records over
+54,000 geometry program applications in each 120-refresh warm lab
+window, with the same approximately 83,000–84,000 draws as baseline.
+
+| Geometry app comparison | Baseline | Fixed geometry |
+| --- | ---: | ---: |
+| Cold title, worst refresh | 48.09 s | 28.41 s |
+| Cold Gadd entrance, worst refresh | 40.12 s | 21.12 s |
+| Later first-use lab transition, worst refresh | 30.17 s | 14.59 s |
+| Gadd, warm p99 | 69.85–72.39 ms | 103.42–106.88 ms |
+| Gadd, warm worst refresh | 75.52 ms | 109.18 ms |
+
+In the warm geometry sample, the tiler was active for 32.3% of GPU-active
+cycles, compared with 78.9% on baseline. External reads/writes rose from
+1.29/1.49 GB/s to 2.10/2.53 GB/s. This is consistent with more memory work
+in the geometry path despite fewer guest vertex evaluations. The optional
+path stays disabled. The synthetic GLES fixture covered 69 pixels with zero
+RGBA byte mismatches, and the two sampled geometry program binaries restored
+in 0.45–0.47 ms. These checks do not establish whole-game pixel equivalence.
+
+A separate structured dispatch rewrite kept both original vertex call sites.
+On 12 real shader pairs, the equivalent dispatch linked in 20.36 s total
+against 24.21 s in the matched baseline order, a 15.9% reduction. Its frame
+performance is unmeasured.
+
 ### Dark Moon, earlier RG Slide measurements
 
 - **Surface residency.** In a warmed native GLES 3.2 title-screen A/B/A,
