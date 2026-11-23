@@ -174,6 +174,7 @@ void BootGame(const std::string& path) {
     };
     select_probe("pica_shader_stream_batch", "CARA_PICA_SHADER_STREAM_BATCH");
     select_probe("lut_effective_change", "CARA_LUT_EFFECTIVE_CHANGE");
+    select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");
     select_probe("checked_remap_packet", "CARA_CHECKED_REMAP_PACKET");
     select_probe("texture_lookup_reuse", "CARA_TEXTURE_LOOKUP_REUSE");
     select_probe("texture_lookup_verify", "CARA_TEXTURE_LOOKUP_VERIFY");
