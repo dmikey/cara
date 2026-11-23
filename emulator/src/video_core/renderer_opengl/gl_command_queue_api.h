@@ -160,6 +160,8 @@ enum class RpcApi : std::size_t {
     SaveRemapState,
     RestoreRemapState,
     CheckedRemapDraw,
+    ConsumePresentFence,
+    PublishRenderFence,
     Count
 };
 inline constexpr std::size_t RpcApiCount=std::size_t(RpcApi::Count);
@@ -321,6 +323,8 @@ inline constexpr std::array<const char*,RpcApiCount> RpcApiNames{{
     "SaveRemapState",
     "RestoreRemapState",
     "CheckedRemapDraw",
+    "ConsumePresentFence",
+    "PublishRenderFence",
 }};
 inline const char* RpcApiName(RpcApi api){const auto i=std::size_t(api);return i<RpcApiCount?RpcApiNames[i]:"Unknown";}
 }

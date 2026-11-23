@@ -463,15 +463,26 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
 #endif
     OGLFrame* frame = mailbox->GetRenderFrame();
 
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    const bool packet_fences = CommandQueue::MailboxFencePacketEnabled();
+#endif
+
     // Clean up sync objects before drawing
 
     // INTEL driver workaround. We can't delete the previous render sync object until we are
     // sure that the presentation is done
     if (frame->present_fence) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GPUWait);
-        glClientWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
-        glWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
-        glDeleteSync(frame->present_fence);
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+        if (packet_fences) {
+            CommandQueue::QueueConsumedPresentFence(frame->present_fence);
+        } else
+#endif
+        {
+            glClientWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
+            glWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
+            glDeleteSync(frame->present_fence);
+        }
         frame->present_fence = nullptr;
     }
 
@@ -492,13 +503,18 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
         glDeleteSync(frame->render_fence);
     }
     // Create a fence for the frontend to wait on and swap this frame to OffTex
-    frame->render_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    glFlush();
-
-#ifdef CARA_GL_CONTEXT_DISPATCH
-    // Publish the shared fence only after its creating context flushed.
-    CommandQueue::Drain();
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (packet_fences) {
+        frame->render_fence = CommandQueue::CreatePublishedRenderFence();
+    } else
 #endif
+    {
+        frame->render_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        glFlush();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+        CommandQueue::Drain();
+#endif
+    }
     mailbox->ReleaseRenderFrame(frame);
 }
 
