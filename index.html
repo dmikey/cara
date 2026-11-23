@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Cara is a new Fast, Accurate, Portable Emulation core for the Nintendo 3DS.">
+  <link rel="icon" type="image/png" href="assets/cara-citrus.png">
+  <title>Cara | Nintendo 3DS emulator</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --background: #fbfaf7;
+      --paper: #fff;
+      --ink: #202923;
+      --muted: #505952;
+      --rule: #dadfd8;
+      --leaf: #1c4939;
+      --leaf-dark: #153729;
+      --accent: #934012;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--ink);
+      font: 1rem / 1.62 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .page {
+      width: min(calc(100% - 5rem), 74rem);
+      margin-inline: auto;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem 1.5rem;
+      min-height: 4.75rem;
+      padding-block: 0.8rem;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .project-name {
+      margin: 0;
+      color: var(--leaf-dark);
+      font-size: 1.5rem;
+      font-weight: 720;
+      letter-spacing: -0.035em;
+    }
+
+    nav ul, .actions, .build-list, .project-links {
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+
+    nav ul, .actions, .project-links {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem 1.5rem;
+    }
+
+    a {
+      color: var(--leaf);
+      text-underline-offset: 0.19em;
+    }
+
+    a:hover { text-decoration-thickness: 0.13em; }
+
+    a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 0.25rem;
+    }
+
+    nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2.75rem;
+      color: var(--ink);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    nav a:hover { text-decoration: underline; }
+
+    .skip-link {
+      position: absolute;
+      z-index: 2;
+      inset: 0.5rem auto auto 0.5rem;
+      transform: translateY(-200%);
+      padding: 0.5rem 0.75rem;
+      background: var(--paper);
+    }
+
+    .skip-link:focus { transform: none; }
+
+    h1, h2 { margin: 0; }
+
+    h1 {
+      max-width: 11ch;
+      font-size: clamp(2.85rem, 6.5vw, 5.25rem);
+      font-weight: 720;
+      line-height: 0.98;
+      letter-spacing: -0.061em;
+    }
+
+    h2 {
+      font-size: clamp(1.5rem, 2.5vw, 2rem);
+      font-weight: 690;
+      line-height: 1.14;
+      letter-spacing: -0.035em;
+    }
+
+    p { margin-block: 0.85rem 0; }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+      align-items: center;
+      gap: clamp(2rem, 5vw, 4.5rem);
+      padding-block: clamp(2.75rem, 6.3vw, 5.15rem);
+    }
+
+    .hero-copy { min-width: 0; }
+
+    .intro {
+      max-width: 34ch;
+      margin-top: 1.45rem;
+      color: var(--muted);
+      font-size: clamp(1.125rem, 1.75vw, 1.35rem);
+      line-height: 1.48;
+    }
+
+    .actions {
+      margin-top: 1.75rem;
+      gap: 0.6rem 1.35rem;
+    }
+
+    .actions a { font-weight: 640; }
+
+    .release-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2.9rem;
+      padding: 0.55rem 1.15rem;
+      border-radius: 0.375rem;
+      background: var(--leaf);
+      color: #fff;
+      text-decoration: none;
+    }
+
+    .release-link:hover { background: var(--leaf-dark); }
+
+    .source-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2.9rem;
+    }
+
+    .hero-art {
+      display: grid;
+      min-width: 0;
+      min-height: 19rem;
+      place-items: center;
+      background: radial-gradient(ellipse at center, #f4ead6, transparent 71%);
+    }
+
+    .hero-mark {
+      display: block;
+      width: min(100%, 25rem);
+      height: auto;
+      mix-blend-mode: multiply;
+      mask-image: radial-gradient(ellipse 49% 45% at 50% 50%, #000 64%, transparent 98%);
+    }
+
+    .downloads {
+      padding-block: clamp(1.6rem, 4.2vw, 2.75rem);
+      border-block: 1px solid var(--rule);
+      scroll-margin-top: 1.25rem;
+    }
+
+    .section-heading {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.5rem 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .section-heading a { font-size: 0.9375rem; }
+
+    .download-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.2rem 1rem;
+    }
+
+    .build-list {
+      overflow: hidden;
+      border: 1px solid var(--rule);
+      border-radius: 0.5rem;
+      background: var(--paper);
+    }
+
+    .build-list li {
+      display: grid;
+      grid-template-columns: minmax(8rem, 0.8fr) minmax(0, 2.15fr);
+      align-items: baseline;
+      gap: 0.2rem 1.2rem;
+      padding: 0.85rem 1.15rem;
+    }
+
+    .build-list li + li { border-top: 1px solid var(--rule); }
+
+    .build-platform { font-weight: 640; }
+
+    .build-availability {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.15rem 1rem;
+      min-width: 0;
+    }
+
+    .build-note { color: var(--muted); }
+    .build-availability a { font-weight: 640; }
+
+    .details {
+      display: grid;
+      grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+      gap: 2rem clamp(2rem, 5vw, 4.5rem);
+      padding-block: clamp(2rem, 4.7vw, 3.55rem);
+    }
+
+    .details section { scroll-margin-top: 1.25rem; }
+    .details p { max-width: 48ch; }
+
+    .project-links {
+      margin-top: 1.05rem;
+      gap: 0.45rem 1.25rem;
+      font-size: 0.9375rem;
+    }
+
+    .credit, .hardware-note {
+      color: var(--muted);
+      font-size: 0.9375rem;
+    }
+
+    .hardware-note { margin-top: 1.2rem; }
+    .credit { margin-top: 1.1rem; }
+
+    footer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem 1.75rem;
+      justify-content: space-between;
+      border-top: 1px solid var(--rule);
+      padding-block: 1.25rem 2rem;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    footer p { margin: 0; }
+
+    @media (max-width: 50rem) {
+      .page { width: calc(100% - 3rem); }
+
+      .hero, .details {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 1.85rem;
+      }
+
+      h1 { max-width: 12ch; }
+      .hero-art {
+        width: min(100%, 23rem);
+        min-height: 0;
+        justify-self: center;
+      }
+
+      .hero-mark { width: min(100%, 16rem); }
+    }
+
+    @media (max-width: 29rem) {
+      .page { width: calc(100% - 2rem); }
+      header { gap: 0 0.65rem; }
+      nav ul { gap: 0.1rem 0.85rem; }
+      .build-list li { grid-template-columns: minmax(0, 1fr); }
+      .build-availability { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <div class="page">
+    <header>
+      <p class="project-name">Cara</p>
+      <nav aria-label="Project">
+        <ul>
+          <li><a href="#get-cara">Downloads</a></li>
+          <li><a href="#project">Project</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="content" tabindex="-1">
+      <section class="hero" aria-labelledby="intro">
+        <div class="hero-copy">
+          <h1 id="intro">Nintendo&nbsp;3DS emulator</h1>
+          <p class="intro">Cara is a new Fast, Accurate, Portable Emulation core for the Nintendo 3DS.</p>
+          <ul class="actions">
+            <li><a class="release-link" href="#get-cara">Downloads</a></li>
+            <li><a class="source-link" href="https://github.com/dmikey/cara">View source</a></li>
+          </ul>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <img class="hero-mark" src="assets/cara-citrus-1024.png" width="1024" height="1024" alt="">
+        </div>
+      </section>
+
+      <section class="downloads" id="get-cara" aria-labelledby="downloads-heading">
+        <div class="section-heading">
+          <h2 id="downloads-heading">Downloads</h2>
+          <div class="download-links">
+            <a href="https://github.com/dmikey/cara/releases/tag/experimental-2026-11-13">Release notes</a>
+            <a href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/SHA256SUMS.txt">SHA-256 checksums</a>
+          </div>
+        </div>
+        <ul class="build-list">
+          <li>
+            <span class="build-platform">macOS</span>
+            <span class="build-note">Signed download pending</span>
+          </li>
+          <li>
+            <span class="build-platform">iPhone and iPad</span>
+            <div class="build-availability">
+              <span class="build-note">Developer preview. For sideloading, re-sign for your device. Public TestFlight invite pending.</span>
+              <a href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/Cara-iOS-gles3-Derek-Anderson-signed.ipa">Download IPA</a>
+            </div>
+          </li>
+          <li>
+            <span class="build-platform">Android</span>
+            <div class="build-availability">
+              <span class="build-note">Experimental ARM64 build, debug-signed</span>
+              <a href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/Cara-Android-arm64-GLES-Dynarmic-experimental.apk">Download APK</a>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <div class="details">
+        <section aria-labelledby="preservation-heading">
+          <h2 id="preservation-heading">Software preservation</h2>
+          <p>Cara exists to preserve the legacy of Nintendo games and help players revisit the experience as faithfully as possible. Cara includes no Nintendo code or game assets. We do not support piracy.</p>
+        </section>
+        <section id="project" aria-labelledby="project-heading">
+          <h2 id="project-heading">Project history</h2>
+          <p>Cara builds on Citra and Citra MMJ and uses Azahar’s FastInterp. The emulator and app source are available under GPL-2.0-or-later.</p>
+          <ul class="project-links">
+            <li><a href="https://github.com/dmikey/cara/blob/main/docs/build.md">Build instructions</a></li>
+            <li><a href="https://github.com/dmikey/cara/blob/main/docs/technology.md">Technical documentation</a></li>
+            <li><a href="https://github.com/dmikey/cara/issues">Report an issue</a></li>
+            <li><a href="https://github.com/dmikey/cara/blob/main/NOTICE">Credits</a></li>
+            <li><a href="https://github.com/dmikey/cara/blob/main/LICENSE">License</a></li>
+          </ul>
+          <p class="hardware-note">Cara is developed on Apple hardware and builds for Android. On Android, compatibility varies by device, including across Mali and Adreno GPUs. <a href="https://github.com/dmikey/cara/blob/main/docs/rg-slide-rendering.md">Hardware notes</a></p>
+          <p class="credit">Made with Codex and heavily engineered by AI.<br>Human Guided Discovery.</p>
+        </section>
+      </div>
+    </main>
+
+    <footer>
+      <p>Cara is an independent project with no affiliation to Nintendo.</p>
+      <p>A <a href="https://citrusvariety.ucr.edu/crc3994">Cara Cara</a> is a pink-fleshed navel orange.</p>
+    </footer>
+  </div>
+</body>
+</html>
