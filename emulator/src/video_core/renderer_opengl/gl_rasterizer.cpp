@@ -2547,9 +2547,8 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     for (unsigned texture_index = 0; texture_index < pica_textures.size(); ++texture_index) {
         const auto& texture = pica_textures[texture_index];
 #ifdef CARA_ANDROID_GLES_ATLAS
-        if (pair && pair->allowed && texture.enabled &&
-            ((texture_index == 0 && texture.config.type != Pica::TexturingRegs::TextureConfig::Texture2D) ||
-             texture.config.lod.max_level != 0))
+        if (pair && pair->allowed && texture.enabled && texture_index == 0 &&
+            texture.config.type != Pica::TexturingRegs::TextureConfig::Texture2D)
             pair->allowed = false;
 #endif
 
@@ -2648,11 +2647,28 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
 #endif
             surface = res_cache.GetTextureSurface(texture);
 #ifdef CARA_ANDROID_GLES_ATLAS
-            if (pair && pair->allowed && (!surface ||
-                !disjoint_output({surface->addr, surface->end}) ||
-                (color_surface && color_surface->texture.handle == surface->texture.handle) ||
-                (depth_surface && depth_surface->texture.handle == surface->texture.handle)))
-                pair->allowed = false;
+            if (pair && pair->allowed) {
+                const auto independent = [&](const Surface& source) {
+                    return source && disjoint_output({source->addr, source->end}) &&
+                           (!color_surface || color_surface->texture.handle != source->texture.handle) &&
+                           (!depth_surface || depth_surface->texture.handle != source->texture.handle);
+                };
+                pair->allowed = independent(surface);
+                const auto levels = texture.config.lod.max_level.Value();
+                if (pair->allowed && levels) {
+                    // Inspect the sources selected by the ordinary mip resolver.
+                    // Incomplete chains, custom textures and temporary blits fall back.
+                    pair->allowed = levels <= surface->level_watchers.size() &&
+                                    !surface->custom_tex_info && surface->registered &&
+                                    surface->addr == texture.config.GetPhysicalAddress() &&
+                                    surface->width == texture.config.width &&
+                                    surface->height == texture.config.height;
+                    for (unsigned level = 0; pair->allowed && level < levels; ++level) {
+                        const auto& watcher = surface->level_watchers[level];
+                        pair->allowed = watcher && watcher->IsValid() && independent(watcher->Get());
+                    }
+                }
+            }
 #endif
             if (surface) {
                 if (surface->texture.handle == color_attachment) {
