@@ -295,7 +295,7 @@ static bool TryShaderStreamExtras(u32 id,u32 count,u32 mask,bool grouped,
     const bool swizzle=id>=PICA_REG_INDEX(vs.swizzle_patterns.set_word[0]) && id<=PICA_REG_INDEX(vs.swizzle_patterns.set_word[7]);
     if(!program && !swizzle)return false;
     if(hooks || origins || g_debug_context || RepeatStateEnabled() || CommandProfileEnabled() ||
-       PostIRQProfileEnabled() || Cara::GuestGPUTrace::active.load(std::memory_order_relaxed) || Cara::ExperimentalP3DCompletionEnabled())return false;
+       PostIRQProfileEnabled() || Cara::GuestGPUTrace::active.load(std::memory_order_relaxed))return false;
     auto& offset=program ? g_state.regs.vs.program.offset : g_state.regs.vs.swizzle_patterns.offset;
     const u32 capacity=program ? 512 : u32(g_state.vs.swizzle_data.size());
     if(offset>capacity || count>capacity-offset)return false;
@@ -313,8 +313,13 @@ static bool TryShaderStreamExtras(u32 id,u32 count,u32 mask,bool grouped,
     // Raw payloads, including signed-zero/NaN words, retain their exact bits.
     // Full-mask port store, shader store, mirror, dirty marks and offset advance
     // happen for EACH logical write in their original order.
+    const bool account_p3d = Cara::ExperimentalP3DCompletionEnabled();
     for(u32 i=0;i<count;++i) {
         const u32 value=*g_state.cmd_list.current_ptr++;
+        // Match the scalar command charge after consuming each word and before
+        // changing PICA state. The guest completion deadline keeps seeing the
+        // same work, including a partially consumed stream on counter overflow.
+        if (account_p3d) g_state.experimental_p3d_work.Command();
         g_state.regs.reg_array[id]=value;
         WriteShaderWord(g_state.vs,offset,value,swizzle);
         if(mirror)WriteShaderWord(g_state.gs,offset,value,swizzle);
