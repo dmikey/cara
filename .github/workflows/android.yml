@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 7c6713b6b694f875195e9203b71c066a41620590
+          ref: d7de1076b81fa13b1a0711b4bb27a5bcb1de2d7a
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-java@v4
@@ -33,8 +33,18 @@ jobs:
       - name: Build and inspect release APK
         working-directory: emulator/src/android
         run: |
-          test "$(git rev-parse HEAD)" = 7c6713b6b694f875195e9203b71c066a41620590
-          gradle --no-daemon --max-workers=3 :app:assembleRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          test "$(git rev-parse HEAD)" = d7de1076b81fa13b1a0711b4bb27a5bcb1de2d7a
+          cat > "$RUNNER_TEMP/rg-slide-profile.init.gradle" <<'GRADLE'
+          gradle.beforeProject { project ->
+              project.pluginManager.withPlugin('com.android.application') {
+                  project.android.buildTypes.named('release') { debuggable = true }
+                  project.androidComponents.finalizeDsl { android ->
+                      android.defaultConfig.versionCode = 275
+                  }
+              }
+          }
+          GRADLE
+          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-profile.init.gradle" :app:assembleRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
           git diff --exit-code
           mkdir -p "$RUNNER_TEMP/rg-slide"
           build_tools="$ANDROID_HOME/build-tools/35.0.0"
@@ -47,6 +57,6 @@ jobs:
           cp "$build_tools/lib/apksigner.jar" "$RUNNER_TEMP/rg-slide/"
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-rg-slide-stable-hud-apk
+          name: cara-rg-slide-apple-gles-test-apk
           path: ${{ runner.temp }}/rg-slide/*
           if-no-files-found: error
