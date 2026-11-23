@@ -89,6 +89,67 @@ combined in this gate, so the result leaves the exact backing pattern
 unknown. Reordering or widening copied guest intervals would require
 independent authority and dependency proofs.
 
+A following shape trace found exactly two native buffers and two writers in
+each of the 795 transfers. Six sampled requests showed the same 128×416
+RGBA8 surface: alternating spans from two raw buffers, with a 512-byte
+row stride and destination starts at offsets 0 and 32. This explains
+why joining neighboring copies could not help. Validate the full row
+partition and each writer's nonoverlapping bounds before binding two
+sources to a single compute pass. With two inputs, ordinary Metal buffer
+bindings suffice. Indirect resource tables would add complexity without
+addressing the observed workload.
+
+The [OpenGL display-transfer path](../emulator/src/video_core/renderer_opengl/gl_rasterizer.cpp)
+looks up valid source and destination views in its texture cache, then
+blits surface rectangles and updates destination ownership. For GL ES an
+eligible transfer reaches the driver as one framebuffer blit after
+attachment setup. Keep the surface-oriented operation where an exact
+view exists. For fragmented backing, preserve the same authoritative
+bytes and combine their GPU reads before issuing the layout write. The
+number of GL calls says nothing about the driver's internal commands.
+
+The earlier M4 Luigi lab replay in [native Metal measurements](native-metal-build.md)
+averaged 16.71 ms per refresh on GLES and 24.00 ms on Metal with equal guest
+ticks and draw requests. A separate queue trace moved waiting from the
+submission queue to the upload arena by widening the submission window,
+and frame time worsened. Measure time at both wait sites before treating a
+smaller queue wait as a renderer improvement. These M4 results and the M1
+retile diagnostics cover different scenes and builds.
+
+### Two-buffer gather and retile
+
+The private kernel binds the two raw Metal buffers directly and writes
+the tiled destination in one dispatch. It keeps the original raw
+writer checks and verifies every span's offset, row stride, coverage,
+and length. Other inputs keep the original resolver. On the M1, a
+production Metal fixture matched 871,936 bytes against the original
+two-pass GPU path and an independent CPU oracle with both flip states,
+nonzero source offsets, and destination guards.
+
+Four same-binary FastInterp replays kept guest CPU at 100%, SDL sound
+on, and CPU vertex fallback off. Both LCDs at all 15 checkpoints,
+selected work, and guest files matched. Both enabled runs eliminated
+the 661,440 staging blits and 169,328,640 staging bytes across the same
+795 transfers. Shader library and render-pipeline builds were zero in
+the measured window.
+
+| Refreshes 2401–2800, ms/refresh | On 1 | Off 1 | Off 2 | On 2 |
+| --- | ---: | ---: | ---: | ---: |
+| Retile host span | 1.064 | 1.715 | 1.741 | 0.900 |
+| Owner-thread CPU | 28.749 | 25.995 | 26.302 | 23.094 |
+| Whole refresh mean | 32.484 | 26.960 | 27.477 | 23.291 |
+| Presentation host span | 2.837 | 0.700 | 0.712 | 0.690 |
+
+The retile host span improved by at least 0.651 ms per refresh. Whole
+owner CPU and frame time did not move consistently. The slower enabled
+run spent more time in other scopes, including presentation and draw
+recording. Its presentation span was elevated in both halves of the
+window. Separately time validation receipt waits, drawable acquisition,
+scanout resolution, and encode or commit before attributing the change
+to a synchronization mechanism. The candidate remains private and off
+by default. This comparison uses the M1 only and does not establish a
+GLES-relative gain.
+
 ## Preserve the backend boundary
 
 Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
