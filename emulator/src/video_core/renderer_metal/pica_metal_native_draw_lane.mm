@@ -4,6 +4,7 @@
 #include "video_core/renderer_metal/exporter-adapter/pica_metal_queued_color_export.hh"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "video_core/renderer_metal/pica_metal_depth_clear_encoding.hh"
+#include "common/cpu_category_timing.h"
 
 #include <algorithm>
 #include <array>
@@ -603,13 +604,55 @@ struct ScopedJoinedDepthCheck {
     explicit ScopedJoinedDepthCheck(JoinedDepthCheck* check) { active_depth_check = check; }
     ~ScopedJoinedDepthCheck() { active_depth_check = previous; }
 };
+// Opt-in CPU and elapsed scopes cover the same operations. A clock error
+// is reported separately so a partial CPU sample cannot look like a wait.
+class ResolveAttributionScope {
+public:
+    ResolveAttributionScope(bool active, NativeMetalCost::Phase wall, NativeMetalCost::Phase cpu)
+        : wall_phase(wall), cpu_phase(cpu), start(active ? Clock::now() : Clock::time_point{}) {
+        if (active)
+            have_cpu = Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr, cpu_start);
+    }
+
+    void Stop() {
+        if (start == Clock::time_point{})
+            return;
+        std::uint64_t cpu_end = 0;
+        const bool valid = have_cpu &&
+            Common::CPUCategoryTiming::ReadThreadCPUTime(nullptr, cpu_end) && cpu_end >= cpu_start;
+        const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count();
+        NativeMetalCost::RecordNs(wall_phase, elapsed);
+        if (valid)
+            NativeMetalCost::RecordNs(cpu_phase, cpu_end - cpu_start);
+        else
+            NativeMetalCost::Count(NativeMetalCost::RetileResolveCpuClockErrors, 1);
+        start = {};
+    }
+
+    ~ResolveAttributionScope() { Stop(); }
+
+private:
+    using Clock = NativeMetalCost::Scope::Clock;
+    const NativeMetalCost::Phase wall_phase;
+    const NativeMetalCost::Phase cpu_phase;
+    Clock::time_point start;
+    std::uint64_t cpu_start = 0;
+    bool have_cpu = false;
+};
+
 } // namespace
 
 std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
-    const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
+    const MetalGuestAuthority::GuestReader& ram, ByteUse use, bool trace_retile) {
     const bool display_transfer = use == ByteUse::DisplayTransfer;
-    NativeMetalCost::Scope cost(NativeMetalCost::ResolveBytesHost);
+    using namespace NativeMetalCost;
+    Scope cost(ResolveBytesHost);
+    ResolveAttributionScope total(trace_retile, RetileResolveTotalWall, RetileResolveTotalCpu);
+    const auto count = [trace_retile](Phase phase, std::uint64_t value) {
+        if (trace_retile)
+            Count(phase, value);
+    };
     const auto bytes = rows.footprint;
     if (!command || command.commandQueue != queue || !command.retainedReferences ||
         command.status != MTLCommandBufferStatusNotEnqueued || bytes.begin >= bytes.end ||
@@ -618,8 +661,19 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         u64{rows.count - 1} * rows.stride_bytes + rows.width_bytes != bytes.Size())
         return std::nullopt;
 
+    ResolveAttributionScope owners(trace_retile, RetileResolveOwnersWall, RetileResolveOwnersCpu);
     const auto current = authority.NativeSegments(bytes.begin, bytes.end);
+    owners.Stop();
+    const bool exact = current.size() == 1 && current.front().begin == bytes.begin &&
+                       current.front().end == bytes.end;
+    if (trace_retile) {
+        count(exact ? RetileResolveExact :
+              current.empty() ? RetileResolveRamOnly : RetileResolvePartial, 1);
+        count(RetileResolveOwnerSegments, current.size());
+        count(RetileResolveSourceBytes, bytes.Size());
+    }
     const auto raw = [&](const MetalGuestWrite& segment) -> const MetalSurfaceWriter* {
+        ResolveAttributionScope timing(trace_retile, RetileResolveRawCheckWall, RetileResolveRawCheckCpu);
         const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
         if (!writer || writer->Queue() != queue || !writer->RawGuestBuffer() ||
             writer->RawGuestBuffer().device != queue.device ||
@@ -634,6 +688,7 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     };
     const auto queue_texture_export = [&](const MetalGuestWrite& segment, PAddr first, PAddr last)
         -> id<MTLBuffer> {
+        ResolveAttributionScope timing(trace_retile, RetileResolveColorWall, RetileResolveColorCpu);
         const bool packed = display_transfer && packed_color_export &&
                             NativeMetalCost::QueuePackedDisplayExports();
         const bool rgba = NativeMetalCost::QueueColorExports() && color_export &&
@@ -655,16 +710,24 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             if (buffer) {
                 NativeMetalCost::Count(NativeMetalCost::DisplayQueuedPackedExport, 1);
                 NativeMetalCost::Count(NativeMetalCost::DisplayQueuedPackedBytes, last - first);
+                count(RetileResolveColorSpans, 1);
+                count(RetileResolveColorBytes, last - first);
             }
             return buffer;
         }
         if (!rgba || !writer->Rgba8Layout())
             return nil;
-        return EncodeQueuedColorExport(command, color_export->tiled_pack,
+        const auto result = EncodeQueuedColorExport(command, color_export->tiled_pack,
                                        (id<MTLTexture>)resource, *writer->Rgba8Layout(), {first,last});
+        if (result) {
+            count(RetileResolveColorSpans, 1);
+            count(RetileResolveColorBytes, last - first);
+        }
+        return result;
     };
     const auto queue_depth_export = [&](const MetalGuestWrite& segment, PAddr first, PAddr last)
         -> id<MTLBuffer> {
+        ResolveAttributionScope timing(trace_retile, RetileResolveDepthWall, RetileResolveDepthCpu);
         if (!active_depth_check || (active_depth_check->producer && !AsyncCheckedDepthImport()))
             return nil;
         const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
@@ -712,6 +775,8 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             }
             NativeMetalCost::Count(NativeMetalCost::QueuedPendingDepthExports, 1);
         }
+        count(RetileResolveDepthSpans, 1);
+        count(RetileResolveDepthBytes, last - first);
         return exported;
     };
 
@@ -734,17 +799,22 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     }
 
     // Common case: the last transfer produced the complete packed surface.
-    if (current.size() == 1 && current.front().begin == bytes.begin &&
-        current.front().end == bytes.end) {
+    if (exact) {
         if (const auto* writer = raw(current.front())) {
             const auto offset = bytes.begin - writer->RawGuestBegin();
-            if (offset % alignment == 0)
+            if (offset % alignment == 0) {
+                count(RetileResolveRawBorrowSpans, 1);
+                count(RetileResolveRawBorrowBytes, bytes.Size());
+                count(RetileResolveNativeBytes, bytes.Size());
                 return MetalTransfer::ByteView{writer->RawGuestBuffer(), bytes, offset};
+            }
         }
         if (active_depth_check && QueuePendingDepthExport() &&
             (rows.count == 1 || rows.width_bytes == rows.stride_bytes) && bytes.Size() % 4 == 0) {
-            if (const auto exported = queue_depth_export(current.front(), bytes.begin, bytes.end))
+            if (const auto exported = queue_depth_export(current.front(), bytes.begin, bytes.end)) {
+                count(RetileResolveNativeBytes, bytes.Size());
                 return MetalTransfer::ByteView{exported, bytes, 0};
+            }
         }
         static const bool direct_export = [] {
             const auto* value = std::getenv("CARA_METAL_DIRECT_EXPORT_CONSUMPTION");
@@ -759,13 +829,16 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
                 NativeMetalCost::Count(NativeMetalCost::QueuedColorExportHost, 1);
                 NativeMetalCost::Count(NativeMetalCost::DirectQueuedExport, 1);
                 NativeMetalCost::Count(NativeMetalCost::DirectQueuedExportBytes, bytes.Size());
+                count(RetileResolveNativeBytes, bytes.Size());
                 return MetalTransfer::ByteView{exported, bytes, 0};
             }
         }
     }
 
+    ResolveAttributionScope stage_alloc(trace_retile, RetileResolveStageAllocWall, RetileResolveStageAllocCpu);
     const auto buffer = AllocateBytes(bytes);
     auto* data = static_cast<u8*>(buffer.contents);
+    stage_alloc.Stop();
     if (!data)
         return std::nullopt;
 
@@ -779,7 +852,15 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     std::vector<Copy> copies;
     auto owner = current.begin();
     const auto read_gap = [&](PAddr begin, PAddr end) {
-        return begin == end || (ram && ram(begin, {data + (begin - bytes.begin), end - begin}));
+        if (begin == end)
+            return true;
+        ResolveAttributionScope timing(trace_retile, RetileResolveGapReadWall, RetileResolveGapReadCpu);
+        const bool read = ram && ram(begin, {data + (begin - bytes.begin), end - begin});
+        if (read) {
+            count(RetileResolveGapSpans, 1);
+            count(RetileResolveGapBytes, end - begin);
+        }
+        return read;
     };
     for (u32 i = 0; i < rows.count; ++i) {
         const auto row = rows.Stripe(i);
@@ -791,11 +872,14 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             const auto last = std::min(row.end, owner->end);
             if (!read_gap(cursor, first))
                 return std::nullopt;
+            count(RetileResolveNativeBytes, last - first);
             const auto* writer = raw(*owner);
             const NSUInteger to = first - bytes.begin;
             const NSUInteger size = last - first;
             const NSUInteger from = writer ? first - writer->RawGuestBegin() : 0;
             if (writer && ((from | to | size) & 3u) == 0) {
+                count(RetileResolveRawStageSpans, 1);
+                count(RetileResolveRawStageBytes, size);
                 copies.push_back({writer->RawGuestBuffer(), from, to, size});
             } else {
                 auto exported = ((to | size) & 3u) == 0
@@ -829,7 +913,14 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
                         NativeMetalCost::Count(kind, 1);
                     }
                     const auto export_bytes = [&] {
-                        return owner->writer->ExportGuestBytes(first, last, {data + to, size});
+                        ResolveAttributionScope timing(trace_retile, RetileResolveSyncExportWall,
+                                                       RetileResolveSyncExportCpu);
+                        const bool exported = owner->writer->ExportGuestBytes(first, last, {data + to, size});
+                        if (exported) {
+                            count(RetileResolveSyncSpans, 1);
+                            count(RetileResolveSyncBytes, size);
+                        }
+                        return exported;
                     };
                     if (display_transfer && NativeMetalCost::Enabled()) {
                         using namespace NativeMetalCost;
@@ -858,12 +949,16 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             return std::nullopt;
     }
     if (!copies.empty()) {
+        ResolveAttributionScope timing(trace_retile, RetileResolveStageBlitWall, RetileResolveStageBlitCpu);
         const auto blit = [command blitCommandEncoder];
         if (!blit)
             return std::nullopt;
-        for (const auto& copy : copies)
+        for (const auto& copy : copies) {
             [blit copyFromBuffer:copy.source sourceOffset:copy.from
                        toBuffer:buffer destinationOffset:copy.to size:copy.size];
+            count(RetileResolveBlitSpans, 1);
+            count(RetileResolveBlitBytes, copy.size);
+        }
         [blit endEncoding];
     }
     return MetalTransfer::ByteView{buffer, bytes, 0};
@@ -1327,7 +1422,12 @@ void PicaMetalNativeDrawLane::TransferDisplay(
             }
         }
         NativeMetalCost::Scope resolve(NativeMetalCost::RetileResolveHost, trace_retile);
-        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer);
+        static const bool profile_resolve = [] {
+            const auto* value = std::getenv("CARA_METAL_PROFILE_RETILE_RESOLVE");
+            return value && std::string_view(value) == "1";
+        }();
+        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer,
+                                   trace_retile && NativeMetalCost::Enabled() && profile_resolve);
         resolve.Stop();
         if (command && !source) {
             // A linear view can reinterpret bytes just written in a tiled

@@ -59,6 +59,19 @@ enum Phase : std::size_t {
     PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
     RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, UniformPreviousVsHit,
     RetileAllocateHost, RetileResolveHost, RetileScratchHost, RetileEncodeHost, RetilePublishHost,
+    RetileResolveTotalWall, RetileResolveTotalCpu, RetileResolveOwnersWall,
+    RetileResolveOwnersCpu, RetileResolveStageAllocWall, RetileResolveStageAllocCpu,
+    RetileResolveRawCheckWall, RetileResolveRawCheckCpu, RetileResolveColorWall,
+    RetileResolveColorCpu, RetileResolveDepthWall, RetileResolveDepthCpu,
+    RetileResolveSyncExportWall, RetileResolveSyncExportCpu, RetileResolveGapReadWall,
+    RetileResolveGapReadCpu, RetileResolveStageBlitWall, RetileResolveStageBlitCpu,
+    RetileResolveExact, RetileResolvePartial, RetileResolveRamOnly,
+    RetileResolveOwnerSegments, RetileResolveSourceBytes, RetileResolveNativeBytes,
+    RetileResolveGapSpans, RetileResolveGapBytes, RetileResolveRawBorrowSpans,
+    RetileResolveRawBorrowBytes, RetileResolveRawStageSpans, RetileResolveRawStageBytes,
+    RetileResolveColorSpans, RetileResolveColorBytes, RetileResolveDepthSpans,
+    RetileResolveDepthBytes, RetileResolveSyncSpans, RetileResolveSyncBytes,
+    RetileResolveBlitSpans, RetileResolveBlitBytes, RetileResolveCpuClockErrors,
     PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
@@ -125,7 +138,20 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws", "runtime_linked_vertex_hit",
     "uniform_previous_vs_hit",
     "retile_allocate_host", "retile_resolve_host", "retile_scratch_host", "retile_encode_host",
-    "retile_publish_host"};
+    "retile_publish_host",
+    "retile_resolve_total_wall", "retile_resolve_total_cpu", "retile_resolve_owners_wall",
+    "retile_resolve_owners_cpu", "retile_resolve_stage_alloc_wall", "retile_resolve_stage_alloc_cpu",
+    "retile_resolve_raw_check_wall", "retile_resolve_raw_check_cpu", "retile_resolve_color_wall",
+    "retile_resolve_color_cpu", "retile_resolve_depth_wall", "retile_resolve_depth_cpu",
+    "retile_resolve_sync_export_wall", "retile_resolve_sync_export_cpu", "retile_resolve_gap_read_wall",
+    "retile_resolve_gap_read_cpu", "retile_resolve_stage_blit_wall", "retile_resolve_stage_blit_cpu",
+    "retile_resolve_exact", "retile_resolve_partial", "retile_resolve_ram_only",
+    "retile_resolve_owner_segments", "retile_resolve_source_bytes", "retile_resolve_native_bytes",
+    "retile_resolve_gap_spans", "retile_resolve_gap_bytes", "retile_resolve_raw_borrow_spans",
+    "retile_resolve_raw_borrow_bytes", "retile_resolve_raw_stage_spans", "retile_resolve_raw_stage_bytes",
+    "retile_resolve_color_spans", "retile_resolve_color_bytes", "retile_resolve_depth_spans",
+    "retile_resolve_depth_bytes", "retile_resolve_sync_spans", "retile_resolve_sync_bytes",
+    "retile_resolve_blit_spans", "retile_resolve_blit_bytes", "retile_resolve_cpu_clock_errors"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {
