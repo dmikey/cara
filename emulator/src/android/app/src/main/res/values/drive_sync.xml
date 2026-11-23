@@ -24,4 +24,5 @@
         <item quantity="one">%d file changed on both sides. Choose which copy to use. Cara keeps the previous versions.</item>
         <item quantity="other">%d files changed on both sides. Choose which copies to use. Cara keeps the previous versions.</item>
     </plurals>
+    <string name="drive_restore_recovery_failed">Cara could not recover a save after an interrupted sync. Your files are preserved.</string>
 </resources>

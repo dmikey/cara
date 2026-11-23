@@ -14,7 +14,9 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -23,6 +25,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.locks.ReentrantLock;
@@ -30,18 +33,9 @@ import java.util.regex.Pattern;
 
 public final class DriveSaveSync {
     private static final ReentrantLock LOCAL_IO = new ReentrantLock(true);
-    private static final long SAVE_LIMIT = 128L * 1024 * 1024;
     private static final long STATE_LIMIT = 768L * 1024 * 1024 + 256;
     private static final Pattern STATE = Pattern.compile(
             "states/(?:[0-9A-F]{16}|homebrew-[0-9A-F]{64})\\.(?:0[1-9]|10)\\.carastate");
-    private static final Pattern SAVE = Pattern.compile(
-            "sdmc/Nintendo 3DS/[0-9a-fA-F]{32}/[0-9a-fA-F]{32}/"
-            + "(?:title/[0-9a-fA-F]{8}/[0-9a-fA-F]{8}/data|extdata/[0-9a-fA-F]{8}/[0-9a-fA-F]{8})/.+"
-            + "|nand/data/[0-9a-fA-F]{32}/extdata/[0-9a-fA-F]{8}/[0-9a-fA-F]{8}/.+");
-    private static final Pattern EXCLUDED = Pattern.compile(
-            ".*\\.(?:3ds|z3ds|zcci|cci|cxi|cia|app|3dsx|nds|elf|axf|7z|zip|deltaskin|tmp|part)$",
-            Pattern.CASE_INSENSITIVE);
-
     static final int GAME_SAVES = 1;
     static final int SAVE_STATES = 2;
 
@@ -59,6 +53,8 @@ public final class DriveSaveSync {
     }
 
     static class Busy extends IOException {
+        private static final long serialVersionUID = 1L;
+
         Busy() {
             super("Close the running game before syncing saves");
         }
@@ -67,16 +63,25 @@ public final class DriveSaveSync {
     private final Context context;
     private final DriveStorage drive;
     private final File root;
+    private final DriveArchiveRestore archives;
 
     DriveSaveSync(Context context, DriveStorage drive) throws IOException {
         this.context = context;
         this.drive = drive;
         root = new File(CaraDirectory.getUserDirectory()).getCanonicalFile();
+        archives = new DriveArchiveRestore(root);
     }
 
-    public static void runGame(Context context, Runnable game) {
+    public static void runGame(Context context, Runnable game, Runnable failedRecovery) {
         LOCAL_IO.lock();
         try {
+            try {
+                File root = new File(CaraDirectory.getUserDirectory()).getCanonicalFile();
+                new DriveArchiveRestore(root).recover();
+            } catch (IOException error) {
+                failedRecovery.run();
+                return;
+            }
             game.run();
         } finally {
             LOCAL_IO.unlock();
@@ -107,7 +112,7 @@ public final class DriveSaveSync {
         if (STATE.matcher(path).matches()) {
             return STATE_LIMIT;
         }
-        return SAVE.matcher(path).matches() && !EXCLUDED.matcher(path).matches() ? SAVE_LIMIT : -1;
+        return DriveSaveArchive.isUnit(path) ? DriveSaveArchive.LIMIT : -1;
     }
 
     Result sync(String account, int contents, Choice choice) throws IOException, JSONException {
@@ -122,6 +127,7 @@ public final class DriveSaveSync {
         Set<String> paths = new TreeSet<>(remote.keySet());
         lockLocal();
         try {
+            archives.recover();
             if ((contents & GAME_SAVES) != 0) {
                 collect("sdmc/Nintendo 3DS", paths);
                 collect("nand/data", paths);
@@ -143,7 +149,7 @@ public final class DriveSaveSync {
             String device;
             lockLocal();
             try {
-                device = file.isFile() ? digest(file, limit(path)) : null;
+                device = fingerprint(path, file);
             } finally {
                 LOCAL_IO.unlock();
             }
@@ -224,7 +230,7 @@ public final class DriveSaveSync {
         try {
             lockLocal();
             try {
-                if (!device.equals(copy(file, snapshot, limit(path)))) {
+                if (!device.equals(snapshot(path, file, snapshot))) {
                     throw new Busy();
                 }
             } finally {
@@ -247,15 +253,12 @@ public final class DriveSaveSync {
             if (!cloud.digest.equals(digest(snapshot, limit(cloud.path)))) {
                 throw new IOException("Cloud save checksum failed");
             }
-            if (merge != null) {
-                drive.upload(cloud.path, cloud.digest, snapshot, parentIds(merge));
-            }
-
             lockLocal();
             try {
                 File target = local(cloud.path);
-                if (!file.equals(target) || (device == null ? target.exists() :
-                        !target.isFile() || !device.equals(digest(target, limit(cloud.path))))) {
+                archives.recover();
+                if (!file.equals(target) || !Objects.equals(device,
+                        fingerprint(cloud.path, target))) {
                     throw new Busy();
                 }
                 if (preserveLocal && device != null) {
@@ -265,26 +268,37 @@ public final class DriveSaveSync {
                         throw new IOException("Could not preserve the previous local save");
                     }
                     if (!backup.exists() || !device.equals(digest(backup, limit(cloud.path)))) {
-                        copy(target, backup, limit(cloud.path));
+                        File preserved = File.createTempFile(".cara-backup-", ".tmp", parent);
+                        try {
+                            if (!device.equals(snapshot(cloud.path, target, preserved))) {
+                                throw new Busy();
+                            }
+                            rename(preserved, backup);
+                        } finally {
+                            preserved.delete();
+                        }
                     }
                 }
-                File directory = target.getParentFile();
-                if (!directory.isDirectory() && !directory.mkdirs()) {
-                    throw new IOException("Could not create the save directory");
-                }
-                File temporary = File.createTempFile(".cara-sync-", ".tmp", directory);
-                try {
-                    copy(snapshot, temporary, limit(cloud.path));
+                if (DriveSaveArchive.isUnit(cloud.path)) {
+                    archives.replace(cloud.path, snapshot);
+                } else {
+                    File directory = target.getParentFile();
+                    if (!directory.isDirectory() && !directory.mkdirs()) {
+                        throw new IOException("Could not create the save directory");
+                    }
+                    File temporary = File.createTempFile(".cara-sync-", ".tmp", directory);
                     try {
-                        Os.rename(temporary.getPath(), target.getPath());
-                    } catch (ErrnoException error) {
-                        throw new IOException("Could not replace the local save", error);
+                        copy(snapshot, temporary, limit(cloud.path));
+                        rename(temporary, target);
+                    } finally {
+                        temporary.delete();
                     }
-                } finally {
-                    temporary.delete();
                 }
             } finally {
                 LOCAL_IO.unlock();
+            }
+            if (merge != null) {
+                drive.upload(cloud.path, cloud.digest, snapshot, parentIds(merge));
             }
         } finally {
             snapshot.delete();
@@ -306,14 +320,65 @@ public final class DriveSaveSync {
                 continue;
             }
             if (child.isDirectory()) {
-                // The SD title contents directory may contain installed games and updates.
-                if (!child.getName().equals("content") && !relative.equals("states")) {
+                if (DriveSaveArchive.isUnit(path)) {
+                    paths.add(path);
+                } else if (archiveContainer(path)) {
                     collect(path, paths);
                 }
-            } else if (child.isFile() && limit(path) >= 0) {
+            } else if (child.isFile() && STATE.matcher(path).matches()) {
                 paths.add(path);
             }
         }
+    }
+
+    private static final Pattern ARCHIVE_CONTAINER = Pattern.compile(
+            "sdmc/Nintendo 3DS/[0-9a-fA-F]{32}"
+            + "(?:/[0-9a-fA-F]{32}(?:/(?:title(?:/[0-9a-fA-F]{8}){0,2}"
+            + "|extdata(?:/[0-9a-fA-F]{8})?))?)?"
+            + "|nand/data/[0-9a-fA-F]{32}(?:/extdata(?:/[0-9a-fA-F]{8})?)?");
+
+    private static boolean archiveContainer(String path) {
+        return ARCHIVE_CONTAINER.matcher(path).matches();
+    }
+
+    private static void rename(File source, File destination) throws IOException {
+        try {
+            Os.rename(source.getPath(), destination.getPath());
+        } catch (ErrnoException error) {
+            throw new IOException("Could not replace the local save", error);
+        }
+    }
+
+    private static String fingerprint(String path, File source) throws IOException {
+        if (!source.exists()) {
+            return null;
+        }
+        if (DriveSaveArchive.isUnit(path)) {
+            return snapshot(path, source, null);
+        }
+        if (!source.isFile()) {
+            throw new IOException("Invalid local save state");
+        }
+        return digest(source, limit(path));
+    }
+
+    private static final OutputStream DISCARD = new OutputStream() {
+        @Override public void write(int value) {}
+        @Override public void write(byte[] bytes, int offset, int length) {}
+    };
+
+    private static String snapshot(String path, File source, File destination) throws IOException {
+        if (!DriveSaveArchive.isUnit(path)) {
+            return copy(source, destination, limit(path));
+        }
+        MessageDigest digest = sha256();
+        try (FileOutputStream file = destination == null ? null : new FileOutputStream(destination)) {
+            DriveSaveArchive.write(source, new DigestOutputStream(file == null ? DISCARD : file, digest));
+            if (file != null) {
+                file.getFD().sync();
+            }
+        }
+        return hex(digest.digest());
     }
 
     private File local(String relative) throws IOException {

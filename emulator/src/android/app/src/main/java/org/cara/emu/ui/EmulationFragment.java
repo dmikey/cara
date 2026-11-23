@@ -29,6 +29,7 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.fragment.app.Fragment;
@@ -411,8 +412,13 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
             NativeLibrary.SurfaceChanged(mSurface);
             Context application = requireContext().getApplicationContext();
             String path = mPath;
-            new Thread(() -> DriveSaveSync.runGame(application, () -> NativeLibrary.Run(path)),
-                       "NativeEmulation").start();
+            Activity host = requireActivity();
+            new Thread(() -> DriveSaveSync.runGame(application, () -> NativeLibrary.Run(path),
+                    () -> host.runOnUiThread(() -> {
+                        Toast.makeText(host, R.string.drive_restore_recovery_failed,
+                                       Toast.LENGTH_LONG).show();
+                        host.finish();
+                    })), "NativeEmulation").start();
         } else if (mState == EmulationState.PAUSED) {
             NativeLibrary.SurfaceChanged(mSurface);
             NativeLibrary.ResumeEmulation();
