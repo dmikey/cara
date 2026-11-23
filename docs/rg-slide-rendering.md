@@ -408,3 +408,28 @@ stages for indexed programs. Required regular draws still wait on their
 exact program when it first appears.
 
 [Arm framebuffer guidance](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-2-how-to-correctly-handle-framebuffers)
+
+### Shared GLES shader census
+
+Set `[Debug] trace_gl_shader_census = True` on Android and capture
+`adb logcat -v epoch -s CaraShader CaraPerf`. On Apple, set
+`CARA_GL_SHADER_CENSUS=1` before launching the GLES build and collect the
+`CaraShader` records from its log. The census uses the same GLES generator,
+source cache, and GL compile/link paths. It does not change shader selection.
+
+- `fragment_key` logs a PICA fragment key on generation, its exact generated
+  source hash, the lighting flag, and generation wall time. A warm binary
+  restore can bypass generation, so use a fresh Cara cache to count keys.
+- `compile` logs each driver compile request and blocking status query, tagged
+  by source hash and GL shader name. Group by Android thread ID to separate the
+  emulation thread from the shared EGL worker. A compile request can hit a
+  driver-private cache.
+- `link` and `binary` report linked source programs and binary restore attempts,
+  including the blocking status query. `first_draw` times submission of the
+  first PICA draw for a linked program. It measures CPU wall time rather than
+  GPU execution and excludes the earlier program bind.
+
+Mark boot, title, save selection, and the lab separately. Report both total
+and distinct fragment compile requests and rank lit source hashes by
+emulation-thread stall time. Use a matched census-off run for headline p99
+because the extra diagnostics add host work.

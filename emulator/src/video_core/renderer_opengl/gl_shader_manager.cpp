@@ -33,6 +33,7 @@
 #include "core/cache_file.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_fragment_lighting_ablation.h"
+#include "video_core/renderer_opengl/gl_shader_census.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -474,7 +475,14 @@ public:
         const u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
         auto iter_ref = shaders_ref.find(key_hash);
         if (iter_ref == shaders_ref.end()) {
+            const auto start = shader_census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
             std::string fs_code = GenerateFragmentShader(key, separable);
+            if (shader_census) {
+                const auto generation_us = ShaderCensus::ElapsedUs(start);
+                const u64 source_hash = Common::ComputeHash64(fs_code.data(), fs_code.size());
+                ShaderCensus::Record("fragment_key key={:016x} source={:016x} lit={} generation_us={}",
+                                     key_hash, source_hash, int(key.state.lighting.enable), generation_us);
+            }
             current_shaders.fs = GetShaderStageRef(fs_code, GL_FRAGMENT_SHADER);
             if (current_shaders.fs) {
                 shaders_ref[key_hash] = current_shaders.fs;
@@ -1091,6 +1099,7 @@ private:
     OGLShaderStage trivial_geometry_shader;
     OGLShaderStage native_geometry_shader;
     std::unordered_map<u64, OGLShaderStage*> shaders_ref;
+    const bool shader_census = ShaderCensus::Enabled();
 #ifdef CARA_IOS_GLES
     struct IOSStagePair { u64 key = 0; OGLProgram* program = nullptr; };
     IOSPipelineCache::StagePairMemo<IOSStagePair> ios_stage_pairs;

@@ -229,6 +229,8 @@ void BootGame(const std::string& path) {
 #endif
     LOG_INFO(Frontend, "Android CPU engine: {}",
              Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");
+    const Config::ConfigInfo<bool> shader_census{{"Debug", "trace_gl_shader_census"}, false};
+    setenv("CARA_GL_SHADER_CENSUS", Config::Get(shader_census) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> trace_timing{{"Debug", "trace_renderer_timing"}, false};
     const Config::ConfigInfo<bool> trace_cpu{{"Debug", "trace_cpu_categories"}, false};
     setenv("CARA_CPU_CATEGORY_TIMING", Config::Get(trace_cpu) ? "1" : "0", 1);

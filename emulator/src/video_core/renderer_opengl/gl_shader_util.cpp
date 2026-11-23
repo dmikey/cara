@@ -13,6 +13,8 @@
 #include "common/assert.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
+#include "common/hash.h"
+#include "video_core/renderer_opengl/gl_shader_census.h"
 #include "common/logging/log.h"
 #include "video_core/renderer_opengl/gl_shader_util.h"
 #include "video_core/renderer_opengl/gl_vars.h"
@@ -106,11 +108,20 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
     GLuint shader_id = glCreateShader(type);
     LOG_DEBUG(Render_OpenGL, "Compiling {} shader: {}", debug_type, shader_id);
     glShaderSource(shader_id, static_cast<GLsizei>(src_arr.size()), src_arr.data(), nullptr);
+    const bool census = ShaderCensus::Enabled();
+    const auto compile_start = census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
     glCompileShader(shader_id);
 
     GLint result = GL_FALSE;
     GLint info_log_length;
     glGetShaderiv(shader_id, GL_COMPILE_STATUS, &result);
+    if (census) {
+        const auto elapsed = ShaderCensus::ElapsedUs(compile_start);
+        const std::string_view original{source};
+        const u64 source_hash = Common::ComputeHash64(original.data(), original.size());
+        ShaderCensus::Record("compile stage={} shader={} source={:016x} ok={} us={}",
+                             debug_type, shader_id, source_hash, result, elapsed);
+    }
     glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &info_log_length);
 
     if (info_log_length > 1) {
@@ -166,12 +177,23 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
         if (formats > 0) glProgramParameteri(program_id, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
     }
 #endif
+    const bool census = ShaderCensus::Enabled();
+    const auto link_start = census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
     glLinkProgram(program_id);
 
     // Check the program
     GLint result = GL_FALSE;
     GLint info_log_length;
     glGetProgramiv(program_id, GL_LINK_STATUS, &result);
+    if (census) {
+        const auto elapsed = ShaderCensus::ElapsedUs(link_start);
+        std::string stages;
+        for (GLuint shader : shaders) {
+            if (shader)
+                fmt::format_to(std::back_inserter(stages), "{}{}", stages.empty() ? "" : ",", shader);
+        }
+        ShaderCensus::Record("link program={} shaders={} ok={} us={}", program_id, stages, result, elapsed);
+    }
     glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &info_log_length);
 
     if (info_log_length > 1) {

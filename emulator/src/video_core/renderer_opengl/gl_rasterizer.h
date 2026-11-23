@@ -9,6 +9,7 @@
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 #include "video_core/renderer_opengl/gl_nearest_borrow_plan.h"
 #include <vector>
 #include <glad/glad.h>
@@ -42,6 +43,8 @@ namespace OpenGL {
 
 class RasterizerOpenGL : public VideoCore::RasterizerInterface {
     friend struct LUTResidencyTestAccess;
+    const bool shader_census;
+    std::unordered_set<u32> shader_census_drawn_programs;
 public:
     RasterizerOpenGL();
     ~RasterizerOpenGL() override;

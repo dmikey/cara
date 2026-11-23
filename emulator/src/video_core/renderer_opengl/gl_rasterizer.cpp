@@ -28,6 +28,7 @@
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/frame_timing.h"
+#include "video_core/renderer_opengl/gl_shader_census.h"
 #include "common/cpu_category_timing.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
@@ -220,7 +221,7 @@ static GLsizeiptr LightingLUTBufferSize(std::size_t fallback) {
 }
 
 RasterizerOpenGL::RasterizerOpenGL()
-    : is_mali_gpu(IsVendorMali()), shader_dirty(true),
+    : shader_census(ShaderCensus::Enabled()), is_mali_gpu(IsVendorMali()), shader_dirty(true),
       vertex_buffer(GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE),
       uniform_buffer(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE),
       index_buffer(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE),
@@ -1659,7 +1660,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                         (topology == Pica::PipelineRegs::TriangleTopology::Strip ?
                             GL_TRIANGLE_STRIP : GL_TRIANGLE_FAN) : GL_TRIANGLES;
                     const auto count = native_elements ? element_indices.size() : triangles.size();
-                    glDrawElements(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr);
+                    {
+                        ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                                      state.draw.shader_program);
+                        glDrawElements(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr);
+                    }
                     if (native_elements && Common::FrameTiming::counters.enabled) {
                         ++Common::FrameTiming::counters.gpu_native_element_draws;
                         Common::FrameTiming::counters.gpu_native_elements_saved += triangles.size() - count;
@@ -1680,6 +1685,8 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                             triangles.size());
             if (!SuppressEffectFamilyHostDraw(triangles.size())) {
                 if(NativeNearestBorrowEnabled() && !BeforeNativeNearestBorrowDraw())return false;
+                ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                              state.draw.shader_program);
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
             }
         }
@@ -1783,16 +1790,22 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 
         DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::DesktopRange,
                                         regs.pipeline.num_vertices);
-        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices))
+        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices)) {
+            ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                          state.draw.shader_program);
             glDrawRangeElementsBaseVertex(
-            primitive_mode, vs_input_index_min, vs_input_index_max, regs.pipeline.num_vertices,
-            index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
-            reinterpret_cast<const void*>(buffer_offset), -static_cast<GLint>(vs_input_index_min));
+                primitive_mode, vs_input_index_min, vs_input_index_max, regs.pipeline.num_vertices,
+                index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
+                reinterpret_cast<const void*>(buffer_offset), -static_cast<GLint>(vs_input_index_min));
+        }
     } else {
         DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedArrays,
                                         regs.pipeline.num_vertices);
-        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices))
+        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices)) {
+            ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                          state.draw.shader_program);
             glDrawArrays(primitive_mode, 0, regs.pipeline.num_vertices);
+        }
     }
 
     return true;
@@ -2731,9 +2744,12 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             std::memcpy(vbo, vertex_batch.data() + base_vertex, vertex_size);
             vertex_buffer.Unmap(vertex_size);
             DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::SoftwareArrays, vertices);
-            if (!SuppressEffectFamilyHostDraw(vertices))
+            if (!SuppressEffectFamilyHostDraw(vertices)) {
+                ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                              state.draw.shader_program);
                 glDrawArrays(GL_TRIANGLES, static_cast<GLint>(offset / sizeof(HardwareVertex)),
-                         static_cast<GLsizei>(vertices));
+                             static_cast<GLsizei>(vertices));
+            }
         }
     }
 
