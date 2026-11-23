@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 
 #include <algorithm>
@@ -213,6 +214,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> lit_lists{{"Debug", "atlas_lit_indexed_lists"}, false};
     const Config::ConfigInfo<bool> async_stage_reuse{{"Debug", "atlas_async_stage_reuse"}, false};
     const Config::ConfigInfo<bool> reuse_layout{{"Debug", "packed_layout_uniform_reuse"}, false};
+    const Config::ConfigInfo<bool> backlog_trace{{"Debug", "trace_ordered_gles_backlog"}, false};
+    setenv("CARA_TRACE_GLES_BACKLOG", Config::Get(backlog_trace) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> batch_trace{{"Debug", "trace_draw_batches"}, false};
     setenv("CARA_TRACE_DRAW_BATCHES", Config::Get(batch_trace) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> repeat_instances{{"Debug", "probe_repeat_instances"}, false};
@@ -465,6 +468,19 @@ void BootGame(const std::string& path) {
                                     rpc(RpcApi::api_glUnmapBuffer), rpc(RpcApi::api_glCreateProgram),
                                     rpc(RpcApi::api_glCreateShader), rpc(RpcApi::api_glGetIntegerv),
                                     static_cast<unsigned long long>(q.transaction_lut_calls));
+                                if (Backlog::Enabled()) {
+                                    for (const auto& row : Backlog::Take()) {
+                                        __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                            "backlog end=%u requester=%s query=%s source=%s command=%s calls=%llu ns=%llu",
+                                            static_cast<unsigned>(frame),
+                                            Backlog::SourceNames[static_cast<unsigned>(row.request.source)],
+                                            RpcApiName(row.request.api),
+                                            Backlog::SourceNames[static_cast<unsigned>(row.command.source)],
+                                            RpcApiName(row.command.api),
+                                            static_cast<unsigned long long>(row.calls),
+                                            static_cast<unsigned long long>(row.ns));
+                                    }
+                                }
                                 const auto timings = TakeSyncTimingsForProfile();
                                 for (size_t i = 0; i < timings.size(); ++i) {
                                     const auto& t = timings[i];

@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
@@ -457,6 +458,9 @@ void RendererOpenGL::RenderScreenshot() {
 
 /// run in core thread
 void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::Display);
+#endif
     OGLFrame* frame = mailbox->GetRenderFrame();
 
     // Clean up sync objects before drawing

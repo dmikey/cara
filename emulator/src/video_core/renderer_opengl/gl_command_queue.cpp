@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
 #include "gl_command_queue.h"
 #include "gl_pipeline_capture.h"
 #include "gl_host_latency.h"
@@ -32,6 +33,35 @@ constexpr std::size_t MaxBatchCommands=64, MaxBatchBytes=256*1024;
 std::atomic<Common::HostRenderQueue*> owner{nullptr};
 std::thread::id producer;
 std::vector<std::function<void()>> pending;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+std::array<Backlog::Tag, MaxBatchCommands> pending_tags{};
+std::atomic<std::int64_t> wait_start_ns{};
+std::atomic<unsigned> wait_tag{};
+std::unordered_map<std::uint64_t, Backlog::Row> worker_backlog;
+
+std::int64_t ProfileNowNs() {
+ return std::chrono::duration_cast<std::chrono::nanoseconds>(
+     std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+unsigned TagIndex(Backlog::Tag tag) {
+ return static_cast<unsigned>(tag.source) * RpcApiCount + static_cast<unsigned>(tag.api);
+}
+void RunProfiled(Backlog::Tag command, std::function<void()>& job) {
+ const auto pending_at_entry = wait_start_ns.load(std::memory_order_acquire);
+ const auto begin = pending_at_entry ? ProfileNowNs() : 0;
+ job();
+ const auto end = ProfileNowNs();
+ const auto wait = wait_start_ns.load(std::memory_order_acquire);
+ if (!wait || end <= wait) return;
+ const auto request = wait_tag.load(std::memory_order_relaxed);
+ const std::uint64_t key = (std::uint64_t(request) << 32) | TagIndex(command);
+ auto& row = worker_backlog[key];
+ row.request = {static_cast<Backlog::Source>(request / RpcApiCount), static_cast<RpcApi>(request % RpcApiCount)};
+ row.command = command;
+ ++row.calls;
+ row.ns += end - std::max(wait, begin);
+}
+#endif
 struct PayloadLease;std::shared_ptr<PayloadLease> pending_slots;
 std::size_t pending_bytes=0;
 struct AtomicStats {
@@ -125,6 +155,10 @@ void Record(std::function<void()> job,std::size_t bytes=0,RpcApi api=RpcApi::Int
    auto holder=std::make_shared<BudgetedJob>();holder->lease=std::move(copy_reservation);holder->job=std::move(job);
    job=[holder]{holder->job();};
  }
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+ if (Common::FrameTiming::counters.enabled && Backlog::Enabled())
+  pending_tags[pending.size()] = {Backlog::source, api};
+#endif
  pending.emplace_back(std::move(job));pending_bytes+=footprint;
  if(pending.size()==1)pending_slots->MarkQueued();
  ++stats.recorded_commands;stats.owned_payload_bytes+=bytes;
@@ -144,6 +178,16 @@ template<class F> decltype(auto) ProfileSync(Common::HostRenderQueue& queue, Rpc
  auto& timing = sync_timings[static_cast<std::size_t>(api)];
  SyncClock::time_point entered{}, returned{};
  const auto start = SyncClock::now();
+ const bool backlog = Backlog::Enabled();
+ if (backlog) {
+  wait_tag.store(TagIndex({Backlog::source, api}), std::memory_order_relaxed);
+  wait_start_ns.store(std::chrono::duration_cast<std::chrono::nanoseconds>(start.time_since_epoch()).count(),
+                      std::memory_order_release);
+ }
+ struct ClearWait {
+  bool enabled;
+  ~ClearWait() { if (enabled) wait_start_ns.store(0, std::memory_order_release); }
+ } clear{backlog};
  Flush();
  struct Account {
   SyncTiming& timing;
@@ -417,12 +461,26 @@ void Flush() {
  auto* active=owner.load();if(!active)return;auto& q=*active;if(q.IsWorkerThread())throw std::logic_error("GL Flush requires producer");Producer();if(pending.empty())return;
  struct Batch {
    std::shared_ptr<PayloadLease> slots;std::vector<std::function<void()>> jobs;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+   std::array<Backlog::Tag, MaxBatchCommands> tags;
+#endif
    ~Batch(){jobs.clear();slots.reset();}
  };
  auto batch=std::make_shared<Batch>();batch->slots=std::move(pending_slots);batch->jobs=std::move(pending);
  batch->slots->Shrink(batch->jobs.size()*sizeof(std::function<void()>));
  const auto bytes=pending_bytes;pending={};pending.reserve(MaxBatchCommands);pending_bytes=0;
  stats.pending_commands=0;stats.pending_bytes=0;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+ if (Common::FrameTiming::counters.enabled && Backlog::Enabled()) {
+  std::copy_n(pending_tags.begin(), batch->jobs.size(), batch->tags.begin());
+  q.Submit([batch] {
+   for (std::size_t i = 0; i < batch->jobs.size(); ++i)
+    RunProfiled(batch->tags[i], batch->jobs[i]);
+  }, bytes);
+  ++stats.submitted_batches;
+  return;
+ }
+#endif
  q.Submit([batch] { for(auto& job:batch->jobs)job(); },bytes);++stats.submitted_batches;
 }
 void Drain() {auto* active=owner.load();if(!active)return;auto& q=*active;if(q.IsWorkerThread())throw std::logic_error("GL Drain on worker");Flush();q.Drain();}
@@ -495,6 +553,23 @@ void UploadBufferOwned(GLenum target,GLintptr offset,std::vector<std::uint8_t> b
  },charge,RpcApi::UploadBufferOwned);
 }
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+bool Backlog::Enabled() {
+ static const bool enabled = [] {
+  const char* flag = std::getenv("CARA_TRACE_GLES_BACKLOG");
+  return flag && std::strcmp(flag, "1") == 0;
+ }();
+ return enabled;
+}
+std::vector<Backlog::Row> Backlog::Take() {
+ Producer();
+ return Owner().Call([] {
+  std::vector<Row> rows;
+  rows.reserve(worker_backlog.size());
+  for (const auto& entry : worker_backlog) rows.push_back(entry.second);
+  worker_backlog.clear();
+  return rows;
+ });
+}
 std::array<SyncTiming, RpcApiCount> TakeSyncTimingsForProfile() {
  Producer();
  return std::exchange(sync_timings, {});
