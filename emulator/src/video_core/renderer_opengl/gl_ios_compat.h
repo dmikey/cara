@@ -7,7 +7,9 @@
 namespace OpenGL {
 #ifdef CARA_ANDROID_GLES_ATLAS
 bool UseNativeLUTBuffers();
+bool UseLightingLUTSnapshots();
 #else
+inline constexpr bool UseLightingLUTSnapshots() { return false; }
 inline constexpr bool UseNativeLUTBuffers() { return false; }
 #endif
 inline GLenum LUTTextureTarget() {
@@ -25,6 +27,8 @@ inline GLenum StreamBufferTarget(GLenum target) {
     return target;
 }
 #ifdef CARA_IOS_GLES
+inline constexpr unsigned LUTTextureWidth = 1024;
+void ReplaceLightingLUTImage(GLuint texture, unsigned unit, const u8* data, std::size_t bytes);
 void AllocateIOSLUT(GLenum internal_format, std::size_t bytes);
 // Source must be ordinary CPU-owned memory, never a mapped GL buffer pointer.
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,

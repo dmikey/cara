@@ -4261,7 +4261,15 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     bool invalidate;
     std::size_t bytes_used = 0;
 #ifdef CARA_IOS_GLES
-    if (!UseNativeLUTBuffers()) {
+    if (UseLightingLUTSnapshots()) {
+        constexpr std::size_t row_bytes = LUTTextureWidth * sizeof(GLvec2);
+        constexpr std::size_t image_bytes = ((max_size + row_bytes - 1) / row_bytes) * row_bytes;
+        invalidate = lighting_lut_image.empty();
+        if (invalidate)
+            lighting_lut_image.resize(image_bytes);
+        buffer = lighting_lut_image.data();
+        offset = 0;
+    } else if (!UseNativeLUTBuffers()) {
         std::tie(buffer, offset, invalidate) = texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
     } else
 #endif
@@ -4287,9 +4295,11 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                 auto& lut_offset =
                     uniform_block_data.light_data.lighting_lut_offset[index / 4][index % 4];
                 if (is_changed || invalidate || lut_offset < 0) {
-                    std::memcpy(buffer + bytes_used, lighting_lut_data[index].data(),
+                    const auto destination = UseLightingLUTSnapshots()
+                        ? index * sizeof(lighting_lut_data[index]) : bytes_used;
+                    std::memcpy(buffer + destination, lighting_lut_data[index].data(),
                                 lighting_lut_data[index].size() * sizeof(GLvec2));
-                    lut_offset = (offset + bytes_used) / sizeof(GLvec2);
+                    lut_offset = (offset + destination) / sizeof(GLvec2);
                     uniform_block_data.light_dirty = true;
                     bytes_used += lighting_lut_data[index].size() * sizeof(GLvec2);
                 }
@@ -4312,9 +4322,10 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
             }
         }
         if (is_changed || invalidate || uniform_block_data.data.fog_lut_offset < 0) {
-            std::memcpy(buffer + bytes_used, fog_lut_data.data(),
+            const auto destination = UseLightingLUTSnapshots() ? sizeof(lighting_lut_data) : bytes_used;
+            std::memcpy(buffer + destination, fog_lut_data.data(),
                         fog_lut_data.size() * sizeof(GLvec2));
-            uniform_block_data.data.fog_lut_offset = (offset + bytes_used) / sizeof(GLvec2);
+            uniform_block_data.data.fog_lut_offset = (offset + destination) / sizeof(GLvec2);
             uniform_block_data.dirty = true;
             bytes_used += fog_lut_data.size() * sizeof(GLvec2);
         }
@@ -4322,7 +4333,12 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     }
 
 #ifdef CARA_IOS_GLES
-    if (!UseNativeLUTBuffers()) {
+    if (UseLightingLUTSnapshots()) {
+        // Previous draws can finish against the old image as GLES replaces all live tables.
+        if (bytes_used)
+            ReplaceLightingLUTImage(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id,
+                                    lighting_lut_image.data(), lighting_lut_image.size());
+    } else if (!UseNativeLUTBuffers()) {
         UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
                      offset, buffer, bytes_used);
         texture_lf_buffer.FinishStaging(bytes_used);

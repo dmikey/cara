@@ -498,6 +498,9 @@ private:
     SamplerInfo texture_cube_sampler;
 
     OGLTexture texture_null;
+#ifdef CARA_IOS_GLES
+    std::vector<u8> lighting_lut_image;
+#endif
     OGLTexture texture_buffer_lut_lf;
     OGLTexture texture_buffer_lut_rg;
     OGLTexture texture_buffer_lut_rgba;
