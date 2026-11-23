@@ -3,7 +3,10 @@
 #include <EGL/egl.h>
 #include <glad/glad.h>
 
+#include <algorithm>
 #include <array>
+#include <cstdlib>
+#include "video_core/renderer_opengl/gl_surface_remap_shaders.h"
 #include <cstdio>
 #include <future>
 #include <stdexcept>
@@ -62,6 +65,120 @@ GLuint Compile(GLenum stage, const char* source) {
     Check(compiled == GL_TRUE, "probe shader compilation");
     return shader;
 }
+
+void CheckRemapPixels() {
+    using namespace OpenGL::SurfaceRemapShaders;
+    constexpr int source_width = 32, dest_width = 16;
+    GLuint textures[2], fbo, vao;
+    glGenTextures(2, textures);
+    glGenFramebuffers(1, &fbo);
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glBindTexture(GL_TEXTURE_2D, textures[1]);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, dest_width, dest_width);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[1], 0);
+    Check(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "remap destination");
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glDisable(GL_DITHER);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glViewport(0, 0, dest_width, dest_width);
+    const auto vs = Compile(GL_VERTEX_SHADER, (std::string("#version 300 es\n") + Vertex).c_str());
+    GLuint programs[2]{};
+    for (int variant = 0; variant < 2; ++variant) {
+        const auto prefix = variant ? "#version 300 es\n#define CARA_REMAP_TEXEL_PAIR\n" : "#version 300 es\n";
+        const auto fs = Compile(GL_FRAGMENT_SHADER, (std::string(prefix) + Fragment).c_str());
+        programs[variant] = glCreateProgram();
+        glAttachShader(programs[variant], vs);
+        glAttachShader(programs[variant], fs);
+        glLinkProgram(programs[variant]);
+        GLint linked;
+        glGetProgramiv(programs[variant], GL_LINK_STATUS, &linked);
+        Check(linked == GL_TRUE, "remap link");
+        glDeleteShader(fs);
+    }
+    std::array<GLubyte, source_width * source_width * 4> data{};
+    uint32_t rng = 73;
+    for (auto& byte : data) {
+        rng = rng * 1664525u + 1013904223u;
+        byte = static_cast<GLubyte>(rng >> 24);
+    }
+    unsigned cases = 0;
+    for (int src : {3, 4}) {
+        const GLenum format = src == 3 ? GL_RGB : GL_RGBA;
+        glTexImage2D(GL_TEXTURE_2D, 0, src == 3 ? GL_RGB8 : GL_RGBA8, source_width,
+                     source_width, 0, format, GL_UNSIGNED_BYTE, data.data());
+        for (int dst : {3, 4}) for (int tiled_src : {0, 1}) for (int tiled_dst : {0, 1}) {
+            for (int offset : {0, 1, 2, 3, 181}) {
+                std::array<GLubyte, dest_width * dest_width * 4> pixels[2];
+                for (int variant = 0; variant < 2; ++variant) {
+                    const auto prog = programs[variant];
+                    glUseProgram(prog);
+                    glUniform4i(glGetUniformLocation(prog, "source_layout"), source_width, source_width, source_width, tiled_src);
+                    glUniform4i(glGetUniformLocation(prog, "destination_layout"), dest_width, dest_width, dest_width, tiled_dst);
+                    glUniform2i(glGetUniformLocation(prog, "bytes_per_pixel"), src, dst);
+                    glUniform1i(glGetUniformLocation(prog, "byte_offset"), offset);
+                    glDrawArrays(GL_TRIANGLES, 0, 3);
+                    glReadPixels(0, 0, dest_width, dest_width, GL_RGBA, GL_UNSIGNED_BYTE, pixels[variant].data());
+                }
+                Check(glGetError() == GL_NO_ERROR && pixels[0] == pixels[1], "remap byte mismatch");
+                Check(*std::min_element(pixels[0].begin(), pixels[0].end()) !=
+                      *std::max_element(pixels[0].begin(), pixels[0].end()), "empty remap reference");
+                ++cases;
+            }
+        }
+    }
+    for (const auto prog : programs) glDeleteProgram(prog);
+    glDeleteShader(vs);
+    glUseProgram(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteTextures(2, textures);
+    glDeleteVertexArrays(1, &vao);
+    std::printf("%u remap cases matched at all 256 pixels\n", cases);
+}
+
+#ifdef CARA_GL_CONTEXT_DISPATCH
+void CheckRemapQueue() {
+    for (const bool enable : {false, true}) {
+        glActiveTexture(GL_TEXTURE3);
+        if (enable) {
+            glEnable(GL_DITHER);
+            glDisable(GL_RASTERIZER_DISCARD);
+        } else {
+            glDisable(GL_DITHER);
+            glEnable(GL_RASTERIZER_DISCARD);
+        }
+        auto saved = Queue::SaveRemapStateIfEnabled();
+        Check(bool(saved), "queued remap save");
+        glActiveTexture(GL_TEXTURE0);
+        glDisable(GL_DITHER);
+        glDisable(GL_RASTERIZER_DISCARD);
+        GLuint fbo;
+        glGenFramebuffers(1, &fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        auto complete = [] { return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE; };
+        Check(!Queue::CheckedRemapDraw(complete), "incomplete remap framebuffer accepted");
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Check(Queue::CheckedRemapDraw(complete), "complete remap framebuffer rejected");
+        Queue::RestoreRemapState(std::move(saved));
+        GLint active;
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+        Check(active == GL_TEXTURE3 && bool(glIsEnabled(GL_DITHER)) == enable &&
+              bool(glIsEnabled(GL_RASTERIZER_DISCARD)) != enable, "remap leaked GL state");
+        glDeleteFramebuffers(1, &fbo);
+    }
+    glDisable(GL_RASTERIZER_DISCARD);
+    glActiveTexture(GL_TEXTURE0);
+    std::puts("checked queue remap restored GL state and returned both framebuffer outcomes");
+}
+#endif
 
 Pixels Draw() {
     const GLuint vs = Compile(GL_VERTEX_SHADER, R"(#version 300 es
@@ -281,6 +398,7 @@ void Run(EGLDisplay display, EGLConfig config) {
     Common::HostRenderQueue worker(128, 8 * 1024 * 1024,
         [&] { rendering.Bind(); submission_worker = true; },
         [&] { rendering.Release(); });
+    setenv("CARA_CHECKED_REMAP_PACKET", "1", 1);
     Queue::Install(worker);
     try {
         const auto queued = Draw();
@@ -295,6 +413,9 @@ void Run(EGLDisplay display, EGLConfig config) {
                     static_cast<unsigned long long>(counters.submitted_batches),
                     static_cast<unsigned long long>(counters.synchronous_calls));
         CheckInstancedDraws();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+        CheckRemapQueue();
+#endif
         Queue::Drain();
         std::puts("queued instanced draws passed");
         std::async(std::launch::async, [&] {
@@ -327,6 +448,7 @@ void Run(EGLDisplay display, EGLConfig config) {
     glad_glDrawArrays = driver_draw;
     rendering.Bind();
     CheckInstancedDraws();
+    CheckRemapPixels();
     rendering.Release();
 }
 } // namespace
