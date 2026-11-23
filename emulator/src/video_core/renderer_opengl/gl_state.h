@@ -26,6 +26,7 @@ constexpr TextureUnit TextureCube{6};
 constexpr TextureUnit TextureBufferLUT_LF{3};
 constexpr TextureUnit TextureBufferLUT_RG{4};
 constexpr TextureUnit TextureBufferLUT_RGBA{5};
+constexpr TextureUnit FogLUT{10};
 
 } // namespace TextureUnits
 
@@ -112,6 +113,8 @@ public:
     struct {
         GLuint texture_buffer; // GL_TEXTURE_BINDING_BUFFER
     } texture_buffer_lut_rgba;
+
+    GLuint fog_lut_texture = 0;
 
     // GL_IMAGE_BINDING_NAME
     GLuint image_shadow_buffer;

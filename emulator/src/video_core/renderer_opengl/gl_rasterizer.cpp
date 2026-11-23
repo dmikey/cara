@@ -272,6 +272,12 @@ RasterizerOpenGL::RasterizerOpenGL()
     texture_buffer_lut_lf.Create();
     texture_buffer_lut_rg.Create();
     texture_buffer_lut_rgba.Create();
+#ifdef CARA_ANDROID_GLES_ATLAS
+    if (UseSeparateFogLUT()) {
+        texture_fog_lut.Create();
+        state.fog_lut_texture = texture_fog_lut.handle;
+    }
+#endif
     state.texture_buffer_lut_lf.texture_buffer = texture_buffer_lut_lf.handle;
     state.texture_buffer_lut_rg.texture_buffer = texture_buffer_lut_rg.handle;
     state.texture_buffer_lut_rgba.texture_buffer = texture_buffer_lut_rgba.handle;
@@ -373,6 +379,13 @@ RasterizerOpenGL::RasterizerOpenGL()
 #endif
         glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, texture_buffer.GetHandle());
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+    if (UseSeparateFogLUT()) {
+        glActiveTexture(TextureUnits::FogLUT.Enum());
+        AllocateIOSLUT(GL_RG32F, fog_lut_data.size() * sizeof(GLvec2));
+    }
+#endif
+
     // restore
     state.texture_units[0].texture_2d = 0;
     // Bind index buffer for hardware shader path
@@ -409,6 +422,8 @@ RasterizerOpenGL::RasterizerOpenGL()
 
 RasterizerOpenGL::~RasterizerOpenGL() {
 #ifdef CARA_ANDROID_GLES_ATLAS
+    if (texture_fog_lut.handle)
+        OpenGLState::ResetTexture(texture_fog_lut.handle);
     ClearDrawFramebufferCache();
 #endif
 }
@@ -4025,18 +4040,23 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
 
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::LightingFogLUT,
                                       Common::FrameTiming::RenderBookkeepingProfileEnabled());
-    u8* buffer;
-    GLintptr offset;
-    bool invalidate;
+    const bool separate_fog = UseSeparateFogLUT();
+    const bool use_lighting_ring = !separate_fog || uniform_block_data.lighting_lut_dirty_any;
+    u8* buffer = nullptr;
+    GLintptr offset = 0;
+    bool invalidate = false;
     std::size_t bytes_used = 0;
+    if (use_lighting_ring) {
 #ifdef CARA_IOS_GLES
-    if (!UseNativeLUTBuffers()) {
-        std::tie(buffer, offset, invalidate) = texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
-    } else
+        if (!UseNativeLUTBuffers()) {
+            std::tie(buffer, offset, invalidate) =
+                texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
+        } else
 #endif
-    {
-        glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_lf_buffer.GetHandle());
-        std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
+        {
+            glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_lf_buffer.GetHandle());
+            std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
+        }
     }
 
     // Sync the lighting luts
@@ -4068,8 +4088,9 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         uniform_block_data.lighting_lut_dirty_any = false;
     }
 
-    // Sync the fog lut
-    if (uniform_block_data.fog_lut_dirty || invalidate) {
+    // The dedicated fog texture outlives lighting-ring wraps.
+    const bool invalidate_fog = invalidate && !separate_fog;
+    if (uniform_block_data.fog_lut_dirty || invalidate_fog) {
         bool is_changed = false;
         for (std::size_t i = 0; i < fog_lut_data.size(); ++i) {
             const auto& entry = Pica::g_state.fog.lut[i];
@@ -4080,16 +4101,27 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                 is_changed = true;
             }
         }
-        if (is_changed || invalidate || uniform_block_data.data.fog_lut_offset < 0) {
-            std::memcpy(buffer + bytes_used, fog_lut_data.data(),
-                        fog_lut_data.size() * sizeof(GLvec2));
-            uniform_block_data.data.fog_lut_offset = (offset + bytes_used) / sizeof(GLvec2);
-            uniform_block_data.dirty = true;
-            bytes_used += fog_lut_data.size() * sizeof(GLvec2);
+        if (is_changed || invalidate_fog || uniform_block_data.data.fog_lut_offset < 0) {
+            const auto fog_size = fog_lut_data.size() * sizeof(GLvec2);
+#ifdef CARA_ANDROID_GLES_ATLAS
+            if (separate_fog) {
+                UploadIOSLUT(texture_fog_lut.handle, TextureUnits::FogLUT.id, GL_RG, 0,
+                             reinterpret_cast<const u8*>(fog_lut_data.data()), fog_size);
+                uniform_block_data.data.fog_lut_offset = 0;
+            } else
+#endif
+            {
+                std::memcpy(buffer + bytes_used, fog_lut_data.data(), fog_size);
+                uniform_block_data.data.fog_lut_offset = (offset + bytes_used) / sizeof(GLvec2);
+                uniform_block_data.dirty = true;
+                bytes_used += fog_size;
+            }
         }
         uniform_block_data.fog_lut_dirty = false;
     }
 
+    if (!use_lighting_ring)
+        return;
 #ifdef CARA_IOS_GLES
     if (!UseNativeLUTBuffers()) {
         UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
