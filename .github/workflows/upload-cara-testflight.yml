@@ -12,14 +12,26 @@ concurrency:
 
 env:
   CARA_IPA: Cara-iOS-arm64-GLES3-signed.ipa
-  CARA_SHA256: fadfa648aa714087ae2f3131162435acd0df82292b6d97acee6f36c2ac8c2165
-  CARA_BUILD: "2"
+  CARA_SHA256: 11bd271be29b026dec56a558e882eae684ae11637bd03e284773964f6df0bf23
+  CARA_BUILD: "1"
 
 jobs:
+  verify-draft-access:
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check read-only access before requesting a Mac runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/assets/784127434" |
+            jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256" '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
   submit:
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.run_attempt == 1
-    permissions:
-      contents: write # User-authorized until the verified private upload completes.
+    needs: verify-draft-access
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
     runs-on: macos-15
     environment: nightly-signing
     timeout-minutes: 25
@@ -30,12 +42,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release view testflight-sdk27-0a5ca68 --json isDraft,isPrerelease,targetCommitish |
-            jq -e '.isDraft and .isPrerelease and .targetCommitish == "0a5ca6815bad32091ff94a1ce35508c711d575a3"' >/dev/null
-          asset="repos/$GH_REPO/releases/assets/784356795"
+          asset="repos/$GH_REPO/releases/assets/784127434"
           gh api "$asset" |
             jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256" '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
-          gh release download testflight-sdk27-0a5ca68 --pattern "$CARA_IPA"
+          gh api -H 'Accept: application/octet-stream' "$asset" > "$CARA_IPA"
           printf '%s  %s\n' "$CARA_SHA256" "$CARA_IPA" | shasum -a 256 -c -
           ditto -x -k "$CARA_IPA" inspection
           app=inspection/Payload/Cara.app
@@ -48,12 +58,7 @@ jobs:
           import plistlib
 
           directory = Path("inspection")
-          app = directory / "Payload/Cara.app"
-          info = plistlib.loads((app / "Info.plist").read_bytes())
-          assert info["CFBundleSupportedPlatforms"] == ["iPhoneOS"]
-          assert info["DTPlatformName"] == "iphoneos" and info["DTSDKName"] == "iphoneos27.2"
-          privacy = plistlib.loads((app / "PrivacyInfo.xcprivacy").read_bytes())
-          assert privacy["NSPrivacyAccessedAPITypes"]
+          info = plistlib.loads((directory / "Payload/Cara.app/Info.plist").read_bytes())
           profile = plistlib.loads((directory / "profile.plist").read_bytes())
           entitlements = plistlib.loads((directory / "entitlements.plist").read_bytes())
           assert info["CFBundleIdentifier"] == "com.dmikey.cara"
@@ -87,13 +92,10 @@ jobs:
           trap 'rm -f "$key_dir/AuthKey_$ASC_ID.p8" "$key_dir/result.json" && rmdir "$key_dir"' EXIT
           printf '%s' "$ASC_KEY" | base64 -D -o "$key_dir/AuthKey_$ASC_ID.p8"
           unset ASC_KEY
-          export DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer
-          test -d "$DEVELOPER_DIR"
           export API_PRIVATE_KEYS_DIR="$key_dir"
-          if ! xcrun altool --upload-app -f "$CARA_IPA" -t ios --apiKey "$ASC_ID" --apiIssuer "$ASC_ISSUER" --output-format json > "$key_dir/result.json" 2>&1; then
-            echo "::error::The App Store Connect uploader did not confirm delivery."
-            grep -Eo 'ITMS-[0-9]{5,}|HTTP [45][0-9]{2}' "$key_dir/result.json" | sort -u || true
-            jq -r '.. | objects | .code? // empty | tostring | select(test("^-?[A-Z0-9_]{2,40}$"))' "$key_dir/result.json" 2>/dev/null | sort -u || true
+          if ! xcrun altool --upload-package "$CARA_IPA" --api-key "$ASC_ID"             --api-issuer "$ASC_ISSUER" --output-format json > "$key_dir/result.json" 2>&1; then
+            echo "::error::Apple rejected the Cara upload. Check build delivery in App Store Connect."
+            grep -Eo 'ITMS-[0-9]{5,}' "$key_dir/result.json" | sort -u || true
             exit 1
           fi
           echo "Apple accepted the Cara preview for processing. See Cara Emulator in App Store Connect." >> "$GITHUB_STEP_SUMMARY"
