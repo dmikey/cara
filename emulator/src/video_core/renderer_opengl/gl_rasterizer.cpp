@@ -64,6 +64,7 @@
 
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
 #include "video_core/renderer_opengl/gl_draw_batch_trace.h"
+#include "cara/pica_repeat_instances.h"
 #endif
 
 namespace OpenGL {
@@ -891,6 +892,13 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
         }
     }
     ranges.SortAndMerge();
+#ifdef CARA_ANDROID_GLES_ATLAS
+    if (auto* pair = Cara::RepeatInstances::pending) {
+        const u64 ix = base + pipeline.index_array.offset;
+        pair->Read({ix, ix + u64(pipeline.num_vertices) * (pipeline.index_array.format ? 2 : 1)});
+        for (const auto& range : ranges) pair->Read({range.begin, range.end});
+    }
+#endif
     size_t bytes=sizeof(constants);
     for (auto& range:ranges) {
         bytes=(bytes+3)&~size_t(3); range.destination=bytes; bytes+=range.end-range.begin;
@@ -1762,6 +1770,11 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                input_indices.size()*sizeof(u16), element_indices.data(), element_bytes);
     };
 #endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+    auto* instance_pair = Cara::RepeatInstances::pending;
+    const bool instance = instance_pair && instance_pair->allowed && !ios_feedback_vertex_reuse &&
+                          !state.draw.program_pipeline && !native_borrow_lease && !runtime_tev_words;
+#endif
     if (ShaderProgramManager::VertexProvenanceEnabled())
         shader_program_manager->ObserveBoundVertexProgram(state.draw.shader_program,
             ios_lit_pair_vertex_reuse?6u:ios_feedback_vertex_reuse?5u:ios_direct_vertex_reuse?3u:ios_indexed_vertex_inputs);
@@ -1782,6 +1795,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                                       state.draw.shader_program);
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
                         trace_batch(mode, count);
+#endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+                        if (instance) {
+                            glDrawElementsInstanced(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr, 2);
+                            instance_pair->issued = true;
+                        } else
 #endif
                         glDrawElements(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr);
                     }
@@ -1809,6 +1828,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                               state.draw.shader_program);
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
                 trace_batch(GL_TRIANGLES, triangles.size());
+#endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+                if (instance) {
+                    glDrawArraysInstanced(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()), 2);
+                    instance_pair->issued = true;
+                } else
 #endif
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
             }
@@ -2500,12 +2525,33 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     }
 #endif
     // Sync and bind the texture surfaces
+#ifdef CARA_ANDROID_GLES_ATLAS
+    auto* pair = Cara::RepeatInstances::pending;
+    auto disjoint_output = [&](Cara::RepeatInstances::Range range) {
+        const auto clear = [&](const Surface& out) {
+            return !out || (out->addr < out->end && !range.Intersects({out->addr,out->end}));
+        };
+        return range.Valid() && clear(color_surface) && clear(depth_surface);
+    };
+    if (pair) {
+        pair->allowed = pair->allowed && is_mali_gpu && accelerate && !shadow_rendering &&
+            !native_plan && ios_indexed_vertex_inputs == 2 && pair->count != 0 &&
+            (!color_surface || pair->Independent({color_surface->addr,color_surface->end})) &&
+            (!depth_surface || pair->Independent({depth_surface->addr,depth_surface->end}));
+    }
+#endif
     const auto pica_textures = regs.texturing.GetTextures();
     {
     Common::FrameTiming::Scope lookup(Common::FrameTiming::Phase::DrawTextureAcquire,
                                      Common::FrameTiming::RenderBookkeepingProfileEnabled());
     for (unsigned texture_index = 0; texture_index < pica_textures.size(); ++texture_index) {
         const auto& texture = pica_textures[texture_index];
+#ifdef CARA_ANDROID_GLES_ATLAS
+        if (pair && pair->allowed && texture.enabled &&
+            ((texture_index == 0 && texture.config.type != Pica::TexturingRegs::TextureConfig::Texture2D) ||
+             texture.config.lod.max_level != 0))
+            pair->allowed = false;
+#endif
 
         if (texture.enabled) {
             if (texture_index == 0) {
@@ -2601,6 +2647,13 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             }
 #endif
             surface = res_cache.GetTextureSurface(texture);
+#ifdef CARA_ANDROID_GLES_ATLAS
+            if (pair && pair->allowed && (!surface ||
+                !disjoint_output({surface->addr, surface->end}) ||
+                (color_surface && color_surface->texture.handle == surface->texture.handle) ||
+                (depth_surface && depth_surface->texture.handle == surface->texture.handle)))
+                pair->allowed = false;
+#endif
             if (surface) {
                 if (surface->texture.handle == color_attachment) {
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)

@@ -212,6 +212,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> reuse_layout{{"Debug", "packed_layout_uniform_reuse"}, false};
     const Config::ConfigInfo<bool> batch_trace{{"Debug", "trace_draw_batches"}, false};
     setenv("CARA_TRACE_DRAW_BATCHES", Config::Get(batch_trace) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> repeat_instances{{"Debug", "probe_repeat_instances"}, false};
+    setenv("CARA_REPEAT_INSTANCES", Config::Get(repeat_instances) ? "1" : "0", 1);
     const bool retain_uploads = Config::Get(resident_uploads);
     setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
     setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", retain_uploads ? "1" : "0", 1);
@@ -466,11 +468,11 @@ void BootGame(const std::string& path) {
                                 phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
                             if (trace_render_phases) {
                                 const auto staging = fmt::format(
-                                    "staging end={} guest_index_compare_span_bytes={} "
+                                    "staging end={} repeat_candidates={} repeat_issued={} guest_index_compare_span_bytes={} "
                                     "guest_vertex_copy_bytes={} constants_bytes={} resize_zero_bytes={} "
                                     "clear_bytes={} leased_bytes={} feedback_copies={} feedback_bytes={} "
                                     "feedback_ms={:.2f}",
-                                    frame, phases.vertex_index_compare_span_bytes,
+                                    frame, phases.repeat_candidates, phases.repeat_issued, phases.vertex_index_compare_span_bytes,
                                     phases.packed_vertices_guest_copy_bytes,
                                     phases.packed_vertices_constant_copy_bytes,
                                     phases.packed_vertices_resize_zero_bytes,

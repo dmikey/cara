@@ -30,6 +30,8 @@ struct Counters {
     bool enabled = false;
     // Requests, not unique frames: repeated command lists/draws/swaps count again.
     std::uint64_t pica_batch_irqs = 0;
+    std::uint64_t repeat_candidates = 0;
+    std::uint64_t repeat_issued = 0;
     std::uint64_t pica_command_lists = 0;
     std::uint64_t pica_shader_stream_packets = 0;
     std::uint64_t pica_shader_stream_words = 0;
