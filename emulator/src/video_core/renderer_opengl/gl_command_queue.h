@@ -8,6 +8,9 @@
 #include <vector>
 #include <glad/glad.h>
 #include "gl_command_queue_api.h"
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "gl_driver_transactions.h"
+#endif
 #include "gl_transaction_attribution.h"
 #include "common/host_render_queue.h"
 namespace Common { class HostRenderQueue; }
@@ -38,6 +41,10 @@ UncheckedBlitProducerStats GetUncheckedBlitProducerStats();
 bool NativeMapUploadRequested();
 bool NativeMapUploadActive();
 Common::HostRenderQueue* Queue();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+void QueueLUT(DriverTransactions::LUTBody body, GLuint texture, unsigned unit, GLenum format,
+              std::size_t offset, const std::uint8_t* data, std::size_t bytes);
+#endif
 void Flush();
 void Drain();
 void SubmitHost(std::function<void()> job,std::size_t bytes=0);

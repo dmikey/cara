@@ -451,7 +451,7 @@ void BootGame(const std::string& path) {
                                 };
                                 __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
                                     "ordered_gles end=%u worker_cpu_ns=%llu commands=%llu batches=%llu "
-                                    "sync=%llu uniform_location=%llu map=%llu unmap=%llu create_program=%llu create_shader=%llu",
+                                    "sync=%llu uniform_location=%llu map=%llu unmap=%llu create_program=%llu create_shader=%llu get_integer=%llu lut_jobs=%llu",
                                     static_cast<unsigned>(frame),
                                     static_cast<unsigned long long>(ReadWorkerCPUForProfile()),
                                     static_cast<unsigned long long>(q.recorded_commands),
@@ -459,7 +459,8 @@ void BootGame(const std::string& path) {
                                     static_cast<unsigned long long>(q.synchronous_calls),
                                     rpc(RpcApi::api_glGetUniformLocation), rpc(RpcApi::api_glMapBufferRange),
                                     rpc(RpcApi::api_glUnmapBuffer), rpc(RpcApi::api_glCreateProgram),
-                                    rpc(RpcApi::api_glCreateShader));
+                                    rpc(RpcApi::api_glCreateShader), rpc(RpcApi::api_glGetIntegerv),
+                                    static_cast<unsigned long long>(q.transaction_lut_calls));
                             }
 #endif
                             const auto reuse = fmt::format(

@@ -1,5 +1,8 @@
 #include "common/frame_timing.h"
 #include "video_core/renderer_opengl/gl_driver_transactions.h"
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #ifdef CARA_IOS_GLES
@@ -36,6 +39,16 @@ void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
 }
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes) {
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    if (CommandQueue::Enabled() && !DriverTransactions::Executing()) {
+        // Capture once. All seven unpack/binding queries, uploads and restoration
+        // execute on the same owner as the preceding and following draws.
+        if (Common::FrameTiming::counters.enabled)
+            Common::FrameTiming::counters.lut_texture_bytes += bytes;
+        CommandQueue::QueueLUT(&UploadIOSLUT, texture, unit, format, offset, data, bytes);
+        return;
+    }
+#endif
     if (const auto* bridge=DriverTransactions::Pending()) {
         bridge->lut(&UploadIOSLUT,texture,unit,format,offset,data,bytes);return;
     }

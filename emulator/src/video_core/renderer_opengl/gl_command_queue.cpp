@@ -284,7 +284,15 @@ void TransactionLUT(DriverTransactions::LUTBody body,std::uint32_t texture,unsig
  if((format!=GL_RG&&format!=GL_RGBA)||!data||offset%stride||bytes%stride)
    throw std::invalid_argument("Invalid CPU LUT upload span");
  if(bytes>MaxBatchBytes-sizeof(std::function<void()>)) {
-   TransactionVoid(DriverTransactions::Kind::LUT,[&]{body(texture,unit,format,offset,data,bytes);});return;
+#ifdef CARA_GL_CONTEXT_DISPATCH
+   Sync([&] {
+     DriverTransactions::ExecutionScope executing;
+     body(texture, unit, format, offset, data, bytes);
+   }, true);
+#else
+   TransactionVoid(DriverTransactions::Kind::LUT,[&]{body(texture,unit,format,offset,data,bytes);});
+#endif
+   return;
  }
  OwnedCopyScope reservation;auto owned=Copy(data,bytes);const auto charge=owned.capacity();
  Record([=,owned=std::move(owned)]{DriverTransactions::ExecutionScope token;
@@ -359,6 +367,12 @@ void Install(Common::HostRenderQueue& queue) {
      UncheckedBlitProducerRequested()?&UncheckedBlitProducerGate:nullptr,std::memory_order_release);
 #endif
 }
+#ifdef CARA_GL_CONTEXT_DISPATCH
+void QueueLUT(DriverTransactions::LUTBody body, GLuint texture, unsigned unit, GLenum format,
+              std::size_t offset, const std::uint8_t* data, std::size_t bytes) {
+    TransactionLUT(body, texture, unit, format, offset, data, bytes);
+}
+#endif
 void Flush() {
  auto* active=owner.load();if(!active)return;auto& q=*active;if(q.IsWorkerThread())throw std::logic_error("GL Flush requires producer");Producer();if(pending.empty())return;
  struct Batch {
