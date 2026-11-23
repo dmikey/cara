@@ -11,14 +11,26 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  CARA_TAG: testflight-preview-9a99f46
-  CARA_REVISION: 9a99f46d1706e84013d14b3abe44546d2f8641d0
   CARA_IPA: Cara-iOS-arm64-GLES3-signed.ipa
   CARA_SHA256: 11bd271be29b026dec56a558e882eae684ae11637bd03e284773964f6df0bf23
   CARA_BUILD: "1"
 
 jobs:
+  verify-draft-access:
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check read-only access before requesting a Mac runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/assets/784127434" |
+            jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256" '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
   submit:
+    needs: verify-draft-access
     if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
     runs-on: macos-15
     environment: nightly-signing
@@ -32,7 +44,7 @@ jobs:
           set -euo pipefail
           asset="repos/$GH_REPO/releases/assets/784127434"
           gh api "$asset" |
-            jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256"               '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
+            jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256" '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
           gh api -H 'Accept: application/octet-stream' "$asset" > "$CARA_IPA"
           printf '%s  %s\n' "$CARA_SHA256" "$CARA_IPA" | shasum -a 256 -c -
           ditto -x -k "$CARA_IPA" inspection
