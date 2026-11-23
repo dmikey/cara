@@ -216,6 +216,9 @@ void BootGame(const std::string& path) {
     setenv("CARA_VERTEX_INDEX_CACHE", Config::Get(prepared_indices) ? "1" : "0", 1);
     setenv("CARA_VERTEX_INDEX_IDENTITY_REUSE", Config::Get(index_identity) ? "1" : "0", 1);
     setenv("CARA_PACKED_PADDING_ONLY_ZERO", Config::Get(clear_padding_only) ? "1" : "0", 1);
+    // Isolated benchmark APK. Compare against the same branch base on the slide.
+    setenv("CARA_PACKED_SNAPSHOT_LEASE", "1", 1);
+    setenv("CARA_VERTEX_UPLOAD_SELF_EQUAL", "1", 1);
     const char* indexed_draws_value = Config::Get(indexed_draws) ? "1" : "0";
     setenv("CARA_GPU_VERTEX_REUSE", indexed_draws_value, 1);
     setenv("CARA_GPU_LIT_PAIR_REUSE", indexed_draws_value, 1);
