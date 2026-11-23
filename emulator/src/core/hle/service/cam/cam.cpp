@@ -26,6 +26,18 @@ SERVICE_CONSTRUCT_IMPL(Service::CAM::Module)
 namespace Service::CAM {
 
 template <class Archive>
+void Module::CameraConfig::serialize(Archive& ar, const unsigned int file_version) {
+    // Save states at version zero include a null camera implementation.
+    if (file_version == 0) {
+        std::unique_ptr<Camera::CameraInterface> legacy_camera;
+        ar& legacy_camera;
+    }
+    ar& contexts;
+    ar& current_context;
+    ar& frame_rate;
+}
+
+template <class Archive>
 void Module::serialize(Archive& ar, const unsigned int) {
     ar& cameras;
     ar& ports;
