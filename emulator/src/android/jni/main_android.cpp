@@ -284,8 +284,13 @@ void BootGame(const std::string& path) {
         if (const char* debug = std::getenv("CARA_GLES_DEBUG"); debug && std::strcmp(debug, "1") == 0) {
             __android_log_print(ANDROID_LOG_WARN, "CaraPerf", "ordered_gles disabled while debug callback is active");
         } else {
-            __android_log_print(ANDROID_LOG_INFO, "CaraPerf", "ordered_gles active=%d",
-                                s_render_window->StartSubmissionWorker());
+            const bool active = s_render_window->StartSubmissionWorker();
+            __android_log_print(ANDROID_LOG_INFO, "CaraPerf", "ordered_gles active=%d", active);
+            if (!active && !s_render_window->HasCoreContext()) {
+                NativeLibrary::ShowMessageDialog(0, "The OpenGL ES context was lost during startup.");
+                s_render_window.reset();
+                return;
+            }
         }
     }
 #endif

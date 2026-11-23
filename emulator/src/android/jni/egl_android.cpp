@@ -49,6 +49,8 @@ public:
         }
     }
 
+    bool IsCurrent() const { return eglGetCurrentContext() == egl_context; }
+
     bool MakeCurrent() {
         return eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
     }
@@ -198,21 +200,40 @@ bool EGLAndroid::StartSubmissionWorker() {
         return true;
     } catch (const std::exception& error) {
         LOG_ERROR(Frontend, "Submission worker startup failed: {}", error.what());
-        submission.reset();
-        if (!core_context->MakeCurrent())
-            throw std::runtime_error("Failed to restore core EGL context");
+        if (submission)
+            StopSubmissionWorker();
+        else if (!core_context->MakeCurrent())
+            LOG_ERROR(Frontend, "Core EGL context unavailable after failed worker startup");
         return false;
     }
 }
 
-void EGLAndroid::StopSubmissionWorker() {
-    if (submission) {
-        OpenGL::CommandQueue::Uninstall();
-        submission->Stop();
-        submission.reset();
-        if (!core_context->MakeCurrent())
-            throw std::runtime_error("Failed to restore core EGL context");
+bool EGLAndroid::HasCoreContext() const {
+    return core_context ? core_context->IsCurrent() : eglGetCurrentContext() == egl_context;
+}
+
+bool EGLAndroid::StopSubmissionWorker() noexcept {
+    if (!submission)
+        return true;
+    bool clean = true;
+    try {
+        if (OpenGL::CommandQueue::Queue() == submission.get())
+            OpenGL::CommandQueue::Uninstall();
+    } catch (...) {
+        clean = false;
     }
+    // Stop joins even if the queue is poisoned. Uninstall restores dispatch on failure.
+    try {
+        submission->Stop();
+    } catch (...) {
+        clean = false;
+    }
+    submission.reset();
+    if (!core_context->MakeCurrent())
+        clean = false;
+    if (!clean)
+        LOG_ERROR(Frontend, "GLES worker stopped after queue or EGL context loss");
+    return clean;
 }
 #endif
 

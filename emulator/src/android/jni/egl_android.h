@@ -23,7 +23,8 @@ public:
     bool Initialize(ANativeWindow* surface);
 #ifdef CARA_GL_CONTEXT_DISPATCH
     bool StartSubmissionWorker();
-    void StopSubmissionWorker();
+    bool StopSubmissionWorker() noexcept;
+    bool HasCoreContext() const;
 #endif
     void UpdateSurface(ANativeWindow* surface);
     void UpdateWindow();
