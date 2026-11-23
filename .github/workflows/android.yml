@@ -37,6 +37,7 @@ jobs:
           cat > "$RUNNER_TEMP/rg-slide-release.init.gradle" <<'GRADLE'
           gradle.beforeProject { project ->
               project.pluginManager.withPlugin('com.android.application') {
+                  project.android.buildTypes.named('release') { debuggable = true }
                   project.dependencies.add('releaseImplementation', 'com.google.errorprone:error_prone_annotations:2.40.0')
               }
           }
@@ -54,6 +55,6 @@ jobs:
           cp "$build_tools/lib/apksigner.jar" "$RUNNER_TEMP/rg-slide/"
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-rg-slide-main-apk
+          name: cara-rg-slide-migration-apk
           path: ${{ runner.temp }}/rg-slide/*
           if-no-files-found: error
