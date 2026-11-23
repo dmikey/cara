@@ -46,8 +46,32 @@ up to 256 pairs and 64 MiB. The existing archive defaults remain
 128 pairs and 32 MiB. Both modes check shader/driver identity, source and
 binary size, and the checksum before submitting saved binaries to GLES.
 Use `trace_gl_shader_census` to record the restore count and binary hits.
-Compare a late lab checkpoint beyond the first 128 programs, and check
-checkpoint cost, title startup and shader-related p99 before promotion.
+On the same `c91c256` APK, a cold normal boot populated a 46.97 MiB
+archive. The warm restart restored 197 of 197 programs as driver binaries
+with zero source links during restore. The title arrived in 21.34 s on
+restart, down from 103.00 s cold. There was zero timed compile/link work
+in the warm windows below.
+
+| 120-refresh window end | Cold p99 | Cold worst | Warm p99 | Warm worst |
+| --- | ---: | ---: | ---: | ---: |
+| 2401, lab entry | 167.45 ms | 40.78 s | 76.56 ms | 114.70 ms |
+| 2521, lab entry | 88.30 ms | 30.69 s | 45.71 ms | 90.15 ms |
+| 4321, late transition | 46.26 ms | 24.03 s | 37.35 ms | 37.46 ms |
+| 4441, late lab | 52.00 ms | 246.16 ms | 41.36 ms | 47.85 ms |
+| 4561, late lab | 39.99 ms | 40.63 ms | 39.47 ms | 41.26 ms |
+
+These are windows from normal boots aligned by refresh count. Guest draw
+counts vary across cold and warm, especially around the transitions.
+The warm late-lab window medians were 36.08 and 36.66 ms. This test
+establishes that the larger cache can restore more than 128 entries and
+that a fully seeded restart avoids the observed compilation bursts. The
+128-entry configuration was verified on an earlier build through early
+Gadd, so this comparison does not isolate the effect of the larger limit
+on the late transition. The larger limit remains opt-in pending a
+same-build 128-versus-256 comparison with matched late coverage.
+The original app and checked profile files were restored.
+
+[Exact Android archive APK](https://github.com/dmikey/cara/actions/runs/45211463641)
 
 ## Linked-program validation on the release APK
 
@@ -121,12 +145,38 @@ downloads from the relevant Slide traces. Warm Gadd measurements show
 zero timed downloads. Removing more CPU work there needs a different
 target.
 
-One default differs. Android EGL requests VS uniform reuse, but JNI
-then applies `atlas_reuse_vs_uniforms` with a false default. iPad enables
-the same path by default. An earlier Android run combined it with raster
-state reuse and did not establish a warm Gadd speedup. An isolated test
-can measure its emulation-thread and upload cost directly. The
-quaternion-only reference slice is present in the shared GLSL generator,
-and the current Android settings do not expose it. Earlier device tests
-showed a small isolated effect. Used-input pruning reduced logical
-register counts on iPad while leaving staged bytes and CPU time similar.
+Android EGL supplies a default for VS uniform reuse, and the Atlas JNI
+setting `atlas_reuse_vs_uniforms` overrides it to false. iPad enables the
+same path by default. Isolated reuse reduced matched M4 iPad Stories
+refresh times from about 27.4 ms to 25.1–25.3 ms. The Slide Dark Moon
+comparison used the same `7a0d1bc` APK and exact warm seed in both arms, at
+JIT + GLES Atlas, 1×, Performance Mode and CLK 100%.
+
+| Warm Gadd, four 120-refresh windows | Default | VS uniform reuse |
+| --- | ---: | ---: |
+| Mean uniform region per refresh | 1.290 ms | 0.905 ms |
+| Mean GPU-command CPU category per refresh | 19.337 ms | 18.507 ms |
+| Window median range | 28.30–29.65 ms | 28.88–29.51 ms |
+| Window p99 range | 34.61–49.87 ms | 35.66–49.38 ms |
+| Worst refresh | 50.95 ms | 69.51 ms |
+
+Title time was 21.01 s with the default and 21.13 s with reuse. The
+measured title uniform region also dropped, from 1.293 to 0.884 ms per
+refresh. The lab arms processed 169,266 and 168,916 draws respectively.
+The instrumented uniform region improved in both scenes. This single
+pair gives no reason to change the Android default on frame time alone.
+The original APK and profile were restored and the checked files matched.
+
+The quaternion-only reference slice is present in the shared GLSL
+generator, and the current Android settings do not expose it. Earlier
+device tests showed a small isolated effect. Used-input pruning reduced
+logical register counts on iPad while leaving staged bytes and CPU time
+similar. Apple raster-state reuse is also opt-in on Android. The earlier
+combined raster and uniform reuse probe did not establish a lab gain.
+
+The title and fog traces give a way to test destination-resource
+lifetime separately. The title loses 17–18 ms per refresh
+inside the LUT upload call, while the lab-entry burst loses 4.49–7.05 ms
+and warm lab LUT traffic drops to zero. An isolated fog destination
+rotation should retain the existing lighting path and measure stalls
+around the exact same guest writes. See [phase results](lit-index-followup.md#lighting-and-fog-transfer-result).

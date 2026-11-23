@@ -1,13 +1,13 @@
 # RG Slide Mali performance handoff
 
-This branch preserves the measured Android GLES Atlas stack and shared
-fragment generator changes. The latest tested source was `53770ae`.
-Base for the current Android results was `120623b`. GitHub main was
-`9a99f46` when this handoff was written. Integrate main as a separate
-step and re-establish the benchmark baseline after integration.
+This handoff covers the measured Android GLES Atlas stack and shared
+fragment generator changes. Re-establish the benchmark baseline when
+integrating changes from main.
 
 - [Renderer and profiling options](../rg-slide-rendering.md)
-- [Cold and warm shader results, with trace data](shader-census.md)
+- [Cold and warm shader census and trace data](shader-census.md)
+- [GLES validation, Apple parity audit and separate-stage measurements](gles-validation.md)
+- [Active lit indexing and fog transfer measurements](lit-index-followup.md)
 - [Android ARM64 build at 53770ae](https://github.com/dmikey/cara/actions/runs/45142152732)
 
 The trace files record experiment markers, GLES shader events, and 120-refresh
@@ -30,12 +30,11 @@ warm control HUD showed 27 guest FPS at 58% SPD. The target is 100% SPD,
 roughly a 16.7 ms system-refresh budget, and a smooth game-specific
 output cadence. Guest FPS and system refreshes are separate measurements.
 
-1. Trace each rejection reason for lit indexed draws. The measured unlit
-   indexed path cut Mali position requests per 1,000 primitives by 28% and
-   tiler-active cycles per input primitive by about 30%. The earlier
-   measured lit route accepted zero draws. Test the opt-in
-   `atlas_lit_indexed_lists` route with `atlas_indexed_draws`, keep triangle
-   order and the quaternion reference vertex, and compare pixels and depth.
+1. The unlit indexed path cut Mali position requests per 1,000 primitives
+   by 28% and tiler-active cycles per input primitive by about 30%. The
+   active lit Shader-topology probe also reduced position requests, with
+   higher emulation-thread CPU time and no established frame-time gain.
+   Keep that probe opt-in and verify color and depth if revisiting it.
 2. Profile live guest index validation in `PrepareIOSVertices`. Prove
    invalidation across direct JIT writes, DMA/transfers, aliasing, and state
    restore before relying on guest-memory generations in place of byte
@@ -57,9 +56,10 @@ single shared EGL worker builds only optional indexed variants. A pixel-
 and depth-correct lit fallback for regular draws remains open. Reuse
 the shared stage cache, fragment generator, and worker. Verify actual
 overlap on Mali before expanding the worker count, and compare cold and
-warm output and timings. The separable shader probe reached GLSL errors
-before the title, and unused TEV operands did not change any of the 95
-matched Dark Moon shader keys. Do not count either as a measured speedup.
+warm output and timings. The corrected opt-in GLES 3.2 separate-stage
+path reached the title and lab and reduced the measured cold stalls.
+Vertex-stage link accounts for most remaining stage cost. Unused TEV
+operands did not affect any of the 95 matched Dark Moon shader keys.
 
 Both prototypes and the shader census remain opt-in where applicable.
 Keep Apple and Android using the same semantics in the shared renderer.

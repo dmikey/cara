@@ -127,5 +127,6 @@ Android's existing `shader_type=2` option failed on the RG Slide before
 the title. The GLES 3.2 driver rejected a desktop ARB extension directive,
 an interface block qualifier, and an interface layout qualifier. The
 probe was stopped after the shader failures, with the original app and
-profile restored. Separable program linking remains unmeasured. See
-`separable-driver-errors.txt`.
+profile restored. See `separable-driver-errors.txt` for the original probe
+and [the later GLES 3.2 stage measurements](gles-validation.md#first-mali-stage-measurements)
+for the corrected implementation.
