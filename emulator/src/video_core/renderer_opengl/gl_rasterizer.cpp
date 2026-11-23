@@ -425,6 +425,7 @@ void RasterizerOpenGL::SyncEntireState() {
     ClearDrawFramebufferCache();
 #endif
 #ifdef CARA_IOS_GLES
+    packed_staging_bytes = 0;
     ios_packed_snapshot_lease.reset();
     if (IndexPayloadReuse::Enabled()) {
         ios_vertex_index_cache.ResetIdentities();
@@ -724,7 +725,7 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if (regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No) return reject("geometry shader");
 #ifdef CARA_IOS_GLES
     if (PackedPoolObserver::Enabled()) packed_pool_observation = {};
-    SCOPE_EXIT({ ios_packed_snapshot_lease.reset(); if (PackedPoolObserver::Enabled()) FinishPackedPoolObservation(); });
+    SCOPE_EXIT({ packed_staging_bytes = 0; ios_packed_snapshot_lease.reset(); if (PackedPoolObserver::Enabled()) FinishPackedPoolObservation(); });
     if (!PrepareIOSVertices(is_indexed)) return reject("vertex input preparation");
     static const bool direct_reuse=[] { const char* v=std::getenv("CARA_GPU_VERTEX_REUSE"); return v && std::strcmp(v,"1")==0; }();
     // Quaternion orientation is irrelevant only when fragment lighting is disabled.
@@ -1054,19 +1055,37 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
     const bool trace = counters.enabled && Common::FrameTiming::RenderBookkeepingProfileEnabled();
     u8* materialized = nullptr;
     if (!ios_packed_snapshot_lease) {
-        const size_t previous_size = ios_vertex_inputs.size();
-        ios_vertex_inputs.resize(rows * IOS_VERTEX_INPUT_WIDTH);
-        materialized = reinterpret_cast<u8*>(ios_vertex_inputs.data());
-        const size_t staged_bytes = ios_vertex_inputs.size() * sizeof(GLvec4);
-        const bool cleared_padding = padding_only_zero &&
+        static const bool reuse_scratch = [] {
+            const char* value = std::getenv("CARA_PACKED_STAGING_REUSE");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        const size_t texels = rows * IOS_VERTEX_INPUT_WIDTH;
+        const size_t staged_bytes = texels * sizeof(GLvec4);
+        size_t resize_zero_bytes = 0;
+        // The older snapshot observer reads the legacy vector directly.
+        const bool use_scratch = reuse_scratch && !previous_snapshot_trace;
+        if (use_scratch) {
+            if (packed_staging_capacity < staged_bytes) {
+                packed_staging = std::make_unique_for_overwrite<u8[]>(staged_bytes);
+                packed_staging_capacity = staged_bytes;
+            }
+            packed_staging_bytes = staged_bytes;
+            materialized = packed_staging.get();
+        } else {
+            if (texels > ios_vertex_inputs.size())
+                resize_zero_bytes = (texels - ios_vertex_inputs.size()) * sizeof(GLvec4);
+            ios_vertex_inputs.resize(texels);
+            materialized = reinterpret_cast<u8*>(ios_vertex_inputs.data());
+        }
+        // Prefix and merged guest spans are written below. Only gaps and row
+        // padding need zeroes. Malformed ranges retain the full-clear fallback.
+        const bool cleared_padding = (padding_only_zero || use_scratch) &&
             ranges.ClearPadding(materialized, staged_bytes, sizeof(constants));
         if (!cleared_padding)
             std::memset(materialized, 0, staged_bytes);
         std::memcpy(materialized, constants.data(), sizeof(constants));
         if (trace) {
-            if (previous_size < ios_vertex_inputs.size())
-                counters.packed_vertices_resize_zero_bytes +=
-                    (ios_vertex_inputs.size() - previous_size) * sizeof(GLvec4);
+            counters.packed_vertices_resize_zero_bytes += resize_zero_bytes;
             counters.packed_vertices_constant_copy_bytes += sizeof(constants);
             size_t clear_bytes = staged_bytes;
             if (cleared_padding) {
@@ -1139,6 +1158,7 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
 
 bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     if(NativeNearestBorrowEnabled()){++native_borrow_input_epoch;native_borrow_prepared=false;}
+    packed_staging_bytes = 0;
     ios_packed_snapshot_lease.reset();
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexPrepare);
     constexpr u32 MAX_VERTICES = IOS_MAX_EXPANDED_VERTICES;
@@ -1246,6 +1266,7 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     }
     // Packed verification/preparation may fail after capture; decoded fallback
     // must use its own newly materialized input, never the abandoned lease.
+    packed_staging_bytes = 0;
     ios_packed_snapshot_lease.reset();
     if (ios_indexed_vertex_inputs) {
         ios_vertex_source_map.BeginDraw();

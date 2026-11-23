@@ -383,13 +383,20 @@ private:
             ios_cached_index_data->packed : ios_vertex_input_indices;
     }
     std::vector<GLvec4> ios_vertex_inputs;
+    // Only a successfully materialized packed draw uses this byte span. Its
+    // allocation remains reusable between draws; the logical span may shrink.
+    std::unique_ptr<u8[]> packed_staging;
+    size_t packed_staging_capacity = 0;
+    size_t packed_staging_bytes = 0;
     // Immutable CPU snapshot only; never reserves a GPU upload-pool owner.
     std::shared_ptr<const std::vector<u8>> ios_packed_snapshot_lease;
     const u8* IOSVertexInputData() const {
+        if (packed_staging_bytes) return packed_staging.get();
         return ios_packed_snapshot_lease ? ios_packed_snapshot_lease->data() :
             reinterpret_cast<const u8*>(ios_vertex_inputs.data());
     }
     size_t IOSVertexInputBytes() const {
+        if (packed_staging_bytes) return packed_staging_bytes;
         return ios_packed_snapshot_lease ? ios_packed_snapshot_lease->size() :
             ios_vertex_inputs.size()*sizeof(GLvec4);
     }
