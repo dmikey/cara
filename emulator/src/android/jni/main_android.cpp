@@ -197,6 +197,9 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> reuse_raster_state{{"Debug", "atlas_reuse_raster_state"}, false};
     const Config::ConfigInfo<bool> defer_unused_luts{{"Debug", "atlas_defer_unused_luts"}, false};
     const Config::ConfigInfo<bool> persistent_uniforms{{"Debug", "atlas_persistent_uniforms"}, false};
+    const Config::ConfigInfo<bool> draw_fbos{{"Debug", "atlas_draw_framebuffer_cache"}, false};
+    const Config::ConfigInfo<bool> lit_lists{{"Debug", "atlas_lit_indexed_lists"}, false};
+    const Config::ConfigInfo<bool> async_stage_reuse{{"Debug", "atlas_async_stage_reuse"}, false};
     const Config::ConfigInfo<bool> reuse_layout{{"Debug", "packed_layout_uniform_reuse"}, false};
     const bool retain_uploads = Config::Get(resident_uploads);
     setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
@@ -215,6 +218,9 @@ void BootGame(const std::string& path) {
     setenv("CARA_GL_STATE_REUSE", Config::Get(reuse_raster_state) ? "1" : "0", 1);
     setenv("CARA_GLES_DEFER_UNUSED_LUTS", Config::Get(defer_unused_luts) ? "1" : "0", 1);
     setenv("CARA_GLES_PERSISTENT_UNIFORMS", Config::Get(persistent_uniforms) ? "1" : "0", 1);
+    setenv("CARA_GLES_DRAW_FRAMEBUFFER_CACHE", Config::Get(draw_fbos) ? "1" : "0", 1);
+    setenv("CARA_GPU_LIT_LISTS", Config::Get(lit_lists) ? "1" : "0", 1);
+    setenv("CARA_ANDROID_SHADER_STAGE_REUSE", Config::Get(async_stage_reuse) ? "1" : "0", 1);
     setenv("CARA_ANDROID_ASYNC_INDEXED_SHADERS",
            Config::Get(indexed_draws) && Config::Get(async_indexed) ? "1" : "0", 1);
     setenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE", Config::Get(reuse_layout) ? "1" : "0", 1);
@@ -412,7 +418,8 @@ void BootGame(const std::string& path) {
                                 "indexed_direct={} indexed_lit={} indexed_lit_vertices={} indexed_lit_ids={} indexed_fallbacks={} "
                                 "native_elements={} native_indices_saved={} runtime_tev_selections={} shader_compiles={} "
                                 "uniform_ms={:.2f} state_apply_ms={:.2f} deferred_lut_syncs={} "
-                                "persistent_uniform_writes={} persistent_uniform_waits={}",
+                                "persistent_uniform_writes={} persistent_uniform_waits={} "
+                                "draw_fbo_hits={} draw_fbo_builds={}",
                                 frame, phases.vertex_prepare_seconds * 1000, phases.draw_seconds * 1000,
                                 phases.vertex_index_cache_hits, phases.vertex_index_cache_misses,
                                 phases.vertex_index_cache_bytes, phases.vertex_upload_reused_bytes,
@@ -424,7 +431,8 @@ void BootGame(const std::string& path) {
                                 phases.runtime_tev_selections, phases.shader_compile_calls,
                                 phases.uniform_upload_seconds * 1000, phases.state_apply_seconds * 1000,
                                 phases.deferred_lighting_fog_lut_syncs, phases.persistent_uniform_writes,
-                                phases.persistent_uniform_waits);
+                                phases.persistent_uniform_waits, phases.draw_fbo_hits,
+                                phases.draw_fbo_builds);
                             if (cpu_categories) {
                                 const auto cpu = Common::CPUCategoryTiming::Snapshot();
                                 const auto report = fmt::format(

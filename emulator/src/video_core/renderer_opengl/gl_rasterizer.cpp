@@ -393,17 +393,27 @@ RasterizerOpenGL::RasterizerOpenGL()
     SyncEntireState();
 }
 
-RasterizerOpenGL::~RasterizerOpenGL() = default;
+RasterizerOpenGL::~RasterizerOpenGL() {
+#ifdef CARA_ANDROID_GLES_ATLAS
+    ClearDrawFramebufferCache();
+#endif
+}
 
 void RasterizerOpenGL::SyncEntireState() {
     FlushSoftwareBatch(SoftwareBatching::Reason::ExplicitVisibility);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    ClearDrawFramebufferCache();
+#endif
 #ifdef CARA_IOS_GLES
     ios_packed_snapshot_lease.reset();
     if (IndexPayloadReuse::Enabled()) {
         ios_vertex_index_cache.ResetIdentities();
         for (auto& bank : ios_vertex_frame_uploads)
             for (auto& pool : bank.sizes)
-                for (auto& entry : pool) entry.index_shadow.InvalidateIdentity();
+                for (auto& entry : pool) {
+                    entry.index_shadow.InvalidateIdentity();
+                    entry.elements_shadow.InvalidateIdentity();
+                }
         IndexPayloadReuse::RecordReset();
     }
 #endif
@@ -705,13 +715,21 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
         const char* value = std::getenv("CARA_GPU_LIT_PAIR_REUSE");
         return value && std::strcmp(value, "1") == 0;
     }();
+    static const bool try_more_lit_lists = [] {
+        const char* value = std::getenv("CARA_GPU_LIT_LISTS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    const bool lit_list = try_more_lit_lists &&
+        regs.pipeline.triangle_topology == Pica::PipelineRegs::TriangleTopology::List &&
+        !regs.framebuffer.IsShadowRendering();
     ios_lit_pair_vertex_reuse = lit_pair_reuse && ios_indexed_vertex_inputs == 2 &&
-        !regs.lighting.disable && !AllowShadow && !ios_direct_vertex_reuse && !ios_feedback_vertex_reuse &&
+        !regs.lighting.disable && (!AllowShadow || lit_list) &&
+        !ios_direct_vertex_reuse && !ios_feedback_vertex_reuse &&
         ios_cached_index_data && ios_cached_index_data->lit_pair_count > 0 &&
         ios_cached_index_data->lit_pair_count <= 65535 &&
         ios_cached_index_data->lit_elements.size() == IOSTriangles().size() &&
         std::uint64_t(ios_cached_index_data->pair_reuse.lru32_vs_runs) * 4 <=
-            std::uint64_t(ios_cached_index_data->pair_reuse.baseline_vs_runs) * 3;
+            std::uint64_t(ios_cached_index_data->pair_reuse.baseline_vs_runs) * (lit_list ? 4 : 3);
 #endif
     if (!SetupVertexShader()) return reject("vertex shader translation");
     if (!SetupGeometryShader()) return reject("geometry setup");
@@ -1267,13 +1285,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                                   IOSInputIndices();
     const auto& element_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_elements :
                                                             input_indices;
-    // Identity is ONLY the current immutable cached packed-index payload. It is
-    // not a guest-address, input snapshot, VS output or register-generation hint.
+    // PrepareIOSVertices already compared the live guest bytes. Reuse that
+    // verified cache identity for the second (resident upload) comparison.
+    // Each upload-bank format tracks a single representation of the entry.
     const IndexPayloadReuse::Identity current_index_identity =
         IndexPayloadReuse::Enabled() && ios_cached_index_data && ios_indexed_vertex_inputs == 2 &&
-        !ios_direct_vertex_reuse && !ios_lit_pair_vertex_reuse && !ios_feedback_vertex_reuse &&
-        input_indices.data() == ios_cached_index_data->packed.data() &&
-        input_indices.size() == ios_cached_index_data->packed.size() ?
+        !ios_feedback_vertex_reuse ?
             ios_cached_index_data->identity : IndexPayloadReuse::Identity{};
     const size_t element_bytes = (ios_lit_pair_vertex_reuse || ios_direct_vertex_reuse) ?
         element_indices.size() * sizeof(u16) : 0;
@@ -1490,7 +1507,13 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             IOSVertexUploadOrderReuse::EqualIndexIdentity(selected_upload->index_shadow,
                 input_indices.data(),index_bytes,current_index_identity,input_full_comparisons,false) :
             matches(selected_upload->index_shadow,input_indices.data(),index_bytes);
-        if (ios_lit_pair_vertex_reuse) reuse_elements=matches(selected_upload->elements_shadow,element_indices.data(),element_bytes);
+        if (ios_lit_pair_vertex_reuse) {
+            reuse_elements = IndexPayloadReuse::Enabled() ?
+                IOSVertexUploadOrderReuse::EqualIndexIdentity(selected_upload->elements_shadow,
+                    element_indices.data(), element_bytes, current_index_identity,
+                    input_full_comparisons, false) :
+                matches(selected_upload->elements_shadow, element_indices.data(), element_bytes);
+        }
     }
     if (Common::FrameTiming::counters.enabled) {
         auto& counters=Common::FrameTiming::counters;
@@ -1575,6 +1598,8 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         // An uncached or non-default payload must never retain an older proof.
         selected_upload->index_shadow.CommitIdentity(cache_inputs ? current_index_identity :
                                                      IndexPayloadReuse::Identity{});
+        selected_upload->elements_shadow.CommitIdentity(cache_inputs && ios_lit_pair_vertex_reuse ?
+            current_index_identity : IndexPayloadReuse::Identity{});
     }
     if (ios_feedback_vertex_reuse) {
         // Re-evaluate every draw: only the current draw's transformed outputs are
@@ -2168,6 +2193,60 @@ bool RasterizerOpenGL::BeforeNativeNearestBorrowDraw() {
 
 #endif
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+void RasterizerOpenGL::ClearDrawFramebufferCache() {
+    for (auto& entry : draw_framebuffers) {
+        if (entry.framebuffer.handle) {
+            OpenGLState::ResetFramebuffer(entry.framebuffer.handle);
+            entry = {};
+        }
+    }
+    next_draw_framebuffer = 0;
+}
+
+GLuint RasterizerOpenGL::BindCachedDrawFramebuffer(const Surface& color, const Surface& depth,
+                                                    bool stencil) {
+    for (const auto& entry : draw_framebuffers) {
+        if (entry.color_name == color->texture.handle && entry.depth_name == depth->texture.handle &&
+            entry.stencil == stencil && SameFramebufferSurface(entry.color, color) &&
+            SameFramebufferSurface(entry.depth, depth)) {
+            OpenGLState::BindDrawFramebuffer(entry.framebuffer.handle);
+            if (Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.draw_fbo_hits;
+            return entry.framebuffer.handle;
+        }
+    }
+
+    auto& entry = draw_framebuffers[next_draw_framebuffer];
+    next_draw_framebuffer = (next_draw_framebuffer + 1) % draw_framebuffers.size();
+    if (entry.framebuffer.handle)
+        OpenGLState::ResetFramebuffer(entry.framebuffer.handle);
+    entry = {};
+    entry.framebuffer.Create();
+    if (!entry.framebuffer.handle)
+        return 0;
+    OpenGLState::BindDrawFramebuffer(entry.framebuffer.handle);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           color->texture.handle, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, stencil ? GL_DEPTH_STENCIL_ATTACHMENT :
+                                                        GL_DEPTH_ATTACHMENT,
+                           GL_TEXTURE_2D, depth->texture.handle, 0);
+    if (Common::FrameTiming::counters.enabled)
+        ++Common::FrameTiming::counters.draw_fbo_builds;
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        OpenGLState::ResetFramebuffer(entry.framebuffer.handle);
+        entry = {};
+        return 0;
+    }
+    entry.color = color;
+    entry.depth = depth;
+    entry.color_name = color->texture.handle;
+    entry.depth_name = depth->texture.handle;
+    entry.stencil = stencil;
+    return entry.framebuffer.handle;
+}
+#endif
+
 bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     bool native_borrow_disabled_for_draw=false;
 #ifdef CARA_IOS_GLES
@@ -2228,8 +2307,6 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     if (color_surface) {
         res_scale = color_surface->res_scale;
         color_attachment = color_surface->texture.handle;
-        framebuffer_info.color_width = color_surface->width;
-        framebuffer_info.color_height = color_surface->height;
     } else if (depth_surface) {
         res_scale = depth_surface->res_scale;
     }
@@ -2433,9 +2510,27 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     }
 #endif
 
-    // Bind the framebuffer surfaces
-    OpenGLState::BindDrawFramebuffer(framebuffer.handle);
-    DiscardExpiredFramebufferAttachments();
+    // The paired route owns only complete color/depth draws. Clear and copy
+    // paths retain the regular FBO and its separate attachment bookkeeping.
+    GLuint paired_framebuffer = 0;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static const bool reuse_draw_fbos = [] {
+        const char* value = std::getenv("CARA_GLES_DRAW_FRAMEBUFFER_CACHE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (reuse_draw_fbos && accelerate && color_surface && depth_surface && !shadow_rendering &&
+        !observe_copy_attachments && !NativeNearestBorrowEnabled() && !SoftwareBatching::Active() &&
+        !CommandQueue::Enabled()) {
+        paired_framebuffer = BindCachedDrawFramebuffer(color_surface, depth_surface, has_stencil);
+    }
+#endif
+    SCOPE_EXIT({ if (paired_framebuffer) state.draw.draw_framebuffer = framebuffer.handle; });
+    if (paired_framebuffer) {
+        state.draw.draw_framebuffer = paired_framebuffer;
+    } else {
+        OpenGLState::BindDrawFramebuffer(framebuffer.handle);
+        DiscardExpiredFramebufferAttachments();
+    }
 
     if (shadow_rendering) {
         if (color_surface == nullptr) {
@@ -2454,7 +2549,7 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0,
                                0);
         state.image_shadow_buffer = color_surface->texture.handle;
-    } else {
+    } else if (!paired_framebuffer) {
         if (framebuffer_info.color_attachment != color_attachment ||
             !SameFramebufferSurface(framebuffer_info.color_surface, color_surface)) {
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,

@@ -360,7 +360,7 @@ private:
         // tracking or hash collision assumptions. Released with the pool entry.
         SharedVertexShadow input_shadow;
         IndexPayloadReuse::Shadow index_shadow;
-        std::vector<u8> elements_shadow;
+        IndexPayloadReuse::Shadow elements_shadow;
         unsigned rows = 0;
     };
     using IOSVertexFrameUploads = IOSVertexUploadBank::Bank<IOSVertexUpload>;
@@ -445,6 +445,20 @@ private:
         return !previous.owner_before(surface) && !surface.owner_before(previous);
     }
     void DiscardExpiredFramebufferAttachments(); // framebuffer must already be bound
+#ifdef CARA_ANDROID_GLES_ATLAS
+    GLuint BindCachedDrawFramebuffer(const Surface& color, const Surface& depth, bool stencil);
+    void ClearDrawFramebufferCache();
+    struct DrawFramebufferEntry {
+        OGLFramebuffer framebuffer;
+        std::weak_ptr<CachedSurface> color;
+        std::weak_ptr<CachedSurface> depth;
+        GLuint color_name{};
+        GLuint depth_name{};
+        bool stencil{};
+    };
+    std::array<DrawFramebufferEntry, 8> draw_framebuffers;
+    std::size_t next_draw_framebuffer{};
+#endif
     struct {
         std::weak_ptr<CachedSurface> color_surface;
         std::weak_ptr<CachedSurface> depth_surface;

@@ -3,6 +3,8 @@
 
 #include <EGL/egl.h>
 #include <condition_variable>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -95,6 +97,19 @@ private:
             jobs.clear();
             return;
         }
+        const char* reuse = std::getenv("CARA_ANDROID_SHADER_STAGE_REUSE");
+        const bool reuse_stages = reuse && std::strcmp(reuse, "1") == 0;
+        std::unordered_map<std::string, OGLShader> vertices, fragments;
+        const auto get_stage = [](auto& stages, const std::string& source, GLenum type) {
+            auto found = stages.find(source);
+            if (found != stages.end())
+                return found->second.handle;
+            if (stages.size() == 16)
+                stages.clear();
+            auto& shader = stages[source];
+            shader.Create(source.c_str(), type);
+            return shader.handle;
+        };
         while (true) {
             Job job;
             {
@@ -109,7 +124,14 @@ private:
                 jobs.pop_front();
             }
             OGLProgram program;
-            program.Create(job.vertex.c_str(), job.fragment.c_str());
+            if (reuse_stages) {
+                const auto vertex = get_stage(vertices, job.vertex, GL_VERTEX_SHADER);
+                const auto fragment = get_stage(fragments, job.fragment, GL_FRAGMENT_SHADER);
+                if (vertex && fragment)
+                    program.Create(false, {vertex, fragment});
+            } else {
+                program.Create(job.vertex.c_str(), job.fragment.c_str());
+            }
             if (program.handle) {
                 // Complete compilation and publish across contexts before the
                 // emulation thread may bind the shared program.
@@ -120,6 +142,8 @@ private:
                 results.at(job.key) = std::move(program);
             }
         }
+        vertices.clear();
+        fragments.clear();
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         eglReleaseThread();
     }
