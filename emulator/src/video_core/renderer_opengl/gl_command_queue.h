@@ -42,6 +42,13 @@ bool NativeMapUploadRequested();
 bool NativeMapUploadActive();
 Common::HostRenderQueue* Queue();
 #ifdef CARA_GL_CONTEXT_DISPATCH
+#ifdef __ANDROID__
+// Durations of producer-side synchronous requests during an enabled frame profile.
+struct SyncTiming {
+    std::uint64_t count{}, before_driver_ns{}, in_driver_ns{}, after_driver_ns{};
+};
+std::array<SyncTiming, RpcApiCount> TakeSyncTimingsForProfile();
+#endif
 void QueueLUT(DriverTransactions::LUTBody body, GLuint texture, unsigned unit, GLenum format,
               std::size_t offset, const std::uint8_t* data, std::size_t bytes);
 #endif

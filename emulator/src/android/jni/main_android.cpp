@@ -465,6 +465,18 @@ void BootGame(const std::string& path) {
                                     rpc(RpcApi::api_glUnmapBuffer), rpc(RpcApi::api_glCreateProgram),
                                     rpc(RpcApi::api_glCreateShader), rpc(RpcApi::api_glGetIntegerv),
                                     static_cast<unsigned long long>(q.transaction_lut_calls));
+                                const auto timings = TakeSyncTimingsForProfile();
+                                for (size_t i = 0; i < timings.size(); ++i) {
+                                    const auto& t = timings[i];
+                                    if (t.count == 0) continue;
+                                    __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                        "sync_time end=%u api=%s calls=%llu before_ns=%llu driver_ns=%llu after_ns=%llu",
+                                        static_cast<unsigned>(frame), RpcApiNames[i],
+                                        static_cast<unsigned long long>(t.count),
+                                        static_cast<unsigned long long>(t.before_driver_ns),
+                                        static_cast<unsigned long long>(t.in_driver_ns),
+                                        static_cast<unsigned long long>(t.after_driver_ns));
+                                }
                             }
 #endif
                             const auto reuse = fmt::format(

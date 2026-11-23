@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <ctime>
+#include <chrono>
 #include <cstdlib>
 #include "common/host_render_queue.h"
 #include <atomic>
@@ -130,11 +131,50 @@ void Record(std::function<void()> job,std::size_t bytes=0,RpcApi api=RpcApi::Int
  stats.pending_commands=pending.size();stats.pending_bytes=pending_bytes;
  if(pending.size()>=MaxBatchCommands || pending_bytes>=MaxBatchBytes) Flush();
 }
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+using SyncClock = std::chrono::steady_clock;
+thread_local std::array<SyncTiming, RpcApiCount> sync_timings{};
+struct StampOnReturn {
+ SyncClock::time_point& output;
+ ~StampOnReturn() { output = SyncClock::now(); }
+};
+template<class F> decltype(auto) ProfileSync(Common::HostRenderQueue& queue, RpcApi api, F&& fn) {
+ // The promise is fulfilled after the worker scope ends. Call returns or throws
+ // before the producer's stack is released, including when a queued job is cancelled.
+ auto& timing = sync_timings[static_cast<std::size_t>(api)];
+ SyncClock::time_point entered{}, returned{};
+ const auto start = SyncClock::now();
+ Flush();
+ struct Account {
+  SyncTiming& timing;
+  const SyncClock::time_point &start, &entered, &returned;
+  ~Account() {
+   if (entered == SyncClock::time_point{}) return;
+   using std::chrono::duration_cast;
+   using std::chrono::nanoseconds;
+   ++timing.count;
+   timing.before_driver_ns += duration_cast<nanoseconds>(entered - start).count();
+   timing.in_driver_ns += duration_cast<nanoseconds>(returned - entered).count();
+   timing.after_driver_ns += duration_cast<nanoseconds>(SyncClock::now() - returned).count();
+  }
+ } account{timing, start, entered, returned};
+ return queue.Call([&]() -> decltype(auto) {
+  entered = SyncClock::now();
+  StampOnReturn stamp{returned};
+  return fn();
+ });
+}
+#endif
 template<class F> decltype(auto) Sync(F&& f,bool pointer=false,RpcApi api=RpcApi::Internal) {
  auto& q=Owner();
  if(q.IsWorkerThread()) { ++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer; backend uses captured raw entrypoints"); }
- Producer();Flush();++stats.synchronous_calls;CountRpc(api);
+ Producer();++stats.synchronous_calls;CountRpc(api);
  if(pointer) ++stats.conservative_pointer_rpcs;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+ if (Common::FrameTiming::counters.enabled)
+  return ProfileSync(q, api, std::forward<F>(f));
+#endif
+ Flush();
  return q.Call(std::forward<F>(f));
 }
 template<class F> decltype(auto) SyncApi(RpcApi api,F&& fn,bool pointer=false){return Sync(std::forward<F>(fn),pointer,api);}
@@ -454,6 +494,12 @@ void UploadBufferOwned(GLenum target,GLintptr offset,std::vector<std::uint8_t> b
      if(result!=GL_NO_ERROR)LOG_DEBUG(Render_OpenGL,"owned stream upload error: {:04X}, target: {}, offset: {}, size: {}",result,target,offset,bytes.size());}
  },charge,RpcApi::UploadBufferOwned);
 }
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+std::array<SyncTiming, RpcApiCount> TakeSyncTimingsForProfile() {
+ Producer();
+ return std::exchange(sync_timings, {});
+}
+#endif
 Stats SnapshotStats(){ Stats s;{std::lock_guard lock(budget_mutex);s.owned_budget_live=budget_live;s.owned_budget_high=budget_high;}
  for(std::size_t i=0;i<RpcApiCount;++i)s.rpc_by_api[i]=rpc_counts[i].load();
  s.uniform_location_rpcs=s.rpc_by_api[std::size_t(RpcApi::api_glGetUniformLocation)];
