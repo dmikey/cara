@@ -27,6 +27,10 @@ on:
         required: false
         type: boolean
         default: false
+      release_candidate:
+        description: 'RC version (Cara.RC.YYYYMMDDNN, e.g. Cara.RC.2026112301); build from main'
+        required: false
+        type: string
       release_tag:
         description: 'Existing release tag to build and attach to; leave empty for build artifacts only'
         required: false
@@ -34,7 +38,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: release-packages-${{ (github.event_name == 'schedule' || inputs.nightly) && 'nightly' || github.event.release.tag_name || inputs.release_tag || github.ref }}
+  group: release-packages-${{ (github.event_name == 'schedule' || inputs.nightly) && 'nightly' || github.event.release.tag_name || inputs.release_candidate || inputs.release_tag || github.ref }}
   cancel-in-progress: false
 jobs:
   source:
@@ -43,6 +47,39 @@ jobs:
     outputs:
       sha: ${{ steps.source.outputs.sha }}
     steps:
+      - name: Validate release candidate request
+        if: github.event_name == 'workflow_dispatch' && inputs.release_candidate != ''
+        env:
+          RC_TAG: ${{ inputs.release_candidate }}
+          EXISTING_TAG: ${{ inputs.release_tag }}
+          NIGHTLY: ${{ inputs.nightly }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          test "$GITHUB_REPOSITORY" = dmikey/cara
+          test "$GITHUB_REF" = refs/heads/main
+          test -z "$EXISTING_TAG"
+          test "$NIGHTLY" = false
+          python3 - <<'PYCODE'
+          import datetime
+          import os
+          import re
+
+          version = re.fullmatch(r"Cara[.]RC[.]([0-9]{8})([0-9]{2})", os.environ["RC_TAG"])
+          if not version or version[2] == "00":
+              raise SystemExit("Use Cara.RC.YYYYMMDDNN with a sequence from 01 to 99.")
+          datetime.datetime.strptime(version[1], "%Y%m%d")
+          PYCODE
+          if gh release view "$RC_TAG" >/dev/null 2>&1; then
+            echo "This RC version already has a GitHub Release."
+            exit 1
+          fi
+          if git ls-remote --exit-code "https://github.com/$GH_REPO.git" "refs/tags/$RC_TAG"; then
+            echo "This RC version is already tagged."
+            exit 1
+          else
+            test "$?" = 2
+          fi
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -133,7 +170,10 @@ jobs:
   publish:
     name: Attach audited binaries to the existing release
     needs: [source, mac, ios]
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    if: >-
+      (github.event_name == 'release' && !startsWith(github.event.release.tag_name, 'Cara.RC.')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' &&
+      !startsWith(inputs.release_tag, 'Cara.RC.'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -164,9 +204,9 @@ jobs:
           gh release upload "$RELEASE_TAG" dist/* SHA256SUMS.txt --clobber
 
   nightly-sign:
-    name: Sign the audited Apple nightly packages
+    name: Sign the audited Apple prerelease packages
     needs: [source, mac, ios]
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly))
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release_candidate != '')))
     runs-on: macos-15
     timeout-minutes: 35
     environment: nightly-signing
@@ -197,6 +237,7 @@ jobs:
           python3 tools/sign_nightly.py mac --artifact-dir work/unsigned-mac \
             --output work/signed/Cara-macOS-arm64-JIT-signed.zip
       - name: Sign the iOS nightly with App Store distribution provisioning
+        if: inputs.release_candidate == ''
         id: ios
         env:
           CARA_IOS_CERTIFICATE_BASE64: ${{ secrets.CARA_IOS_CERTIFICATE_BASE64 }}
@@ -206,18 +247,18 @@ jobs:
           python3 tools/sign_nightly.py ios --artifact-dir work/unsigned-ios \
             --output work/signed/Cara-iOS-arm64-GLES3-signed.ipa
       - uses: actions/upload-artifact@v4
-        if: steps.mac.outputs.signed == 'true' && steps.ios.outputs.signed == 'true'
+        if: steps.mac.outputs.signed == 'true' && (inputs.release_candidate != '' || steps.ios.outputs.signed == 'true')
         with:
           name: nightly-signed
           path: work/signed/*
           if-no-files-found: error
       - id: result
-        if: steps.mac.outputs.signed == 'true' && steps.ios.outputs.signed == 'true'
+        if: steps.mac.outputs.signed == 'true' && (inputs.release_candidate != '' || steps.ios.outputs.signed == 'true')
         run: echo "signed=true" >> "$GITHUB_OUTPUT"
   nightly-publish:
-    name: Publish signed nightly prerelease
+    name: Publish signed Apple prerelease
     needs: [source, nightly-sign]
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)) && needs.nightly-sign.outputs.signed == 'true'
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release_candidate != ''))) && needs.nightly-sign.outputs.signed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -231,6 +272,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+          RC_TAG: ${{ inputs.release_candidate }}
         run: |
           python3 - <<'PYCODE'
           import hashlib
@@ -240,8 +282,11 @@ jobs:
 
           assets = {
               'Cara-macOS-arm64-JIT-signed.zip': {'signing':'developer-id','notarized':True,'cpu_jit':True},
-              'Cara-iOS-arm64-GLES3-signed.ipa': {'signing':'apple-distribution','distribution':'app-store-connect','cpu_jit':False},
           }
+          if not os.environ['RC_TAG']:
+              assets['Cara-iOS-arm64-GLES3-signed.ipa'] = {
+                  'signing':'apple-distribution','distribution':'app-store-connect','cpu_jit':False,
+              }
           assert {p.name for p in Path('dist').iterdir()} == {
               name + ext for name in assets for ext in ('', '.json')}, 'Unexpected release assets'
           versions = set()
@@ -256,6 +301,19 @@ jobs:
               versions.add(manifest['build_version'])
           assert len(versions) == 1
           PYCODE
+          if [[ -n "$RC_TAG" ]]; then
+            mac=Cara-macOS-arm64-JIT-signed.zip
+            (cd dist && sha256sum -- "$mac" "$mac.json" > ../SHA256SUMS.txt)
+            gh release create "$RC_TAG" "dist/$mac" "dist/$mac.json" SHA256SUMS.txt \
+              --draft --prerelease --latest=false --target "$EXPECTED_SHA" --title "$RC_TAG" \
+              --notes "Cara release candidate from $EXPECTED_SHA. The arm64 Mac app is signed and notarized with optional CPU JIT. iOS distribution is through TestFlight."
+            gh release edit "$RC_TAG" --draft=false --latest=false
+            url=$(gh release view "$RC_TAG" --json url,isDraft,isPrerelease \
+              --jq 'select(.isDraft == false and .isPrerelease == true) | .url')
+            test -n "$url"
+            printf '%s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           (cd dist && sha256sum -- * > ../SHA256SUMS.txt)
           stamp=$(date -u +%Y%m%d)
           tag="nightly-$stamp-${EXPECTED_SHA:0:12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
