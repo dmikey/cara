@@ -173,7 +173,6 @@ void BootGame(const std::string& path) {
         const Config::ConfigInfo<bool> option{{"Debug", key}, false};
         setenv(variable, Config::Get(option) ? "1" : "0", 1);
     };
-    select_probe("elide_depth_duplicates", "CARA_ELIDE_DEPTH_DUPLICATES");
     select_probe("pica_shader_stream_batch", "CARA_PICA_SHADER_STREAM_BATCH");
     select_probe("lut_effective_change", "CARA_LUT_EFFECTIVE_CHANGE");
     select_probe("packed_staging_reuse", "CARA_PACKED_STAGING_REUSE");
@@ -565,12 +564,11 @@ void BootGame(const std::string& path) {
                                 phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
                             if (trace_render_phases) {
                                 const auto staging = fmt::format(
-                                    "staging end={} repeat_candidates={} repeat_issued={} repeat_elided={} guest_index_compare_span_bytes={} "
+                                    "staging end={} repeat_candidates={} repeat_issued={} guest_index_compare_span_bytes={} "
                                     "guest_vertex_copy_bytes={} constants_bytes={} resize_zero_bytes={} "
                                     "clear_bytes={} leased_bytes={} shared_upload_bytes={} feedback_copies={} feedback_bytes={} "
                                     "feedback_ms={:.2f}",
-                                    frame, phases.repeat_candidates, phases.repeat_issued, phases.repeat_elided,
-                                    phases.vertex_index_compare_span_bytes,
+                                    frame, phases.repeat_candidates, phases.repeat_issued, phases.vertex_index_compare_span_bytes,
                                     phases.packed_vertices_guest_copy_bytes,
                                     phases.packed_vertices_constant_copy_bytes,
                                     phases.packed_vertices_resize_zero_bytes,

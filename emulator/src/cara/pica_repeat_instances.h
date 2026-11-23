@@ -17,7 +17,7 @@ struct Pair {
     Range commands;
     std::array<Range, 18> inputs{};
     std::size_t count{};
-    bool allowed{}, issued{}, depth_idempotent{}, elided{};
+    bool allowed{}, issued{};
     void Read(Range r) {
         if (!r.Valid() || count == inputs.size()) allowed = false;
         else inputs[count++] = r;
@@ -31,14 +31,9 @@ struct Pair {
 inline thread_local Pair* pending = nullptr;
 inline thread_local const std::uint32_t* skip = nullptr;
 inline thread_local Range list_range;
-inline bool ElideDepthDuplicates() {
-    static const bool on = std::getenv("CARA_ELIDE_DEPTH_DUPLICATES") &&
-                           !std::strcmp(std::getenv("CARA_ELIDE_DEPTH_DUPLICATES"), "1");
-    return on;
-}
 inline bool Enabled() {
     static const bool on = std::getenv("CARA_REPEAT_INSTANCES") &&
                            !std::strcmp(std::getenv("CARA_REPEAT_INSTANCES"), "1");
-    return on || ElideDepthDuplicates();
+    return on;
 }
 } // namespace Cara::RepeatInstances
