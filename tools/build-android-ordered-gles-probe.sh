@@ -20,5 +20,5 @@ esac
     -I"$src" -I"$deps/glad/include" -I"$deps/boost" -I"$deps/fmt/include" \
     "${defines[@]}" -DCARA_IOS_GLES=1 -DCARA_ANDROID_GLES_ATLAS=1 -DFMT_HEADER_ONLY=1 \
     "$src/android/jni/tests/ordered_gles_probe.cpp" "$src/android/jni/tests/probe_log.cpp" \
-    "$renderer/gl_command_queue.cpp" "$renderer/gl_observer_stubs.cpp" "$renderer/gl_state.cpp" \
+    "$renderer/gl_ios_compat.cpp" "$renderer/gl_command_queue.cpp" "$renderer/gl_observer_stubs.cpp" "$renderer/gl_state.cpp" \
     "$out/glad.o" -Wl,--gc-sections -lEGL -ldl -llog -o "$out/cara_ordered_gles_probe"

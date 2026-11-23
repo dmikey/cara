@@ -15,6 +15,7 @@
 
 #include "common/host_render_queue.h"
 #include "video_core/renderer_opengl/gl_command_queue.h"
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 
 namespace {
 namespace Queue = OpenGL::CommandQueue;
@@ -65,6 +66,88 @@ GLuint Compile(GLenum stage, const char* source) {
     glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
     Check(compiled == GL_TRUE, "probe shader compilation");
     return shader;
+}
+
+// Use the same float texture format, width and padded rows as all 24 lighting tables plus fog.
+// Queue both generations and mutate the source before reading either rendered target.
+void CheckLightingImages() {
+    constexpr int w = OpenGL::LUTTextureWidth, h = 7;
+    GLuint textures[3], fbo, vao;
+    glGenTextures(3, textures);
+    glGenFramebuffers(1, &fbo);
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glActiveTexture(GL_TEXTURE0);
+    for (int i = 1; i <= 2; ++i) {
+        glBindTexture(GL_TEXTURE_2D, textures[i]);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, w, h);
+    }
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glDisable(GL_DITHER);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_RASTERIZER_DISCARD);
+    glDisable(GL_BLEND);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glViewport(0, 0, w, h);
+    auto vs = Compile(GL_VERTEX_SHADER, R"(#version 300 es
+void main() { vec2 p=vec2((gl_VertexID<<1)&2, gl_VertexID&2); gl_Position=vec4(p*2.-1.,0.,1.); })");
+    auto fs = Compile(GL_FRAGMENT_SHADER, R"(#version 300 es
+precision highp float;
+uniform highp sampler2D lut;
+out vec4 color;
+void main() { color=vec4(texelFetch(lut,ivec2(gl_FragCoord.xy),0).rg,0.,1.); })");
+    auto program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    GLint linked = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    Check(linked, "lighting image program link");
+    glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program,"lut"),0);
+    std::vector<float> table(2*w*h);
+    auto value = [](std::size_t i, unsigned generation) { return (i*7 + generation*61) % 256; };
+    for (unsigned generation = 0; generation < 2; ++generation) {
+        for (std::size_t i = 0; i < table.size(); ++i)
+            table[i] = static_cast<float>(value(i,generation)) / 255.f;
+        glActiveTexture(GL_TEXTURE3);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 4);
+        OpenGL::ReplaceLightingLUTImage(textures[0], 0, reinterpret_cast<const u8*>(table.data()),
+                                        table.size()*sizeof(float));
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[generation+1], 0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    std::fill(table.begin(), table.end(), 0.f);
+    GLint saved = 0;
+    glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &saved);
+    Check(saved == 4, "lighting upload lost unpack state");
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &saved);
+    Check(saved == GL_TEXTURE3, "lighting upload lost active unit");
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    glActiveTexture(GL_TEXTURE0);
+    std::vector<u8> pixels(4*w*h);
+    for (unsigned generation = 0; generation < 2; ++generation) {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[generation+1], 0);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        for (int i = 0; i < w*h; ++i)
+            Check(pixels[i*4] == value(i*2,generation) && pixels[i*4+1] == value(i*2+1,generation)
+                  && pixels[i*4+2] == 0 && pixels[i*4+3] == 255, "lighting image pixel mismatch");
+    }
+    Check(glGetError() == GL_NO_ERROR, "lighting image GLES error");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteVertexArrays(1, &vao);
+    glDeleteTextures(3, textures);
+    glUseProgram(0);
+    glDeleteProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    std::puts("two complete lighting images matched all 14336 pixels");
 }
 
 void CheckRemapPixels() {
@@ -454,6 +537,7 @@ void Run(EGLDisplay display, EGLConfig config) {
 #ifdef CARA_GL_CONTEXT_DISPATCH
         CheckRemapQueue();
         CheckSharedVertexUpload();
+        CheckLightingImages();
         published = Queue::CreatePublishedRenderFence();
         Check(published != nullptr, "render fence not created");
 #endif
