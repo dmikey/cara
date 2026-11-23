@@ -10,6 +10,9 @@
 #include <memory>
 #include <optional>
 #include <unordered_set>
+#ifdef CARA_ANDROID_GLES_ATLAS
+#include "video_core/renderer_opengl/gl_fog_lut_residency.h"
+#endif
 #include "video_core/renderer_opengl/gl_nearest_borrow_plan.h"
 #include <vector>
 #include <glad/glad.h>
@@ -497,6 +500,9 @@ private:
 
     std::array<std::array<GLvec2, 256>, Pica::LightingRegs::NumLightingSampler> lighting_lut_data{};
     std::array<GLvec2, 128> fog_lut_data{};
+#ifdef CARA_ANDROID_GLES_ATLAS
+    FogLUTResidency<decltype(fog_lut_data)> fog_lut_residency;
+#endif
     std::array<GLvec2, 128> proctex_noise_lut_data{};
     std::array<GLvec2, 128> proctex_color_map_data{};
     std::array<GLvec2, 128> proctex_alpha_map_data{};

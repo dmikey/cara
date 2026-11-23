@@ -4067,6 +4067,13 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
     }
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+    const bool reuse_fog = is_mali_gpu && !UseNativeLUTBuffers();
+    int uploaded_fog_offset = -1;
+    if (reuse_fog && invalidate)
+        fog_lut_residency.Invalidate();
+#endif
+
     // Sync the lighting luts
     if (uniform_block_data.lighting_lut_dirty_any || invalidate) {
         for (unsigned index = 0; index < uniform_block_data.lighting_lut_dirty.size(); index++) {
@@ -4109,11 +4116,25 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
             }
         }
         if (is_changed || invalidate || uniform_block_data.data.fog_lut_offset < 0) {
-            std::memcpy(buffer + bytes_used, fog_lut_data.data(),
-                        fog_lut_data.size() * sizeof(GLvec2));
-            uniform_block_data.data.fog_lut_offset = (offset + bytes_used) / sizeof(GLvec2);
+            int resident_offset = -1;
+#ifdef CARA_ANDROID_GLES_ATLAS
+            if (reuse_fog)
+                resident_offset = fog_lut_residency.Find(fog_lut_data);
+#endif
+            if (resident_offset < 0) {
+                std::memcpy(buffer + bytes_used, fog_lut_data.data(),
+                            fog_lut_data.size() * sizeof(GLvec2));
+                resident_offset = (offset + bytes_used) / sizeof(GLvec2);
+                bytes_used += fog_lut_data.size() * sizeof(GLvec2);
+#ifdef CARA_ANDROID_GLES_ATLAS
+                if (reuse_fog)
+                    uploaded_fog_offset = resident_offset;
+#endif
+            } else if (Common::FrameTiming::counters.enabled) {
+                ++Common::FrameTiming::counters.fog_lut_resident_hits;
+            }
+            uniform_block_data.data.fog_lut_offset = resident_offset;
             uniform_block_data.dirty = true;
-            bytes_used += fog_lut_data.size() * sizeof(GLvec2);
         }
         uniform_block_data.fog_lut_dirty = false;
     }
@@ -4123,6 +4144,10 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
                      offset, buffer, bytes_used);
         texture_lf_buffer.FinishStaging(bytes_used);
+#ifdef CARA_ANDROID_GLES_ATLAS
+        if (uploaded_fog_offset >= 0)
+            fog_lut_residency.Remember(fog_lut_data, uploaded_fog_offset);
+#endif
     } else
 #endif
         texture_lf_buffer.Unmap(bytes_used);
