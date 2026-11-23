@@ -27,8 +27,8 @@ jobs:
           const token = payload + '.' + sign('sha256', Buffer.from(payload), { key, dsaEncoding:'ieee-p1363' }).toString('base64url')
           async function inspect() {
             const paths = [
-              '/v1/buildUploads/b80af088-2162-44f7-af1c-ad4df5e0b5c9?fields%5BbuildUploads%5D=state,cfBundleVersion,cfBundleShortVersionString,platform',
-              '/v1/buildUploadFiles/d0c42fd1-09b7-4e70-926a-84d8a4d09f99?fields%5BbuildUploadFiles%5D=fileName,fileSize,assetType,assetDeliveryState,sourceFileChecksums'
+              '/v1/buildUploads/c998bb6c-4083-43fc-8357-7b5145fed292?fields%5BbuildUploads%5D=state,cfBundleVersion,cfBundleShortVersionString,platform',
+              '/v1/buildUploadFiles/f3b2d2a6-acb5-411b-9a21-6522ab259b3d?fields%5BbuildUploadFiles%5D=fileName,fileSize,assetType,assetDeliveryState,sourceFileChecksums'
             ]
             for (const path of paths) {
               const res = await fetch('https://api.appstoreconnect.apple.com' + path, {
