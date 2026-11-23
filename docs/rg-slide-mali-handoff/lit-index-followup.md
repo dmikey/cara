@@ -148,3 +148,21 @@ The branch removes the experiment and its test switch. The original
 signed APK and checked user profile files were restored.
 
 [Exact Android test APK](https://github.com/dmikey/cara/actions/runs/45218080631)
+
+### Reusing already resident fog tables
+
+The `9ed8792` experiment on an isolated branch kept eight exact table
+snapshots for the current lighting/fog upload-ring lap. It invalidated
+the offsets before ring wrap and recorded them after upload. A standalone
+ASan/UBSan fixture verified initial absence, byte-exact equality, signed
+zero distinction, eviction and invalidation. Android ARM64 CI passed.
+
+Cold and cache-seeded normal Dark Moon boots reached Gadd's lab on the
+Slide at fixed CLK 100%. Both runs recorded **zero reuse hits** across the
+sampled title, opening and Gadd windows. The code could not reuse an older
+fog table within its bounded live-ring history in this route. The result
+does not establish whether a different game or longer-lived buffer has
+more repeated table values. This experiment stays outside the integration
+branch. The original APK and checked profile files were restored.
+
+[Exact Android test APK](https://github.com/dmikey/cara/actions/runs/45225133190)

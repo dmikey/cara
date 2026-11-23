@@ -237,3 +237,32 @@ copy count, size and wall time. Compare spans are the requested byte
 length, even if an unequal `memcmp` returns early. Feedback is an API
 footprint and wall scope. Neither value is a hardware DRAM counter.
 [Android profiling build](https://github.com/dmikey/cara/actions/runs/45224342082)
+
+The `f202e4e` APK reached warm Gadd from a normal boot and emitted the
+new counters. Mean work across four 120-refresh windows was:
+
+| Work per refresh | Measured amount |
+| --- | ---: |
+| Guest index compare span requested | 0.64 MB |
+| Guest vertex copies into staging | 4.90 MB |
+| Default attribute copies | 0.09 MB |
+| Vector growth zero initialization | 2.87 MB |
+| Explicit staging clear | 5.43 MB |
+| Driver upload payload avoided by the resident cache | 6.13 MB |
+| Vertex and index bytes actually uploaded through GLES | 0.052 MB |
+| Required render-target feedback copies | 0 |
+
+These are software spans and explicit copy/write requests. They do not
+measure physical DRAM traffic. This capture locates substantial duplicate
+work before the GPU upload-cache lookup. A production change needs to
+test the live guest source ranges directly against the retained snapshot,
+then use the immutable resident handle on a hit. That keeps GPU vertex
+decode and rendering on the GPU without first rebuilding the same
+snapshot on the host. Use already-owned bytes on misses so a future GL
+worker never borrows mutable guest RAM. Source validation, retained GL
+resource identity and GPU completion are distinct concerns.
+
+The Slide advertises GLES base-vertex drawing, coherent framebuffer
+fetch and `GL_EXT_buffer_storage`. It lacks the queried multidraw
+extensions and `GL_KHR_parallel_shader_compile`. Keep host scheduling
+and shader compilation tests tied to these driver capabilities.
