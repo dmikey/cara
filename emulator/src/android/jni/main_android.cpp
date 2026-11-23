@@ -210,6 +210,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> lit_lists{{"Debug", "atlas_lit_indexed_lists"}, false};
     const Config::ConfigInfo<bool> async_stage_reuse{{"Debug", "atlas_async_stage_reuse"}, false};
     const Config::ConfigInfo<bool> reuse_layout{{"Debug", "packed_layout_uniform_reuse"}, false};
+    const Config::ConfigInfo<bool> batch_trace{{"Debug", "trace_draw_batches"}, false};
+    setenv("CARA_TRACE_DRAW_BATCHES", Config::Get(batch_trace) ? "1" : "0", 1);
     const bool retain_uploads = Config::Get(resident_uploads);
     setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
     setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", retain_uploads ? "1" : "0", 1);

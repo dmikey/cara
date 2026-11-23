@@ -585,6 +585,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInter
     switch (id) {
     // Trigger IRQ
     case PICA_REG_INDEX(trigger_irq):
+        if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.pica_batch_irqs;
         if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
             Cara::GuestGPUTrace::Kind::PicaIRQ, 0, 0, value, mask);
         Service::GSP::SignalInterrupt(Service::GSP::InterruptId::P3D);
