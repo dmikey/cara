@@ -7,6 +7,7 @@
   const ios = "Cara-iOS-arm64-GLES3-unsigned.ipa";
   const android = "Cara-Android-arm64-signed.apk";
   const checksums = "SHA256SUMS.txt";
+  const initialCandidate = "Cara.RC.2026112301";
 
   function assetsFor(release) {
     if (release.draft !== false || release.prerelease !== true ||
@@ -19,7 +20,9 @@
       asset.state === "uploaded" && asset.size > 0 &&
       /^sha256:[a-f0-9]{64}$/.test(asset.digest)
     ).map((asset) => asset.name));
-    if (![mac, ios, checksums].every((name) => assets.has(name))) {
+    const required = release.tag_name === initialCandidate ?
+      [mac, ios, checksums] : [mac, `${mac}.json`, ios, `${ios}.json`, checksums];
+    if (!required.every((name) => assets.has(name))) {
       return null;
     }
     return { tag: release.tag_name, assets };
@@ -32,6 +35,7 @@
     notes.textContent = `${candidate.tag} release notes`;
     document.getElementById("candidate-checksums").href = `${base}/${checksums}`;
     document.getElementById("candidate-mac").href = `${base}/${mac}`;
+    document.getElementById("legacy-mac-checksum").hidden = candidate.tag !== initialCandidate;
     document.getElementById("candidate-ios").href = `${base}/${ios}`;
 
     if (candidate.assets.has(android) && candidate.assets.has("android-signed.json")) {
