@@ -611,6 +611,9 @@ least 6 GiB physical RAM; an explicit `CARA_VERTEX_INDEX_CACHE=0` selects the
 uncached path. The core remains opt-in. Retain the bounded fallback and verify
 future dynamic-index workloads; do not extrapolate these hit rates to every game.
 
+See the [matched SE 3 and M1 Luigi trials](apple-atlas-luigi-2026-11-23.md)
+for the desktop CPU savings and the SE 3 frame-time tradeoff.
+
 ## Architectural prior art
 
 Prioritize submission overhead and repeated vertex work, alongside a CPU polling
