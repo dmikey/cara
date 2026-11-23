@@ -1,0 +1,84 @@
+name: Notarize the signed Cara Mac preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notarize-cara-mac-preview
+  cancel-in-progress: false
+
+env:
+  PREVIEW_TAG: mac-preview-9a99f46
+  PREVIEW_REVISION: 9a99f46d1706e84013d14b3abe44546d2f8641d0
+  PREVIEW_INPUT: Cara-macOS-arm64-JIT-notary-input.zip
+  PREVIEW_INPUT_SHA: dedef7f82278dd72c276923a41c1ba02ade801626f4bbd2245198213e2ef793a
+  PREVIEW_OUTPUT: Cara-macOS-arm64-JIT-signed.zip
+
+jobs:
+  notarize:
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    environment: nightly-signing
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch and verify the locally signed package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view "$PREVIEW_TAG" --json isDraft,isPrerelease,targetCommitish |
+            jq -e --arg revision "$PREVIEW_REVISION" '.isDraft and .isPrerelease and .targetCommitish == $revision' >/dev/null
+          gh release download "$PREVIEW_TAG" --pattern "$PREVIEW_INPUT"
+          printf '%s  %s\n' "$PREVIEW_INPUT_SHA" "$PREVIEW_INPUT" | shasum -a 256 -c -
+          mkdir app
+          ditto -x -k "$PREVIEW_INPUT" app
+          codesign --verify --strict --deep --verbose=2 -R='anchor apple generic and identifier "org.cara.mac" and certificate leaf[subject.OU] = "2GTL2L66E7"' app/Cara.app
+      - name: Notarize and staple the verified package
+        env:
+          NOTARY_KEY: ${{ secrets.CARA_ASC_UPLOAD_KEY_BASE64 }}
+          NOTARY_ID: ${{ secrets.CARA_ASC_UPLOAD_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.CARA_ASC_UPLOAD_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$NOTARY_KEY" || -z "$NOTARY_ID" || -z "$NOTARY_ISSUER" ]]; then
+            echo "::error::Missing the configured App Store Connect team key."
+            exit 1
+          fi
+          umask 077
+          key_dir=$(mktemp -d "${RUNNER_TEMP}/cara-notary.XXXXXX")
+          trap 'rm -f "$key_dir/AuthKey.p8" && rmdir "$key_dir"' EXIT
+          printf '%s' "$NOTARY_KEY" | base64 -D -o "$key_dir/AuthKey.p8"
+          unset NOTARY_KEY
+          if ! xcrun notarytool submit "$PREVIEW_INPUT" --key "$key_dir/AuthKey.p8" \
+            --key-id "$NOTARY_ID" --issuer "$NOTARY_ISSUER" --wait --timeout 18m \
+            --output-format json > notarization.json; then
+            cat notarization.json
+            exit 1
+          fi
+          if ! jq -e '.status == "Accepted"' notarization.json >/dev/null; then
+            cat notarization.json
+            exit 1
+          fi
+          xcrun stapler staple app/Cara.app
+          xcrun stapler validate app/Cara.app
+          codesign --verify --strict --deep --verbose=2 app/Cara.app
+          ditto -c -k --keepParent app/Cara.app "$PREVIEW_OUTPUT"
+          shasum -a 256 "$PREVIEW_OUTPUT" > SHA256SUMS.txt
+      - name: Publish the verified notarized preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view "$PREVIEW_TAG" --json isDraft --jq .isDraft | grep -qx true
+          gh release upload "$PREVIEW_TAG" "$PREVIEW_OUTPUT" SHA256SUMS.txt
+          gh release delete-asset "$PREVIEW_TAG" "$PREVIEW_INPUT" --yes
+          gh release edit "$PREVIEW_TAG" --draft=false --prerelease --latest=false
+          gh release view "$PREVIEW_TAG" --json isDraft,isPrerelease,url \
+            --jq 'select(.isDraft == false and .isPrerelease == true) | .url' >> "$GITHUB_STEP_SUMMARY"
