@@ -98,7 +98,7 @@ public:
         const auto path = FileUtil::GetUserPath(FileUtil::UserPath::LogDir) +
                           "jit-blocks-core-" + std::to_string(parent.GetID()) + ".csv";
         std::ofstream out;
-        FileUtil::OpenFStream(out, path, std::ios::out | std::ios::trunc);
+        OpenFStream(out, path, std::ios::out | std::ios::trunc);
         if (!out) {
             LOG_WARNING(Core_ARM11, "Could not write Dynarmic block map for core {}", parent.GetID());
             return;
