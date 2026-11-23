@@ -42,8 +42,8 @@ def main():
                 center = (pixels - 1) / 2
                 convert(source, RES / f"mipmap-{density}/{name}_round.png",
                         "-resize", f"{pixels}x{pixels}!", "-alpha", "off", "(",
-                        "+clone", "-fill", "black", "-colorize", "100", "-fill", "white",
-                        "-draw", f"circle {center},{center} {center},0", ")",
+                        "-size", f"{pixels}x{pixels}", "xc:black", "-fill", "white",
+                        "-draw", f"circle {center},{center} {center},0", "-alpha", "off", ")",
                         "-compose", "CopyOpacity", "-composite")
         else:
             convert(source, RES / f"mipmap-nodpi/{name}.png", "-resize", "192x192!")
