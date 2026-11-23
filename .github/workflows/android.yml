@@ -34,7 +34,15 @@ jobs:
         working-directory: emulator/src/android
         run: |
           test "$(git rev-parse HEAD)" = e28483f8fd6f5bfa795b697148c08f6287940221
-          gradle --no-daemon --max-workers=3 :app:assembleRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          cat > "$RUNNER_TEMP/rg-slide-release.init.gradle" <<'GRADLE'
+          gradle.beforeProject { project ->
+              project.pluginManager.withPlugin('com.android.application') {
+                  project.dependencies.add('releaseImplementation', 'com.google.errorprone:error_prone_annotations:2.40.0')
+              }
+          }
+          GRADLE
+          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-release.init.gradle" :app:assembleRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          git diff --exit-code
           mkdir -p "$RUNNER_TEMP/rg-slide"
           build_tools="$ANDROID_HOME/build-tools/35.0.0"
           apk="$RUNNER_TEMP/rg-slide/Cara-Android-main-arm64-unsigned.apk"
