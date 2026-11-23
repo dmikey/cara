@@ -175,6 +175,7 @@ void BootGame(const std::string& path) {
     };
     select_probe("pica_shader_stream_batch", "CARA_PICA_SHADER_STREAM_BATCH");
     select_probe("lut_effective_change", "CARA_LUT_EFFECTIVE_CHANGE");
+    select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");
     select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
     select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");
     select_probe("checked_remap_packet", "CARA_CHECKED_REMAP_PACKET");
@@ -558,14 +559,14 @@ void BootGame(const std::string& path) {
                                 const auto staging = fmt::format(
                                     "staging end={} repeat_candidates={} repeat_issued={} guest_index_compare_span_bytes={} "
                                     "guest_vertex_copy_bytes={} constants_bytes={} resize_zero_bytes={} "
-                                    "clear_bytes={} leased_bytes={} feedback_copies={} feedback_bytes={} "
+                                    "clear_bytes={} leased_bytes={} shared_upload_bytes={} feedback_copies={} feedback_bytes={} "
                                     "feedback_ms={:.2f}",
                                     frame, phases.repeat_candidates, phases.repeat_issued, phases.vertex_index_compare_span_bytes,
                                     phases.packed_vertices_guest_copy_bytes,
                                     phases.packed_vertices_constant_copy_bytes,
                                     phases.packed_vertices_resize_zero_bytes,
                                     phases.packed_vertices_clear_bytes,
-                                    phases.packed_vertices_leased_bytes, phases.texture_feedback_copies,
+                                    phases.packed_vertices_leased_bytes, phases.vertex_shared_upload_bytes, phases.texture_feedback_copies,
                                     phases.texture_feedback_copy_bytes,
                                     phases.texture_feedback_copy_seconds * 1000);
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", staging.c_str());

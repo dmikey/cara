@@ -15,6 +15,7 @@
 #include "gl_transaction_attribution.h"
 #include "common/host_render_queue.h"
 namespace Common { class HostRenderQueue; }
+namespace OpenGL { class SharedVertexShadow; }
 namespace OpenGL::CommandQueue {
 struct Stats {
     std::uint64_t owned_native_map_uploads=0,transaction_inline_calls=0,transaction_sync_calls=0,transaction_state_fallbacks=0,transaction_lut_calls=0,owned_unmap_error_queries=0,owned_budget_live=0,owned_budget_high=0,owned_budget_waits=0;
@@ -45,6 +46,8 @@ Common::HostRenderQueue* Queue();
 #ifdef CARA_GL_CONTEXT_DISPATCH
 #ifdef __ANDROID__
 // Durations of producer-side synchronous requests during an enabled frame profile.
+bool TryQueueVertexUpload(GLsizei width, GLsizei height, GLenum format, GLenum type,
+                          const void* pixels, std::size_t bytes, SharedVertexShadow& retained);
 struct RemapState;
 std::shared_ptr<RemapState> SaveRemapStateIfEnabled();
 void RestoreRemapState(std::shared_ptr<RemapState> state);

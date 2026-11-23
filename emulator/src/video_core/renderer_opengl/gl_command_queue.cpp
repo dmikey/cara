@@ -1,4 +1,5 @@
 #include "video_core/renderer_opengl/gl_backlog_profile.h"
+#include "video_core/renderer_opengl/gl_shared_vertex_shadow.h"
 #include "gl_command_queue.h"
 #include "gl_pipeline_capture.h"
 #include "gl_host_latency.h"
@@ -457,6 +458,34 @@ void Install(Common::HostRenderQueue& queue) {
 }
 #ifdef CARA_GL_CONTEXT_DISPATCH
 #ifdef __ANDROID__
+// Publish one immutable snapshot to both the FIFO driver call and the resident
+// upload cache. Both can outlive the guest input and release it independently.
+bool TryQueueVertexUpload(GLsizei width, GLsizei height, GLenum format, GLenum type,
+                          const void* pixels, std::size_t bytes, SharedVertexShadow& retained) {
+    static const bool requested = [] {
+        const char* value = std::getenv("CARA_SHARED_VERTEX_UPLOAD");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (!requested || !Enabled()) return false;
+    Producer();
+    std::size_t span = 0;
+    if (unpack_buffer || !pixels || !bytes || bytes > MaxBatchBytes - sizeof(std::function<void()>) ||
+        !TextureSpan(width, height, format, type, span) || span != bytes) return false;
+    OwnedCopyScope reservation;
+    SharedVertexShadow snapshot;
+    const auto* first = static_cast<const std::uint8_t*>(pixels);
+    snapshot.assign(first, first + bytes);
+    auto lease = snapshot.CaptureLease(MaxBatchBytes - sizeof(std::function<void()>));
+    if (!lease) return false;
+    const auto charge = lease->capacity();
+    RecordApi(RpcApi::api_glTexSubImage2D, [=, data = std::move(lease)] {
+        raw_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, data->data());
+    }, charge);
+    retained = std::move(snapshot);
+    ++stats.texture_owned_uploads;
+    return true;
+}
+
 struct RemapState {
     GLint active_texture = GL_TEXTURE0;
     GLboolean dither = GL_FALSE;

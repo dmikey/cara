@@ -1623,6 +1623,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         counters.vertex_upload_reused_bytes+=skipped;
         counters.vertex_upload_reused_textures+=unsigned(reuse_input)+unsigned(reuse_index);
     }
+    bool published_input_shadow = false;
     if (!reuse_input) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         if (orphan_upload) {
@@ -1639,8 +1640,18 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             }
             Common::FrameTiming::Scope update_timing(Common::FrameTiming::Phase::VertexSubImageUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_subimage_calls;
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
-                            input_format, input_type, input_data);
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+            if (cache_inputs)
+                published_input_shadow = CommandQueue::TryQueueVertexUpload(IOS_VERTEX_INPUT_WIDTH,
+                    upload_rows, input_format, input_type, input_data, input_bytes,
+                    selected_upload->input_shadow);
+            if (published_input_shadow && Common::FrameTiming::counters.enabled)
+                Common::FrameTiming::counters.vertex_shared_upload_bytes += input_bytes;
+#endif
+            if (!published_input_shadow) {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
+                                input_format, input_type, input_data);
+            }
         }
     }
     if (ios_indexed_vertex_inputs && !ios_direct_vertex_reuse && !reuse_index) {
@@ -1679,7 +1690,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     }
     if (cache_inputs) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
-        if (!reuse_input) {
+        if (!reuse_input && !published_input_shadow) {
             const auto* data=reinterpret_cast<const u8*>(input_data);
             selected_upload->input_shadow.assign(data,data+input_bytes);
         }
