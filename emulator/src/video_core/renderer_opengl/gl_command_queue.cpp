@@ -394,7 +394,11 @@ TransactionAttribution::Snapshot GetTransactionAttribution(){
 }
 std::uint64_t ReadWorkerCPUForProfile(){
  if(!Enabled())return 0;Producer();Flush();
- const auto result=Owner().Call([]{timespec value{};if(clock_gettime(CLOCK_THREAD_CPUTIME_ID,&value))throw std::runtime_error("Worker CPU profile clock failed");return std::uint64_t(value.tv_sec)*1000000000ull+std::uint64_t(value.tv_nsec);});
+ const auto result=Owner().Call([] {
+     const auto ns = TransactionAttribution::HostClock(true);
+     if (!ns) throw std::runtime_error("Worker CPU profile clock unavailable");
+     return ns;
+ });
  // Promise completion precedes job retirement; profiles require zero live jobs.
  Owner().Drain();return result;
 }

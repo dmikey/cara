@@ -5,12 +5,16 @@ on:
   pull_request:
     paths:
       - '.github/workflows/release.yml'
+      - '.github/workflows/android-release.yml'
+      - '.github/workflows/linux-opengl.yml'
+      - '.github/workflows/windows-opengl.yml'
       - 'emulator/**'
       - 'tools/build.py'
       - 'tools/build_mac_sdl.py'
       - 'tools/audit_no_jit.py'
       - 'tools/package_*.py'
       - 'tools/sign_nightly.py'
+      - 'tools/sign_android_nightly.py'
       - 'tools/mac_bundle.py'
       - 'tools/mac_app_launcher.mm'
       - 'tools/mac_runtime.json'
@@ -38,7 +42,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   source:
-    name: Pin one source commit for both binaries
+    name: Pin one source commit for all packages
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.source.outputs.sha }}
@@ -98,7 +102,7 @@ jobs:
   ios:
     needs: source
     name: iOS arm64 GLES3 / unsigned IPA / no JIT
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -111,6 +115,9 @@ jobs:
           work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
           echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
           echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+          sdk=$(xcrun --sdk iphoneos --show-sdk-version)
+          test "${sdk%%.*}" -ge 26
+          xcodebuild -version
       - name: Build and audit the physical-device app without signing
         run: |
           python3 tools/prepare.py
@@ -156,6 +163,68 @@ jobs:
           git check-ref-format "refs/tags/$RELEASE_TAG"
           gh release view "$RELEASE_TAG" >/dev/null
           gh release upload "$RELEASE_TAG" dist/* SHA256SUMS.txt --clobber
+
+  nightly-linux:
+    needs: source
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly))
+    uses: ./.github/workflows/linux-opengl.yml
+    with:
+      source_sha: ${{ needs.source.outputs.sha }}
+  nightly-windows:
+    needs: source
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly))
+    uses: ./.github/workflows/windows-opengl.yml
+    with:
+      source_sha: ${{ needs.source.outputs.sha }}
+  nightly-android:
+    needs: source
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly))
+    uses: ./.github/workflows/android-release.yml
+    with:
+      source_sha: ${{ needs.source.outputs.sha }}
+  nightly-android-sign:
+    name: Sign and verify the Android nightly packages
+    needs: [source, nightly-android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: nightly-signing
+    outputs:
+      signed: ${{ steps.android.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-Android-arm64-unsigned
+          path: work/unsigned-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'build-tools;36.0.0'
+      - name: Sign matched APK and App Bundle
+        id: android
+        env:
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+          CARA_ANDROID_KEYSTORE_BASE64: ${{ secrets.CARA_ANDROID_KEYSTORE_BASE64 }}
+          CARA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.CARA_ANDROID_KEYSTORE_PASSWORD }}
+          CARA_ANDROID_KEY_ALIAS: ${{ secrets.CARA_ANDROID_KEY_ALIAS }}
+          CARA_ANDROID_KEY_PASSWORD: ${{ secrets.CARA_ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 tools/sign_android_nightly.py --artifact-dir work/unsigned-android \
+            --output work/signed-android --source-revision "$EXPECTED_SHA"
+      - uses: actions/upload-artifact@v4
+        if: steps.android.outputs.signed == 'true'
+        with:
+          name: nightly-signed-android
+          path: work/signed-android/*
+          if-no-files-found: error
 
   nightly-sign:
     name: Sign the audited Apple nightly packages
@@ -209,9 +278,9 @@ jobs:
         if: steps.mac.outputs.signed == 'true' && steps.ios.outputs.signed == 'true'
         run: echo "signed=true" >> "$GITHUB_OUTPUT"
   nightly-publish:
-    name: Publish signed nightly prerelease
-    needs: [source, nightly-sign]
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)) && needs.nightly-sign.outputs.signed == 'true'
+    name: Publish verified nightly prerelease
+    needs: [source, nightly-sign, nightly-linux, nightly-windows, nightly-android-sign]
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)) && needs.nightly-sign.outputs.signed == 'true' && needs.nightly-android-sign.outputs.signed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -220,7 +289,21 @@ jobs:
         with:
           name: nightly-signed
           path: dist
-      - name: Verify and publish matching signed products
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightly-signed-android
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-Linux-x86_64-OpenGL
+          path: work/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-Windows-x86_64-OpenGL
+          path: dist
+      - name: Collect audited Linux package
+        run: cp work/linux/Cara-Linux-x86_64-OpenGL.tar.gz work/linux/linux-build.json dist/
+      - name: Verify and publish matching products
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -236,8 +319,34 @@ jobs:
               'Cara-macOS-arm64-JIT-signed.zip': {'signing':'developer-id','notarized':True,'cpu_jit':True},
               'Cara-iOS-arm64-GLES3-signed.ipa': {'signing':'apple-distribution','distribution':'app-store-connect','cpu_jit':False},
           }
-          assert {p.name for p in Path('dist').iterdir()} == {
-              name + ext for name in assets for ext in ('', '.json')}, 'Unexpected release assets'
+          android_assets = {'Cara-Android-arm64-signed.apk', 'Cara-Android-arm64-signed.aab'}
+          linux = 'Cara-Linux-x86_64-OpenGL.tar.gz'
+          windows = 'Cara-Windows-x86_64-OpenGL.zip'
+          manifests = {'android-signed.json', 'linux-build.json', 'windows-build.json'}
+          apple_assets = {name + ext for name in assets for ext in ('', '.json')}
+          assert {p.name for p in Path('dist').iterdir()} == (
+              apple_assets | android_assets | {linux, windows} | manifests), 'Unexpected release assets'
+          source = os.environ['EXPECTED_SHA']
+          for name in manifests:
+              assert json.loads((Path('dist') / name).read_text())['source_revision'] == source, name
+          android = json.loads(Path('dist/android-signed.json').read_text())
+          assert android['signing'] == 'android-upload-key'
+          assert android['application_id'] == 'org.cara.emu' and android['target_sdk'] == 36
+          assert android['cpu_jit'] is True and android['shader_jit'] is False
+          assert set(android['assets']) == android_assets
+          for name, expected in android['assets'].items():
+              with (Path('dist') / name).open('rb') as asset:
+                  assert hashlib.file_digest(asset, 'sha256').hexdigest() == expected, name
+          windows_build = json.loads(Path('dist/windows-build.json').read_text())
+          assert windows_build['signing'] == 'unsigned'
+          with (Path('dist') / windows).open('rb') as asset:
+              assert hashlib.file_digest(asset, 'sha256').hexdigest() == windows_build['asset_sha256']
+          linux_build = json.loads(Path('dist/linux-build.json').read_text())
+          assert linux_build['cpu_jit'] is False and linux_build['shader_jit'] is False
+          import tarfile
+          with tarfile.open(Path('dist') / linux, 'r:gz') as archive:
+              with archive.extractfile('Cara-Linux-x86_64-OpenGL/cara') as binary:
+                  assert hashlib.file_digest(binary, 'sha256').hexdigest() == linux_build['binary_sha256']
           versions = set()
           for name, requirements in assets.items():
               path = Path('dist') / name
@@ -257,6 +366,9 @@ jobs:
             "Automated Cara nightly from commit $EXPECTED_SHA." \
             "The macOS app is Developer ID-signed and notarized, with optional ARM64 CPU JIT." \
             "The iOS IPA uses App Store distribution signing for App Store Connect. It requires separate installation or distribution through Apple." \
+            "The Android APK and Play App Bundle are signed with the configured Android upload key." \
+            "Linux and Windows OpenGL packages are unsigned." \
+            "Corresponding source and build scripts: https://github.com/$GH_REPO/tree/$EXPECTED_SHA" \
             "Verify downloaded files using SHA256SUMS.txt." > notes.md
           gh release create "$tag" dist/* SHA256SUMS.txt --draft --prerelease --latest=false \
             --target "$EXPECTED_SHA" --title "Cara Nightly $stamp · ${EXPECTED_SHA:0:12}" --notes-file notes.md

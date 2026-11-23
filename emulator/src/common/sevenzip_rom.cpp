@@ -13,7 +13,11 @@
 #include <string_view>
 #include <archive.h>
 #include <archive_entry.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 #include "common/file_util.h"
 #include "common/logging/log.h"
 #include "common/sevenzip_lzma2.h"
@@ -55,11 +59,60 @@ bool IsCartridge(archive_entry* entry) {
 thread_local const SevenZipLoadScope* scope = nullptr;
 
 struct Cartridge final : SevenZipCartridge {
+#ifdef _WIN32
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    std::mutex read_mutex;
+
+    ~Cartridge() {
+        if (handle != INVALID_HANDLE_VALUE)
+            CloseHandle(handle);
+    }
+    bool OpenTemporary(const std::filesystem::path& directory) {
+        wchar_t path[MAX_PATH]{};
+        if (!GetTempFileNameW(directory.c_str(), L"car", 0, path))
+            return false;
+        handle = CreateFileW(path, GENERIC_READ | GENERIC_WRITE | DELETE, 0, nullptr,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE,
+                             nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            DeleteFileW(path);
+            return false;
+        }
+        return true;
+    }
+    std::size_t ReadAt(u64 position, void* buffer, std::size_t bytes) override {
+        std::lock_guard lock(read_mutex);
+        LARGE_INTEGER offset{};
+        offset.QuadPart = static_cast<LONGLONG>(position);
+        if (!SetFilePointerEx(handle, offset, nullptr, FILE_BEGIN))
+            return 0;
+        std::size_t done = 0;
+        while (done < bytes) {
+            DWORD count = 0;
+            if (!ReadFile(handle, static_cast<u8*>(buffer) + done,
+                          static_cast<DWORD>(std::min<std::size_t>(bytes - done, 1U << 30)),
+                          &count, nullptr) || !count)
+                break;
+            done += count;
+        }
+        return done;
+    }
+    bool WriteBlock(const u8* buffer, std::size_t bytes) {
+        DWORD written = 0;
+        return WriteFile(handle, buffer, static_cast<DWORD>(bytes), &written, nullptr) &&
+               written == bytes;
+    }
+#else
     int fd = -1;
 
     ~Cartridge() {
         if (fd >= 0)
             close(fd);
+    }
+    bool OpenTemporary(const std::filesystem::path& directory) {
+        auto path = (directory / "cara-cartridge-XXXXXX").string();
+        fd = mkstemp(path.data());
+        return fd >= 0 && unlink(path.c_str()) == 0;
     }
     std::size_t ReadAt(u64 position, void* buffer, std::size_t bytes) override {
         std::size_t done = 0;
@@ -74,6 +127,19 @@ struct Cartridge final : SevenZipCartridge {
         }
         return done;
     }
+    bool WriteBlock(const u8* buffer, std::size_t bytes) {
+        std::size_t written = 0;
+        while (written < bytes) {
+            const auto n = write(fd, buffer + written, bytes - written);
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0)
+                return false;
+            written += n;
+        }
+        return true;
+    }
+#endif
 };
 
 std::shared_ptr<SevenZipCartridge> Extract(std::unique_ptr<IOHandler> handle,
@@ -115,25 +181,16 @@ std::shared_ptr<SevenZipCartridge> Extract(std::unique_ptr<IOHandler> handle,
         const auto space = std::filesystem::space(directory, error);
         if (error || space.available < static_cast<u64>(size))
             return {};
-        auto path = (directory / "cara-cartridge-XXXXXX").string();
         cartridge = std::make_shared<Cartridge>();
-        cartridge->fd = mkstemp(path.data());
-        if (cartridge->fd < 0 || unlink(path.c_str()) != 0)
+        if (!cartridge->OpenTemporary(directory))
             return {};
         std::array<u8, 64 * 1024> block;
         la_ssize_t bytes;
         while ((bytes = archive_read_data(reader.get(), block.data(), block.size())) > 0) {
             if (bytes > size - static_cast<s64>(cartridge->size))
                 return {};
-            ssize_t written = 0;
-            while (written < bytes) {
-                const auto n = write(cartridge->fd, block.data() + written, bytes - written);
-                if (n < 0 && errno == EINTR)
-                    continue;
-                if (n <= 0)
-                    return {};
-                written += n;
-            }
+            if (!cartridge->WriteBlock(block.data(), bytes))
+                return {};
             cartridge->size += bytes;
             if (progress && cartridge->size - last_report >= (4U << 20)) {
                 progress(cartridge->size, size);

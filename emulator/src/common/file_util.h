@@ -21,6 +21,9 @@
 #include <boost/serialization/string.hpp>
 #include <boost/serialization/wrapper.hpp>
 #include "common/common_types.h"
+#ifdef _MSC_VER
+#include "common/string_util.h"
+#endif
 
 namespace FileUtil {
 
