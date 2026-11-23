@@ -3,6 +3,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <CoreMotion/CoreMotion.h>
 #include "core/frontend/apple/cia_open.h"
+#include "core/frontend/apple/game_open_error.h"
 #include "core/hle/service/ptm/step_history.h"
 #include "core/hle/service/cecd/streetpass.h"
 #include "cara/guest_gpu_trace.h"
@@ -704,7 +705,6 @@ static BOOL CaraCanTuneEmulation() {
     return !std::getenv("CARA_BENCHMARK_FRAMES") && !std::getenv("CARA_ADAPTIVE_GUEST_CPU") && !std::getenv("CARA_MAX_SPEED_PERCENT");
 }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
-static NSString* const CaraMetalRendererKey = @"metalRendererAfterBootRecovery";
 static NSString* const CaraFirstUseShadersKey = @"firstUseShaderFallback";
 static NSString* const CaraAsyncShadersKey = @"asyncMetalShaders";
 
@@ -718,7 +718,7 @@ static bool CaraAsyncShadersPreference(id playMode) {
 static bool CaraMetalRendererRequested() {
     if (const auto* override = std::getenv("CARA_PRIVATE_IOS_METAL_ONLY"))
         return std::strcmp(override, "1") == 0;
-    return [NSUserDefaults.standardUserDefaults boolForKey:CaraMetalRendererKey];
+    return false;
 }
 #endif
 
@@ -1591,61 +1591,6 @@ static std::filesystem::path PedometerHistoryPath() {
     }
     [sections addObject:@{@"title":@"Display", @"rows":display,
                           @"footer":@"Reopen the game to apply a change to native resolution."}];
-#ifdef CARA_PRIVATE_IOS_METAL_LCD
-    const BOOL experimentalEnabled = [displayDefaults boolForKey:CaraMetalRendererKey];
-    NSMutableArray* rendering = [NSMutableArray arrayWithObject:
-        @{@"title":@"Experimental Renderer", @"symbol":@"gpu",
-          @"subtitle":@"Use Metal the next time you open a game.",
-          @"value":@(experimentalEnabled),
-          @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:CaraMetalRendererKey]; }}];
-    if (experimentalEnabled) {
-        [rendering addObject:@{@"title":@"2× Metal internal resolution", @"symbol":@"square.resize",
-            @"value":@([displayDefaults boolForKey:@"metalSupersampling"]),
-            @"change":^(BOOL enabled) { [displayDefaults setBool:enabled forKey:@"metalSupersampling"]; }}];
-        NSArray<NSString*>* filters = @[@"Game default", @"Nearest neighbor", @"Bilinear"];
-        const auto selected = Cara::ParseMetalTextureFilter((int)[displayDefaults integerForKey:@"metalTextureFilter"]);
-        [rendering addObject:@{@"title":@"Texture filtering", @"symbol":@"slider.horizontal.3",
-            @"subtitle":[filters[static_cast<NSUInteger>(selected)] stringByAppendingString:@" · Applies when you reopen the game."],
-            @"keepOpen":@YES, @"action":^{
-                EmulatorController* controller = owner;
-                if (!controller) return;
-                UIAlertController* choices = [UIAlertController alertControllerWithTitle:@"Texture filtering"
-                    message:nil preferredStyle:UIAlertControllerStyleAlert];
-                for (NSUInteger i = 0; i < filters.count; ++i) {
-                    [choices addAction:[UIAlertAction actionWithTitle:filters[i] style:UIAlertActionStyleDefault
-                        handler:^(UIAlertAction*) {
-                            [displayDefaults setInteger:i forKey:@"metalTextureFilter"];
-                            [controller updateSyncFeedback];
-                        }]];
-                }
-                [choices addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-                UIViewController* presenter = controller;
-                while (presenter.presentedViewController) presenter = presenter.presentedViewController;
-                [presenter presentViewController:choices animated:YES completion:nil];
-            }}];
-        NSString* displayPlayMode = [displayDefaults stringForKey:@"playMode"];
-        [rendering addObject:@{@"title":@"Async Shaders", @"symbol":@"square.stack.3d.up",
-            @"subtitle":@"Build eligible Metal shaders in the background. Applies when you reopen a game.",
-            @"value":@(CaraAsyncShadersPreference(displayPlayMode)),
-            @"enabled":@(![displayPlayMode isEqual:@"accuracy"]),
-            @"change":^(BOOL enabled) {
-                [displayDefaults setBool:enabled forKey:CaraAsyncShadersKey];
-            }}];
-
-    }
-    [sections addObject:@{@"title":@"Rendering",@"rows":rendering,
-                          @"footer":@"Metal settings apply when you reopen a game."}];
-    NSMutableArray* shaderOptions=[NSMutableArray array];
-    NSString* playMode=[displayDefaults stringForKey:@"playMode"];
-    [shaderOptions addObject:@{@"title":@"First-use shader fallback", @"symbol":@"cpu",
-        @"subtitle":@"Uses CPU vertices to reduce first-use shader stalls. Can slow gameplay. Reopen the game to apply.",
-        @"value":@([displayDefaults boolForKey:CaraFirstUseShadersKey]),
-        @"enabled":@(![playMode isEqual:@"accuracy"]),
-        @"change":^(BOOL enabled) {
-            [displayDefaults setBool:enabled forKey:CaraFirstUseShadersKey];
-        }}];
-    [sections addObject:@{@"title":@"Shader options",@"rows":shaderOptions}];
-#endif
 #endif
     NSMutableArray* general=[NSMutableArray array];
     [general addObject:@{@"title":@"Sound",@"symbol":@"speaker.wave.2",@"value":@(!AudioCore::IsIOSAudioMuted()),@"change":^(BOOL on) { AudioCore::SetIOSAudioMuted(!on); [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"audioMuted"]; }}];
@@ -2501,7 +2446,7 @@ static std::filesystem::path PedometerHistoryPath() {
 #endif
     const bool first_use_fallback =
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
-        ![CaraEmulationValue(@"playMode") isEqual:@"accuracy"] &&
+        emuWindow->native_metal_only && ![CaraEmulationValue(@"playMode") isEqual:@"accuracy"] &&
         [NSUserDefaults.standardUserDefaults boolForKey:CaraFirstUseShadersKey];
 #else
         false;
@@ -2797,9 +2742,8 @@ static std::filesystem::path PedometerHistoryPath() {
                 if (self->sessionGeneration!=session) return;
                 self->onlineGameIdentity=roomIdentity;
                 if (result != Core::System::ResultStatus::Success)
-                    self->sessionFailure = result==Core::System::ResultStatus::ErrorLoader_ErrorEncrypted ?
-                        @"The game content is encrypted. Open a decrypted dump or configure your console keys." :
-                        [NSString stringWithFormat:@"Load failed (code %u)",unsigned(result)];
+                    self->sessionFailure = [NSString stringWithUTF8String:
+                        Frontend::Apple::GameOpenError(result, rom)];
                 [self updateSessionPresentation];
                 if (showOnlineRooms && !self.presentedViewController)
                     [self showOnlineRoomsInNavigation:nil];
@@ -3886,9 +3830,6 @@ static std::filesystem::path PedometerHistoryPath() {
 @end
 int main(int argc, char** argv) {
     @autoreleasepool {
-#ifdef CARA_PRIVATE_IOS_METAL_LCD
-        [NSUserDefaults.standardUserDefaults registerDefaults:@{CaraMetalRendererKey: @NO}];
-#endif
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(AppDelegate.class));
     }
 }

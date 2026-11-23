@@ -50,8 +50,8 @@ SDL_Scancode Key(NSEvent* e){
 @public std::unique_ptr<Model> model;NSTableView* table;NSPopUpButton* engine;NSTextField* status;NSButton* bind;
 NSTabView* tabs;
 NSButton* tab_buttons[3];
-NSPopUpButton *mode, *scale, *textureFilter;
-NSButton *fixedClock, *limitSpeed, *frameSkip, *resetTuning, *asyncShaders, *supersampling;
+NSPopUpButton *mode, *scale;
+NSButton *fixedClock, *limitSpeed, *frameSkip, *resetTuning;
 NSSlider *guestClock, *maximumSpeed;
 NSTextField *guestClockValue, *maximumSpeedValue, *modeDescription;
 NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<InputCommon::Polling::DevicePoller>> pollers;
@@ -105,8 +105,6 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
     fixedClock.state = !performance || play.fixed_guest_clock ? NSControlStateValueOn : NSControlStateValueOff;
     limitSpeed.state = !performance || play.limit_speed ? NSControlStateValueOn : NSControlStateValueOff;
     frameSkip.state = play.SkipHostFrames() ? NSControlStateValueOn : NSControlStateValueOff;
-    asyncShaders.state = play.UseAsyncMetalShaders() ? NSControlStateValueOn : NSControlStateValueOff;
-    asyncShaders.enabled = performance;
     fixedClock.enabled = limitSpeed.enabled = frameSkip.enabled = resetTuning.enabled = performance;
     guestClock.enabled = performance && play.fixed_guest_clock;
     maximumSpeed.enabled = performance && play.limit_speed;
@@ -121,8 +119,6 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
     modeDescription.stringValue = performance
         ? @"Cara adjusts the guest clock under load unless you set a fixed clock. Guest GPU timing applies when you open a game."
         : @"Locks guest clock and speed to 100%. Guest GPU timing applies when you open a game.";
-    supersampling.state = play.metal_supersampling ? NSControlStateValueOn : NSControlStateValueOff;
-    [textureFilter selectItemAtIndex:static_cast<NSInteger>(play.texture_filter)];
     [scale selectItemWithTag:static_cast<NSInteger>(play.display_scale)];
 }
 -(void)changePlayOption:(id)sender {
@@ -135,12 +131,6 @@ NSInteger waiting;id key_monitor;NSTimer* timer;std::vector<std::unique_ptr<Inpu
         play.limit_speed = limitSpeed.state == NSControlStateValueOn;
     else if (sender == frameSkip)
         play.adaptive_frame_skip = frameSkip.state == NSControlStateValueOn;
-    else if (sender == textureFilter)
-        play.texture_filter = Cara::ParseMetalTextureFilter((int)textureFilter.indexOfSelectedItem);
-    else if (sender == supersampling)
-        play.metal_supersampling = supersampling.state == NSControlStateValueOn;
-    else if (sender == asyncShaders)
-        play.async_metal_shaders = asyncShaders.state == NSControlStateValueOn;
     else if (sender == guestClock)
         play.guest_clock_percent = 5 * std::lround(guestClock.doubleValue / 5);
     else if (sender == maximumSpeed)
@@ -287,18 +277,6 @@ CaraPreferencesActions* BuildPreferences(){
  [a->scale itemAtIndex:2].tag=static_cast<NSInteger>(DisplayScale::Lossless4x);
  a->scale.target=a;a->scale.action=@selector(changePlayOption:);[display addSubview:a->scale];
  [display addSubview:Label(@"Lossless modes center the screens at whole pixel multiples. Smaller windows use the largest whole multiple that fits. Below 1×, the screens fit the window.",NSMakeRect(15,205,528,59))];
- a->supersampling=PlayCheckbox(@"2× internal resolution",NSMakeRect(15,88,300,22),a);
- [display addSubview:a->supersampling];
- [display addSubview:Label(@"Render geometry at twice the native resolution. Reopen the game to apply.",NSMakeRect(15,40,528,44))];
- [display addSubview:Label(@"Texture filtering",NSMakeRect(15,13,125,22))];
- a->textureFilter=[[[NSPopUpButton alloc]initWithFrame:NSMakeRect(141,9,194,30) pullsDown:NO]autorelease];
- [a->textureFilter setAccessibilityLabel:@"Metal texture filtering"];
- [a->textureFilter addItemsWithTitles:@[@"Game default",@"Nearest neighbor",@"Bilinear"]];
- a->textureFilter.target=a;a->textureFilter.action=@selector(changePlayOption:);
- [display addSubview:a->textureFilter];
- a->asyncShaders=PlayCheckbox(@"Async Shaders",NSMakeRect(15,173,220,22),a);
- [display addSubview:a->asyncShaders];
- [display addSubview:Label(@"Build eligible shaders in the background when you open a game with Metal in Performance mode.",NSMakeRect(15,123,528,42))];
  [a updatePlayControls];
 
  [controls addSubview:Label(@"Select an action to change its keyboard key, controller button or stick.",NSMakeRect(15,283,528,25))];
@@ -382,8 +360,6 @@ int SelfTest(const std::string& out){
   require(a->mode.numberOfItems==2&&a->scale.numberOfItems==3,"play and scaling choices missing");
   snapshot(settings_window,"settings.png");
   [a->mode selectItemAtIndex:1];[a changePlayOption:a->mode];
-  require(a->asyncShaders.enabled && a->asyncShaders.state==NSControlStateValueOn,
-          "Performance async shaders default missing");
   a->fixedClock.state=NSControlStateValueOn;[a changePlayOption:a->fixedClock];
   a->guestClock.integerValue=155;[a changePlayOption:a->guestClock];
   a->limitSpeed.state=NSControlStateValueOn;[a changePlayOption:a->limitSpeed];
@@ -391,8 +367,7 @@ int SelfTest(const std::string& out){
   [a->mode selectItemAtIndex:0];[a changePlayOption:a->mode];
   require(!a->fixedClock.enabled && a->fixedClock.state==NSControlStateValueOn &&
           !a->guestClock.enabled && a->guestClock.integerValue==100 && !a->maximumSpeed.enabled &&
-          a->maximumSpeed.integerValue==100 && !a->frameSkip.enabled && !a->asyncShaders.enabled &&
-          a->asyncShaders.state==NSControlStateValueOff,"Accuracy controls not locked");
+          a->maximumSpeed.integerValue==100 && !a->frameSkip.enabled,"Accuracy controls not locked");
   [a->mode selectItemAtIndex:1];[a changePlayOption:a->mode];
   require(a->guestClock.enabled && a->maximumSpeed.enabled && a->guestClock.integerValue==155 &&
           a->maximumSpeed.integerValue==125,"Performance did not restore saved tuning");
@@ -401,7 +376,6 @@ int SelfTest(const std::string& out){
           a->tab_buttons[1].state==NSControlStateValueOn,"Display tab selection failed");
   [a->scale selectItemWithTag:static_cast<NSInteger>(DisplayScale::Lossless4x)];[a changePlayOption:a->scale];
   snapshot(settings_window,"display.png");
-  a->asyncShaders.state=NSControlStateValueOff;[a changePlayOption:a->asyncShaders];
   [a selectSettingsTab:a->tab_buttons[2]];
   require(a->tab_buttons[1].state==NSControlStateValueOff &&
           a->tab_buttons[2].state==NSControlStateValueOn,"Controls tab selection failed");
@@ -439,7 +413,7 @@ int SelfTest(const std::string& out){
       &&saved.buttons[1].value==button&&saved.analogs[0].controller==analog,"binding persistence failed");
   require(saved.backend==(MacPreferences::JitAvailable()?"jit":"fastinterp"),"backend persistence failed");
   require(saved.play.guest_clock_percent==155 && saved.play.maximum_speed_percent==125 &&
-          saved.play.display_scale==DisplayScale::Lossless4x && !saved.play.async_metal_shaders,
+          saved.play.display_scale==DisplayScale::Lossless4x,
           "play settings persistence failed");
   const auto applied = TakeSavedPlaySettings();
   require(applied && *applied==saved.play,"Save did not publish the runtime play settings");
@@ -448,8 +422,7 @@ int SelfTest(const std::string& out){
   require(a->model->play==saved.play,"control reset changed play settings");
   [a restorePlayTuning:nil];
   require(a->model->play.guest_clock_percent==100 && a->model->play.maximum_speed_percent==100 &&
-          a->model->play.display_scale==saved.play.display_scale &&
-          !a->model->play.async_metal_shaders,"reset tuning changed display settings");
+          a->model->play.display_scale==saved.play.display_scale,"reset tuning changed display settings");
   auto* cancel_timer=[NSTimer timerWithTimeInterval:.05 repeats:NO block:^(NSTimer*){[a cancel:nil];}];
   [[NSRunLoop mainRunLoop]addTimer:cancel_timer forMode:NSModalPanelRunLoopMode];
   [NSApp runModalForWindow:settings_window];CleanupPreferences(a);

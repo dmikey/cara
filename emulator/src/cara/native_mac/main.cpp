@@ -1,4 +1,5 @@
 #include "core/frontend/apple/cia_open.h"
+#include "core/frontend/apple/game_open_error.h"
 #include "cara/console_activity.h"
 #include <SDL.h>
 #include "cara/native_mac/native_command_policy.h"
@@ -399,8 +400,16 @@ static int RunNativeMain(int argc, char** argv) {
         core_load_started=true;
         const auto loaded = system.Load(window, argv[1]);
         std::cout << "Native load result: " << static_cast<unsigned>(loaded) << std::endl;
-        if (loaded != Core::System::ResultStatus::Success)
+        if (loaded != Core::System::ResultStatus::Success) {
+            const auto* message = Frontend::Apple::GameOpenError(loaded, argv[1]);
+            std::cerr << "Cara could not open this game: " << message << std::endl;
+            if (std::getenv("CARA_NATIVE_GUI_OPEN")) {
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Couldn’t open game",
+                                         message, nullptr);
+                return 92;
+            }
             return 3;
+        }
         if(controller_fixture) {
             const auto checks=Cara::ControllerPlayTest::Run(system);
             std::ofstream report(directory+"native-controller-play-test.json");

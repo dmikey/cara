@@ -405,7 +405,6 @@ System::ResultStatus System::Load(Frontend::EmuWindow& emu_window, const std::st
 
     std::shared_ptr<Kernel::Process> process;
     const Loader::ResultStatus load_result = app_loader->Load(process);
-    kernel->Initialize(process, cpu_cores[0].get());
     if (Loader::ResultStatus::Success != load_result) {
         LOG_CRITICAL(Core, "Failed to load ROM (Error {})!", static_cast<u32>(load_result));
         System::Shutdown();
@@ -419,6 +418,7 @@ System::ResultStatus System::Load(Frontend::EmuWindow& emu_window, const std::st
             return ResultStatus::ErrorLoader;
         }
     }
+    kernel->Initialize(process, cpu_cores[0].get());
     cheat_engine = std::make_unique<Cheats::CheatEngine>(*this);
     perf_stats = std::make_unique<PerfStats>();
 
