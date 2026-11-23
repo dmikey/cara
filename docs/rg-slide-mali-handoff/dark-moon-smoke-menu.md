@@ -55,3 +55,20 @@ A paired thread capture repeated the first title transition on the partial-updat
 | GLES worker | 82.18 ms | 440.85 ms waiting on its work queue | 6 of 17 were in texture subimage uploads |
 
 The longest single empty-worker wait was 258.4 ms. The emulation stack included ARM64 block emission, `RegAlloc::UpdateAllUses`, `RegAlloc::AssertAllUnlocked`, and constructing a random device. Those compiler costs occur when the guest executes new CPU blocks even with the graphics pipeline archive warm. This result identifies a producer-limited interval inside an otherwise driver-limited menu. The scheduler times overlap between threads. [Gap-specific thread timing and sample counts](dark-moon-refresh515.tsv)
+
+### Testing the ARM64 producer
+
+The control build is `81b104d`. Candidate `97cde21` keeps a high-water mark for the spill slots actually used while emitting one block. It preserves the original allocation order, reuses freed slots and retains the final assertion over the entire spill array. Spill candidate selection uses a bounded local array. The random engine is initialized once per compiler thread, when it first needs a victim. Guest CPU timing, PICA execution and the GLES renderer are identical between these APKs.
+
+On the M3 Max, the vendored Dynarmic suite with the A32 frontend passed 200,561 assertions in 47 cases. A separate oracle translated an ARMv7 NEON block using 32 D registers 512 times, clearing the translation cache every iteration. All 64 integer lanes and the final guest PC matched a scalar reference in the original and candidate builds. In nine alternating host trials, the median for the whole 512-translation program fell from 123.56 to 110.41 ms. That is a host compiler workload, separate from the RG Slide game measurement.
+
+
+The Slide restored all 128 program binaries on each warm boot of the control and the two candidate runs. The normal-boot title window ending at refresh 601 contained 25,561 draws every time and recorded zero shader compilation. Refresh 515 took **517.30 ms** on the control, **435.36 ms** on the first candidate boot and **433.45 ms** on the repeat. Window p99 fell from **151.55 ms** to **126.02 / 127.28 ms**. This change cut a repeatable 82–84 ms from the title transition. The remaining 433–435 ms is still visible. The sampler that attributed the original stall was disabled in all three timing runs.
+
+| Warm Gadd, JIT + GLES, CLK 100% | Graphics CPU per refresh | Median frame range | Window p99 range | Worst frame |
+| --- | ---: | ---: | ---: | ---: |
+| Control | 11.27 ms | 29.61–32.51 ms | 35.92–48.46 ms | 110.74 ms @ 2593 |
+| JIT candidate | 11.14 ms | 29.69–32.66 ms | 36.80–51.17 ms | 89.45 ms @ 2746 |
+| Candidate repeat | 11.34 ms | 29.83–32.72 ms | 37.95–88.37 ms | 104.43 ms @ 2593 |
+
+The register allocator improves the first title transition. Gadd still misses the 16.7 ms budget. Frame-tail differences between the two candidate boots are larger than the median differences versus the control. Every run restored the original signed APK and the checked user configuration and cache. [Exact candidate build](https://github.com/dmikey/cara/actions/runs/45266874010) · [Gadd window data](dark-moon-jit-gadd.tsv) · [Normal-boot freezes and shader links](dark-moon-cold-links.tsv)
