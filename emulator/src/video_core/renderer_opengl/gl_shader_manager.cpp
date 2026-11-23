@@ -782,6 +782,35 @@ public:
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline checkpoint: {} pipelines, {} bytes",
                  ios_entries.size(), bytes.size());
     }
+    void RememberIOSPipeline(u64 key, const OGLProgram& program, const std::string& vs_source,
+                             const std::string& fs_source) {
+        if (ios_entries.size() >= IOSPipelineCache::MaxEntries ||
+            vs_source.size() > IOSPipelineCache::MaxSource ||
+            fs_source.size() > IOSPipelineCache::MaxSource)
+            return;
+
+        IOSPipelineCache::Entry entry{vs_source, fs_source};
+        if (!ios_formats.empty()) {
+            GLenum format = 0;
+            std::vector<GLbyte> binary;
+            program.GetProgramBinary(format, binary, IOSPipelineCache::MaxBinary);
+            if (binary.size() <= IOSPipelineCache::MaxBinary &&
+                std::find(ios_formats.begin(), ios_formats.end(), static_cast<GLint>(format)) !=
+                    ios_formats.end()) {
+                entry.format = format;
+                entry.binary.assign(binary.begin(), binary.end());
+            }
+        }
+        const auto cost = entry.vertex.size() + entry.fragment.size() + entry.binary.size() + 16;
+        if (cost > IOSPipelineCache::MaxBytes || ios_bytes > IOSPipelineCache::MaxBytes - cost)
+            return;
+        ios_bytes += cost;
+        ios_entries.push_back(std::move(entry));
+        ios_entry_keys.push_back(key);
+        ios_dirty = true;
+        ios_last_miss = std::chrono::steady_clock::now();
+    }
+
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     bool AsyncIndexedEnabled() const {
         static const bool enabled = [] {
@@ -813,6 +842,8 @@ public:
             }
             cached_program = std::move(ready);
             BindIOSProgram(cached_program);
+            RememberIOSPipeline(pair.key, cached_program, current_shaders.vs->GetSource(),
+                                current_shaders.fs->GetSource());
         }
         state.draw.shader_program = cached_program.handle;
         state.draw.program_pipeline = 0;
@@ -835,30 +866,8 @@ public:
             if (vs && fs) p.Create(false, {vs, fs});
             BindIOSProgram(p);
             if (!p.handle) failed_ios_programs.insert(key);
-            else if (ios_entries.size() < IOSPipelineCache::MaxEntries &&
-                     vs_source.size() <= IOSPipelineCache::MaxSource &&
-                     fs_source.size() <= IOSPipelineCache::MaxSource) {
-                IOSPipelineCache::Entry entry{vs_source, fs_source};
-                if (!ios_formats.empty()) {
-                    GLenum format = 0;
-                    std::vector<GLbyte> binary;
-                    p.GetProgramBinary(format, binary, IOSPipelineCache::MaxBinary);
-                    if (binary.size() <= IOSPipelineCache::MaxBinary &&
-                        std::find(ios_formats.begin(), ios_formats.end(), static_cast<GLint>(format)) != ios_formats.end()) {
-                        entry.format = format;
-                        entry.binary.assign(binary.begin(), binary.end());
-                    }
-                }
-                const auto cost = entry.vertex.size() + entry.fragment.size() + entry.binary.size() + 16;
-                if (cost <= IOSPipelineCache::MaxBytes &&
-                    ios_bytes <= IOSPipelineCache::MaxBytes - cost) {
-                    ios_bytes += cost;
-                    ios_entries.push_back(std::move(entry));
-                    ios_entry_keys.push_back(key);
-                    ios_dirty = true;
-                    ios_last_miss = std::chrono::steady_clock::now();
-                }
-            }
+            else
+                RememberIOSPipeline(key, p, vs_source, fs_source);
         }
         if (!p.handle && (native_geometry_selected || native_dispatch_selected))
             throw std::runtime_error("Native shader route cached program failed; no CPU fallback");
