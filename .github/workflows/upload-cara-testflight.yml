@@ -12,65 +12,90 @@ concurrency:
 
 env:
   CARA_IPA: Cara-iOS-arm64-GLES3-signed.ipa
-  CARA_SHA256: fadfa648aa714087ae2f3131162435acd0df82292b6d97acee6f36c2ac8c2165
-  CARA_BUILD: "2"
+  CARA_SHA256: 11bd271be29b026dec56a558e882eae684ae11637bd03e284773964f6df0bf23
+  CARA_BUILD: "1"
 
 jobs:
-  submit:
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.run_attempt == 1
-    permissions:
-      actions: read
-      contents: write # User-authorized until the verified private upload completes.
+  verify-draft-access:
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: nightly-signing
-    timeout-minutes: 25
+    timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Confirm the Mac runner never started the upload
+      - name: Check read-only access before requesting a Mac runner
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh api "repos/$GH_REPO/actions/runs/45255823971" |
-            jq -e '.status == "completed" and .conclusion == "cancelled" and .run_attempt == 1 and
-              .head_sha == "3d8b45f032fcbafcb98fa368e002188ae5155fd6"' >/dev/null
-          gh api "repos/$GH_REPO/actions/runs/45255823971/attempts/1/jobs" |
-            jq -e '.total_count == 1 and .jobs[0].id == 137977242864 and
-              .jobs[0].conclusion == "cancelled" and (.jobs[0].steps | length == 0)' >/dev/null
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/assets/784127434" |
+            jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256" '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
+  submit:
+    needs: verify-draft-access
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    environment: nightly-signing
+    timeout-minutes: 25
+    steps:
       - name: Fetch and verify the private Cara release candidate
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release view testflight-sdk27-0a5ca68 --json isDraft,isPrerelease,targetCommitish |
-            jq -e '.isDraft and .isPrerelease and .targetCommitish == "0a5ca6815bad32091ff94a1ce35508c711d575a3"' >/dev/null
-          asset="repos/$GH_REPO/releases/assets/784356795"
+          asset="repos/$GH_REPO/releases/assets/784127434"
           gh api "$asset" |
             jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256" '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
-          gh release download testflight-sdk27-0a5ca68 --pattern "$CARA_IPA"
-          printf '%s  %s\n' "$CARA_SHA256" "$CARA_IPA" | sha256sum -c -
+          gh api -H 'Accept: application/octet-stream' "$asset" > "$CARA_IPA"
+          printf '%s  %s\n' "$CARA_SHA256" "$CARA_IPA" | shasum -a 256 -c -
+          ditto -x -k "$CARA_IPA" inspection
+          app=inspection/Payload/Cara.app
+          codesign --verify --deep --strict -R='anchor apple generic and identifier "com.dmikey.cara" and certificate leaf[subject.OU] = "2GTL2L66E7"' "$app"
+          codesign -d --entitlements - --xml "$app" > inspection/entitlements.plist
+          security cms -D -i "$app/embedded.mobileprovision" > inspection/profile.plist
           python3 - <<'PY'
           import os
+          from pathlib import Path
           import plistlib
-          from zipfile import ZipFile
 
-          with ZipFile(os.environ["CARA_IPA"]) as app:
-              assert app.testzip() is None
-              root = "Payload/Cara.app/"
-              info = plistlib.loads(app.read(root + "Info.plist"))
-              privacy = plistlib.loads(app.read(root + "PrivacyInfo.xcprivacy"))
-              assert info["CFBundleSupportedPlatforms"] == ["iPhoneOS"]
-              assert info["DTPlatformName"] == "iphoneos" and info["DTSDKName"] == "iphoneos27.2"
-              assert info["CFBundleIdentifier"] == "com.dmikey.cara"
-              assert info["CFBundleVersion"] == os.environ["CARA_BUILD"]
-              assert privacy["NSPrivacyAccessedAPITypes"]
+          directory = Path("inspection")
+          info = plistlib.loads((directory / "Payload/Cara.app/Info.plist").read_bytes())
+          profile = plistlib.loads((directory / "profile.plist").read_bytes())
+          entitlements = plistlib.loads((directory / "entitlements.plist").read_bytes())
+          assert info["CFBundleIdentifier"] == "com.dmikey.cara"
+          assert info["CFBundleVersion"] == os.environ["CARA_BUILD"]
+          assert profile["TeamIdentifier"] == ["2GTL2L66E7"]
+          platforms = profile["Platform"]
+          assert "iOS" in platforms and set(platforms) <= {"iOS", "xrOS", "visionOS"}
+          assert "ProvisionedDevices" not in profile and "ProvisionsAllDevices" not in profile
+          assert entitlements == {
+              "application-identifier": "2GTL2L66E7.com.dmikey.cara",
+              "com.apple.developer.team-identifier": "2GTL2L66E7",
+              "get-task-allow": False,
+              "beta-reports-active": True,
+              "keychain-access-groups": ["2GTL2L66E7.com.dmikey.cara"],
+          }
           PY
       - name: Submit the verified package for Apple processing
         env:
           ASC_KEY: ${{ secrets.CARA_ASC_UPLOAD_KEY_BASE64 }}
           ASC_ID: ${{ secrets.CARA_ASC_UPLOAD_KEY_ID }}
           ASC_ISSUER: ${{ secrets.CARA_ASC_UPLOAD_ISSUER_ID }}
-        run: node tools/cara-build-upload.cjs "$CARA_IPA"
+        run: |
+          set -euo pipefail
+          if [[ -z "$ASC_KEY" || ! "$ASC_ID" =~ ^[A-Z0-9]{10}$ ||
+                ! "$ASC_ISSUER" =~ ^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$ ]]; then
+            echo "::error::Missing the configured App Store Connect team credential."
+            exit 1
+          fi
+          umask 077
+          key_dir=$(mktemp -d "${RUNNER_TEMP}/cara-testflight.XXXXXX")
+          trap 'rm -f "$key_dir/AuthKey_$ASC_ID.p8" "$key_dir/result.json" && rmdir "$key_dir"' EXIT
+          printf '%s' "$ASC_KEY" | base64 -D -o "$key_dir/AuthKey_$ASC_ID.p8"
+          unset ASC_KEY
+          export API_PRIVATE_KEYS_DIR="$key_dir"
+          if ! xcrun altool --upload-package "$CARA_IPA" --api-key "$ASC_ID"             --api-issuer "$ASC_ISSUER" --output-format json > "$key_dir/result.json" 2>&1; then
+            echo "::error::Apple rejected the Cara upload. Check build delivery in App Store Connect."
+            grep -Eo 'ITMS-[0-9]{5,}' "$key_dir/result.json" | sort -u || true
+            exit 1
+          fi
+          echo "Apple accepted the Cara preview for processing. See Cara Emulator in App Store Connect." >> "$GITHUB_STEP_SUMMARY"
