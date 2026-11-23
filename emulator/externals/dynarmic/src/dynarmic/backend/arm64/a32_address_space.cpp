@@ -396,11 +396,16 @@ EmitConfig A32AddressSpace::GetEmitConfig() {
     };
 }
 
-void A32AddressSpace::RegisterNewBasicBlock(const IR::Block& block, const EmittedBlockInfo&) {
+void A32AddressSpace::RegisterNewBasicBlock(const IR::Block& block, const EmittedBlockInfo& info) {
     const A32::LocationDescriptor descriptor{block.Location()};
     const A32::LocationDescriptor end_location{block.EndLocation()};
     const auto range = boost::icl::discrete_interval<u32>::closed(descriptor.PC(), end_location.PC() - 1);
     block_ranges.AddRange(range, descriptor);
+    if (conf.block_emitted) {
+        conf.block_emitted(conf.block_emission_context, descriptor.PC(), descriptor.TFlag(),
+                           reinterpret_cast<std::uintptr_t>(this),
+                           reinterpret_cast<std::uintptr_t>(info.entry_point), info.size);
+    }
 }
 
 }  // namespace Dynarmic::Backend::Arm64

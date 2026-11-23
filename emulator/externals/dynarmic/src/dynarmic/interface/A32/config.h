@@ -116,6 +116,14 @@ struct UserCallbacks : public TranslateCallbacks {
 struct UserConfig {
     UserCallbacks* callbacks;
 
+    // Optional ARM64 profiling receipt, emitted only for a newly installed block.
+    // The host range is valid in the supplied address space for this emission.
+    using BlockEmissionCallback = void (*)(void* context, VAddr guest_pc, bool thumb,
+                                            std::uintptr_t address_space, std::uintptr_t host_start,
+                                            std::size_t host_size);
+    BlockEmissionCallback block_emitted = nullptr;
+    void* block_emission_context = nullptr;
+
     size_t processor_id = 0;
     ExclusiveMonitor* global_monitor = nullptr;
 

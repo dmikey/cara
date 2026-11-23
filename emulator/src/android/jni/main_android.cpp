@@ -178,6 +178,8 @@ void BootGame(const std::string& path) {
 #endif
     LOG_INFO(Frontend, "Android CPU engine: {}",
              Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");
+    const Config::ConfigInfo<bool> trace_jit{{"Debug", "dynarmic_block_map"}, false};
+    setenv("CARA_DYNARMIC_BLOCK_MAP", Config::Get(trace_jit) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> trace_timing{{"Debug", "trace_renderer_timing"}, false};
     auto& phases = Common::FrameTiming::counters;
     phases = {};

@@ -6,6 +6,12 @@
 #include <cstdlib>
 #include <ostream>
 #include <stdexcept>
+#ifdef ANDROID
+#include <ctime>
+#include <fstream>
+#include <vector>
+#include "common/file_util.h"
+#endif
 #include "core/arm/fastinterp/arm_tick_counts.h"
 #include <dynarmic/interface/A32/a32.h>
 #include <dynarmic/interface/A32/context.h>
@@ -85,7 +91,43 @@ class DynarmicUserCallbacks final : public Dynarmic::A32::UserCallbacks {
 public:
     explicit DynarmicUserCallbacks(ARM_Dynarmic& parent)
         : parent(parent), svc_context(parent.system), memory(parent.memory) {}
-    ~DynarmicUserCallbacks() = default;
+    ~DynarmicUserCallbacks() override {
+#ifdef ANDROID
+        if (block_emissions.empty()) return;
+
+        const auto path = FileUtil::GetUserPath(FileUtil::UserPath::LogDir) +
+                          "jit-blocks-core-" + std::to_string(parent.GetID()) + ".csv";
+        std::ofstream out;
+        FileUtil::OpenFStream(out, path, std::ios::out | std::ios::trunc);
+        if (!out) {
+            LOG_WARNING(Core_ARM11, "Could not write Dynarmic block map for core {}", parent.GetID());
+            return;
+        }
+        out << "# dropped=" << dropped_block_emissions << '\n'
+            << "monotonic_ns,address_space,host_start,host_size,guest_pc,thumb\n";
+        for (const auto& block : block_emissions) {
+            out << block.monotonic_ns << ',' << block.address_space << ',' << block.host_start
+                << ',' << block.host_size << ',' << block.guest_pc << ',' << block.thumb << '\n';
+        }
+#endif
+    }
+
+#ifdef ANDROID
+    static void RecordBlockEmission(void* context, VAddr pc, bool thumb,
+                                    std::uintptr_t address_space, std::uintptr_t host_start,
+                                    std::size_t host_size) {
+        auto& recorder = *static_cast<DynarmicUserCallbacks*>(context);
+        timespec timestamp{};
+        if (recorder.block_emissions.size() >= MaxBlockEmissions ||
+            clock_gettime(CLOCK_MONOTONIC, &timestamp) != 0) {
+            ++recorder.dropped_block_emissions;
+            return;
+        }
+        const u64 time = static_cast<u64>(timestamp.tv_sec) * 1000000000ULL +
+                         static_cast<u64>(timestamp.tv_nsec);
+        recorder.block_emissions.push_back({time, address_space, host_start, host_size, pc, thumb});
+    }
+#endif
 
     std::uint8_t MemoryRead8(VAddr vaddr) override {
         return memory.Read8(vaddr);
@@ -192,6 +234,17 @@ public:
     }
 
 #ifdef ANDROID
+    struct BlockEmission {
+        u64 monotonic_ns;
+        std::uintptr_t address_space;
+        std::uintptr_t host_start;
+        std::size_t host_size;
+        VAddr guest_pc;
+        bool thumb;
+    };
+    static constexpr std::size_t MaxBlockEmissions = 65536;
+    std::vector<BlockEmission> block_emissions;
+    u64 dropped_block_emissions = 0;
     unsigned startup_svc_count = 0;
 #endif
     ARM_Dynarmic& parent;
@@ -384,6 +437,11 @@ std::unique_ptr<Dynarmic::A32::Jit> ARM_Dynarmic::MakeJit() {
     config.arch_version = Dynarmic::A32::ArchVersion::v6K;
     config.page_table = &current_page_table->GetPointerArray();
 #ifdef ANDROID
+    if (const char* value = std::getenv("CARA_DYNARMIC_BLOCK_MAP");
+        value && std::strcmp(value, "1") == 0) {
+        config.block_emitted = &DynarmicUserCallbacks::RecordBlockEmission;
+        config.block_emission_context = cb.get();
+    }
     if (const char* value = std::getenv("CARA_JIT_CALLBACK_MEMORY"); value && std::strcmp(value, "1") == 0) {
         config.page_table = nullptr;
         LOG_INFO(Core_ARM11, "Dynarmic diagnostic: callback memory enabled");
