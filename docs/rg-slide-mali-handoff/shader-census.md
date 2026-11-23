@@ -1,0 +1,131 @@
+# Dark Moon shader stalls on RG Slide
+
+RG Slide T820 and Mali-G57, Dark Moon USA, normal boot from a raw 3DS image,
+JIT + GLES Atlas, Performance Mode, 1×, and guest CLK 100%. This run used a
+disposable Cara profile with an empty Cara shader cache. The driver-private
+cache was preserved. The prior APK and profile were restored after the run,
+and the original config and shader-cache SHA-256 values matched.
+
+## Cold control
+
+APK `3967947`. Title checkpoint arrived in 105.34 s. The first measured
+cold title compile/link burst consumed 81,109.11 ms across a 120-refresh
+window. Window p99 was 30,962.63 ms and its worst refresh was 49,616.51 ms.
+
+| Lab window ending at system refresh | p50 | p99 | Worst | Shader scope wall time in window |
+| ---: | ---: | ---: | ---: | ---: |
+| 2264 | 17.64 ms | 87.09 ms | 40,979.32 ms | 40,790.14 ms |
+| 2504 | 28.25 ms | 165.91 ms | 30,501.47 ms | 30,440.00 ms |
+| 2624 | 28.26 ms | 51.64 ms | 76.83 ms | 0 ms |
+| 2744 | 28.86 ms | 51.62 ms | 52.88 ms | 0 ms |
+| 2864 | 29.03 ms | 50.02 ms | 51.26 ms | 0 ms |
+| 2984 | 28.94 ms | 51.92 ms | 34,364.72 ms | 34,293.78 ms |
+| 3464 | 32.42 ms | 3,185.28 ms | 42,004.04 ms | 45,041.12 ms |
+
+The first lab HUD checkpoint showed 23 guest-submitted FPS and 47% SPD with
+CLK 100%. Frame times above are system refresh durations. Several single
+refresh stalls are large enough to dominate responsiveness while appearing
+outside a 120-sample p99. The report keeps the maxima alongside p99.
+
+The saved cache reached its 128-entry cap before the run ended. These
+entries reference 34 distinct vertex sources and 74 distinct fragment
+sources. Of the fragment sources, 54 contain generated per-light vector
+code. The disk snapshot contains 19,214,012 bytes of program binaries and
+10,737,551 bytes of GLSL strings, with 3,382,163 unique GLSL bytes across
+both stages. This snapshot cannot enumerate all keys or compile attempts.
+
+The legacy cold trace collects compile and link under a single aggregate.
+The shared census APK adds separate events for generation by PICA key,
+source hash, fragment compile, link, binary restore, and first PICA draw
+submission. Its log includes the thread ID for driver work.
+
+## Shared GLES census
+
+APK `2344283`, with exact stage reuse enabled on the single existing EGL
+worker. The app's program cache started empty and the driver-private cache
+was preserved. Title checkpoint arrived in 103.81 s.
+
+| Phase | New PICA keys | Distinct generated FS | Fragment compile calls, emulation / other | Emulation compile and status | Emulation link and status | Worst first PICA draw |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Boot through title | 43 | 37 | 44 / 10 | 9.30 s | 73.80 s | 5.11 ms |
+| Save transition through lab checkpoint | 52 | 43 | 37 / 11 | 3.41 s | 104.57 s | 0.27 ms |
+
+The generated fragment count includes 27 lit sources through the title
+and 28 newly generated lit sources after save selection. Compile counts
+include GL helper and worker sources outside the PICA generation log.
+Cold lab refreshes 2332 and 2511 took 41.78 s and 31.27 s respectively.
+Across four subsequent lab windows with zero recorded shader work, p99
+ranged from 34.27 to 54.53 ms, worst refresh was 167.38 ms, and the HUD
+showed 27 game FPS at 57% SPD and CLK 100%.
+
+The existing source cache already collapses PICA keys that emit identical
+GLSL. It cannot remove the cost of linking distinct vertex/fragment pairs.
+The emulation thread still linked 56 programs on the route from save
+selection into the lab even with an active EGL worker for indexed draws.
+Link time includes the blocking GL status query. The observed first-draw
+times measure host submission only.
+
+Programs linked to known lit fragment sources account for **89.18 s** of
+the 104.57 s emulation-thread link total after save selection. The six
+highest-cost lit fragment sources each account for roughly 5.0 s across
+their vertex/fragment program combinations. The next four each account for
+about 4.0 s. This points to the exact programs using lit fragments as the
+primary target for the hybrid path. The lit shaders in the capped cache
+include 18 five-light, 12 seven-light, and 21 eight-light sources.
+
+## Warm restart
+
+The same diagnostic APK loaded 128 binaries in 90.87 ms total GL upload
+and status-query wall time. The title checkpoint arrived in 21.49 s. The
+save transition to the same lab checkpoint generated the same 52 PICA
+keys and 43 fragment sources without a driver fragment compile or program
+link. Across four lab windows, p99 was 35.18–49.57 ms, worst refresh was
+69.68 ms, and the HUD showed 27 FPS at 58% SPD and CLK 100%. Shader
+prewarming removes the observed compile burst on this sampled route.
+Sustained lab speed remains limited after shader work disappears.
+
+The original APK and player profile were restored after both runs. The
+original config and shader-cache SHA-256 checks matched.
+
+## Warm attachment reuse probe
+
+The same APK and seed cache were used with paired color/depth FBO reuse
+enabled. Four warm lab windows contained 37,200–37,820 cache hits each
+and zero cached FBO rebuilds. Median draw submission wall
+time was 454.39 ms per 120 refreshes for the control and 435.62 ms for
+the probe, about 0.16 ms per refresh lower.
+
+| Warm lab | p50 range | p99 range | Worst refresh | HUD |
+| --- | ---: | ---: | ---: | --- |
+| Control | 28.03–29.28 ms | 35.18–49.57 ms | 69.68 ms | 27 FPS / 58% SPD |
+| Paired FBO | 28.74–29.18 ms | 35.94–50.51 ms | 59.76 ms | 27 FPS / 58% SPD |
+
+This single A/B shows similar sustained throughput. The reduced largest
+refresh needs repeated measured A/B runs. Device counters were recorded
+for the FBO probe alone, so they cannot establish a tiler-cycle delta.
+The FBO option remains experimental.
+
+Twenty fragment source hashes were seen in compile requests on both the
+emulation thread and the worker. Summed wall time for those requests was
+81 ms on emulation and 2 ms on the worker. That duplication exists, but
+eliminating it would address very little of the observed cold stall.
+
+## Unused combiner operand correction
+
+APK `53770ae` passed Android CI. A normal cold run matched all 95 PICA
+keys and all their generated source hashes through the title and the lab.
+The title still had 54 emulation-thread links and the save/lab phase had
+56. Title boot took 104.86 s and the worst title refresh was 50.24 s.
+The two largest early lab stalls were 41.42 s and 30.47 s. This game
+route never exercised a combination that would emit fewer sources under
+the unused-operand correction. The fixture verified the code path with
+synthetic input and the device experiment establishes no Dark Moon gain.
+
+## Existing separable shader route
+
+Android's existing `shader_type=2` option failed on the RG Slide before
+the title. The GLES 3.2 driver rejected a desktop ARB extension directive,
+an interface block qualifier, and an interface layout qualifier. The
+probe was stopped after the shader failures, with the original app and
+profile restored. Separable program linking remains unmeasured. See
+`separable-driver-errors.txt`.
