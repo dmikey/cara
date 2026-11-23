@@ -64,3 +64,34 @@ this workload in addition to the measured host submission overhead. The device
 did not expose a clock trace for this run. The hardware counters do not establish
 wall-clock occupancy or the duration of any one draw.
 [Counter capture](gadd-tiler-counters.csv.gz) · [Arm counter definitions](https://arm-software.github.io/libGPUCounters/mali-g57_counter_reference.html)
+
+## Test of equivalent adjacent draws
+
+The private Android trial peeks at packets through the next indexed or array
+trigger and checks the complete float32 vectors against the live PICA uniforms.
+It accepts a small set of scalar register writes. Texture and vertex inputs,
+index data and command memory must be disjoint from the selected framebuffer
+outputs. A qualifying pair issues two instances of the original primitive in
+one GLES call. Both guest triggers and the intervening PICA writes still execute
+in order, including guest timing charges. It keeps the ordinary path for shader
+hooks, geometry processing, feedback and unproven ranges. The first build also
+requires textures without mipmaps. This is a private diagnostic in a release
+configuration APK. Production defaults are unchanged.
+
+Four normal boots on the [same APK](https://github.com/dmikey/cara/actions/runs/45243481062)
+restored 197/197 program binaries and used the same fixed CLK 100% configuration.
+Both controls and both candidates included four complete warm-lab windows with
+zero shader compile time. The title comparison uses three full windows per boot,
+with exactly 153,320 guest triggers in each boot. Times are milliseconds.
+
+| Run in execution order | Gadd pairs combined / guest draws | Gadd graphics CPU per refresh | Window p99 range | Worst @ refresh | Title graphics CPU per refresh | Title worst |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| [On 1](gadd-instance-on-b.log.gz) | 5,368 / 170,312 | 19.18 | 33.49–51.83 | 72.20 @ 2591 | 23.22 | 59.39 |
+| [Off 1](gadd-instance-off-a.log.gz) | 0 / 169,265 | 19.07 | 33.74–50.99 | 69.58 @ 2529 | 22.84 | 61.17 |
+| [On 2](gadd-instance-on-d.log.gz) | 5,313 / 168,566 | 19.13 | 34.69–51.06 | 76.37 @ 2779 | 23.20 | 57.81 |
+| [Off 2](gadd-instance-off-c.log.gz) | 0 / 168,915 | 19.15 | 35.15–52.07 | 73.02 @ 2572 | 22.94 | 63.19 |
+
+The bounded search combined 3.15% of the guest draws in Gadd. Average graphics
+CPU was 19.15 ms enabled and 19.11 ms disabled. It merged zero pairs at the
+title, where the search increased graphics CPU by 0.32 ms per refresh across
+the two boots per arm. This variant did not earn activation.
