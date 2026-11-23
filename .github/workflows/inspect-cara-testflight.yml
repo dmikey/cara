@@ -1,16 +1,16 @@
-name: Finalize the existing Cara TestFlight upload
+name: Inspect Cara TestFlight upload
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   inspect:
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.run_attempt == 1
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
     environment: nightly-signing
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Check and finalize the existing upload file in Apple
+      - name: Read the existing upload records from Apple
         env:
           ASC_KEY: ${{ secrets.CARA_ASC_UPLOAD_KEY_BASE64 }}
           ASC_ID: ${{ secrets.CARA_ASC_UPLOAD_KEY_ID }}
@@ -18,7 +18,6 @@ jobs:
         shell: bash
         run: |
           node <<'JS'
-          const assert = require('node:assert/strict')
           const { createPrivateKey, sign } = require('node:crypto')
           const key = createPrivateKey(Buffer.from(process.env.ASC_KEY, 'base64'))
           const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url')
@@ -31,7 +30,6 @@ jobs:
               '/v1/buildUploads/b80af088-2162-44f7-af1c-ad4df5e0b5c9?fields%5BbuildUploads%5D=state,cfBundleVersion,cfBundleShortVersionString,platform',
               '/v1/buildUploadFiles/d0c42fd1-09b7-4e70-926a-84d8a4d09f99?fields%5BbuildUploadFiles%5D=fileName,fileSize,assetType,assetDeliveryState,sourceFileChecksums'
             ]
-            const records = []
             for (const path of paths) {
               const res = await fetch('https://api.appstoreconnect.apple.com' + path, {
                 headers: {Authorization:'Bearer ' + token}, redirect:'error', signal:AbortSignal.timeout(30000)
@@ -39,30 +37,8 @@ jobs:
               const record = await res.json()
               const errors = record.errors?.map(({code, title, detail}) => ({code,title,detail})) ?? []
               console.log(JSON.stringify({status:res.status,attributes:record.data?.attributes,errors}))
-              assert.equal(res.status, 200)
-              records.push(record.data.attributes)
+              if (!res.ok) process.exitCode = 1
             }
-            const [build, file] = records
-            assert.deepEqual([build.cfBundleShortVersionString, build.cfBundleVersion, build.platform, build.state.state],
-              ['0.1.0','2','IOS','AWAITING_UPLOAD'])
-            assert.deepEqual([file.fileName,file.fileSize,file.assetType,file.assetDeliveryState.state],
-              ['Cara-iOS-arm64-GLES3-signed.ipa',17359380,'ASSET','AWAITING_UPLOAD'])
-            assert.equal(file.sourceFileChecksums.file, null)
-
-            const id = 'd0c42fd1-09b7-4e70-926a-84d8a4d09f99'
-            // MD5 computed locally from the verified SHA-256-pinned signed IPA.
-            const fileChecksum = { algorithm:'MD5', hash:'9335fe821bb19c9925b9609b91c889ea' }
-            const resp = await fetch('https://api.appstoreconnect.apple.com/v1/buildUploadFiles/' + id, {
-              method:'PATCH', headers:{Authorization:'Bearer ' + token, 'Content-Type':'application/json'},
-              body:JSON.stringify({data:{type:'buildUploadFiles',id,attributes:{
-                uploaded:true,sourceFileChecksums:{file:fileChecksum}}}}),
-              redirect:'error', signal:AbortSignal.timeout(30000)
-            })
-            const result = await resp.json()
-            const state = result.data?.attributes?.assetDeliveryState?.state
-            const errors = result.errors?.map(({code, title, detail, source}) => ({code,title,detail,source})) ?? []
-            console.log(JSON.stringify({status:resp.status, state, errors}))
-            assert.ok(resp.ok && result.data?.id === id && ['UPLOAD_COMPLETE','COMPLETE'].includes(state))
           }
           inspect().catch(() => { console.error('Apple upload status request failed'); process.exitCode = 1 })
           JS
