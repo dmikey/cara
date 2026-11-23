@@ -49,7 +49,8 @@ Common::HostRenderQueue* Queue();
 bool TryQueueVertexUpload(GLsizei width, GLsizei height, GLenum format, GLenum type,
                           const void* pixels, std::size_t bytes, SharedVertexShadow& retained);
 bool MailboxFencePacketEnabled();
-void QueueConsumedPresentFence(GLsync fence);
+void QueueConsumedPresentFence(GLsync fence, bool server_wait_only = false);
+void QueuePublishedRenderFence(std::function<void(GLsync)> publish);
 GLsync CreatePublishedRenderFence();
 struct RemapState;
 std::shared_ptr<RemapState> SaveRemapStateIfEnabled();

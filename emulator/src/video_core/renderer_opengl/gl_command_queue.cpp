@@ -494,14 +494,28 @@ bool MailboxFencePacketEnabled() {
     return requested && Enabled();
 }
 
-void QueueConsumedPresentFence(GLsync fence) {
+void QueueConsumedPresentFence(GLsync fence, bool server_wait_only) {
     // The old owner handed this handle to the render context. Only that
     // context consumes the wait result. All subsequent frame commands follow.
-    RecordApi(RpcApi::ConsumePresentFence, [fence] {
-        raw_glClientWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
+    RecordApi(RpcApi::ConsumePresentFence, [fence, server_wait_only] {
+        if (!server_wait_only) {
+            raw_glClientWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
+        }
         raw_glWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
         raw_glDeleteSync(fence);
     });
+}
+
+void QueuePublishedRenderFence(std::function<void(GLsync)> publish) {
+    RecordApi(RpcApi::PublishRenderFence, [publish = std::move(publish)] {
+        const auto fence = raw_glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        if (!fence) {
+            throw std::runtime_error("Could not create the mailbox render fence");
+        }
+        raw_glFlush();
+        publish(fence);
+    });
+    Flush();
 }
 
 GLsync CreatePublishedRenderFence() {
