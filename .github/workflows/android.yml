@@ -63,16 +63,21 @@ jobs:
           name: cara-rg-slide-pica-cpu-apk
           path: ${{ runner.temp }}/rg-slide/*
           if-no-files-found: error
-      - name: Build standalone ordered EGL probe
-        working-directory: emulator/src/android
+
+  ordered-gles-probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build original and thread-local dispatch probes
         run: |
-          build_dir="$(find app/.cxx -name build.ninja -path '*/arm64-v8a/*' -print -quit)"
-          "$ANDROID_HOME/cmake/3.31.6/bin/cmake" --build "$(dirname "$build_dir")" --target cara_ordered_gles_probe --parallel 3
-          probe="$(find app/.cxx app/build -type f -name cara_ordered_gles_probe -print -quit)"
-          test -x "$probe"
-          cp "$probe" "$RUNNER_TEMP/rg-slide/"
+          compiler="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang++"
+          for mode in original tls; do
+            tools/build-android-ordered-gles-probe.sh "$RUNNER_TEMP/probes/$mode" "$compiler" "$mode"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: cara-ordered-gles-probe
-          path: ${{ runner.temp }}/rg-slide/cara_ordered_gles_probe
+          path: ${{ runner.temp }}/probes/*/cara_ordered_gles_probe
           if-no-files-found: error
