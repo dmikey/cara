@@ -1246,9 +1246,14 @@ void PicaMetalNativeDrawLane::TransferDisplay(
     if (scaled_crop || rgb8_retile || ((linear_to_tiles || detile_raw) &&
         !registers.address_override_enabled && valid_extent &&
         ((registers.input_width | registers.input_height) & 7u) == 0)) {
-        NativeMetalCost::Scope route(linear_to_tiles || rgb8_retile
-                                         ? NativeMetalCost::RetileHost
-                                         : NativeMetalCost::RawDetileHost);
+        const bool retile_route = linear_to_tiles || rgb8_retile;
+        NativeMetalCost::Scope route(retile_route ? NativeMetalCost::RetileHost
+                                                 : NativeMetalCost::RawDetileHost);
+        static const bool profile_retile = [] {
+            const auto* value = std::getenv("CARA_METAL_PROFILE_RETILE");
+            return value && std::string_view(value) == "1";
+        }();
+        const bool trace_retile = retile_route && profile_retile;
         using MetalTransfer::AlignedGuestInterval;
         const u32 source_bpp = scaled_crop ? scaled_crop->source_bpp : packed16 ? 2u : 4u;
         const u64 size = u64{registers.input_width} * registers.input_height * source_bpp;
@@ -1292,8 +1297,10 @@ void PicaMetalNativeDrawLane::TransferDisplay(
             }
             retile = cached;
         }
+        NativeMetalCost::Scope allocate(NativeMetalCost::RetileAllocateHost, trace_retile);
         const auto command = [queue commandBuffer];
         const auto output = AllocateBytes(*dst);
+        allocate.Stop();
         if (group.Resolution().Factor() > 1 && layout_flags == 0x2004u &&
             resident_color && resident_color->rgba8) {
             const auto& layout = *resident_color->rgba8;
@@ -1319,10 +1326,13 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                 }
             }
         }
+        NativeMetalCost::Scope resolve(NativeMetalCost::RetileResolveHost, trace_retile);
         auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer);
+        resolve.Stop();
         if (command && !source) {
             // A linear view can reinterpret bytes just written in a tiled
             // render target. Materialize that exact byte range before tiling.
+            NativeMetalCost::Scope scratch(NativeMetalCost::RetileScratchHost, trace_retile);
             const auto staging = AllocateBytes(*src);
             auto* data = static_cast<u8*>(staging.contents);
             if (data && authority.ReadIntoScratch(src->begin, {data, src->Size()}, ram))
@@ -1330,6 +1340,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         }
         if (!retile || retile.maxTotalThreadsPerThreadgroup < 64 || !source || !output)
             submissions.Fail("Could not resolve linear-to-tiled Metal transfer");
+        NativeMetalCost::Scope encode(NativeMetalCost::RetileEncodeHost, trace_retile);
         const auto encoder = [command computeCommandEncoder];
         if (!encoder)
             submissions.Fail("Could not encode linear-to-tiled Metal transfer");
@@ -1357,6 +1368,8 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         if (scaled_crop && scaled_crop->destination_bpp == 2u)
             NativeMetalCost::Count(NativeMetalCost::DisplayScaledCropRgb565, 1);
         [encoder endEncoding];
+        encode.Stop();
+        NativeMetalCost::Scope publish(NativeMetalCost::RetilePublishHost, trace_retile);
         PublishBytes(command, output, DenseRows(*dst));
         return;
     }

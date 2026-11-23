@@ -57,7 +57,9 @@ enum Phase : std::size_t {
     SimdReferenceRequests, SimdReferenceCompiled, SimdReferenceRejected, SimdReferenceFallbacks, SimdReferenceDraws, DisplayCropRgb8Candidates, DisplayCrop565Candidates, DisplayCropOwnerHits, DisplayCropOwnerMisses, DisplayCropFused, DisplayCropSourceBytesAvoided, DisplayRgb8RetileCandidates, DisplayRgb8RetileOwnerHits, DisplayLinearBufferOnly, DisplayLinearTextureBytesAvoided, LinearTextureAlignmentQueries, LinearTextureAlignmentHits, ShaderIdentityFullChecks, ShaderIdentityComparedBytes, ShaderIdentityFastHits, ShaderIdentityValidationFailures, AsyncDepthImports, AsyncDepthChecksPassed, AsyncDepthChecksFailed, QueuedPendingDepthExports,
     PicaListToFirstShaderTranslation, PicaFirstShaderWithin100us, PicaFirstShaderWithin1ms,
     PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
-    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, UniformPreviousVsHit, PhaseCount
+    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, UniformPreviousVsHit,
+    RetileAllocateHost, RetileResolveHost, RetileScratchHost, RetileEncodeHost, RetilePublishHost,
+    PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
     "color_acquire", "depth_acquire", "lut_refresh", "record_total", "encode_total",
@@ -121,7 +123,9 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "pica_first_shader_within_1ms", "pica_first_shader_within_5ms", "pica_first_shader_after_5ms",
     "runtime_vertex_spirv_msl_hit", "general_fragment_draws",
     "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws", "runtime_linked_vertex_hit",
-    "uniform_previous_vs_hit"};
+    "uniform_previous_vs_hit",
+    "retile_allocate_host", "retile_resolve_host", "retile_scratch_host", "retile_encode_host",
+    "retile_publish_host"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {
@@ -285,8 +289,8 @@ struct Scope {
     using Clock = std::chrono::steady_clock;
     const Phase phase;
     Clock::time_point start;
-    explicit Scope(Phase phase_) :
-        phase(phase_), start(Enabled() ? Clock::now() : Clock::time_point{}) {}
+    explicit Scope(Phase phase_, bool active = true) :
+        phase(phase_), start(active && Enabled() ? Clock::now() : Clock::time_point{}) {}
     ~Scope() { Stop(); }
     void Stop() {
         if (start == Clock::time_point{}) return;
