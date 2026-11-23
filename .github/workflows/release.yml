@@ -110,12 +110,18 @@ jobs:
           python3 -m venv work/tools
           work/tools/bin/python -m pip install cmake==3.31.10 ninja==1.13.2
           echo "$PWD/work/tools/bin" >> "$GITHUB_PATH"
-          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+          developer=/Applications/Xcode_26.3.app/Contents/Developer
+          test -d "$developer"
+          sdk=$(DEVELOPER_DIR="$developer" xcrun --sdk iphoneos --show-sdk-version)
+          test "${sdk%%.*}" -ge 26
+          echo "DEVELOPER_DIR=$developer" >> "$GITHUB_ENV"
       - name: Build and audit the physical-device app without signing
         run: |
           python3 tools/prepare.py
           python3 tools/build.py ios --renderer gles3 --jobs 2
           python3 tools/audit_no_jit.py ios --renderer gles3
+          sdk=$(xcrun vtool -show-build work/build-ios-gles3/bin/cara-ios.app/cara-ios | awk '$1 == "sdk" {print $2}')
+          test "${sdk%%.*}" -ge 26
       - name: Package sideloading IPA
         run: |
           python3 tools/package_ipa.py --app work/build-ios-gles3/bin/cara-ios.app --audit work/build-ios-gles3/no-jit-audit.json --output dist/Cara-iOS-arm64-GLES3-unsigned.ipa
