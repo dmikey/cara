@@ -97,7 +97,8 @@ private:
     enum class ByteUse { General, DisplayTransfer, TextureCopy };
     std::optional<MetalTransfer::ByteView> ResolveBytes(
         id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
-        const MetalGuestAuthority::GuestReader& ram, ByteUse use = ByteUse::General);
+        const MetalGuestAuthority::GuestReader& ram, ByteUse use = ByteUse::General,
+        const MetalTransfer::DisplayTransferRegisters* shape_probe = nullptr);
     id<MTLBuffer> AllocateBytes(MetalTransfer::GuestInterval bytes);
     void PublishBytes(id<MTLCommandBuffer> command, id<MTLBuffer> buffer,
                       const MetalTransfer::Rows& rows);

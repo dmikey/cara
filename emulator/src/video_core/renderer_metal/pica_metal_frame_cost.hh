@@ -59,6 +59,10 @@ enum Phase : std::size_t {
     PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
     RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, UniformPreviousVsHit,
     RetileAllocateHost, RetileResolveHost, RetileScratchHost, RetileEncodeHost, RetilePublishHost,
+    RetileShapeRequests, RetileShapeSpans, RetileShapeBytes, RetileShapeBuffers,
+    RetileShapeWriters, RetileShapeSingleBuffer, RetileShapeMultiBuffer, RetileShapeDense,
+    RetileShapeRegular, RetileShapeAlternatingPair, RetileShapeOverflow, RetileShapeChanges,
+    RetileShapeTier2,
     PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
@@ -125,7 +129,11 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws", "runtime_linked_vertex_hit",
     "uniform_previous_vs_hit",
     "retile_allocate_host", "retile_resolve_host", "retile_scratch_host", "retile_encode_host",
-    "retile_publish_host"};
+    "retile_publish_host",
+    "retile_shape_requests", "retile_shape_spans", "retile_shape_bytes", "retile_shape_buffers",
+    "retile_shape_writers", "retile_shape_single_buffer", "retile_shape_multi_buffer",
+    "retile_shape_dense", "retile_shape_regular", "retile_shape_alternating_pair",
+    "retile_shape_overflow", "retile_shape_changes", "retile_shape_tier2"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {

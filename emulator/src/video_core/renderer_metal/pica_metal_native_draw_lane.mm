@@ -18,6 +18,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <fmt/format.h>
 #import <Foundation/Foundation.h>
@@ -603,11 +604,155 @@ struct ScopedJoinedDepthCheck {
     explicit ScopedJoinedDepthCheck(JoinedDepthCheck* check) { active_depth_check = check; }
     ~ScopedJoinedDepthCheck() { active_depth_check = previous; }
 };
+// IDs stay in the probe; never log pointers or guest addresses. Compact
+// affine shapes are tracked without allocation, with exact identity counts
+// retained even when there are too many buffers for a compact shape.
+class RetileIdentities {
+public:
+    static constexpr std::size_t Compact = 8;
+
+    std::size_t Index(const void* identity) {
+        const auto end = compact.begin() + size;
+        const auto found = std::find(compact.begin(), end, identity);
+        if (found != end)
+            return found - compact.begin();
+        if (size < Compact) {
+            compact[size] = identity;
+            return size++;
+        }
+        overflow.insert(identity);
+        return Compact;
+    }
+
+    std::size_t Count() const { return size + overflow.size(); }
+
+private:
+    std::array<const void*, Compact> compact{};
+    std::size_t size = 0;
+    std::unordered_set<const void*> overflow;
+};
+
+struct RetileRawPosition {
+    s64 ordinal{}, from{}, to{};
+    bool operator==(const RetileRawPosition&) const = default;
+
+    RetileRawPosition Delta(RetileRawPosition previous) const {
+        return {ordinal - previous.ordinal, from - previous.from, to - previous.to};
+    }
+};
+
+struct RetileRawPattern {
+    RetileRawPosition first{}, stride{};
+    std::size_t spans = 0;
+    bool regular = true;
+    bool operator==(const RetileRawPattern&) const = default;
+};
+
+struct RetileRawSummary {
+    std::array<RetileRawPattern, RetileIdentities::Compact> pattern{};
+    std::size_t buffer_count{}, writer_count{}, spans{}, bytes{}, span_bytes{};
+    u32 width{}, height{};
+    bool flip{}, dense{}, regular{};
+    bool operator==(const RetileRawSummary&) const = default;
+};
+
+class RetileRawShape {
+public:
+    explicit RetileRawShape(const MetalTransfer::DisplayTransferRegisters& regs)
+        : width(regs.input_width), height(regs.input_height), flip((regs.flags & 1u) != 0) {}
+
+    void Observe(const MetalSurfaceWriter* writer, id<MTLBuffer> buffer, NSUInteger from,
+                 NSUInteger to, NSUInteger size) {
+        writers.Index(writer);
+        const auto index = buffers.Index((__bridge const void*)buffer);
+        if (!spans)
+            span_bytes = size;
+        contiguous &= size == span_bytes && to == bytes;
+        if (index < pattern.size()) {
+            auto& group = pattern[index];
+            const RetileRawPosition position{static_cast<s64>(spans), static_cast<s64>(from),
+                                             static_cast<s64>(to)};
+            if (!group.spans)
+                group.first = position;
+            else if (group.spans == 1)
+                group.stride = position.Delta(previous[index]);
+            else
+                group.regular &= position.Delta(previous[index]) == group.stride;
+            previous[index] = position;
+            ++group.spans;
+        }
+        ++spans;
+        bytes += size;
+    }
+
+    void Finish(NSUInteger footprint, id<MTLDevice> device) {
+        using namespace NativeMetalCost;
+        const auto backing_count = buffers.Count();
+        const auto writer_count = writers.Count();
+        const bool overflow = backing_count > RetileIdentities::Compact;
+        const bool dense = spans && contiguous && bytes == footprint;
+        const bool regular = dense && !overflow && std::all_of(
+            pattern.begin(), pattern.end(), [](const auto& group) { return group.regular; });
+        const bool pair = regular && backing_count == 2 &&
+            pattern[0].first.ordinal == 0 && pattern[1].first.ordinal == 1 &&
+            pattern[0].stride.ordinal == 2 && pattern[1].stride.ordinal == 2;
+        const bool tier2 = device.argumentBuffersSupport == MTLArgumentBuffersTier2;
+        Count(RetileShapeRequests, 1);
+        Count(RetileShapeSpans, spans);
+        Count(RetileShapeBytes, bytes);
+        Count(RetileShapeBuffers, backing_count);
+        Count(RetileShapeWriters, writer_count);
+        Count(RetileShapeSingleBuffer, backing_count == 1);
+        Count(RetileShapeMultiBuffer, backing_count > 1);
+        Count(RetileShapeDense, dense);
+        Count(RetileShapeRegular, regular);
+        Count(RetileShapeAlternatingPair, pair);
+        Count(RetileShapeOverflow, overflow);
+        Count(RetileShapeTier2, tier2);
+
+        const RetileRawSummary summary{pattern, backing_count, writer_count, spans, bytes,
+                                      span_bytes, width, height, flip, dense, regular};
+        static thread_local RetileRawSummary last{};
+        static thread_local std::size_t ordinal = 0;
+        ++ordinal;
+        if (summary != last) {
+            Count(RetileShapeChanges, 1);
+            last = summary;
+        }
+        // Samples with cumulative ordinals can be joined to exact checkpoint
+        // counters. Shape-change counts distinguish stable windows from samples.
+        if (ordinal == 1 || ordinal % 128 == 0) {
+            std::string description;
+            for (std::size_t index = 0; index < std::min(backing_count, pattern.size()); ++index) {
+                const auto& entry = pattern[index];
+                description += fmt::format(
+                    "{}{}:{},{},{},{},{},{},{}", description.empty() ? "" : ";", index,
+                    entry.spans, entry.first.ordinal, entry.stride.ordinal,
+                    entry.first.from, entry.stride.from, entry.first.to, entry.stride.to);
+            }
+            LOG_INFO(Render_OpenGL, "RETILE_RAW_SHAPE ordinal={} width={} height={} flip={} spans={} "
+                    "span_bytes={} bytes={} buffers={} writers={} dense={} regular={} pair={} tier2={} groups={}",
+                    ordinal, width, height, int(flip), spans, span_bytes, bytes, backing_count,
+                    writer_count, int(dense), int(regular), int(pair), int(tier2), description);
+        }
+    }
+
+private:
+    const u32 width, height;
+    const bool flip;
+    RetileIdentities writers, buffers;
+    std::array<RetileRawPattern, RetileIdentities::Compact> pattern{};
+    std::array<RetileRawPosition, RetileIdentities::Compact> previous{};
+    std::size_t spans = 0, bytes = 0, span_bytes = 0;
+    bool contiguous = true;
+};
+
 } // namespace
 
 std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
-    const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
+    const MetalGuestAuthority::GuestReader& ram, ByteUse use,
+    const MetalTransfer::DisplayTransferRegisters* shape_probe) {
     const bool display_transfer = use == ByteUse::DisplayTransfer;
     NativeMetalCost::Scope cost(NativeMetalCost::ResolveBytesHost);
     const auto bytes = rows.footprint;
@@ -618,6 +763,9 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         u64{rows.count - 1} * rows.stride_bytes + rows.width_bytes != bytes.Size())
         return std::nullopt;
 
+    std::optional<RetileRawShape> shape;
+    if (shape_probe)
+        shape.emplace(*shape_probe);
     const auto current = authority.NativeSegments(bytes.begin, bytes.end);
     const auto raw = [&](const MetalGuestWrite& segment) -> const MetalSurfaceWriter* {
         const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
@@ -738,13 +886,21 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         current.front().end == bytes.end) {
         if (const auto* writer = raw(current.front())) {
             const auto offset = bytes.begin - writer->RawGuestBegin();
-            if (offset % alignment == 0)
+            if (offset % alignment == 0) {
+                if (shape) {
+                    shape->Observe(writer, writer->RawGuestBuffer(), offset, 0, bytes.Size());
+                    shape->Finish(bytes.Size(), queue.device);
+                }
                 return MetalTransfer::ByteView{writer->RawGuestBuffer(), bytes, offset};
+            }
         }
         if (active_depth_check && QueuePendingDepthExport() &&
             (rows.count == 1 || rows.width_bytes == rows.stride_bytes) && bytes.Size() % 4 == 0) {
-            if (const auto exported = queue_depth_export(current.front(), bytes.begin, bytes.end))
+            if (const auto exported = queue_depth_export(current.front(), bytes.begin, bytes.end)) {
+                if (shape)
+                    shape->Finish(bytes.Size(), queue.device);
                 return MetalTransfer::ByteView{exported, bytes, 0};
+            }
         }
         static const bool direct_export = [] {
             const auto* value = std::getenv("CARA_METAL_DIRECT_EXPORT_CONSUMPTION");
@@ -759,6 +915,8 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
                 NativeMetalCost::Count(NativeMetalCost::QueuedColorExportHost, 1);
                 NativeMetalCost::Count(NativeMetalCost::DirectQueuedExport, 1);
                 NativeMetalCost::Count(NativeMetalCost::DirectQueuedExportBytes, bytes.Size());
+                if (shape)
+                    shape->Finish(bytes.Size(), queue.device);
                 return MetalTransfer::ByteView{exported, bytes, 0};
             }
         }
@@ -796,7 +954,10 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             const NSUInteger size = last - first;
             const NSUInteger from = writer ? first - writer->RawGuestBegin() : 0;
             if (writer && ((from | to | size) & 3u) == 0) {
-                copies.push_back({writer->RawGuestBuffer(), from, to, size});
+                const auto backing = writer->RawGuestBuffer();
+                if (shape)
+                    shape->Observe(writer, backing, from, to, size);
+                copies.push_back({backing, from, to, size});
             } else {
                 auto exported = ((to | size) & 3u) == 0
                     ? queue_texture_export(*owner, first, last) : nil;
@@ -866,6 +1027,8 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
                        toBuffer:buffer destinationOffset:copy.to size:copy.size];
         [blit endEncoding];
     }
+    if (shape)
+        shape->Finish(bytes.Size(), queue.device);
     return MetalTransfer::ByteView{buffer, bytes, 0};
 }
 
@@ -1327,7 +1490,13 @@ void PicaMetalNativeDrawLane::TransferDisplay(
             }
         }
         NativeMetalCost::Scope resolve(NativeMetalCost::RetileResolveHost, trace_retile);
-        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer);
+        static const bool profile_shape = [] {
+            const auto* value = std::getenv("CARA_METAL_PROFILE_RAW_RETILE_SHAPE");
+            return value && std::string_view(value) == "1";
+        }();
+        const auto* shape = profile_shape && NativeMetalCost::Enabled() &&
+                            linear_to_tiles && !rgb8_retile && !scaled_crop ? &registers : nullptr;
+        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer, shape);
         resolve.Stop();
         if (command && !source) {
             // A linear view can reinterpret bytes just written in a tiled
