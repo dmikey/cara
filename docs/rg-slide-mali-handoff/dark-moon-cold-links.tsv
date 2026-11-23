@@ -1,0 +1,15 @@
+run	arm	phase	binary_hits	prewarm_source_links	seconds_to_title	worst_ms	worst_refresh	ending_refresh	window_p99_ms	compile_window_ms	link_event_count	sum_link_wall_ms	longest_link_ms
+lite-final	A	boot			104.5	50127.1	515	601	30970.24	81648.91	57	82489.1	3106.37
+lite-final	A	opening			104.5	41102.23	2478	2521	48.16	40906.66	26	44592.43	3085.82
+lite-prep	D	boot	128	0	21.31	517.09	515	601	150.57	0.00	0	0	0
+lite-prep	D	opening	128	0	21.31	129.9	1652	1681	87.86	0.00	0	0	0
+lite-prep	M	boot	128	0	21.3	509.82	515	601	150.82	0.00	0	0	0
+lite-prep	M	opening	128	0	21.3	116.98	2472	2521	44.78	0.00	0	0	0
+lite-prep	R	boot	128	0	21.24	528.14	515	601	150.82	0.00	0	0	0
+lite-prep	R	opening	128	0	21.24	113.7	1646	1681	82.23	0.00	0	0	0
+lite-lut-image	A	boot			104.69	49907.82	515	601	31149.71	81639.69	57	82693.11	3144.78
+lite-lut-image	A	opening			104.69	41023.87	2902	3001	147.16	40820.23	26	44709.7	3106.21
+lite-lut-image	I	boot	128	0	18.61	522.37	515	601	150.44	0.00	0	0	0
+lite-lut-image	I	opening	128	0	18.61	118.73	3028	3121	78.40	0.00	0	0	0
+lite-lut-image	R	boot	128	0	21.28	520.37	515	601	149.31	0.00	0	0	0
+lite-lut-image	R	opening	128	0	21.28	115.99	2900	3001	108.22	0.00	0	0	0
