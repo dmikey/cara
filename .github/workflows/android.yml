@@ -62,6 +62,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
+          packages: platform-tools
       - run: sdkmanager 'ndk;29.0.14206865'
       - run: mkdir -p "$RUNNER_TEMP/rg-slide"
       - name: Build Mali geometry counter sampler
