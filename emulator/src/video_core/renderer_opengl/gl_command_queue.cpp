@@ -462,7 +462,7 @@ void Flush() {
  struct Batch {
    std::shared_ptr<PayloadLease> slots;std::vector<std::function<void()>> jobs;
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
-   std::array<Backlog::Tag, MaxBatchCommands> tags;
+   std::vector<Backlog::Tag> tags;
 #endif
    ~Batch(){jobs.clear();slots.reset();}
  };
@@ -472,7 +472,7 @@ void Flush() {
  stats.pending_commands=0;stats.pending_bytes=0;
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
  if (Common::FrameTiming::counters.enabled && Backlog::Enabled()) {
-  std::copy_n(pending_tags.begin(), batch->jobs.size(), batch->tags.begin());
+  batch->tags.assign(pending_tags.begin(), pending_tags.begin() + batch->jobs.size());
   q.Submit([batch] {
    for (std::size_t i = 0; i < batch->jobs.size(); ++i)
     RunProfiled(batch->tags[i], batch->jobs[i]);
