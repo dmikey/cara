@@ -2,73 +2,76 @@ name: Android GLES ARM64
 
 on:
   workflow_dispatch:
-    inputs:
-      preview:
-        description: Build an installable side-by-side preview
-        type: boolean
-        default: false
-  pull_request:
-    paths:
-      - '.github/workflows/android.yml'
-      - 'emulator/CMakeLists.txt'
-      - 'emulator/src/android/**'
-      - 'emulator/src/cara/**'
-      - 'emulator/src/core/**'
-      - 'emulator/src/video_core/renderer_opengl/**'
 
 permissions:
   contents: read
 
 jobs:
-  apk:
-    name: APK (${{ matrix.renderer }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - renderer: atlas
-            atlas: 'ON'
-          - renderer: gles32
-            atlas: 'OFF'
+  rg-slide:
+    name: Build exact main ARM64 release APK for local signing
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools
           log-accepted-android-sdk-licenses: false
+          packages: platform-tools
+
       - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;29.0.14206865' 'cmake;3.31.6'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Build ARM64 GLES debug APK with Dynarmic and FastInterp
+      - name: Build and inspect release APK
         working-directory: emulator/src/android
-        env:
-          CARA_ANDROID_PREVIEW: ${{ inputs.preview && 'true' || 'false' }}
-        run: gradle --no-daemon --max-workers=3 :app:assembleDebug -PcaraGlesAtlas=${{ matrix.atlas }} -PcaraPreview="$CARA_ANDROID_PREVIEW"
-      - name: Verify the APK
         run: |
-          apk=emulator/src/android/app/build/outputs/apk/debug/app-debug.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
-          unzip -l "$apk" | grep 'lib/arm64-v8a/libmain.so'
-          native="$(find emulator/src/android/app/build/intermediates/cxx -path '*/obj/arm64-v8a/libmain.so' -print -quit)"
-          test -n "$native"
-          tools="$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          "$tools/llvm-readelf" -h "$native" > android-native-header.txt
-          "$tools/llvm-nm" -C --defined-only "$native" > "$RUNNER_TEMP/android-native-symbols.txt"
-          grep -F 'AArch64' android-native-header.txt
-          grep -F 'ARM_Dynarmic::Run()' "$RUNNER_TEMP/android-native-symbols.txt"
-          grep -F 'ARM_FastInterp::Run()' "$RUNNER_TEMP/android-native-symbols.txt"
-          if grep -Eq 'JitShader::|ShaderJit::' "$RUNNER_TEMP/android-native-symbols.txt"; then
-            exit 1
-          fi
+          cat > "$RUNNER_TEMP/rg-slide-profile.init.gradle" <<'GRADLE'
+          gradle.beforeProject { project ->
+              project.pluginManager.withPlugin('com.android.application') {
+                  project.androidComponents.finalizeDsl { android ->
+                      android.defaultConfig.versionCode = 275
+                  }
+              }
+          }
+          GRADLE
+          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-profile.init.gradle" :app:assembleRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          git diff --exit-code
+          mkdir -p "$RUNNER_TEMP/rg-slide"
+          build_tools="$ANDROID_HOME/build-tools/35.0.0"
+          apk="$RUNNER_TEMP/rg-slide/Cara-Android-main-arm64-unsigned.apk"
+          "$build_tools/zipalign" -P 16 -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$apk"
+          "$build_tools/zipalign" -c -P 16 4 "$apk"
+          "$build_tools/aapt" dump badging "$apk" > "$RUNNER_TEMP/rg-slide/apk-badging.txt"
+          grep "^package: name='org.cara.emu'" "$RUNNER_TEMP/rg-slide/apk-badging.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/rg-slide/source-revision.txt"
+          cp "$build_tools/lib/apksigner.jar" "$RUNNER_TEMP/rg-slide/"
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-android-arm64-${{ matrix.renderer }}-cpu-jit${{ inputs.preview && '-preview' || '' }}
+          name: cara-rg-slide-indexed-test-apk
+          path: ${{ runner.temp }}/rg-slide/*
           if-no-files-found: error
-          path: emulator/src/android/app/build/outputs/apk/debug/app-debug.apk
+  sampler:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'ndk;29.0.14206865'
+      - run: mkdir -p "$RUNNER_TEMP/rg-slide"
+      - name: Build Mali geometry counter sampler
+        run: |
+          git clone --depth 1 --branch 2.5.1 https://github.com/ARM-software/libGPUCounters.git "$RUNNER_TEMP/arm-counters"
+          test "$(git -C "$RUNNER_TEMP/arm-counters" rev-parse HEAD)" = 847a04a1597d132a3746e9c6374d3977cea89a6d
+          sh tools/rg-slide-profile/build-android.sh "$ANDROID_HOME/ndk/29.0.14206865" "$RUNNER_TEMP/arm-counters" "$RUNNER_TEMP/cara-sampler"
+          cp "$RUNNER_TEMP/cara-sampler/cara-mali-sample" "$RUNNER_TEMP/rg-slide/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cara-rg-slide-mali-geometry-sampler
+          path: ${{ runner.temp }}/rg-slide/cara-mali-sample
+          if-no-files-found: error
