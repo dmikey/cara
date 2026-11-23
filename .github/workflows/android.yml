@@ -34,16 +34,6 @@ jobs:
         run: |
           cat > "$RUNNER_TEMP/rg-slide-profile.init.gradle" <<'GRADLE'
           gradle.beforeProject { project ->
-              if (project.name == 'app') {
-                  project.repositories {
-                      exclusiveContent {
-                          forRepository {
-                              maven { url = uri('https://maven-central.storage-download.googleapis.com/maven2/') }
-                          }
-                          filter { includeGroup('com.google.errorprone') }
-                      }
-                  }
-              }
               project.pluginManager.withPlugin('com.android.application') {
                   project.androidComponents.finalizeDsl { android ->
                       android.defaultConfig.versionCode = 275
@@ -52,8 +42,9 @@ jobs:
           }
           GRADLE
           sed -i '/<\/application>/i\        <profileable android:shell="true" />' app/src/main/AndroidManifest.xml
-          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-profile.init.gradle" :app:assembleRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
-          git restore app/src/main/AndroidManifest.xml
+          sed -i 's|mavenCentral()|maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }|g' build.gradle
+          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-profile.init.gradle" :app:assembleRelease -x :app:lintVitalAnalyzeRelease -x :app:lintVitalReportRelease -x :app:lintVitalRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          git restore build.gradle app/src/main/AndroidManifest.xml
           git diff --exit-code
           mkdir -p "$RUNNER_TEMP/rg-slide"
           build_tools="$ANDROID_HOME/build-tools/35.0.0"
