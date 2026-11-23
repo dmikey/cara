@@ -129,3 +129,29 @@ depth-rejected draw and a stencil-equals-two test. This verifies GLES
 instancing behavior for the fixture. Exact output parity for the real
 multi-pass Gadd scene and cross-title regression coverage remain open.
 [Standalone fixture](https://github.com/dmikey/cara/blob/aa58aa1/emulator/src/android/jni/tests/ordered_gles_probe.cpp)
+
+## Independent graphics worker experiment
+
+A separate [Android worker build](https://github.com/dmikey/cara/actions/runs/45248433508)
+transferred the main GLES submission context to an ordered worker and grouped
+LUT upload state setup, transfer and restoration in one owned command.
+The PICA register parser and draw preparation remained on the emulation thread.
+The direct and worker normal boots used the same APK, packed layout uniform
+reuse and a matching 128-entry binary cache. Both restored 128 binaries with
+zero source links. Each of the four warm Gadd windows had zero shader compile
+time and zero surface download time.
+
+| Gadd, 480 refreshes per arm | Emulation-thread graphics CPU ms/refresh | Worker CPU ms/refresh | Window p99 range, ms | Worst ms @ refresh |
+| --- | ---: | ---: | ---: | ---: |
+| Direct | 19.17 | — | 35.51–50.82 | 70.33 @ 2969 |
+| Ordered worker with grouped LUT uploads | 12.57 | 12.61 | 35.05–57.74 | 110.85 @ 2591 |
+
+The grouped worker moved 6.60 ms off the producer. During the three sustained
+windows after the first, it recorded about 25,000 commands, 398 submissions
+of command batches and 19 synchronous calls per refresh. The two threads
+overlapped their work. Title window 961 had the same 51,168 guest draws in
+both boots; median refresh time improved from 50.28 to 43.10 ms and p99
+from 57.22 to 48.94 ms. The producer's elapsed lighting/fog LUT scope fell
+from 2,225.83 ms to 14.57 ms across the window, including the effect of
+moving driver time to the worker. Warm Gadd's longer worst frame keeps this
+experimental. This trial ran independently of the draw-combining branch.
