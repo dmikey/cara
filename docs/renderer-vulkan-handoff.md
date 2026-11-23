@@ -209,6 +209,50 @@ elapsed timings overlap. The p99 values varied, so the replay does
 not establish a frame-time or hitch improvement. Keep this private
 option off by default. These are Metal host measurements on the M1.
 
+### Remaining M1 Luigi CPU cost with direct LCD reads
+
+The 3,000-refresh replay enabled direct LCD reads and used FastInterp at
+100% guest CPU with SDL audio. Both LCDs matched at 15 checkpoints.
+Guest SD files and selected draw and transfer work matched. The process
+exited cleanly. In refreshes 2401–2800, direct reads still avoided all
+320,000 LCD staging blits. The measured window issued 277,455 draws in
+6,360 groups, with zero shader library or pipeline builds.
+
+The owner averaged **22.834 ms of CPU per refresh** against **23.025 ms
+elapsed**. The 16.7 ms target requires recovering at least 6.13 ms of
+owner CPU at this workload and the observed instrumentation. The
+first and second 200-refresh halves averaged 22.828 and 22.841 ms of
+owner CPU, respectively.
+
+| Owner thread scope | Exclusive CPU ms/refresh |
+| --- | ---: |
+| Guest CPU execution and memory | 11.276 |
+| Metal draw binding | 3.484 |
+| Metal draw encoding | 2.099 |
+| Metal transfers | 1.965 |
+| PICA command handling outside the nested scopes | 1.129 |
+| Metal publication and submission | 1.090 |
+| Metal draw recording | 0.606 |
+| Metal presentation | 0.221 |
+| Other tracked and untracked CPU | 0.964 |
+| Total | 22.834 |
+
+The exclusive CPU tracker charged nested scopes separately. The guest
+CPU category includes memory accesses. In the same window, submission
+pressure contributed 0.012 ms elapsed per refresh and upload-arena wait
+was zero. This identifies owner CPU time as the frame-budget constraint
+in this run. It does not measure GPU utilization. The category clocks
+add overhead and the exact split is diagnostic. The earlier direct-read
+runs averaged 22.524 and 22.656 ms of owner CPU.
+
+Draw binding and encoding together account for 5.583 ms of owner CPU,
+before draw recording. The binding scopes report 0.983 ms elapsed in
+vertex inputs, 0.947 ms in attachment and LUT setup, and 0.613 ms in
+sampled texture setup. The encoding upload scope reports 0.956 ms
+elapsed. These are child spans, so adding them to the parent CPU
+numbers would count work twice. They identify where to test reuse
+while preserving the original guest memory and draw order.
+
 ## Preserve the backend boundary
 
 Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
