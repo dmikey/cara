@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: d7de1076b81fa13b1a0711b4bb27a5bcb1de2d7a
+          ref: 8882138a22e57be64d749e30259dd421a19ff400
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-java@v4
@@ -33,11 +33,10 @@ jobs:
       - name: Build and inspect release APK
         working-directory: emulator/src/android
         run: |
-          test "$(git rev-parse HEAD)" = d7de1076b81fa13b1a0711b4bb27a5bcb1de2d7a
+          test "$(git rev-parse HEAD)" = 8882138a22e57be64d749e30259dd421a19ff400
           cat > "$RUNNER_TEMP/rg-slide-profile.init.gradle" <<'GRADLE'
           gradle.beforeProject { project ->
               project.pluginManager.withPlugin('com.android.application') {
-                  project.android.buildTypes.named('release') { debuggable = true }
                   project.androidComponents.finalizeDsl { android ->
                       android.defaultConfig.versionCode = 275
                   }
@@ -57,6 +56,6 @@ jobs:
           cp "$build_tools/lib/apksigner.jar" "$RUNNER_TEMP/rg-slide/"
       - uses: actions/upload-artifact@v4
         with:
-          name: cara-rg-slide-apple-gles-test-apk
+          name: cara-rg-slide-exact-staging-test-apk
           path: ${{ runner.temp }}/rg-slide/*
           if-no-files-found: error
