@@ -2596,6 +2596,15 @@ RasterizerCacheOpenGL::~RasterizerCacheOpenGL() {
 }
 
 GLuint RasterizerCacheOpenGL::GetTextureCopyHandle(const Surface& surface) {
+    namespace Timing = Common::FrameTiming;
+    auto& counters = Timing::counters;
+    const bool profile = counters.enabled && Timing::RenderBookkeepingProfileEnabled();
+    Timing::Scope timing(Timing::Phase::TextureFeedbackCopy, profile);
+    if (profile) {
+        ++counters.texture_feedback_copies;
+        counters.texture_feedback_copy_bytes += u64(surface->GetScaledWidth()) *
+            surface->GetScaledHeight() * CachedSurface::GetGLBytesPerPixel(surface->pixel_format);
+    }
     if (!validation_copy_trace || !validation_copy_trace->InWindow())
         return surface->GetTextureCopyHandle();
     auto& trace = *validation_copy_trace;

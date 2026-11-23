@@ -62,10 +62,13 @@ public:
 
     // The result remains valid until the next cache mutation. The renderer uses
     // it for one draw on its owning thread, then performs the next lookup.
-    const Data* Find(const Key& key, const std::uint8_t* source, std::size_t size) {
+    const Data* Find(const Key& key, const std::uint8_t* source, std::size_t size,
+                     std::uint64_t* compared_bytes = nullptr) {
         const auto found = entries.find(key);
         if (found == entries.end()) return nullptr;
         auto& entry = found->second;
+        if (compared_bytes && size && source && entry.data.source.size() == size)
+            *compared_bytes += size;
         if (entry.data.source.size() != size ||
             (size && (!source || std::memcmp(entry.data.source.data(), source, size)))) {
             Erase(found);

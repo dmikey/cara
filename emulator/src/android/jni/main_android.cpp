@@ -463,6 +463,20 @@ void BootGame(const std::string& path) {
                                 phases.texture_lookup_hits, phases.texture_lookup_verify_mismatches,
                                 phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
                             if (trace_render_phases) {
+                                const auto staging = fmt::format(
+                                    "staging end={} guest_index_compare_span_bytes={} "
+                                    "guest_vertex_copy_bytes={} constants_bytes={} resize_zero_bytes={} "
+                                    "clear_bytes={} leased_bytes={} feedback_copies={} feedback_bytes={} "
+                                    "feedback_ms={:.2f}",
+                                    frame, phases.vertex_index_compare_span_bytes,
+                                    phases.packed_vertices_guest_copy_bytes,
+                                    phases.packed_vertices_constant_copy_bytes,
+                                    phases.packed_vertices_resize_zero_bytes,
+                                    phases.packed_vertices_clear_bytes,
+                                    phases.packed_vertices_leased_bytes, phases.texture_feedback_copies,
+                                    phases.texture_feedback_copy_bytes,
+                                    phases.texture_feedback_copy_seconds * 1000);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", staging.c_str());
                                 const auto draw_phases = fmt::format(
                                     "draw_phases end={} framebuffer_ms={:.2f} textures_ms={:.2f} "
                                     "shader_setup_ms={:.2f} invalidation_ms={:.2f} index_reuse_ms={:.2f} "

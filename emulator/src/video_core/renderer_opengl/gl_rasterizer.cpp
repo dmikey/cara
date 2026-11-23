@@ -1031,22 +1031,45 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
                 totals.failed,totals.logical,totals.skipped_source);
         }
     }
-    static const bool padding_only_zero=PackedVertexPaddingOnlyEnabled();
-    u8* materialized=nullptr;
+    static const bool padding_only_zero = PackedVertexPaddingOnlyEnabled();
+    auto& counters = Common::FrameTiming::counters;
+    const bool trace = counters.enabled && Common::FrameTiming::RenderBookkeepingProfileEnabled();
+    u8* materialized = nullptr;
     if (!ios_packed_snapshot_lease) {
-        ios_vertex_inputs.resize(rows*IOS_VERTEX_INPUT_WIDTH);
-        materialized=reinterpret_cast<u8*>(ios_vertex_inputs.data());
-        if (!padding_only_zero ||
-            !ranges.ClearPadding(materialized,ios_vertex_inputs.size()*sizeof(GLvec4),sizeof(constants)))
-            std::memset(materialized,0,ios_vertex_inputs.size()*sizeof(GLvec4));
-        std::memcpy(materialized,constants.data(),sizeof(constants));
+        const size_t previous_size = ios_vertex_inputs.size();
+        ios_vertex_inputs.resize(rows * IOS_VERTEX_INPUT_WIDTH);
+        materialized = reinterpret_cast<u8*>(ios_vertex_inputs.data());
+        const size_t staged_bytes = ios_vertex_inputs.size() * sizeof(GLvec4);
+        const bool cleared_padding = padding_only_zero &&
+            ranges.ClearPadding(materialized, staged_bytes, sizeof(constants));
+        if (!cleared_padding)
+            std::memset(materialized, 0, staged_bytes);
+        std::memcpy(materialized, constants.data(), sizeof(constants));
+        if (trace) {
+            if (previous_size < ios_vertex_inputs.size())
+                counters.packed_vertices_resize_zero_bytes +=
+                    (ios_vertex_inputs.size() - previous_size) * sizeof(GLvec4);
+            counters.packed_vertices_constant_copy_bytes += sizeof(constants);
+            size_t clear_bytes = staged_bytes;
+            if (cleared_padding) {
+                clear_bytes -= sizeof(constants);
+                for (const auto& range : ranges)
+                    clear_bytes -= range.end - range.begin;
+            }
+            counters.packed_vertices_clear_bytes += clear_bytes;
+        }
+    } else if (trace) {
+        counters.packed_vertices_leased_bytes += ios_packed_snapshot_lease->size();
     }
     const u8* output=IOSVertexInputData();
     for (const auto& range:ranges) {
         if (!ios_packed_snapshot_lease) {
             const auto memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
             if (!memory || memory.GetSize()<range.end-range.begin) return false;
-            std::memcpy(materialized+range.destination,memory.GetPtr(),range.end-range.begin);
+            const size_t range_bytes = range.end - range.begin;
+            std::memcpy(materialized + range.destination, memory.GetPtr(), range_bytes);
+            if (trace)
+                counters.packed_vertices_guest_copy_bytes += range_bytes;
         }
         for (unsigned reg=0;reg<16;++reg)
             if (loaded[reg] && addresses[reg]>=range.begin && addresses[reg]<range.end)
@@ -1137,7 +1160,12 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     const IOSVertexIndexCache::Key key{is_indexed?index_address:0,count,
         is_indexed?0:u32(pipeline.vertex_offset),static_cast<u32>(topology),
         is_indexed?(pipeline.index_array.format?2u:1u):0u};
-    if (cache_enabled) ios_cached_index_data=ios_vertex_index_cache.Find(key,indices,source_size);
+    if (cache_enabled) {
+        auto& counters = Common::FrameTiming::counters;
+        const bool trace = counters.enabled && Common::FrameTiming::RenderBookkeepingProfileEnabled();
+        ios_cached_index_data = ios_vertex_index_cache.Find(
+            key, indices, source_size, trace ? &counters.vertex_index_compare_span_bytes : nullptr);
+    }
     if (Common::FrameTiming::counters.enabled && cache_enabled) {
         if (ios_cached_index_data) ++Common::FrameTiming::counters.vertex_index_cache_hits;
         else ++Common::FrameTiming::counters.vertex_index_cache_misses;
