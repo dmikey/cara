@@ -434,6 +434,9 @@ void Run(EGLDisplay display, EGLConfig config) {
         [&] { rendering.Release(); });
     setenv("CARA_CHECKED_REMAP_PACKET", "1", 1);
     setenv("CARA_SHARED_VERTEX_UPLOAD", "1", 1);
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    GLsync published = nullptr;
+#endif
     Queue::Install(worker);
     try {
         const auto queued = Draw();
@@ -451,11 +454,20 @@ void Run(EGLDisplay display, EGLConfig config) {
 #ifdef CARA_GL_CONTEXT_DISPATCH
         CheckRemapQueue();
         CheckSharedVertexUpload();
+        published = Queue::CreatePublishedRenderFence();
+        Check(published != nullptr, "render fence not created");
 #endif
         Queue::Drain();
         std::puts("queued instanced draws passed");
         std::async(std::launch::async, [&] {
             helper.Bind();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+            glWaitSync(published, 0, GL_TIMEOUT_IGNORED);
+            glDeleteSync(published);
+            published = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            glFlush();
+            Check(published && glGetError() == GL_NO_ERROR, "sibling fence exchange");
+#endif
             const bool presenter = CheckHelperCall("present glBindFramebuffer", [] { glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); });
             const bool compiler = CheckHelperCall("shader worker glCreateShader", [] {
                 const auto shader = glCreateShader(GL_FRAGMENT_SHADER);
@@ -475,6 +487,12 @@ void Run(EGLDisplay display, EGLConfig config) {
             std::puts("native sibling control passed");
             helper.Release();
         }).get();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+        Queue::QueueConsumedPresentFence(published);
+        Queue::Drain();
+        Check(worker.Call([&] { return !glIsSync(published); }) && glGetError() == GL_NO_ERROR, "present fence was not retired");
+        std::puts("render and present fence round trip passed across EGL contexts");
+#endif
     } catch (...) {
         Queue::Uninstall();
         throw;
