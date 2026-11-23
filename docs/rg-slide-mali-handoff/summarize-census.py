@@ -7,9 +7,9 @@ phase = ''
 records = defaultdict(list)
 emulation = {}
 for line in Path(sys.argv[1]).read_text().splitlines():
-    if match := re.search(r'CaraBudget:\s+(boot|title-end|title|profile)-([\w-]+)$', line):
+    if match := re.search(r'CaraBudget:\s+(boot|title-end|title|profile|begin|end|lab)-([\w-]+)$', line):
         marker, run = match.groups()
-        phase = (run, marker)
+        phase = (run, marker) if marker not in {'end', 'lab'} else ''
     elif match := re.search(r'\s(\d+)\s+(\d+) I CaraPerf: window', line):
         pid, tid = match.groups()
         emulation[pid] = tid
@@ -22,6 +22,12 @@ for phase, rows in records.items():
     keys = {r['key']: r['source'] for _, _, a, r in rows if a == 'fragment_key'}
     lit = {r['source'] for _, _, a, r in rows if a == 'fragment_key' and r['lit'] == '1'}
     print(f'{"/".join(phase)}: {len(keys)} new PICA keys, {len(set(keys.values()))} distinct sources, {len(lit)} lit')
+    for _, _, action, fields in rows:
+        if action == 'cache_restore':
+            count = fields['entries']
+            hits = fields['binary_hits']
+            links = fields['source_links']
+            print(f'  restore: {hits}/{count} binaries, {links} source links, {fields["bytes"]} bytes')
     for is_emulation in (True, False):
         scope = [(a, r) for pid, tid, a, r in rows if (emulation.get(pid) == tid) == is_emulation]
         if not scope:

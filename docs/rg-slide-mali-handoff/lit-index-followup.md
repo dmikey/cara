@@ -120,3 +120,31 @@ staging while retaining the destination texture hazard.
 See [phase windows](mali-render-phases.log.txt) and
 [Android CI](https://github.com/dmikey/cara/actions/runs/45202872936).
 The original signed APK and profile were restored after the tests.
+
+### Dedicated fog texture trial
+
+Exact Android APK `1fb7a46` booted Dark Moon four times at JIT + GLES Atlas,
+1×, Performance Mode and CLK 100%. The trial put the 128-entry fog table
+in its own 8 KiB allocation, sampled it with the same interpolation, and
+kept lighting on the shared 2D texture. Both restarts restored 128 out of
+128 shader binaries from their own cold runs. Each arm used the same
+route through title and save selection to Gadd's lab.
+
+| Measurement | Shared texture | Separate fog |
+| --- | ---: | ---: |
+| Warm title texture transfer per refresh, windows 721–961 | 18.22–19.09 ms | 17.76–18.86 ms |
+| Warm lab-entry texture transfer per refresh, windows 2401 and 2521 | 5.08 / 7.97 ms | 5.04 / 7.11 ms |
+| Warm lab-entry p99, same two windows | 89.46 / 47.00 ms | 41.78 / 71.62 ms |
+| Warm Gadd window median range | 29.17–29.97 ms | 28.92–29.50 ms |
+| Warm Gadd window p99 range | 36.03–56.34 ms | 34.04–52.19 ms |
+| Worst warm Gadd refresh | 71.85 ms | 52.19 ms |
+
+Cold title arrived at 103.20 s shared and 103.10 s split. GLSL validation
+passed 16 generated fog and logic-op variants. No renderer API errors
+were logged in these arms. The measured warm transfer reductions were
+under 1 ms per refresh and lab-entry p99 moved in different directions.
+Scene draw counts varied and pixel equivalence was not established.
+The branch removes the experiment and its test switch. The original
+signed APK and checked user profile files were restored.
+
+[Exact Android test APK](https://github.com/dmikey/cara/actions/runs/45218080631)
