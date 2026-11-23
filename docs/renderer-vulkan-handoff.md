@@ -163,12 +163,20 @@ and LCD measurements are within the total presentation scope.
 Both LCDs matched at 15 checkpoints, along with the selected work
 and guest SD files. The window presented 400 drawables with no misses.
 
-Keep receipt validation in place. The CPU target in this run is
-resolving the current LCD bytes. When the decoder reads only pixel
-bytes inside each row, test whether one tracked writer covers all
-those rows and can supply them from its existing buffer. Keep the
-original path for mixed owners, unproven coverage, or an incompatible
-queue. Measure any savings across the full refresh.
+A separate M1 replay tested whether a single tracked raw buffer could
+supply every pixel row without staging. The 800 LCD source resolutions
+in the selected window split into 400 existing direct reads and 400
+staged reads. Staging issued 320,000 raw Metal buffer blits for
+115,200,000 bytes. Guest RAM gaps and queued or synchronous exports
+were zero. The single-writer option had zero hits. The replay matched
+both LCDs at all 15 checkpoints, guest SD files, and selected work.
+The option stays off and has no measured speedup.
+
+Before testing direct decode from multiple raw buffers, confirm that
+the same few validated leases cover each consumed row with a stable
+split. The aggregate counts alone cannot establish the split or writer
+identities. Preserve the original receipt checks and retain staging
+for layouts or ownership that the decoder cannot prove.
 
 ## Preserve the backend boundary
 
