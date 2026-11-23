@@ -29,7 +29,7 @@ Each of the four boots used the same signed APK. Packed vertex-layout uniform re
 | Worker | Off | 12.57 | 12.61 | 35.05–57.74 | 110.85 |
 | Worker | On | 11.76 | 11.02 | 37.28–46.69 | 108.09 |
 
-The producer's surface-remapping scope averaged 7.06 ms of elapsed time per refresh with the worker and raster reuse, versus 0.85 ms on the direct path with reuse. This includes waiting for earlier commands when a helper needs an answer. The guest CPU execution category averaged 5.82 and 5.45 ms of CPU time respectively. Shader compile time and surface download time were zero in all four measured lab windows on each arm. One boot per configuration and different scene animation phases limit claims about p99.
+The producer's surface-remapping scope averaged 7.06 ms of elapsed time per refresh with the worker and raster reuse, versus 0.85 ms on the direct path with reuse. This includes waiting for earlier commands when a helper needs an answer. The guest CPU execution category averaged 5.82 and 5.45 ms of CPU time respectively. Shader compile time and surface download time were zero in all four measured lab windows on each arm. One boot per configuration and different scene animation phases limit claims about p99. [Individual windows](gadd-state-reuse-windows.tsv)
 
 ## Where the threads sleep
 
