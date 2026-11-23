@@ -433,3 +433,11 @@ Mark boot, title, save selection, and the lab separately. Report both total
 and distinct fragment compile requests and rank lit source hashes by
 emulation-thread stall time. Use a matched census-off run for headline p99
 because the extra diagnostics add host work.
+
+The shared fragment generator now keeps its texture and fragment lighting
+usage flags per call. That allows independent worker generation with the
+explicit shader target and a captured PICA key. GL submission still uses
+the existing context and preserves guest draw order. An eight-thread host
+fixture reproduced mismatched GLSL with the old shared flags. The corrected
+generator matched 32 serial GLES sources byte for byte and matched all
+32,000 parallel calls.
