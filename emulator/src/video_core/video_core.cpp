@@ -126,6 +126,17 @@ RasterizerInterface* Rasterizer() {
     return g_rasterizer.get();
 }
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+bool RunGLESDepthCoherenceSelfTest(std::string& detail) {
+    auto* rasterizer = dynamic_cast<OpenGL::RasterizerOpenGL*>(g_rasterizer.get());
+    if (!rasterizer || !OpenGL::GLES) {
+        detail = "GLES rasterizer unavailable";
+        return false;
+    }
+    return rasterizer->RunDepthCoherenceSelfTest(detail);
+}
+#endif
+
 void FrameUpdate() {
     Core::System::GetInstance().perf_stats->EndSystemFrame();
     Core::System::GetInstance().perf_stats->BeginSystemFrame();

@@ -33,9 +33,6 @@
 #include "core/loader/smdh.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
-#ifdef CARA_ANDROID_GLES_ATLAS
-#include "video_core/renderer_opengl/gl_rasterizer.h"
-#endif
 #include "video_core/video_core.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
 
@@ -285,12 +282,7 @@ void BootGame(const std::string& path) {
         bool passed = false;
 #ifdef CARA_ANDROID_GLES_ATLAS
         try {
-            auto* rasterizer = dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
-            if (rasterizer) {
-                passed = rasterizer->RunDepthCoherenceSelfTest(detail);
-            } else {
-                detail = "GLES rasterizer unavailable";
-            }
+            passed = VideoCore::RunGLESDepthCoherenceSelfTest(detail);
         } catch (const std::exception& exception) {
             detail = exception.what();
         } catch (...) {

@@ -350,10 +350,10 @@ trace_renderer_timing = True
 Launch a supported local title. The verifier initializes its GLES context and
 guest memory, runs generated data through the shared depth oracle before
 executing guest instructions, and returns to the library. Use logcat to collect
-the result and the fixture case counts.
+the result and the gameplay timing windows.
 
 ```sh
-adb logcat -v brief -s CaraPerf:I cara:I | grep -E 'depth_coherence|Depth (CPU coherence|broader-copy) oracle|surface_window| window end='
+adb logcat -v brief -s CaraPerf:I | grep -E 'depth_coherence|surface_window| window end='
 ```
 
 Require `depth_coherence passed=1` for the ON arm. The fixture checks depth

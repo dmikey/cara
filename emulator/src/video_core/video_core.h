@@ -7,6 +7,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace Frontend {
@@ -59,6 +60,9 @@ ResultStatus Init(Frontend::EmuWindow& window, Memory::MemorySystem& memory);
 RendererBase* Renderer();
 Memory::MemorySystem* Memory();
 RasterizerInterface* Rasterizer();
+#ifdef CARA_ANDROID_GLES_ATLAS
+bool RunGLESDepthCoherenceSelfTest(std::string& detail);
+#endif
 u16 GetResolutionScaleFactor();
 u32 GetCurrentFrame();
 void SetBackgroundImage(u32* pixels, u32 width, u32 height);
