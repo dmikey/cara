@@ -169,8 +169,11 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
-    LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
-             Config::Get(packed_fetch_reuse));
+    const Config::ConfigInfo<bool> structured_dispatch{{"Debug", "structured_shader_dispatch"}, false};
+    const bool use_structured_dispatch = Config::Get(structured_dispatch);
+    setenv("CARA_ANDROID_STRUCTURED_SHADER_DISPATCH", use_structured_dispatch ? "1" : "0", 1);
+    LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}, structured shader dispatch={}",
+             Config::Get(packed_fetch_reuse), use_structured_dispatch);
 #endif
     LOG_INFO(Frontend, "Android CPU engine: {}",
              Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");

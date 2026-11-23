@@ -658,6 +658,9 @@ public:
         identity += "\nbackend=native-mac-atlas-gl41";
 #elif defined(CARA_ANDROID_GLES_ATLAS)
         identity += "\nbackend=android-gles-atlas";
+        if (ShaderDecompiler::UsesStructuredJumpDispatch()) {
+            identity += "\nstructured-jump-dispatch=1";
+        }
         const char* fetch_reuse = std::getenv("CARA_GPU_PACKED_FETCH_REUSE");
         identity += fetch_reuse && std::strcmp(fetch_reuse, "1") == 0
                         ? "\npacked-fetch-reuse=1" : "\npacked-fetch-reuse=0";

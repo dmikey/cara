@@ -3,6 +3,7 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <cstdlib>
 #include <exception>
 #include <map>
 #include <set>
@@ -24,6 +25,17 @@ using nihstro::SourceRegister;
 using nihstro::SwizzlePattern;
 
 constexpr u32 PROGRAM_END = Pica::Shader::MAX_PROGRAM_CODE_LENGTH;
+
+bool UsesStructuredJumpDispatch() {
+#if defined(CARA_ANDROID_GLES_ATLAS)
+    const char* enabled = std::getenv("CARA_ANDROID_STRUCTURED_SHADER_DISPATCH");
+    return enabled && enabled[0] == '1' && enabled[1] == '\0';
+#elif defined(CARA_IOS_GLES) || defined(__APPLE__)
+    return false;
+#else
+    return true;
+#endif
+}
 
 class DecompileFail : public std::runtime_error {
 public:
@@ -265,7 +277,8 @@ public:
         : subroutines(subroutines), program_code(program_code), swizzle_data(swizzle_data),
           main_offset(main_offset), inputreg_getter(inputreg_getter),
           outputreg_getter(outputreg_getter), sanitize_mul(sanitize_mul),
-          isolated_dispatch(isolated_dispatch) {
+          isolated_dispatch(isolated_dispatch),
+          structured_dispatch(UsesStructuredJumpDispatch()) {
 
         Generate();
     }
@@ -861,29 +874,24 @@ float rsq_safe(float x) {
                 shader.AddLine("while (true) {");
                 ++shader.scope;
 
-#if defined(CARA_IOS_GLES) || defined(__APPLE__)
-                // Apple's GLES and desktop GL linkers crash on some switch/fallthrough trees.
-                // A single-iteration loop preserves switch breaks and case fallthrough.
-                if (!isolated_dispatch) {
+                if (structured_dispatch) {
+                    shader.AddLine("switch (jmp_to) {");
+                } else if (!isolated_dispatch) {
+                    // Apple linkers need equivalent fallthrough through a single-iteration loop.
                     shader.AddLine("do {");
                     shader.AddLine("bool cara_case_active = false;");
                 }
-#else
-                shader.AddLine("switch (jmp_to) {");
-#endif
 
                 for (auto label : labels) {
-#if defined(CARA_IOS_GLES) || defined(__APPLE__)
-                    if (isolated_dispatch) {
+                    if (structured_dispatch) {
+                        shader.AddLine("case " + std::to_string(label) + "u: {");
+                    } else if (isolated_dispatch) {
                         shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) {");
                         shader.AddLine("do {");
                     } else {
                         shader.AddLine("if (jmp_to == " + std::to_string(label) + "u) cara_case_active = true;");
                         shader.AddLine("if (cara_case_active) {");
                     }
-#else
-                    shader.AddLine("case " + std::to_string(label) + "u: {");
-#endif
                     ++shader.scope;
 
                     auto next_it = labels.lower_bound(label + 1);
@@ -896,8 +904,7 @@ float rsq_safe(float x) {
                         labels.emplace(compile_end);
                     }
 
-#if defined(CARA_IOS_GLES) || defined(__APPLE__)
-                    if (isolated_dispatch) {
+                    if (!structured_dispatch && isolated_dispatch) {
                         // INSIDE local do: a taken existing JMP break skips fallthrough.
                         // Existing nested PICA loops remain the nearest targets of their breaks.
                         const auto fallthrough_it = labels.upper_bound(label);
@@ -906,18 +913,17 @@ float rsq_safe(float x) {
                         shader.AddLine("} while (false);");
                         shader.AddLine("continue;");
                     }
-#endif
                     --shader.scope;
                     shader.AddLine("}");
                 }
 
-#if defined(CARA_IOS_GLES) || defined(__APPLE__)
-                shader.AddLine("return false;");
-                if (!isolated_dispatch) shader.AddLine("} while (false);");
-#else
-                shader.AddLine("default: return false;");
-                shader.AddLine("}");
-#endif
+                if (structured_dispatch) {
+                    shader.AddLine("default: return false;");
+                    shader.AddLine("}");
+                } else {
+                    shader.AddLine("return false;");
+                    if (!isolated_dispatch) shader.AddLine("} while (false);");
+                }
 
                 --shader.scope;
                 shader.AddLine("}");
@@ -941,6 +947,7 @@ private:
     const RegGetter& outputreg_getter;
     const u8 sanitize_mul;
     const bool isolated_dispatch;
+    const bool structured_dispatch;
 
     ShaderWriter shader;
 };
