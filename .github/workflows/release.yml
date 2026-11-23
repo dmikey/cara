@@ -159,6 +159,7 @@ jobs:
           python3 tools/audit_no_jit.py ios --renderer gles3
           sdk=$(xcrun vtool -show-build work/build-ios-gles3/bin/cara-ios.app/cara-ios | awk '$1 == "sdk" {print $2}')
           test "${sdk%%.*}" -ge 26
+          test "$(plutil -extract UIRequiredDeviceCapabilities.0 raw -o - work/build-ios-gles3/bin/cara-ios.app/Info.plist)" = arm64
       - name: Package sideloading IPA
         run: |
           python3 tools/package_ipa.py --app work/build-ios-gles3/bin/cara-ios.app --audit work/build-ios-gles3/no-jit-audit.json --output dist/Cara-iOS-arm64-GLES3-unsigned.ipa
