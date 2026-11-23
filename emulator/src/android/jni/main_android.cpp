@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -46,7 +47,11 @@
 #include "png_handler.h"
 #include "saf_handler.h"
 
+// The emulation thread owns the window. JNI may borrow it only while holding
+// this mutex, and retirement waits for any in-flight presentation to finish.
+static std::mutex s_window_mutex;
 static ANativeWindow* s_surface = nullptr;
+static EGLAndroid* s_render_window = nullptr;
 
 static std::atomic<bool> s_update_hid;
 static std::atomic<bool> s_stop_running;
@@ -68,7 +73,6 @@ static Cara::PlayPolicy ReadPlayPolicy() {
                                 Config::Get(Config::USE_FRAME_LIMIT));
 }
 
-static std::unique_ptr<EGLAndroid> s_render_window;
 static std::shared_ptr<AndroidKeyboard> s_keyboard;
 
 struct GameInfo {
@@ -157,11 +161,17 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
 void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
-    s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
-    if (!s_render_window->Initialize(s_surface)) {
+    auto render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
+    ANativeWindow* initial_surface;
+    bool initialized;
+    {
+        std::lock_guard lock{s_window_mutex};
+        initial_surface = s_surface;
+        initialized = render_window->Initialize(initial_surface);
+    }
+    if (!initialized) {
         LOG_ERROR(Frontend, "Could not initialize Android OpenGL ES");
         NativeLibrary::ShowMessageDialog(0, "Could not initialize OpenGL ES on this device.");
-        s_render_window.reset();
         return;
     }
 
@@ -209,7 +219,7 @@ void BootGame(const std::string& path) {
     // cfg->SetCountryCode(49); // USA
     // cfg->UpdateConfigNANDSavegame();
 
-    Core::System::ResultStatus result = system.Load(*s_render_window, path);
+    Core::System::ResultStatus result = system.Load(*render_window, path);
     if (result != Core::System::ResultStatus::Success) {
         switch (result) {
         case Core::System::ResultStatus::ErrorGetLoader:
@@ -252,18 +262,23 @@ void BootGame(const std::string& path) {
                                              "Error while loading ROM! An unknown error occured.");
             break;
         }
-        s_render_window.reset();
         return;
     }
 
     auto hid = system.ServiceManager()
                    .GetService<Service::HID::Module::Interface>("hid:USER")
                    ->GetModule();
-    NativeLibrary::UpdateProgress("BootGame", 1, 1);
-
     s_update_hid = false;
-    s_stop_running = false;
-    s_is_running = true;
+    {
+        std::scoped_lock lock{s_window_mutex, s_running_mutex};
+        if (s_surface && s_surface != initial_surface) {
+            render_window->UpdateSurface(s_surface);
+        }
+        s_render_window = render_window.get();
+        s_stop_running = false;
+        s_is_running = true;
+    }
+    NativeLibrary::UpdateProgress("BootGame", 1, 1);
     system.perf_stats->SetBoundedFramePacing(true);
     Cara::AdaptiveClock adaptive_clock;
     auto sampled_frame = VideoCore::GetCurrentFrame();
@@ -284,8 +299,8 @@ void BootGame(const std::string& path) {
         const auto policy = ReadPlayPolicy();
         Settings::values.use_frame_limit = policy.limit_speed;
         Settings::values.frame_limit = policy.maximum_speed;
-        s_render_window->SetAdaptiveFrameSkip(ReadPlayMode() == Cara::PlayMode::Performance &&
-                                              Config::Get(Config::ADAPTIVE_FRAME_SKIP));
+        render_window->SetAdaptiveFrameSkip(ReadPlayMode() == Cara::PlayMode::Performance &&
+                                            Config::Get(Config::ADAPTIVE_FRAME_SKIP));
         if (adaptive_clock.Enabled() != policy.adaptive)
             adaptive_clock.SetEnabled(policy.adaptive);
         adaptive_clock.ResetSamples();
@@ -310,8 +325,6 @@ void BootGame(const std::string& path) {
         if (s_is_running) {
             result = system.RunLoop();
             if (result == Core::System::ResultStatus::ShutdownRequested) {
-                // End emulation execution
-                s_render_window->UpdateSurface(nullptr);
                 break;
             } else if (result != Core::System::ResultStatus::Success) {
                 s_stop_running = true;
@@ -381,11 +394,17 @@ void BootGame(const std::string& path) {
             sampled_frame = VideoCore::GetCurrentFrame();
             discard_next_sample = true;
             reset_trace();
-            s_render_window->PollEvents();
+            render_window->PollEvents();
             Settings::values.audio_volume = volume;
         }
     }
 
+    {
+        std::scoped_lock lock{s_window_mutex, s_running_mutex};
+        s_render_window = nullptr;
+        s_stop_running = true;
+        s_is_running = false;
+    }
     {
         std::lock_guard lock{s_running_mutex};
         if (s_pending_settings) {
@@ -395,12 +414,10 @@ void BootGame(const std::string& path) {
         Config::Save();
     }
 
-    // Shutdown the core emulation
-    s_render_window->DoneCurrent();
+    // The renderer keeps a reference to the live window until core shutdown.
+    render_window->DoneCurrent();
     hid.reset();
     system.Shutdown();
-    s_render_window.reset();
-    s_is_running = false;
     resetSearchResults();
 }
 
@@ -447,10 +464,8 @@ static const GameInfo& GetGameInfo(const std::string& path) {
     }
     auto [iter, is_new] = s_app_dict.emplace(path, GameInfo{});
     auto& game = iter->second;
-    if (!is_new) {
-        if (timestamp == game.timestamp) {
-            return game;
-        }
+    if (!is_new && !game.strid.empty() && timestamp == game.timestamp) {
+        return game;
     }
 
     auto app_loader = Loader::GetLoader(path);
@@ -577,6 +592,7 @@ JNIEXPORT jboolean JNICALL Java_org_cara_emu_NativeLibrary_IsRunning(JNIEnv* env
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceChanged(JNIEnv* env, jclass obj,
                                                                        jobject surf) {
+    std::lock_guard lock{s_window_mutex};
     s_surface = ANativeWindow_fromSurface(env, surf);
     if (s_render_window) {
         s_render_window->UpdateSurface(s_surface);
@@ -585,22 +601,27 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceChanged(JNIEnv* en
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* env, jclass obj) {
-    ANativeWindow_release(s_surface);
-    s_surface = nullptr;
+    std::lock_guard lock{s_window_mutex};
+    if (s_surface) {
+        ANativeWindow_release(s_surface);
+        s_surface = nullptr;
+    }
     if (s_render_window) {
         s_render_window->UpdateSurface(s_surface);
     }
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_WindowChanged(JNIEnv* env, jclass obj) {
-    if (s_render_window) {
+    std::lock_guard lock{s_window_mutex};
+    if (s_render_window && s_surface) {
         UpdateDisplayRotation();
         s_render_window->UpdateWindow();
     }
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_DoFrame(JNIEnv* env, jclass obj) {
-    if (!s_is_running || s_stop_running) {
+    std::lock_guard lock{s_window_mutex};
+    if (!s_render_window || !s_surface || !s_is_running || s_stop_running) {
         return;
     }
     s_render_window->TryPresenting();
@@ -638,6 +659,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_TouchEvent(JNIEnv* env, j
     const int TOUCH_MOVED = 2;
     const int TOUCH_RELEASED = 4;
 
+    std::lock_guard lock{s_window_mutex};
     if (s_render_window) {
         if (action & TOUCH_PRESSED) {
             s_render_window->TouchPressed(x, y);
@@ -778,16 +800,18 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     // run
     BootGame(JniHelper::Unwrap(jFile));
 
-    // shotdown
     InputManager::GetInstance().Shutdown();
-    NativeLibrary::Shutdown(env);
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_ResumeEmulation(JNIEnv* env, jclass obj) {
-    if (!s_stop_running) {
+    {
+        std::lock_guard lock{s_running_mutex};
+        if (s_stop_running) {
+            return;
+        }
         s_is_running = true;
-        s_running_cv.notify_all();
     }
+    s_running_cv.notify_all();
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_PauseEmulation(JNIEnv* env, jclass obj) {
@@ -796,8 +820,15 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_PauseEmulation(JNIEnv* en
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_StopEmulation(JNIEnv* env, jclass obj) {
-    s_stop_running = true;
-    s_render_window->StopPresenting();
+    {
+        std::scoped_lock lock{s_window_mutex, s_running_mutex};
+        // Unbind the presentation context on its calling thread before the
+        // emulation thread can observe the stop and destroy the EGL window.
+        if (s_render_window) {
+            s_render_window->StopPresenting();
+        }
+        s_stop_running = true;
+    }
     s_running_cv.notify_all();
 }
 
@@ -900,7 +931,10 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_setCustomLayout(JNIEnv* e
             Config::Set(Config::LANDSCAPE_CUSTOM_LAYOUT, true);
         }
     }
-    s_render_window->UpdateLayout();
+    std::lock_guard lock{s_window_mutex};
+    if (s_render_window) {
+        s_render_window->UpdateLayout();
+    }
 }
 
 JNIEXPORT jobject JNICALL Java_org_cara_emu_NativeLibrary_getCustomLayout(JNIEnv* env, jclass obj,

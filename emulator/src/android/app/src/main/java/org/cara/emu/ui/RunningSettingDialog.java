@@ -307,8 +307,8 @@ public class RunningSettingDialog extends DialogFragment {
                 dismiss();
                 break;
             case SettingsItem.SETTING_EXIT_GAME:
-                NativeLibrary.StopEmulation();
                 dismiss();
+                activity.exitGame();
                 break;
             case SettingsItem.SETTING_MULTIPLAYER_CREATE_ROOM:
                 NetPlayManager.ShowCreateRoomDialog(getActivity());

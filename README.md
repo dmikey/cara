@@ -229,7 +229,7 @@ details and benchmark methodology.
 Cara is licensed under **GPL-2.0-or-later**. Emulator and dependency source is
 bundled in the repository, with build tools and validation guides included.
 
-[Build Cara](docs/build.md) · [Performance](docs/performance.md) ·
+[Build Cara](docs/build.md) · [Daijishō setup](docs/android-launchers.md) · [Performance](docs/performance.md) ·
 [Architecture](docs/technology.md) · [Save states](docs/save-states.md) ·
 [Validation](docs/validation.md)
 

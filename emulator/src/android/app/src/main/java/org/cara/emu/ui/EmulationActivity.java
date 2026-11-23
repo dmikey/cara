@@ -11,6 +11,7 @@ import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
+import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
@@ -21,13 +22,17 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
+import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.cara.emu.NativeLibrary;
@@ -50,22 +55,45 @@ public final class EmulationActivity extends AppCompatActivity {
     private static WeakReference<EmulationActivity> sInstance = new WeakReference<>(null);
 
     @SuppressLint("StaticFieldLeak")
-    private class InitTask extends AsyncTask<Context, Void, Map<Integer, Bitmap>> {
+    private class InitTask extends AsyncTask<Void, Void, Map<Integer, Bitmap>> {
+        private final String path = mGamePath;
+        private final int launch = mLaunchGeneration;
+        private String gameId = mGameId;
+        private String gameName = mGameName;
+
         @Override
-        protected Map<Integer, Bitmap> doInBackground(Context... contexts) {
+        protected Map<Integer, Bitmap> doInBackground(Void... ignored) {
+            if (gameId == null || gameId.isEmpty()) {
+                gameId = NativeLibrary.GetAppId(path);
+                gameName = NativeLibrary.GetAppTitle(path);
+            }
             Settings settings = new Settings();
-            settings.loadSettings(mGameId);
+            settings.loadSettings(gameId != null ? gameId : "");
             SettingSection section = settings.getSection(Settings.SECTION_INI_CORE);
             Setting setting = section.getSetting(SettingsFile.KEY_THEME_PACKAGE);
             String theme = setting != null ? setting.getValueAsString() : "";
-            return CaraDirectory.loadInputOverlay(contexts[0], theme);
+            return CaraDirectory.loadInputOverlay(EmulationActivity.this, theme);
         }
 
         @Override
         protected void onPostExecute(Map<Integer, Bitmap> result) {
+            if (isDestroyed() || isFinishing() || launch != mLaunchGeneration) {
+                return;
+            }
+            mGameId = gameId;
+            mGameName = gameName == null || gameName.isEmpty() ? getString(R.string.app_name) : gameName;
             mBitmaps = result;
-            refreshControls();
-            updateBackgroundImage();
+            setTitle(mGameName);
+            findViewById(R.id.game_open_progress).setVisibility(View.GONE);
+            if (mEmulationFragment == null) {
+                mEmulationFragment = EmulationFragment.newInstance(path);
+                getSupportFragmentManager().beginTransaction()
+                        .add(R.id.fragment_emulation, mEmulationFragment)
+                        .runOnCommit(EmulationActivity.this::updateBackgroundImage).commit();
+            } else {
+                refreshControls();
+                updateBackgroundImage();
+            }
         }
     }
 
@@ -73,6 +101,8 @@ public final class EmulationActivity extends AppCompatActivity {
     private String mGameName;
     private String mGamePath;
     private boolean mMenuVisible;
+    private int mLaunchGeneration;
+    private AlertDialog mSwitchGameDialog;
     private EmulationFragment mEmulationFragment;
     private Map<Integer, Bitmap> mBitmaps;
 
@@ -101,39 +131,121 @@ public final class EmulationActivity extends AppCompatActivity {
         setContentView(R.layout.activity_emulation);
         sInstance = new WeakReference<>(this);
 
-        if (savedInstanceState == null) {
-            Intent intent = getIntent();
-            mGameId = intent.getStringExtra(EXTRA_GAME_ID);
-            mGameName = intent.getStringExtra(EXTRA_GAME_NAME);
-            mGamePath = intent.getStringExtra(EXTRA_GAME_PATH);
-        } else {
+        Intent intent = getIntent();
+        mGamePath = savedInstanceState == null ? getLaunchPath(intent) :
+                savedInstanceState.getString(EXTRA_GAME_PATH);
+        if (mGamePath == null) {
+            Toast.makeText(this, R.string.game_launch_unavailable, Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+        if (savedInstanceState != null) {
             mGameId = savedInstanceState.getString(EXTRA_GAME_ID);
             mGameName = savedInstanceState.getString(EXTRA_GAME_NAME);
-            mGamePath = savedInstanceState.getString(EXTRA_GAME_PATH);
+        } else if (!Intent.ACTION_VIEW.equals(intent.getAction())) {
+            String id = intent.getStringExtra(EXTRA_GAME_ID);
+            mGameId = id != null && id.matches("[0-9a-fA-F]{16}") ? id : null;
+            mGameName = intent.getStringExtra(EXTRA_GAME_NAME);
         }
 
         if (!CaraDirectory.isInitialized()) {
             CaraDirectory.start(this);
         }
-
-        if (mGameId == null || mGameId.isEmpty()) {
-            mGameId = NativeLibrary.GetAppId(mGamePath);
-            mGameName = NativeLibrary.GetAppTitle(mGamePath);
-        }
-
-        // Find or create the EmulationFragment
         mEmulationFragment = (EmulationFragment)getSupportFragmentManager().findFragmentById(
-            R.id.fragment_emulation);
-        if (mEmulationFragment == null) {
-            mEmulationFragment = EmulationFragment.newInstance(mGamePath);
-            getSupportFragmentManager()
-                .beginTransaction()
-                .add(R.id.fragment_emulation, mEmulationFragment)
-                .commit();
-        }
+                R.id.fragment_emulation);
+        prepareGame();
+    }
 
-        setTitle(mGameName);
-        new InitTask().execute(this);
+    private static String getLaunchPath(Intent intent) {
+        Uri data = intent.getData();
+        if (data == null && intent.getClipData() != null &&
+                intent.getClipData().getItemCount() == 1) {
+            data = intent.getClipData().getItemAt(0).getUri();
+        }
+        if (data == null) {
+            String path = intent.getStringExtra(EXTRA_GAME_PATH);
+            if (path == null || path.isEmpty()) {
+                return null;
+            }
+            if (path.startsWith("/")) {
+                // Daijishō's legacy file.path form keeps literal spaces and percent signs.
+                data = Uri.fromFile(new File(path));
+            } else {
+                data = Uri.parse(path);
+            }
+        }
+        if ("content".equals(data.getScheme()) && data.getAuthority() != null) {
+            return data.toString();
+        }
+        if (data.getScheme() != null && !"file".equals(data.getScheme())) {
+            return null;
+        }
+        String path = data.getScheme() == null ? data.toString() : data.getPath();
+        if (path == null || !path.startsWith("/")) {
+            return null;
+        }
+        File file = new File(path);
+        String name = file.getName().toLowerCase(Locale.ROOT);
+        return file.isFile() && file.canRead() &&
+                name.matches(".*\\.(3ds|3dsx|cci|cxi|app|axf|elf|cia|zip|7z|z3ds|zcci)") ?
+                path : null;
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String path = getLaunchPath(intent);
+        if (path == null) {
+            Toast.makeText(this, R.string.game_launch_unavailable, Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (path.equals(mGamePath)) {
+            setIntent(intent);
+            return;
+        }
+        if (mSwitchGameDialog != null) {
+            mSwitchGameDialog.dismiss();
+        }
+        if (mEmulationFragment == null || !mEmulationFragment.hasSession()) {
+            replaceGame(intent, path);
+        } else if (mEmulationFragment.canSwitchGame()) {
+            mSwitchGameDialog = new AlertDialog.Builder(this)
+                    .setTitle(R.string.game_launch_switch_title)
+                    .setMessage(R.string.game_launch_switch_message)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.game_launch_switch_title,
+                            (dialog, which) -> mEmulationFragment.stopEmulation(
+                                    () -> replaceGame(intent, path)))
+                    .create();
+            mSwitchGameDialog.setOnDismissListener(dialog -> mSwitchGameDialog = null);
+            mSwitchGameDialog.show();
+        } else {
+            Toast.makeText(this, R.string.game_launch_wait, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void replaceGame(Intent intent, String path) {
+        if (isDestroyed() || isFinishing()) {
+            return;
+        }
+        if (mEmulationFragment != null) {
+            getSupportFragmentManager().beginTransaction().remove(mEmulationFragment)
+                    .commitNowAllowingStateLoss();
+            mEmulationFragment = null;
+        }
+        setIntent(intent);
+        mGamePath = path;
+        mGameId = null;
+        mGameName = null;
+        mLaunchGeneration++;
+        prepareGame();
+    }
+
+    private void prepareGame() {
+        if (mEmulationFragment == null) {
+            findViewById(R.id.game_open_progress).setVisibility(View.VISIBLE);
+        }
+        new InitTask().execute();
     }
 
     @Override
@@ -146,13 +258,21 @@ public final class EmulationActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
-        if (mMenuVisible) {
-            mEmulationFragment.stopEmulation();
+        if (mEmulationFragment == null) {
             finish();
-            sInstance = new WeakReference<>(null);
+        } else if (mMenuVisible) {
+            exitGame();
         } else {
             mMenuVisible = true;
             showRunningSetting();
+        }
+    }
+
+    public void exitGame() {
+        if (mEmulationFragment == null) {
+            finish();
+        } else {
+            mEmulationFragment.stopEmulation(this::finish);
         }
     }
 
@@ -460,7 +580,9 @@ public final class EmulationActivity extends AppCompatActivity {
     }
 
     public void updateProgress(String name, long written, long total) {
-        mEmulationFragment.updateProgress(name, written, total);
+        if (mEmulationFragment != null) {
+            mEmulationFragment.updateProgress(name, written, total);
+        }
     }
 
     public Bitmap getInputBitmap(int id, float scale) {
