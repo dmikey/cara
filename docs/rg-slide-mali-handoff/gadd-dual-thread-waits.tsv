@@ -1,0 +1,93 @@
+guest_state	guest_api	worker_state	worker_api	nanoseconds	percent_of_overlap_window
+on CPU	-	on CPU	-	852494719	28.3348
+on CPU	-	worker condition wait	other	572994337	19.0449
+GLES result	glGetIntegerv	Mali semaphore	glDrawElements	292145010	9.7102
+GLES result	glGetIntegerv	on CPU	-	254667374	8.4645
+on CPU	-	Mali semaphore	glDrawElements	185613685	6.1693
+GLES result	glGetError	Mali semaphore	glDrawArrays	175667541	5.8388
+on CPU	-	Mali semaphore	glBlitFramebuffer	168409314	5.5975
+GLES result	glFenceSync	Mali semaphore	glClear	167366308	5.5628
+GLES result	glClientWaitSync	Mali semaphore	glBlitFramebuffer	90663734	3.0134
+GLES result	glClientWaitSync	on CPU	-	38526609	1.2805
+GLES result	glFenceSync	on CPU	-	33594038	1.1166
+on CPU	-	other off CPU	glFramebufferTexture2D	30348195	1.0087
+on CPU	-	Mali semaphore	glClearBufferfv	22529071	0.7488
+GLES result	glGetError	on CPU	-	16089578	0.5348
+GLES result	glGetIntegerv	Mali semaphore	glBlitFramebuffer	11846309	0.3937
+GLES result	glCheckFramebufferStatus	on CPU	-	10896610	0.3622
+on CPU	-	Mali semaphore	glDrawArrays	9315500	0.3096
+on CPU	-	other off CPU	glMapBufferRange	8284964	0.2754
+on CPU	-	Mali semaphore	glClearBufferfi	7238651	0.2406
+on CPU	-	other off CPU	glBindFramebuffer	5390350	0.1792
+on CPU	-	other off CPU	glUnmapBuffer	4946302	0.1644
+GLES result	glGetIntegerv	other off CPU	glFramebufferTexture2D	4871349	0.1619
+GLES result	glClientWaitSync	Mali semaphore	glDrawElements	4513962	0.1500
+GLES result	glIsEnabled	on CPU	-	4324128	0.1437
+GLES result	glGetIntegerv	Mali semaphore	glClearBufferfv	3505923	0.1165
+GLES condition wait	glDrawElements	Mali semaphore	glBlitFramebuffer	2883731	0.0958
+GLES result	glGetIntegerv	other off CPU	glDrawElements	2580196	0.0858
+GLES result	glGetIntegerv	other off CPU	glUnmapBuffer	2372649	0.0789
+other off CPU	other	on CPU	-	1968460	0.0654
+GLES result	glIsEnabled	worker condition wait	other	1679000	0.0558
+GLES result	glGetIntegerv	other off CPU	glBindFramebuffer	1485847	0.0494
+on CPU	-	other off CPU	glBlitFramebuffer	1436384	0.0477
+on CPU	-	other off CPU	other	1272734	0.0423
+other off CPU	other	worker condition wait	other	1122888	0.0373
+on CPU	-	other off CPU	glDrawArrays	1098266	0.0365
+on CPU	-	other off CPU	glDrawElements	1032195	0.0343
+on CPU	-	other off CPU	glClearBufferfv	987042	0.0328
+GLES result	glClientWaitSync	Mali semaphore	glClearBufferfv	963611	0.0320
+GLES result	glCheckFramebufferStatus	worker condition wait	other	963269	0.0320
+GLES result	glFlush	on CPU	-	920537	0.0306
+GLES result	glClientWaitSync	other off CPU	glBindFramebuffer	886541	0.0295
+GLES result	glGetIntegerv	other off CPU	glMapBufferRange	845619	0.0281
+GLES result	glGetIntegerv	other off CPU	other	841616	0.0280
+on CPU	-	other off CPU	glTexSubImage2D	703079	0.0234
+GLES result	glFenceSync	worker condition wait	other	636234	0.0211
+GLES result	glFenceSync	other off CPU	glFenceSync	603540	0.0201
+GLES result	glGetIntegerv	worker condition wait	other	573226	0.0191
+GLES result	glFenceSync	other off CPU	glBufferData	494845	0.0164
+GLES result	glGetError	other off CPU	glDrawArrays	388577	0.0129
+GLES result	glFenceSync	other off CPU	glDrawArrays	334962	0.0111
+GLES result	glGetIntegerv	other off CPU	glTexSubImage2D	321732	0.0107
+GLES condition wait	glDrawElements	on CPU	-	287923	0.0096
+GLES condition wait	glBindTexture	on CPU	-	280231	0.0093
+GLES result	glClientWaitSync	other off CPU	glFramebufferTexture2D	197848	0.0066
+GLES result	glFenceSync	other off CPU	glClear	185539	0.0062
+other off CPU	other	Mali semaphore	glBlitFramebuffer	147654	0.0049
+on CPU	-	other off CPU	glBindTexture	142269	0.0047
+GLES result	glFlush	worker condition wait	other	134003	0.0045
+other off CPU	other	Mali semaphore	glDrawElements	120385	0.0040
+GLES condition wait	glBindTexture	other off CPU	glClearBufferfv	101884	0.0034
+GLES condition wait	glBindBuffer	on CPU	-	96077	0.0032
+on CPU	-	other off CPU	glBufferData	94192	0.0031
+GLES result	glGetError	worker condition wait	other	90424	0.0030
+GLES result	glClientWaitSync	worker condition wait	other	84882	0.0028
+GLES condition wait	glBindBuffer	other off CPU	glDrawArrays	80462	0.0027
+on CPU	-	other off CPU	glClearBufferfi	77539	0.0026
+GLES result	glGetIntegerv	other off CPU	glBlitFramebuffer	77230	0.0026
+GLES result	glGetIntegerv	other off CPU	glUseProgram	70269	0.0023
+other off CPU	glActiveTexture	on CPU	-	63962	0.0021
+GLES condition wait	glActiveTexture	on CPU	-	63307	0.0021
+on CPU	-	other off CPU	glUseProgram	60077	0.0020
+GLES result	glGetIntegerv	other off CPU	glSamplerParameteri	53731	0.0018
+other off CPU	other	other off CPU	other	43730	0.0015
+on CPU	-	other off CPU	glBindSampler	43000	0.0014
+other off CPU	other	other off CPU	glMapBufferRange	39461	0.0013
+other off CPU	other	Mali semaphore	glClearBufferfv	38077	0.0013
+GLES result	glClientWaitSync	other off CPU	glBlitFramebuffer	28808	0.0010
+other off CPU	other	other off CPU	glFramebufferTexture2D	28347	0.0009
+other off CPU	other	other off CPU	glBindFramebuffer	28192	0.0009
+GLES result	glCheckFramebufferStatus	other off CPU	glBindFramebuffer	24423	0.0008
+GLES result	glClientWaitSync	other off CPU	glUnmapBuffer	24423	0.0008
+GLES condition wait	glBindTexture	other off CPU	glBindFramebuffer	23423	0.0008
+GLES condition wait	glEnable	on CPU	-	21500	0.0007
+other off CPU	glDepthFunc	Mali semaphore	glDrawElements	20923	0.0007
+on CPU	-	other off CPU	glBlendFuncSeparate	20269	0.0007
+GLES result	glGetIntegerv	other off CPU	glViewport	17769	0.0006
+other off CPU	other	other off CPU	glDrawArrays	17462	0.0006
+other off CPU	glFenceSync	worker condition wait	other	17154	0.0006
+other off CPU	glCheckFramebufferStatus	worker condition wait	other	16308	0.0005
+other off CPU	other	other off CPU	glUnmapBuffer	15654	0.0005
+GLES result	other	on CPU	-	14038	0.0005
+GLES result	glGetIntegerv	other off CPU	glBufferData	12269	0.0004

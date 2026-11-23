@@ -36,6 +36,7 @@ public:
         std::vector<std::uint8_t> source;
         std::vector<std::uint32_t> triangles;
         std::vector<std::uint16_t> packed;
+        std::vector<std::uint16_t> native_elements;
         std::uint32_t first{}, last{}, unique{};
         bool packable{};
         PairReuseStats pair_reuse;
@@ -46,6 +47,7 @@ public:
         std::size_t Bytes() const {
             return source.capacity() + triangles.capacity() * sizeof(std::uint32_t) +
                    packed.capacity() * sizeof(std::uint16_t) + sizeof(pair_reuse) +
+                   native_elements.capacity() * sizeof(std::uint16_t) +
                    (lit_pairs.capacity() + lit_elements.capacity()) * sizeof(std::uint16_t);
         }
     };
@@ -60,10 +62,13 @@ public:
 
     // The result remains valid until the next cache mutation. The renderer uses
     // it for one draw on its owning thread, then performs the next lookup.
-    const Data* Find(const Key& key, const std::uint8_t* source, std::size_t size) {
+    const Data* Find(const Key& key, const std::uint8_t* source, std::size_t size,
+                     std::uint64_t* compared_bytes = nullptr) {
         const auto found = entries.find(key);
         if (found == entries.end()) return nullptr;
         auto& entry = found->second;
+        if (compared_bytes && size && source && entry.data.source.size() == size)
+            *compared_bytes += size;
         if (entry.data.source.size() != size ||
             (size && (!source || std::memcmp(entry.data.source.data(), source, size)))) {
             Erase(found);
@@ -74,7 +79,8 @@ public:
     }
 
     const Data* Store(const Key& key, const std::uint8_t* source, std::size_t size,
-                      std::vector<std::uint32_t>& triangles, bool measure_pair_reuse = false, bool build_lit_pairs = false) {
+                      std::vector<std::uint32_t>& triangles, bool measure_pair_reuse = false,
+                      bool build_lit_pairs = false, bool build_native_elements = false) {
         if (triangles.empty() || (size && !source) || !entry_limit) return nullptr;
         Data data;
         if (size) data.source.assign(source, source + size);
@@ -93,6 +99,25 @@ public:
                 seen.set(index);
             }
             data.unique = static_cast<std::uint32_t>(seen.count());
+        }
+        // GLES fixed-index restart can consume 0xffff instead of sourcing a
+        // vertex. Use the established triangle path for that span.
+        if (build_native_elements && key.count >= 3 && key.format <= 2 &&
+            size == std::size_t(key.count) * key.format &&
+            data.triangles.size() == (std::size_t(key.count) - 2) * 3 &&
+            data.packable && data.last - data.first < UINT16_MAX) {
+            data.native_elements.reserve(key.count);
+            for (std::uint32_t i = 0; i < key.count; ++i) {
+                std::uint32_t vertex = key.offset + i;
+                if (key.format == 1) {
+                    vertex = data.source[i];
+                } else if (key.format == 2) {
+                    std::uint16_t index;
+                    std::memcpy(&index, data.source.data() + i * sizeof(index), sizeof(index));
+                    vertex = index;
+                }
+                data.native_elements.push_back(static_cast<std::uint16_t>(vertex - data.first));
+            }
         }
         if ((measure_pair_reuse || build_lit_pairs) && data.packable && data.triangles.size() % 3 == 0 &&
             data.triangles.size() <= 65535) {

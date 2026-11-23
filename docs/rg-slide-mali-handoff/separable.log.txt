@@ -1,0 +1,36 @@
+--------- beginning of main
+         1795424967.898  6256  6256 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+         1795424967.902  6256  6256 I AndroidRuntime: Using default boot image
+         1795424967.902  6256  6256 I AndroidRuntime: Leaving lock profiling enabled
+         1795424968.026  6256  6256 D AndroidRuntime: Calling main entry com.android.commands.svc.Svc
+         1795424968.037  6256  6256 D AndroidRuntime: Shutting down VM
+         1795424969.042  6293  6293 I CaraBudget: boot-cold-separable
+         1795424969.441  6301  6347 I CaraPerf: session mode=performance cpu=Dynarmic renderer=atlas native_luts=0 resolution=1 p3d=1 ppf=1 soft_knee=1
+         1795424969.691  6301  6347 I CaraShader: compile stage=vertex shader=1 source=9b4e61ba374bd2d2 ok=1 us=966
+         1795424969.692  6301  6347 I CaraShader: compile stage=fragment shader=2 source=ba2d69786a35f55b ok=1 us=650
+         1795424969.696  6301  6347 I CaraShader: link program=3 shaders=1,2 ok=1 us=4221
+         1795424969.697  6301  6347 I CaraShader: compile stage=vertex shader=2 source=7ad8c29214aafdc3 ok=1 us=693
+         1795424969.697  6301  6347 I CaraShader: compile stage=fragment shader=1 source=df79da3af384259f ok=1 us=519
+         1795424969.703  6301  6347 I CaraShader: link program=4 shaders=2,1 ok=1 us=4981
+         1795424969.704  6301  6347 I CaraShader: compile stage=vertex shader=1 source=6b7593b2f8c2a725 ok=1 us=694
+         1795424969.705  6301  6347 I CaraShader: compile stage=fragment shader=2 source=66a9770fd8e14489 ok=1 us=1078
+         1795424969.725  6301  6347 I CaraShader: link program=5 shaders=1,2 ok=1 us=20467
+         1795424969.725  6301  6347 I CaraShader: compile stage=vertex shader=2 source=6b7593b2f8c2a725 ok=1 us=43
+         1795424969.726  6301  6347 I CaraShader: compile stage=fragment shader=1 source=cdfdf7de5a5edfb3 ok=1 us=823
+         1795424969.729  6301  6347 I CaraShader: link program=6 shaders=2,1 ok=1 us=2996
+         1795424969.729  6301  6347 I CaraShader: compile stage=vertex shader=1 source=6b7593b2f8c2a725 ok=1 us=37
+         1795424969.730  6301  6347 I CaraShader: compile stage=fragment shader=2 source=42d49526ba453e8b ok=1 us=1032
+         1795424969.737  6301  6347 I CaraShader: link program=7 shaders=1,2 ok=1 us=6660
+         1795424969.737  6301  6347 I CaraShader: compile stage=vertex shader=2 source=6b7593b2f8c2a725 ok=1 us=34
+         1795424969.738  6301  6347 I CaraShader: compile stage=fragment shader=1 source=8a45056a7c0531c6 ok=1 us=769
+         1795424969.743  6301  6347 I CaraShader: link program=8 shaders=2,1 ok=1 us=4751
+         1795424969.745  6301  6347 I CaraShader: compile stage=vertex shader=1 source=ae5f7098260ca4e4 ok=0 us=576
+         1795424969.745  6301  6347 I CaraShader: link program=2 shaders= ok=0 us=4
+         1795424971.253  6301  6347 I CaraShader: compile stage=vertex shader=1 source=1bc26d8a7634e1df ok=1 us=743
+         1795424971.257  6301  6347 I CaraShader: compile stage=fragment shader=2 source=e73571f21436e944 ok=1 us=4053
+         1795424971.302  6301  6347 I CaraShader: link program=9 shaders=1,2 ok=1 us=44672
+         1795424972.665  6301  6347 I CaraShader: compile stage=vertex shader=2 source=9455edce6b25d2da ok=0 us=23865
+         1795424972.665  6301  6347 I CaraShader: link program=1 shaders= ok=0 us=6
+         1795424972.666  6301  6347 I CaraShader: fragment_key key=3f817e4de24069b5 source=adc7e71acbc01a9a lit=0 generation_us=20
+         1795424972.668  6301  6347 I CaraShader: compile stage=fragment shader=2 source=adc7e71acbc01a9a ok=0 us=1115
+         1795424972.668  6301  6347 I CaraShader: link program=1 shaders= ok=0 us=5

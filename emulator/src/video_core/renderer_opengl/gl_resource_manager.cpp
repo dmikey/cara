@@ -7,6 +7,7 @@
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "video_core/renderer_opengl/gl_resource_manager.h"
+#include "video_core/renderer_opengl/gl_shader_census.h"
 #include "video_core/renderer_opengl/gl_shader_util.h"
 #include "video_core/renderer_opengl/gl_state.h"
 
@@ -57,10 +58,10 @@ void OGLSampler::Release() {
     handle = 0;
 }
 
-void OGLShader::Create(const char* source, GLenum type) {
+void OGLShader::Create(const char* source, GLenum type, bool separable) {
     if (handle != 0)
         return;
-    handle = LoadShader(source, type);
+    handle = LoadShader(source, type, separable);
 }
 
 void OGLShader::Release() {
@@ -89,17 +90,24 @@ void OGLProgram::Create(const char* vert_shader, const char* frag_shader) {
 void OGLProgram::Create(const char* compute_shader) {
     OGLShader shader;
     shader.Create(compute_shader, GL_COMPUTE_SHADER);
-
-    Create(false, {shader.handle});
+    if (shader.handle)
+        Create(false, {shader.handle});
 }
 
 void OGLProgram::Create(GLenum format, const std::vector<GLbyte>& binary) {
     handle = glCreateProgram();
+    if (!handle)
+        return;
+    const bool census = ShaderCensus::Enabled();
+    const auto start = census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
     glProgramBinary(handle, format, binary.data(), binary.size());
 
     // Check the link status. If this fails, it means the binary was invalid.
-    GLint link_status;
+    GLint link_status = GL_FALSE;
     glGetProgramiv(handle, GL_LINK_STATUS, &link_status);
+    if (census)
+        ShaderCensus::Record("binary program={} ok={} us={}", handle, link_status,
+                             ShaderCensus::ElapsedUs(start));
     if (link_status != GL_TRUE) {
         LOG_DEBUG(Render_OpenGL, "OGLProgram failed to create GL program from program binary!");
         glDeleteProgram(handle);

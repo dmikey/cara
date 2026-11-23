@@ -9,6 +9,7 @@
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 #include "video_core/renderer_opengl/gl_nearest_borrow_plan.h"
 #include <vector>
 #include <glad/glad.h>
@@ -42,6 +43,8 @@ namespace OpenGL {
 
 class RasterizerOpenGL : public VideoCore::RasterizerInterface {
     friend struct LUTResidencyTestAccess;
+    const bool shader_census;
+    std::unordered_set<u32> shader_census_drawn_programs;
 public:
     RasterizerOpenGL();
     ~RasterizerOpenGL() override;
@@ -360,7 +363,7 @@ private:
         // tracking or hash collision assumptions. Released with the pool entry.
         SharedVertexShadow input_shadow;
         IndexPayloadReuse::Shadow index_shadow;
-        std::vector<u8> elements_shadow;
+        IndexPayloadReuse::Shadow elements_shadow;
         unsigned rows = 0;
     };
     using IOSVertexFrameUploads = IOSVertexUploadBank::Bank<IOSVertexUpload>;
@@ -380,13 +383,20 @@ private:
             ios_cached_index_data->packed : ios_vertex_input_indices;
     }
     std::vector<GLvec4> ios_vertex_inputs;
+    // Only a successfully materialized packed draw uses this byte span. Its
+    // allocation remains reusable between draws; the logical span may shrink.
+    std::unique_ptr<u8[]> packed_staging;
+    size_t packed_staging_capacity = 0;
+    size_t packed_staging_bytes = 0;
     // Immutable CPU snapshot only; never reserves a GPU upload-pool owner.
     std::shared_ptr<const std::vector<u8>> ios_packed_snapshot_lease;
     const u8* IOSVertexInputData() const {
+        if (packed_staging_bytes) return packed_staging.get();
         return ios_packed_snapshot_lease ? ios_packed_snapshot_lease->data() :
             reinterpret_cast<const u8*>(ios_vertex_inputs.data());
     }
     size_t IOSVertexInputBytes() const {
+        if (packed_staging_bytes) return packed_staging_bytes;
         return ios_packed_snapshot_lease ? ios_packed_snapshot_lease->size() :
             ios_vertex_inputs.size()*sizeof(GLvec4);
     }
@@ -445,6 +455,20 @@ private:
         return !previous.owner_before(surface) && !surface.owner_before(previous);
     }
     void DiscardExpiredFramebufferAttachments(); // framebuffer must already be bound
+#ifdef CARA_ANDROID_GLES_ATLAS
+    GLuint BindCachedDrawFramebuffer(const Surface& color, const Surface& depth, bool stencil);
+    void ClearDrawFramebufferCache();
+    struct DrawFramebufferEntry {
+        OGLFramebuffer framebuffer;
+        std::weak_ptr<CachedSurface> color;
+        std::weak_ptr<CachedSurface> depth;
+        GLuint color_name{};
+        GLuint depth_name{};
+        bool stencil{};
+    };
+    std::array<DrawFramebufferEntry, 8> draw_framebuffers;
+    std::size_t next_draw_framebuffer{};
+#endif
     struct {
         std::weak_ptr<CachedSurface> color_surface;
         std::weak_ptr<CachedSurface> depth_surface;
@@ -474,6 +498,15 @@ private:
     SamplerInfo texture_cube_sampler;
 
     OGLTexture texture_null;
+#ifdef CARA_IOS_GLES
+    std::vector<u8> lighting_lut_image;
+#endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static constexpr size_t LightingTextureBatchSize = 32;
+    std::array<OGLTexture, LightingTextureBatchSize> lighting_texture_batch;
+    size_t next_lighting_texture = LightingTextureBatchSize;
+    OGLTexture lighting_texture_generation;
+#endif
     OGLTexture texture_buffer_lut_lf;
     OGLTexture texture_buffer_lut_rg;
     OGLTexture texture_buffer_lut_rgba;

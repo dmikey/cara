@@ -1,0 +1,11 @@
+API	calls/refresh	before driver ms	driver wall ms	return ms	total ms/refresh
+glGetIntegerv	3.04	5.5875	0.0084	0.0379	5.6339
+glFenceSync	1.00	1.6416	0.1195	0.0105	1.7716
+glGetError	3.04	1.5898	0.0010	0.0208	1.6117
+glClientWaitSync	1.00	1.1564	0.0023	0.0137	1.1724
+glGenTextures	1.81	0.1927	0.0013	0.0124	0.2064
+glCheckFramebufferStatus	3.04	0.1073	0.0057	0.0194	0.1324
+glIsEnabled	6.08	0.0516	0.0028	0.0371	0.0914
+glGetUniformLocation	0.03	0.0408	0.0002	0.0003	0.0413
+glFlush	1.00	0.0130	0.0016	0.0082	0.0228
+glGenBuffers	0.23	0.0156	0.0002	0.0016	0.0174

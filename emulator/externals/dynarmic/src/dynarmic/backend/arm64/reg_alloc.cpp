@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: 0BSD
  */
 
+#include <random>
 #include "dynarmic/backend/arm64/reg_alloc.h"
 
 #include <algorithm>
@@ -221,8 +222,8 @@ void RegAlloc::UpdateAllUses() {
         fpr.UpdateUses();
     }
     flags.UpdateUses();
-    for (auto& spill : spills) {
-        spill.UpdateUses();
+    for (size_t i = 0; i < used_spill_slots; ++i) {
+        spills[i].UpdateUses();
     }
 }
 
@@ -231,7 +232,7 @@ void RegAlloc::AssertAllUnlocked() const {
     ASSERT(std::all_of(gprs.begin(), gprs.end(), is_unlocked));
     ASSERT(std::all_of(fprs.begin(), fprs.end(), is_unlocked));
     ASSERT(is_unlocked(flags));
-    ASSERT(std::all_of(spills.begin(), spills.end(), is_unlocked));
+    ASSERT(std::all_of(spills.begin(), spills.begin() + used_spill_slots, is_unlocked));
 }
 
 void RegAlloc::AssertNoMoreUses() const {
@@ -433,11 +434,14 @@ int RegAlloc::AllocateRegister(const std::array<HostLocInfo, 32>& regs, const st
         return *empty;
     }
 
-    std::vector<int> candidates;
-    std::copy_if(order.begin(), order.end(), std::back_inserter(candidates), [&](int i) { return regs[i].MaybeAllocatable(); });
+    std::array<int, 32> candidates;
+    ASSERT(order.size() <= candidates.size());
+    const auto end = std::copy_if(order.begin(), order.end(), candidates.begin(), [&](int i) { return regs[i].MaybeAllocatable(); });
 
     // TODO: LRU
-    std::uniform_int_distribution<size_t> dis{0, candidates.size() - 1};
+    ASSERT(end != candidates.begin());
+    static thread_local std::mt19937 rand_gen{std::random_device{}()};
+    std::uniform_int_distribution<size_t> dis{0, static_cast<size_t>(end - candidates.begin()) - 1};
     return candidates[dis(rand_gen)];
 }
 
@@ -503,10 +507,13 @@ void RegAlloc::SpillFlags() {
     gprs[new_location_index] = std::exchange(flags, {});
 }
 
-int RegAlloc::FindFreeSpill() const {
-    const auto iter = std::find_if(spills.begin(), spills.end(), [](const HostLocInfo& info) { return info.values.empty(); });
-    ASSERT_MSG(iter != spills.end(), "All spill locations are full");
-    return static_cast<int>(iter - spills.begin());
+int RegAlloc::FindFreeSpill() {
+    const auto end = spills.begin() + used_spill_slots;
+    const auto iter = std::find_if(spills.begin(), end, [](const HostLocInfo& info) { return info.values.empty(); });
+    if (iter != end)
+        return static_cast<int>(iter - spills.begin());
+    ASSERT_MSG(used_spill_slots < spills.size(), "All spill locations are full");
+    return static_cast<int>(used_spill_slots++);
 }
 
 void RegAlloc::LoadCopyInto(const IR::Value& value, oaknut::XReg reg) {
@@ -572,7 +579,8 @@ std::optional<HostLoc> RegAlloc::ValueLocation(const IR::Inst* value) const {
     if (contains_value(flags)) {
         return HostLoc{HostLoc::Kind::Flags, 0};
     }
-    if (const auto iter = std::find_if(spills.begin(), spills.end(), contains_value); iter != spills.end()) {
+    const auto spill_end = spills.begin() + used_spill_slots;
+    if (const auto iter = std::find_if(spills.begin(), spill_end, contains_value); iter != spill_end) {
         return HostLoc{HostLoc::Kind::Spill, static_cast<int>(iter - spills.begin())};
     }
     return std::nullopt;
@@ -604,7 +612,8 @@ HostLocInfo& RegAlloc::ValueInfo(const IR::Inst* value) {
     if (contains_value(flags)) {
         return flags;
     }
-    if (const auto iter = std::find_if(spills.begin(), spills.end(), contains_value); iter != spills.end()) {
+    const auto spill_end = spills.begin() + used_spill_slots;
+    if (const auto iter = std::find_if(spills.begin(), spill_end, contains_value); iter != spill_end) {
         return *iter;
     }
     ASSERT_FALSE("RegAlloc::ValueInfo: Value not found");

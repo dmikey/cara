@@ -1,0 +1,24 @@
+fragment_2.txt
+}
+gl_FragDepth = uintBitsToFloat(cara_depth_float_bits);
+color = byteround(last_tex_env_out);
+}
+
+
+1:1: P0001: Extension directive must occur before any non-preprocessor tokens
+vertex_0.txt
+    gl_Position.xy = ((raster_xy - cara_viewport.xy) / cara_viewport.zw - vec2(1.0)) * gl_Position.w;
+}
+}
+
+
+1:2: P0001: Extension directive must occur before any non-preprocessor tokens
+1:19: L0001: Invalid qualifier 'out' for interface block
+vertex_1.txt
+texcoord0_w = vs_out_attr3.w;
+view = vec3(vs_out_attr4.x, vs_out_attr4.y, vs_out_attr4.z);
+}
+
+
+1:1: P0001: Extension directive must occur before any non-preprocessor tokens
+1:30: L0001: Unexpected layout qualifier on non-interface variable

@@ -11,6 +11,9 @@
 
 struct ANativeWindow;
 class SharedContext_Android;
+#ifdef CARA_GL_CONTEXT_DISPATCH
+namespace Common { class HostRenderQueue; }
+#endif
 
 class EGLAndroid : public Frontend::EmuWindow {
 public:
@@ -18,6 +21,11 @@ public:
     ~EGLAndroid() override;
 
     bool Initialize(ANativeWindow* surface);
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    bool StartSubmissionWorker();
+    bool StopSubmissionWorker() noexcept;
+    bool HasCoreContext() const;
+#endif
     void UpdateSurface(ANativeWindow* surface);
     void UpdateWindow();
     void UpdateLayout();
@@ -49,6 +57,9 @@ private:
     EGLDisplay egl_display = EGL_NO_DISPLAY;
 
     std::unique_ptr<SharedContext_Android> core_context;
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    std::unique_ptr<Common::HostRenderQueue> submission;
+#endif
 
     enum class PresentingState {
         Initial,

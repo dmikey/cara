@@ -1,0 +1,28 @@
+thread	type	observed_stack	value	unit
+emulation	schedule	on CPU	446.881	ms
+emulation	off CPU	GLES result	76.264	ms
+emulation	off CPU	JIT	1.617	ms
+emulation	off CPU	PICA draw	0.083	ms
+emulation	off CPU	generate vertex shader	0.056	ms
+emulation	on CPU sampled	JIT	62	samples
+emulation	on CPU sampled	PICA draw	13	samples
+emulation	on CPU sampled	other	11	samples
+emulation	on CPU sampled	generate vertex shader	1	samples
+GLES	schedule	on CPU	82.183	ms
+GLES	off CPU	worker queue	440.849	ms
+GLES	off CPU	driver glTexSubImage2D	0.955	ms
+GLES	off CPU	driver glBindFramebuffer	0.47	ms
+GLES	off CPU	driver glFramebufferTexture2D	0.273	ms
+GLES	off CPU	driver glDrawElements	0.108	ms
+GLES	off CPU	driver glBlitFramebuffer	0.021	ms
+GLES	off CPU	driver glUnmapBuffer	0.015	ms
+GLES	off CPU	driver glDrawArrays	0.014	ms
+GLES	off CPU	driver glTexImage2D	0.012	ms
+GLES	on CPU sampled	driver glTexSubImage2D	6	samples
+GLES	on CPU sampled	driver glBindFramebuffer	3	samples
+GLES	on CPU sampled	other	2	samples
+GLES	on CPU sampled	driver glDrawElements	2	samples
+GLES	on CPU sampled	driver glBlitFramebuffer	1	samples
+GLES	on CPU sampled	driver glTexImage2D	1	samples
+GLES	on CPU sampled	driver glFramebufferTexture2D	1	samples
+GLES	on CPU sampled	driver glDisable	1	samples

@@ -24,7 +24,6 @@
 #include "video_core/regs_lighting.h"
 #include "video_core/regs_rasterizer.h"
 #include "video_core/regs_texturing.h"
-#include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_shader_decompiler.h"
 #include "video_core/renderer_opengl/gl_shader_gen.h"
 #include "video_core/renderer_opengl/gl_packed_vertex.h"
@@ -105,13 +104,13 @@ layout (std140) uniform shader_light_data {
 };
 )";
 
-static bool s_use_fragment_color;
-static bool s_use_texcolor0;
-static bool s_use_texcolor1;
-static bool s_use_texcolor2;
+struct FragmentUsage {
+    bool fragment_color = false;
+    std::array<bool, 3> texcolor{};
+};
 
 static std::string GetVertexInterfaceDeclaration(bool is_output, bool separable_shader,
-                                                 std::string_view prefix = {}) {
+                                                 std::string_view prefix = {}, bool gles = false) {
     std::string out;
 
     const auto append_variable = [&](std::string_view var, int location) {
@@ -130,7 +129,7 @@ static std::string GetVertexInterfaceDeclaration(bool is_output, bool separable_
     append_variable("vec4 normquat", ATTRIBUTE_NORMQUAT);
     append_variable("vec3 view", ATTRIBUTE_VIEW);
 
-    if (is_output && separable_shader) {
+    if (is_output && separable_shader && !gles) {
         // gl_PerVertex redeclaration is required for separate shader object
         out += R"(
 out gl_PerVertex {
@@ -429,7 +428,8 @@ static std::string SampleExplicitMaterialLod(const PicaFSConfig& config, unsigne
                        unit, coord, bias);
 }
 
-static std::string SampleTexture(const PicaFSConfig& config, unsigned texture_unit) {
+static std::string SampleTexture(const PicaFSConfig& config, FragmentUsage& usage,
+                                 unsigned texture_unit) {
     const auto& state = config.state;
     // With a disabled PICA unit, the software rasterizer keeps its initialized
     // RGBA zero sample. Keep the same TEV and lighting operations without
@@ -441,7 +441,7 @@ static std::string SampleTexture(const PicaFSConfig& config, unsigned texture_un
         // Only unit 0 respects the texturing type
         switch (state.texture0_type) {
         case TexturingRegs::TextureConfig::Texture2D:
-            s_use_texcolor0 = true;
+            usage.texcolor[0] = true;
             return "texcolor0";
         case TexturingRegs::TextureConfig::Projection2D:
             // TODO (wwylele): find the exact LOD formula for projection texture
@@ -461,13 +461,13 @@ static std::string SampleTexture(const PicaFSConfig& config, unsigned texture_un
             return "texture(tex0, texcoord0)";
         }
     case 1:
-        s_use_texcolor1 = true;
+        usage.texcolor[1] = true;
         return "texcolor1";
     case 2:
         if (state.texture2_use_coord1) {
             return SampleExplicitMaterialLod(config, 2, "texcoord1");
         } else {
-            s_use_texcolor2 = true;
+            usage.texcolor[2] = true;
             return "texcolor2";
         }
     case 3:
@@ -484,7 +484,7 @@ static std::string SampleTexture(const PicaFSConfig& config, unsigned texture_un
 }
 
 /// Writes the specified TEV stage source component(s)
-static void AppendSource(std::string& out, const PicaFSConfig& config,
+static void AppendSource(std::string& out, const PicaFSConfig& config, FragmentUsage& usage,
                          TevStageConfig::Source source, const std::string& index_name) {
     using Source = TevStageConfig::Source;
     switch (source) {
@@ -493,23 +493,23 @@ static void AppendSource(std::string& out, const PicaFSConfig& config,
         break;
     case Source::PrimaryFragmentColor:
         out += "primary_fragment_color";
-        s_use_fragment_color = true;
+        usage.fragment_color = true;
         break;
     case Source::SecondaryFragmentColor:
         out += "secondary_fragment_color";
-        s_use_fragment_color = true;
+        usage.fragment_color = true;
         break;
     case Source::Texture0:
-        out += SampleTexture(config, 0);
+        out += SampleTexture(config, usage, 0);
         break;
     case Source::Texture1:
-        out += SampleTexture(config, 1);
+        out += SampleTexture(config, usage, 1);
         break;
     case Source::Texture2:
-        out += SampleTexture(config, 2);
+        out += SampleTexture(config, usage, 2);
         break;
     case Source::Texture3:
-        out += SampleTexture(config, 3);
+        out += SampleTexture(config, usage, 3);
         break;
     case Source::PreviousBuffer:
         out += "combiner_buffer";
@@ -531,54 +531,55 @@ static void AppendSource(std::string& out, const PicaFSConfig& config,
 
 /// Writes the color components to use for the specified TEV stage color modifier
 static void AppendColorModifier(std::string& out, const PicaFSConfig& config,
+                                FragmentUsage& usage,
                                 TevStageConfig::ColorModifier modifier,
                                 TevStageConfig::Source source, const std::string& index_name) {
     using ColorModifier = TevStageConfig::ColorModifier;
     out += "(";
     switch (modifier) {
     case ColorModifier::SourceColor:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".rgb";
         break;
     case ColorModifier::OneMinusSourceColor:
         out += "vec3(1.0) - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".rgb";
         break;
     case ColorModifier::SourceAlpha:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".aaa";
         break;
     case ColorModifier::OneMinusSourceAlpha:
         out += "vec3(1.0) - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".aaa";
         break;
     case ColorModifier::SourceRed:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".rrr";
         break;
     case ColorModifier::OneMinusSourceRed:
         out += "vec3(1.0) - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".rrr";
         break;
     case ColorModifier::SourceGreen:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".ggg";
         break;
     case ColorModifier::OneMinusSourceGreen:
         out += "vec3(1.0) - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".ggg";
         break;
     case ColorModifier::SourceBlue:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".bbb";
         break;
     case ColorModifier::OneMinusSourceBlue:
         out += "vec3(1.0) - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".bbb";
         break;
     default:
@@ -591,45 +592,46 @@ static void AppendColorModifier(std::string& out, const PicaFSConfig& config,
 
 /// Writes the alpha component to use for the specified TEV stage alpha modifier
 static void AppendAlphaModifier(std::string& out, const PicaFSConfig& config,
+                                FragmentUsage& usage,
                                 TevStageConfig::AlphaModifier modifier,
                                 TevStageConfig::Source source, const std::string& index_name) {
     using AlphaModifier = TevStageConfig::AlphaModifier;
     out += "(";
     switch (modifier) {
     case AlphaModifier::SourceAlpha:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".a";
         break;
     case AlphaModifier::OneMinusSourceAlpha:
         out += "1.0 - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".a";
         break;
     case AlphaModifier::SourceRed:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".r";
         break;
     case AlphaModifier::OneMinusSourceRed:
         out += "1.0 - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".r";
         break;
     case AlphaModifier::SourceGreen:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".g";
         break;
     case AlphaModifier::OneMinusSourceGreen:
         out += "1.0 - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".g";
         break;
     case AlphaModifier::SourceBlue:
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".b";
         break;
     case AlphaModifier::OneMinusSourceBlue:
         out += "1.0 - ";
-        AppendSource(out, config, source, index_name);
+        AppendSource(out, config, usage, source, index_name);
         out += ".b";
         break;
     default:
@@ -753,22 +755,48 @@ static void AppendAlphaTestCondition(std::string& out, FramebufferRegs::CompareF
     }
 }
 
+// Match the operands read by the emitted color and alpha expressions.
+static unsigned TevOperandCount(TevStageConfig::Operation operation, bool alpha) {
+    using Operation = TevStageConfig::Operation;
+    switch (operation) {
+    case Operation::Replace:
+        return 1;
+    case Operation::Modulate:
+    case Operation::Add:
+    case Operation::AddSigned:
+    case Operation::Subtract:
+        return 2;
+    case Operation::Lerp:
+    case Operation::MultiplyThenAdd:
+    case Operation::AddThenMultiply:
+        return 3;
+    case Operation::Dot3_RGB:
+    case Operation::Dot3_RGBA:
+        return alpha ? 0 : 2;
+    default:
+        return 0;
+    }
+}
+
 /// Writes the code to emulate the specified TEV stage
-static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config, u32 index) {
+static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config,
+                                 FragmentUsage& usage, u32 index) {
     const auto stage =
         static_cast<const TexturingRegs::TevStageConfig>(config.state.tev_stages[index]);
     if (!IsPassThroughTevStage(stage)) {
         std::string index_name = std::to_string(index);
 
         std::array<std::string, 3> color_results;
-        AppendColorModifier(color_results[0], config, stage.color_modifier1, stage.color_source1,
-                            index_name);
-        if (stage.color_op != TevStageConfig::Operation::Replace) {
-            AppendColorModifier(color_results[1], config, stage.color_modifier2,
+        const auto color_operands = TevOperandCount(stage.color_op, false);
+        if (color_operands >= 1)
+            AppendColorModifier(color_results[0], config, usage, stage.color_modifier1,
+                                stage.color_source1, index_name);
+        if (color_operands >= 2)
+            AppendColorModifier(color_results[1], config, usage, stage.color_modifier2,
                                 stage.color_source2, index_name);
-            AppendColorModifier(color_results[2], config, stage.color_modifier3,
+        if (color_operands == 3)
+            AppendColorModifier(color_results[2], config, usage, stage.color_modifier3,
                                 stage.color_source3, index_name);
-        }
 
         // Round the output of each TEV stage to maintain the PICA's 8 bits of precision
         out += "vec3 color_output_" + index_name + " = byteround(";
@@ -780,14 +808,16 @@ static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config, u
             out += "float alpha_output_" + index_name + " = color_output_" + index_name + "[0];\n";
         } else {
             std::array<std::string, 3> alpha_results;
-            AppendAlphaModifier(alpha_results[0], config, stage.alpha_modifier1,
-                                stage.alpha_source1, index_name);
-            if (stage.alpha_op != TevStageConfig::Operation::Replace) {
-                AppendAlphaModifier(alpha_results[1], config, stage.alpha_modifier2,
+            const auto alpha_operands = TevOperandCount(stage.alpha_op, true);
+            if (alpha_operands >= 1)
+                AppendAlphaModifier(alpha_results[0], config, usage, stage.alpha_modifier1,
+                                    stage.alpha_source1, index_name);
+            if (alpha_operands >= 2)
+                AppendAlphaModifier(alpha_results[1], config, usage, stage.alpha_modifier2,
                                     stage.alpha_source2, index_name);
-                AppendAlphaModifier(alpha_results[2], config, stage.alpha_modifier3,
+            if (alpha_operands == 3)
+                AppendAlphaModifier(alpha_results[2], config, usage, stage.alpha_modifier3,
                                     stage.alpha_source3, index_name);
-            }
 
             out += "float alpha_output_" + index_name + " = byteround(";
             AppendAlphaCombiner(out, stage.alpha_op, alpha_results);
@@ -821,7 +851,7 @@ static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config, u
 }
 
 /// Writes the code to emulate fragment lighting
-static void WriteLighting(std::string& out, const PicaFSConfig& config) {
+static void WriteLighting(std::string& out, const PicaFSConfig& config, FragmentUsage& usage) {
     const auto& lighting = config.state.lighting;
 
     // Define lighting globals
@@ -837,7 +867,8 @@ static void WriteLighting(std::string& out, const PicaFSConfig& config) {
 
     // Compute fragment normals and tangents
     const auto Perturbation = [&] {
-        return fmt::format("2.0 * ({}).rgb - 1.0", SampleTexture(config, lighting.bump_selector));
+        return fmt::format("2.0 * ({}).rgb - 1.0",
+                           SampleTexture(config, usage, lighting.bump_selector));
     };
     if (lighting.bump_mode == LightingRegs::LightingBumpMode::NormalMap) {
         // Bump mapping is enabled using a normal map
@@ -875,7 +906,7 @@ static void WriteLighting(std::string& out, const PicaFSConfig& config) {
            "vec3 tangent = quaternion_rotate(normalized_normquat, surface_tangent);\n";
 
     if (lighting.enable_shadow) {
-        std::string shadow_texture = SampleTexture(config, lighting.shadow_selector);
+        std::string shadow_texture = SampleTexture(config, usage, lighting.shadow_selector);
         if (lighting.shadow_invert) {
             out += fmt::format("vec4 shadow = vec4(1.0) - {};\n", shadow_texture);
         } else {
@@ -1570,7 +1601,7 @@ std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_sh
     bool shadow_rendering = false;
     bool shader_logic_ops = false;
 
-    if (separable_shader) {
+    if (separable_shader && !target.gles) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
 
@@ -1599,7 +1630,7 @@ std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_sh
 )";
     }
 
-    out += GetVertexInterfaceDeclaration(false, separable_shader);
+    out += GetVertexInterfaceDeclaration(false, separable_shader, {}, target.gles);
     out += R"(
 #ifndef CARA_GLES
 in vec4 gl_FragCoord;
@@ -1792,19 +1823,15 @@ if (cara_tex0_crop.y != 0) {
         out += "depth /= gl_FragCoord.w;\n";
     }
 
-    // flags
-    s_use_fragment_color = false;
-    s_use_texcolor0 = false;
-    s_use_texcolor1 = false;
-    s_use_texcolor2 = false;
+    FragmentUsage usage;
 
     std::string tev_stages;
     bool declares_combiner_buffer = true;
     if (target.metal_runtime_tev_units) {
-        s_use_texcolor0 = true;
-        s_use_texcolor1 = (target.metal_runtime_tev_units & 2) != 0;
+        usage.texcolor[0] = true;
+        usage.texcolor[1] = (target.metal_runtime_tev_units & 2) != 0;
         declares_combiner_buffer = false;
-        tev_stages = s_use_texcolor1
+        tev_stages = usage.texcolor[1]
             ? "last_tex_env_out = caraRunTev(rounded_primary_color, texcolor0, texcolor1);\n"
             : "last_tex_env_out = caraRunTev(rounded_primary_color, texcolor0, vec4(0));\n";
     } else if (target.elide_dead_combiner_buffer) {
@@ -1812,7 +1839,7 @@ if (cara_tex0_crop.y != 0) {
         bool reads_combiner_buffer = false;
         for (u32 index = 0; index < state.tev_stages.size(); ++index) {
             const auto start = tev_stages.size();
-            const auto updates_start = WriteTevStage(tev_stages, config, index);
+            const auto updates_start = WriteTevStage(tev_stages, config, usage, index);
             const auto math = std::string_view(tev_stages).substr(start, updates_start - start);
             reads_combiner_buffer |= math.find("combiner_buffer") != std::string_view::npos;
             tev_without_updates.append(math);
@@ -1825,14 +1852,14 @@ if (cara_tex0_crop.y != 0) {
         }
     } else {
         for (u32 index = 0; index < state.tev_stages.size(); ++index)
-            WriteTevStage(tev_stages, config, index);
+            WriteTevStage(tev_stages, config, usage, index);
     }
 
     std::string lighting_codes;
-    if (state.lighting.enable && s_use_fragment_color)
-        WriteLighting(lighting_codes, config);
+    if (state.lighting.enable && usage.fragment_color)
+        WriteLighting(lighting_codes, config, usage);
 
-    if (s_use_texcolor0) {
+    if (usage.texcolor[0]) {
         if (state.native_nearest_borrow_tex0) {
 #ifdef CARA_MAC_ATLAS_PIPELINE
             // Both actual and helper invocations read only the certified logical crop.
@@ -1849,11 +1876,11 @@ if (cara_tex0_crop.y != 0) {
                    ";\n";
         }
     }
-    if (s_use_texcolor1) {
+    if (usage.texcolor[1]) {
         out += "vec4 texcolor1 = " + SampleExplicitMaterialLod(config, 1, "texcoord1") +
                ";\n";
     }
-    if (s_use_texcolor2) {
+    if (usage.texcolor[2]) {
         out += "vec4 texcolor2 = " + SampleExplicitMaterialLod(config, 2, "texcoord2") +
                ";\n";
     }
@@ -1979,7 +2006,8 @@ gl_FragDepth = uintBitsToFloat(cara_depth_float_bits);
             // Take the color output as-is
             break;
         case FramebufferRegs::LogicOp::CopyInverted:
-            out += "color = ~color;\n";
+            // Complement the already quantized UNORM channels.
+            out += "color = vec4(1.0) - color;\n";
             break;
         case FramebufferRegs::LogicOp::NoOp:
             // We need to discard the color, but not necessarily the depth. This is not possible
@@ -2012,7 +2040,7 @@ std::string GenerateTrivialVertexShader(bool separable_shader) {
 #ifdef CARA_IOS_GLES
     out += "#define CARA_FULL_DEPTH_RANGE 1\n";
 #endif
-    if (separable_shader) {
+    if (separable_shader && !GLES) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
 
@@ -2033,7 +2061,7 @@ std::string GenerateTrivialVertexShader(bool separable_shader) {
     out +=
         fmt::format("layout(location = {}) in vec3 vert_view;\n", static_cast<int>(ATTRIBUTE_VIEW));
 
-    out += GetVertexInterfaceDeclaration(true, separable_shader);
+    out += GetVertexInterfaceDeclaration(true, separable_shader, {}, GLES);
 
     out += UniformBlockDef;
 
@@ -2074,7 +2102,7 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
     if(native_quaternion_geometry || native_isolated_dispatch) return {};
 #endif
     if (ios_output && ios_indexed_inputs==5) {
-        out=GetVertexInterfaceDeclaration(true,false);
+        out = GetVertexInterfaceDeclaration(true, separable_shader && GLES, {}, GLES);
         out+=R"(
 uniform highp sampler2D cara_vertex_outputs;
 uniform highp usampler2D cara_vertex_indices;
@@ -2107,7 +2135,7 @@ void main() {
         out+="}\n";
         return out;
     }
-    if (separable_shader) {
+    if (separable_shader && !GLES) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
 
@@ -2155,7 +2183,8 @@ layout (std140) uniform vs_config {
 
     // output attributes declaration
     for (u32 i = 0; i < config.state.num_outputs; ++i) {
-        out += (separable_shader ? "layout(location = " + std::to_string(i) + ")" : std::string{}) +
+        out += (separable_shader && !ios_output ?
+                    "layout(location = " + std::to_string(i) + ")" : std::string{}) +
                (ios_output ? " vec4 vs_out_attr" : " out vec4 vs_out_attr") + std::to_string(i) + ";\n";
     }
 
@@ -2226,7 +2255,8 @@ layout (std140) uniform vs_config {
                 }
             }
         }
-        out += GetVertexInterfaceDeclaration(true, false, native_quaternion_geometry?"vs_":"");
+        out += GetVertexInterfaceDeclaration(true, separable_shader && GLES,
+                                             native_quaternion_geometry ? "vs_" : "", GLES);
         if (ios_indexed_inputs==4)
             for (unsigned field=0;field<6;++field)
                 out+=fmt::format("out highp vec4 cara_feedback{};\n",field);

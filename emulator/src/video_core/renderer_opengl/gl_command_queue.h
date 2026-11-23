@@ -4,13 +4,18 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 #include <glad/glad.h>
 #include "gl_command_queue_api.h"
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "gl_driver_transactions.h"
+#endif
 #include "gl_transaction_attribution.h"
 #include "common/host_render_queue.h"
 namespace Common { class HostRenderQueue; }
+namespace OpenGL { class SharedVertexShadow; }
 namespace OpenGL::CommandQueue {
 struct Stats {
     std::uint64_t owned_native_map_uploads=0,transaction_inline_calls=0,transaction_sync_calls=0,transaction_state_fallbacks=0,transaction_lut_calls=0,owned_unmap_error_queries=0,owned_budget_live=0,owned_budget_high=0,owned_budget_waits=0;
@@ -38,6 +43,28 @@ UncheckedBlitProducerStats GetUncheckedBlitProducerStats();
 bool NativeMapUploadRequested();
 bool NativeMapUploadActive();
 Common::HostRenderQueue* Queue();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#ifdef __ANDROID__
+// Durations of producer-side synchronous requests during an enabled frame profile.
+bool TryQueueVertexUpload(GLsizei width, GLsizei height, GLenum format, GLenum type,
+                          const void* pixels, std::size_t bytes, SharedVertexShadow& retained);
+bool MailboxFencePacketEnabled();
+void QueueConsumedPresentFence(GLsync fence, bool server_wait_only = false);
+void QueuePublishedRenderFence(std::function<void(GLsync)> publish);
+GLsync CreatePublishedRenderFence();
+struct RemapState;
+std::shared_ptr<RemapState> SaveRemapStateIfEnabled();
+void RestoreRemapState(std::shared_ptr<RemapState> state);
+bool CheckedRemapDraw(std::function<bool()> draw);
+
+struct SyncTiming {
+    std::uint64_t count{}, before_driver_ns{}, in_driver_ns{}, after_driver_ns{};
+};
+std::array<SyncTiming, RpcApiCount> TakeSyncTimingsForProfile();
+#endif
+void QueueLUT(DriverTransactions::LUTBody body, GLuint texture, unsigned unit, GLenum format,
+              std::size_t offset, const std::uint8_t* data, std::size_t bytes);
+#endif
 void Flush();
 void Drain();
 void SubmitHost(std::function<void()> job,std::size_t bytes=0);

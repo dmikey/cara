@@ -1,14 +1,22 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 #include "video_core/renderer_opengl/gl_driver_transactions.h"
 // Copyright 2026 Cara contributors
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <cstdlib>
+#include <cstring>
 #include <limits>
+#include <string>
 #include "common/scope_exit.h"
 #include "video_core/renderer_opengl/gl_native_rgba8_remap.h"
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_surface_remap.h"
+#include "video_core/renderer_opengl/gl_surface_remap_shaders.h"
 
 namespace OpenGL {
 
@@ -16,86 +24,16 @@ bool SurfaceRemapper::Initialize() {
     if (initialized)
         return program.handle != 0;
     initialized = true;
-    constexpr const char* vertex = R"(
-void main() {
-    const vec2 positions[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
-    gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
-}
-)";
-    // Native GLES uses this shader without the atlas precision preamble.
-    constexpr const char* fragment = R"(
-#ifdef GL_ES
-precision highp float;
-precision highp int;
+    const char* fragment = SurfaceRemapShaders::Fragment;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    const char* requested = std::getenv("CARA_REMAP_TEXEL_PAIR");
+    std::string variant;
+    if (requested && std::strcmp(requested, "1") == 0) {
+        variant = std::string("#define CARA_REMAP_TEXEL_PAIR\n") + fragment;
+        fragment = variant.c_str();
+    }
 #endif
-uniform highp sampler2D source_texture;
-// Width, height, stride, tiled flag. Coordinates in textures are GL coordinates.
-uniform highp ivec4 source_layout;
-uniform highp ivec4 destination_layout;
-uniform highp int byte_offset;
-uniform highp ivec2 bytes_per_pixel;
-uniform highp int native_reverse;
-out highp vec4 color;
-
-int interleave(int x, int y) {
-    return (x & 1) | ((y & 1) << 1) | ((x & 2) << 1) | ((y & 2) << 2) |
-           ((x & 4) << 2) | ((y & 4) << 3);
-}
-int deinterleave(int value) {
-    return (value & 1) | ((value >> 1) & 2) | ((value >> 2) & 4);
-}
-// Read a byte in guest order, undoing GLES RGB/BGRA upload byte reversal.
-float guest_byte(int offset) {
-    int pixel = offset / bytes_per_pixel.x;
-    int component = bytes_per_pixel.x - 1 - (offset % bytes_per_pixel.x);
-    ivec2 source;
-    if (source_layout.w != 0) {
-        int tile = pixel / 64;
-        int within = pixel & 63;
-        source.x = (tile % (source_layout.z / 8)) * 8 + deinterleave(within);
-        source.y = source_layout.y - 1 -
-                   ((tile / (source_layout.z / 8)) * 8 + deinterleave(within >> 1));
-    } else {
-        source = ivec2(pixel % source_layout.z, pixel / source_layout.z);
-    }
-    return texelFetch(source_texture, source, 0)[component];
-}
-void main() {
-    ivec2 destination = ivec2(gl_FragCoord.xy);
-    int pixel;
-    if (destination_layout.w != 0) {
-        int y = destination_layout.y - 1 - destination.y;
-        pixel = (y / 8) * destination_layout.z * 8 + (destination.x / 8) * 64 +
-                interleave(destination.x & 7, y & 7);
-    } else {
-        pixel = destination.y * destination_layout.z + destination.x;
-    }
-    int offset = pixel * bytes_per_pixel.y + byte_offset;
-    if (bytes_per_pixel.x == bytes_per_pixel.y && byte_offset % bytes_per_pixel.x == 0) {
-        // Preserve the original one-fetch path for equal formats.
-        int source_pixel = offset / bytes_per_pixel.x;
-        ivec2 source;
-        if (source_layout.w != 0) {
-            int tile = source_pixel / 64;
-            int within = source_pixel & 63;
-            source = ivec2((tile % (source_layout.z / 8)) * 8 + deinterleave(within),
-                          source_layout.y - 1 -
-                          ((tile / (source_layout.z / 8)) * 8 + deinterleave(within >> 1)));
-        } else {
-            source = ivec2(source_pixel % source_layout.z, source_pixel / source_layout.z);
-        }
-        color = texelFetch(source_texture, source, 0);
-        if (native_reverse != 0) color = color.abgr;
-    } else if (bytes_per_pixel.y == 4) {
-        color = vec4(guest_byte(offset + 3), guest_byte(offset + 2),
-                     guest_byte(offset + 1), guest_byte(offset));
-    } else {
-        color = vec4(guest_byte(offset + 2), guest_byte(offset + 1),
-                     guest_byte(offset), 1.0);
-    }
-}
-)";
-    program.Create(vertex, fragment);
+    program.Create(SurfaceRemapShaders::Vertex, fragment);
     if (!program.handle)
         return false;
     vao.Create();
@@ -122,6 +60,9 @@ bool SurfaceRemapper::RemapRGBA8(GLuint source_texture, const SurfaceParams& sou
 bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& source,
                                GLuint destination_texture, const SurfaceParams& destination,
                                const Common::Rectangle<u32>& rectangle, bool native_rgba8) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::SurfaceRemap);
+#endif
     if (const auto* bridge=DriverTransactions::Pending())
         return bridge->sync_bool(DriverTransactions::Kind::Remap,[&] {
             return RemapBytes(source_texture,source,destination_texture,destination,rectangle,native_rgba8);
@@ -162,14 +103,28 @@ bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& sou
         byte_offset > std::numeric_limits<GLint>::max()) return false;
     const OpenGLState previous = OpenGLState::GetCurState();
     GLint previous_active_texture = GL_TEXTURE0;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
-    const GLboolean previous_dither = glIsEnabled(GL_DITHER);
-    const GLboolean previous_discard = glIsEnabled(GL_RASTERIZER_DISCARD);
+    GLboolean previous_dither = GL_FALSE, previous_discard = GL_FALSE;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    const auto queued_state = CommandQueue::SaveRemapStateIfEnabled();
+    if (!queued_state)
+#endif
+    {
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
+        previous_dither = glIsEnabled(GL_DITHER);
+        previous_discard = glIsEnabled(GL_RASTERIZER_DISCARD);
+    }
     SCOPE_EXIT({
-        if (previous_dither) glEnable(GL_DITHER);
-        if (previous_discard) glEnable(GL_RASTERIZER_DISCARD);
         previous.Apply();
-        glActiveTexture(previous_active_texture);
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+        if (queued_state) {
+            CommandQueue::RestoreRemapState(queued_state);
+        } else
+#endif
+        {
+            if (previous_dither) glEnable(GL_DITHER);
+            if (previous_discard) glEnable(GL_RASTERIZER_DISCARD);
+            glActiveTexture(previous_active_texture);
+        }
     });
     if (!Initialize())
         return false;
@@ -193,17 +148,25 @@ bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& sou
     SCOPE_EXIT({
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
     });
-    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        return false;
-    glUniform4i(source_layout_location, source.width, source.height, source.stride, source.is_tiled);
-    glUniform4i(destination_layout_location, destination.width, destination.height,
-                destination.stride, destination.is_tiled);
-    glUniform1i(byte_offset_location, static_cast<GLint>(byte_offset));
-    glUniform2i(bytes_per_pixel_location, source.GetFormatBpp() / 8,
-                destination.GetFormatBpp() / 8);
-    glUniform1i(native_reverse_location, !GLES && native_encoding.reverse_components);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    return glGetError() == GL_NO_ERROR;
+    // This private VAO uses gl_VertexID. The producer owns all renderer metadata
+    // and waits for the real framebuffer status and draw error before returning.
+    const auto checked_draw = [&] {
+        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            return false;
+        glUniform4i(source_layout_location, source.width, source.height, source.stride, source.is_tiled);
+        glUniform4i(destination_layout_location, destination.width, destination.height,
+                    destination.stride, destination.is_tiled);
+        glUniform1i(byte_offset_location, static_cast<GLint>(byte_offset));
+        glUniform2i(bytes_per_pixel_location, source.GetFormatBpp() / 8,
+                    destination.GetFormatBpp() / 8);
+        glUniform1i(native_reverse_location, !GLES && native_encoding.reverse_components);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        return glGetError() == GL_NO_ERROR;
+    };
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (queued_state) return CommandQueue::CheckedRemapDraw(checked_draw);
+#endif
+    return checked_draw();
 }
 
 } // namespace OpenGL

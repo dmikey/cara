@@ -1,0 +1,193 @@
+         1795447393.355 10080 10118 I CaraPerf: cpu end=721 other_ms=59.98 execution_ms=736.46 svc_ms=263.80 gpu_command_ms=2670.39 dsp_ms=12.37 failures=0 overflows=0
+         1795447393.355 10080 10118 I CaraPerf: draw_phases end=721 framebuffer_ms=129.42 textures_ms=156.21 shader_setup_ms=21.70 invalidation_ms=95.43 index_reuse_ms=175.94 stream_map_ms=44.55 stream_unmap_ms=46.85 remap_ms=43.47
+         1795447393.355 10080 10118 I CaraPerf: lut_phases end=721 lighting_fog_ms=2195.37 procedural_ms=0.00 texture_setup_ms=3.32 texture_transfer_ms=2181.32 texture_restore_ms=0.64 uploads=480 bytes=5354496
+         1795447393.355 10080 10118 I CaraPerf: texture_phase end=721 phase=acquire calls=89084 samples=1393 sample_cpu_ms=2.91 sample_wall_ms=4.65 failures=0
+         1795447393.355 10080 10118 I CaraPerf: texture_phase end=721 phase=selection calls=89411 samples=1399 sample_cpu_ms=1.89 sample_wall_ms=3.62 failures=0
+         1795447393.355 10080 10118 I CaraPerf: texture_phase end=721 phase=validation calls=89104 samples=1393 sample_cpu_ms=1.76 sample_wall_ms=3.66 failures=0
+         1795447393.355 10080 10118 I CaraPerf: texture_phase end=721 phase=reinterpretation calls=54 samples=1 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447393.355 10080 10118 I CaraPerf: texture_phase end=721 phase=allocation calls=27 samples=1 sample_cpu_ms=0.02 sample_wall_ms=0.02 failures=0
+         1795447393.355 10080 10118 I CaraPerf: texture_phase end=721 phase=load calls=27 samples=1 sample_cpu_ms=0.02 sample_wall_ms=0.02 failures=0
+         1795447393.355 10080 10118 I CaraPerf: texture_phase end=721 phase=upload calls=27 samples=1 sample_cpu_ms=0.05 sample_wall_ms=0.06 failures=0
+         1795447393.355 10080 10118 I CaraPerf: texture_phase end=721 phase=mipmap calls=46451 samples=725 sample_cpu_ms=1.21 sample_wall_ms=2.15 failures=0
+         1795447393.355 10080 10118 I CaraPerf: draw_sample end=721 phase=submit samples=686 sample_cpu_ms=7.15 sample_wall_ms=7.58 failures=0
+         1795447393.355 10080 10118 I CaraPerf: draw_sample end=721 phase=uniform_upload samples=686 sample_cpu_ms=3.86 sample_wall_ms=4.72 failures=0
+         1795447393.355 10080 10118 I CaraPerf: draw_sample end=721 phase=stream_map samples=686 sample_cpu_ms=0.90 sample_wall_ms=1.16 failures=0
+         1795447393.355 10080 10118 I CaraPerf: draw_sample end=721 phase=stream_unmap samples=686 sample_cpu_ms=0.90 sample_wall_ms=1.17 failures=0
+         1795447393.355 10080 10118 I CaraPerf: draw_sample end=721 phase=vertex_subimage samples=333 sample_cpu_ms=3.05 sample_wall_ms=3.47 failures=0
+         1795447393.355 10080 10118 I CaraPerf: window end=721 clock=100 p50_ms=49.26 p99_ms=58.90 worst_ms=61.73 worst_frame=641 draws=45932 upload_ms=225.85 submit_ms=443.76 download_ms=0.00 compile_ms=0.00 lut_ms=2199.23 waits_ms=0.60
+         1795447399.303 10080 10118 I CaraPerf: cpu end=841 other_ms=58.76 execution_ms=719.09 svc_ms=260.87 gpu_command_ms=2843.96 dsp_ms=10.45 failures=0 overflows=0
+         1795447399.303 10080 10118 I CaraPerf: draw_phases end=841 framebuffer_ms=132.74 textures_ms=158.71 shader_setup_ms=22.32 invalidation_ms=101.70 index_reuse_ms=183.45 stream_map_ms=48.11 stream_unmap_ms=52.87 remap_ms=43.51
+         1795447399.303 10080 10118 I CaraPerf: lut_phases end=841 lighting_fog_ms=2064.58 procedural_ms=0.00 texture_setup_ms=3.49 texture_transfer_ms=2050.19 texture_restore_ms=0.67 uploads=480 bytes=5354496
+         1795447399.304 10080 10118 I CaraPerf: texture_phase end=841 phase=acquire calls=99032 samples=1547 sample_cpu_ms=3.47 sample_wall_ms=5.52 failures=0
+         1795447399.304 10080 10118 I CaraPerf: texture_phase end=841 phase=selection calls=99297 samples=1551 sample_cpu_ms=2.12 sample_wall_ms=4.03 failures=0
+         1795447399.304 10080 10118 I CaraPerf: texture_phase end=841 phase=validation calls=99039 samples=1547 sample_cpu_ms=1.55 sample_wall_ms=3.43 failures=0
+         1795447399.304 10080 10118 I CaraPerf: texture_phase end=841 phase=reinterpretation calls=18 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447399.304 10080 10118 I CaraPerf: texture_phase end=841 phase=allocation calls=9 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447399.304 10080 10118 I CaraPerf: texture_phase end=841 phase=load calls=9 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447399.304 10080 10118 I CaraPerf: texture_phase end=841 phase=upload calls=9 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447399.304 10080 10118 I CaraPerf: texture_phase end=841 phase=mipmap calls=51752 samples=810 sample_cpu_ms=1.30 sample_wall_ms=2.33 failures=0
+         1795447399.304 10080 10118 I CaraPerf: draw_sample end=841 phase=submit samples=765 sample_cpu_ms=7.73 sample_wall_ms=8.17 failures=0
+         1795447399.304 10080 10118 I CaraPerf: draw_sample end=841 phase=uniform_upload samples=765 sample_cpu_ms=4.29 sample_wall_ms=5.20 failures=0
+         1795447399.304 10080 10118 I CaraPerf: draw_sample end=841 phase=stream_map samples=765 sample_cpu_ms=0.99 sample_wall_ms=1.27 failures=0
+         1795447399.304 10080 10118 I CaraPerf: draw_sample end=841 phase=stream_unmap samples=765 sample_cpu_ms=0.99 sample_wall_ms=1.28 failures=0
+         1795447399.304 10080 10118 I CaraPerf: draw_sample end=841 phase=vertex_subimage samples=392 sample_cpu_ms=3.70 sample_wall_ms=4.21 failures=0
+         1795447399.304 10080 10118 I CaraPerf: window end=841 clock=100 p50_ms=49.79 p99_ms=57.19 worst_ms=58.02 worst_frame=829 draws=51032 upload_ms=283.83 submit_ms=471.45 download_ms=0.00 compile_ms=0.00 lut_ms=2068.79 waits_ms=0.58
+         1795447405.236 10080 10118 I CaraPerf: cpu end=961 other_ms=58.15 execution_ms=700.44 svc_ms=255.42 gpu_command_ms=2808.71 dsp_ms=10.15 failures=0 overflows=0
+         1795447405.236 10080 10118 I CaraPerf: draw_phases end=961 framebuffer_ms=131.42 textures_ms=152.99 shader_setup_ms=21.99 invalidation_ms=101.24 index_reuse_ms=180.82 stream_map_ms=47.86 stream_unmap_ms=52.48 remap_ms=44.38
+         1795447405.236 10080 10118 I CaraPerf: lut_phases end=961 lighting_fog_ms=2107.77 procedural_ms=0.00 texture_setup_ms=3.45 texture_transfer_ms=2093.48 texture_restore_ms=0.62 uploads=480 bytes=5394432
+         1795447405.236 10080 10118 I CaraPerf: texture_phase end=961 phase=acquire calls=98976 samples=1546 sample_cpu_ms=3.38 sample_wall_ms=5.45 failures=0
+         1795447405.236 10080 10118 I CaraPerf: texture_phase end=961 phase=selection calls=99216 samples=1550 sample_cpu_ms=2.05 sample_wall_ms=3.98 failures=0
+         1795447405.236 10080 10118 I CaraPerf: texture_phase end=961 phase=validation calls=98976 samples=1546 sample_cpu_ms=1.59 sample_wall_ms=3.30 failures=0
+         1795447405.236 10080 10118 I CaraPerf: texture_phase end=961 phase=mipmap calls=51696 samples=807 sample_cpu_ms=1.30 sample_wall_ms=2.30 failures=0
+         1795447405.236 10080 10118 I CaraPerf: draw_sample end=961 phase=submit samples=766 sample_cpu_ms=7.60 sample_wall_ms=8.11 failures=0
+         1795447405.236 10080 10118 I CaraPerf: draw_sample end=961 phase=uniform_upload samples=766 sample_cpu_ms=4.24 sample_wall_ms=5.19 failures=0
+         1795447405.236 10080 10118 I CaraPerf: draw_sample end=961 phase=stream_map samples=766 sample_cpu_ms=0.97 sample_wall_ms=1.26 failures=0
+         1795447405.236 10080 10118 I CaraPerf: draw_sample end=961 phase=stream_unmap samples=766 sample_cpu_ms=1.00 sample_wall_ms=1.28 failures=0
+         1795447405.236 10080 10118 I CaraPerf: draw_sample end=961 phase=vertex_subimage samples=385 sample_cpu_ms=3.66 sample_wall_ms=4.19 failures=0
+         1795447405.236 10080 10118 I CaraPerf: window end=961 clock=100 p50_ms=51.66 p99_ms=56.79 worst_ms=57.24 worst_frame=905 draws=51168 upload_ms=281.62 submit_ms=459.16 download_ms=0.00 compile_ms=0.00 lut_ms=2111.97 waits_ms=0.57
+         1795447432.402 10080 10118 I CaraPerf: cpu end=1561 other_ms=64.52 execution_ms=713.85 svc_ms=254.80 gpu_command_ms=1718.17 dsp_ms=12.08 failures=0 overflows=0
+         1795447432.403 10080 10118 I CaraPerf: draw_phases end=1561 framebuffer_ms=91.46 textures_ms=114.97 shader_setup_ms=15.95 invalidation_ms=58.93 index_reuse_ms=155.37 stream_map_ms=39.06 stream_unmap_ms=28.76 remap_ms=43.42
+         1795447432.403 10080 10118 I CaraPerf: lut_phases end=1561 lighting_fog_ms=636.34 procedural_ms=0.00 texture_setup_ms=1.16 texture_transfer_ms=630.50 texture_restore_ms=0.24 uploads=169 bytes=1344512
+         1795447432.403 10080 10118 I CaraPerf: texture_phase end=1561 phase=acquire calls=50898 samples=794 sample_cpu_ms=9.78 sample_wall_ms=10.91 failures=0
+         1795447432.403 10080 10118 I CaraPerf: texture_phase end=1561 phase=selection calls=51201 samples=798 sample_cpu_ms=1.25 sample_wall_ms=2.31 failures=0
+         1795447432.403 10080 10118 I CaraPerf: texture_phase end=1561 phase=validation calls=50942 samples=795 sample_cpu_ms=0.86 sample_wall_ms=1.91 failures=0
+         1795447432.403 10080 10118 I CaraPerf: texture_phase end=1561 phase=reinterpretation calls=132 samples=2 sample_cpu_ms=0.00 sample_wall_ms=0.01 failures=0
+         1795447432.403 10080 10118 I CaraPerf: texture_phase end=1561 phase=allocation calls=66 samples=1 sample_cpu_ms=0.01 sample_wall_ms=0.01 failures=0
+         1795447432.403 10080 10118 I CaraPerf: texture_phase end=1561 phase=load calls=66 samples=1 sample_cpu_ms=0.01 sample_wall_ms=0.01 failures=0
+         1795447432.403 10080 10118 I CaraPerf: texture_phase end=1561 phase=upload calls=66 samples=1 sample_cpu_ms=0.04 sample_wall_ms=0.06 failures=0
+         1795447432.403 10080 10118 I CaraPerf: texture_phase end=1561 phase=mipmap calls=22674 samples=355 sample_cpu_ms=0.63 sample_wall_ms=1.09 failures=0
+         1795447432.403 10080 10118 I CaraPerf: draw_sample end=1561 phase=submit samples=379 sample_cpu_ms=4.93 sample_wall_ms=5.20 failures=0
+         1795447432.403 10080 10118 I CaraPerf: draw_sample end=1561 phase=uniform_upload samples=379 sample_cpu_ms=2.36 sample_wall_ms=3.46 failures=0
+         1795447432.403 10080 10118 I CaraPerf: draw_sample end=1561 phase=stream_map samples=379 sample_cpu_ms=0.58 sample_wall_ms=0.98 failures=0
+         1795447432.403 10080 10118 I CaraPerf: draw_sample end=1561 phase=stream_unmap samples=379 sample_cpu_ms=0.55 sample_wall_ms=1.06 failures=0
+         1795447432.403 10080 10118 I CaraPerf: draw_sample end=1561 phase=vertex_subimage samples=96 sample_cpu_ms=0.98 sample_wall_ms=1.11 failures=0
+         1795447432.403 10080 10118 I CaraPerf: window end=1561 clock=100 p50_ms=24.13 p99_ms=88.48 worst_ms=91.54 worst_frame=1506 draws=25170 upload_ms=87.02 submit_ms=410.34 download_ms=0.00 compile_ms=0.00 lut_ms=638.63 waits_ms=0.65
+         1795447434.547 10080 10118 I CaraPerf: cpu end=1681 other_ms=57.90 execution_ms=510.76 svc_ms=235.73 gpu_command_ms=1169.88 dsp_ms=9.51 failures=0 overflows=0
+         1795447434.547 10080 10118 I CaraPerf: draw_phases end=1681 framebuffer_ms=67.79 textures_ms=84.06 shader_setup_ms=9.07 invalidation_ms=42.73 index_reuse_ms=144.73 stream_map_ms=32.82 stream_unmap_ms=22.50 remap_ms=42.18
+         1795447434.547 10080 10118 I CaraPerf: lut_phases end=1681 lighting_fog_ms=123.57 procedural_ms=0.00 texture_setup_ms=0.53 texture_transfer_ms=118.20 texture_restore_ms=0.13 uploads=96 bytes=98304
+         1795447434.547 10080 10118 I CaraPerf: texture_phase end=1681 phase=acquire calls=35272 samples=551 sample_cpu_ms=1.52 sample_wall_ms=2.26 failures=0
+         1795447434.547 10080 10118 I CaraPerf: texture_phase end=1681 phase=selection calls=35462 samples=555 sample_cpu_ms=1.08 sample_wall_ms=1.86 failures=0
+         1795447434.547 10080 10118 I CaraPerf: texture_phase end=1681 phase=validation calls=35290 samples=553 sample_cpu_ms=0.60 sample_wall_ms=1.33 failures=0
+         1795447434.547 10080 10118 I CaraPerf: texture_phase end=1681 phase=reinterpretation calls=52 samples=1 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447434.547 10080 10118 I CaraPerf: texture_phase end=1681 phase=allocation calls=26 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447434.547 10080 10118 I CaraPerf: texture_phase end=1681 phase=load calls=26 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447434.547 10080 10118 I CaraPerf: texture_phase end=1681 phase=upload calls=26 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447434.547 10080 10118 I CaraPerf: texture_phase end=1681 phase=mipmap calls=12424 samples=193 sample_cpu_ms=0.37 sample_wall_ms=0.63 failures=0
+         1795447434.547 10080 10118 I CaraPerf: draw_sample end=1681 phase=submit samples=267 sample_cpu_ms=2.62 sample_wall_ms=2.78 failures=0
+         1795447434.547 10080 10118 I CaraPerf: draw_sample end=1681 phase=uniform_upload samples=267 sample_cpu_ms=1.53 sample_wall_ms=1.94 failures=0
+         1795447434.547 10080 10118 I CaraPerf: draw_sample end=1681 phase=stream_map samples=267 sample_cpu_ms=0.36 sample_wall_ms=0.48 failures=0
+         1795447434.547 10080 10118 I CaraPerf: draw_sample end=1681 phase=stream_unmap samples=267 sample_cpu_ms=0.36 sample_wall_ms=0.51 failures=0
+         1795447434.547 10080 10118 I CaraPerf: draw_sample end=1681 phase=vertex_subimage samples=44 sample_cpu_ms=0.56 sample_wall_ms=0.63 failures=0
+         1795447434.547 10080 10118 I CaraPerf: window end=1681 clock=100 p50_ms=17.74 p99_ms=24.13 worst_ms=25.15 worst_frame=1645 draws=17146 upload_ms=41.27 submit_ms=162.39 download_ms=0.00 compile_ms=0.00 lut_ms=125.24 waits_ms=0.57
+         1795447436.540 10080 10118 I CaraPerf: cpu end=1801 other_ms=58.64 execution_ms=493.83 svc_ms=232.66 gpu_command_ms=1097.93 dsp_ms=9.26 failures=0 overflows=0
+         1795447436.540 10080 10118 I CaraPerf: draw_phases end=1801 framebuffer_ms=64.68 textures_ms=75.73 shader_setup_ms=8.78 invalidation_ms=41.30 index_reuse_ms=139.66 stream_map_ms=22.31 stream_unmap_ms=20.12 remap_ms=42.23
+         1795447436.540 10080 10118 I CaraPerf: lut_phases end=1801 lighting_fog_ms=3.85 procedural_ms=0.00 texture_setup_ms=0.00 texture_transfer_ms=0.00 texture_restore_ms=0.00 uploads=0 bytes=0
+         1795447436.540 10080 10118 I CaraPerf: texture_phase end=1801 phase=acquire calls=34808 samples=544 sample_cpu_ms=1.54 sample_wall_ms=2.18 failures=0
+         1795447436.540 10080 10118 I CaraPerf: texture_phase end=1801 phase=selection calls=34928 samples=546 sample_cpu_ms=1.04 sample_wall_ms=1.79 failures=0
+         1795447436.540 10080 10118 I CaraPerf: texture_phase end=1801 phase=validation calls=34808 samples=544 sample_cpu_ms=0.65 sample_wall_ms=1.47 failures=0
+         1795447436.540 10080 10118 I CaraPerf: texture_phase end=1801 phase=mipmap calls=12008 samples=189 sample_cpu_ms=0.35 sample_wall_ms=0.60 failures=0
+         1795447436.540 10080 10118 I CaraPerf: draw_sample end=1801 phase=submit samples=262 sample_cpu_ms=2.63 sample_wall_ms=2.78 failures=0
+         1795447436.540 10080 10118 I CaraPerf: draw_sample end=1801 phase=uniform_upload samples=262 sample_cpu_ms=1.53 sample_wall_ms=2.07 failures=0
+         1795447436.540 10080 10118 I CaraPerf: draw_sample end=1801 phase=stream_map samples=262 sample_cpu_ms=0.38 sample_wall_ms=0.61 failures=0
+         1795447436.540 10080 10118 I CaraPerf: draw_sample end=1801 phase=stream_unmap samples=262 sample_cpu_ms=0.35 sample_wall_ms=0.49 failures=0
+         1795447436.540 10080 10118 I CaraPerf: draw_sample end=1801 phase=vertex_subimage samples=32 sample_cpu_ms=0.44 sample_wall_ms=0.49 failures=0
+         1795447436.540 10080 10118 I CaraPerf: window end=1801 clock=100 p50_ms=16.49 p99_ms=19.81 worst_ms=21.70 worst_frame=1685 draws=16688 upload_ms=30.35 submit_ms=155.00 download_ms=0.00 compile_ms=0.00 lut_ms=5.44 waits_ms=0.56
+         1795447438.549 10080 10118 I CaraPerf: cpu end=1921 other_ms=57.67 execution_ms=481.65 svc_ms=232.73 gpu_command_ms=1088.78 dsp_ms=9.21 failures=0 overflows=0
+         1795447438.549 10080 10118 I CaraPerf: draw_phases end=1921 framebuffer_ms=63.85 textures_ms=80.01 shader_setup_ms=9.03 invalidation_ms=42.31 index_reuse_ms=140.49 stream_map_ms=25.02 stream_unmap_ms=19.69 remap_ms=41.85
+         1795447438.549 10080 10118 I CaraPerf: lut_phases end=1921 lighting_fog_ms=1.72 procedural_ms=0.00 texture_setup_ms=0.00 texture_transfer_ms=0.00 texture_restore_ms=0.00 uploads=0 bytes=0
+         1795447438.549 10080 10118 I CaraPerf: texture_phase end=1921 phase=acquire calls=34908 samples=546 sample_cpu_ms=1.53 sample_wall_ms=2.24 failures=0
+         1795447438.549 10080 10118 I CaraPerf: texture_phase end=1921 phase=selection calls=35074 samples=548 sample_cpu_ms=1.03 sample_wall_ms=1.74 failures=0
+         1795447438.549 10080 10118 I CaraPerf: texture_phase end=1921 phase=validation calls=34920 samples=545 sample_cpu_ms=0.69 sample_wall_ms=1.50 failures=0
+         1795447438.549 10080 10118 I CaraPerf: texture_phase end=1921 phase=reinterpretation calls=34 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447438.549 10080 10118 I CaraPerf: texture_phase end=1921 phase=allocation calls=17 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447438.549 10080 10118 I CaraPerf: texture_phase end=1921 phase=load calls=17 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447438.549 10080 10118 I CaraPerf: texture_phase end=1921 phase=upload calls=17 samples=0 sample_cpu_ms=0.00 sample_wall_ms=0.00 failures=0
+         1795447438.549 10080 10118 I CaraPerf: texture_phase end=1921 phase=mipmap calls=13032 samples=202 sample_cpu_ms=0.36 sample_wall_ms=0.63 failures=0
+         1795447438.549 10080 10118 I CaraPerf: draw_sample end=1921 phase=submit samples=258 sample_cpu_ms=2.74 sample_wall_ms=2.89 failures=0
+         1795447438.549 10080 10118 I CaraPerf: draw_sample end=1921 phase=uniform_upload samples=258 sample_cpu_ms=1.54 sample_wall_ms=2.22 failures=0
+         1795447438.549 10080 10118 I CaraPerf: draw_sample end=1921 phase=stream_map samples=258 sample_cpu_ms=0.39 sample_wall_ms=0.80 failures=0
+         1795447438.549 10080 10118 I CaraPerf: draw_sample end=1921 phase=stream_unmap samples=258 sample_cpu_ms=0.35 sample_wall_ms=0.45 failures=0
+         1795447438.549 10080 10118 I CaraPerf: draw_sample end=1921 phase=vertex_subimage samples=23 sample_cpu_ms=0.27 sample_wall_ms=0.31 failures=0
+         1795447438.549 10080 10118 I CaraPerf: window end=1921 clock=100 p50_ms=16.57 p99_ms=19.23 worst_ms=21.07 worst_frame=1880 draws=16536 upload_ms=26.23 submit_ms=164.56 download_ms=0.00 compile_ms=0.00 lut_ms=3.29 waits_ms=0.52
+         1795447449.956 10080 10118 I CaraPerf: cpu end=2401 other_ms=67.00 execution_ms=641.88 svc_ms=261.13 gpu_command_ms=2007.23 dsp_ms=9.63 failures=0 overflows=0
+         1795447449.956 10080 10118 I CaraPerf: draw_phases end=2401 framebuffer_ms=93.57 textures_ms=183.00 shader_setup_ms=19.15 invalidation_ms=79.99 index_reuse_ms=204.56 stream_map_ms=42.33 stream_unmap_ms=37.67 remap_ms=53.40
+         1795447449.956 10080 10118 I CaraPerf: lut_phases end=2401 lighting_fog_ms=541.99 procedural_ms=0.00 texture_setup_ms=0.39 texture_transfer_ms=538.39 texture_restore_ms=0.21 uploads=74 bytes=84992
+         1795447449.956 10080 10118 I CaraPerf: texture_phase end=2401 phase=acquire calls=68342 samples=1068 sample_cpu_ms=2.92 sample_wall_ms=4.36 failures=0
+         1795447449.956 10080 10118 I CaraPerf: texture_phase end=2401 phase=selection calls=68833 samples=1075 sample_cpu_ms=2.22 sample_wall_ms=3.58 failures=0
+         1795447449.956 10080 10118 I CaraPerf: texture_phase end=2401 phase=validation calls=68441 samples=1069 sample_cpu_ms=1.11 sample_wall_ms=2.50 failures=0
+         1795447449.956 10080 10118 I CaraPerf: texture_phase end=2401 phase=reinterpretation calls=286 samples=4 sample_cpu_ms=0.01 sample_wall_ms=0.02 failures=0
+         1795447449.956 10080 10118 I CaraPerf: texture_phase end=2401 phase=allocation calls=135 samples=2 sample_cpu_ms=0.03 sample_wall_ms=0.03 failures=0
+         1795447449.956 10080 10118 I CaraPerf: texture_phase end=2401 phase=load calls=143 samples=2 sample_cpu_ms=0.33 sample_wall_ms=0.34 failures=0
+         1795447449.956 10080 10118 I CaraPerf: texture_phase end=2401 phase=upload calls=143 samples=2 sample_cpu_ms=0.08 sample_wall_ms=0.08 failures=0
+         1795447449.956 10080 10118 I CaraPerf: texture_phase end=2401 phase=mipmap calls=32224 samples=504 sample_cpu_ms=0.81 sample_wall_ms=1.42 failures=0
+         1795447449.956 10080 10118 I CaraPerf: draw_sample end=2401 phase=submit samples=512 sample_cpu_ms=5.74 sample_wall_ms=6.07 failures=0
+         1795447449.956 10080 10118 I CaraPerf: draw_sample end=2401 phase=uniform_upload samples=512 sample_cpu_ms=2.95 sample_wall_ms=3.62 failures=0
+         1795447449.956 10080 10118 I CaraPerf: draw_sample end=2401 phase=stream_map samples=512 sample_cpu_ms=0.71 sample_wall_ms=0.94 failures=0
+         1795447449.956 10080 10118 I CaraPerf: draw_sample end=2401 phase=stream_unmap samples=512 sample_cpu_ms=0.68 sample_wall_ms=0.87 failures=0
+         1795447449.956 10080 10118 I CaraPerf: draw_sample end=2401 phase=vertex_subimage samples=67 sample_cpu_ms=0.84 sample_wall_ms=0.95 failures=0
+         1795447449.956 10080 10118 I CaraPerf: window end=2401 clock=100 p50_ms=34.71 p99_ms=87.47 worst_ms=104.92 worst_frame=2328 draws=32727 upload_ms=78.58 submit_ms=341.53 download_ms=0.00 compile_ms=0.00 lut_ms=544.87 waits_ms=0.73
+         1795447454.298 10080 10118 I CaraPerf: cpu end=2521 other_ms=71.70 execution_ms=688.44 svc_ms=274.44 gpu_command_ms=2417.01 dsp_ms=9.87 failures=0 overflows=0
+         1795447454.298 10080 10118 I CaraPerf: draw_phases end=2521 framebuffer_ms=114.88 textures_ms=193.84 shader_setup_ms=23.25 invalidation_ms=103.50 index_reuse_ms=239.16 stream_map_ms=55.11 stream_unmap_ms=50.15 remap_ms=59.46
+         1795447454.298 10080 10118 I CaraPerf: lut_phases end=2521 lighting_fog_ms=850.79 procedural_ms=0.00 texture_setup_ms=0.60 texture_transfer_ms=845.59 texture_restore_ms=0.41 uploads=111 bytes=162816
+         1795447454.298 10080 10118 I CaraPerf: texture_phase end=2521 phase=acquire calls=88822 samples=1387 sample_cpu_ms=4.03 sample_wall_ms=5.94 failures=0
+         1795447454.298 10080 10118 I CaraPerf: texture_phase end=2521 phase=selection calls=88945 samples=1390 sample_cpu_ms=2.75 sample_wall_ms=4.39 failures=0
+         1795447454.298 10080 10118 I CaraPerf: texture_phase end=2521 phase=validation calls=88822 samples=1388 sample_cpu_ms=1.34 sample_wall_ms=3.01 failures=0
+         1795447454.298 10080 10118 I CaraPerf: texture_phase end=2521 phase=mipmap calls=54736 samples=855 sample_cpu_ms=1.30 sample_wall_ms=2.34 failures=0
+         1795447454.298 10080 10118 I CaraPerf: draw_sample end=2521 phase=submit samples=670 sample_cpu_ms=7.31 sample_wall_ms=7.74 failures=0
+         1795447454.298 10080 10118 I CaraPerf: draw_sample end=2521 phase=uniform_upload samples=670 sample_cpu_ms=3.90 sample_wall_ms=4.83 failures=0
+         1795447454.298 10080 10118 I CaraPerf: draw_sample end=2521 phase=stream_map samples=670 sample_cpu_ms=0.93 sample_wall_ms=1.22 failures=0
+         1795447454.298 10080 10118 I CaraPerf: draw_sample end=2521 phase=stream_unmap samples=670 sample_cpu_ms=0.90 sample_wall_ms=1.19 failures=0
+         1795447454.298 10080 10118 I CaraPerf: draw_sample end=2521 phase=vertex_subimage samples=57 sample_cpu_ms=0.80 sample_wall_ms=0.89 failures=0
+         1795447454.298 10080 10118 I CaraPerf: window end=2521 clock=100 p50_ms=35.89 p99_ms=83.86 worst_ms=87.09 worst_frame=2459 draws=42935 upload_ms=58.38 submit_ms=449.04 download_ms=0.00 compile_ms=0.00 lut_ms=854.51 waits_ms=0.76
+         1795447457.823 10080 10118 I CaraPerf: cpu end=2641 other_ms=76.47 execution_ms=671.47 svc_ms=279.80 gpu_command_ms=2343.73 dsp_ms=10.54 failures=0 overflows=0
+         1795447457.823 10080 10118 I CaraPerf: draw_phases end=2641 framebuffer_ms=125.35 textures_ms=196.69 shader_setup_ms=21.25 invalidation_ms=99.75 index_reuse_ms=227.56 stream_map_ms=50.65 stream_unmap_ms=50.66 remap_ms=68.81
+         1795447457.823 10080 10118 I CaraPerf: lut_phases end=2641 lighting_fog_ms=3.69 procedural_ms=0.00 texture_setup_ms=0.00 texture_transfer_ms=0.00 texture_restore_ms=0.00 uploads=0 bytes=0
+         1795447457.823 10080 10118 I CaraPerf: texture_phase end=2641 phase=acquire calls=87364 samples=1364 sample_cpu_ms=3.82 sample_wall_ms=5.64 failures=0
+         1795447457.823 10080 10118 I CaraPerf: texture_phase end=2641 phase=selection calls=87485 samples=1367 sample_cpu_ms=2.78 sample_wall_ms=4.46 failures=0
+         1795447457.823 10080 10118 I CaraPerf: texture_phase end=2641 phase=validation calls=87364 samples=1364 sample_cpu_ms=1.34 sample_wall_ms=3.00 failures=0
+         1795447457.823 10080 10118 I CaraPerf: texture_phase end=2641 phase=mipmap calls=54208 samples=847 sample_cpu_ms=1.29 sample_wall_ms=2.26 failures=0
+         1795447457.823 10080 10118 I CaraPerf: draw_sample end=2641 phase=submit samples=661 sample_cpu_ms=7.36 sample_wall_ms=7.74 failures=0
+         1795447457.823 10080 10118 I CaraPerf: draw_sample end=2641 phase=uniform_upload samples=661 sample_cpu_ms=3.78 sample_wall_ms=4.67 failures=0
+         1795447457.823 10080 10118 I CaraPerf: draw_sample end=2641 phase=stream_map samples=661 sample_cpu_ms=0.87 sample_wall_ms=1.15 failures=0
+         1795447457.823 10080 10118 I CaraPerf: draw_sample end=2641 phase=stream_unmap samples=661 sample_cpu_ms=0.91 sample_wall_ms=1.20 failures=0
+         1795447457.823 10080 10118 I CaraPerf: draw_sample end=2641 phase=vertex_subimage samples=41 sample_cpu_ms=0.48 sample_wall_ms=0.55 failures=0
+         1795447457.823 10080 10118 I CaraPerf: window end=2641 clock=100 p50_ms=28.93 p99_ms=36.24 worst_ms=49.49 worst_frame=2591 draws=42230 upload_ms=32.27 submit_ms=459.36 download_ms=0.00 compile_ms=0.00 lut_ms=7.29 waits_ms=0.74
+         1795447461.312 10080 10118 I CaraPerf: cpu end=2761 other_ms=76.29 execution_ms=650.50 svc_ms=263.58 gpu_command_ms=2302.45 dsp_ms=10.36 failures=0 overflows=0
+         1795447461.312 10080 10118 I CaraPerf: draw_phases end=2761 framebuffer_ms=136.75 textures_ms=201.92 shader_setup_ms=21.08 invalidation_ms=98.47 index_reuse_ms=226.33 stream_map_ms=50.17 stream_unmap_ms=50.50 remap_ms=56.90
+         1795447461.312 10080 10118 I CaraPerf: lut_phases end=2761 lighting_fog_ms=3.50 procedural_ms=0.00 texture_setup_ms=0.00 texture_transfer_ms=0.00 texture_restore_ms=0.00 uploads=0 bytes=0
+         1795447461.312 10080 10118 I CaraPerf: texture_phase end=2761 phase=acquire calls=86640 samples=1355 sample_cpu_ms=4.03 sample_wall_ms=5.78 failures=0
+         1795447461.312 10080 10118 I CaraPerf: texture_phase end=2761 phase=selection calls=86760 samples=1357 sample_cpu_ms=2.83 sample_wall_ms=4.43 failures=0
+         1795447461.312 10080 10118 I CaraPerf: texture_phase end=2761 phase=validation calls=86640 samples=1355 sample_cpu_ms=1.18 sample_wall_ms=2.84 failures=0
+         1795447461.312 10080 10118 I CaraPerf: texture_phase end=2761 phase=mipmap calls=53760 samples=840 sample_cpu_ms=1.23 sample_wall_ms=2.22 failures=0
+         1795447461.312 10080 10118 I CaraPerf: draw_sample end=2761 phase=submit samples=655 sample_cpu_ms=7.00 sample_wall_ms=7.42 failures=0
+         1795447461.312 10080 10118 I CaraPerf: draw_sample end=2761 phase=uniform_upload samples=655 sample_cpu_ms=3.72 sample_wall_ms=4.64 failures=0
+         1795447461.312 10080 10118 I CaraPerf: draw_sample end=2761 phase=stream_map samples=655 sample_cpu_ms=0.87 sample_wall_ms=1.16 failures=0
+         1795447461.312 10080 10118 I CaraPerf: draw_sample end=2761 phase=stream_unmap samples=655 sample_cpu_ms=0.89 sample_wall_ms=1.17 failures=0
+         1795447461.312 10080 10118 I CaraPerf: draw_sample end=2761 phase=vertex_subimage samples=40 sample_cpu_ms=0.48 sample_wall_ms=0.53 failures=0
+         1795447461.312 10080 10118 I CaraPerf: window end=2761 clock=100 p50_ms=28.81 p99_ms=34.49 worst_ms=34.62 worst_frame=2701 draws=41880 upload_ms=31.11 submit_ms=436.08 download_ms=0.00 compile_ms=0.00 lut_ms=7.07 waits_ms=0.79
+         1795447464.903 10080 10118 I CaraPerf: cpu end=2881 other_ms=78.52 execution_ms=655.66 svc_ms=272.08 gpu_command_ms=2352.83 dsp_ms=10.40 failures=0 overflows=0
+         1795447464.903 10080 10118 I CaraPerf: draw_phases end=2881 framebuffer_ms=140.98 textures_ms=202.26 shader_setup_ms=21.23 invalidation_ms=100.18 index_reuse_ms=232.67 stream_map_ms=49.48 stream_unmap_ms=50.89 remap_ms=55.75
+         1795447464.903 10080 10118 I CaraPerf: lut_phases end=2881 lighting_fog_ms=3.60 procedural_ms=0.00 texture_setup_ms=0.00 texture_transfer_ms=0.00 texture_restore_ms=0.00 uploads=0 bytes=0
+         1795447464.903 10080 10118 I CaraPerf: texture_phase end=2881 phase=acquire calls=88082 samples=1376 sample_cpu_ms=4.02 sample_wall_ms=5.90 failures=0
+         1795447464.903 10080 10118 I CaraPerf: texture_phase end=2881 phase=selection calls=88204 samples=1377 sample_cpu_ms=2.77 sample_wall_ms=4.37 failures=0
+         1795447464.903 10080 10118 I CaraPerf: texture_phase end=2881 phase=validation calls=88082 samples=1377 sample_cpu_ms=1.24 sample_wall_ms=2.89 failures=0
+         1795447464.903 10080 10118 I CaraPerf: texture_phase end=2881 phase=mipmap calls=54656 samples=854 sample_cpu_ms=1.28 sample_wall_ms=2.29 failures=0
+         1795447464.903 10080 10118 I CaraPerf: draw_sample end=2881 phase=submit samples=665 sample_cpu_ms=7.54 sample_wall_ms=7.92 failures=0
+         1795447464.903 10080 10118 I CaraPerf: draw_sample end=2881 phase=uniform_upload samples=665 sample_cpu_ms=3.84 sample_wall_ms=4.71 failures=0
+         1795447464.903 10080 10118 I CaraPerf: draw_sample end=2881 phase=stream_map samples=665 sample_cpu_ms=0.91 sample_wall_ms=1.21 failures=0
+         1795447464.903 10080 10118 I CaraPerf: draw_sample end=2881 phase=stream_unmap samples=665 sample_cpu_ms=0.91 sample_wall_ms=1.17 failures=0
+         1795447464.903 10080 10118 I CaraPerf: draw_sample end=2881 phase=vertex_subimage samples=39 sample_cpu_ms=0.46 sample_wall_ms=0.51 failures=0
+         1795447464.903 10080 10118 I CaraPerf: window end=2881 clock=100 p50_ms=29.42 p99_ms=50.69 worst_ms=51.64 worst_frame=2793 draws=42577 upload_ms=30.12 submit_ms=444.32 download_ms=0.00 compile_ms=0.00 lut_ms=7.27 waits_ms=0.78
+         1795447468.497 10080 10118 I CaraPerf: cpu end=3001 other_ms=79.12 execution_ms=651.61 svc_ms=271.96 gpu_command_ms=2357.37 dsp_ms=10.17 failures=0 overflows=0
+         1795447468.497 10080 10118 I CaraPerf: draw_phases end=3001 framebuffer_ms=135.06 textures_ms=200.20 shader_setup_ms=21.32 invalidation_ms=99.95 index_reuse_ms=231.66 stream_map_ms=49.79 stream_unmap_ms=52.35 remap_ms=56.19
+         1795447468.497 10080 10118 I CaraPerf: lut_phases end=3001 lighting_fog_ms=3.62 procedural_ms=0.00 texture_setup_ms=0.00 texture_transfer_ms=0.00 texture_restore_ms=0.00 uploads=0 bytes=0
+         1795447468.497 10080 10118 I CaraPerf: texture_phase end=3001 phase=acquire calls=88086 samples=1377 sample_cpu_ms=3.95 sample_wall_ms=5.77 failures=0
+         1795447468.497 10080 10118 I CaraPerf: texture_phase end=3001 phase=selection calls=88208 samples=1378 sample_cpu_ms=2.83 sample_wall_ms=4.49 failures=0
+         1795447468.497 10080 10118 I CaraPerf: texture_phase end=3001 phase=validation calls=88086 samples=1376 sample_cpu_ms=1.26 sample_wall_ms=2.91 failures=0
+         1795447468.497 10080 10118 I CaraPerf: texture_phase end=3001 phase=mipmap calls=54656 samples=855 sample_cpu_ms=1.27 sample_wall_ms=2.25 failures=0
+         1795447468.497 10080 10118 I CaraPerf: draw_sample end=3001 phase=submit samples=665 sample_cpu_ms=7.75 sample_wall_ms=8.18 failures=0
+         1795447468.497 10080 10118 I CaraPerf: draw_sample end=3001 phase=uniform_upload samples=665 sample_cpu_ms=3.79 sample_wall_ms=4.71 failures=0
+         1795447468.497 10080 10118 I CaraPerf: draw_sample end=3001 phase=stream_map samples=665 sample_cpu_ms=0.88 sample_wall_ms=1.15 failures=0
+         1795447468.497 10080 10118 I CaraPerf: draw_sample end=3001 phase=stream_unmap samples=665 sample_cpu_ms=0.93 sample_wall_ms=1.27 failures=0
+         1795447468.497 10080 10118 I CaraPerf: draw_sample end=3001 phase=vertex_subimage samples=39 sample_cpu_ms=0.46 sample_wall_ms=0.54 failures=0
+         1795447468.497 10080 10118 I CaraPerf: window end=3001 clock=100 p50_ms=29.26 p99_ms=51.51 worst_ms=52.08 worst_frame=2900 draws=42579 upload_ms=30.89 submit_ms=456.87 download_ms=0.00 compile_ms=0.00 lut_ms=7.23 waits_ms=0.79

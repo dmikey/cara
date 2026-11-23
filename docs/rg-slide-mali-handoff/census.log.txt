@@ -1,0 +1,1068 @@
+--------- beginning of main
+         1795423794.693 25367 25367 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+         1795423794.697 25367 25367 I AndroidRuntime: Using default boot image
+         1795423794.697 25367 25367 I AndroidRuntime: Leaving lock profiling enabled
+         1795423794.818 25367 25367 D AndroidRuntime: Calling main entry com.android.commands.svc.Svc
+         1795423794.830 25367 25367 D AndroidRuntime: Shutting down VM
+         1795423795.860 25455 25455 I CaraBudget: boot-cold-census
+         1795423796.200 25464 25511 I CaraPerf: session mode=performance cpu=Dynarmic renderer=atlas native_luts=0 resolution=1 p3d=1 ppf=1 soft_knee=1
+         1795423796.437 25464 25511 I CaraShader: compile stage=vertex shader=1 source=9b4e61ba374bd2d2 ok=1 us=940
+         1795423796.438 25464 25511 I CaraShader: compile stage=fragment shader=2 source=ba2d69786a35f55b ok=1 us=563
+         1795423796.441 25464 25511 I CaraShader: link program=3 shaders=1,2 ok=1 us=3786
+         1795423796.442 25464 25511 I CaraShader: compile stage=vertex shader=2 source=7ad8c29214aafdc3 ok=1 us=670
+         1795423796.443 25464 25511 I CaraShader: compile stage=fragment shader=1 source=df79da3af384259f ok=1 us=698
+         1795423796.447 25464 25511 I CaraShader: link program=4 shaders=2,1 ok=1 us=3938
+         1795423796.448 25464 25511 I CaraShader: compile stage=vertex shader=1 source=6b7593b2f8c2a725 ok=1 us=697
+         1795423796.449 25464 25511 I CaraShader: compile stage=fragment shader=2 source=66a9770fd8e14489 ok=1 us=1063
+         1795423796.459 25464 25511 I CaraShader: link program=5 shaders=1,2 ok=1 us=9308
+         1795423796.459 25464 25511 I CaraShader: compile stage=vertex shader=2 source=6b7593b2f8c2a725 ok=1 us=44
+         1795423796.460 25464 25511 I CaraShader: compile stage=fragment shader=1 source=cdfdf7de5a5edfb3 ok=1 us=843
+         1795423796.463 25464 25511 I CaraShader: link program=6 shaders=2,1 ok=1 us=2951
+         1795423796.463 25464 25511 I CaraShader: compile stage=vertex shader=1 source=6b7593b2f8c2a725 ok=1 us=37
+         1795423796.464 25464 25511 I CaraShader: compile stage=fragment shader=2 source=42d49526ba453e8b ok=1 us=1218
+         1795423796.475 25464 25511 I CaraShader: link program=7 shaders=1,2 ok=1 us=10821
+         1795423796.475 25464 25511 I CaraShader: compile stage=vertex shader=2 source=6b7593b2f8c2a725 ok=1 us=36
+         1795423796.476 25464 25511 I CaraShader: compile stage=fragment shader=1 source=8a45056a7c0531c6 ok=1 us=760
+         1795423796.486 25464 25511 I CaraShader: link program=8 shaders=2,1 ok=1 us=10136
+         1795423796.489 25464 25511 I CaraShader: compile stage=vertex shader=1 source=21814ddac826d96c ok=1 us=1978
+         1795423798.017 25464 25511 I CaraShader: compile stage=vertex shader=2 source=1bc26d8a7634e1df ok=1 us=774
+         1795423798.021 25464 25511 I CaraShader: compile stage=fragment shader=9 source=e73571f21436e944 ok=1 us=4336
+         1795423798.063 25464 25511 I CaraShader: link program=10 shaders=2,9 ok=1 us=42123
+         1795423799.408 25464 25511 I CaraShader: fragment_key key=3f817e4de24069b5 source=11ebad82b6ebe074 lit=0 generation_us=42
+         1795423799.411 25464 25511 I CaraShader: compile stage=fragment shader=9 source=11ebad82b6ebe074 ok=1 us=2971
+         1795423799.693 25464 25568 I CaraShader: compile stage=vertex shader=2 source=b1c0317d735b4c5d ok=1 us=276449
+         1795423799.694 25464 25568 I CaraShader: compile stage=fragment shader=12 source=11ebad82b6ebe074 ok=1 us=82
+         1795423799.954 25464 25511 I CaraShader: compile stage=vertex shader=11 source=7ea6e5a28d5d2427 ok=1 us=536219
+         1795423800.364 25464 25568 I CaraShader: link program=13 shaders=2,12 ok=1 us=669898
+         1795423800.740 25464 25511 I CaraShader: link program=14 shaders=11,9 ok=1 us=786126
+         1795423800.740 25464 25511 I CaraShader: first_draw program=14 us=104
+         1795423800.749 25464 25511 I CaraShader: first_draw program=13 us=50
+         1795423801.265 25464 25511 I CaraPerf: cpu end=121 other_ms=96.26 execution_ms=1574.53 svc_ms=260.34 gpu_command_ms=1340.28 dsp_ms=4.51 failures=0 overflows=0
+         1795423801.265 25464 25511 I CaraPerf: work end=121 pica_lists=883 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423801.265 25464 25511 I CaraPerf: reuse end=121 prep_ms=0.54 draw_ms=1342.01 index_hits=64 index_misses=1 index_bytes=842 reused_upload_bytes=133632 vertex_upload_bytes=16128 index_upload_bytes=1792 packed_draws=65 indexed_direct=64 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=1 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=6 uniform_ms=1.20 state_apply_ms=101.07 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423801.265 25464 25511 I CaraPerf: window end=121 clock=100 p50_ms=16.72 p99_ms=256.61 worst_ms=1375.19 worst_frame=89 draws=65 upload_ms=0.35 submit_ms=2.48 download_ms=6.87 compile_ms=1373.26 lut_ms=0.27 waits_ms=0.52
+         1795423803.477 25464 25511 I CaraPerf: cpu end=241 other_ms=68.24 execution_ms=415.94 svc_ms=425.02 gpu_command_ms=1170.22 dsp_ms=4.54 failures=0 overflows=0
+         1795423803.478 25464 25511 I CaraPerf: work end=241 pica_lists=1195 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423803.478 25464 25511 I CaraPerf: reuse end=241 prep_ms=50.89 draw_ms=1041.38 index_hits=47604 index_misses=1 index_bytes=1684 reused_upload_bytes=79844608 vertex_upload_bytes=29837312 index_upload_bytes=331776 packed_draws=47605 indexed_direct=47605 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=140.65 state_apply_ms=300.79 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423803.478 25464 25511 I CaraPerf: window end=241 clock=100 p50_ms=16.84 p99_ms=41.55 worst_ms=103.06 worst_frame=129 draws=47605 upload_ms=137.79 submit_ms=236.50 download_ms=0.00 compile_ms=0.00 lut_ms=3.57 waits_ms=0.54
+         1795423805.512 25464 25511 I CaraPerf: cpu end=361 other_ms=66.69 execution_ms=306.66 svc_ms=416.16 gpu_command_ms=1095.14 dsp_ms=4.52 failures=0 overflows=0
+         1795423805.512 25464 25511 I CaraPerf: work end=361 pica_lists=1185 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423805.512 25464 25511 I CaraPerf: reuse end=361 prep_ms=49.64 draw_ms=966.81 index_hits=46527 index_misses=0 index_bytes=1684 reused_upload_bytes=75800320 vertex_upload_bytes=31397888 index_upload_bytes=0 packed_draws=46527 indexed_direct=46527 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=131.14 state_apply_ms=292.09 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423805.512 25464 25511 I CaraPerf: window end=361 clock=100 p50_ms=17.02 p99_ms=20.85 worst_ms=20.91 worst_frame=312 draws=46527 upload_ms=115.67 submit_ms=225.79 download_ms=0.00 compile_ms=0.00 lut_ms=3.48 waits_ms=0.57
+         1795423807.780 25464 25511 I CaraPerf: cpu end=481 other_ms=61.75 execution_ms=822.44 svc_ms=242.47 gpu_command_ms=80.66 dsp_ms=4.68 failures=0 overflows=0
+         1795423807.780 25464 25511 I CaraPerf: work end=481 pica_lists=715 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423807.780 25464 25511 I CaraPerf: reuse end=481 prep_ms=2.98 draw_ms=64.52 index_hits=1223 index_misses=0 index_bytes=1684 reused_upload_bytes=2723584 vertex_upload_bytes=94208 index_upload_bytes=0 packed_draws=1223 indexed_direct=1223 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=9.13 state_apply_ms=109.06 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423807.780 25464 25511 I CaraPerf: window end=481 clock=100 p50_ms=16.67 p99_ms=120.67 worst_ms=163.08 worst_frame=468 draws=1223 upload_ms=0.51 submit_ms=15.10 download_ms=0.00 compile_ms=0.00 lut_ms=0.33 waits_ms=0.58
+         1795423808.432 25464 25511 I CaraShader: fragment_key key=9ebe83e6e24069b5 source=a1507018acd82378 lit=0 generation_us=29
+         1795423808.436 25464 25511 I CaraShader: compile stage=fragment shader=15 source=a1507018acd82378 ok=1 us=3788
+         1795423808.724 25464 25568 I CaraShader: compile stage=vertex shader=16 source=d3a9418ed70aa1fc ok=1 us=287127
+         1795423808.724 25464 25568 I CaraShader: compile stage=fragment shader=18 source=a1507018acd82378 ok=1 us=130
+         1795423808.943 25464 25511 I CaraShader: compile stage=vertex shader=17 source=4a2f85c1737fcf15 ok=1 us=505750
+         1795423809.429 25464 25568 I CaraShader: link program=19 shaders=16,18 ok=1 us=704441
+         1795423809.748 25464 25511 I CaraShader: link program=20 shaders=17,15 ok=1 us=804617
+         1795423809.748 25464 25511 I CaraShader: first_draw program=20 us=65
+         1795423809.827 25464 25511 I CaraShader: first_draw program=19 us=76
+         1795423810.608 25464 25511 I CaraShader: compile stage=vertex shader=21 source=4d30a54875fec2a2 ok=1 us=518042
+         1795423810.617 25464 25511 I CaraShader: fragment_key key=5d06c7ffd6b07d0c source=b04f0baf9c4dbcd2 lit=1 generation_us=65
+         1795423810.633 25464 25511 I CaraShader: compile stage=fragment shader=22 source=b04f0baf9c4dbcd2 ok=1 us=15621
+         1795423812.514 25464 25511 I CaraShader: link program=23 shaders=21,22 ok=1 us=1881016
+         1795423812.515 25464 25511 I CaraShader: first_draw program=23 us=205
+         1795423812.530 25464 25511 I CaraShader: fragment_key key=9ebe83e66d7c60b9 source=c2170334d7b4a4d1 lit=0 generation_us=25
+         1795423812.533 25464 25511 I CaraShader: compile stage=fragment shader=24 source=c2170334d7b4a4d1 ok=1 us=3270
+         1795423812.814 25464 25568 I CaraShader: compile stage=vertex shader=25 source=4bd1567c4faf6bb1 ok=1 us=280193
+         1795423812.814 25464 25568 I CaraShader: compile stage=fragment shader=27 source=c2170334d7b4a4d1 ok=1 us=91
+         1795423813.036 25464 25511 I CaraShader: compile stage=vertex shader=26 source=734c3d69fcc06efb ok=1 us=501775
+         1795423813.455 25464 25568 I CaraShader: link program=28 shaders=25,27 ok=1 us=641071
+         1795423813.790 25464 25511 I CaraShader: link program=29 shaders=26,24 ok=1 us=753313
+         1795423813.790 25464 25511 I CaraShader: first_draw program=29 us=61
+         1795423813.797 25464 25511 I CaraShader: fragment_key key=2cdc01d16d7c60b9 source=12b1d51ec8a4fd4c lit=0 generation_us=33
+         1795423813.800 25464 25511 I CaraShader: compile stage=fragment shader=30 source=12b1d51ec8a4fd4c ok=1 us=3051
+         1795423814.092 25464 25568 I CaraShader: compile stage=vertex shader=31 source=f6d82fd06b1bbfbe ok=1 us=291193
+         1795423814.092 25464 25568 I CaraShader: compile stage=fragment shader=33 source=12b1d51ec8a4fd4c ok=1 us=106
+         1795423814.300 25464 25511 I CaraShader: compile stage=vertex shader=32 source=79cbf450e6d730e7 ok=1 us=498510
+         1795423814.891 25464 25568 I CaraShader: link program=34 shaders=31,33 ok=1 us=798856
+         1795423815.119 25464 25511 I CaraShader: link program=35 shaders=32,30 ok=1 us=818908
+         1795423815.120 25464 25511 I CaraShader: first_draw program=35 us=165
+         1795423815.128 25464 25511 I CaraShader: first_draw program=34 us=57
+         1795423815.129 25464 25511 I CaraShader: fragment_key key=9ebe83e61a101450 source=e638888b5cec5584 lit=0 generation_us=31
+         1795423815.132 25464 25511 I CaraShader: compile stage=fragment shader=36 source=e638888b5cec5584 ok=1 us=2759
+         1795423815.133 25464 25568 I CaraShader: compile stage=fragment shader=38 source=e638888b5cec5584 ok=1 us=99
+         1795423815.894 25464 25568 I CaraShader: link program=39 shaders=16,38 ok=1 us=761685
+         1795423815.942 25464 25511 I CaraShader: link program=37 shaders=17,36 ok=1 us=810046
+         1795423815.943 25464 25511 I CaraShader: first_draw program=37 us=159
+         1795423815.949 25464 25511 I CaraShader: first_draw program=39 us=76
+         1795423815.950 25464 25511 I CaraShader: fragment_key key=9ebe83e65524bfe1 source=a1507018acd82378 lit=0 generation_us=35
+         1795423816.596 25464 25511 I CaraShader: compile stage=vertex shader=40 source=043c304f6262673f ok=1 us=643800
+         1795423816.603 25464 25511 I CaraShader: fragment_key key=f616c876cae6115b source=4abdc9965ee9998d lit=1 generation_us=89
+         1795423816.627 25464 25511 I CaraShader: compile stage=fragment shader=41 source=4abdc9965ee9998d ok=1 us=23183
+         1795423819.692 25464 25511 I CaraShader: link program=42 shaders=40,41 ok=1 us=3064729
+         1795423819.692 25464 25511 I CaraShader: first_draw program=42 us=161
+         1795423820.228 25464 25511 I CaraShader: compile stage=vertex shader=43 source=1aa5d7d510a8387d ok=1 us=533894
+         1795423820.243 25464 25511 I CaraShader: fragment_key key=2ad7d4b9cbcf6c1e source=b57f62b44cb43d43 lit=1 generation_us=77
+         1795423820.268 25464 25511 I CaraShader: compile stage=fragment shader=44 source=b57f62b44cb43d43 ok=1 us=24601
+         1795423822.127 25464 25511 I CaraShader: link program=45 shaders=43,44 ok=1 us=1859063
+         1795423822.128 25464 25511 I CaraShader: first_draw program=45 us=251
+         1795423822.661 25464 25511 I CaraShader: compile stage=vertex shader=46 source=9cdd4e7fdb6487b1 ok=1 us=530784
+         1795423824.522 25464 25511 I CaraShader: link program=47 shaders=46,41 ok=1 us=1861198
+         1795423824.523 25464 25511 I CaraShader: first_draw program=47 us=63
+         1795423824.532 25464 25511 I CaraShader: fragment_key key=c0a13105e6f95bc9 source=340458249a225cb1 lit=1 generation_us=90
+         1795423824.557 25464 25511 I CaraShader: compile stage=fragment shader=48 source=340458249a225cb1 ok=1 us=24796
+         1795423826.498 25464 25511 I CaraShader: link program=49 shaders=21,48 ok=1 us=1940509
+         1795423826.498 25464 25511 I CaraShader: first_draw program=49 us=160
+         1795423826.506 25464 25511 I CaraShader: fragment_key key=fcc45de84b74ba52 source=f2ad24931e63eede lit=1 generation_us=97
+         1795423826.530 25464 25511 I CaraShader: compile stage=fragment shader=50 source=f2ad24931e63eede ok=1 us=23789
+         1795423828.462 25464 25511 I CaraShader: link program=51 shaders=21,50 ok=1 us=1931861
+         1795423828.462 25464 25511 I CaraShader: first_draw program=51 us=66
+         1795423829.041 25464 25511 I CaraShader: compile stage=vertex shader=52 source=2808e2f12aa3a68f ok=1 us=533703
+         1795423829.041 25464 25511 I CaraShader: fragment_key key=7f1b659fa2eae947 source=c4c1dd0b7c63ff58 lit=1 generation_us=84
+         1795423829.065 25464 25511 I CaraShader: compile stage=fragment shader=53 source=c4c1dd0b7c63ff58 ok=1 us=24033
+         1795423831.063 25464 25511 I CaraShader: link program=54 shaders=52,53 ok=1 us=1997502
+         1795423831.064 25464 25511 I CaraShader: first_draw program=54 us=59
+         1795423833.079 25464 25511 I CaraShader: link program=55 shaders=52,48 ok=1 us=2014314
+         1795423833.079 25464 25511 I CaraShader: first_draw program=55 us=75
+         1795423833.080 25464 25511 I CaraShader: fragment_key key=0180e1edf6ebdff4 source=6baeced6f459fb04 lit=1 generation_us=94
+         1795423833.104 25464 25511 I CaraShader: compile stage=fragment shader=56 source=6baeced6f459fb04 ok=1 us=23585
+         1795423835.137 25464 25511 I CaraShader: link program=57 shaders=52,56 ok=1 us=2033278
+         1795423835.138 25464 25511 I CaraShader: first_draw program=57 us=68
+         1795423835.146 25464 25511 I CaraShader: fragment_key key=3de58d005b663e6f source=8756ef9f029cbf80 lit=1 generation_us=150
+         1795423835.172 25464 25511 I CaraShader: compile stage=fragment shader=58 source=8756ef9f029cbf80 ok=1 us=25062
+         1795423837.183 25464 25511 I CaraShader: link program=59 shaders=52,58 ok=1 us=2010965
+         1795423837.183 25464 25511 I CaraShader: first_draw program=59 us=290
+         1795423837.186 25464 25511 I CaraShader: fragment_key key=5df569d435ede450 source=a77dea0fff1d0f40 lit=0 generation_us=29
+         1795423837.189 25464 25511 I CaraShader: compile stage=fragment shader=60 source=a77dea0fff1d0f40 ok=1 us=3042
+         1795423837.503 25464 25568 I CaraShader: compile stage=vertex shader=61 source=1adba957ae924328 ok=1 us=312531
+         1795423837.503 25464 25568 I CaraShader: compile stage=fragment shader=63 source=a77dea0fff1d0f40 ok=1 us=108
+         1795423837.747 25464 25511 I CaraShader: compile stage=vertex shader=62 source=a9c16f5eb7539a02 ok=1 us=556242
+         1795423838.732 25464 25568 I CaraShader: link program=64 shaders=61,63 ok=1 us=1229472
+         1795423839.209 25464 25511 I CaraShader: link program=65 shaders=62,60 ok=1 us=1461919
+         1795423839.210 25464 25511 I CaraShader: first_draw program=65 us=148
+         1795423839.217 25464 25511 I CaraShader: first_draw program=64 us=115
+         1795423839.225 25464 25511 I CaraShader: fragment_key key=e2416bfb5914f239 source=adf4521e291c37cb lit=0 generation_us=45
+         1795423839.229 25464 25511 I CaraShader: compile stage=fragment shader=66 source=adf4521e291c37cb ok=1 us=3516
+         1795423839.229 25464 25568 I CaraShader: compile stage=fragment shader=68 source=adf4521e291c37cb ok=1 us=117
+         1795423840.647 25464 25511 I CaraShader: link program=67 shaders=62,66 ok=1 us=1418463
+         1795423840.648 25464 25511 I CaraShader: first_draw program=67 us=255
+         1795423840.660 25464 25511 I CaraShader: fragment_key key=9ebe83e66fa01c04 source=c2170334d7b4a4d1 lit=0 generation_us=29
+         1795423840.660 25464 25511 I CaraShader: first_draw program=28 us=53
+         1795423840.682 25464 25568 I CaraShader: link program=69 shaders=61,68 ok=1 us=1452946
+         1795423840.978 25464 25568 I CaraShader: compile stage=vertex shader=71 source=c3191dde00438bee ok=1 us=294723
+         1795423841.211 25464 25511 I CaraShader: compile stage=vertex shader=70 source=00341733554656ac ok=1 us=546918
+         1795423842.322 25464 25568 I CaraShader: link program=72 shaders=71,68 ok=1 us=1344636
+         1795423842.540 25464 25511 I CaraShader: link program=73 shaders=70,66 ok=1 us=1328923
+         1795423842.540 25464 25511 I CaraShader: first_draw program=73 us=161
+         1795423842.547 25464 25511 I CaraShader: first_draw program=72 us=67
+         1795423843.068 25464 25511 I CaraShader: compile stage=vertex shader=74 source=0fc985d5d5ff37d4 ok=1 us=511772
+         1795423843.075 25464 25511 I CaraShader: fragment_key key=d401c92ce3999e33 source=557b76b47c6a7b77 lit=1 generation_us=102
+         1795423843.099 25464 25511 I CaraShader: compile stage=fragment shader=75 source=557b76b47c6a7b77 ok=1 us=23763
+         1795423844.297 25464 25511 I CaraShader: link program=76 shaders=74,75 ok=1 us=1197439
+         1795423844.298 25464 25511 I CaraShader: first_draw program=76 us=152
+         1795423844.299 25464 25511 I CaraShader: fragment_key key=2104d77c897aba8e source=219cd6a679637d85 lit=0 generation_us=18
+         1795423844.302 25464 25511 I CaraShader: compile stage=fragment shader=77 source=219cd6a679637d85 ok=1 us=2341
+         1795423844.614 25464 25568 I CaraShader: compile stage=vertex shader=78 source=a5262fc71fea1436 ok=1 us=311328
+         1795423844.614 25464 25568 I CaraShader: compile stage=fragment shader=80 source=219cd6a679637d85 ok=1 us=97
+         1795423844.842 25464 25511 I CaraShader: compile stage=vertex shader=79 source=2655eecb9df23cc3 ok=1 us=538938
+         1795423845.433 25464 25568 I CaraShader: link program=81 shaders=78,80 ok=1 us=819408
+         1795423845.671 25464 25511 I CaraShader: link program=82 shaders=79,77 ok=1 us=828769
+         1795423845.672 25464 25511 I CaraShader: first_draw program=82 us=162
+         1795423845.672 25464 25511 I CaraShader: first_draw program=81 us=39
+         1795423845.702 25464 25511 I CaraShader: compile stage=vertex shader=83 source=6a9f20500255cc04 ok=1 us=28939
+         1795423845.708 25464 25511 I CaraShader: fragment_key key=1e9a57c0b14deb56 source=98b7333f4e1b9f92 lit=1 generation_us=109
+         1795423845.733 25464 25511 I CaraShader: compile stage=fragment shader=84 source=98b7333f4e1b9f92 ok=1 us=24516
+         1795423845.926 25464 25511 I CaraShader: link program=85 shaders=83,84 ok=1 us=193485
+         1795423845.927 25464 25511 I CaraShader: first_draw program=85 us=138
+         1795423845.928 25464 25511 I CaraShader: fragment_key key=e2416bfb5bc88e84 source=adf4521e291c37cb lit=0 generation_us=39
+         1795423845.933 25464 25511 I CaraShader: first_draw program=69 us=5113
+         1795423845.935 25464 25511 I CaraShader: fragment_key key=2104d77c65ac07f0 source=219cd6a679637d85 lit=0 generation_us=22
+         1795423846.247 25464 25568 I CaraShader: compile stage=vertex shader=86 source=52b2830e83c3ff09 ok=1 us=310962
+         1795423846.491 25464 25511 I CaraShader: compile stage=vertex shader=87 source=8cf9f9a43b2c5192 ok=1 us=553982
+         1795423847.045 25464 25568 I CaraShader: link program=88 shaders=86,80 ok=1 us=797811
+         1795423847.314 25464 25511 I CaraShader: link program=89 shaders=87,77 ok=1 us=823225
+         1795423847.315 25464 25511 I CaraShader: first_draw program=89 us=184
+         1795423847.325 25464 25511 I CaraShader: first_draw program=88 us=36
+         1795423847.328 25464 25511 I CaraShader: fragment_key key=ef97ebe35bc88e84 source=1972d385210c9a47 lit=0 generation_us=43
+         1795423847.332 25464 25511 I CaraShader: compile stage=fragment shader=90 source=1972d385210c9a47 ok=1 us=4125
+         1795423847.332 25464 25568 I CaraShader: compile stage=fragment shader=92 source=1972d385210c9a47 ok=1 us=140
+         1795423848.668 25464 25511 I CaraShader: link program=91 shaders=70,90 ok=1 us=1335858
+         1795423848.669 25464 25511 I CaraShader: first_draw program=91 us=331
+         1795423848.678 25464 25568 I CaraShader: link program=93 shaders=71,92 ok=1 us=1345542
+         1795423849.177 25464 25511 I CaraShader: compile stage=vertex shader=94 source=387c9743d586eee2 ok=1 us=499155
+         1795423850.393 25464 25511 I CaraShader: link program=95 shaders=94,84 ok=1 us=1209319
+         1795423850.394 25464 25511 I CaraShader: first_draw program=95 us=166
+         1795423850.402 25464 25511 I CaraShader: fragment_key key=572935ddcae6115b source=be167554b62bf41b lit=1 generation_us=94
+         1795423850.425 25464 25511 I CaraShader: compile stage=fragment shader=96 source=be167554b62bf41b ok=1 us=22408
+         1795423853.522 25464 25511 I CaraShader: link program=97 shaders=40,96 ok=1 us=3096767
+         1795423853.522 25464 25511 I CaraShader: first_draw program=97 us=136
+         1795423855.387 25464 25511 I CaraShader: link program=98 shaders=46,96 ok=1 us=1863675
+         1795423855.387 25464 25511 I CaraShader: first_draw program=98 us=55
+         1795423855.941 25464 25511 I CaraShader: compile stage=vertex shader=99 source=a8e2ab8b7c723753 ok=1 us=543893
+         1795423855.941 25464 25511 I CaraShader: fragment_key key=fc13d025d4a1223d source=e99e13313f2787bd lit=1 generation_us=91
+         1795423855.962 25464 25511 I CaraShader: compile stage=fragment shader=100 source=e99e13313f2787bd ok=1 us=21044
+         1795423858.232 25464 25511 I CaraShader: link program=101 shaders=99,100 ok=1 us=2269092
+         1795423858.233 25464 25511 I CaraShader: first_draw program=101 us=156
+         1795423858.241 25464 25511 I CaraShader: fragment_key key=3f817e4db9f2029f source=11ebad82b6ebe074 lit=0 generation_us=77
+         1795423858.270 25464 25511 I CaraShader: first_draw program=93 us=262
+         1795423858.278 25464 25511 I CaraShader: fragment_key key=bfa5aa6bb14deb56 source=0ddd844947dd7cc2 lit=1 generation_us=95
+         1795423858.301 25464 25511 I CaraShader: compile stage=fragment shader=102 source=0ddd844947dd7cc2 ok=1 us=23093
+         1795423858.501 25464 25511 I CaraShader: link program=103 shaders=83,102 ok=1 us=199688
+         1795423858.502 25464 25511 I CaraShader: first_draw program=103 us=134
+         1795423858.582 25464 25511 I CaraShader: fragment_key key=3f817e4df6c6a92e source=93c27678d622f8b0 lit=0 generation_us=33
+         1795423858.584 25464 25511 I CaraShader: compile stage=fragment shader=104 source=93c27678d622f8b0 ok=1 us=2514
+         1795423858.584 25464 25568 I CaraShader: compile stage=fragment shader=106 source=93c27678d622f8b0 ok=1 us=86
+         1795423859.322 25464 25568 I CaraShader: link program=107 shaders=16,106 ok=1 us=737445
+         1795423859.446 25464 25511 I CaraShader: link program=105 shaders=17,104 ok=1 us=862024
+         1795423859.447 25464 25511 I CaraShader: first_draw program=105 us=99
+         1795423859.473 25464 25511 I CaraShader: first_draw program=107 us=20
+         1795423859.710 25464 25511 I CaraShader: fragment_key key=dda426930fc08cee source=2c74be75d5ef2ea8 lit=1 generation_us=83
+         1795423859.730 25464 25511 I CaraShader: compile stage=fragment shader=108 source=2c74be75d5ef2ea8 ok=1 us=19104
+         1795423861.704 25464 25511 I CaraShader: link program=109 shaders=21,108 ok=1 us=1974268
+         1795423861.705 25464 25511 I CaraShader: first_draw program=109 us=89
+         1795423861.711 25464 25511 I CaraShader: fragment_key key=50d63b8c6e9b2d36 source=7887084e73c153b9 lit=1 generation_us=138
+         1795423861.739 25464 25511 I CaraShader: compile stage=fragment shader=110 source=7887084e73c153b9 ok=1 us=27529
+         1795423864.922 25464 25511 I CaraShader: link program=111 shaders=40,110 ok=1 us=3182577
+         1795423864.923 25464 25511 I CaraShader: first_draw program=111 us=86
+         1795423864.923 25464 25511 I CaraShader: fragment_key key=8c1727436fb25073 source=4ea08bdf6ecd0510 lit=1 generation_us=135
+         1795423864.952 25464 25511 I CaraShader: compile stage=fragment shader=112 source=4ea08bdf6ecd0510 ok=1 us=29090
+         1795423866.838 25464 25511 I CaraShader: link program=113 shaders=43,112 ok=1 us=1885721
+         1795423866.838 25464 25511 I CaraShader: first_draw program=113 us=60
+         1795423868.714 25464 25511 I CaraShader: link program=114 shaders=46,110 ok=1 us=1874903
+         1795423868.714 25464 25511 I CaraShader: first_draw program=114 us=54
+         1795423868.715 25464 25511 I CaraShader: fragment_key key=56bac23c7832712a source=600651bc8ab37d0f lit=1 generation_us=110
+         1795423868.742 25464 25511 I CaraShader: compile stage=fragment shader=115 source=600651bc8ab37d0f ok=1 us=27712
+         1795423870.661 25464 25511 I CaraShader: link program=116 shaders=21,115 ok=1 us=1918026
+         1795423870.661 25464 25511 I CaraShader: first_draw program=116 us=60
+         1795423870.662 25464 25511 I CaraShader: fragment_key key=6adfaed1d5bf90b1 source=84fdd49120fe0ab5 lit=1 generation_us=142
+         1795423870.689 25464 25511 I CaraShader: compile stage=fragment shader=117 source=84fdd49120fe0ab5 ok=1 us=27609
+         1795423872.604 25464 25511 I CaraShader: link program=118 shaders=21,117 ok=1 us=1914269
+         1795423872.604 25464 25511 I CaraShader: first_draw program=118 us=52
+         1795423872.606 25464 25511 I CaraShader: fragment_key key=e90096a63c21c3a4 source=9a5ebb498011c96d lit=1 generation_us=92
+         1795423872.632 25464 25511 I CaraShader: compile stage=fragment shader=119 source=9a5ebb498011c96d ok=1 us=26122
+         1795423874.612 25464 25511 I CaraShader: link program=120 shaders=52,119 ok=1 us=1979528
+         1795423874.613 25464 25511 I CaraShader: first_draw program=120 us=52
+         1795423876.645 25464 25511 I CaraShader: link program=121 shaders=52,115 ok=1 us=2032005
+         1795423876.645 25464 25511 I CaraShader: first_draw program=121 us=54
+         1795423876.646 25464 25511 I CaraShader: fragment_key key=43ee92266820f517 source=54c8b340ec82cab1 lit=1 generation_us=132
+         1795423876.672 25464 25511 I CaraShader: compile stage=fragment shader=122 source=54c8b340ec82cab1 ok=1 us=26520
+         1795423878.722 25464 25511 I CaraShader: link program=123 shaders=52,122 ok=1 us=2050022
+         1795423878.723 25464 25511 I CaraShader: first_draw program=123 us=81
+         1795423878.723 25464 25511 I CaraShader: fragment_key key=7f8bfecbc5ad148c source=15ade0bddfdf0efa lit=1 generation_us=153
+         1795423878.751 25464 25511 I CaraShader: compile stage=fragment shader=124 source=15ade0bddfdf0efa ok=1 us=27914
+         1795423880.796 25464 25511 I CaraShader: link program=125 shaders=52,124 ok=1 us=2044385
+         1795423880.796 25464 25511 I CaraShader: first_draw program=125 us=53
+         1795423880.798 25464 25511 I CaraShader: fragment_key key=421a3a157d52b4d0 source=3c68b3cf1c45ee10 lit=1 generation_us=103
+         1795423880.826 25464 25511 I CaraShader: compile stage=fragment shader=126 source=3c68b3cf1c45ee10 ok=1 us=27769
+         1795423882.003 25464 25511 I CaraShader: link program=127 shaders=74,126 ok=1 us=1176744
+         1795423882.003 25464 25511 I CaraShader: first_draw program=127 us=50
+         1795423882.004 25464 25511 I CaraShader: fragment_key key=b85aa43a1530d73b source=15f197fdecea9e91 lit=1 generation_us=81
+         1795423882.033 25464 25511 I CaraShader: compile stage=fragment shader=128 source=15f197fdecea9e91 ok=1 us=29002
+         1795423882.250 25464 25511 I CaraShader: link program=129 shaders=83,128 ok=1 us=216436
+         1795423882.250 25464 25511 I CaraShader: first_draw program=129 us=114
+         1795423883.454 25464 25511 I CaraShader: link program=130 shaders=94,128 ok=1 us=1196542
+         1795423883.455 25464 25511 I CaraShader: first_draw program=130 us=60
+         1795423883.455 25464 25511 I CaraShader: fragment_key key=f1e9c6276e9b2d36 source=91e55d550df28df1 lit=1 generation_us=91
+         1795423883.481 25464 25511 I CaraShader: compile stage=fragment shader=131 source=91e55d550df28df1 ok=1 us=25986
+         1795423886.578 25464 25511 I CaraShader: link program=132 shaders=40,131 ok=1 us=3096911
+         1795423886.579 25464 25511 I CaraShader: first_draw program=132 us=55
+         1795423888.475 25464 25511 I CaraShader: link program=133 shaders=46,131 ok=1 us=1895836
+         1795423888.475 25464 25511 I CaraShader: first_draw program=133 us=52
+         1795423888.476 25464 25511 I CaraShader: fragment_key key=6a08231c4a6a08de source=97dbaecef6b9fe88 lit=1 generation_us=95
+         1795423888.502 25464 25511 I CaraShader: compile stage=fragment shader=134 source=97dbaecef6b9fe88 ok=1 us=26093
+         1795423890.738 25464 25511 I CaraShader: link program=135 shaders=99,134 ok=1 us=2236352
+         1795423890.739 25464 25511 I CaraShader: first_draw program=135 us=56
+         1795423890.743 25464 25511 I CaraShader: fragment_key key=3f14a8aa4d0b0b5c source=be079a13fb30c0c3 lit=1 generation_us=87
+         1795423890.770 25464 25511 I CaraShader: compile stage=fragment shader=136 source=be079a13fb30c0c3 ok=1 us=26709
+         1795423890.966 25464 25511 I CaraShader: link program=137 shaders=83,136 ok=1 us=195665
+         1795423890.966 25464 25511 I CaraShader: first_draw program=137 us=110
+         1795423890.994 25464 25511 I CaraShader: fragment_key key=196559911530d73b source=b21dbc2eaad4656e lit=1 generation_us=93
+         1795423891.021 25464 25511 I CaraShader: compile stage=fragment shader=138 source=b21dbc2eaad4656e ok=1 us=26732
+         1795423891.215 25464 25511 I CaraShader: link program=139 shaders=83,138 ok=1 us=194055
+         1795423891.215 25464 25511 I CaraShader: first_draw program=139 us=112
+         1795423892.285 25464 25511 I CaraShader: fragment_key key=2104d77c67707b4d source=219cd6a679637d85 lit=0 generation_us=28
+         1795423895.207 25464 25511 I CaraPerf: cpu end=601 other_ms=63.47 execution_ms=1305.64 svc_ms=289.57 gpu_command_ms=83402.68 dsp_ms=8.92 failures=0 overflows=0
+         1795423895.208 25464 25511 I CaraPerf: work end=601 pica_lists=699 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423895.208 25464 25511 I CaraPerf: reuse end=601 prep_ms=256.72 draw_ms=80597.76 index_hits=25275 index_misses=286 index_bytes=1948588 reused_upload_bytes=285253888 vertex_upload_bytes=30273280 index_upload_bytes=3460864 packed_draws=24218 indexed_direct=13416 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=16 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=98 uniform_ms=93.48 state_apply_ms=226.59 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423895.208 25464 25511 I CaraPerf: window end=601 clock=100 p50_ms=43.52 p99_ms=31288.19 worst_ms=49832.07 worst_frame=515 draws=25561 upload_ms=117.37 submit_ms=330.54 download_ms=0.00 compile_ms=81696.69 lut_ms=1646.67 waits_ms=0.53
+         1795423899.665 26647 26647 I CaraBudget: title-cold-census
+         1795423901.156 25464 25511 I CaraPerf: cpu end=721 other_ms=64.29 execution_ms=810.98 svc_ms=276.18 gpu_command_ms=2672.03 dsp_ms=12.62 failures=0 overflows=0
+         1795423901.156 25464 25511 I CaraPerf: work end=721 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423901.156 25464 25511 I CaraPerf: reuse end=721 prep_ms=324.53 draw_ms=4126.34 index_hits=45417 index_misses=515 index_bytes=2103980 reused_upload_bytes=411792640 vertex_upload_bytes=47591168 index_upload_bytes=4011776 packed_draws=43892 indexed_direct=29012 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=143.03 state_apply_ms=273.47 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423901.156 25464 25511 I CaraPerf: window end=721 clock=100 p50_ms=49.20 p99_ms=59.93 worst_ms=61.37 worst_frame=615 draws=45932 upload_ms=219.10 submit_ms=461.75 download_ms=0.00 compile_ms=0.00 lut_ms=2121.80 waits_ms=0.53
+         1795423907.110 25464 25511 I CaraPerf: cpu end=841 other_ms=61.23 execution_ms=765.03 svc_ms=270.96 gpu_command_ms=2799.92 dsp_ms=10.32 failures=0 overflows=0
+         1795423907.110 25464 25511 I CaraPerf: work end=841 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423907.110 25464 25511 I CaraPerf: reuse end=841 prep_ms=332.32 draw_ms=4177.68 index_hits=50484 index_misses=548 index_bytes=2256308 reused_upload_bytes=413632256 vertex_upload_bytes=57764608 index_upload_bytes=6071040 packed_draws=48992 indexed_direct=34112 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=155.76 state_apply_ms=283.81 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423907.110 25464 25511 I CaraPerf: window end=841 clock=100 p50_ms=50.46 p99_ms=61.54 worst_ms=61.97 worst_frame=759 draws=51032 upload_ms=271.70 submit_ms=480.18 download_ms=0.00 compile_ms=0.00 lut_ms=2058.65 waits_ms=0.51
+         1795423913.073 25464 25511 I CaraPerf: cpu end=961 other_ms=61.08 execution_ms=750.89 svc_ms=268.98 gpu_command_ms=2771.95 dsp_ms=10.24 failures=0 overflows=0
+         1795423913.073 25464 25511 I CaraPerf: work end=961 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423913.073 25464 25511 I CaraPerf: reuse end=961 prep_ms=330.46 draw_ms=4206.04 index_hits=50656 index_misses=512 index_bytes=2286988 reused_upload_bytes=414220288 vertex_upload_bytes=57138688 index_upload_bytes=6131200 packed_draws=49128 indexed_direct=34248 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=154.86 state_apply_ms=281.54 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423913.073 25464 25511 I CaraPerf: window end=961 clock=100 p50_ms=52.50 p99_ms=57.31 worst_ms=58.65 worst_frame=929 draws=51168 upload_ms=268.63 submit_ms=468.50 download_ms=0.00 compile_ms=0.00 lut_ms=2112.75 waits_ms=0.53
+         1795423919.035 25464 25511 I CaraPerf: cpu end=1081 other_ms=61.17 execution_ms=755.71 svc_ms=267.48 gpu_command_ms=2772.76 dsp_ms=10.34 failures=0 overflows=0
+         1795423919.035 25464 25511 I CaraPerf: work end=1081 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423919.035 25464 25511 I CaraPerf: reuse end=1081 prep_ms=328.20 draw_ms=4205.04 index_hits=50686 index_misses=434 index_bytes=2307660 reused_upload_bytes=413976064 vertex_upload_bytes=57123840 index_upload_bytes=6128640 packed_draws=49080 indexed_direct=34200 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=155.17 state_apply_ms=280.59 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423919.035 25464 25511 I CaraPerf: window end=1081 clock=100 p50_ms=52.70 p99_ms=57.71 worst_ms=57.99 worst_frame=1027 draws=51120 upload_ms=268.54 submit_ms=473.35 download_ms=0.00 compile_ms=0.00 lut_ms=2107.30 waits_ms=0.51
+         1795423923.717 26847 26847 I CaraBudget: title-end-cold-census
+         1795423925.011 25464 25511 I CaraPerf: cpu end=1201 other_ms=62.86 execution_ms=785.14 svc_ms=273.69 gpu_command_ms=2806.11 dsp_ms=11.28 failures=0 overflows=0
+         1795423925.011 25464 25511 I CaraPerf: work end=1201 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423925.011 25464 25511 I CaraPerf: reuse end=1201 prep_ms=330.43 draw_ms=4170.94 index_hits=50193 index_misses=454 index_bytes=2310516 reused_upload_bytes=412873984 vertex_upload_bytes=57136128 index_upload_bytes=5893120 packed_draws=48607 indexed_direct=33727 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=155.02 state_apply_ms=284.57 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423925.011 25464 25511 I CaraPerf: window end=1201 clock=100 p50_ms=50.19 p99_ms=62.54 worst_ms=63.85 worst_frame=1179 draws=50647 upload_ms=270.45 submit_ms=482.69 download_ms=0.00 compile_ms=0.00 lut_ms=2045.75 waits_ms=0.51
+         1795423930.859 25464 25511 I CaraPerf: cpu end=1321 other_ms=65.20 execution_ms=815.37 svc_ms=275.99 gpu_command_ms=2891.10 dsp_ms=11.68 failures=0 overflows=0
+         1795423930.859 25464 25511 I CaraPerf: work end=1321 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423930.859 25464 25511 I CaraPerf: reuse end=1321 prep_ms=332.30 draw_ms=4003.28 index_hits=53633 index_misses=93 index_bytes=2310516 reused_upload_bytes=409551104 vertex_upload_bytes=67077376 index_upload_bytes=4732160 packed_draws=51686 indexed_direct=36806 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=163.09 state_apply_ms=290.69 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423930.859 25464 25511 I CaraPerf: window end=1321 clock=100 p50_ms=48.14 p99_ms=61.68 worst_ms=69.96 worst_frame=1207 draws=53726 upload_ms=296.45 submit_ms=491.19 download_ms=0.00 compile_ms=0.00 lut_ms=1799.55 waits_ms=0.58
+         1795423931.840 26942 26942 I CaraBudget: profile-cold-census
+         1795423936.653 25464 25511 I CaraPerf: cpu end=1441 other_ms=62.00 execution_ms=762.29 svc_ms=268.23 gpu_command_ms=2532.28 dsp_ms=11.37 failures=0 overflows=0
+         1795423936.653 25464 25511 I CaraPerf: work end=1441 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423936.653 25464 25511 I CaraPerf: reuse end=1441 prep_ms=311.53 draw_ms=4059.35 index_hits=43313 index_misses=57 index_bytes=2310516 reused_upload_bytes=407256064 vertex_upload_bytes=45487616 index_upload_bytes=3458560 packed_draws=41330 indexed_direct=26450 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=133.95 state_apply_ms=259.39 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423936.653 25464 25511 I CaraPerf: window end=1441 clock=100 p50_ms=48.13 p99_ms=56.72 worst_ms=70.06 worst_frame=1343 draws=43370 upload_ms=204.99 submit_ms=442.34 download_ms=0.00 compile_ms=0.00 lut_ms=2169.58 waits_ms=0.63
+         1795423937.406 25464 25511 I CaraShader: fragment_key key=3f817e4d5524bfe1 source=11ebad82b6ebe074 lit=0 generation_us=38
+         1795423938.252 25464 25511 I CaraShader: fragment_key key=50d63b8c824d9048 source=7887084e73c153b9 lit=1 generation_us=111
+         1795423938.293 25464 25511 I CaraShader: fragment_key key=2d28dae86fb25073 source=ff5250f92f3e597c lit=1 generation_us=100
+         1795423938.334 25464 25511 I CaraShader: compile stage=fragment shader=140 source=ff5250f92f3e597c ok=1 us=40873
+         1795423940.253 25464 25511 I CaraShader: link program=141 shaders=43,140 ok=1 us=1918665
+         1795423940.253 25464 25511 I CaraShader: first_draw program=141 us=56
+         1795423941.313 25464 25511 I CaraShader: fragment_key key=d798371ce677f692 source=8bcf1b12da1e3929 lit=1 generation_us=121
+         1795423941.345 25464 25511 I CaraShader: compile stage=fragment shader=142 source=8bcf1b12da1e3929 ok=1 us=31258
+         1795423944.433 25464 25511 I CaraShader: link program=143 shaders=40,142 ok=1 us=3088291
+         1795423944.434 25464 25511 I CaraShader: first_draw program=143 us=161
+         1795423946.304 25464 25511 I CaraShader: link program=144 shaders=46,142 ok=1 us=1869637
+         1795423946.304 25464 25511 I CaraShader: first_draw program=144 us=50
+         1795423946.322 25464 25511 I CaraShader: fragment_key key=73ac73a3922a2cad source=d0295b5f426ab732 lit=1 generation_us=95
+         1795423946.349 25464 25511 I CaraShader: compile stage=fragment shader=145 source=d0295b5f426ab732 ok=1 us=27078
+         1795423948.306 25464 25511 I CaraShader: link program=146 shaders=21,145 ok=1 us=1957052
+         1795423948.307 25464 25511 I CaraShader: first_draw program=146 us=167
+         1795423950.413 25464 25511 I CaraShader: link program=147 shaders=52,145 ok=1 us=2052714
+         1795423950.413 25464 25511 I CaraShader: first_draw program=147 us=46
+         1795423950.419 25464 25511 I CaraShader: fragment_key key=9ebe83e6a8c7761f source=0524371141c5d5d9 lit=0 generation_us=37
+         1795423950.423 25464 25511 I CaraShader: compile stage=fragment shader=148 source=0524371141c5d5d9 ok=1 us=3234
+         1795423950.423 25464 25568 I CaraShader: compile stage=fragment shader=150 source=0524371141c5d5d9 ok=1 us=110
+         1795423951.101 25464 25568 I CaraShader: link program=151 shaders=25,150 ok=1 us=678152
+         1795423951.160 25464 25511 I CaraShader: link program=149 shaders=26,148 ok=1 us=737001
+         1795423951.160 25464 25511 I CaraShader: first_draw program=149 us=65
+         1795423951.161 25464 25511 I CaraShader: first_draw program=151 us=28
+         1795423951.163 25464 25511 I CaraShader: fragment_key key=b28da34b8238a890 source=dd3f99d4204debbb lit=1 generation_us=85
+         1795423951.189 25464 25511 I CaraShader: compile stage=fragment shader=152 source=dd3f99d4204debbb ok=1 us=26419
+         1795423953.153 25464 25511 I CaraShader: link program=153 shaders=21,152 ok=1 us=1963545
+         1795423953.153 25464 25511 I CaraShader: first_draw program=153 us=63
+         1795423953.163 25464 25511 I CaraShader: fragment_key key=8ee8cfa62fb5490b source=e019e2fb4e276254 lit=1 generation_us=107
+         1795423953.189 25464 25511 I CaraShader: compile stage=fragment shader=154 source=e019e2fb4e276254 ok=1 us=25231
+         1795423955.156 25464 25511 I CaraShader: link program=155 shaders=21,154 ok=1 us=1966675
+         1795423955.156 25464 25511 I CaraShader: first_draw program=155 us=63
+         1795423955.674 25464 25511 I CaraShader: compile stage=vertex shader=156 source=60473ff028337511 ok=1 us=516017
+         1795423955.675 25464 25511 I CaraShader: fragment_key key=bba3f844ad38e996 source=8dd8b89892a27bfa lit=1 generation_us=120
+         1795423955.702 25464 25511 I CaraShader: compile stage=fragment shader=157 source=8dd8b89892a27bfa ok=1 us=27308
+         1795423956.985 25464 25511 I CaraShader: link program=158 shaders=156,157 ok=1 us=1282422
+         1795423956.986 25464 25511 I CaraShader: first_draw program=158 us=157
+         1795423956.994 25464 25511 I CaraShader: fragment_key key=2cdc01d1aa1b0aa2 source=b684717d10999231 lit=0 generation_us=38
+         1795423956.998 25464 25511 I CaraShader: compile stage=fragment shader=159 source=b684717d10999231 ok=1 us=3285
+         1795423956.998 25464 25568 I CaraShader: compile stage=fragment shader=161 source=b684717d10999231 ok=1 us=111
+         1795423957.802 25464 25568 I CaraShader: link program=162 shaders=31,161 ok=1 us=804165
+         1795423957.858 25464 25511 I CaraShader: link program=160 shaders=32,159 ok=1 us=860072
+         1795423957.859 25464 25511 I CaraShader: first_draw program=160 us=145
+         1795423957.860 25464 25511 I CaraShader: fragment_key key=2104d77ca2cb6deb source=5dc510c9db650bfd lit=0 generation_us=16
+         1795423957.863 25464 25511 I CaraShader: compile stage=fragment shader=163 source=5dc510c9db650bfd ok=1 us=2680
+         1795423958.167 25464 25568 I CaraShader: compile stage=vertex shader=164 source=01e7d96eeb2a0592 ok=1 us=303238
+         1795423958.167 25464 25568 I CaraShader: compile stage=fragment shader=166 source=5dc510c9db650bfd ok=1 us=115
+         1795423958.409 25464 25511 I CaraShader: compile stage=vertex shader=165 source=6e61b140ec4d9716 ok=1 us=544230
+         1795423958.721 25464 25568 I CaraShader: link program=167 shaders=164,166 ok=1 us=554461
+         1795423959.009 25464 25511 I CaraShader: link program=168 shaders=165,163 ok=1 us=599968
+         1795423959.009 25464 25511 I CaraShader: first_draw program=168 us=145
+         1795423959.015 25464 25511 I CaraShader: fragment_key key=d8411b96c98223fb source=ebdf64e12b90a5f1 lit=1 generation_us=124
+         1795423959.038 25464 25511 I CaraShader: compile stage=fragment shader=169 source=ebdf64e12b90a5f1 ok=1 us=22965
+         1795423962.193 25464 25511 I CaraShader: link program=170 shaders=40,169 ok=1 us=3154801
+         1795423962.194 25464 25511 I CaraShader: first_draw program=170 us=59
+         1795423964.097 25464 25511 I CaraShader: link program=171 shaders=46,169 ok=1 us=1902752
+         1795423964.097 25464 25511 I CaraShader: first_draw program=171 us=55
+         1795423964.098 25464 25511 I CaraShader: fragment_key key=737bfe6ed5196c20 source=3e8d3814765fc3ea lit=1 generation_us=91
+         1795423964.121 25464 25511 I CaraShader: compile stage=fragment shader=172 source=3e8d3814765fc3ea ok=1 us=22605
+         1795423966.427 25464 25511 I CaraShader: link program=173 shaders=99,172 ok=1 us=2305736
+         1795423966.427 25464 25511 I CaraShader: first_draw program=173 us=53
+         1795423966.435 25464 25511 I CaraShader: fragment_key key=3f817e4deb9b676a source=93c27678d622f8b0 lit=0 generation_us=42
+         1795423966.436 25464 25511 I CaraShader: fragment_key key=3f817e4da4afccdb source=11ebad82b6ebe074 lit=0 generation_us=29
+         1795423966.447 25464 25511 I CaraShader: first_draw program=162 us=22
+         1795423966.448 25464 25511 I CaraShader: first_draw program=167 us=112
+         1795423966.453 25464 25511 I CaraShader: fragment_key key=d8411b962788e238 source=ebdf64e12b90a5f1 lit=1 generation_us=82
+         1795423967.117 25464 25511 I CaraShader: fragment_key key=d121ac6dd47bc1a5 source=0b807268cce3e6c5 lit=1 generation_us=70
+         1795423967.123 25464 25511 I CaraShader: compile stage=fragment shader=174 source=0b807268cce3e6c5 ok=1 us=5478
+         1795423970.267 25464 25511 I CaraShader: link program=175 shaders=40,174 ok=1 us=3144331
+         1795423970.268 25464 25511 I CaraShader: first_draw program=175 us=267
+         1795423972.151 25464 25511 I CaraShader: link program=176 shaders=46,174 ok=1 us=1882897
+         1795423972.151 25464 25511 I CaraShader: first_draw program=176 us=57
+         1795423972.427 25464 25511 I CaraPerf: cpu end=1561 other_ms=66.05 execution_ms=755.02 svc_ms=260.54 gpu_command_ms=33690.76 dsp_ms=12.41 failures=0 overflows=0
+         1795423972.427 25464 25511 I CaraPerf: work end=1561 pica_lists=687 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423972.427 25464 25511 I CaraPerf: reuse end=1561 prep_ms=285.30 draw_ms=33647.89 index_hits=25787 index_misses=119 index_bytes=3899284 reused_upload_bytes=418191616 vertex_upload_bytes=27798784 index_upload_bytes=2614528 packed_draws=24882 indexed_direct=12833 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=3 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=30 uniform_ms=102.82 state_apply_ms=200.65 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423972.427 25464 25511 I CaraPerf: window end=1561 clock=100 p50_ms=28.63 p99_ms=5057.81 worst_ms=25152.43 worst_frame=1510 draws=25906 upload_ms=91.76 submit_ms=410.05 download_ms=0.00 compile_ms=31988.67 lut_ms=697.58 waits_ms=0.58
+         1795423972.909 25464 25511 I CaraShader: compile stage=vertex shader=177 source=1e3ec4020e2493e3 ok=1 us=436548
+         1795423973.519 25464 25511 I CaraShader: link program=178 shaders=177,104 ok=1 us=609787
+         1795423973.519 25464 25511 I CaraShader: first_draw program=178 us=56
+         1795423975.729 25464 25511 I CaraPerf: cpu end=1681 other_ms=59.53 execution_ms=519.72 svc_ms=237.77 gpu_command_ms=2290.04 dsp_ms=9.93 failures=0 overflows=0
+         1795423975.729 25464 25511 I CaraPerf: work end=1681 pica_lists=721 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423975.729 25464 25511 I CaraPerf: reuse end=1681 prep_ms=218.78 draw_ms=1660.09 index_hits=16262 index_misses=864 index_bytes=5013196 reused_upload_bytes=505613824 vertex_upload_bytes=6964224 index_upload_bytes=693248 packed_draws=16932 indexed_direct=7332 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=2 uniform_ms=73.47 state_apply_ms=158.84 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423975.729 25464 25511 I CaraPerf: window end=1681 clock=100 p50_ms=17.88 p99_ms=94.69 worst_ms=1074.30 worst_frame=1564 draws=17126 upload_ms=39.84 submit_ms=170.40 download_ms=0.00 compile_ms=1046.75 lut_ms=142.74 waits_ms=0.53
+         1795423977.723 25464 25511 I CaraPerf: cpu end=1801 other_ms=62.71 execution_ms=525.86 svc_ms=240.38 gpu_command_ms=1096.47 dsp_ms=9.84 failures=0 overflows=0
+         1795423977.723 25464 25511 I CaraPerf: work end=1801 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423977.723 25464 25511 I CaraPerf: reuse end=1801 prep_ms=211.01 draw_ms=774.81 index_hits=16140 index_misses=584 index_bytes=5506452 reused_upload_bytes=505670400 vertex_upload_bytes=5350656 index_upload_bytes=507136 packed_draws=16724 indexed_direct=7124 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=62.35 state_apply_ms=154.30 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423977.723 25464 25511 I CaraPerf: window end=1801 clock=100 p50_ms=16.63 p99_ms=18.90 worst_ms=22.87 worst_frame=1689 draws=16724 upload_ms=28.90 submit_ms=162.24 download_ms=0.00 compile_ms=0.00 lut_ms=5.51 waits_ms=0.60
+         1795423979.099 25464 25511 I CaraShader: fragment_key key=ef97ebe39cafe49f source=33effa611cc43f15 lit=0 generation_us=61
+         1795423979.111 25464 25511 I CaraShader: compile stage=fragment shader=179 source=33effa611cc43f15 ok=1 us=11345
+         1795423979.111 25464 25568 I CaraShader: compile stage=fragment shader=181 source=33effa611cc43f15 ok=1 us=134
+         1795423980.447 25464 25568 I CaraShader: link program=182 shaders=71,181 ok=1 us=1336089
+         1795423980.487 25464 25511 I CaraShader: link program=180 shaders=70,179 ok=1 us=1375889
+         1795423980.487 25464 25511 I CaraShader: first_draw program=180 us=194
+         1795423981.258 25464 25568 I CaraShader: link program=184 shaders=86,166 ok=1 us=767996
+         1795423981.328 25464 25511 I CaraShader: link program=183 shaders=87,163 ok=1 us=838281
+         1795423981.328 25464 25511 I CaraShader: first_draw program=183 us=148
+         1795423981.336 25464 25511 I CaraShader: first_draw program=182 us=74
+         1795423981.346 25464 25511 I CaraShader: first_draw program=184 us=156
+         1795423981.967 25464 25511 I CaraPerf: cpu end=1921 other_ms=59.53 execution_ms=496.24 svc_ms=233.34 gpu_command_ms=3289.66 dsp_ms=9.26 failures=0 overflows=0
+         1795423981.967 25464 25511 I CaraPerf: work end=1921 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423981.967 25464 25511 I CaraPerf: reuse end=1921 prep_ms=194.52 draw_ms=3017.33 index_hits=16300 index_misses=204 index_bytes=5544492 reused_upload_bytes=507458816 vertex_upload_bytes=4259584 index_upload_bytes=417536 packed_draws=16504 indexed_direct=6826 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=2 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=3 uniform_ms=61.64 state_apply_ms=152.49 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423981.967 25464 25511 I CaraPerf: window end=1921 clock=100 p50_ms=16.65 p99_ms=19.64 worst_ms=2257.30 worst_frame=1884 draws=16504 upload_ms=26.45 submit_ms=169.33 download_ms=0.00 compile_ms=2225.73 lut_ms=3.40 waits_ms=0.52
+         1795423984.566 25464 25511 I CaraPerf: cpu end=2041 other_ms=61.83 execution_ms=520.66 svc_ms=259.99 gpu_command_ms=1491.79 dsp_ms=10.21 failures=0 overflows=0
+         1795423984.566 25464 25511 I CaraPerf: work end=2041 pica_lists=721 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423984.566 25464 25511 I CaraPerf: reuse end=2041 prep_ms=258.24 draw_ms=1340.93 index_hits=17636 index_misses=202 index_bytes=5628834 reused_upload_bytes=530568960 vertex_upload_bytes=4708096 index_upload_bytes=472832 packed_draws=17838 indexed_direct=7320 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=85.49 state_apply_ms=179.04 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423984.566 25464 25511 I CaraPerf: window end=2041 clock=100 p50_ms=21.17 p99_ms=33.82 worst_ms=104.57 worst_frame=1989 draws=17838 upload_ms=32.45 submit_ms=412.94 download_ms=0.00 compile_ms=0.00 lut_ms=3.98 waits_ms=0.56
+         1795423987.283 25464 25511 I CaraPerf: cpu end=2161 other_ms=62.45 execution_ms=499.36 svc_ms=264.51 gpu_command_ms=1456.94 dsp_ms=10.19 failures=0 overflows=0
+         1795423987.283 25464 25511 I CaraPerf: work end=2161 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423987.283 25464 25511 I CaraPerf: reuse end=2161 prep_ms=273.17 draw_ms=1347.98 index_hits=17598 index_misses=204 index_bytes=5688994 reused_upload_bytes=532501760 vertex_upload_bytes=3781888 index_upload_bytes=376064 packed_draws=17802 indexed_direct=7242 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=83.17 state_apply_ms=183.84 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423987.283 25464 25511 I CaraPerf: window end=2161 clock=100 p50_ms=22.50 p99_ms=27.53 worst_ms=32.20 worst_frame=2106 draws=17802 upload_ms=30.44 submit_ms=503.79 download_ms=0.00 compile_ms=0.00 lut_ms=4.28 waits_ms=0.49
+         1795423989.554 25464 25511 I CaraPerf: cpu end=2281 other_ms=63.85 execution_ms=545.21 svc_ms=261.34 gpu_command_ms=1283.00 dsp_ms=10.65 failures=0 overflows=0
+         1795423989.554 25464 25511 I CaraPerf: work end=2281 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795423989.554 25464 25511 I CaraPerf: reuse end=2281 prep_ms=225.69 draw_ms=994.69 index_hits=17582 index_misses=162 index_bytes=5757074 reused_upload_bytes=532587264 vertex_upload_bytes=3562752 index_upload_bytes=333056 packed_draws=17744 indexed_direct=7184 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=69.81 state_apply_ms=173.44 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795423989.554 25464 25511 I CaraPerf: window end=2281 clock=100 p50_ms=18.54 p99_ms=24.77 worst_ms=25.59 worst_frame=2167 draws=17744 upload_ms=27.09 submit_ms=247.01 download_ms=0.00 compile_ms=0.00 lut_ms=3.92 waits_ms=0.79
+         1795423990.444 25464 25511 I CaraShader: fragment_key key=c21b612698095815 source=5433b5efce09ac3e lit=0 generation_us=33
+         1795423990.454 25464 25511 I CaraShader: compile stage=fragment shader=185 source=5433b5efce09ac3e ok=1 us=10331
+         1795423990.773 25464 25568 I CaraShader: compile stage=vertex shader=187 source=2cc17021fa28a274 ok=1 us=318075
+         1795423990.773 25464 25568 I CaraShader: compile stage=fragment shader=188 source=5433b5efce09ac3e ok=1 us=106
+         1795423991.617 25464 25511 I CaraShader: link program=186 shaders=43,185 ok=1 us=1162563
+         1795423991.617 25464 25511 I CaraShader: first_draw program=186 us=117
+         1795423991.618 25464 25511 I CaraShader: fragment_key key=d8411b96cb5e5f46 source=ebdf64e12b90a5f1 lit=1 generation_us=83
+         1795423991.619 25464 25511 I CaraShader: fragment_key key=c7983adf1d63081e source=98b3f0d64615b66d lit=1 generation_us=63
+         1795423991.635 25464 25511 I CaraShader: compile stage=fragment shader=190 source=98b3f0d64615b66d ok=1 us=15861
+         1795423991.886 25464 25568 I CaraShader: link program=189 shaders=187,188 ok=1 us=1112832
+         1795423993.575 25464 25511 I CaraShader: link program=191 shaders=21,190 ok=1 us=1939458
+         1795423993.575 25464 25511 I CaraShader: first_draw program=191 us=85
+         1795423993.584 25464 25511 I CaraShader: fragment_key key=444702a8f4fd5b0b source=f31ad840da8649ec lit=1 generation_us=86
+         1795423993.600 25464 25511 I CaraShader: compile stage=fragment shader=192 source=f31ad840da8649ec ok=1 us=15567
+         1795423995.558 25464 25511 I CaraShader: link program=193 shaders=21,192 ok=1 us=1958196
+         1795423995.558 25464 25511 I CaraShader: first_draw program=193 us=140
+         1795423995.566 25464 25511 I CaraShader: fragment_key key=78226e455970ba90 source=8299d9b90064201e lit=1 generation_us=78
+         1795423995.581 25464 25511 I CaraShader: compile stage=fragment shader=194 source=8299d9b90064201e ok=1 us=15213
+         1795423997.535 25464 25511 I CaraShader: link program=195 shaders=21,194 ok=1 us=1953497
+         1795423997.535 25464 25511 I CaraShader: first_draw program=195 us=130
+         1795423999.624 25464 25511 I CaraShader: link program=196 shaders=52,192 ok=1 us=2079139
+         1795423999.625 25464 25511 I CaraShader: first_draw program=196 us=151
+         1795424001.634 25464 25511 I CaraShader: link program=197 shaders=52,190 ok=1 us=2008522
+         1795424001.635 25464 25511 I CaraShader: first_draw program=197 us=53
+         1795424003.721 25464 25511 I CaraShader: link program=198 shaders=52,194 ok=1 us=2077825
+         1795424003.721 25464 25511 I CaraShader: first_draw program=198 us=238
+         1795424003.723 25464 25511 I CaraShader: fragment_key key=b903bead49623ead source=c0d77fe0208e0653 lit=1 generation_us=70
+         1795424003.739 25464 25511 I CaraShader: compile stage=fragment shader=199 source=c0d77fe0208e0653 ok=1 us=15139
+         1795424005.805 25464 25511 I CaraShader: link program=200 shaders=52,199 ok=1 us=2065856
+         1795424005.805 25464 25511 I CaraShader: first_draw program=200 us=60
+         1795424005.813 25464 25511 I CaraShader: fragment_key key=8566d240e4efdf36 source=7dc4fd00c6dde70f lit=1 generation_us=73
+         1795424005.830 25464 25511 I CaraShader: compile stage=fragment shader=201 source=7dc4fd00c6dde70f ok=1 us=16079
+         1795424007.809 25464 25511 I CaraShader: link program=202 shaders=21,201 ok=1 us=1978999
+         1795424007.809 25464 25511 I CaraShader: first_draw program=202 us=67
+         1795424009.795 25464 25511 I CaraShader: link program=203 shaders=21,199 ok=1 us=1977504
+         1795424009.796 25464 25511 I CaraShader: first_draw program=203 us=161
+         1795424009.796 25464 25511 I CaraShader: fragment_key key=4e95973677b38cbf source=bf641dd3310bc486 lit=1 generation_us=75
+         1795424009.812 25464 25511 I CaraShader: compile stage=fragment shader=204 source=bf641dd3310bc486 ok=1 us=15729
+         1795424012.968 25464 25511 I CaraShader: link program=205 shaders=40,204 ok=1 us=3155368
+         1795424012.968 25464 25511 I CaraShader: first_draw program=205 us=53
+         1795424012.969 25464 25511 I CaraShader: fragment_key key=e5af72ce6b28c364 source=6f54a23f2203c3df lit=1 generation_us=71
+         1795424012.984 25464 25511 I CaraShader: compile stage=fragment shader=206 source=6f54a23f2203c3df ok=1 us=14911
+         1795424015.262 25464 25511 I CaraShader: link program=207 shaders=99,206 ok=1 us=2278291
+         1795424015.263 25464 25511 I CaraShader: first_draw program=207 us=54
+         1795424015.263 25464 25511 I CaraShader: fragment_key key=4e95973699b94d7c source=bf641dd3310bc486 lit=1 generation_us=73
+         1795424017.180 25464 25511 I CaraShader: link program=208 shaders=46,204 ok=1 us=1916685
+         1795424017.180 25464 25511 I CaraShader: first_draw program=208 us=51
+         1795424017.221 25464 25511 I CaraShader: fragment_key key=9ebe83e6909fa947 source=14d2b4559423a0fc lit=0 generation_us=49
+         1795424017.225 25464 25511 I CaraShader: compile stage=fragment shader=209 source=14d2b4559423a0fc ok=1 us=3285
+         1795424017.225 25464 25568 I CaraShader: compile stage=fragment shader=211 source=14d2b4559423a0fc ok=1 us=109
+         1795424018.035 25464 25568 I CaraShader: link program=212 shaders=16,211 ok=1 us=809481
+         1795424018.071 25464 25511 I CaraShader: link program=210 shaders=17,209 ok=1 us=845881
+         1795424018.072 25464 25511 I CaraShader: first_draw program=210 us=151
+         1795424018.462 25464 25568 I CaraShader: compile stage=vertex shader=213 source=68ed3768ecabfccd ok=1 us=363460
+         1795424018.775 25464 25511 I CaraShader: compile stage=vertex shader=214 source=02c806a73e2db0ed ok=1 us=675353
+         1795424019.435 25464 25568 I CaraShader: link program=215 shaders=213,166 ok=1 us=972576
+         1795424019.805 25464 25511 I CaraShader: link program=216 shaders=214,163 ok=1 us=1029694
+         1795424019.805 25464 25511 I CaraShader: first_draw program=216 us=138
+         1795424019.807 25464 25511 I CaraShader: first_draw program=215 us=55
+         1795424019.808 25464 25511 I CaraShader: fragment_key key=63249c8d40ef80f7 source=067d56785be4e94f lit=0 generation_us=40
+         1795424019.812 25464 25511 I CaraShader: compile stage=fragment shader=217 source=067d56785be4e94f ok=1 us=3724
+         1795424019.812 25464 25568 I CaraShader: compile stage=fragment shader=211 source=067d56785be4e94f ok=1 us=111
+         1795424020.917 25464 25568 I CaraShader: link program=181 shaders=187,211 ok=1 us=1104500
+         1795424020.970 25464 25511 I CaraShader: link program=218 shaders=43,217 ok=1 us=1157910
+         1795424020.971 25464 25511 I CaraShader: first_draw program=218 us=206
+         1795424020.971 25464 25511 I CaraShader: first_draw program=181 us=38
+         1795424020.972 25464 25511 I CaraShader: fragment_key key=cc31eae6a5e30eec source=b9e85797bc551d26 lit=0 generation_us=27
+         1795424020.977 25464 25511 I CaraShader: compile stage=fragment shader=166 source=b9e85797bc551d26 ok=1 us=4376
+         1795424021.335 25464 25568 I CaraShader: compile stage=vertex shader=80 source=de07b925a07588b2 ok=1 us=357234
+         1795424021.335 25464 25568 I CaraShader: compile stage=fragment shader=92 source=b9e85797bc551d26 ok=1 us=121
+         1795424021.655 25464 25511 I CaraShader: compile stage=vertex shader=68 source=967bfc0b98700444 ok=1 us=675981
+         1795424023.303 25464 25568 I CaraShader: link program=63 shaders=80,92 ok=1 us=1967961
+         1795424023.565 25464 25511 I CaraShader: link program=33 shaders=68,166 ok=1 us=1910286
+         1795424023.565 25464 25511 I CaraShader: first_draw program=33 us=48
+         1795424023.566 25464 25511 I CaraShader: first_draw program=63 us=49
+         1795424023.574 25464 25511 I CaraShader: fragment_key key=a61908800ec40a0f source=601c3de3b0489009 lit=1 generation_us=64
+         1795424023.590 25464 25511 I CaraShader: compile stage=fragment shader=188 source=601c3de3b0489009 ok=1 us=15495
+         1795424024.820 25464 25511 I CaraShader: link program=150 shaders=94,188 ok=1 us=1229727
+         1795424024.820 25464 25511 I CaraShader: first_draw program=150 us=66
+         1795424024.821 25464 25511 I CaraShader: fragment_key key=2104d77ca0171156 source=5dc510c9db650bfd lit=0 generation_us=32
+         1795424024.832 25464 25511 I CaraShader: fragment_key key=9ebe83e64aa50d18 source=a1507018acd82378 lit=0 generation_us=35
+         1795424024.832 25464 25511 I CaraShader: fragment_key key=efaa6a9daf55545d source=bd8666435f474b43 lit=1 generation_us=67
+         1795424024.848 25464 25511 I CaraShader: compile stage=fragment shader=106 source=bd8666435f474b43 ok=1 us=15989
+         1795424028.016 25464 25511 I CaraShader: link program=12 shaders=40,106 ok=1 us=3167459
+         1795424028.017 25464 25511 I CaraShader: first_draw program=12 us=54
+         1795424029.909 25464 25511 I CaraShader: link program=27 shaders=46,106 ok=1 us=1891845
+         1795424029.909 25464 25511 I CaraShader: first_draw program=27 us=58
+         1795424029.910 25464 25511 I CaraShader: fragment_key key=44908f65b3ce1b86 source=0c815b2baa3214c8 lit=1 generation_us=69
+         1795424029.923 25464 25511 I CaraShader: compile stage=fragment shader=18 source=0c815b2baa3214c8 ok=1 us=13387
+         1795424032.195 25464 25511 I CaraShader: link program=161 shaders=99,18 ok=1 us=2271516
+         1795424032.196 25464 25511 I CaraShader: first_draw program=161 us=152
+         1795424032.216 25464 25511 I CaraShader: first_draw program=212 us=25
+         1795424032.232 25464 25511 I CaraShader: first_draw program=189 us=24
+         1795424032.233 25464 25511 I CaraShader: fragment_key key=d121ac6d38ad7cdb source=0b807268cce3e6c5 lit=1 generation_us=60
+         1795424034.829 25464 25511 I CaraPerf: cpu end=2401 other_ms=66.44 execution_ms=662.67 svc_ms=263.57 gpu_command_ms=43549.38 dsp_ms=9.81 failures=0 overflows=0
+         1795424034.829 25464 25511 I CaraPerf: work end=2401 pica_lists=721 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424034.829 25464 25511 I CaraPerf: reuse end=2401 prep_ms=237.77 draw_ms=43787.57 index_hits=31827 index_misses=116 index_bytes=6963793 reused_upload_bytes=625359360 vertex_upload_bytes=28696832 index_upload_bytes=3123456 packed_draws=31943 indexed_direct=11427 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=16 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=37 uniform_ms=119.38 state_apply_ms=222.30 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424034.829 25464 25511 I CaraPerf: window end=2401 clock=100 p50_ms=34.23 p99_ms=150.34 worst_ms=41782.54 worst_frame=2332 draws=31943 upload_ms=77.13 submit_ms=365.89 download_ms=0.00 compile_ms=41586.42 lut_ms=478.86 waits_ms=0.62
+         1795424038.825 25464 25511 I CaraShader: fragment_key key=c7983adfc585d0fc source=2c70bc235a94a33d lit=1 generation_us=93
+         1795424038.849 25464 25511 I CaraShader: compile stage=fragment shader=38 source=2c70bc235a94a33d ok=1 us=23225
+         1795424040.762 25464 25511 I CaraShader: link program=219 shaders=21,38 ok=1 us=1912595
+         1795424040.762 25464 25511 I CaraShader: first_draw program=219 us=92
+         1795424040.763 25464 25511 I CaraShader: fragment_key key=444702a82c1b83e9 source=c6c77bca600ac679 lit=1 generation_us=72
+         1795424040.779 25464 25511 I CaraShader: compile stage=fragment shader=220 source=c6c77bca600ac679 ok=1 us=15008
+         1795424042.747 25464 25511 I CaraShader: link program=221 shaders=21,220 ok=1 us=1968624
+         1795424042.748 25464 25511 I CaraShader: first_draw program=221 us=119
+         1795424042.748 25464 25511 I CaraShader: fragment_key key=78226e4581966272 source=5679050ca244728c lit=1 generation_us=68
+         1795424042.765 25464 25511 I CaraShader: compile stage=fragment shader=222 source=5679050ca244728c ok=1 us=16203
+         1795424044.731 25464 25511 I CaraShader: link program=223 shaders=21,222 ok=1 us=1966453
+         1795424044.732 25464 25511 I CaraShader: first_draw program=223 us=68
+         1795424046.814 25464 25511 I CaraShader: link program=224 shaders=52,220 ok=1 us=2081239
+         1795424046.814 25464 25511 I CaraShader: first_draw program=224 us=48
+         1795424048.863 25464 25511 I CaraShader: link program=225 shaders=52,38 ok=1 us=2048655
+         1795424048.863 25464 25511 I CaraShader: first_draw program=225 us=60
+         1795424050.941 25464 25511 I CaraShader: link program=226 shaders=52,222 ok=1 us=2077099
+         1795424050.941 25464 25511 I CaraShader: first_draw program=226 us=48
+         1795424050.942 25464 25511 I CaraShader: fragment_key key=b903bead9184e64f source=1e06e034d781a18b lit=1 generation_us=65
+         1795424050.957 25464 25511 I CaraShader: compile stage=fragment shader=227 source=1e06e034d781a18b ok=1 us=15096
+         1795424053.064 25464 25511 I CaraShader: link program=228 shaders=52,227 ok=1 us=2106828
+         1795424053.065 25464 25511 I CaraShader: first_draw program=228 us=68
+         1795424053.066 25464 25511 I CaraShader: fragment_key key=8566d2403c0907d4 source=7af58079e3c19777 lit=1 generation_us=72
+         1795424053.083 25464 25511 I CaraShader: compile stage=fragment shader=229 source=7af58079e3c19777 ok=1 us=17139
+         1795424055.073 25464 25511 I CaraShader: link program=230 shaders=21,229 ok=1 us=1989436
+         1795424055.073 25464 25511 I CaraShader: first_draw program=230 us=119
+         1795424057.051 25464 25511 I CaraShader: link program=231 shaders=21,227 ok=1 us=1975938
+         1795424057.051 25464 25511 I CaraShader: first_draw program=231 us=66
+         1795424057.052 25464 25511 I CaraShader: fragment_key key=4e959736af55545d source=4391deed97316fe3 lit=1 generation_us=73
+         1795424057.068 25464 25511 I CaraShader: compile stage=fragment shader=232 source=4391deed97316fe3 ok=1 us=15734
+         1795424060.256 25464 25511 I CaraShader: link program=233 shaders=40,232 ok=1 us=3188297
+         1795424060.257 25464 25511 I CaraShader: first_draw program=233 us=83
+         1795424060.257 25464 25511 I CaraShader: fragment_key key=e5af72ceb3ce1b86 source=feb211c484ae50c9 lit=1 generation_us=70
+         1795424060.271 25464 25511 I CaraShader: compile stage=fragment shader=234 source=feb211c484ae50c9 ok=1 us=14012
+         1795424062.582 25464 25511 I CaraShader: link program=235 shaders=99,234 ok=1 us=2310226
+         1795424062.582 25464 25511 I CaraShader: first_draw program=235 us=66
+         1795424062.583 25464 25511 I CaraShader: fragment_key key=4e959736415f959e source=4391deed97316fe3 lit=1 generation_us=72
+         1795424064.488 25464 25511 I CaraShader: link program=236 shaders=46,232 ok=1 us=1904975
+         1795424064.488 25464 25511 I CaraShader: first_draw program=236 us=59
+         1795424064.492 25464 25511 I CaraShader: fragment_key key=9ebe83e6487971a5 source=a1507018acd82378 lit=0 generation_us=33
+         1795424064.493 25464 25511 I CaraShader: fragment_key key=2cdc01d172fdd240 source=12b1d51ec8a4fd4c lit=0 generation_us=29
+         1795424064.494 25464 25511 I CaraShader: fragment_key key=2104d77c7a2db509 source=219cd6a679637d85 lit=0 generation_us=36
+         1795424064.494 25464 25568 I CaraShader: compile stage=fragment shader=238 source=219cd6a679637d85 ok=1 us=95
+         1795424065.475 25464 25568 I CaraShader: link program=239 shaders=213,238 ok=1 us=981434
+         1795424065.541 25464 25511 I CaraShader: link program=237 shaders=214,77 ok=1 us=1047035
+         1795424065.541 25464 25511 I CaraShader: first_draw program=237 us=139
+         1795424065.542 25464 25511 I CaraShader: first_draw program=239 us=37
+         1795424065.542 25464 25511 I CaraShader: fragment_key key=63249c8d98095815 source=900a37442607ed62 lit=0 generation_us=39
+         1795424065.546 25464 25511 I CaraShader: compile stage=fragment shader=240 source=900a37442607ed62 ok=1 us=3645
+         1795424065.546 25464 25568 I CaraShader: compile stage=fragment shader=242 source=900a37442607ed62 ok=1 us=114
+         1795424066.663 25464 25568 I CaraShader: link program=243 shaders=187,242 ok=1 us=1116771
+         1795424066.709 25464 25511 I CaraShader: link program=241 shaders=43,240 ok=1 us=1162988
+         1795424066.710 25464 25511 I CaraShader: first_draw program=241 us=265
+         1795424066.710 25464 25511 I CaraShader: first_draw program=243 us=36
+         1795424066.710 25464 25511 I CaraShader: fragment_key key=cc31eae67d05d60e source=747f9056027492d4 lit=0 generation_us=34
+         1795424066.714 25464 25511 I CaraShader: compile stage=fragment shader=244 source=747f9056027492d4 ok=1 us=3646
+         1795424066.714 25464 25568 I CaraShader: compile stage=fragment shader=246 source=747f9056027492d4 ok=1 us=123
+         1795424068.499 25464 25568 I CaraShader: link program=247 shaders=80,246 ok=1 us=1784534
+         1795424068.768 25464 25511 I CaraShader: link program=245 shaders=68,244 ok=1 us=2053927
+         1795424068.768 25464 25511 I CaraShader: first_draw program=245 us=49
+         1795424068.769 25464 25511 I CaraShader: first_draw program=247 us=50
+         1795424068.778 25464 25511 I CaraShader: fragment_key key=a6190880d622d2ed source=3998345b7f683e7d lit=1 generation_us=82
+         1795424068.794 25464 25511 I CaraShader: compile stage=fragment shader=248 source=3998345b7f683e7d ok=1 us=16551
+         1795424070.007 25464 25511 I CaraShader: link program=249 shaders=94,248 ok=1 us=1212798
+         1795424070.008 25464 25511 I CaraShader: first_draw program=249 us=60
+         1795424070.008 25464 25511 I CaraShader: fragment_key key=2104d77c78f1c9b4 source=219cd6a679637d85 lit=0 generation_us=25
+         1795424070.331 25464 25511 I CaraPerf: cpu end=2521 other_ms=74.01 execution_ms=737.53 svc_ms=288.56 gpu_command_ms=33423.78 dsp_ms=10.38 failures=0 overflows=0
+         1795424070.331 25464 25511 I CaraPerf: work end=2521 pica_lists=733 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424070.331 25464 25511 I CaraPerf: reuse end=2521 prep_ms=227.44 draw_ms=33860.67 index_hits=42599 index_misses=0 index_bytes=6963793 reused_upload_bytes=738604544 vertex_upload_bytes=11542784 index_upload_bytes=864512 packed_draws=42599 indexed_direct=14536 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=3 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=26 uniform_ms=152.89 state_apply_ms=258.57 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424070.331 25464 25511 I CaraPerf: window end=2521 clock=100 p50_ms=35.75 p99_ms=66.09 worst_ms=31265.16 worst_frame=2511 draws=42599 upload_ms=44.51 submit_ms=483.38 download_ms=0.00 compile_ms=31149.56 lut_ms=812.87 waits_ms=0.69
+         1795424073.957 25464 25511 I CaraPerf: cpu end=2641 other_ms=70.60 execution_ms=687.38 svc_ms=262.47 gpu_command_ms=2512.42 dsp_ms=10.29 failures=0 overflows=0
+         1795424073.957 25464 25511 I CaraPerf: work end=2641 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424073.957 25464 25511 I CaraPerf: reuse end=2641 prep_ms=229.90 draw_ms=2053.74 index_hits=41880 index_misses=0 index_bytes=6963793 reused_upload_bytes=732339712 vertex_upload_bytes=5462528 index_upload_bytes=117248 packed_draws=41880 indexed_direct=14280 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=170.15 state_apply_ms=266.29 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424073.957 25464 25511 I CaraPerf: window end=2641 clock=100 p50_ms=28.88 p99_ms=54.22 worst_ms=167.38 worst_frame=2579 draws=41880 upload_ms=34.42 submit_ms=486.73 download_ms=0.00 compile_ms=0.00 lut_ms=7.84 waits_ms=0.68
+         1795424077.422 25464 25511 I CaraPerf: cpu end=2761 other_ms=74.21 execution_ms=705.39 svc_ms=269.30 gpu_command_ms=2337.31 dsp_ms=10.51 failures=0 overflows=0
+         1795424077.422 25464 25511 I CaraPerf: work end=2761 pica_lists=725 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424077.422 25464 25511 I CaraPerf: reuse end=2761 prep_ms=226.34 draw_ms=1863.32 index_hits=42228 index_misses=0 index_bytes=6963793 reused_upload_bytes=738558976 vertex_upload_bytes=5389312 index_upload_bytes=111616 packed_draws=42228 indexed_direct=14398 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=155.57 state_apply_ms=266.78 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424077.422 25464 25511 I CaraPerf: window end=2761 clock=100 p50_ms=28.61 p99_ms=34.27 worst_ms=49.83 worst_frame=2732 draws=42228 upload_ms=32.31 submit_ms=462.13 download_ms=0.00 compile_ms=0.00 lut_ms=7.88 waits_ms=0.75
+         1795424080.955 25464 25511 I CaraPerf: cpu end=2881 other_ms=73.65 execution_ms=733.87 svc_ms=274.36 gpu_command_ms=2379.97 dsp_ms=10.63 failures=0 overflows=0
+         1795424080.955 25464 25511 I CaraPerf: work end=2881 pica_lists=727 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424080.955 25464 25511 I CaraPerf: reuse end=2881 prep_ms=229.98 draw_ms=1910.45 index_hits=42230 index_misses=0 index_bytes=6963793 reused_upload_bytes=732689920 vertex_upload_bytes=11262976 index_upload_bytes=852992 packed_draws=42230 indexed_direct=14400 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=167.61 state_apply_ms=256.33 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424080.955 25464 25511 I CaraPerf: window end=2881 clock=100 p50_ms=29.11 p99_ms=54.53 worst_ms=81.08 worst_frame=2779 draws=42230 upload_ms=44.34 submit_ms=467.08 download_ms=0.00 compile_ms=0.00 lut_ms=7.96 waits_ms=0.72
+         1795424084.502 25464 25511 I CaraPerf: cpu end=3001 other_ms=74.59 execution_ms=753.74 svc_ms=277.80 gpu_command_ms=2365.74 dsp_ms=10.66 failures=0 overflows=0
+         1795424084.502 25464 25511 I CaraPerf: work end=3001 pica_lists=725 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424084.502 25464 25511 I CaraPerf: reuse end=3001 prep_ms=229.78 draw_ms=1892.97 index_hits=42228 index_misses=0 index_bytes=6963793 reused_upload_bytes=738556672 vertex_upload_bytes=5391616 index_upload_bytes=111872 packed_draws=42228 indexed_direct=14398 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=161.77 state_apply_ms=258.28 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424084.502 25464 25511 I CaraPerf: window end=3001 clock=100 p50_ms=29.26 p99_ms=36.00 worst_ms=50.74 worst_frame=2952 draws=42228 upload_ms=33.78 submit_ms=480.76 download_ms=0.00 compile_ms=0.00 lut_ms=8.00 waits_ms=0.71
+         1795424085.694 28280 28280 I CaraBudget: lab-cold-census
+         1795424086.006 28309 28309 I CaraBudget: boot-warm-census
+         1795424086.349 28316 28372 I CaraPerf: session mode=performance cpu=Dynarmic renderer=atlas native_luts=0 resolution=1 p3d=1 ppf=1 soft_knee=1
+         1795424086.595 28316 28372 I CaraShader: compile stage=vertex shader=1 source=9b4e61ba374bd2d2 ok=1 us=14385
+         1795424086.595 28316 28372 I CaraShader: compile stage=fragment shader=2 source=ba2d69786a35f55b ok=1 us=38
+         1795424086.596 28316 28372 I CaraShader: link program=3 shaders=1,2 ok=1 us=289
+         1795424086.596 28316 28372 I CaraShader: compile stage=vertex shader=2 source=7ad8c29214aafdc3 ok=1 us=40
+         1795424086.596 28316 28372 I CaraShader: compile stage=fragment shader=1 source=df79da3af384259f ok=1 us=34
+         1795424086.596 28316 28372 I CaraShader: link program=4 shaders=2,1 ok=1 us=248
+         1795424086.597 28316 28372 I CaraShader: compile stage=vertex shader=1 source=6b7593b2f8c2a725 ok=1 us=31
+         1795424086.597 28316 28372 I CaraShader: compile stage=fragment shader=2 source=66a9770fd8e14489 ok=1 us=40
+         1795424086.597 28316 28372 I CaraShader: link program=5 shaders=1,2 ok=1 us=278
+         1795424086.597 28316 28372 I CaraShader: compile stage=vertex shader=2 source=6b7593b2f8c2a725 ok=1 us=30
+         1795424086.597 28316 28372 I CaraShader: compile stage=fragment shader=1 source=cdfdf7de5a5edfb3 ok=1 us=22
+         1795424086.597 28316 28372 I CaraShader: link program=6 shaders=2,1 ok=1 us=157
+         1795424086.597 28316 28372 I CaraShader: compile stage=vertex shader=1 source=6b7593b2f8c2a725 ok=1 us=22
+         1795424086.597 28316 28372 I CaraShader: compile stage=fragment shader=2 source=42d49526ba453e8b ok=1 us=39
+         1795424086.597 28316 28372 I CaraShader: link program=7 shaders=1,2 ok=1 us=178
+         1795424086.598 28316 28372 I CaraShader: compile stage=vertex shader=2 source=6b7593b2f8c2a725 ok=1 us=42
+         1795424086.598 28316 28372 I CaraShader: compile stage=fragment shader=1 source=8a45056a7c0531c6 ok=1 us=50
+         1795424086.598 28316 28372 I CaraShader: link program=8 shaders=2,1 ok=1 us=167
+         1795424086.701 28316 28372 I CaraShader: binary program=1 ok=1 us=851
+         1795424086.702 28316 28372 I CaraShader: binary program=2 ok=1 us=561
+         1795424086.703 28316 28372 I CaraShader: binary program=9 ok=1 us=516
+         1795424086.703 28316 28372 I CaraShader: binary program=10 ok=1 us=393
+         1795424086.704 28316 28372 I CaraShader: binary program=11 ok=1 us=751
+         1795424086.705 28316 28372 I CaraShader: binary program=12 ok=1 us=393
+         1795424086.706 28316 28372 I CaraShader: binary program=13 ok=1 us=455
+         1795424086.706 28316 28372 I CaraShader: binary program=14 ok=1 us=423
+         1795424086.707 28316 28372 I CaraShader: binary program=15 ok=1 us=408
+         1795424086.708 28316 28372 I CaraShader: binary program=16 ok=1 us=350
+         1795424086.709 28316 28372 I CaraShader: binary program=17 ok=1 us=828
+         1795424086.710 28316 28372 I CaraShader: binary program=18 ok=1 us=654
+         1795424086.711 28316 28372 I CaraShader: binary program=19 ok=1 us=545
+         1795424086.712 28316 28372 I CaraShader: binary program=20 ok=1 us=551
+         1795424086.712 28316 28372 I CaraShader: binary program=21 ok=1 us=536
+         1795424086.713 28316 28372 I CaraShader: binary program=22 ok=1 us=616
+         1795424086.714 28316 28372 I CaraShader: binary program=23 ok=1 us=598
+         1795424086.715 28316 28372 I CaraShader: binary program=24 ok=1 us=526
+         1795424086.717 28316 28372 I CaraShader: binary program=25 ok=1 us=1292
+         1795424086.718 28316 28372 I CaraShader: binary program=26 ok=1 us=987
+         1795424086.720 28316 28372 I CaraShader: binary program=27 ok=1 us=788
+         1795424086.722 28316 28372 I CaraShader: binary program=28 ok=1 us=2181
+         1795424086.723 28316 28372 I CaraShader: binary program=29 ok=1 us=1172
+         1795424086.741 28316 28372 I CaraShader: binary program=30 ok=1 us=17113
+         1795424086.742 28316 28372 I CaraShader: binary program=31 ok=1 us=849
+         1795424086.743 28316 28372 I CaraShader: binary program=32 ok=1 us=1008
+         1795424086.744 28316 28372 I CaraShader: binary program=33 ok=1 us=805
+         1795424086.746 28316 28372 I CaraShader: binary program=34 ok=1 us=1277
+         1795424086.747 28316 28372 I CaraShader: binary program=35 ok=1 us=758
+         1795424086.748 28316 28372 I CaraShader: binary program=36 ok=1 us=1076
+         1795424086.749 28316 28372 I CaraShader: binary program=37 ok=1 us=660
+         1795424086.751 28316 28372 I CaraShader: binary program=38 ok=1 us=1479
+         1795424086.752 28316 28372 I CaraShader: binary program=39 ok=1 us=658
+         1795424086.753 28316 28372 I CaraShader: binary program=40 ok=1 us=1346
+         1795424086.755 28316 28372 I CaraShader: binary program=41 ok=1 us=795
+         1795424086.755 28316 28372 I CaraShader: binary program=42 ok=1 us=484
+         1795424086.757 28316 28372 I CaraShader: binary program=43 ok=1 us=922
+         1795424086.758 28316 28372 I CaraShader: binary program=44 ok=1 us=580
+         1795424086.758 28316 28372 I CaraShader: binary program=45 ok=1 us=575
+         1795424086.759 28316 28372 I CaraShader: binary program=46 ok=1 us=343
+         1795424086.760 28316 28372 I CaraShader: binary program=47 ok=1 us=353
+         1795424086.760 28316 28372 I CaraShader: binary program=48 ok=1 us=435
+         1795424086.761 28316 28372 I CaraShader: binary program=49 ok=1 us=657
+         1795424086.762 28316 28372 I CaraShader: binary program=50 ok=1 us=555
+         1795424086.763 28316 28372 I CaraShader: binary program=51 ok=1 us=479
+         1795424086.764 28316 28372 I CaraShader: binary program=52 ok=1 us=536
+         1795424086.765 28316 28372 I CaraShader: binary program=53 ok=1 us=568
+         1795424086.765 28316 28372 I CaraShader: binary program=54 ok=1 us=540
+         1795424086.766 28316 28372 I CaraShader: binary program=55 ok=1 us=526
+         1795424086.767 28316 28372 I CaraShader: binary program=56 ok=1 us=537
+         1795424086.768 28316 28372 I CaraShader: binary program=57 ok=1 us=562
+         1795424086.769 28316 28372 I CaraShader: binary program=58 ok=1 us=384
+         1795424086.769 28316 28372 I CaraShader: binary program=59 ok=1 us=365
+         1795424086.770 28316 28372 I CaraShader: binary program=60 ok=1 us=457
+         1795424086.771 28316 28372 I CaraShader: binary program=61 ok=1 us=712
+         1795424086.772 28316 28372 I CaraShader: binary program=62 ok=1 us=460
+         1795424086.773 28316 28372 I CaraShader: binary program=63 ok=1 us=524
+         1795424086.773 28316 28372 I CaraShader: binary program=64 ok=1 us=301
+         1795424086.773 28316 28372 I CaraShader: binary program=65 ok=1 us=289
+         1795424086.774 28316 28372 I CaraShader: binary program=66 ok=1 us=469
+         1795424086.775 28316 28372 I CaraShader: binary program=67 ok=1 us=594
+         1795424086.776 28316 28372 I CaraShader: binary program=68 ok=1 us=461
+         1795424086.777 28316 28372 I CaraShader: binary program=69 ok=1 us=531
+         1795424086.777 28316 28372 I CaraShader: binary program=70 ok=1 us=421
+         1795424086.778 28316 28372 I CaraShader: binary program=71 ok=1 us=392
+         1795424086.779 28316 28372 I CaraShader: binary program=72 ok=1 us=299
+         1795424086.779 28316 28372 I CaraShader: binary program=73 ok=1 us=502
+         1795424086.780 28316 28372 I CaraShader: binary program=74 ok=1 us=525
+         1795424086.781 28316 28372 I CaraShader: binary program=75 ok=1 us=605
+         1795424086.782 28316 28372 I CaraShader: binary program=76 ok=1 us=378
+         1795424086.782 28316 28372 I CaraShader: binary program=77 ok=1 us=375
+         1795424086.783 28316 28372 I CaraShader: binary program=78 ok=1 us=646
+         1795424086.784 28316 28372 I CaraShader: binary program=79 ok=1 us=531
+         1795424086.785 28316 28372 I CaraShader: binary program=80 ok=1 us=561
+         1795424086.786 28316 28372 I CaraShader: binary program=81 ok=1 us=427
+         1795424086.786 28316 28372 I CaraShader: binary program=82 ok=1 us=326
+         1795424086.787 28316 28372 I CaraShader: binary program=83 ok=1 us=592
+         1795424086.788 28316 28372 I CaraShader: binary program=84 ok=1 us=487
+         1795424086.789 28316 28372 I CaraShader: binary program=85 ok=1 us=349
+         1795424086.789 28316 28372 I CaraShader: binary program=86 ok=1 us=370
+         1795424086.790 28316 28372 I CaraShader: binary program=87 ok=1 us=341
+         1795424086.790 28316 28372 I CaraShader: binary program=88 ok=1 us=378
+         1795424086.791 28316 28372 I CaraShader: binary program=89 ok=1 us=295
+         1795424086.792 28316 28372 I CaraShader: binary program=90 ok=1 us=524
+         1795424086.793 28316 28372 I CaraShader: binary program=91 ok=1 us=575
+         1795424086.793 28316 28372 I CaraShader: binary program=92 ok=1 us=423
+         1795424086.794 28316 28372 I CaraShader: binary program=93 ok=1 us=503
+         1795424086.795 28316 28372 I CaraShader: binary program=94 ok=1 us=519
+         1795424086.796 28316 28372 I CaraShader: binary program=95 ok=1 us=475
+         1795424086.797 28316 28372 I CaraShader: binary program=96 ok=1 us=460
+         1795424086.797 28316 28372 I CaraShader: binary program=97 ok=1 us=622
+         1795424086.798 28316 28372 I CaraShader: binary program=98 ok=1 us=479
+         1795424086.799 28316 28372 I CaraShader: binary program=99 ok=1 us=560
+         1795424086.800 28316 28372 I CaraShader: binary program=100 ok=1 us=819
+         1795424086.801 28316 28372 I CaraShader: binary program=101 ok=1 us=790
+         1795424086.802 28316 28372 I CaraShader: binary program=102 ok=1 us=509
+         1795424086.803 28316 28372 I CaraShader: binary program=103 ok=1 us=408
+         1795424086.803 28316 28372 I CaraShader: binary program=104 ok=1 us=482
+         1795424086.804 28316 28372 I CaraShader: binary program=105 ok=1 us=383
+         1795424086.805 28316 28372 I CaraShader: binary program=106 ok=1 us=387
+         1795424086.805 28316 28372 I CaraShader: binary program=107 ok=1 us=385
+         1795424086.806 28316 28372 I CaraShader: binary program=108 ok=1 us=611
+         1795424086.807 28316 28372 I CaraShader: binary program=109 ok=1 us=540
+         1795424086.808 28316 28372 I CaraShader: binary program=110 ok=1 us=406
+         1795424086.809 28316 28372 I CaraShader: binary program=111 ok=1 us=631
+         1795424086.810 28316 28372 I CaraShader: binary program=112 ok=1 us=470
+         1795424086.811 28316 28372 I CaraShader: binary program=113 ok=1 us=605
+         1795424086.811 28316 28372 I CaraShader: binary program=114 ok=1 us=359
+         1795424086.812 28316 28372 I CaraShader: binary program=115 ok=1 us=411
+         1795424086.813 28316 28372 I CaraShader: binary program=116 ok=1 us=535
+         1795424086.813 28316 28372 I CaraShader: binary program=117 ok=1 us=448
+         1795424086.814 28316 28372 I CaraShader: binary program=118 ok=1 us=536
+         1795424086.815 28316 28372 I CaraShader: binary program=119 ok=1 us=634
+         1795424086.816 28316 28372 I CaraShader: binary program=120 ok=1 us=635
+         1795424086.817 28316 28372 I CaraShader: binary program=121 ok=1 us=632
+         1795424086.818 28316 28372 I CaraShader: binary program=122 ok=1 us=728
+         1795424086.819 28316 28372 I CaraShader: binary program=123 ok=1 us=618
+         1795424086.820 28316 28372 I CaraShader: binary program=124 ok=1 us=529
+         1795424086.821 28316 28372 I CaraShader: binary program=125 ok=1 us=689
+         1795424086.822 28316 28372 I CaraShader: binary program=126 ok=1 us=735
+         1795424086.823 28316 28372 I CaraShader: binary program=127 ok=1 us=550
+         1795424086.823 28316 28372 I CaraShader: binary program=128 ok=1 us=369
+         1795424086.824 28316 28372 I CaraShader: binary program=129 ok=1 us=328
+         1795424086.824 28316 28372 I CaraShader: binary program=130 ok=1 us=435
+         1795424086.825 28316 28372 I CaraShader: binary program=131 ok=1 us=493
+         1795424086.826 28316 28372 I CaraShader: binary program=132 ok=1 us=491
+         1795424086.827 28316 28372 I CaraShader: binary program=133 ok=1 us=440
+         1795424086.827 28316 28372 I CaraShader: binary program=134 ok=1 us=509
+         1795424086.830 28316 28372 I CaraShader: compile stage=vertex shader=135 source=21814ddac826d96c ok=1 us=66
+         1795424088.295 28316 28372 I CaraShader: compile stage=vertex shader=136 source=1bc26d8a7634e1df ok=1 us=42
+         1795424088.295 28316 28372 I CaraShader: compile stage=fragment shader=137 source=e73571f21436e944 ok=1 us=110
+         1795424088.296 28316 28372 I CaraShader: link program=138 shaders=136,137 ok=1 us=365
+         1795424089.631 28316 28372 I CaraShader: fragment_key key=3f817e4de24069b5 source=11ebad82b6ebe074 lit=0 generation_us=27
+         1795424089.631 28316 28372 I CaraShader: first_draw program=2 us=66
+         1795424090.159 28316 28372 I CaraPerf: cpu end=121 other_ms=92.31 execution_ms=1552.21 svc_ms=235.64 gpu_command_ms=16.06 dsp_ms=4.47 failures=0 overflows=0
+         1795424090.159 28316 28372 I CaraPerf: work end=121 pica_lists=883 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424090.159 28316 28372 I CaraPerf: reuse end=121 prep_ms=0.52 draw_ms=9.80 index_hits=64 index_misses=1 index_bytes=842 reused_upload_bytes=135936 vertex_upload_bytes=13824 index_upload_bytes=1536 packed_draws=65 indexed_direct=65 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=3 uniform_ms=1.16 state_apply_ms=94.03 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424090.159 28316 28372 I CaraPerf: window end=121 clock=100 p50_ms=16.73 p99_ms=151.31 worst_ms=255.38 worst_frame=2 draws=65 upload_ms=0.34 submit_ms=2.30 download_ms=6.16 compile_ms=0.64 lut_ms=0.25 waits_ms=0.52
+         1795424092.322 28316 28372 I CaraPerf: cpu end=241 other_ms=67.22 execution_ms=393.79 svc_ms=409.13 gpu_command_ms=1163.97 dsp_ms=4.60 failures=0 overflows=0
+         1795424092.322 28316 28372 I CaraPerf: work end=241 pica_lists=1195 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424092.322 28316 28372 I CaraPerf: reuse end=241 prep_ms=49.06 draw_ms=1033.94 index_hits=47604 index_misses=1 index_bytes=1684 reused_upload_bytes=79844608 vertex_upload_bytes=29837312 index_upload_bytes=331776 packed_draws=47605 indexed_direct=47605 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=143.31 state_apply_ms=298.59 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424092.322 28316 28372 I CaraPerf: window end=241 clock=100 p50_ms=16.41 p99_ms=39.11 worst_ms=102.94 worst_frame=129 draws=47605 upload_ms=133.89 submit_ms=230.72 download_ms=0.00 compile_ms=0.00 lut_ms=3.49 waits_ms=0.47
+         1795424094.340 28316 28372 I CaraPerf: cpu end=361 other_ms=65.89 execution_ms=285.69 svc_ms=399.20 gpu_command_ms=1096.23 dsp_ms=4.45 failures=0 overflows=0
+         1795424094.340 28316 28372 I CaraPerf: work end=361 pica_lists=1185 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424094.340 28316 28372 I CaraPerf: reuse end=361 prep_ms=47.88 draw_ms=969.36 index_hits=46527 index_misses=0 index_bytes=1684 reused_upload_bytes=75800320 vertex_upload_bytes=31397888 index_upload_bytes=0 packed_draws=46527 indexed_direct=46527 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=136.09 state_apply_ms=290.05 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424094.340 28316 28372 I CaraPerf: window end=361 clock=100 p50_ms=16.74 p99_ms=20.35 worst_ms=22.19 worst_frame=341 draws=46527 upload_ms=116.01 submit_ms=220.90 download_ms=0.00 compile_ms=0.00 lut_ms=3.42 waits_ms=0.49
+         1795424096.601 28316 28372 I CaraPerf: cpu end=481 other_ms=59.52 execution_ms=802.85 svc_ms=224.33 gpu_command_ms=74.05 dsp_ms=4.32 failures=0 overflows=0
+         1795424096.602 28316 28372 I CaraPerf: work end=481 pica_lists=715 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424096.602 28316 28372 I CaraPerf: reuse end=481 prep_ms=2.64 draw_ms=59.10 index_hits=1223 index_misses=0 index_bytes=1684 reused_upload_bytes=2723584 vertex_upload_bytes=94208 index_upload_bytes=0 packed_draws=1223 indexed_direct=1223 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=7.01 state_apply_ms=98.91 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424096.602 28316 28372 I CaraPerf: window end=481 clock=100 p50_ms=16.69 p99_ms=119.35 worst_ms=159.09 worst_frame=468 draws=1223 upload_ms=0.45 submit_ms=14.08 download_ms=0.00 compile_ms=0.00 lut_ms=0.27 waits_ms=0.51
+         1795424097.251 28316 28372 I CaraShader: fragment_key key=9ebe83e6e24069b5 source=a1507018acd82378 lit=0 generation_us=24
+         1795424097.251 28316 28372 I CaraShader: first_draw program=10 us=51
+         1795424097.582 28316 28372 I CaraShader: fragment_key key=5d06c7ffd6b07d0c source=b04f0baf9c4dbcd2 lit=1 generation_us=66
+         1795424097.582 28316 28372 I CaraShader: first_draw program=11 us=93
+         1795424097.592 28316 28372 I CaraShader: fragment_key key=9ebe83e66d7c60b9 source=c2170334d7b4a4d1 lit=0 generation_us=20
+         1795424097.592 28316 28372 I CaraShader: first_draw program=29 us=40
+         1795424097.594 28316 28372 I CaraShader: fragment_key key=2cdc01d16d7c60b9 source=12b1d51ec8a4fd4c lit=0 generation_us=34
+         1795424097.594 28316 28372 I CaraShader: first_draw program=14 us=51
+         1795424097.597 28316 28372 I CaraShader: fragment_key key=9ebe83e61a101450 source=e638888b5cec5584 lit=0 generation_us=50
+         1795424097.598 28316 28372 I CaraShader: first_draw program=16 us=134
+         1795424097.598 28316 28372 I CaraShader: fragment_key key=9ebe83e65524bfe1 source=a1507018acd82378 lit=0 generation_us=26
+         1795424097.603 28316 28372 I CaraShader: fragment_key key=f616c876cae6115b source=4abdc9965ee9998d lit=1 generation_us=76
+         1795424097.603 28316 28372 I CaraShader: first_draw program=17 us=61
+         1795424097.613 28316 28372 I CaraShader: fragment_key key=2ad7d4b9cbcf6c1e source=b57f62b44cb43d43 lit=1 generation_us=86
+         1795424097.614 28316 28372 I CaraShader: first_draw program=18 us=73
+         1795424097.616 28316 28372 I CaraShader: first_draw program=19 us=28
+         1795424097.618 28316 28372 I CaraShader: fragment_key key=c0a13105e6f95bc9 source=340458249a225cb1 lit=1 generation_us=186
+         1795424097.618 28316 28372 I CaraShader: first_draw program=20 us=69
+         1795424097.620 28316 28372 I CaraShader: fragment_key key=fcc45de84b74ba52 source=f2ad24931e63eede lit=1 generation_us=79
+         1795424097.620 28316 28372 I CaraShader: first_draw program=21 us=30
+         1795424097.657 28316 28372 I CaraShader: fragment_key key=7f1b659fa2eae947 source=c4c1dd0b7c63ff58 lit=1 generation_us=75
+         1795424097.657 28316 28372 I CaraShader: first_draw program=22 us=33
+         1795424097.658 28316 28372 I CaraShader: first_draw program=23 us=30
+         1795424097.658 28316 28372 I CaraShader: fragment_key key=0180e1edf6ebdff4 source=6baeced6f459fb04 lit=1 generation_us=90
+         1795424097.658 28316 28372 I CaraShader: first_draw program=24 us=24
+         1795424097.661 28316 28372 I CaraShader: fragment_key key=3de58d005b663e6f source=8756ef9f029cbf80 lit=1 generation_us=114
+         1795424097.662 28316 28372 I CaraShader: first_draw program=25 us=62
+         1795424097.665 28316 28372 I CaraShader: fragment_key key=5df569d435ede450 source=a77dea0fff1d0f40 lit=0 generation_us=33
+         1795424097.665 28316 28372 I CaraShader: first_draw program=27 us=50
+         1795424097.677 28316 28372 I CaraShader: fragment_key key=e2416bfb5914f239 source=adf4521e291c37cb lit=0 generation_us=46
+         1795424097.677 28316 28372 I CaraShader: first_draw program=36 us=61
+         1795424097.682 28316 28372 I CaraShader: fragment_key key=9ebe83e66fa01c04 source=c2170334d7b4a4d1 lit=0 generation_us=44
+         1795424097.684 28316 28372 I CaraShader: first_draw program=31 us=40
+         1795424097.694 28316 28372 I CaraShader: fragment_key key=d401c92ce3999e33 source=557b76b47c6a7b77 lit=1 generation_us=118
+         1795424097.694 28316 28372 I CaraShader: first_draw program=32 us=50
+         1795424097.696 28316 28372 I CaraShader: fragment_key key=2104d77c897aba8e source=219cd6a679637d85 lit=0 generation_us=18
+         1795424097.696 28316 28372 I CaraShader: first_draw program=34 us=41
+         1795424097.698 28316 28372 I CaraShader: fragment_key key=1e9a57c0b14deb56 source=98b7333f4e1b9f92 lit=1 generation_us=95
+         1795424097.698 28316 28372 I CaraShader: first_draw program=35 us=90
+         1795424097.698 28316 28372 I CaraShader: fragment_key key=e2416bfb5bc88e84 source=adf4521e291c37cb lit=0 generation_us=30
+         1795424097.700 28316 28372 I CaraShader: fragment_key key=2104d77c65ac07f0 source=219cd6a679637d85 lit=0 generation_us=13
+         1795424097.700 28316 28372 I CaraShader: first_draw program=38 us=33
+         1795424097.706 28316 28372 I CaraShader: fragment_key key=ef97ebe35bc88e84 source=1972d385210c9a47 lit=0 generation_us=39
+         1795424097.706 28316 28372 I CaraShader: first_draw program=44 us=42
+         1795424097.709 28316 28372 I CaraShader: first_draw program=40 us=46
+         1795424097.711 28316 28372 I CaraShader: fragment_key key=572935ddcae6115b source=be167554b62bf41b lit=1 generation_us=169
+         1795424097.712 28316 28372 I CaraShader: first_draw program=41 us=51
+         1795424097.713 28316 28372 I CaraShader: first_draw program=42 us=31
+         1795424097.717 28316 28372 I CaraShader: fragment_key key=fc13d025d4a1223d source=e99e13313f2787bd lit=1 generation_us=79
+         1795424097.717 28316 28372 I CaraShader: first_draw program=43 us=38
+         1795424097.719 28316 28372 I CaraShader: fragment_key key=3f817e4db9f2029f source=11ebad82b6ebe074 lit=0 generation_us=33
+         1795424097.752 28316 28372 I CaraShader: fragment_key key=bfa5aa6bb14deb56 source=0ddd844947dd7cc2 lit=1 generation_us=272
+         1795424097.753 28316 28372 I CaraShader: first_draw program=45 us=90
+         1795424097.830 28316 28372 I CaraShader: fragment_key key=3f817e4df6c6a92e source=93c27678d622f8b0 lit=0 generation_us=37
+         1795424097.830 28316 28372 I CaraShader: first_draw program=47 us=44
+         1795424098.091 28316 28372 I CaraShader: fragment_key key=dda426930fc08cee source=2c74be75d5ef2ea8 lit=1 generation_us=93
+         1795424098.097 28316 28372 I CaraShader: first_draw program=48 us=58
+         1795424098.099 28316 28372 I CaraShader: fragment_key key=50d63b8c6e9b2d36 source=7887084e73c153b9 lit=1 generation_us=115
+         1795424098.100 28316 28372 I CaraShader: first_draw program=49 us=36
+         1795424098.100 28316 28372 I CaraShader: fragment_key key=8c1727436fb25073 source=4ea08bdf6ecd0510 lit=1 generation_us=101
+         1795424098.100 28316 28372 I CaraShader: first_draw program=50 us=18
+         1795424098.100 28316 28372 I CaraShader: first_draw program=51 us=17
+         1795424098.100 28316 28372 I CaraShader: fragment_key key=56bac23c7832712a source=600651bc8ab37d0f lit=1 generation_us=91
+         1795424098.100 28316 28372 I CaraShader: first_draw program=52 us=18
+         1795424098.101 28316 28372 I CaraShader: fragment_key key=6adfaed1d5bf90b1 source=84fdd49120fe0ab5 lit=1 generation_us=61
+         1795424098.101 28316 28372 I CaraShader: first_draw program=53 us=17
+         1795424098.102 28316 28372 I CaraShader: fragment_key key=e90096a63c21c3a4 source=9a5ebb498011c96d lit=1 generation_us=73
+         1795424098.102 28316 28372 I CaraShader: first_draw program=54 us=19
+         1795424098.102 28316 28372 I CaraShader: first_draw program=55 us=14
+         1795424098.102 28316 28372 I CaraShader: fragment_key key=43ee92266820f517 source=54c8b340ec82cab1 lit=1 generation_us=57
+         1795424098.102 28316 28372 I CaraShader: first_draw program=56 us=17
+         1795424098.103 28316 28372 I CaraShader: fragment_key key=7f8bfecbc5ad148c source=15ade0bddfdf0efa lit=1 generation_us=63
+         1795424098.103 28316 28372 I CaraShader: first_draw program=57 us=16
+         1795424098.104 28316 28372 I CaraShader: fragment_key key=421a3a157d52b4d0 source=3c68b3cf1c45ee10 lit=1 generation_us=73
+         1795424098.105 28316 28372 I CaraShader: first_draw program=58 us=17
+         1795424098.105 28316 28372 I CaraShader: fragment_key key=b85aa43a1530d73b source=15f197fdecea9e91 lit=1 generation_us=63
+         1795424098.105 28316 28372 I CaraShader: first_draw program=59 us=99
+         1795424098.108 28316 28372 I CaraShader: first_draw program=60 us=31
+         1795424098.108 28316 28372 I CaraShader: fragment_key key=f1e9c6276e9b2d36 source=91e55d550df28df1 lit=1 generation_us=88
+         1795424098.108 28316 28372 I CaraShader: first_draw program=61 us=54
+         1795424098.109 28316 28372 I CaraShader: first_draw program=62 us=22
+         1795424098.109 28316 28372 I CaraShader: fragment_key key=6a08231c4a6a08de source=97dbaecef6b9fe88 lit=1 generation_us=72
+         1795424098.109 28316 28372 I CaraShader: first_draw program=63 us=16
+         1795424098.113 28316 28372 I CaraShader: fragment_key key=3f14a8aa4d0b0b5c source=be079a13fb30c0c3 lit=1 generation_us=131
+         1795424098.113 28316 28372 I CaraShader: first_draw program=64 us=49
+         1795424098.138 28316 28372 I CaraShader: fragment_key key=196559911530d73b source=b21dbc2eaad4656e lit=1 generation_us=92
+         1795424098.139 28316 28372 I CaraShader: first_draw program=65 us=42
+         1795424099.195 28316 28372 I CaraShader: fragment_key key=2104d77c67707b4d source=219cd6a679637d85 lit=0 generation_us=30
+         1795424102.023 28316 28372 I CaraPerf: cpu end=601 other_ms=62.83 execution_ms=1283.60 svc_ms=280.26 gpu_command_ms=1821.42 dsp_ms=8.68 failures=0 overflows=0
+         1795424102.023 28316 28372 I CaraPerf: work end=601 pica_lists=699 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424102.023 28316 28372 I CaraPerf: reuse end=601 prep_ms=245.35 draw_ms=2976.88 index_hits=25275 index_misses=286 index_bytes=1948588 reused_upload_bytes=285216768 vertex_upload_bytes=30310400 index_upload_bytes=3463168 packed_draws=24218 indexed_direct=13432 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=91.65 state_apply_ms=224.20 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424102.023 28316 28372 I CaraPerf: window end=601 clock=100 p50_ms=43.90 p99_ms=163.87 worst_ms=489.11 worst_frame=515 draws=25561 upload_ms=117.01 submit_ms=282.29 download_ms=0.00 compile_ms=0.00 lut_ms=1660.91 waits_ms=0.52
+         1795424107.496 28654 28654 I CaraBudget: title-warm-census
+         1795424107.875 28316 28372 I CaraPerf: cpu end=721 other_ms=60.83 execution_ms=759.44 svc_ms=265.69 gpu_command_ms=2589.32 dsp_ms=12.54 failures=0 overflows=0
+         1795424107.875 28316 28372 I CaraPerf: work end=721 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424107.875 28316 28372 I CaraPerf: reuse end=721 prep_ms=316.21 draw_ms=4105.84 index_hits=45417 index_misses=515 index_bytes=2103980 reused_upload_bytes=411792640 vertex_upload_bytes=47591168 index_upload_bytes=4011776 packed_draws=43892 indexed_direct=29012 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=142.75 state_apply_ms=270.70 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424107.875 28316 28372 I CaraPerf: window end=721 clock=100 p50_ms=49.02 p99_ms=58.34 worst_ms=61.02 worst_frame=615 draws=45932 upload_ms=218.75 submit_ms=436.99 download_ms=0.00 compile_ms=0.00 lut_ms=2171.95 waits_ms=0.52
+         1795424113.730 28316 28372 I CaraPerf: cpu end=841 other_ms=59.52 execution_ms=737.33 svc_ms=260.94 gpu_command_ms=2734.66 dsp_ms=10.28 failures=0 overflows=0
+         1795424113.730 28316 28372 I CaraPerf: work end=841 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424113.730 28316 28372 I CaraPerf: reuse end=841 prep_ms=324.87 draw_ms=4127.11 index_hits=50484 index_misses=548 index_bytes=2256308 reused_upload_bytes=413632256 vertex_upload_bytes=57764608 index_upload_bytes=6071040 packed_draws=48992 indexed_direct=34112 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=155.86 state_apply_ms=277.99 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424113.730 28316 28372 I CaraPerf: window end=841 clock=100 p50_ms=48.96 p99_ms=57.24 worst_ms=58.10 worst_frame=745 draws=51032 upload_ms=274.89 submit_ms=460.60 download_ms=0.00 compile_ms=0.00 lut_ms=2062.62 waits_ms=0.49
+         1795424119.604 28316 28372 I CaraPerf: cpu end=961 other_ms=58.96 execution_ms=720.73 svc_ms=258.87 gpu_command_ms=2717.06 dsp_ms=10.33 failures=0 overflows=0
+         1795424119.604 28316 28372 I CaraPerf: work end=961 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424119.604 28316 28372 I CaraPerf: reuse end=961 prep_ms=323.46 draw_ms=4168.02 index_hits=50656 index_misses=512 index_bytes=2286988 reused_upload_bytes=414220288 vertex_upload_bytes=57138688 index_upload_bytes=6131200 packed_draws=49128 indexed_direct=34248 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=156.45 state_apply_ms=275.16 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424119.604 28316 28372 I CaraPerf: window end=961 clock=100 p50_ms=50.99 p99_ms=58.51 worst_ms=63.44 worst_frame=909 draws=51168 upload_ms=273.61 submit_ms=449.99 download_ms=0.00 compile_ms=0.00 lut_ms=2119.99 waits_ms=0.48
+         1795424125.482 28316 28372 I CaraPerf: cpu end=1081 other_ms=59.10 execution_ms=718.93 svc_ms=258.26 gpu_command_ms=2718.59 dsp_ms=10.22 failures=0 overflows=0
+         1795424125.482 28316 28372 I CaraPerf: work end=1081 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424125.482 28316 28372 I CaraPerf: reuse end=1081 prep_ms=323.43 draw_ms=4175.73 index_hits=50686 index_misses=434 index_bytes=2307660 reused_upload_bytes=413976064 vertex_upload_bytes=57123840 index_upload_bytes=6128640 packed_draws=49080 indexed_direct=34200 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=155.75 state_apply_ms=275.63 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424125.482 28316 28372 I CaraPerf: window end=1081 clock=100 p50_ms=49.47 p99_ms=56.29 worst_ms=57.00 worst_frame=1041 draws=51120 upload_ms=272.53 submit_ms=455.21 download_ms=0.00 compile_ms=0.00 lut_ms=2123.86 waits_ms=0.50
+         1795424131.372 28316 28372 I CaraPerf: cpu end=1201 other_ms=59.18 execution_ms=721.01 svc_ms=259.87 gpu_command_ms=2731.94 dsp_ms=10.57 failures=0 overflows=0
+         1795424131.372 28316 28372 I CaraPerf: work end=1201 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424131.372 28316 28372 I CaraPerf: reuse end=1201 prep_ms=326.07 draw_ms=4177.92 index_hits=50666 index_misses=454 index_bytes=2310516 reused_upload_bytes=413977600 vertex_upload_bytes=57122304 index_upload_bytes=6127104 packed_draws=49080 indexed_direct=34200 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=156.34 state_apply_ms=276.34 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424131.372 28316 28372 I CaraPerf: window end=1201 clock=100 p50_ms=50.21 p99_ms=57.26 worst_ms=57.65 worst_frame=1123 draws=51120 upload_ms=272.62 submit_ms=460.50 download_ms=0.00 compile_ms=0.00 lut_ms=2117.28 waits_ms=0.50
+         1795424131.538 28890 28890 I CaraBudget: title-end-warm-census
+         1795424137.174 28316 28372 I CaraPerf: cpu end=1321 other_ms=62.28 execution_ms=779.93 svc_ms=268.27 gpu_command_ms=2797.20 dsp_ms=12.21 failures=0 overflows=0
+         1795424137.174 28316 28372 I CaraPerf: work end=1321 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424137.174 28316 28372 I CaraPerf: reuse end=1321 prep_ms=323.58 draw_ms=4016.72 index_hits=52517 index_misses=197 index_bytes=2310516 reused_upload_bytes=409030656 vertex_upload_bytes=65389568 index_upload_bytes=4766720 packed_draws=50674 indexed_direct=35794 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=164.04 state_apply_ms=288.00 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424137.174 28316 28372 I CaraPerf: window end=1321 clock=100 p50_ms=51.81 p99_ms=61.57 worst_ms=62.48 worst_frame=1207 draws=52714 upload_ms=294.90 submit_ms=465.93 download_ms=0.00 compile_ms=0.00 lut_ms=1887.12 waits_ms=0.61
+         1795424138.972 28977 28977 I CaraBudget: profile-warm-census
+         1795424142.895 28316 28372 I CaraPerf: cpu end=1441 other_ms=60.17 execution_ms=737.07 svc_ms=264.15 gpu_command_ms=2536.02 dsp_ms=11.81 failures=0 overflows=0
+         1795424142.895 28316 28372 I CaraPerf: work end=1441 pica_lists=600 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424142.895 28316 28372 I CaraPerf: reuse end=1441 prep_ms=310.71 draw_ms=4015.39 index_hits=45264 index_misses=50 index_bytes=2310516 reused_upload_bytes=408154880 vertex_upload_bytes=49067776 index_upload_bytes=3745536 packed_draws=43274 indexed_direct=28394 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=139.10 state_apply_ms=261.77 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424142.895 28316 28372 I CaraPerf: window end=1441 clock=100 p50_ms=48.00 p99_ms=55.30 worst_ms=66.12 worst_frame=1361 draws=45314 upload_ms=222.51 submit_ms=433.09 download_ms=0.00 compile_ms=0.00 lut_ms=2121.71 waits_ms=0.59
+         1795424144.491 28316 28372 I CaraShader: fragment_key key=3f817e4d5524bfe1 source=11ebad82b6ebe074 lit=0 generation_us=53
+         1795424145.323 28316 28372 I CaraShader: fragment_key key=50d63b8c824d9048 source=7887084e73c153b9 lit=1 generation_us=106
+         1795424145.365 28316 28372 I CaraShader: fragment_key key=2d28dae86fb25073 source=ff5250f92f3e597c lit=1 generation_us=115
+         1795424145.365 28316 28372 I CaraShader: first_draw program=66 us=25
+         1795424146.420 28316 28372 I CaraShader: fragment_key key=d798371ce677f692 source=8bcf1b12da1e3929 lit=1 generation_us=142
+         1795424146.421 28316 28372 I CaraShader: first_draw program=67 us=92
+         1795424146.421 28316 28372 I CaraShader: first_draw program=68 us=184
+         1795424146.433 28316 28372 I CaraShader: fragment_key key=73ac73a3922a2cad source=d0295b5f426ab732 lit=1 generation_us=106
+         1795424146.434 28316 28372 I CaraShader: first_draw program=69 us=235
+         1795424146.488 28316 28372 I CaraShader: first_draw program=70 us=21
+         1795424146.489 28316 28372 I CaraShader: fragment_key key=9ebe83e6a8c7761f source=0524371141c5d5d9 lit=0 generation_us=33
+         1795424146.489 28316 28372 I CaraShader: first_draw program=72 us=31
+         1795424146.491 28316 28372 I CaraShader: fragment_key key=b28da34b8238a890 source=dd3f99d4204debbb lit=1 generation_us=121
+         1795424146.491 28316 28372 I CaraShader: first_draw program=73 us=99
+         1795424146.495 28316 28372 I CaraShader: fragment_key key=8ee8cfa62fb5490b source=e019e2fb4e276254 lit=1 generation_us=84
+         1795424146.495 28316 28372 I CaraShader: first_draw program=74 us=31
+         1795424146.497 28316 28372 I CaraShader: fragment_key key=bba3f844ad38e996 source=8dd8b89892a27bfa lit=1 generation_us=106
+         1795424146.497 28316 28372 I CaraShader: first_draw program=75 us=39
+         1795424146.500 28316 28372 I CaraShader: fragment_key key=2cdc01d1aa1b0aa2 source=b684717d10999231 lit=0 generation_us=37
+         1795424146.500 28316 28372 I CaraShader: first_draw program=81 us=46
+         1795424146.502 28316 28372 I CaraShader: fragment_key key=2104d77ca2cb6deb source=5dc510c9db650bfd lit=0 generation_us=41
+         1795424146.502 28316 28372 I CaraShader: first_draw program=82 us=55
+         1795424146.502 28316 28372 I CaraShader: fragment_key key=d8411b96c98223fb source=ebdf64e12b90a5f1 lit=1 generation_us=104
+         1795424146.502 28316 28372 I CaraShader: first_draw program=78 us=23
+         1795424146.502 28316 28372 I CaraShader: first_draw program=79 us=19
+         1795424146.503 28316 28372 I CaraShader: fragment_key key=737bfe6ed5196c20 source=3e8d3814765fc3ea lit=1 generation_us=123
+         1795424146.503 28316 28372 I CaraShader: first_draw program=80 us=18
+         1795424146.504 28316 28372 I CaraShader: fragment_key key=3f817e4deb9b676a source=93c27678d622f8b0 lit=0 generation_us=37
+         1795424146.505 28316 28372 I CaraShader: fragment_key key=3f817e4da4afccdb source=11ebad82b6ebe074 lit=0 generation_us=24
+         1795424146.520 28316 28372 I CaraShader: fragment_key key=d8411b962788e238 source=ebdf64e12b90a5f1 lit=1 generation_us=130
+         1795424147.119 28316 28372 I CaraPerf: cpu end=1561 other_ms=66.02 execution_ms=761.69 svc_ms=257.44 gpu_command_ms=1923.11 dsp_ms=12.00 failures=0 overflows=0
+         1795424147.119 28316 28372 I CaraPerf: work end=1561 pica_lists=669 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424147.119 28316 28372 I CaraPerf: reuse end=1561 prep_ms=303.25 draw_ms=2573.51 index_hits=29129 index_misses=97 index_bytes=3856460 reused_upload_bytes=403241728 vertex_upload_bytes=32468224 index_upload_bytes=2979072 packed_draws=27896 indexed_direct=15058 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=106.06 state_apply_ms=209.68 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424147.119 28316 28372 I CaraPerf: window end=1561 clock=100 p50_ms=34.03 p99_ms=88.49 worst_ms=108.34 worst_frame=1528 draws=29226 upload_ms=110.99 submit_ms=450.66 download_ms=0.00 compile_ms=0.00 lut_ms=1038.75 waits_ms=0.61
+         1795424147.176 28316 28372 I CaraShader: fragment_key key=d121ac6dd47bc1a5 source=0b807268cce3e6c5 lit=1 generation_us=90
+         1795424147.177 28316 28372 I CaraShader: first_draw program=83 us=79
+         1795424147.177 28316 28372 I CaraShader: first_draw program=84 us=19
+         1795424147.489 28316 28372 I CaraShader: first_draw program=85 us=35
+         1795424149.276 28316 28372 I CaraPerf: cpu end=1681 other_ms=59.27 execution_ms=516.84 svc_ms=233.44 gpu_command_ms=1135.44 dsp_ms=10.38 failures=0 overflows=0
+         1795424149.276 28316 28372 I CaraPerf: work end=1681 pica_lists=721 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424149.276 28316 28372 I CaraPerf: reuse end=1681 prep_ms=209.26 draw_ms=974.37 index_hits=16280 index_misses=710 index_bytes=4768172 reused_upload_bytes=505650176 vertex_upload_bytes=6384128 index_upload_bytes=631296 packed_draws=16796 indexed_direct=7196 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=73.27 state_apply_ms=153.86 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424149.276 28316 28372 I CaraPerf: window end=1681 clock=100 p50_ms=17.79 p99_ms=24.27 worst_ms=25.13 worst_frame=1667 draws=16990 upload_ms=41.32 submit_ms=164.96 download_ms=0.00 compile_ms=0.00 lut_ms=167.82 waits_ms=0.55
+         1795424151.265 28316 28372 I CaraPerf: cpu end=1801 other_ms=59.81 execution_ms=510.02 svc_ms=230.29 gpu_command_ms=1074.43 dsp_ms=9.45 failures=0 overflows=0
+         1795424151.265 28316 28372 I CaraPerf: work end=1801 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424151.265 28316 28372 I CaraPerf: reuse end=1801 prep_ms=202.81 draw_ms=754.96 index_hits=16191 index_misses=697 index_bytes=5434916 reused_upload_bytes=505686016 vertex_upload_bytes=5970432 index_upload_bytes=547328 packed_draws=16888 indexed_direct=7288 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=62.36 state_apply_ms=150.45 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424151.265 28316 28372 I CaraPerf: window end=1801 clock=100 p50_ms=16.49 p99_ms=19.45 worst_ms=21.86 worst_frame=1707 draws=16888 upload_ms=31.76 submit_ms=156.05 download_ms=0.00 compile_ms=0.00 lut_ms=6.00 waits_ms=0.57
+         1795424152.941 28316 28372 I CaraShader: fragment_key key=ef97ebe39cafe49f source=33effa611cc43f15 lit=0 generation_us=51
+         1795424152.941 28316 28372 I CaraShader: first_draw program=88 us=54
+         1795424152.944 28316 28372 I CaraShader: first_draw program=89 us=47
+         1795424153.270 28316 28372 I CaraPerf: cpu end=1921 other_ms=57.55 execution_ms=484.81 svc_ms=227.82 gpu_command_ms=1039.35 dsp_ms=9.25 failures=0 overflows=0
+         1795424153.270 28316 28372 I CaraPerf: work end=1921 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424153.270 28316 28372 I CaraPerf: reuse end=1921 prep_ms=195.07 draw_ms=748.26 index_hits=16135 index_misses=225 index_bytes=5497956 reused_upload_bytes=506505472 vertex_upload_bytes=4245248 index_upload_bytes=427776 packed_draws=16360 indexed_direct=6720 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=56.47 state_apply_ms=148.97 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424153.270 28316 28372 I CaraPerf: window end=1921 clock=100 p50_ms=16.76 p99_ms=19.49 worst_ms=22.35 worst_frame=1902 draws=16360 upload_ms=24.99 submit_ms=158.48 download_ms=0.00 compile_ms=0.00 lut_ms=3.43 waits_ms=0.48
+         1795424155.730 28316 28372 I CaraPerf: cpu end=2041 other_ms=60.68 execution_ms=513.99 svc_ms=256.48 gpu_command_ms=1353.70 dsp_ms=10.11 failures=0 overflows=0
+         1795424155.730 28316 28372 I CaraPerf: work end=2041 pica_lists=721 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424155.730 28316 28372 I CaraPerf: reuse end=2041 prep_ms=248.03 draw_ms=1215.37 index_hits=17529 index_misses=201 index_bytes=5586194 reused_upload_bytes=527521024 vertex_upload_bytes=4705536 index_upload_bytes=470272 packed_draws=17730 indexed_direct=7320 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=89.57 state_apply_ms=176.37 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424155.730 28316 28372 I CaraPerf: window end=2041 clock=100 p50_ms=20.78 p99_ms=27.89 worst_ms=33.69 worst_frame=1971 draws=17730 upload_ms=33.96 submit_ms=402.48 download_ms=0.00 compile_ms=0.00 lut_ms=3.87 waits_ms=0.71
+         1795424158.459 28316 28372 I CaraPerf: cpu end=2161 other_ms=64.29 execution_ms=514.38 svc_ms=268.79 gpu_command_ms=1427.80 dsp_ms=10.93 failures=0 overflows=0
+         1795424158.459 28316 28372 I CaraPerf: work end=2161 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424158.459 28316 28372 I CaraPerf: reuse end=2161 prep_ms=268.92 draw_ms=1351.66 index_hits=17625 index_misses=213 index_bytes=5642170 reused_upload_bytes=532510464 vertex_upload_bytes=3856128 index_upload_bytes=376576 packed_draws=17838 indexed_direct=7278 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=80.18 state_apply_ms=181.39 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424158.459 28316 28372 I CaraPerf: window end=2161 clock=100 p50_ms=22.57 p99_ms=33.01 worst_ms=35.75 worst_frame=2133 draws=17838 upload_ms=31.31 submit_ms=500.01 download_ms=0.00 compile_ms=0.00 lut_ms=4.08 waits_ms=0.79
+         1795424160.837 28316 28372 I CaraPerf: cpu end=2281 other_ms=63.50 execution_ms=519.42 svc_ms=251.46 gpu_command_ms=1334.11 dsp_ms=10.52 failures=0 overflows=0
+         1795424160.838 28316 28372 I CaraPerf: work end=2281 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424160.838 28316 28372 I CaraPerf: reuse end=2281 prep_ms=246.18 draw_ms=1062.13 index_hits=17569 index_misses=139 index_bytes=5701354 reused_upload_bytes=532559872 vertex_upload_bytes=3507200 index_upload_bytes=332800 packed_draws=17708 indexed_direct=7148 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=82.33 state_apply_ms=172.59 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424160.838 28316 28372 I CaraPerf: window end=2281 clock=100 p50_ms=19.12 p99_ms=27.72 worst_ms=28.91 worst_frame=2191 draws=17708 upload_ms=27.13 submit_ms=279.59 download_ms=0.00 compile_ms=0.00 lut_ms=4.08 waits_ms=0.85
+         1795424162.024 28316 28372 I CaraShader: fragment_key key=c21b612698095815 source=5433b5efce09ac3e lit=0 generation_us=31
+         1795424162.025 28316 28372 I CaraShader: first_draw program=115 us=57
+         1795424162.025 28316 28372 I CaraShader: fragment_key key=d8411b96cb5e5f46 source=ebdf64e12b90a5f1 lit=1 generation_us=108
+         1795424162.026 28316 28372 I CaraShader: fragment_key key=c7983adf1d63081e source=98b3f0d64615b66d lit=1 generation_us=123
+         1795424162.027 28316 28372 I CaraShader: first_draw program=91 us=41
+         1795424162.030 28316 28372 I CaraShader: fragment_key key=444702a8f4fd5b0b source=f31ad840da8649ec lit=1 generation_us=90
+         1795424162.030 28316 28372 I CaraShader: first_draw program=92 us=59
+         1795424162.032 28316 28372 I CaraShader: fragment_key key=78226e455970ba90 source=8299d9b90064201e lit=1 generation_us=69
+         1795424162.032 28316 28372 I CaraShader: first_draw program=93 us=41
+         1795424162.036 28316 28372 I CaraShader: first_draw program=94 us=71
+         1795424162.037 28316 28372 I CaraShader: first_draw program=95 us=19
+         1795424162.038 28316 28372 I CaraShader: first_draw program=96 us=62
+         1795424162.040 28316 28372 I CaraShader: fragment_key key=b903bead49623ead source=c0d77fe0208e0653 lit=1 generation_us=70
+         1795424162.040 28316 28372 I CaraShader: first_draw program=97 us=40
+         1795424162.042 28316 28372 I CaraShader: fragment_key key=8566d240e4efdf36 source=7dc4fd00c6dde70f lit=1 generation_us=70
+         1795424162.042 28316 28372 I CaraShader: first_draw program=98 us=29
+         1795424162.045 28316 28372 I CaraShader: first_draw program=99 us=46
+         1795424162.045 28316 28372 I CaraShader: fragment_key key=4e95973677b38cbf source=bf641dd3310bc486 lit=1 generation_us=110
+         1795424162.045 28316 28372 I CaraShader: first_draw program=100 us=22
+         1795424162.046 28316 28372 I CaraShader: fragment_key key=e5af72ce6b28c364 source=6f54a23f2203c3df lit=1 generation_us=61
+         1795424162.046 28316 28372 I CaraShader: first_draw program=101 us=21
+         1795424162.046 28316 28372 I CaraShader: fragment_key key=4e95973699b94d7c source=bf641dd3310bc486 lit=1 generation_us=50
+         1795424162.046 28316 28372 I CaraShader: first_draw program=102 us=54
+         1795424162.079 28316 28372 I CaraShader: fragment_key key=9ebe83e6909fa947 source=14d2b4559423a0fc lit=0 generation_us=95
+         1795424162.079 28316 28372 I CaraShader: first_draw program=114 us=53
+         1795424162.097 28316 28372 I CaraShader: first_draw program=105 us=39
+         1795424162.100 28316 28372 I CaraShader: fragment_key key=63249c8d40ef80f7 source=067d56785be4e94f lit=0 generation_us=37
+         1795424162.100 28316 28372 I CaraShader: first_draw program=107 us=97
+         1795424162.101 28316 28372 I CaraShader: fragment_key key=cc31eae6a5e30eec source=b9e85797bc551d26 lit=0 generation_us=28
+         1795424162.101 28316 28372 I CaraShader: first_draw program=109 us=111
+         1795424162.104 28316 28372 I CaraShader: fragment_key key=a61908800ec40a0f source=601c3de3b0489009 lit=1 generation_us=74
+         1795424162.105 28316 28372 I CaraShader: first_draw program=110 us=27
+         1795424162.105 28316 28372 I CaraShader: fragment_key key=2104d77ca0171156 source=5dc510c9db650bfd lit=0 generation_us=46
+         1795424162.109 28316 28372 I CaraShader: fragment_key key=9ebe83e64aa50d18 source=a1507018acd82378 lit=0 generation_us=38
+         1795424162.110 28316 28372 I CaraShader: fragment_key key=efaa6a9daf55545d source=bd8666435f474b43 lit=1 generation_us=67
+         1795424162.110 28316 28372 I CaraShader: first_draw program=111 us=27
+         1795424162.110 28316 28372 I CaraShader: first_draw program=112 us=24
+         1795424162.110 28316 28372 I CaraShader: fragment_key key=44908f65b3ce1b86 source=0c815b2baa3214c8 lit=1 generation_us=66
+         1795424162.111 28316 28372 I CaraShader: first_draw program=113 us=19
+         1795424162.137 28316 28372 I CaraShader: fragment_key key=d121ac6d38ad7cdb source=0b807268cce3e6c5 lit=1 generation_us=60
+         1795424163.949 28316 28372 I CaraPerf: cpu end=2401 other_ms=64.92 execution_ms=621.13 svc_ms=256.60 gpu_command_ms=1748.67 dsp_ms=10.09 failures=0 overflows=0
+         1795424163.949 28316 28372 I CaraPerf: work end=2401 pica_lists=721 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424163.949 28316 28372 I CaraPerf: reuse end=2401 prep_ms=226.79 draw_ms=1718.09 index_hits=28171 index_misses=130 index_bytes=6903929 reused_upload_bytes=595316992 vertex_upload_bytes=28441600 index_upload_bytes=3140608 packed_draws=28301 indexed_direct=10357 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=105.93 state_apply_ms=205.26 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424163.949 28316 28372 I CaraPerf: window end=2401 clock=100 p50_ms=17.95 p99_ms=86.97 worst_ms=107.55 worst_frame=2350 draws=28301 upload_ms=76.57 submit_ms=297.62 download_ms=0.00 compile_ms=0.00 lut_ms=372.85 waits_ms=0.66
+         1795424168.267 28316 28372 I CaraPerf: cpu end=2521 other_ms=72.31 execution_ms=709.71 svc_ms=268.51 gpu_command_ms=2276.95 dsp_ms=9.97 failures=0 overflows=0
+         1795424168.267 28316 28372 I CaraPerf: work end=2521 pica_lists=727 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424168.267 28316 28372 I CaraPerf: reuse end=2521 prep_ms=216.90 draw_ms=2740.80 index_hits=42284 index_misses=0 index_bytes=6903929 reused_upload_bytes=732607488 vertex_upload_bytes=11469824 index_upload_bytes=865280 packed_draws=42284 indexed_direct=14454 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=152.03 state_apply_ms=248.31 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424168.267 28316 28372 I CaraPerf: window end=2521 clock=100 p50_ms=35.56 p99_ms=64.35 worst_ms=86.56 worst_frame=2496 draws=42284 upload_ms=45.52 submit_ms=439.92 download_ms=0.00 compile_ms=0.00 lut_ms=955.84 waits_ms=0.75
+         1795424168.560 28316 28372 I CaraShader: fragment_key key=c7983adfc585d0fc source=2c70bc235a94a33d lit=1 generation_us=78
+         1795424168.561 28316 28372 I CaraShader: first_draw program=116 us=52
+         1795424168.562 28316 28372 I CaraShader: fragment_key key=444702a82c1b83e9 source=c6c77bca600ac679 lit=1 generation_us=109
+         1795424168.562 28316 28372 I CaraShader: first_draw program=117 us=24
+         1795424168.562 28316 28372 I CaraShader: fragment_key key=78226e4581966272 source=5679050ca244728c lit=1 generation_us=45
+         1795424168.562 28316 28372 I CaraShader: first_draw program=118 us=18
+         1795424168.562 28316 28372 I CaraShader: first_draw program=119 us=17
+         1795424168.562 28316 28372 I CaraShader: first_draw program=120 us=18
+         1795424168.563 28316 28372 I CaraShader: first_draw program=121 us=19
+         1795424168.563 28316 28372 I CaraShader: fragment_key key=b903bead9184e64f source=1e06e034d781a18b lit=1 generation_us=55
+         1795424168.563 28316 28372 I CaraShader: first_draw program=122 us=25
+         1795424168.563 28316 28372 I CaraShader: fragment_key key=8566d2403c0907d4 source=7af58079e3c19777 lit=1 generation_us=45
+         1795424168.563 28316 28372 I CaraShader: first_draw program=123 us=21
+         1795424168.564 28316 28372 I CaraShader: first_draw program=124 us=20
+         1795424168.564 28316 28372 I CaraShader: fragment_key key=4e959736af55545d source=4391deed97316fe3 lit=1 generation_us=74
+         1795424168.564 28316 28372 I CaraShader: first_draw program=125 us=25
+         1795424168.564 28316 28372 I CaraShader: fragment_key key=e5af72ceb3ce1b86 source=feb211c484ae50c9 lit=1 generation_us=46
+         1795424168.564 28316 28372 I CaraShader: first_draw program=126 us=20
+         1795424168.565 28316 28372 I CaraShader: fragment_key key=4e959736415f959e source=4391deed97316fe3 lit=1 generation_us=56
+         1795424168.565 28316 28372 I CaraShader: first_draw program=127 us=19
+         1795424168.566 28316 28372 I CaraShader: fragment_key key=9ebe83e6487971a5 source=a1507018acd82378 lit=0 generation_us=75
+         1795424168.567 28316 28372 I CaraShader: fragment_key key=2cdc01d172fdd240 source=12b1d51ec8a4fd4c lit=0 generation_us=24
+         1795424168.567 28316 28372 I CaraShader: fragment_key key=2104d77c7a2db509 source=219cd6a679637d85 lit=0 generation_us=10
+         1795424168.568 28316 28372 I CaraShader: first_draw program=129 us=46
+         1795424168.568 28316 28372 I CaraShader: fragment_key key=63249c8d98095815 source=900a37442607ed62 lit=0 generation_us=37
+         1795424168.568 28316 28372 I CaraShader: first_draw program=131 us=44
+         1795424168.568 28316 28372 I CaraShader: fragment_key key=cc31eae67d05d60e source=747f9056027492d4 lit=0 generation_us=34
+         1795424168.568 28316 28372 I CaraShader: first_draw program=133 us=17
+         1795424168.570 28316 28372 I CaraShader: fragment_key key=a6190880d622d2ed source=3998345b7f683e7d lit=1 generation_us=70
+         1795424168.570 28316 28372 I CaraShader: first_draw program=134 us=36
+         1795424168.570 28316 28372 I CaraShader: fragment_key key=2104d77c78f1c9b4 source=219cd6a679637d85 lit=0 generation_us=34
+         1795424171.776 28316 28372 I CaraPerf: cpu end=2641 other_ms=78.85 execution_ms=670.47 svc_ms=274.51 gpu_command_ms=2250.61 dsp_ms=10.95 failures=0 overflows=0
+         1795424171.776 28316 28372 I CaraPerf: work end=2641 pica_lists=720 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424171.776 28316 28372 I CaraPerf: reuse end=2641 prep_ms=218.23 draw_ms=1886.81 index_hits=41880 index_misses=0 index_bytes=6903929 reused_upload_bytes=732432384 vertex_upload_bytes=5369856 index_upload_bytes=110592 packed_draws=41880 indexed_direct=14280 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=154.11 state_apply_ms=268.85 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424171.776 28316 28372 I CaraPerf: window end=2641 clock=100 p50_ms=28.53 p99_ms=36.79 worst_ms=38.22 worst_frame=2530 draws=41880 upload_ms=32.69 submit_ms=442.84 download_ms=0.00 compile_ms=0.00 lut_ms=85.30 waits_ms=0.80
+         1795424175.212 28316 28372 I CaraPerf: cpu end=2761 other_ms=79.70 execution_ms=663.26 svc_ms=272.50 gpu_command_ms=2283.68 dsp_ms=10.76 failures=0 overflows=0
+         1795424175.212 28316 28372 I CaraPerf: work end=2761 pica_lists=725 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424175.212 28316 28372 I CaraPerf: reuse end=2761 prep_ms=224.16 draw_ms=1811.13 index_hits=42228 index_misses=0 index_bytes=6903929 reused_upload_bytes=738520832 vertex_upload_bytes=5427456 index_upload_bytes=114944 packed_draws=42228 indexed_direct=14398 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=148.68 state_apply_ms=272.14 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424175.212 28316 28372 I CaraPerf: window end=2761 clock=100 p50_ms=28.03 p99_ms=35.18 worst_ms=49.31 worst_frame=2732 draws=42228 upload_ms=32.43 submit_ms=454.74 download_ms=0.00 compile_ms=0.00 lut_ms=7.74 waits_ms=0.81
+         1795424178.721 28316 28372 I CaraPerf: cpu end=2881 other_ms=81.06 execution_ms=668.09 svc_ms=280.34 gpu_command_ms=2289.25 dsp_ms=10.52 failures=0 overflows=0
+         1795424178.721 28316 28372 I CaraPerf: work end=2881 pica_lists=726 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424178.721 28316 28372 I CaraPerf: reuse end=2881 prep_ms=222.97 draw_ms=1838.04 index_hits=42229 index_misses=0 index_bytes=6903929 reused_upload_bytes=732475648 vertex_upload_bytes=11474944 index_upload_bytes=860160 packed_draws=42229 indexed_direct=14399 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=153.05 state_apply_ms=270.09 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424178.721 28316 28372 I CaraPerf: window end=2881 clock=100 p50_ms=28.45 p99_ms=39.12 worst_ms=69.68 worst_frame=2839 draws=42229 upload_ms=42.01 submit_ms=454.03 download_ms=0.00 compile_ms=0.00 lut_ms=7.86 waits_ms=0.89
+         1795424182.293 28316 28372 I CaraPerf: cpu end=3001 other_ms=80.59 execution_ms=676.68 svc_ms=272.23 gpu_command_ms=2279.19 dsp_ms=10.81 failures=0 overflows=0
+         1795424182.294 28316 28372 I CaraPerf: work end=3001 pica_lists=733 shader_stream_packets=0 shader_stream_words=0 texture_lookup_checks=0 texture_lookup_hits=0 texture_verify_mismatches=0 subrect_candidates=0 subrect_rejected=0
+         1795424182.294 28316 28372 I CaraPerf: reuse end=3001 prep_ms=219.90 draw_ms=1841.85 index_hits=42579 index_misses=0 index_bytes=6903929 reused_upload_bytes=744740864 vertex_upload_bytes=5360384 index_upload_bytes=111360 packed_draws=42579 indexed_direct=14519 indexed_lit=0 indexed_lit_vertices=0 indexed_lit_ids=0 indexed_fallbacks=0 native_elements=0 native_indices_saved=0 runtime_tev_selections=0 shader_compiles=0 uniform_ms=152.97 state_apply_ms=273.99 deferred_lut_syncs=0 persistent_uniform_writes=0 persistent_uniform_waits=0 draw_fbo_hits=0 draw_fbo_builds=0
+         1795424182.294 28316 28372 I CaraPerf: window end=3001 clock=100 p50_ms=29.28 p99_ms=49.57 worst_ms=50.47 worst_frame=2900 draws=42579 upload_ms=31.74 submit_ms=461.47 download_ms=0.00 compile_ms=0.00 lut_ms=7.78 waits_ms=0.79
+         1795424184.382 29373 29373 I CaraBudget: lab-warm-census

@@ -7,7 +7,6 @@
 
 #include <array>
 #include <optional>
-#include <random>
 #include <utility>
 #include <vector>
 
@@ -158,7 +157,7 @@ public:
     using ArgumentInfo = std::array<Argument, IR::max_arg_count>;
 
     explicit RegAlloc(oaknut::CodeGenerator& code, FpsrManager& fpsr_manager, std::vector<int> gpr_order, std::vector<int> fpr_order)
-            : code{code}, fpsr_manager{fpsr_manager}, gpr_order{gpr_order}, fpr_order{fpr_order}, rand_gen{std::random_device{}()} {}
+            : code{code}, fpsr_manager{fpsr_manager}, gpr_order{std::move(gpr_order)}, fpr_order{std::move(fpr_order)} {}
 
     ArgumentInfo GetArgumentInfo(IR::Inst* inst);
     bool WasValueDefined(IR::Inst* inst) const;
@@ -314,7 +313,7 @@ private:
     int AllocateRegister(const std::array<HostLocInfo, 32>& regs, const std::vector<int>& order) const;
     void SpillGpr(int index);
     void SpillFpr(int index);
-    int FindFreeSpill() const;
+    int FindFreeSpill();
 
     void LoadCopyInto(const IR::Value& value, oaknut::XReg reg);
     void LoadCopyInto(const IR::Value& value, oaknut::QReg reg);
@@ -333,7 +332,8 @@ private:
     HostLocInfo flags;
     std::array<HostLocInfo, SpillCount> spills;
 
-    mutable std::mt19937 rand_gen;
+    // Only FindFreeSpill extends the contiguous prefix used by this block.
+    size_t used_spill_slots = 0;
 
     tsl::robin_set<const IR::Inst*> defined_insts;
 };

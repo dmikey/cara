@@ -1,3 +1,5 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
+#include "video_core/renderer_opengl/gl_remap_origin_profile.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 
 #include <algorithm>
@@ -18,6 +20,7 @@
 #include "common/common_paths.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
+#include "common/cpu_category_timing.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
@@ -29,6 +32,9 @@
 #include "core/hle/service/ptm/ptm.h"
 #include "core/loader/smdh.h"
 #include "core/settings.h"
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/video_core.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -165,6 +171,35 @@ void BootGame(const std::string& path) {
         return;
     }
 
+    // Isolate shared renderer and command-processor optimizations on device.
+    const auto select_probe = [](const char* key, const char* variable) {
+        const Config::ConfigInfo<bool> option{{"Debug", key}, false};
+        setenv(variable, Config::Get(option) ? "1" : "0", 1);
+    };
+    select_probe("pica_shader_stream_batch", "CARA_PICA_SHADER_STREAM_BATCH");
+    select_probe("lut_effective_change", "CARA_LUT_EFFECTIVE_CHANGE");
+    select_probe("packed_staging_reuse", "CARA_PACKED_STAGING_REUSE");
+    select_probe("mailbox_fence_packet", "CARA_MAILBOX_FENCE_PACKET");
+    select_probe("mailbox_async_publish", "CARA_MAILBOX_ASYNC_PUBLISH");
+    select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
+    select_probe("lighting_lut_generations", "CARA_LIGHTING_LUT_GENERATIONS");
+    select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");
+    select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
+    select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");
+    select_probe("checked_remap_packet", "CARA_CHECKED_REMAP_PACKET");
+    select_probe("texture_lookup_reuse", "CARA_TEXTURE_LOOKUP_REUSE");
+    select_probe("texture_lookup_verify", "CARA_TEXTURE_LOOKUP_VERIFY");
+    select_probe("texture_exact_prefilter", "CARA_TEXTURE_EXACT_PREFILTER");
+    select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
+    select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
+    select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
+    select_probe("atlas_extended_program_cache", "CARA_MALI_EXTENDED_PROGRAM_CACHE");
+    const Config::ConfigInfo<bool> render_phase_trace{{"Debug", "trace_render_phases"}, false};
+    const bool trace_render_phases = Config::Get(render_phase_trace);
+    const char* render_phase_value = trace_render_phases ? "1" : "0";
+    setenv("CARA_RENDER_BOOKKEEPING_PROFILE", render_phase_value, 1);
+    setenv("CARA_TEXTURE_ACQUISITION_PROFILE", render_phase_value, 1);
+    setenv("CARA_PHASE_CPU_TIMING", render_phase_value, 1);
     // This residency path was tested on Mali with both GLES backends.
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
     setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
@@ -173,15 +208,70 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
+    // EGL sets the shipping geometry reuse defaults. Separate debug overrides
+    // let a matched trace isolate each shared atlas path.
+    const Config::ConfigInfo<bool> resident_uploads{{"Debug", "resident_vertex_uploads"}, true};
+    const Config::ConfigInfo<bool> prepared_indices{{"Debug", "prepared_vertex_indices"}, true};
+    const Config::ConfigInfo<bool> index_identity{{"Debug", "vertex_index_identity_reuse"}, false};
+    const Config::ConfigInfo<bool> clear_padding_only{{"Debug", "packed_vertex_padding_only"}, false};
+    const Config::ConfigInfo<bool> indexed_draws{{"Debug", "atlas_indexed_draws"}, false};
+    const Config::ConfigInfo<bool> async_indexed{{"Debug", "atlas_async_indexed_shaders"}, true};
+    const Config::ConfigInfo<bool> native_elements{{"Debug", "atlas_native_elements"}, false};
+    const Config::ConfigInfo<bool> retain_bindings{{"Debug", "atlas_retain_vertex_bindings"}, false};
+    const Config::ConfigInfo<bool> retain_pica_textures{{"Debug", "atlas_retain_pica_textures"}, false};
+    setenv("CARA_GLES_RETAIN_PICA_TEXTURES", Config::Get(retain_pica_textures) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> runtime_tev{{"Debug", "atlas_runtime_tev"}, false};
+    const Config::ConfigInfo<bool> reuse_vs_uniforms{{"Debug", "atlas_reuse_vs_uniforms"}, false};
+    const Config::ConfigInfo<bool> reuse_raster_state{{"Debug", "atlas_reuse_raster_state"}, false};
+    const Config::ConfigInfo<bool> defer_unused_luts{{"Debug", "atlas_defer_unused_luts"}, false};
+    const Config::ConfigInfo<bool> persistent_uniforms{{"Debug", "atlas_persistent_uniforms"}, false};
+    const Config::ConfigInfo<bool> draw_fbos{{"Debug", "atlas_draw_framebuffer_cache"}, false};
+    const Config::ConfigInfo<bool> lit_lists{{"Debug", "atlas_lit_indexed_lists"}, false};
+    const Config::ConfigInfo<bool> async_stage_reuse{{"Debug", "atlas_async_stage_reuse"}, false};
+    const Config::ConfigInfo<bool> reuse_layout{{"Debug", "packed_layout_uniform_reuse"}, false};
+    const Config::ConfigInfo<bool> backlog_trace{{"Debug", "trace_ordered_gles_backlog"}, false};
+    setenv("CARA_TRACE_GLES_BACKLOG", Config::Get(backlog_trace) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> batch_trace{{"Debug", "trace_draw_batches"}, false};
+    setenv("CARA_TRACE_DRAW_BATCHES", Config::Get(batch_trace) ? "1" : "0", 1);
+    const Config::ConfigInfo<bool> repeat_instances{{"Debug", "probe_repeat_instances"}, false};
+    setenv("CARA_REPEAT_INSTANCES", Config::Get(repeat_instances) ? "1" : "0", 1);
+    const bool retain_uploads = Config::Get(resident_uploads);
+    setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
+    setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", retain_uploads ? "1" : "0", 1);
+    setenv("CARA_VERTEX_INDEX_CACHE", Config::Get(prepared_indices) ? "1" : "0", 1);
+    setenv("CARA_VERTEX_INDEX_IDENTITY_REUSE", Config::Get(index_identity) ? "1" : "0", 1);
+    setenv("CARA_PACKED_PADDING_ONLY_ZERO", Config::Get(clear_padding_only) ? "1" : "0", 1);
+    const char* indexed_draws_value = Config::Get(indexed_draws) ? "1" : "0";
+    setenv("CARA_GPU_VERTEX_REUSE", indexed_draws_value, 1);
+    setenv("CARA_GPU_LIT_PAIR_REUSE", indexed_draws_value, 1);
+    setenv("CARA_GPU_NATIVE_ELEMENTS",
+           Config::Get(indexed_draws) && Config::Get(native_elements) ? "1" : "0", 1);
+    setenv("CARA_GPU_RETAIN_INPUT_BINDINGS", Config::Get(retain_bindings) ? "1" : "0", 1);
+    setenv("CARA_GLES_RUNTIME_TEV", Config::Get(runtime_tev) ? "1" : "0", 1);
+    setenv("CARA_VS_UNIFORM_REUSE", Config::Get(reuse_vs_uniforms) ? "1" : "0", 1);
+    setenv("CARA_GL_STATE_REUSE", Config::Get(reuse_raster_state) ? "1" : "0", 1);
+    setenv("CARA_GLES_DEFER_UNUSED_LUTS", Config::Get(defer_unused_luts) ? "1" : "0", 1);
+    setenv("CARA_GLES_PERSISTENT_UNIFORMS", Config::Get(persistent_uniforms) ? "1" : "0", 1);
+    setenv("CARA_GLES_DRAW_FRAMEBUFFER_CACHE", Config::Get(draw_fbos) ? "1" : "0", 1);
+    setenv("CARA_GPU_LIT_LISTS", Config::Get(lit_lists) ? "1" : "0", 1);
+    setenv("CARA_ANDROID_SHADER_STAGE_REUSE", Config::Get(async_stage_reuse) ? "1" : "0", 1);
+    setenv("CARA_ANDROID_ASYNC_INDEXED_SHADERS",
+           Config::Get(indexed_draws) && Config::Get(async_indexed) ? "1" : "0", 1);
+    setenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE", Config::Get(reuse_layout) ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
              Config::Get(packed_fetch_reuse));
 #endif
     LOG_INFO(Frontend, "Android CPU engine: {}",
              Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");
+    const Config::ConfigInfo<bool> shader_census{{"Debug", "trace_gl_shader_census"}, false};
+    setenv("CARA_GL_SHADER_CENSUS", Config::Get(shader_census) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> trace_timing{{"Debug", "trace_renderer_timing"}, false};
+    const Config::ConfigInfo<bool> trace_cpu{{"Debug", "trace_cpu_categories"}, false};
+    setenv("CARA_CPU_CATEGORY_TIMING", Config::Get(trace_cpu) ? "1" : "0", 1);
     auto& phases = Common::FrameTiming::counters;
     phases = {};
     phases.enabled = Config::Get(trace_timing);
+    const bool cpu_categories = phases.enabled && Common::CPUCategoryTiming::DiagnosticEnabled();
     const auto gpu_policy = Cara::GetGPUCompletionPolicy(ReadPlayMode() == Cara::PlayMode::Performance);
     Cara::gpu_completion_policy = gpu_policy;
     if (phases.enabled) {
@@ -209,6 +299,23 @@ void BootGame(const std::string& path) {
     // cfg->SetCountryCode(49); // USA
     // cfg->UpdateConfigNANDSavegame();
 
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    const Config::ConfigInfo<bool> ordered_worker{{"Debug", "ordered_gles_worker"}, false};
+    if (Config::Get(ordered_worker)) {
+        setenv("CARA_GL_QUEUE_NATIVE_MAP_UPLOAD", "1", 1);
+        if (const char* debug = std::getenv("CARA_GLES_DEBUG"); debug && std::strcmp(debug, "1") == 0) {
+            __android_log_print(ANDROID_LOG_WARN, "CaraPerf", "ordered_gles disabled while debug callback is active");
+        } else {
+            const bool active = s_render_window->StartSubmissionWorker();
+            __android_log_print(ANDROID_LOG_INFO, "CaraPerf", "ordered_gles active=%d", active);
+            if (!active && !s_render_window->HasCoreContext()) {
+                NativeLibrary::ShowMessageDialog(0, "The OpenGL ES context was lost during startup.");
+                s_render_window.reset();
+                return;
+            }
+        }
+    }
+#endif
     Core::System::ResultStatus result = system.Load(*s_render_window, path);
     if (result != Core::System::ResultStatus::Success) {
         switch (result) {
@@ -279,6 +386,7 @@ void BootGame(const std::string& path) {
         const bool enabled = phases.enabled;
         phases = {};
         phases.enabled = enabled;
+        if (cpu_categories) Common::CPUCategoryTiming::Reset();
     };
     const auto apply_play_policy = [&] {
         const auto policy = ReadPlayPolicy();
@@ -356,6 +464,197 @@ void BootGame(const std::string& path) {
                                 phases.surface_download_seconds * 1000,
                                 phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
                                 phases.gpu_wait_seconds * 1000);
+#ifdef CARA_GL_CONTEXT_DISPATCH
+                            if (OpenGL::CommandQueue::Enabled()) {
+                                using namespace OpenGL::CommandQueue;
+                                const auto q = SnapshotStats();
+                                const auto rpc = [&](RpcApi api) {
+                                    return static_cast<unsigned long long>(q.rpc_by_api[static_cast<size_t>(api)]);
+                                };
+                                __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                    "ordered_gles end=%u worker_cpu_ns=%llu commands=%llu batches=%llu "
+                                    "sync=%llu uniform_location=%llu map=%llu unmap=%llu create_program=%llu create_shader=%llu get_integer=%llu lut_jobs=%llu",
+                                    static_cast<unsigned>(frame),
+                                    static_cast<unsigned long long>(ReadWorkerCPUForProfile()),
+                                    static_cast<unsigned long long>(q.recorded_commands),
+                                    static_cast<unsigned long long>(q.submitted_batches),
+                                    static_cast<unsigned long long>(q.synchronous_calls),
+                                    rpc(RpcApi::api_glGetUniformLocation), rpc(RpcApi::api_glMapBufferRange),
+                                    rpc(RpcApi::api_glUnmapBuffer), rpc(RpcApi::api_glCreateProgram),
+                                    rpc(RpcApi::api_glCreateShader), rpc(RpcApi::api_glGetIntegerv),
+                                    static_cast<unsigned long long>(q.transaction_lut_calls));
+                                if (OpenGL::RemapOriginProfile::Enabled()) {
+                                    auto& rows = OpenGL::RemapOriginProfile::rows;
+                                    for (const auto& [key, count] : rows) {
+                                        const auto& [origin, entry, covered, src_bpp, dst_bpp, tiled_src, tiled_dst] = key;
+                                        __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                            "remap_owner end=%u origin=%u vs_entry=%d covers=%d "
+                                            "src_bpp=%u dst_bpp=%u src_tiled=%d dst_tiled=%d calls=%llu bytes=%llu",
+                                            static_cast<unsigned>(frame), origin, entry, int(covered),
+                                            src_bpp, dst_bpp, int(tiled_src), int(tiled_dst),
+                                            static_cast<unsigned long long>(count.calls),
+                                            static_cast<unsigned long long>(count.bytes));
+                                    }
+                                    rows.clear();
+                                }
+                                if (Backlog::Enabled()) {
+                                    for (const auto& row : Backlog::Take()) {
+                                        __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                            "backlog end=%u requester=%s query=%s source=%s command=%s vs_entry=%d calls=%llu ns=%llu",
+                                            static_cast<unsigned>(frame),
+                                            Backlog::SourceNames[static_cast<unsigned>(row.request.source)],
+                                            RpcApiName(row.request.api),
+                                            Backlog::SourceNames[static_cast<unsigned>(row.command.source)],
+                                            RpcApiName(row.command.api),
+                                            row.command.entry == Backlog::NoEntry ? -1 : int(row.command.entry),
+                                            static_cast<unsigned long long>(row.calls),
+                                            static_cast<unsigned long long>(row.ns));
+                                    }
+                                }
+                                const auto timings = TakeSyncTimingsForProfile();
+                                for (size_t i = 0; i < timings.size(); ++i) {
+                                    const auto& t = timings[i];
+                                    if (t.count == 0) continue;
+                                    __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                        "sync_time end=%u api=%s calls=%llu before_ns=%llu driver_ns=%llu after_ns=%llu",
+                                        static_cast<unsigned>(frame), RpcApiNames[i],
+                                        static_cast<unsigned long long>(t.count),
+                                        static_cast<unsigned long long>(t.before_driver_ns),
+                                        static_cast<unsigned long long>(t.in_driver_ns),
+                                        static_cast<unsigned long long>(t.after_driver_ns));
+                                }
+                            }
+#endif
+                            const auto reuse = fmt::format(
+                                "reuse end={} prep_ms={:.2f} draw_ms={:.2f} "
+                                "index_hits={} index_misses={} index_bytes={} "
+                                "reused_upload_bytes={} vertex_upload_bytes={} index_upload_bytes={} packed_draws={} "
+                                "indexed_direct={} indexed_lit={} indexed_lit_vertices={} indexed_lit_ids={} indexed_fallbacks={} "
+                                "native_elements={} native_indices_saved={} runtime_tev_selections={} shader_compiles={} "
+                                "uniform_ms={:.2f} state_apply_ms={:.2f} deferred_lut_syncs={} "
+                                "persistent_uniform_writes={} persistent_uniform_waits={} "
+                                "draw_fbo_hits={} draw_fbo_builds={}",
+                                frame, phases.vertex_prepare_seconds * 1000, phases.draw_seconds * 1000,
+                                phases.vertex_index_cache_hits, phases.vertex_index_cache_misses,
+                                phases.vertex_index_cache_bytes, phases.vertex_upload_reused_bytes,
+                                phases.vertex_upload_bytes, phases.vertex_index_upload_bytes,
+                                phases.gpu_packed_input_draws, phases.gpu_direct_vertex_draws,
+                                phases.gpu_lit_pair_draws, phases.gpu_lit_pair_vertices,
+                                phases.gpu_lit_pair_ids, phases.gpu_indexed_shader_fallbacks,
+                                phases.gpu_native_element_draws, phases.gpu_native_elements_saved,
+                                phases.runtime_tev_selections, phases.shader_compile_calls,
+                                phases.uniform_upload_seconds * 1000, phases.state_apply_seconds * 1000,
+                                phases.deferred_lighting_fog_lut_syncs, phases.persistent_uniform_writes,
+                                phases.persistent_uniform_waits, phases.draw_fbo_hits,
+                                phases.draw_fbo_builds);
+                            if (cpu_categories) {
+                                const auto cpu = Common::CPUCategoryTiming::Snapshot();
+                                const auto report = fmt::format(
+                                    "cpu end={} other_ms={:.2f} execution_ms={:.2f} svc_ms={:.2f} "
+                                    "gpu_command_ms={:.2f} dsp_ms={:.2f} failures={} overflows={}",
+                                    frame, cpu.cpu_ns[0] / 1e6, cpu.cpu_ns[1] / 1e6, cpu.cpu_ns[2] / 1e6,
+                                    cpu.cpu_ns[3] / 1e6, cpu.cpu_ns[4] / 1e6, cpu.clock_failures,
+                                    cpu.counter_overflows);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                            }
+                            const auto work = fmt::format(
+                                "work end={} pica_lists={} shader_stream_packets={} shader_stream_words={} "
+                                "texture_lookup_checks={} texture_lookup_hits={} texture_verify_mismatches={} "
+                                "subrect_candidates={} subrect_rejected={}",
+                                frame, phases.pica_command_lists, phases.pica_shader_stream_packets,
+                                phases.pica_shader_stream_words, phases.texture_lookup_checks,
+                                phases.texture_lookup_hits, phases.texture_lookup_verify_mismatches,
+                                phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
+                            if (trace_render_phases) {
+                                const auto staging = fmt::format(
+                                    "staging end={} repeat_candidates={} repeat_issued={} guest_index_compare_span_bytes={} "
+                                    "guest_vertex_copy_bytes={} constants_bytes={} resize_zero_bytes={} "
+                                    "clear_bytes={} leased_bytes={} shared_upload_bytes={} feedback_copies={} feedback_bytes={} "
+                                    "feedback_ms={:.2f}",
+                                    frame, phases.repeat_candidates, phases.repeat_issued, phases.vertex_index_compare_span_bytes,
+                                    phases.packed_vertices_guest_copy_bytes,
+                                    phases.packed_vertices_constant_copy_bytes,
+                                    phases.packed_vertices_resize_zero_bytes,
+                                    phases.packed_vertices_clear_bytes,
+                                    phases.packed_vertices_leased_bytes, phases.vertex_shared_upload_bytes, phases.texture_feedback_copies,
+                                    phases.texture_feedback_copy_bytes,
+                                    phases.texture_feedback_copy_seconds * 1000);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", staging.c_str());
+                                const auto draw_phases = fmt::format(
+                                    "draw_phases end={} framebuffer_ms={:.2f} textures_ms={:.2f} "
+                                    "shader_setup_ms={:.2f} invalidation_ms={:.2f} index_reuse_ms={:.2f} "
+                                    "stream_map_ms={:.2f} stream_unmap_ms={:.2f} remap_ms={:.2f}",
+                                    frame, phases.draw_framebuffer_acquire_seconds * 1000,
+                                    phases.draw_texture_acquire_seconds * 1000,
+                                    phases.draw_shader_setup_seconds * 1000,
+                                    phases.draw_dirty_invalidate_seconds * 1000,
+                                    phases.vertex_reuse_check_seconds * 1000,
+                                    phases.stream_map_seconds * 1000, phases.stream_unmap_seconds * 1000,
+                                    phases.surface_remap_seconds * 1000);
+                                const auto lut_phases = fmt::format(
+                                    "lut_phases end={} lighting_fog_ms={:.2f} procedural_ms={:.2f} "
+                                    "texture_setup_ms={:.2f} texture_transfer_ms={:.2f} "
+                                    "texture_restore_ms={:.2f} uploads={} bytes={}",
+                                    frame, phases.lighting_fog_lut_seconds * 1000,
+                                    phases.procedural_lut_seconds * 1000,
+                                    phases.lut_texture_setup_seconds * 1000,
+                                    phases.lut_texture_transfer_seconds * 1000,
+                                    phases.lut_texture_restore_seconds * 1000,
+                                    phases.lut_texture_uploads, phases.lut_texture_bytes);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", draw_phases.c_str());
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", lut_phases.c_str());
+
+                                constexpr std::array texture_phases = {
+                                    "acquire", "selection", "validation", "reinterpretation",
+                                    "allocation", "load", "upload", "mipmap"};
+                                static_assert(texture_phases.size() == static_cast<std::size_t>(
+                                    Common::FrameTiming::TextureAcquisitionPhase::Count));
+                                for (std::size_t i = 0; i < texture_phases.size(); ++i) {
+                                    const auto& phase = phases.texture_acquisition_samples[i];
+                                    if (phase.calls == 0)
+                                        continue;
+                                    const auto& sample = phase.timing;
+                                    const auto report = fmt::format(
+                                        "texture_phase end={} phase={} calls={} samples={} "
+                                        "sample_cpu_ms={:.2f} sample_wall_ms={:.2f} failures={}",
+                                        frame, texture_phases[i], phase.calls, sample.samples,
+                                        sample.cpu_seconds * 1000, sample.wall_seconds * 1000,
+                                        sample.clock_failures);
+                                    __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                                }
+
+                                const auto sample_phase = [frame](const char* name, const auto& sample) {
+                                    if (sample.samples == 0 && sample.clock_failures == 0)
+                                        return;
+                                    const auto report = fmt::format(
+                                        "draw_sample end={} phase={} samples={} sample_cpu_ms={:.2f} "
+                                        "sample_wall_ms={:.2f} failures={}",
+                                        frame, name, sample.samples, sample.cpu_seconds * 1000,
+                                        sample.wall_seconds * 1000, sample.clock_failures);
+                                    __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                                };
+                                sample_phase("submit", phases.draw_submit_cpu_samples);
+                                sample_phase("uniform_upload", phases.uniform_upload_cpu_samples);
+                                sample_phase("stream_map", phases.stream_map_cpu_samples);
+                                sample_phase("stream_unmap", phases.stream_unmap_cpu_samples);
+                                sample_phase("vertex_subimage", phases.vertex_subimage_cpu_samples);
+                                sample_phase("vertex_orphan", phases.vertex_orphan_cpu_samples);
+                            }
+                            const auto& lit = phases.lit_index_selection;
+                            if (std::any_of(lit.topology.begin(), lit.topology.end(),
+                                            [](u64 draws) { return draws != 0; })) {
+                                const auto report = fmt::format(
+                                    "lit_index end={} list={} strip={} fan={} shader_topology={} "
+                                    "need_packed={} shadow_guard={} feedback={} missing_pairs={} "
+                                    "low_reuse={} selected={} program_pending={}",
+                                    frame, lit.topology[0], lit.topology[1], lit.topology[2],
+                                    lit.topology[3], lit.packed_input_required, lit.shadow_route,
+                                    lit.feedback_route, lit.pair_data_unavailable,
+                                    lit.reuse_below_threshold, lit.selected, lit.program_pending);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                            }
+                            __android_log_write(ANDROID_LOG_INFO, "CaraPerf", work.c_str());
+                            __android_log_write(ANDROID_LOG_INFO, "CaraPerf", reuse.c_str());
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
                             reset_trace();
                         }
@@ -396,9 +695,22 @@ void BootGame(const std::string& path) {
     }
 
     // Shutdown the core emulation
-    s_render_window->DoneCurrent();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    const bool had_worker = OpenGL::CommandQueue::Enabled();
+    if (had_worker) {
+        // Give the producer a live context for resource destruction.
+        s_render_window->StopSubmissionWorker();
+    } else
+#endif
+    {
+        s_render_window->DoneCurrent();
+    }
     hid.reset();
     system.Shutdown();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    if (had_worker)
+        s_render_window->DoneCurrent();
+#endif
     s_render_window.reset();
     s_is_running = false;
     resetSearchResults();

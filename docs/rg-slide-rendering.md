@@ -312,6 +312,51 @@ uploads. These are wall-clock phase measurements from iPad. The equivalent
 RG Slide cost is still unmeasured. See
 [the earlier hardware investigation](hardware-investigation.md#monster-hunter-stories-current-leads).
 
+## Dark Moon indexed draws and Mali geometry counters
+
+The comparison used one release APK on the T820 with Dynarmic JIT, 1× GLES
+Atlas, Performance Mode, a fixed 50% guest CPU clock, and shared P3D/PPF
+pacing. Each run booted from the library into a fresh in-game slot and
+played through the lab arrival. The title and lab rows use matched warm
+120-refresh windows. The indexed option is a developer INI setting with
+a default of off. It selects the shared real element-buffer paths for
+packed draws. The unlit path ran about 14,200 times per lab window. No
+lit ordered-pair draws met the selection rule in the measured windows.
+
+| Run | Lab median | Lab p99 range | Lab worst | Title p99 range | Title worst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Arrays, first control | 32.22 ms | 37.18–40.73 ms | 51.82 ms at 3359 | 57.73–58.99 ms | 60.17 ms at 919 |
+| Indexed, cache seeding run | 29.32 ms | 35.17–50.21 ms | 73.42 ms at 3266 | 57.20–57.71 ms | 62.05 ms at 937 |
+| Indexed, restart with saved cache | 28.81 ms | 34.59–50.19 ms | 59.60 ms at 3010 | 56.55–56.92 ms | 57.77 ms at 1369 |
+| Arrays, recheck | 31.98 ms | 38.16–55.06 ms | 78.28 ms at 3112 | 57.92–61.08 ms | 66.92 ms at 1231 |
+
+Both indexed captures reduced position-shading requests from 751 to
+537–538 per 1,000 input primitives. Varying requests fell more modestly,
+from 78–82 to 73–74. Position request queue stalls dropped from 69–71% to
+55–56% of tiler-active cycles. Tiler-active cycles per input primitive fell
+from 183 to 127–129, and L2 tiler reads fell from 49.5 to 40.3 bytes per
+input primitive. About 9% of primitives survived culling. Shader requests
+and tiler activity overlap. The counters attribute pressure to issuing
+position work and do not measure exclusive stage elapsed times.
+[Arm Mali-G57 counters](https://arm-software.github.io/libGPUCounters/mali-g57_counter_reference.html)
+
+Lab draw submission fell from 4.26–4.31 to 3.69–3.71 ms per refresh.
+Perfetto scheduling estimates still put the emulation thread around
+26.5–27.5 CPU-ms per refresh across both paths. Indexed draws improved
+warm throughput while the emulation thread remained over the 16.67 ms
+refresh budget.
+
+The warmed title held its frame times. Arrival at the title regressed
+on both indexed boots. The worst startup refresh was about 8.51 s on
+indexed versus 2.16–2.18 s on control, with about 11.2 s of compilation
+in the indexed startup window versus 2.1 s on control. The saved
+indexed cache hit the 128-entry admission limit at 30.17 MiB, which
+prevents saving additional variants once it fills. The first lab
+arrival also compiled variants on the indexed restart, outside the warm
+windows above. Keep indexed draws opt-in. A follow-up should preserve
+the existing draw route on shader misses and isolate the remaining
+emulation-thread costs. [Release probe and sampler CI](https://github.com/dmikey/cara/actions/runs/45113654759)
+
 ## Reproducing and extending the measurements
 
 1. Keep **Accuracy Mode, native resolution and JIT** for the first comparison.
@@ -338,4 +383,70 @@ physical gameplay comparisons are separate checks. The current evidence does
 not establish sustained full speed across the tested RG Slide workloads.
 Mali-G52 and Mali-T820 devices require separate tests.
 
+## Follow-up probes for the Gadd render budget
+
+Enable `trace_renderer_timing` in a disposable profile, use JIT and Atlas
+at 1× with a fixed 100% guest clock, and enable one candidate per launch.
+For VRR gameplay, record guest game submissions and actual display
+presentation separately. The target for the game output is 24–40 FPS.
+System-refresh p99, worst refresh and guest speed describe emulator
+throughput and pacing separately.
+
+| Debug option | Candidate | What to measure |
+| --- | --- | --- |
+| `atlas_draw_framebuffer_cache` | Reuse an FBO with the same live color/depth owners, texture names and stencil format | Cache hits and builds, attachment calls, CPU time, and exact color/depth output |
+| `atlas_lit_indexed_lists` with `atlas_indexed_draws` | Admit assembled lit triangle lists, including Shader topology with the guest geometry stage disabled, whose model predicts no extra vertex invocations | Lit indexed draw count, position requests, and matching lighting and frame times |
+| `vertex_index_identity_reuse` with `atlas_indexed_draws` | Carry the verified index-cache identity to both indexed uploads | CPU compare samples and avoided upload comparisons |
+| `atlas_async_stage_reuse` with `atlas_indexed_draws` | Reuse exact compiled vertex and fragment sources on the Android EGL worker | Cold transitions and indexed fallback draws using matched empty caches |
+
+Draw-FBO reuse applies to accelerated draws with both attachments. It keeps
+the existing surface validation and write invalidation. Cache identities
+cover the immutable packed upload and are invalidated when the owner
+resets. The live guest-byte comparison is still required until a write
+proof covers JIT writes, DMA and state restore. The shader worker reuses
+stages for indexed programs. Required regular draws still wait on their
+exact program when it first appears.
+
 [Arm framebuffer guidance](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-2-how-to-correctly-handle-framebuffers)
+
+### Shared GLES shader census
+
+Set `[Debug] trace_gl_shader_census = True` on Android and capture
+`adb logcat -v epoch -s CaraShader CaraPerf`. On Apple, set
+`CARA_GL_SHADER_CENSUS=1` before launching the GLES build and collect the
+`CaraShader` records from its log. The census uses the same GLES generator,
+source cache, and GL compile/link paths. It does not change shader selection.
+
+- `fragment_key` logs a PICA fragment key on generation, its exact generated
+  source hash, the lighting flag, and generation wall time. A warm binary
+  restore can bypass generation, so use a fresh Cara cache to count keys.
+- `compile` logs each driver compile request and blocking status query, tagged
+  by source hash and GL shader name. Group by Android thread ID to separate the
+  emulation thread from the shared EGL worker. A compile request can hit a
+  driver-private cache.
+- `link` and `binary` report linked source programs and binary restore attempts,
+  including the blocking status query. `first_draw` times submission of the
+  first PICA draw for a linked program. It measures CPU wall time rather than
+  GPU execution and excludes the earlier program bind.
+
+Mark boot, title, save selection, and the lab separately. Report both total
+and distinct fragment compile requests and rank lit source hashes by
+emulation-thread stall time. Use a matched census-off run for headline p99
+because the extra diagnostics add host work.
+
+The shared fragment generator now keeps its texture and fragment lighting
+usage flags per call. That allows independent worker generation with the
+explicit shader target and a captured PICA key. GL submission still uses
+the existing context and preserves guest draw order. An eight-thread host
+fixture reproduced mismatched GLSL with the old shared flags. The corrected
+generator matched 32 serial GLES sources byte for byte and matched all
+32,000 parallel calls.
+
+The shared generator emits TEV dependencies only for operands the selected
+color or alpha expression reads. Previously, a two-input operation walked
+the third source and could mark its texture or fragment lighting as used,
+even though the expression never included that operand. The correction
+adds no branch to the generated shader and leaves alpha and color rounding
+unchanged. A host fixture compared generated GLSL for all 100 color/alpha
+operation combinations while varying inactive sources. Measure cold
+source counts and compare device pixels before adopting the change.

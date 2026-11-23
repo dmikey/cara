@@ -16,12 +16,21 @@ struct ShaderStreamHooks final : VideoCore::RasterizerInterface {
 };
 struct ShaderStreamSaved {
     Regs regs; Shader::ShaderSetup vs,gs; decltype(g_state.cmd_list) list;
-    static ShaderStreamSaved Take(){return {g_state.regs,g_state.vs,g_state.gs,g_state.cmd_list};}
-    void Restore()const {g_state.regs=regs;g_state.vs=vs;g_state.gs=gs;g_state.cmd_list=list;}
+    Cara::P3DWorkEstimate p3d_work;
+    static ShaderStreamSaved Take() {
+        return {g_state.regs, g_state.vs, g_state.gs, g_state.cmd_list, g_state.experimental_p3d_work};
+    }
+    void Restore() const {
+        g_state.regs = regs;
+        g_state.vs = vs;
+        g_state.gs = gs;
+        g_state.cmd_list = list;
+        g_state.experimental_p3d_work = p3d_work;
+    }
     std::string Bytes()const {
         std::ostringstream s(std::ios::out|std::ios::binary);
         {boost::archive::binary_oarchive ar(s);
-         ar<<boost::serialization::make_array(regs.reg_array.data(),Regs::NUM_REGS)<<vs<<gs;}
+         ar<<boost::serialization::make_array(regs.reg_array.data(),Regs::NUM_REGS)<<vs<<gs<<p3d_work;}
         return s.str();
     }
 };
@@ -98,6 +107,19 @@ bool RunShaderStreamBatchSelfTest(std::string& result) {
         // Program source aliases target and mirrored GS storage; retain exact
         // read/store order rather than using memcpy/restrict/read-ahead.
         for(unsigned alias:{1u,2u})run(PICA_REG_INDEX(vs.program.set_word[0]),15,1,7,false,false,false,false,alias);
+        {
+            const auto policy = Cara::gpu_completion_policy;
+            const auto estimate = g_state.experimental_p3d_work;
+            SCOPE_EXIT({Cara::gpu_completion_policy = policy; g_state.experimental_p3d_work = estimate;});
+            Cara::gpu_completion_policy = {true, true, true};
+            g_state.experimental_p3d_work.fifth_ns = 4096;
+            run(PICA_REG_INDEX(vs.program.set_word[0]), 15, 16, 8, false, false);
+            require(g_state.experimental_p3d_work.fifth_ns == 4096 + 8 * 112,
+                    "P3D charge changed for a timed program stream");
+            run(PICA_REG_INDEX(vs.swizzle_patterns.set_word[0]), 15, 32, 8, true, false);
+            require(g_state.experimental_p3d_work.fifth_ns == 4096 + 16 * 112,
+                    "P3D charge changed for a timed swizzle stream");
+        }
         // Nonstream and GS-only ports must remain on original path.
         run(PICA_REG_INDEX(gs.program.set_word[0]),15,0,2,true,true);
         {
@@ -175,7 +197,7 @@ bool RunShaderStreamBatchSelfTest(std::string& result) {
         }
         result="PASS "+std::to_string(cases)+" actual scalar-vs-stream cases; "+std::to_string(compared_words)+
             " per-word serialized state comparisons; hits="+std::to_string(hits)+" declines="+std::to_string(declined)+
-            "; includes masks, ports, mirroring/useGS, dirty/hash state, raw NaN/zero, capacity, padded truncation and source alias; foreign trace guard adds zero observations";
+            "; includes masks, ports, mirroring/useGS, dirty/hash state, raw NaN/zero, capacity, padded truncation and source alias and P3D command charges; foreign trace guard adds zero observations";
         return true;
     }catch(const std::exception& e){result=std::string("FAIL ")+e.what();return false;}
 }

@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
 #include "cara/quad_uv_plan.h"
 #include "cara/guest_gpu_trace.h"
 #include "cara/quad_input_capture_trace.h"
@@ -28,6 +29,7 @@
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/frame_timing.h"
+#include "video_core/renderer_opengl/gl_shader_census.h"
 #include "common/cpu_category_timing.h"
 #include "common/logging/log.h"
 #include "common/math_util.h"
@@ -44,6 +46,7 @@
 #include "video_core/regs_framebuffer.h"
 #include "video_core/regs_rasterizer.h"
 #include "video_core/regs_texturing.h"
+#include "video_core/renderer_opengl/gl_command_queue.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_scissor_damage.h"
@@ -59,6 +62,11 @@
 #include "video_core/renderer_opengl/pica_to_gl.h"
 #include "video_core/renderer_opengl/renderer_opengl.h"
 #include "video_core/video_core.h"
+
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+#include "video_core/renderer_opengl/gl_draw_batch_trace.h"
+#include "cara/pica_repeat_instances.h"
+#endif
 
 namespace OpenGL {
 // Diagnostics suppress final raster submission only. CPU VS/GS, primitive
@@ -219,7 +227,7 @@ static GLsizeiptr LightingLUTBufferSize(std::size_t fallback) {
 }
 
 RasterizerOpenGL::RasterizerOpenGL()
-    : is_mali_gpu(IsVendorMali()), shader_dirty(true),
+    : shader_census(ShaderCensus::Enabled()), is_mali_gpu(IsVendorMali()), shader_dirty(true),
       vertex_buffer(GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE),
       uniform_buffer(GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE),
       index_buffer(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE),
@@ -379,8 +387,20 @@ RasterizerOpenGL::RasterizerOpenGL()
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer.GetHandle());
 
-    // 845需要开启分离着色器，但开启后Mali GPU会挂掉，究极日也有显示问题！
-    const bool use_separable_shader = Settings::values.use_separable_shader;
+    bool use_separable_shader = Settings::values.use_separable_shader;
+#if defined(CARA_IOS_GLES) && !defined(CARA_MAC_ATLAS_PIPELINE)
+    if (use_separable_shader)
+        LOG_INFO(Render_OpenGL, "GLSL ES Atlas uses linked vertex/fragment programs by default");
+    use_separable_shader = false;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    const char* separable_probe = std::getenv("CARA_MALI_SEPARABLE_PROGRAMS");
+    use_separable_shader = separable_probe && std::strcmp(separable_probe, "1") == 0 &&
+        is_mali_gpu && GLES && GLAD_GL_ES_VERSION_3_2 && glGenProgramPipelines &&
+        glBindProgramPipeline && glUseProgramStages && glProgramUniform4iv;
+    if (use_separable_shader)
+        LOG_INFO(Render_OpenGL, "Mali GLSL ES 3.20 separable program probe enabled");
+#endif
+#endif
     shader_program_manager = std::make_unique<ShaderProgramManager>(use_separable_shader);
 
     OpenGLState::InvalidateRasterState();
@@ -393,17 +413,28 @@ RasterizerOpenGL::RasterizerOpenGL()
     SyncEntireState();
 }
 
-RasterizerOpenGL::~RasterizerOpenGL() = default;
+RasterizerOpenGL::~RasterizerOpenGL() {
+#ifdef CARA_ANDROID_GLES_ATLAS
+    ClearDrawFramebufferCache();
+#endif
+}
 
 void RasterizerOpenGL::SyncEntireState() {
     FlushSoftwareBatch(SoftwareBatching::Reason::ExplicitVisibility);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    ClearDrawFramebufferCache();
+#endif
 #ifdef CARA_IOS_GLES
+    packed_staging_bytes = 0;
     ios_packed_snapshot_lease.reset();
     if (IndexPayloadReuse::Enabled()) {
         ios_vertex_index_cache.ResetIdentities();
         for (auto& bank : ios_vertex_frame_uploads)
             for (auto& pool : bank.sizes)
-                for (auto& entry : pool) entry.index_shadow.InvalidateIdentity();
+                for (auto& entry : pool) {
+                    entry.index_shadow.InvalidateIdentity();
+                    entry.elements_shadow.InvalidateIdentity();
+                }
         IndexPayloadReuse::RecordReset();
     }
 #endif
@@ -675,6 +706,11 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if(SoftwareBatching::CensusEnabled())software_census_after_draw=true;
     if(SoftwareBatching::Active()) {software_batch_planner.Hardware();FlushSoftwareBatch(SoftwareBatching::Reason::HardwareDraw,false);}
     const auto& regs = Pica::g_state.regs;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    using CommandQueue::Backlog::Source;
+    CommandQueue::Backlog::Scope source_scope(regs.lighting.disable ? Source::UnlitPica : Source::LitPica,
+                                               static_cast<std::uint16_t>(regs.vs.main_offset));
+#endif
     const auto reject=[&](const char* reason) {
 #ifdef CARA_IOS_GLES
         static const bool trace=std::getenv("CARA_VERTEX_FALLBACK_TRACE")!=nullptr;
@@ -689,7 +725,7 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if (regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No) return reject("geometry shader");
 #ifdef CARA_IOS_GLES
     if (PackedPoolObserver::Enabled()) packed_pool_observation = {};
-    SCOPE_EXIT({ ios_packed_snapshot_lease.reset(); if (PackedPoolObserver::Enabled()) FinishPackedPoolObservation(); });
+    SCOPE_EXIT({ packed_staging_bytes = 0; ios_packed_snapshot_lease.reset(); if (PackedPoolObserver::Enabled()) FinishPackedPoolObservation(); });
     if (!PrepareIOSVertices(is_indexed)) return reject("vertex input preparation");
     static const bool direct_reuse=[] { const char* v=std::getenv("CARA_GPU_VERTEX_REUSE"); return v && std::strcmp(v,"1")==0; }();
     // Quaternion orientation is irrelevant only when fragment lighting is disabled.
@@ -705,13 +741,45 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
         const char* value = std::getenv("CARA_GPU_LIT_PAIR_REUSE");
         return value && std::strcmp(value, "1") == 0;
     }();
-    ios_lit_pair_vertex_reuse = lit_pair_reuse && ios_indexed_vertex_inputs == 2 &&
-        !regs.lighting.disable && !AllowShadow && !ios_direct_vertex_reuse && !ios_feedback_vertex_reuse &&
-        ios_cached_index_data && ios_cached_index_data->lit_pair_count > 0 &&
-        ios_cached_index_data->lit_pair_count <= 65535 &&
-        ios_cached_index_data->lit_elements.size() == IOSTriangles().size() &&
-        std::uint64_t(ios_cached_index_data->pair_reuse.lru32_vs_runs) * 4 <=
-            std::uint64_t(ios_cached_index_data->pair_reuse.baseline_vs_runs) * 3;
+    static const bool try_more_lit_lists = [] {
+        const char* value = std::getenv("CARA_GPU_LIT_LISTS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    ios_lit_pair_vertex_reuse = false;
+    if (lit_pair_reuse && !regs.lighting.disable) {
+        auto& timing = Common::FrameTiming::counters;
+        auto& selection = timing.lit_index_selection;
+        const auto topology = Pica::g_state.primitive_assembler.GetTopology();
+        if (timing.enabled)
+            ++selection.topology[static_cast<u32>(topology)];
+        using Topology = Pica::PipelineRegs::TriangleTopology;
+        // The programmable geometry stage was rejected above. In Shader
+        // topology the CPU assembler still produces complete triangles.
+        // Both draw paths use that same triangle order and reference vertex.
+        const bool lit_list = try_more_lit_lists &&
+            (topology == Topology::List || topology == Topology::Shader) &&
+            !regs.framebuffer.IsShadowRendering();
+        const auto count = [&](std::uint64_t& counter) {
+            if (timing.enabled)
+                ++counter;
+        };
+        if (ios_indexed_vertex_inputs != 2) {
+            count(selection.packed_input_required);
+        } else if (AllowShadow && !lit_list) {
+            count(selection.shadow_route);
+        } else if (ios_feedback_vertex_reuse) {
+            count(selection.feedback_route);
+        } else if (!ios_cached_index_data || ios_cached_index_data->lit_pair_count == 0 ||
+                   ios_cached_index_data->lit_pair_count > 65535 ||
+                   ios_cached_index_data->lit_elements.size() != IOSTriangles().size()) {
+            count(selection.pair_data_unavailable);
+        } else {
+            const auto& reuse = ios_cached_index_data->pair_reuse;
+            ios_lit_pair_vertex_reuse = std::uint64_t(reuse.lru32_vs_runs) * 4 <=
+                std::uint64_t(reuse.baseline_vs_runs) * (lit_list ? 4 : 3);
+            count(ios_lit_pair_vertex_reuse ? selection.selected : selection.reuse_below_threshold);
+        }
+    }
 #endif
     if (!SetupVertexShader()) return reject("vertex shader translation");
     if (!SetupGeometryShader()) return reject("geometry setup");
@@ -831,6 +899,13 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
         }
     }
     ranges.SortAndMerge();
+#ifdef CARA_ANDROID_GLES_ATLAS
+    if (auto* pair = Cara::RepeatInstances::pending) {
+        const u64 ix = base + pipeline.index_array.offset;
+        pair->Read({ix, ix + u64(pipeline.num_vertices) * (pipeline.index_array.format ? 2 : 1)});
+        for (const auto& range : ranges) pair->Read({range.begin, range.end});
+    }
+#endif
     size_t bytes=sizeof(constants);
     for (auto& range:ranges) {
         bytes=(bytes+3)&~size_t(3); range.destination=bytes; bytes+=range.end-range.begin;
@@ -975,22 +1050,63 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
                 totals.failed,totals.logical,totals.skipped_source);
         }
     }
-    static const bool padding_only_zero=PackedVertexPaddingOnlyEnabled();
-    u8* materialized=nullptr;
+    static const bool padding_only_zero = PackedVertexPaddingOnlyEnabled();
+    auto& counters = Common::FrameTiming::counters;
+    const bool trace = counters.enabled && Common::FrameTiming::RenderBookkeepingProfileEnabled();
+    u8* materialized = nullptr;
     if (!ios_packed_snapshot_lease) {
-        ios_vertex_inputs.resize(rows*IOS_VERTEX_INPUT_WIDTH);
-        materialized=reinterpret_cast<u8*>(ios_vertex_inputs.data());
-        if (!padding_only_zero ||
-            !ranges.ClearPadding(materialized,ios_vertex_inputs.size()*sizeof(GLvec4),sizeof(constants)))
-            std::memset(materialized,0,ios_vertex_inputs.size()*sizeof(GLvec4));
-        std::memcpy(materialized,constants.data(),sizeof(constants));
+        static const bool reuse_scratch = [] {
+            const char* value = std::getenv("CARA_PACKED_STAGING_REUSE");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        const size_t texels = rows * IOS_VERTEX_INPUT_WIDTH;
+        const size_t staged_bytes = texels * sizeof(GLvec4);
+        size_t resize_zero_bytes = 0;
+        // The older snapshot observer reads the legacy vector directly.
+        const bool use_scratch = reuse_scratch && !previous_snapshot_trace;
+        if (use_scratch) {
+            if (packed_staging_capacity < staged_bytes) {
+                packed_staging = std::make_unique_for_overwrite<u8[]>(staged_bytes);
+                packed_staging_capacity = staged_bytes;
+            }
+            packed_staging_bytes = staged_bytes;
+            materialized = packed_staging.get();
+        } else {
+            if (texels > ios_vertex_inputs.size())
+                resize_zero_bytes = (texels - ios_vertex_inputs.size()) * sizeof(GLvec4);
+            ios_vertex_inputs.resize(texels);
+            materialized = reinterpret_cast<u8*>(ios_vertex_inputs.data());
+        }
+        // Prefix and merged guest spans are written below. Only gaps and row
+        // padding need zeroes. Malformed ranges retain the full-clear fallback.
+        const bool cleared_padding = (padding_only_zero || use_scratch) &&
+            ranges.ClearPadding(materialized, staged_bytes, sizeof(constants));
+        if (!cleared_padding)
+            std::memset(materialized, 0, staged_bytes);
+        std::memcpy(materialized, constants.data(), sizeof(constants));
+        if (trace) {
+            counters.packed_vertices_resize_zero_bytes += resize_zero_bytes;
+            counters.packed_vertices_constant_copy_bytes += sizeof(constants);
+            size_t clear_bytes = staged_bytes;
+            if (cleared_padding) {
+                clear_bytes -= sizeof(constants);
+                for (const auto& range : ranges)
+                    clear_bytes -= range.end - range.begin;
+            }
+            counters.packed_vertices_clear_bytes += clear_bytes;
+        }
+    } else if (trace) {
+        counters.packed_vertices_leased_bytes += ios_packed_snapshot_lease->size();
     }
     const u8* output=IOSVertexInputData();
     for (const auto& range:ranges) {
         if (!ios_packed_snapshot_lease) {
             const auto memory=VideoCore::Memory()->GetPhysicalRef(u32(range.begin));
             if (!memory || memory.GetSize()<range.end-range.begin) return false;
-            std::memcpy(materialized+range.destination,memory.GetPtr(),range.end-range.begin);
+            const size_t range_bytes = range.end - range.begin;
+            std::memcpy(materialized + range.destination, memory.GetPtr(), range_bytes);
+            if (trace)
+                counters.packed_vertices_guest_copy_bytes += range_bytes;
         }
         for (unsigned reg=0;reg<16;++reg)
             if (loaded[reg] && addresses[reg]>=range.begin && addresses[reg]<range.end)
@@ -1042,6 +1158,7 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
 
 bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     if(NativeNearestBorrowEnabled()){++native_borrow_input_epoch;native_borrow_prepared=false;}
+    packed_staging_bytes = 0;
     ios_packed_snapshot_lease.reset();
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexPrepare);
     constexpr u32 MAX_VERTICES = IOS_MAX_EXPANDED_VERTICES;
@@ -1073,11 +1190,20 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         const char* value = std::getenv("CARA_GPU_LIT_PAIR_REUSE");
         return value && std::strcmp(value, "1") == 0;
     }();
+    static const bool native_elements = [] {
+        const char* value = std::getenv("CARA_GPU_NATIVE_ELEMENTS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
     ios_cached_index_data=nullptr;
     const IOSVertexIndexCache::Key key{is_indexed?index_address:0,count,
         is_indexed?0:u32(pipeline.vertex_offset),static_cast<u32>(topology),
         is_indexed?(pipeline.index_array.format?2u:1u):0u};
-    if (cache_enabled) ios_cached_index_data=ios_vertex_index_cache.Find(key,indices,source_size);
+    if (cache_enabled) {
+        auto& counters = Common::FrameTiming::counters;
+        const bool trace = counters.enabled && Common::FrameTiming::RenderBookkeepingProfileEnabled();
+        ios_cached_index_data = ios_vertex_index_cache.Find(
+            key, indices, source_size, trace ? &counters.vertex_index_compare_span_bytes : nullptr);
+    }
     if (Common::FrameTiming::counters.enabled && cache_enabled) {
         if (ios_cached_index_data) ++Common::FrameTiming::counters.vertex_index_cache_hits;
         else ++Common::FrameTiming::counters.vertex_index_cache_misses;
@@ -1098,7 +1224,9 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         }
         if (ios_triangle_indices.empty()) return false;
         if (cache_enabled)
-            ios_cached_index_data=ios_vertex_index_cache.Store(key,indices,source_size,ios_triangle_indices, pair_probe_enabled, build_lit_pairs);
+            ios_cached_index_data = ios_vertex_index_cache.Store(
+                key, indices, source_size, ios_triangle_indices, pair_probe_enabled, build_lit_pairs,
+                native_elements && strip);
     }
     const auto& triangles=IOSTriangles();
     if (Common::FrameTiming::counters.enabled)
@@ -1138,6 +1266,7 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
     }
     // Packed verification/preparation may fail after capture; decoded fallback
     // must use its own newly materialized input, never the abandoned lease.
+    packed_staging_bytes = 0;
     ios_packed_snapshot_lease.reset();
     if (ios_indexed_vertex_inputs) {
         ios_vertex_source_map.BeginDraw();
@@ -1243,17 +1372,33 @@ static GLenum GetCurrentPrimitiveMode() {
 
 bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 #ifdef CARA_IOS_GLES
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    if ((ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse) &&
+        !shader_program_manager->TryApplyAsyncIndexed(state)) {
+        auto& timing = Common::FrameTiming::counters;
+        if (timing.enabled && ios_lit_pair_vertex_reuse)
+            ++timing.lit_index_selection.program_pending;
+        ios_direct_vertex_reuse = false;
+        ios_lit_pair_vertex_reuse = false;
+        ++timing.gpu_indexed_shader_fallbacks;
+        if (!SetupVertexShader()) return false;
+    }
+#endif
     const auto* input_data=IOSVertexInputData();
     const size_t input_bytes=IOSVertexInputBytes();
-    const auto& input_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_pairs : IOSInputIndices();
-    const auto& element_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_elements : IOSInputIndices();
-    // Identity is ONLY the current immutable cached packed-index payload. It is
-    // not a guest-address, input snapshot, VS output or register-generation hint.
+    const bool native_elements = ios_direct_vertex_reuse && ios_cached_index_data &&
+                                 !ios_cached_index_data->native_elements.empty();
+    const auto& input_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_pairs :
+                                native_elements ? ios_cached_index_data->native_elements :
+                                                  IOSInputIndices();
+    const auto& element_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_elements :
+                                                            input_indices;
+    // PrepareIOSVertices already compared the live guest bytes. Reuse that
+    // verified cache identity for the second (resident upload) comparison.
+    // Each upload-bank format tracks a single representation of the entry.
     const IndexPayloadReuse::Identity current_index_identity =
         IndexPayloadReuse::Enabled() && ios_cached_index_data && ios_indexed_vertex_inputs == 2 &&
-        !ios_direct_vertex_reuse && !ios_lit_pair_vertex_reuse && !ios_feedback_vertex_reuse &&
-        input_indices.data() == ios_cached_index_data->packed.data() &&
-        input_indices.size() == ios_cached_index_data->packed.size() ?
+        !ios_feedback_vertex_reuse ?
             ios_cached_index_data->identity : IndexPayloadReuse::Identity{};
     const size_t element_bytes = (ios_lit_pair_vertex_reuse || ios_direct_vertex_reuse) ?
         element_indices.size() * sizeof(u16) : 0;
@@ -1274,7 +1419,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                                    Common::FrameTiming::RenderBookkeepingProfileEnabled());
         shader_program_manager->ApplyTo(state);
     }
-    if (!state.draw.shader_program) return false;
+    if (!state.draw.shader_program && !state.draw.program_pipeline) return false;
     state.Apply();
     const bool raw_inputs = ios_indexed_vertex_inputs == 2;
     if (PackedPoolObserver::Enabled() && packed_pool_observation.state==PackedPoolObserver::State::Pending &&
@@ -1284,15 +1429,27 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const GLenum input_format = raw_inputs ? GL_RGBA_INTEGER : GL_RGBA;
     const GLenum input_type = raw_inputs ? GL_UNSIGNED_INT : GL_FLOAT;
     if (raw_inputs) {
-        static const bool reuse_layout=[] { const char* v=std::getenv("CARA_GL_STATE_REUSE"); return v && std::strcmp(v,"1")==0; }();
+        static const bool reuse_layout=[] { const char* v=std::getenv("CARA_GL_STATE_REUSE"); const char* layout=std::getenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE"); return (v && std::strcmp(v,"1")==0) || (layout && std::strcmp(layout,"1")==0); }();
+        const auto vertex_program = state.draw.program_pipeline ?
+            shader_program_manager->GetSeparableVertexProgram() : state.draw.shader_program;
+        const auto update_layout = [&](GLint location) {
+            if (state.draw.program_pipeline)
+                glProgramUniform4iv(vertex_program, location, 16, ios_packed_layout[0].data());
+            else
+                glUniform4iv(location, 16, ios_packed_layout[0].data());
+        };
         if (reuse_layout) {
-            auto& cached=ios_layout_uniforms[state.draw.shader_program];
-            if (!cached.initialized) cached.location=glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]");
-            if (!cached.initialized || cached.values!=ios_packed_layout) {
-                glUniform4iv(cached.location,16,ios_packed_layout[0].data());
-                cached.values=ios_packed_layout; cached.initialized=true;
+            auto& cached = ios_layout_uniforms[vertex_program];
+            if (!cached.initialized)
+                cached.location = glGetUniformLocation(vertex_program, "cara_vertex_layout[0]");
+            if (!cached.initialized || cached.values != ios_packed_layout) {
+                update_layout(cached.location);
+                cached.values = ios_packed_layout;
+                cached.initialized = true;
             }
-        } else glUniform4iv(glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
+        } else {
+            update_layout(glGetUniformLocation(vertex_program, "cara_vertex_layout[0]"));
+        }
     }
     glActiveTexture(GL_TEXTURE7);
     const unsigned upload_rows = static_cast<unsigned>(input_bytes / (IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4)));
@@ -1470,7 +1627,13 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             IOSVertexUploadOrderReuse::EqualIndexIdentity(selected_upload->index_shadow,
                 input_indices.data(),index_bytes,current_index_identity,input_full_comparisons,false) :
             matches(selected_upload->index_shadow,input_indices.data(),index_bytes);
-        if (ios_lit_pair_vertex_reuse) reuse_elements=matches(selected_upload->elements_shadow,element_indices.data(),element_bytes);
+        if (ios_lit_pair_vertex_reuse) {
+            reuse_elements = IndexPayloadReuse::Enabled() ?
+                IOSVertexUploadOrderReuse::EqualIndexIdentity(selected_upload->elements_shadow,
+                    element_indices.data(), element_bytes, current_index_identity,
+                    input_full_comparisons, false) :
+                matches(selected_upload->elements_shadow, element_indices.data(), element_bytes);
+        }
     }
     if (Common::FrameTiming::counters.enabled) {
         auto& counters=Common::FrameTiming::counters;
@@ -1481,6 +1644,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         counters.vertex_upload_reused_bytes+=skipped;
         counters.vertex_upload_reused_textures+=unsigned(reuse_input)+unsigned(reuse_index);
     }
+    bool published_input_shadow = false;
     if (!reuse_input) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         if (orphan_upload) {
@@ -1497,8 +1661,18 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             }
             Common::FrameTiming::Scope update_timing(Common::FrameTiming::Phase::VertexSubImageUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_subimage_calls;
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
-                            input_format, input_type, input_data);
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+            if (cache_inputs)
+                published_input_shadow = CommandQueue::TryQueueVertexUpload(IOS_VERTEX_INPUT_WIDTH,
+                    upload_rows, input_format, input_type, input_data, input_bytes,
+                    selected_upload->input_shadow);
+            if (published_input_shadow && Common::FrameTiming::counters.enabled)
+                Common::FrameTiming::counters.vertex_shared_upload_bytes += input_bytes;
+#endif
+            if (!published_input_shadow) {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, IOS_VERTEX_INPUT_WIDTH, upload_rows,
+                                input_format, input_type, input_data);
+            }
         }
     }
     if (ios_indexed_vertex_inputs && !ios_direct_vertex_reuse && !reuse_index) {
@@ -1537,7 +1711,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     }
     if (cache_inputs) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexReuseCheck);
-        if (!reuse_input) {
+        if (!reuse_input && !published_input_shadow) {
             const auto* data=reinterpret_cast<const u8*>(input_data);
             selected_upload->input_shadow.assign(data,data+input_bytes);
         }
@@ -1555,6 +1729,8 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         // An uncached or non-default payload must never retain an older proof.
         selected_upload->index_shadow.CommitIdentity(cache_inputs ? current_index_identity :
                                                      IndexPayloadReuse::Identity{});
+        selected_upload->elements_shadow.CommitIdentity(cache_inputs && ios_lit_pair_vertex_reuse ?
+            current_index_identity : IndexPayloadReuse::Identity{});
     }
     if (ios_feedback_vertex_reuse) {
         // Re-evaluate every draw: only the current draw's transformed outputs are
@@ -1597,6 +1773,46 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         ++Common::FrameTiming::counters.gpu_feedback_vertex_draws;
         Common::FrameTiming::counters.gpu_feedback_source_vertices+=ios_vertex_input_span;
     }
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    const auto trace_batch = [&](GLenum mode, size_t count) {
+        if (!DrawBatchTrace::Enabled()) return;
+        DrawBatchTrace::State sample{};
+        const auto& counters = Common::FrameTiming::counters;
+        sample.frame = VideoCore::GetCurrentFrame();
+        sample.list = counters.pica_command_lists;
+        sample.interrupts = counters.pica_batch_irqs;
+        sample.lut_uploads = counters.lut_texture_uploads;
+        sample.attachments = DrawBatchTrace::attachments;
+        sample.shader = state.draw.shader_program;
+        sample.pipeline = state.draw.program_pipeline;
+        sample.route = ios_lit_pair_vertex_reuse ? 6 : ios_feedback_vertex_reuse ? 5 :
+                       ios_direct_vertex_reuse ? 3 : ios_indexed_vertex_inputs;
+        sample.mode = mode;
+        sample.count = static_cast<u32>(count);
+        sample.storage = {input_texture.handle, selected_indices->handle, elements ? elements->handle : 0u};
+        sample.gl = state;
+        const auto textures = Pica::g_state.regs.texturing.GetTextures();
+        for (size_t i=0; i<textures.size(); ++i) {
+            if (textures[i].enabled) {
+                sample.textures[i] = textures[i].config;
+                sample.formats[i] = 1 + static_cast<u32>(textures[i].format);
+            }
+        }
+        sample.layout = ios_packed_layout;
+        sample.common = uniform_block_data.data;
+        sample.light = uniform_block_data.light_data;
+        sample.vs = previous_vs_uniforms;
+        sample.feedback = DrawBatchTrace::feedback_draw || ios_feedback_vertex_reuse ||
+                          state.draw.program_pipeline || bool(runtime_tev_words);
+        DrawBatchTrace::Record(sample, input_data, input_bytes, input_indices.data(),
+                               input_indices.size()*sizeof(u16), element_indices.data(), element_bytes);
+    };
+#endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+    auto* instance_pair = Cara::RepeatInstances::pending;
+    const bool instance = instance_pair && instance_pair->allowed && !ios_feedback_vertex_reuse &&
+                          !state.draw.program_pipeline && !native_borrow_lease && !runtime_tev_words;
+#endif
     if (ShaderProgramManager::VertexProvenanceEnabled())
         shader_program_manager->ObserveBoundVertexProgram(state.draw.shader_program,
             ios_lit_pair_vertex_reuse?6u:ios_feedback_vertex_reuse?5u:ios_direct_vertex_reuse?3u:ios_indexed_vertex_inputs);
@@ -1606,8 +1822,31 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             {
                 DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedElements,
                                                 triangles.size());
-                if (!SuppressEffectFamilyHostDraw(triangles.size()))
-                    glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(triangles.size()),GL_UNSIGNED_SHORT,nullptr);
+                if (!SuppressEffectFamilyHostDraw(triangles.size())) {
+                    const auto topology = Pica::g_state.primitive_assembler.GetTopology();
+                    const GLenum mode = native_elements ?
+                        (topology == Pica::PipelineRegs::TriangleTopology::Strip ?
+                            GL_TRIANGLE_STRIP : GL_TRIANGLE_FAN) : GL_TRIANGLES;
+                    const auto count = native_elements ? element_indices.size() : triangles.size();
+                    {
+                        ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                                      state.draw.shader_program);
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+                        trace_batch(mode, count);
+#endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+                        if (instance) {
+                            glDrawElementsInstanced(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr, 2);
+                            instance_pair->issued = true;
+                        } else
+#endif
+                        glDrawElements(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr);
+                    }
+                    if (native_elements && Common::FrameTiming::counters.enabled) {
+                        ++Common::FrameTiming::counters.gpu_native_element_draws;
+                        Common::FrameTiming::counters.gpu_native_elements_saved += triangles.size() - count;
+                    }
+                }
             }
             if (ios_lit_pair_vertex_reuse) {
                 ++Common::FrameTiming::counters.gpu_lit_pair_draws;
@@ -1623,6 +1862,17 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                             triangles.size());
             if (!SuppressEffectFamilyHostDraw(triangles.size())) {
                 if(NativeNearestBorrowEnabled() && !BeforeNativeNearestBorrowDraw())return false;
+                ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                              state.draw.shader_program);
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+                trace_batch(GL_TRIANGLES, triangles.size());
+#endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+                if (instance) {
+                    glDrawArraysInstanced(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()), 2);
+                    instance_pair->issued = true;
+                } else
+#endif
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
             }
         }
@@ -1726,16 +1976,22 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 
         DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::DesktopRange,
                                         regs.pipeline.num_vertices);
-        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices))
+        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices)) {
+            ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                          state.draw.shader_program);
             glDrawRangeElementsBaseVertex(
-            primitive_mode, vs_input_index_min, vs_input_index_max, regs.pipeline.num_vertices,
-            index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
-            reinterpret_cast<const void*>(buffer_offset), -static_cast<GLint>(vs_input_index_min));
+                primitive_mode, vs_input_index_min, vs_input_index_max, regs.pipeline.num_vertices,
+                index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
+                reinterpret_cast<const void*>(buffer_offset), -static_cast<GLint>(vs_input_index_min));
+        }
     } else {
         DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedArrays,
                                         regs.pipeline.num_vertices);
-        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices))
+        if (!SuppressEffectFamilyHostDraw(regs.pipeline.num_vertices)) {
+            ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                          state.draw.shader_program);
             glDrawArrays(primitive_mode, 0, regs.pipeline.num_vertices);
+        }
     }
 
     return true;
@@ -1787,7 +2043,11 @@ void RasterizerOpenGL::FlushSoftwareBatch(SoftwareBatching::Reason reason,bool p
 }
 void RasterizerOpenGL::BeginPicaCommandList(){if(!SoftwareBatching::Active())return;FlushSoftwareBatch(SoftwareBatching::Reason::ListBegin);software_batch_planner.Begin();software_batch_draw_safe=false;software_census_after_draw=false;software_batch_input_guard_required=software_batch_input_indexed=true;}
 void RasterizerOpenGL::EndPicaCommandList(){if(!SoftwareBatching::Active())return;FlushSoftwareBatch(SoftwareBatching::Reason::ListEnd);software_batch_planner.End();software_batch_draw_safe=false;software_census_after_draw=false;software_batch_input_guard_required=software_batch_input_indexed=true;}
-void RasterizerOpenGL::FlushDeferredDraws(){FlushSoftwareBatch(SoftwareBatching::Reason::ExplicitVisibility);}
+void RasterizerOpenGL::FlushDeferredDraws(){
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    DrawBatchTrace::Fence();
+#endif
+FlushSoftwareBatch(SoftwareBatching::Reason::ExplicitVisibility);}
 
 bool RasterizerOpenGL::SoftwareBatchResourcesSafe(bool include_vertex_inputs,bool indexed) {
     using namespace SoftwareBatching;
@@ -2138,6 +2398,60 @@ bool RasterizerOpenGL::BeforeNativeNearestBorrowDraw() {
 
 #endif
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+void RasterizerOpenGL::ClearDrawFramebufferCache() {
+    for (auto& entry : draw_framebuffers) {
+        if (entry.framebuffer.handle) {
+            OpenGLState::ResetFramebuffer(entry.framebuffer.handle);
+            entry = {};
+        }
+    }
+    next_draw_framebuffer = 0;
+}
+
+GLuint RasterizerOpenGL::BindCachedDrawFramebuffer(const Surface& color, const Surface& depth,
+                                                    bool stencil) {
+    for (const auto& entry : draw_framebuffers) {
+        if (entry.color_name == color->texture.handle && entry.depth_name == depth->texture.handle &&
+            entry.stencil == stencil && SameFramebufferSurface(entry.color, color) &&
+            SameFramebufferSurface(entry.depth, depth)) {
+            OpenGLState::BindDrawFramebuffer(entry.framebuffer.handle);
+            if (Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.draw_fbo_hits;
+            return entry.framebuffer.handle;
+        }
+    }
+
+    auto& entry = draw_framebuffers[next_draw_framebuffer];
+    next_draw_framebuffer = (next_draw_framebuffer + 1) % draw_framebuffers.size();
+    if (entry.framebuffer.handle)
+        OpenGLState::ResetFramebuffer(entry.framebuffer.handle);
+    entry = {};
+    entry.framebuffer.Create();
+    if (!entry.framebuffer.handle)
+        return 0;
+    OpenGLState::BindDrawFramebuffer(entry.framebuffer.handle);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           color->texture.handle, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, stencil ? GL_DEPTH_STENCIL_ATTACHMENT :
+                                                        GL_DEPTH_ATTACHMENT,
+                           GL_TEXTURE_2D, depth->texture.handle, 0);
+    if (Common::FrameTiming::counters.enabled)
+        ++Common::FrameTiming::counters.draw_fbo_builds;
+    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        OpenGLState::ResetFramebuffer(entry.framebuffer.handle);
+        entry = {};
+        return 0;
+    }
+    entry.color = color;
+    entry.depth = depth;
+    entry.color_name = color->texture.handle;
+    entry.depth_name = depth->texture.handle;
+    entry.stencil = stencil;
+    return entry.framebuffer.handle;
+}
+#endif
+
 bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     bool native_borrow_disabled_for_draw=false;
 #ifdef CARA_IOS_GLES
@@ -2198,12 +2512,17 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     if (color_surface) {
         res_scale = color_surface->res_scale;
         color_attachment = color_surface->texture.handle;
-        framebuffer_info.color_width = color_surface->width;
-        framebuffer_info.color_height = color_surface->height;
     } else if (depth_surface) {
         res_scale = depth_surface->res_scale;
     }
 
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    if (DrawBatchTrace::Enabled()) {
+        DrawBatchTrace::attachments = {color_attachment, depth_surface ? depth_surface->texture.handle : 0u};
+        DrawBatchTrace::feedback_draw = shadow_rendering;
+        if (!accelerate) DrawBatchTrace::Fence();
+    }
+#endif
     // Intended selected surfaces, before texture acquisition can change cache
     // state. This is not a query of the currently bound GL framebuffer.
     if (observe_copy_attachments)
@@ -2244,12 +2563,32 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     }
 #endif
     // Sync and bind the texture surfaces
+#ifdef CARA_ANDROID_GLES_ATLAS
+    auto* pair = Cara::RepeatInstances::pending;
+    auto disjoint_output = [&](Cara::RepeatInstances::Range range) {
+        const auto clear = [&](const Surface& out) {
+            return !out || (out->addr < out->end && !range.Intersects({out->addr,out->end}));
+        };
+        return range.Valid() && clear(color_surface) && clear(depth_surface);
+    };
+    if (pair) {
+        pair->allowed = pair->allowed && is_mali_gpu && accelerate && !shadow_rendering &&
+            !native_plan && ios_indexed_vertex_inputs == 2 && pair->count != 0 &&
+            (!color_surface || pair->Independent({color_surface->addr,color_surface->end})) &&
+            (!depth_surface || pair->Independent({depth_surface->addr,depth_surface->end}));
+    }
+#endif
     const auto pica_textures = regs.texturing.GetTextures();
     {
     Common::FrameTiming::Scope lookup(Common::FrameTiming::Phase::DrawTextureAcquire,
                                      Common::FrameTiming::RenderBookkeepingProfileEnabled());
     for (unsigned texture_index = 0; texture_index < pica_textures.size(); ++texture_index) {
         const auto& texture = pica_textures[texture_index];
+#ifdef CARA_ANDROID_GLES_ATLAS
+        if (pair && pair->allowed && texture.enabled && texture_index == 0 &&
+            texture.config.type != Pica::TexturingRegs::TextureConfig::Texture2D)
+            pair->allowed = false;
+#endif
 
         if (texture.enabled) {
             if (texture_index == 0) {
@@ -2345,8 +2684,35 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             }
 #endif
             surface = res_cache.GetTextureSurface(texture);
+#ifdef CARA_ANDROID_GLES_ATLAS
+            if (pair && pair->allowed) {
+                const auto independent = [&](const Surface& source) {
+                    return source && disjoint_output({source->addr, source->end}) &&
+                           (!color_surface || color_surface->texture.handle != source->texture.handle) &&
+                           (!depth_surface || depth_surface->texture.handle != source->texture.handle);
+                };
+                pair->allowed = independent(surface);
+                const auto levels = texture.config.lod.max_level.Value();
+                if (pair->allowed && levels) {
+                    // Inspect the sources selected by the ordinary mip resolver.
+                    // Incomplete chains, custom textures and temporary blits fall back.
+                    pair->allowed = levels <= surface->level_watchers.size() &&
+                                    !surface->custom_tex_info && surface->registered &&
+                                    surface->addr == texture.config.GetPhysicalAddress() &&
+                                    surface->width == texture.config.width &&
+                                    surface->height == texture.config.height;
+                    for (unsigned level = 0; pair->allowed && level < levels; ++level) {
+                        const auto& watcher = surface->level_watchers[level];
+                        pair->allowed = watcher && watcher->IsValid() && independent(watcher->Get());
+                    }
+                }
+            }
+#endif
             if (surface) {
                 if (surface->texture.handle == color_attachment) {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+                    if (DrawBatchTrace::Enabled()) DrawBatchTrace::feedback_draw = true;
+#endif
                     state.texture_units[texture_index].texture_2d = res_cache.GetTextureCopyHandle(surface);
                 } else {
                     state.texture_units[texture_index].texture_2d = surface->texture.handle;
@@ -2403,9 +2769,31 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     }
 #endif
 
-    // Bind the framebuffer surfaces
-    OpenGLState::BindDrawFramebuffer(framebuffer.handle);
-    DiscardExpiredFramebufferAttachments();
+    // The paired route owns only complete color/depth draws. Clear and copy
+    // paths retain the regular FBO and its separate attachment bookkeeping.
+    GLuint paired_framebuffer = 0;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static const bool reuse_draw_fbos = [] {
+        const char* value = std::getenv("CARA_GLES_DRAW_FRAMEBUFFER_CACHE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (reuse_draw_fbos && accelerate && color_surface && depth_surface && !shadow_rendering &&
+        !observe_copy_attachments && !NativeNearestBorrowEnabled() && !SoftwareBatching::Active() &&
+        !CommandQueue::Enabled()) {
+        paired_framebuffer = BindCachedDrawFramebuffer(color_surface, depth_surface, has_stencil);
+    }
+#endif
+    SCOPE_EXIT({ if (paired_framebuffer) state.draw.draw_framebuffer = framebuffer.handle; });
+    if (paired_framebuffer) {
+        state.draw.draw_framebuffer = paired_framebuffer;
+    } else {
+        if (color_surface) {
+            framebuffer_info.color_width = color_surface->width;
+            framebuffer_info.color_height = color_surface->height;
+        }
+        OpenGLState::BindDrawFramebuffer(framebuffer.handle);
+        DiscardExpiredFramebufferAttachments();
+    }
 
     if (shadow_rendering) {
         if (color_surface == nullptr) {
@@ -2424,7 +2812,7 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0,
                                0);
         state.image_shadow_buffer = color_surface->texture.handle;
-    } else {
+    } else if (!paired_framebuffer) {
         if (framebuffer_info.color_attachment != color_attachment ||
             !SameFramebufferSurface(framebuffer_info.color_surface, color_surface)) {
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
@@ -2525,8 +2913,22 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     // Sync the LUTs within the texture buffer
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::LUTUpload);
-        SyncAndUploadLUTs();
-        SyncAndUploadLUTsLF();
+        static const bool defer_unused_luts = [] {
+            const char* value = std::getenv("CARA_GLES_DEFER_UNUSED_LUTS");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        // SetFragmentShader's inputs come from these same registers. Leave
+        // the dirty tables pending until a draw can actually sample them.
+        // Each stream still handles its own wrap and reuploads all live tables.
+        if (!defer_unused_luts || regs.texturing.main_config.texture3_enable)
+            SyncAndUploadLUTs();
+        if (!defer_unused_luts || !regs.lighting.disable ||
+            regs.texturing.fog_mode != Pica::TexturingRegs::FogMode::None) {
+            SyncAndUploadLUTsLF();
+        } else if (Common::FrameTiming::counters.enabled &&
+                   (uniform_block_data.lighting_lut_dirty_any || uniform_block_data.fog_lut_dirty)) {
+            ++Common::FrameTiming::counters.deferred_lighting_fog_lut_syncs;
+        }
     }
 
     // Sync the uniform data
@@ -2573,9 +2975,10 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             shader_program_manager->ApplyTo(state);
         }
         state.Apply();
+        succeeded = state.draw.shader_program || state.draw.program_pipeline;
 
         std::size_t max_vertices = 3 * (VERTEX_BUFFER_SIZE / (3 * sizeof(HardwareVertex)));
-        for (std::size_t base_vertex = 0; base_vertex < vertex_batch.size();
+        for (std::size_t base_vertex = 0; succeeded && base_vertex < vertex_batch.size();
              base_vertex += max_vertices) {
             const std::size_t vertices = std::min(max_vertices, vertex_batch.size() - base_vertex);
             const std::size_t vertex_size = vertices * sizeof(HardwareVertex);
@@ -2586,9 +2989,12 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             std::memcpy(vbo, vertex_batch.data() + base_vertex, vertex_size);
             vertex_buffer.Unmap(vertex_size);
             DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::SoftwareArrays, vertices);
-            if (!SuppressEffectFamilyHostDraw(vertices))
+            if (!SuppressEffectFamilyHostDraw(vertices)) {
+                ShaderCensus::FirstDraw first(shader_census, shader_census_drawn_programs,
+                                              state.draw.shader_program);
                 glDrawArrays(GL_TRIANGLES, static_cast<GLint>(offset / sizeof(HardwareVertex)),
-                         static_cast<GLsizei>(vertices));
+                             static_cast<GLsizei>(vertices));
+            }
         }
     }
 
@@ -2602,9 +3008,27 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     vertex_batch.clear();
     host_include_scope.Restore();
 
-    // Reset textures in rasterizer state context because the rasterizer cache might delete them
-    for (auto& texture_unit : state.texture_units) {
-        texture_unit.texture_2d = 0;
+    bool retain_texture_bindings = false;
+#if defined(CARA_ANDROID_GLES_ATLAS) && defined(CARA_GL_CONTEXT_DISPATCH)
+    static const bool retain_pica_textures = [] {
+        const char* value = std::getenv("CARA_GLES_RETAIN_PICA_TEXTURES");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    retain_texture_bindings = retain_pica_textures && is_mali_gpu && CommandQueue::Enabled() &&
+                              succeeded && !shadow_rendering;
+    if (retain_texture_bindings) {
+        // Preserve the applied bindings through cleanup. Each draw resolves its own
+        // surfaces, including feedback copies, before applying its next bindings.
+        const auto& applied = OpenGLState::GetCurState();
+        for (unsigned i = 0; i < std::size(state.texture_units); ++i) {
+            state.texture_units[i].texture_2d = applied.texture_units[i].texture_2d;
+        }
+    }
+#endif
+    if (!retain_texture_bindings) {
+        for (auto& texture_unit : state.texture_units) {
+            texture_unit.texture_2d = 0;
+        }
     }
     state.texture_cube_unit.texture_cube = 0;
     if (AllowShadow) {
@@ -2617,6 +3041,16 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         state.image_shadow_buffer = 0;
     }
     state.Apply();
+    if (retain_texture_bindings) {
+        // Drop the rasterizer's desired names. Only the applied GL state keeps
+        // them, and texture deletion clears those references.
+        for (auto& texture_unit : state.texture_units) {
+            texture_unit.texture_2d = 0;
+        }
+    }
+
+    if (!succeeded)
+        return false;
 
     if (shadow_rendering) {
         glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
@@ -3069,27 +3503,50 @@ void RasterizerOpenGL::NotifyPicaRegisterChanged(u32 id) {
 }
 
 void RasterizerOpenGL::FlushAll() {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    DrawBatchTrace::Fence();
+#endif
+
     FlushSoftwareBatch(SoftwareBatching::Reason::FlushAll);
     res_cache.FlushAll();
 }
 
 void RasterizerOpenGL::FlushRegion(PAddr addr, u32 size) {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    DrawBatchTrace::Fence();
+#endif
+
     FlushSoftwareBatch(SoftwareBatching::Reason::FlushRegion);
     res_cache.FlushRegion(addr, size);
 }
 
 void RasterizerOpenGL::InvalidateRegion(PAddr addr, u32 size) {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    DrawBatchTrace::Fence();
+#endif
+
     FlushSoftwareBatch(SoftwareBatching::Reason::Invalidate);
     res_cache.InvalidateRegion(addr, size, nullptr);
 }
 
 void RasterizerOpenGL::FlushAndInvalidateRegion(PAddr addr, u32 size) {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    DrawBatchTrace::Fence();
+#endif
+
     FlushSoftwareBatch(SoftwareBatching::Reason::Invalidate);
     res_cache.FlushRegion(addr, size);
     res_cache.InvalidateRegion(addr, size, nullptr);
 }
 
 bool RasterizerOpenGL::AccelerateDisplayTransfer(const GPU::Regs::DisplayTransferConfig& config) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::DisplayTransfer);
+#endif
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    DrawBatchTrace::Fence();
+#endif
+
     FlushSoftwareBatch(SoftwareBatching::Reason::Transfer);
     SurfaceParams src_params;
     src_params.addr = config.GetPhysicalInputAddress();
@@ -3162,6 +3619,13 @@ bool RasterizerOpenGL::AccelerateDisplayTransfer(const GPU::Regs::DisplayTransfe
 }
 
 bool RasterizerOpenGL::AccelerateTextureCopy(const GPU::Regs::DisplayTransferConfig& config) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::TextureCopy);
+#endif
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    DrawBatchTrace::Fence();
+#endif
+
     FlushSoftwareBatch(SoftwareBatching::Reason::Transfer);
     namespace Trace = Cara::TextureCopyTrace;
     const auto reject = [](Trace::Reason reason) { Trace::SetReason(reason); return false; };
@@ -3256,6 +3720,13 @@ bool RasterizerOpenGL::AccelerateTextureCopy(const GPU::Regs::DisplayTransferCon
 }
 
 bool RasterizerOpenGL::AccelerateFill(const GPU::Regs::MemoryFillConfig& config) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::MemoryFill);
+#endif
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    DrawBatchTrace::Fence();
+#endif
+
     FlushSoftwareBatch(SoftwareBatching::Reason::Transfer);
     Surface dst_surface = res_cache.GetFillSurface(config);
     res_cache.InvalidateRegion(dst_surface->addr, dst_surface->size, dst_surface,
@@ -3401,6 +3872,8 @@ void RasterizerOpenGL::SetShader() {
     if (probe_runtime_tev) {
         ShaderProgramManager::RuntimeTevWords next{};
         if (!native_borrow_fragment_selected && shader_program_manager->TryRuntimeTev(Pica::g_state.regs, next)) {
+            if (Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.runtime_tev_selections;
             if (runtime_tev_words != next) {
                 runtime_tev_words = next;
                 uniform_block_data.light_dirty = true;
@@ -3463,7 +3936,12 @@ void RasterizerOpenGL::SyncDepthOffset() {
 }
 
 void RasterizerOpenGL::SyncBlendEnabled() {
-    state.blend.enabled = (Pica::g_state.regs.framebuffer.output_merger.alphablend_enable == 1);
+    const bool enabled = Pica::g_state.regs.framebuffer.output_merger.alphablend_enable == 1;
+    if (GLES && state.blend.enabled != enabled) {
+        shader_dirty = true;
+        SyncColorWriteMask();
+    }
+    state.blend.enabled = enabled;
 }
 
 void RasterizerOpenGL::SyncBlendFuncs() {
@@ -3570,32 +4048,22 @@ void RasterizerOpenGL::SyncAlphaTest() {
 }
 
 void RasterizerOpenGL::SyncLogicOp() {
-    const auto& regs = Pica::g_state.regs;
-    state.logic_op = PicaToGL::LogicOp(regs.framebuffer.output_merger.logic_op);
-    /*if (GLES && (GLAD_GL_ARM_shader_framebuffer_fetch || GLAD_GL_EXT_shader_framebuffer_fetch)) {
+    const auto& merger = Pica::g_state.regs.framebuffer.output_merger;
+    const auto logic_op = PicaToGL::LogicOp(merger.logic_op);
+    if (GLES && !merger.alphablend_enable && state.logic_op != logic_op)
         shader_dirty = true;
-    }*/
-    if (GLES) {
-        if (!regs.framebuffer.output_merger.alphablend_enable) {
-            if (regs.framebuffer.output_merger.logic_op == Pica::FramebufferRegs::LogicOp::NoOp) {
-                // Color output is disabled by logic operation. We use color write mask to skip
-                // color but allow depth write.
-                state.color_mask = {};
-            }
-        }
-    }
+    state.logic_op = logic_op;
+    if (GLES)
+        SyncColorWriteMask();
 }
 
 void RasterizerOpenGL::SyncColorWriteMask() {
     const auto& regs = Pica::g_state.regs;
-    if (GLES) {
-        if (!regs.framebuffer.output_merger.alphablend_enable) {
-            if (regs.framebuffer.output_merger.logic_op == Pica::FramebufferRegs::LogicOp::NoOp) {
-                // Color output is disabled by logic operation. We use color write mask to skip
-                // color but allow depth write. Return early to avoid overwriting this.
-                return;
-            }
-        }
+    if (GLES && !regs.framebuffer.output_merger.alphablend_enable &&
+        regs.framebuffer.output_merger.logic_op == Pica::FramebufferRegs::LogicOp::NoOp) {
+        // Preserve depth updates while suppressing all color writes.
+        state.color_mask = {};
+        return;
     }
 
     auto IsColorWriteEnabled = [&](u32 value) {
@@ -3811,12 +4279,22 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         return;
     }
 
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::LightingFogLUT,
+                                      Common::FrameTiming::RenderBookkeepingProfileEnabled());
     u8* buffer;
     GLintptr offset;
     bool invalidate;
     std::size_t bytes_used = 0;
 #ifdef CARA_IOS_GLES
-    if (!UseNativeLUTBuffers()) {
+    if (UseLightingLUTSnapshots()) {
+        constexpr std::size_t row_bytes = LUTTextureWidth * sizeof(GLvec2);
+        constexpr std::size_t image_bytes = ((max_size + row_bytes - 1) / row_bytes) * row_bytes;
+        invalidate = lighting_lut_image.empty();
+        if (invalidate)
+            lighting_lut_image.resize(image_bytes);
+        buffer = lighting_lut_image.data();
+        offset = 0;
+    } else if (!UseNativeLUTBuffers()) {
         std::tie(buffer, offset, invalidate) = texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
     } else
 #endif
@@ -3842,9 +4320,11 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                 auto& lut_offset =
                     uniform_block_data.light_data.lighting_lut_offset[index / 4][index % 4];
                 if (is_changed || invalidate || lut_offset < 0) {
-                    std::memcpy(buffer + bytes_used, lighting_lut_data[index].data(),
+                    const auto destination = UseLightingLUTSnapshots()
+                        ? index * sizeof(lighting_lut_data[index]) : bytes_used;
+                    std::memcpy(buffer + destination, lighting_lut_data[index].data(),
                                 lighting_lut_data[index].size() * sizeof(GLvec2));
-                    lut_offset = (offset + bytes_used) / sizeof(GLvec2);
+                    lut_offset = (offset + destination) / sizeof(GLvec2);
                     uniform_block_data.light_dirty = true;
                     bytes_used += lighting_lut_data[index].size() * sizeof(GLvec2);
                 }
@@ -3867,9 +4347,10 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
             }
         }
         if (is_changed || invalidate || uniform_block_data.data.fog_lut_offset < 0) {
-            std::memcpy(buffer + bytes_used, fog_lut_data.data(),
+            const auto destination = UseLightingLUTSnapshots() ? sizeof(lighting_lut_data) : bytes_used;
+            std::memcpy(buffer + destination, fog_lut_data.data(),
                         fog_lut_data.size() * sizeof(GLvec2));
-            uniform_block_data.data.fog_lut_offset = (offset + bytes_used) / sizeof(GLvec2);
+            uniform_block_data.data.fog_lut_offset = (offset + destination) / sizeof(GLvec2);
             uniform_block_data.dirty = true;
             bytes_used += fog_lut_data.size() * sizeof(GLvec2);
         }
@@ -3877,7 +4358,55 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     }
 
 #ifdef CARA_IOS_GLES
-    if (!UseNativeLUTBuffers()) {
+    if (UseLightingLUTSnapshots()) {
+        if (bytes_used) {
+            GLuint texture = texture_buffer_lut_lf.handle;
+#ifdef CARA_ANDROID_GLES_ATLAS
+            static const bool distinct_lighting_images = [] {
+                const char* value = std::getenv("CARA_LIGHTING_LUT_GENERATIONS");
+                return value && std::strcmp(value, "1") == 0;
+            }();
+            if (distinct_lighting_images) {
+                if (next_lighting_texture == LightingTextureBatchSize) {
+                    // These names belong to earlier, already submitted draws. GLES
+                    // retains their storage for pending work after deletion.
+                    std::array<GLuint, LightingTextureBatchSize> names{};
+                    for (size_t i = 0; i < names.size(); ++i) {
+                        names[i] = std::exchange(lighting_texture_batch[i].handle, 0);
+                    }
+                    if (names.back() != 0) {
+                        glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
+                    }
+                    names.fill(0);
+                    glGenTextures(static_cast<GLsizei>(names.size()), names.data());
+                    if (std::any_of(names.begin(), names.end(), [](GLuint name) { return name == 0; })) {
+                        glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
+                    } else {
+                        for (size_t i = 0; i < names.size(); ++i) {
+                            lighting_texture_batch[i].handle = names[i];
+                        }
+                        next_lighting_texture = 0;
+                    }
+                }
+                if (next_lighting_texture < LightingTextureBatchSize) {
+                    std::swap(lighting_texture_generation,
+                              lighting_texture_batch[next_lighting_texture++]);
+                    texture = lighting_texture_generation.handle;
+                }
+            }
+#endif
+            ReplaceLightingLUTImage(texture, TextureUnits::TextureBufferLUT_LF.id,
+                                    lighting_lut_image.data(), lighting_lut_image.size());
+#ifdef CARA_ANDROID_GLES_ATLAS
+            if (distinct_lighting_images) {
+                // Publish after initialization. All earlier commands keep their
+                // own texture objects, including draws still in flight.
+                OpenGLState::BindLightingLUT(texture);
+                state.texture_buffer_lut_lf.texture_buffer = texture;
+            }
+#endif
+        }
+    } else if (!UseNativeLUTBuffers()) {
         UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
                      offset, buffer, bytes_used);
         texture_lf_buffer.FinishStaging(bytes_used);
@@ -3898,6 +4427,8 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
         return;
     }
 
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ProceduralLUT,
+                                      Common::FrameTiming::RenderBookkeepingProfileEnabled());
     u8* buffer;
     GLintptr offset;
     bool invalidate;

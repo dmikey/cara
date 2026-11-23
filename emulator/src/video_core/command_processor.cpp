@@ -34,6 +34,9 @@
 #include "core/memory.h"
 #include "core/settings.h"
 #include "core/tracer/recorder.h"
+#ifdef CARA_ANDROID_GLES_ATLAS
+#include "cara/pica_repeat_instances.h"
+#endif
 #include "video_core/command_processor.h"
 #include "video_core/debug_utils/debug_utils.h"
 #include "video_core/pica_state.h"
@@ -295,7 +298,7 @@ static bool TryShaderStreamExtras(u32 id,u32 count,u32 mask,bool grouped,
     const bool swizzle=id>=PICA_REG_INDEX(vs.swizzle_patterns.set_word[0]) && id<=PICA_REG_INDEX(vs.swizzle_patterns.set_word[7]);
     if(!program && !swizzle)return false;
     if(hooks || origins || g_debug_context || RepeatStateEnabled() || CommandProfileEnabled() ||
-       PostIRQProfileEnabled() || Cara::GuestGPUTrace::active.load(std::memory_order_relaxed) || Cara::ExperimentalP3DCompletionEnabled())return false;
+       PostIRQProfileEnabled() || Cara::GuestGPUTrace::active.load(std::memory_order_relaxed))return false;
     auto& offset=program ? g_state.regs.vs.program.offset : g_state.regs.vs.swizzle_patterns.offset;
     const u32 capacity=program ? 512 : u32(g_state.vs.swizzle_data.size());
     if(offset>capacity || count>capacity-offset)return false;
@@ -313,15 +316,28 @@ static bool TryShaderStreamExtras(u32 id,u32 count,u32 mask,bool grouped,
     // Raw payloads, including signed-zero/NaN words, retain their exact bits.
     // Full-mask port store, shader store, mirror, dirty marks and offset advance
     // happen for EACH logical write in their original order.
+    const bool account_p3d = Cara::ExperimentalP3DCompletionEnabled();
     for(u32 i=0;i<count;++i) {
         const u32 value=*g_state.cmd_list.current_ptr++;
+        // Match the scalar command charge after consuming each word and before
+        // changing PICA state. The guest completion deadline keeps seeing the
+        // same work, including a partially consumed stream on counter overflow.
+        if (account_p3d) g_state.experimental_p3d_work.Command();
         g_state.regs.reg_array[id]=value;
         WriteShaderWord(g_state.vs,offset,value,swizzle);
         if(mirror)WriteShaderWord(g_state.gs,offset,value,swizzle);
         ++offset;step(i);
     }
-    if(count_runtime){++shader_stream_batch_stats.packets;shader_stream_batch_stats.words+=count;
-        if(mirror)shader_stream_batch_stats.mirrored_words+=count;}
+    if (count_runtime) {
+        ++shader_stream_batch_stats.packets;
+        shader_stream_batch_stats.words += count;
+        if (mirror) shader_stream_batch_stats.mirrored_words += count;
+        auto& timing = Common::FrameTiming::counters;
+        if (timing.enabled) {
+            ++timing.pica_shader_stream_packets;
+            timing.pica_shader_stream_words += count;
+        }
+    }
     return true;
 }
 
@@ -525,7 +541,109 @@ static void ExecuteSoftwareDraw(bool is_indexed, [[maybe_unused]] bool accelerat
         VideoCore::Rasterizer()->DrawTriangles();
 }
 
-static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInterface* command_hooks) {
+#ifdef CARA_ANDROID_GLES_ATLAS
+static void SetRepeatList(PAddr base, size_t size, const u32* head) {
+    using namespace Cara::RepeatInstances;
+    if (!Enabled()) return;
+    list_range = {};
+    skip = nullptr;
+    const auto ref = VideoCore::Memory()->GetPhysicalRef(base);
+    if (ref && ref.GetSize() >= size && ref.GetPtr() == reinterpret_cast<const u8*>(head))
+        list_range = {base, u64(base) + size};
+}
+
+// This lookahead never executes a guest packet. Only ordinary scalar headers
+// survive and the real decoder still charges and applies each original write.
+static const u32* FindRepeatedTrigger(u32 trigger) {
+    using namespace Cara::RepeatInstances;
+    const auto& list = g_state.cmd_list;
+    const auto& regs = g_state.regs;
+    if (!list_range.Valid() || !list.current_ptr || !list.head_ptr ||
+        g_debug_context || Cara::GuestGPUTrace::Enabled()) return nullptr;
+    const auto topology = g_state.primitive_assembler.GetTopology();
+    if (topology != PipelineRegs::TriangleTopology::List && topology != PipelineRegs::TriangleTopology::Shader)
+        return nullptr;
+    if (topology == PipelineRegs::TriangleTopology::Shader && regs.pipeline.variable_primitive)
+        return nullptr;
+    const auto* cursor = list.current_ptr;
+    const auto* end = list.head_ptr + list.length;
+    if (cursor < list.head_ptr || cursor > end || ((cursor-list.head_ptr) & 1)) return nullptr;
+    unsigned uniform_index = 96;
+    for (unsigned scanned = 0; scanned < 24 && end - cursor >= 2; ++scanned) {
+        const u32 first = *cursor++;
+        const CommandHeader header{*cursor++};
+        const unsigned id = header.cmd_id;
+        const unsigned extra = header.extra_data_length;
+        if (header.group_commands || extra > end - cursor) return nullptr;
+        if (id == trigger && !extra) return cursor;
+        if (id == PICA_REG_INDEX(vs.uniform_setup.set_value[0])) {
+            // Only whole float32 vectors. The real writer consumes W,Z,Y,X.
+            if (header.parameter_mask != 15 || (extra + 1) % 4 ||
+                (extra + 1) / 4 > 96 - uniform_index) return nullptr;
+            for (unsigned i = 0; i <= extra; ++i) {
+                const float live = g_state.vs.uniforms.f[uniform_index + i / 4][3 - i % 4].ToFloat32();
+                const u32 word = i == 0 ? first : cursor[i - 1];
+                if (std::memcmp(&live, &word, sizeof(word))) return nullptr;
+            }
+            uniform_index += (extra + 1) / 4;
+            cursor += extra;
+            if (extra & 1) {
+                if (cursor == end) return nullptr;
+                ++cursor;
+            }
+            continue;
+        }
+        if (extra) return nullptr;
+        switch (id) {
+        case PICA_REG_INDEX(vs.uniform_setup):
+            if (header.parameter_mask != 15 || (first & ~0x7fu) != 0x80000000u ||
+                (first & 0x7f) >= 96 || g_state.vs_float_regs_counter) return nullptr;
+            uniform_index = first & 0x7f;
+            break;
+        case PICA_REG_INDEX(pipeline.gpu_mode):
+        case 0x231: // GPUREG_VTX_FUNC, no guest-visible post-transform cache.
+            break;
+        case 0x253: // GPUREG_GEOSTAGE_CONFIG2
+        case 0x0d3: // TEV2 constant color
+        case 0x0fb: // TEV5 constant color
+        case PICA_REG_INDEX(pipeline.vertex_attributes):
+        case PICA_REG_INDEX(pipeline.vertex_attributes.attribute_loaders[0]):
+        case PICA_REG_INDEX(pipeline.num_vertices):
+        case PICA_REG_INDEX(pipeline.index_array):
+        case PICA_REG_INDEX(pipeline.vertex_offset):
+        case PICA_REG_INDEX(pipeline.triangle_topology): {
+            for (unsigned byte = 0; byte < 4; ++byte)
+                if ((header.parameter_mask & (1u << byte)) &&
+                    ((first ^ regs.reg_array[id]) & (0xffu << (8 * byte)))) return nullptr;
+            break;
+        }
+        default: return nullptr;
+        }
+    }
+    return nullptr;
+}
+
+[[gnu::noinline]] static bool TryAcceleratedPair(u32 trigger, bool indexed) {
+    using namespace Cara::RepeatInstances;
+    const auto* next = FindRepeatedTrigger(trigger);
+    if (!next) return VideoCore::Rasterizer()->AccelerateDrawBatch(indexed);
+    Pair pair{};
+    pair.commands = list_range;
+    pair.allowed = true;
+    pending = &pair;
+    SCOPE_EXIT({ pending = nullptr; });
+    auto& timing = Common::FrameTiming::counters;
+    if (timing.enabled) ++timing.repeat_candidates;
+    const bool rendered = VideoCore::Rasterizer()->AccelerateDrawBatch(indexed);
+    if (pair.issued) {
+        skip = next;
+        if (timing.enabled) ++timing.repeat_issued;
+    }
+    return rendered;
+}
+#endif
+
+static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInterface* command_hooks, bool scalar_packet = false) {
     auto& regs = g_state.regs;
 
     if (id >= Regs::NUM_REGS) {
@@ -572,6 +690,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInter
     switch (id) {
     // Trigger IRQ
     case PICA_REG_INDEX(trigger_irq):
+        if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.pica_batch_irqs;
         if (Cara::GuestGPUTrace::Enabled()) Cara::GuestGPUTrace::Emit(Core::System::GetInstance().CoreTiming(),
             Cara::GuestGPUTrace::Kind::PicaIRQ, 0, 0, value, mask);
         Service::GSP::SignalInterrupt(Service::GSP::InterruptId::P3D);
@@ -694,6 +813,9 @@ static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInter
         u32* head_ptr = (u32*)VideoCore::Memory()->GetPhysicalPointer(redirected_base);
         g_state.cmd_list.head_ptr = g_state.cmd_list.current_ptr = head_ptr;
         g_state.cmd_list.length = regs.pipeline.command_buffer.GetSize(index) / sizeof(u32);
+#ifdef CARA_ANDROID_GLES_ATLAS
+        SetRepeatList(redirected_base, g_state.cmd_list.length * sizeof(u32), head_ptr);
+#endif
         if (Cara::GuestGPUTrace::IsOwner() && Cara::GuestGPUTrace::command_origins_enabled)
             Cara::GuestGPUTrace::RedirectCommandOrigin(
                 redirected_base, g_state.cmd_list.length, head_ptr);
@@ -788,7 +910,21 @@ static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInter
             break;
         }
 #endif
-        if (accelerate_draw && rasterizer->AccelerateDrawBatch(is_indexed)) {
+#ifdef CARA_ANDROID_GLES_ATLAS
+        if (Cara::RepeatInstances::Enabled() && scalar_packet && !command_hooks) {
+            if (Cara::RepeatInstances::skip == g_state.cmd_list.current_ptr) {
+                Cara::RepeatInstances::skip = nullptr;
+                break;
+            }
+        }
+        const bool paired_path = accelerate_draw && Cara::RepeatInstances::Enabled() &&
+                                 scalar_packet && !command_hooks;
+        const bool rendered = accelerate_draw && (paired_path ? TryAcceleratedPair(id, is_indexed) :
+                                                   rasterizer->AccelerateDrawBatch(is_indexed));
+#else
+        const bool rendered = accelerate_draw && rasterizer->AccelerateDrawBatch(is_indexed);
+#endif
+        if (rendered) {
             break;
         } else if (Settings::values.skip_slow_draw) {
             break;
@@ -1051,6 +1187,10 @@ void ProcessCommandList(PAddr list, u32 size) {
     g_state.cmd_list.addr = list;
     g_state.cmd_list.head_ptr = g_state.cmd_list.current_ptr = buffer;
     g_state.cmd_list.length = size / sizeof(u32);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    SetRepeatList(list, size, buffer);
+    SCOPE_EXIT({ Cara::RepeatInstances::skip = nullptr; Cara::RepeatInstances::list_range = {}; });
+#endif
 
     Cara::GuestGPUTrace::CommandOriginFrame* origin_scope = nullptr;
     if (Cara::GuestGPUTrace::CommandOriginsTracking())
@@ -1086,7 +1226,7 @@ void ProcessCommandList(PAddr list, u32 size) {
             Cara::GuestGPUTrace::ObserveCommandParameter(origin_scope, g_state.cmd_list.head_ptr,
                 g_state.cmd_list.current_ptr, g_state.cmd_list.length, 0, cmd_id, true);
         }
-        WritePicaReg(cmd_id, value, header.parameter_mask, command_hooks);
+        WritePicaReg(cmd_id, value, header.parameter_mask, command_hooks, header.extra_data_length == 0);
         // Observe only metadata AFTER the original scalar header. In particular,
         // never read ahead, move the cursor, or reject legacy truncated packets.
         if (collect_shader_packets) {

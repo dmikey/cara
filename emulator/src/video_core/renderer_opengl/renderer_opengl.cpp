@@ -1,14 +1,24 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
+#include <string_view>
 #include <memory>
 #include <glad/glad.h>
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 #include <queue>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include "common/frame_timing.h"
 #include "common/bit_field.h"
 #include "common/logging/log.h"
@@ -57,6 +67,7 @@ struct OGLTextureMailbox {
     std::queue<OGLFrame*> free_queue;
     std::deque<OGLFrame*> present_queue;
     OGLFrame* previous_frame = nullptr;
+    u64 presentation_generation = 0;
     std::chrono::milliseconds elapsed{};
 
     OGLTextureMailbox() {
@@ -81,13 +92,13 @@ struct OGLTextureMailbox {
 
     /// called in core thread
     void ResetPresent() {
-        if (!present_queue.empty()) {
-            std::scoped_lock lock(swap_chain_lock);
-            for (auto& frame : present_queue) {
-                free_queue.push(frame);
-            }
-            present_queue.clear();
+        std::scoped_lock lock(swap_chain_lock);
+        ++presentation_generation;
+        for (auto* frame : present_queue) {
+            free_queue.push(frame);
         }
+        present_queue.clear();
+        free_cv.notify_all();
     }
 
     /// called in core thread
@@ -115,40 +126,47 @@ struct OGLTextureMailbox {
     }
 
     /// called in core thread
-    OGLFrame* GetRenderFrame() {
+    OGLFrame* GetRenderFrame(u64& generation) {
         std::unique_lock<std::mutex> lock(swap_chain_lock);
-
-        // If theres no free frames, we will reuse the oldest render frame
         if (free_queue.empty()) {
-            // wait for new entries in the present_queue
             free_cv.wait_for(lock, elapsed, [this] { return !free_queue.empty(); });
-            if (free_queue.empty()) {
-                auto frame = present_queue.front();
-                present_queue.pop_front();
-
-                // recycle one more pending frame
-                free_queue.push(present_queue.front());
-                present_queue.pop_front();
-
-                return frame;
-            }
         }
-
-        OGLFrame* frame = free_queue.front();
-        free_queue.pop();
+        generation = presentation_generation;
+        if (!free_queue.empty()) {
+            auto* frame = free_queue.front();
+            free_queue.pop();
+            return frame;
+        }
+        if (present_queue.empty()) {
+            return nullptr;
+        }
+        auto* frame = present_queue.front();
+        present_queue.pop_front();
+        if (!present_queue.empty()) {
+            free_queue.push(present_queue.front());
+            present_queue.pop_front();
+        }
         return frame;
     }
 
-    /// called in core thread
-    void ReleaseRenderFrame(OGLFrame* frame) {
-        std::unique_lock<std::mutex> lock(swap_chain_lock);
-        present_queue.push_back(frame);
+    // Called by the producer or by the worker after flushing the fence.
+    void ReleaseRenderFrame(OGLFrame* frame, u64 generation) {
+        std::scoped_lock lock(swap_chain_lock);
+        if (generation == presentation_generation) {
+            present_queue.push_back(frame);
+        } else {
+            free_queue.push(frame);
+        }
+        free_cv.notify_one();
     }
 
     /// called in present thread
     OGLFrame* GetPresentFrame() {
         std::unique_lock<std::mutex> lock(swap_chain_lock);
 
+        if (present_queue.empty()) {
+            return nullptr;
+        }
         // free the previous frame and add it back to the free queue
         if (previous_frame) {
             free_queue.push(previous_frame);
@@ -166,11 +184,6 @@ struct OGLTextureMailbox {
         }
 
         return previous_frame;
-    }
-
-    /// called in present thread
-    bool IsPresentEmpty() const {
-        return present_queue.empty();
     }
 
     /// called in present thread
@@ -354,6 +367,15 @@ RendererOpenGL::RendererOpenGL(Frontend::EmuWindow& window, bool use_gles) : Ren
 }
 
 RendererOpenGL::~RendererOpenGL() {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (CommandQueue::Enabled()) {
+        try {
+            CommandQueue::Drain();
+        } catch (const std::exception& error) {
+            LOG_ERROR(Render_OpenGL, "Could not drain GLES mailbox work: {}", error.what());
+        }
+    }
+#endif
     OSD::Shutdown();
 }
 
@@ -448,7 +470,28 @@ void RendererOpenGL::RenderScreenshot() {
 
 /// run in core thread
 void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
-    OGLFrame* frame = mailbox->GetRenderFrame();
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::Display);
+#endif
+    u64 generation = 0;
+    OGLFrame* frame = mailbox->GetRenderFrame(generation);
+
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    static const bool async_requested = [] {
+        const char* value = std::getenv("CARA_MAILBOX_ASYNC_PUBLISH");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    const bool async_publish = async_requested && GLES && CommandQueue::Enabled();
+    const bool packet_fences = async_publish || CommandQueue::MailboxFencePacketEnabled();
+    if (!frame && async_publish) {
+        // The bounded mailbox is full. Drain outside the mailbox lock.
+        CommandQueue::Drain();
+        frame = mailbox->GetRenderFrame(generation);
+    }
+#endif
+    if (!frame) {
+        return;
+    }
 
     // Clean up sync objects before drawing
 
@@ -456,9 +499,16 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
     // sure that the presentation is done
     if (frame->present_fence) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GPUWait);
-        glClientWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
-        glWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
-        glDeleteSync(frame->present_fence);
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+        if (packet_fences) {
+            CommandQueue::QueueConsumedPresentFence(frame->present_fence, async_publish);
+        } else
+#endif
+        {
+            glClientWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
+            glWaitSync(frame->present_fence, 0, GL_TIMEOUT_IGNORED);
+            glDeleteSync(frame->present_fence);
+        }
         frame->present_fence = nullptr;
     }
 
@@ -479,20 +529,36 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
         glDeleteSync(frame->render_fence);
     }
     // Create a fence for the frontend to wait on and swap this frame to OffTex
-    frame->render_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    glFlush();
-
-    mailbox->ReleaseRenderFrame(frame);
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (async_publish) {
+        CommandQueue::QueuePublishedRenderFence(
+            [owner = mailbox.get(), frame, generation](GLsync fence) {
+                frame->render_fence = fence;
+                owner->ReleaseRenderFrame(frame, generation);
+            });
+        return;
+    }
+    if (packet_fences) {
+        frame->render_fence = CommandQueue::CreatePublishedRenderFence();
+    } else
+#endif
+    {
+        frame->render_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        glFlush();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+        CommandQueue::Drain();
+#endif
+    }
+    mailbox->ReleaseRenderFrame(frame, generation);
 }
 
 /// run in present thread
 bool RendererOpenGL::TryPresent() {
-    if (mailbox->IsPresentEmpty()) {
+    auto* frame = mailbox->GetPresentFrame();
+    if (!frame) {
         LOG_TRACE(Render_OpenGL, "mailbox no frame to present");
         return false;
     }
-
-    auto frame = mailbox->GetPresentFrame();
     const auto& layout = render_window.GetFramebufferLayout();
 
     // Clearing before a full overwrite of a fbo can signal to drivers that they can avoid a
@@ -948,11 +1014,59 @@ void RendererOpenGL::DrawScreens(const Layout::FramebufferLayout& layout, bool i
     OSD::DrawMessage(render_window, layout);
 }
 
+static void APIENTRY ObserveGLESDebugMessage(GLenum source, GLenum type, GLuint id,
+                                             GLenum severity, GLsizei length,
+                                             const GLchar* message, const void*) {
+    if (type != GL_DEBUG_TYPE_ERROR && type != GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR)
+        return;
+
+    // Keep repeating draw-time validation errors from flooding the log.
+    const std::array<GLuint, 3> key{source, type, id};
+    static thread_local std::array<std::array<GLuint, 3>, 64> seen{};
+    static thread_local std::size_t count = 0;
+    const auto end = seen.begin() + count;
+    if (count == seen.size() || std::find(seen.begin(), end, key) != end)
+        return;
+    seen[count++] = key;
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_WARN, "CaraGLES", "source=0x%x type=0x%x id=%u severity=0x%x %.*s",
+                        source, type, id, severity, length, message);
+#else
+    LOG_WARNING(Render_OpenGL, "GLES source={:x} type={:x} id={} severity={:x} {}",
+                source, type, id, severity, std::string_view(message, length));
+#endif
+}
+
+static void InstallGLESDebugObserver() {
+    const char* enabled = std::getenv("CARA_GLES_DEBUG");
+    if (!GLES || !enabled || std::strcmp(enabled, "1") != 0)
+        return;
+
+    if (GLAD_GL_ES_VERSION_3_2 && glDebugMessageCallback) {
+        glDebugMessageCallback(ObserveGLESDebugMessage, nullptr);
+    } else if (GLAD_GL_KHR_debug && glDebugMessageCallbackKHR) {
+        glDebugMessageCallbackKHR(ObserveGLESDebugMessage, nullptr);
+    } else {
+        LOG_INFO(Render_OpenGL, "GLES debug output is unavailable in this context");
+        return;
+    }
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+#ifdef __ANDROID__
+    __android_log_write(ANDROID_LOG_INFO, "CaraGLES", "GLES debug observer installed on renderer context");
+#endif
+}
+
 /// Initialize the renderer
 VideoCore::ResultStatus RendererOpenGL::Init() {
     const char* gl_version{reinterpret_cast<char const*>(glGetString(GL_VERSION))};
     const char* gpu_vendor{reinterpret_cast<char const*>(glGetString(GL_VENDOR))};
     const char* gpu_model{reinterpret_cast<char const*>(glGetString(GL_RENDERER))};
+
+    if (!gl_version || !gpu_vendor || !gpu_model) {
+        LOG_ERROR(Render_OpenGL, "No usable GL context during renderer initialization");
+        return VideoCore::ResultStatus::ErrorGenericDrivers;
+    }
 
     LOG_INFO(Render_OpenGL, "GL_VERSION: {}", gl_version);
     LOG_INFO(Render_OpenGL, "GL_VENDOR: {}", gpu_vendor);
@@ -985,6 +1099,7 @@ VideoCore::ResultStatus RendererOpenGL::Init() {
         return VideoCore::ResultStatus::ErrorGenericDrivers;
     }
 #endif
+    InstallGLESDebugObserver();
     InitOpenGLObjects();
 
     return VideoCore::ResultStatus::Success;

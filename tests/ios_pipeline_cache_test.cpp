@@ -27,6 +27,14 @@ int main() {
     assert(!Decode(malicious, identity, decoded));
     auto too_many = std::vector<Entry>(MaxEntries + 1, expected[0]);
     assert(Encode(identity, too_many).empty());
+    const auto extended = Encode(identity, too_many, ExtendedMaliLimits);
+    assert(!extended.empty());
+    std::vector<Entry> extended_decoded;
+    assert(!Decode(extended, identity, extended_decoded));
+    assert(Decode(extended, identity, extended_decoded, ExtendedMaliLimits));
+    assert(extended_decoded.size() == MaxEntries + 1);
+    assert(Encode(identity, expected, Limits{bytes.size() - 1, MaxEntries}).empty());
+    assert(!Decode(bytes, identity, extended_decoded, Limits{bytes.size() - 1, MaxEntries}));
     auto too_large = expected;
     too_large[0].binary.resize(MaxBinary + 1);
     assert(Encode(identity, too_large).empty());

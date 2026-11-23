@@ -33,7 +33,8 @@ binary-format capability or frame-time benefit is claimed without device proof.
 
 The identity includes a CMake-generated SHA256 over generator/decompiler,
 source preparation, packed-vertex/input layout, shader manager/bindings,
-rasterizer declarations, register layout and binary-resource source inputs.
+native geometry and shared TEV shader text, register layout and binary-resource source inputs.
+Host-only rasterizer storage can change independently of this fingerprint.
 CMake tracks edits and regenerates that fingerprint. It additionally includes
 GL vendor, renderer, version, GLSL version, the OS build and advertised binary
 formats. Persisted sources are paired by hashes of their exact bytes rather than

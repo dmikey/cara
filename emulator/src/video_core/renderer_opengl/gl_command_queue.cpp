@@ -1,3 +1,5 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
+#include "video_core/renderer_opengl/gl_shared_vertex_shadow.h"
 #include "gl_command_queue.h"
 #include "gl_pipeline_capture.h"
 #include "gl_host_latency.h"
@@ -8,6 +10,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <ctime>
+#include <chrono>
 #include <cstdlib>
 #include "common/host_render_queue.h"
 #include <atomic>
@@ -31,6 +34,35 @@ constexpr std::size_t MaxBatchCommands=64, MaxBatchBytes=256*1024;
 std::atomic<Common::HostRenderQueue*> owner{nullptr};
 std::thread::id producer;
 std::vector<std::function<void()>> pending;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+std::array<Backlog::Tag, MaxBatchCommands> pending_tags{};
+std::atomic<std::int64_t> wait_start_ns{};
+std::atomic<unsigned> wait_tag{};
+std::unordered_map<std::uint64_t, Backlog::Row> worker_backlog;
+
+std::int64_t ProfileNowNs() {
+ return std::chrono::duration_cast<std::chrono::nanoseconds>(
+     std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+unsigned TagIndex(Backlog::Tag tag) {
+ return ((static_cast<unsigned>(tag.source) * static_cast<unsigned>(RpcApiCount) + static_cast<unsigned>(tag.api)) << 16) | tag.entry;
+}
+void RunProfiled(Backlog::Tag command, std::function<void()>& job) {
+ const auto pending_at_entry = wait_start_ns.load(std::memory_order_acquire);
+ const auto begin = pending_at_entry ? ProfileNowNs() : 0;
+ job();
+ const auto end = ProfileNowNs();
+ const auto wait = wait_start_ns.load(std::memory_order_acquire);
+ if (!wait || end <= wait) return;
+ const auto request = wait_tag.load(std::memory_order_relaxed);
+ const std::uint64_t key = (std::uint64_t(request) << 32) | TagIndex(command);
+ auto& row = worker_backlog[key];
+ row.request = {static_cast<Backlog::Source>((request >> 16) / RpcApiCount), static_cast<RpcApi>((request >> 16) % RpcApiCount), Backlog::NoEntry};
+ row.command = command;
+ ++row.calls;
+ row.ns += end - std::max(wait, begin);
+}
+#endif
 struct PayloadLease;std::shared_ptr<PayloadLease> pending_slots;
 std::size_t pending_bytes=0;
 struct AtomicStats {
@@ -124,17 +156,74 @@ void Record(std::function<void()> job,std::size_t bytes=0,RpcApi api=RpcApi::Int
    auto holder=std::make_shared<BudgetedJob>();holder->lease=std::move(copy_reservation);holder->job=std::move(job);
    job=[holder]{holder->job();};
  }
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+ if (Common::FrameTiming::counters.enabled && Backlog::Enabled()) {
+  const bool draw = api == RpcApi::api_glDrawArrays || api == RpcApi::api_glDrawElements ||
+                    api == RpcApi::api_glDrawArraysInstanced || api == RpcApi::api_glDrawElementsInstanced ||
+                    api == RpcApi::api_glDrawRangeElementsBaseVertex;
+  pending_tags[pending.size()] = {Backlog::source, api, draw ? Backlog::vertex_entry : Backlog::NoEntry};
+ }
+#endif
  pending.emplace_back(std::move(job));pending_bytes+=footprint;
  if(pending.size()==1)pending_slots->MarkQueued();
  ++stats.recorded_commands;stats.owned_payload_bytes+=bytes;
  stats.pending_commands=pending.size();stats.pending_bytes=pending_bytes;
  if(pending.size()>=MaxBatchCommands || pending_bytes>=MaxBatchBytes) Flush();
 }
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+using SyncClock = std::chrono::steady_clock;
+thread_local std::array<SyncTiming, RpcApiCount> sync_timings{};
+struct StampOnReturn {
+ SyncClock::time_point& output;
+ ~StampOnReturn() { output = SyncClock::now(); }
+};
+template<class F> decltype(auto) ProfileSync(Common::HostRenderQueue& queue, RpcApi api, F&& fn) {
+ // The promise is fulfilled after the worker scope ends. Call returns or throws
+ // before the producer's stack is released, including when a queued job is cancelled.
+ auto& timing = sync_timings[static_cast<std::size_t>(api)];
+ SyncClock::time_point entered{}, returned{};
+ const auto start = SyncClock::now();
+ const bool backlog = Backlog::Enabled();
+ if (backlog) {
+  wait_tag.store(TagIndex({Backlog::source, api}), std::memory_order_relaxed);
+  wait_start_ns.store(std::chrono::duration_cast<std::chrono::nanoseconds>(start.time_since_epoch()).count(),
+                      std::memory_order_release);
+ }
+ struct ClearWait {
+  bool enabled;
+  ~ClearWait() { if (enabled) wait_start_ns.store(0, std::memory_order_release); }
+ } clear{backlog};
+ Flush();
+ struct Account {
+  SyncTiming& timing;
+  const SyncClock::time_point &start, &entered, &returned;
+  ~Account() {
+   if (entered == SyncClock::time_point{}) return;
+   using std::chrono::duration_cast;
+   using std::chrono::nanoseconds;
+   ++timing.count;
+   timing.before_driver_ns += duration_cast<nanoseconds>(entered - start).count();
+   timing.in_driver_ns += duration_cast<nanoseconds>(returned - entered).count();
+   timing.after_driver_ns += duration_cast<nanoseconds>(SyncClock::now() - returned).count();
+  }
+ } account{timing, start, entered, returned};
+ return queue.Call([&]() -> decltype(auto) {
+  entered = SyncClock::now();
+  StampOnReturn stamp{returned};
+  return fn();
+ });
+}
+#endif
 template<class F> decltype(auto) Sync(F&& f,bool pointer=false,RpcApi api=RpcApi::Internal) {
  auto& q=Owner();
  if(q.IsWorkerThread()) { ++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer; backend uses captured raw entrypoints"); }
- Producer();Flush();++stats.synchronous_calls;CountRpc(api);
+ Producer();++stats.synchronous_calls;CountRpc(api);
  if(pointer) ++stats.conservative_pointer_rpcs;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+ if (Common::FrameTiming::counters.enabled)
+  return ProfileSync(q, api, std::forward<F>(f));
+#endif
+ Flush();
  return q.Call(std::forward<F>(f));
 }
 template<class F> decltype(auto) SyncApi(RpcApi api,F&& fn,bool pointer=false){return Sync(std::forward<F>(fn),pointer,api);}
@@ -284,11 +373,19 @@ void TransactionLUT(DriverTransactions::LUTBody body,std::uint32_t texture,unsig
  if((format!=GL_RG&&format!=GL_RGBA)||!data||offset%stride||bytes%stride)
    throw std::invalid_argument("Invalid CPU LUT upload span");
  if(bytes>MaxBatchBytes-sizeof(std::function<void()>)) {
-   TransactionVoid(DriverTransactions::Kind::LUT,[&]{body(texture,unit,format,offset,data,bytes);});return;
+#ifdef CARA_GL_CONTEXT_DISPATCH
+   Sync([&] {
+     DriverTransactions::ExecutionScope executing;
+     body(texture, unit, format, offset, data, bytes);
+   }, true);
+#else
+   TransactionVoid(DriverTransactions::Kind::LUT,[&]{body(texture,unit,format,offset,data,bytes);});
+#endif
+   return;
  }
  OwnedCopyScope reservation;auto owned=Copy(data,bytes);const auto charge=owned.capacity();
  Record([=,owned=std::move(owned)]{DriverTransactions::ExecutionScope token;
-   body(texture,unit,format,offset,owned.data(),owned.size());},charge);
+   body(texture,unit,format,offset,owned.data(),owned.size());},charge,RpcApi::UploadLUTOwned);
  ++stats.transaction_lut_calls;
  if(transaction_attribution.value.enabled)transaction_attribution.Add(transaction_attribution.value.async_lut);
 }
@@ -351,20 +448,146 @@ void Install(Common::HostRenderQueue& queue) {
  transform_feedback_active=false;owner.store(&queue,std::memory_order_release);
  DriverTransactions::unchecked_blit_commands_recorded.store(0,std::memory_order_relaxed);
  transaction_attribution.BeginInstall(attribution_requested);
+ // Android keeps mutable renderer state and its profiling counters on the producer.
+ // Only owned GL driver calls may run on the worker in this experiment.
+#ifndef CARA_GL_CONTEXT_DISPATCH
  DriverTransactions::hooks.store(&transaction_hooks,std::memory_order_release);
  DriverTransactions::unchecked_blit_producer_gate.store(
      UncheckedBlitProducerRequested()?&UncheckedBlitProducerGate:nullptr,std::memory_order_release);
+#endif
 }
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#ifdef __ANDROID__
+// Publish one immutable snapshot to both the FIFO driver call and the resident
+// upload cache. Both can outlive the guest input and release it independently.
+bool TryQueueVertexUpload(GLsizei width, GLsizei height, GLenum format, GLenum type,
+                          const void* pixels, std::size_t bytes, SharedVertexShadow& retained) {
+    static const bool requested = [] {
+        const char* value = std::getenv("CARA_SHARED_VERTEX_UPLOAD");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (!requested || !Enabled()) return false;
+    Producer();
+    std::size_t span = 0;
+    if (unpack_buffer || !pixels || !bytes || bytes > MaxBatchBytes - sizeof(std::function<void()>) ||
+        !TextureSpan(width, height, format, type, span) || span != bytes) return false;
+    OwnedCopyScope reservation;
+    SharedVertexShadow snapshot;
+    const auto* first = static_cast<const std::uint8_t*>(pixels);
+    snapshot.assign(first, first + bytes);
+    auto lease = snapshot.CaptureLease(MaxBatchBytes - sizeof(std::function<void()>));
+    if (!lease) return false;
+    const auto charge = lease->capacity();
+    RecordApi(RpcApi::api_glTexSubImage2D, [=, data = std::move(lease)] {
+        raw_glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, data->data());
+    }, charge);
+    retained = std::move(snapshot);
+    ++stats.texture_owned_uploads;
+    return true;
+}
+
+bool MailboxFencePacketEnabled() {
+    static const bool requested = [] {
+        const char* value = std::getenv("CARA_MAILBOX_FENCE_PACKET");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return requested && Enabled();
+}
+
+void QueueConsumedPresentFence(GLsync fence, bool server_wait_only) {
+    // The old owner handed this handle to the render context. Only that
+    // context consumes the wait result. All subsequent frame commands follow.
+    RecordApi(RpcApi::ConsumePresentFence, [fence, server_wait_only] {
+        if (!server_wait_only) {
+            raw_glClientWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
+        }
+        raw_glWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
+        raw_glDeleteSync(fence);
+    });
+}
+
+void QueuePublishedRenderFence(std::function<void(GLsync)> publish) {
+    RecordApi(RpcApi::PublishRenderFence, [publish = std::move(publish)] {
+        const auto fence = raw_glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        if (!fence) {
+            throw std::runtime_error("Could not create the mailbox render fence");
+        }
+        raw_glFlush();
+        publish(fence);
+    });
+    Flush();
+}
+
+GLsync CreatePublishedRenderFence() {
+    return SyncApi(RpcApi::PublishRenderFence, [] {
+        const auto fence = raw_glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        raw_glFlush();
+        return fence;
+    });
+}
+
+struct RemapState {
+    GLint active_texture = GL_TEXTURE0;
+    GLboolean dither = GL_FALSE;
+    GLboolean discard = GL_FALSE;
+};
+
+std::shared_ptr<RemapState> SaveRemapStateIfEnabled() {
+    static const bool requested = [] {
+        const char* value = std::getenv("CARA_CHECKED_REMAP_PACKET");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (!requested || !Enabled()) return {};
+    auto state = std::make_shared<RemapState>();
+    RecordApi(RpcApi::SaveRemapState, [state] {
+        raw_glGetIntegerv(GL_ACTIVE_TEXTURE, &state->active_texture);
+        state->dither = raw_glIsEnabled(GL_DITHER);
+        state->discard = raw_glIsEnabled(GL_RASTERIZER_DISCARD);
+    });
+    return state;
+}
+
+void RestoreRemapState(std::shared_ptr<RemapState> state) {
+    RecordApi(RpcApi::RestoreRemapState, [state = std::move(state)] {
+        if (state->dither) raw_glEnable(GL_DITHER);
+        if (state->discard) raw_glEnable(GL_RASTERIZER_DISCARD);
+        raw_glActiveTexture(state->active_texture);
+    });
+}
+
+bool CheckedRemapDraw(std::function<bool()> draw) {
+    return SyncApi(RpcApi::CheckedRemapDraw, std::move(draw));
+}
+#endif
+void QueueLUT(DriverTransactions::LUTBody body, GLuint texture, unsigned unit, GLenum format,
+              std::size_t offset, const std::uint8_t* data, std::size_t bytes) {
+    TransactionLUT(body, texture, unit, format, offset, data, bytes);
+}
+#endif
 void Flush() {
  auto* active=owner.load();if(!active)return;auto& q=*active;if(q.IsWorkerThread())throw std::logic_error("GL Flush requires producer");Producer();if(pending.empty())return;
  struct Batch {
    std::shared_ptr<PayloadLease> slots;std::vector<std::function<void()>> jobs;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+   std::vector<Backlog::Tag> tags;
+#endif
    ~Batch(){jobs.clear();slots.reset();}
  };
  auto batch=std::make_shared<Batch>();batch->slots=std::move(pending_slots);batch->jobs=std::move(pending);
  batch->slots->Shrink(batch->jobs.size()*sizeof(std::function<void()>));
  const auto bytes=pending_bytes;pending={};pending.reserve(MaxBatchCommands);pending_bytes=0;
  stats.pending_commands=0;stats.pending_bytes=0;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+ if (Common::FrameTiming::counters.enabled && Backlog::Enabled()) {
+  batch->tags.assign(pending_tags.begin(), pending_tags.begin() + batch->jobs.size());
+  q.Submit([batch] {
+   for (std::size_t i = 0; i < batch->jobs.size(); ++i)
+    RunProfiled(batch->tags[i], batch->jobs[i]);
+  }, bytes);
+  ++stats.submitted_batches;
+  return;
+ }
+#endif
  q.Submit([batch] { for(auto& job:batch->jobs)job(); },bytes);++stats.submitted_batches;
 }
 void Drain() {auto* active=owner.load();if(!active)return;auto& q=*active;if(q.IsWorkerThread())throw std::logic_error("GL Drain on worker");Flush();q.Drain();}
@@ -380,7 +603,7 @@ void Uninstall() {
  stats.pending_commands=0;stats.pending_bytes=0;
  if(failure)std::rethrow_exception(failure);
 }
-bool ForwardsGetError(PFNGLGETERRORPROC expected){return Enabled()?raw_glGetError==expected&&glad_glGetError==Wrap_glGetError:glad_glGetError==expected;}
+bool ForwardsGetError(PFNGLGETERRORPROC expected){return Enabled()?raw_glGetError==expected&&glGetError==Wrap_glGetError:glGetError==expected;}
 bool Enabled(){return owner.load(std::memory_order_acquire)!=nullptr;}
 bool UncheckedBlitProducerRequested(){static const bool enabled=[] {const char* v=std::getenv("CARA_GL_QUEUE_UNCHECKED_BLIT_PRODUCER");return v&&std::strcmp(v,"1")==0;}();return enabled;}
 UncheckedBlitProducerStats GetUncheckedBlitProducerStats(){return {
@@ -436,9 +659,32 @@ void UploadBufferOwned(GLenum target,GLintptr offset,std::vector<std::uint8_t> b
      if(result!=GL_NO_ERROR)LOG_DEBUG(Render_OpenGL,"owned stream upload error: {:04X}, target: {}, offset: {}, size: {}",result,target,offset,bytes.size());}
  },charge,RpcApi::UploadBufferOwned);
 }
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+bool Backlog::Enabled() {
+ static const bool enabled = [] {
+  const char* flag = std::getenv("CARA_TRACE_GLES_BACKLOG");
+  return flag && std::strcmp(flag, "1") == 0;
+ }();
+ return enabled;
+}
+std::vector<Backlog::Row> Backlog::Take() {
+ Producer();
+ return Owner().Call([] {
+  std::vector<Row> rows;
+  rows.reserve(worker_backlog.size());
+  for (const auto& entry : worker_backlog) rows.push_back(entry.second);
+  worker_backlog.clear();
+  return rows;
+ });
+}
+std::array<SyncTiming, RpcApiCount> TakeSyncTimingsForProfile() {
+ Producer();
+ return std::exchange(sync_timings, {});
+}
+#endif
 Stats SnapshotStats(){ Stats s;{std::lock_guard lock(budget_mutex);s.owned_budget_live=budget_live;s.owned_budget_high=budget_high;}
  for(std::size_t i=0;i<RpcApiCount;++i)s.rpc_by_api[i]=rpc_counts[i].load();
- s.uniform_location_rpcs=s.rpc_by_api[std::size_t(RpcApi::glGetUniformLocation)];
+ s.uniform_location_rpcs=s.rpc_by_api[std::size_t(RpcApi::api_glGetUniformLocation)];
 #define COPY_STAT(n) s.n=stats.n.load()
  COPY_STAT(owned_native_map_uploads);COPY_STAT(transaction_inline_calls);COPY_STAT(transaction_sync_calls);COPY_STAT(transaction_state_fallbacks);COPY_STAT(transaction_lut_calls);COPY_STAT(owned_unmap_error_queries);COPY_STAT(owned_budget_waits);
  COPY_STAT(recorded_commands);COPY_STAT(submitted_batches);COPY_STAT(synchronous_calls);COPY_STAT(owned_payload_bytes);

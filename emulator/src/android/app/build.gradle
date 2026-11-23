@@ -58,6 +58,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments "-DCARA_ENABLE_JIT=OFF",
+                        "-DCARA_ANDROID_ORDERED_GLES=${project.findProperty('caraOrderedGles') ?: 'OFF'}",
                         "-DCARA_ANDROID_GLES_ATLAS=${project.findProperty('caraGlesAtlas') ?: 'ON'}",
                         "-DCARA_ANDROID_CPU_JIT=${caraCpuJit ? 'ON' : 'OFF'}",
                         "-DENABLE_QT=0", // Don't use QT

@@ -21,6 +21,12 @@
 #include <sys/sysctl.h>
 #elif defined(__ANDROID__)
 #include <sys/system_properties.h>
+#ifdef CARA_ANDROID_GLES_ATLAS
+#include "video_core/renderer_opengl/gl_android_shader_worker.h"
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
+#endif
 #endif
 #include "video_core/renderer_opengl/ios_pipeline_cache.h"
 #endif
@@ -30,6 +36,7 @@
 #include "core/cache_file.h"
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_fragment_lighting_ablation.h"
+#include "video_core/renderer_opengl/gl_shader_census.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -135,12 +142,13 @@ public:
         this->hash = hash;
         if (separable) {
             OGLShader shader;
-            shader.Create(shader_code.c_str(), type);
+            shader.Create(shader_code.c_str(), type, true);
+            if (!shader.handle) return;
             program.Create(true, {shader.handle});
+            if (!program.handle) return;
             SetShaderUniformBlockBindings(program.handle);
-            if (type == GL_FRAGMENT_SHADER) {
+            if (type == GL_FRAGMENT_SHADER || type == GL_VERTEX_SHADER)
                 SetShaderSamplerBindings(program.handle);
-            }
         } else if (!defer) {
             this->shader.Create(shader_code.c_str(), type);
         }
@@ -290,12 +298,13 @@ public:
         }
     }
 
-    OGLShaderStage* GetShaderStageRef(const std::string& shader_code, GLenum shader_type) {
+    OGLShaderStage* GetShaderStageRef(const std::string& shader_code, GLenum shader_type,
+                                       bool defer = false) {
         const u64 code_hash = Common::ComputeHash64(shader_code.data(), shader_code.size());
         auto [iter, new_shader] = shaders.emplace(code_hash, separable);
         OGLShaderStage& cached_shader = iter->second;
         if (new_shader) {
-            cached_shader.Create(shader_code, shader_type, code_hash, CanDeferIOSStage(shader_code));
+            cached_shader.Create(shader_code, shader_type, code_hash, defer || CanDeferIOSStage(shader_code));
             if (!cached_shader.IsValid()) {
                 LOG_WARNING(Render_OpenGL, "shader {:04X} create failed!", shader_type);
                 shaders.erase(code_hash);
@@ -367,7 +376,11 @@ public:
                         vs_code += "\n#error Cara optional shader retry test\n";
                 }
 #endif
-                current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER);
+                bool defer = false;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+                defer = (ios_indexed_inputs == 3 || ios_indexed_inputs == 6) && AsyncIndexedEnabled();
+#endif
+                current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER, defer);
 #ifdef CARA_IOS_GLES
                 if (!current_shaders.vs) {
                     auto baseline = GenerateVertexShader(setup, key, separable,
@@ -466,7 +479,14 @@ public:
         const u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
         auto iter_ref = shaders_ref.find(key_hash);
         if (iter_ref == shaders_ref.end()) {
+            const auto start = shader_census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
             std::string fs_code = GenerateFragmentShader(key, separable);
+            if (shader_census) {
+                const auto generation_us = ShaderCensus::ElapsedUs(start);
+                const u64 source_hash = Common::ComputeHash64(fs_code.data(), fs_code.size());
+                ShaderCensus::Record("fragment_key key={:016x} source={:016x} lit={} generation_us={}",
+                                     key_hash, source_hash, int(key.state.lighting.enable), generation_us);
+            }
             current_shaders.fs = GetShaderStageRef(fs_code, GL_FRAGMENT_SHADER);
             if (current_shaders.fs) {
                 shaders_ref[key_hash] = current_shaders.fs;
@@ -531,7 +551,16 @@ public:
         current_shaders.gs = native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
     }
 
+    GLuint GetSeparableVertexProgram() {
+        return separable && current_shaders.vs ? current_shaders.vs->GetHandle() : 0;
+    }
+
     void ApplyTo(OpenGLState& state) {
+        if (!current_shaders.vs || !current_shaders.fs) {
+            state.draw.shader_program = 0;
+            state.draw.program_pipeline = 0;
+            return;
+        }
         // Also covers a programmable-mode change during feedback fallback.
         if(native_geometry_enabled) current_shaders.gs=native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
 #ifdef CARA_IOS_GLES
@@ -544,10 +573,19 @@ public:
         GLuint gs = current_shaders.gs->GetHandle();
         GLuint fs = current_shaders.fs->GetHandle();
         if (separable) {
-            glUseProgramStages(pipeline.handle, GL_VERTEX_SHADER_BIT, vs);
-            glUseProgramStages(pipeline.handle, GL_GEOMETRY_SHADER_BIT, gs);
-            glUseProgramStages(pipeline.handle, GL_FRAGMENT_SHADER_BIT, fs);
             state.draw.shader_program = 0;
+            state.draw.program_pipeline = 0;
+            if (!vs || !fs || !pipeline.handle)
+                return;
+            constexpr std::array<GLbitfield, 3> stage_bits{
+                GL_VERTEX_SHADER_BIT, GL_GEOMETRY_SHADER_BIT, GL_FRAGMENT_SHADER_BIT};
+            const std::array<GLuint, 3> stages{vs, gs, fs};
+            for (std::size_t i = 0; i < stages.size(); ++i) {
+                if (attached_stages[i] != stages[i]) {
+                    glUseProgramStages(pipeline.handle, stage_bits[i], stages[i]);
+                    attached_stages[i] = stages[i];
+                }
+            }
             state.draw.program_pipeline = pipeline.handle;
         } else {
             const std::array<u64, 3> bundle{
@@ -697,18 +735,27 @@ public:
     }
     void LoadIOSPipelines() {
         ios_identity = IOSIdentity();
-        ios_cache_path = GetCacheFile() +
-                         (UseNativeLUTBuffers() ? ".native-lut.cara-pso1" : ".cara-pso1");
+        std::string suffix = UseNativeLUTBuffers() ? ".native-lut" : "";
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        const char* expanded = std::getenv("CARA_MALI_EXTENDED_PROGRAM_CACHE");
+        const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        if (expanded && std::strcmp(expanded, "1") == 0 && renderer &&
+            std::strstr(renderer, "Mali")) {
+            ios_cache_limits = IOSPipelineCache::ExtendedMaliLimits;
+            suffix += ".mali-extended";
+        }
+#endif
+        ios_cache_path = GetCacheFile() + suffix + ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
         std::ifstream file(ios_cache_path, std::ios::binary | std::ios::ate);
         if (!file) return;
         const auto size = file.tellg();
-        if (size < 0 || size > static_cast<std::streamoff>(IOSPipelineCache::MaxBytes)) return;
+        if (size < 0 || size > static_cast<std::streamoff>(ios_cache_limits.bytes)) return;
         std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
         file.seekg(0);
         if (!file.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) ||
-            !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries)) return;
+            !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries, ios_cache_limits)) return;
         const auto start = std::chrono::steady_clock::now();
         unsigned binary_hits = 0, source_links = 0;
         // A stage shared by several saved programs needs compiling only once.
@@ -741,6 +788,9 @@ public:
             }
             BindIOSProgram(p);
         }
+        if (shader_census)
+            ShaderCensus::Record("cache_restore entries={} binary_hits={} source_links={} bytes={}",
+                                 ios_entries.size(), binary_hits, source_links, bytes.size());
         LOG_INFO(Render_OpenGL, "Cara iOS prewarm: {} binary hits, {} source links, {} us; {} formats",
                  binary_hits, source_links,
                  std::chrono::duration_cast<std::chrono::microseconds>(
@@ -763,7 +813,7 @@ public:
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         if (!file) { fail("open"); return; }
         // Serialize at most once per permitted attempt, never on a denied retry.
-        const auto bytes = IOSPipelineCache::Encode(ios_identity, ios_entries);
+        const auto bytes = IOSPipelineCache::Encode(ios_identity, ios_entries, ios_cache_limits);
         if (bytes.empty()) { file.close(); fail("encode"); return; }
         file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
         file.close();
@@ -774,6 +824,85 @@ public:
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline checkpoint: {} pipelines, {} bytes",
                  ios_entries.size(), bytes.size());
     }
+    void RememberIOSPipeline(u64 key, const OGLProgram& program, const std::string& vs_source,
+                             const std::string& fs_source) {
+        if (ios_entries.size() >= ios_cache_limits.entries ||
+            vs_source.size() > IOSPipelineCache::MaxSource ||
+            fs_source.size() > IOSPipelineCache::MaxSource)
+            return;
+
+        IOSPipelineCache::Entry entry{vs_source, fs_source};
+        if (!ios_formats.empty()) {
+            GLenum format = 0;
+            std::vector<GLbyte> binary;
+            program.GetProgramBinary(format, binary, IOSPipelineCache::MaxBinary);
+            if (binary.size() <= IOSPipelineCache::MaxBinary &&
+                std::find(ios_formats.begin(), ios_formats.end(), static_cast<GLint>(format)) !=
+                    ios_formats.end()) {
+                entry.format = format;
+                entry.binary.assign(binary.begin(), binary.end());
+            }
+        }
+        const auto cost = entry.vertex.size() + entry.fragment.size() + entry.binary.size() + 16;
+        if (cost > ios_cache_limits.bytes || ios_bytes > ios_cache_limits.bytes - cost)
+            return;
+        ios_bytes += cost;
+        ios_entries.push_back(std::move(entry));
+        ios_entry_keys.push_back(key);
+        ios_dirty = true;
+        ios_last_miss = std::chrono::steady_clock::now();
+    }
+
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    bool AsyncIndexedEnabled() const {
+        static const bool enabled = [] {
+            const char* value = std::getenv("CARA_ANDROID_ASYNC_INDEXED_SHADERS");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        return enabled && !separable && Settings::values.use_shader_cache &&
+            NativeQuaternionGeometry::TwoStageCache(true, native_geometry_enabled);
+    }
+
+    bool TryApplyAsyncIndexed(OpenGLState& state) {
+        if (!AsyncIndexedEnabled()) {
+            return true;
+        }
+        const auto& pair = ios_stage_pairs.Get(current_shaders.vs, current_shaders.fs, [&] {
+            const auto key = IOSPipelineCache::KeyFromDigests(current_shaders.vs->GetSourceDigest(),
+                                                            current_shaders.fs->GetSourceDigest());
+            return IOSStagePair{key, &program_cache[key]};
+        });
+        auto& cached_program = *pair.program;
+        if (!cached_program.handle) {
+            if (!android_shader_worker) {
+                auto create_worker = [] { return std::make_unique<AndroidShaderWorker>(); };
+#ifdef CARA_GL_CONTEXT_DISPATCH
+                // The constructor creates its shared context from the current core context.
+                if (auto* queue = CommandQueue::Queue()) {
+                    CommandQueue::Flush();
+                    android_shader_worker = queue->Call(create_worker);
+                } else
+#endif
+                {
+                    android_shader_worker = create_worker();
+                }
+            }
+            auto ready = android_shader_worker->Request(pair.key, current_shaders.vs->GetSource(),
+                                                        current_shaders.fs->GetSource());
+            if (!ready.handle) {
+                return false;
+            }
+            cached_program = std::move(ready);
+            BindIOSProgram(cached_program);
+            RememberIOSPipeline(pair.key, cached_program, current_shaders.vs->GetSource(),
+                                current_shaders.fs->GetSource());
+        }
+        state.draw.shader_program = cached_program.handle;
+        state.draw.program_pipeline = 0;
+        return true;
+    }
+#endif
+
     void ApplyIOSPipeline(OpenGLState& state) {
         const auto& vs_source = current_shaders.vs->GetSource();
         const auto& fs_source = current_shaders.fs->GetSource();
@@ -789,30 +918,8 @@ public:
             if (vs && fs) p.Create(false, {vs, fs});
             BindIOSProgram(p);
             if (!p.handle) failed_ios_programs.insert(key);
-            else if (ios_entries.size() < IOSPipelineCache::MaxEntries &&
-                     vs_source.size() <= IOSPipelineCache::MaxSource &&
-                     fs_source.size() <= IOSPipelineCache::MaxSource) {
-                IOSPipelineCache::Entry entry{vs_source, fs_source};
-                if (!ios_formats.empty()) {
-                    GLenum format = 0;
-                    std::vector<GLbyte> binary;
-                    p.GetProgramBinary(format, binary, IOSPipelineCache::MaxBinary);
-                    if (binary.size() <= IOSPipelineCache::MaxBinary &&
-                        std::find(ios_formats.begin(), ios_formats.end(), static_cast<GLint>(format)) != ios_formats.end()) {
-                        entry.format = format;
-                        entry.binary.assign(binary.begin(), binary.end());
-                    }
-                }
-                const auto cost = entry.vertex.size() + entry.fragment.size() + entry.binary.size() + 16;
-                if (cost <= IOSPipelineCache::MaxBytes &&
-                    ios_bytes <= IOSPipelineCache::MaxBytes - cost) {
-                    ios_bytes += cost;
-                    ios_entries.push_back(std::move(entry));
-                    ios_entry_keys.push_back(key);
-                    ios_dirty = true;
-                    ios_last_miss = std::chrono::steady_clock::now();
-                }
-            }
+            else
+                RememberIOSPipeline(key, p, vs_source, fs_source);
         }
         if (!p.handle && (native_geometry_selected || native_dispatch_selected))
             throw std::runtime_error("Native shader route cached program failed; no CPU fallback");
@@ -1036,6 +1143,7 @@ private:
     OGLShaderStage trivial_geometry_shader;
     OGLShaderStage native_geometry_shader;
     std::unordered_map<u64, OGLShaderStage*> shaders_ref;
+    const bool shader_census = ShaderCensus::Enabled();
 #ifdef CARA_IOS_GLES
     struct IOSStagePair { u64 key = 0; OGLProgram* program = nullptr; };
     IOSPipelineCache::StagePairMemo<IOSStagePair> ios_stage_pairs;
@@ -1044,6 +1152,7 @@ private:
     std::vector<GLint> ios_formats;
     std::string ios_identity;
     std::string ios_cache_path;
+    IOSPipelineCache::Limits ios_cache_limits = IOSPipelineCache::DefaultLimits;
     IOSPipelineCache::CheckpointRetry ios_checkpoint_retry;
     std::size_t ios_bytes = 8192; // Header/identity/checksum reserve included in the disk budget.
     bool ios_dirty = false;
@@ -1053,6 +1162,9 @@ private:
     OGLShader feedback_fragment;
     std::unordered_set<u64> failed_ios_vertex_shaders;
     std::unordered_set<u64> failed_ios_programs;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    std::unique_ptr<AndroidShaderWorker> android_shader_worker;
+#endif
 #endif
 #ifdef CARA_MAC_ATLAS_PIPELINE
     std::unique_ptr<VertexProvenance::Ledger<>> vertex_provenance;
@@ -1061,6 +1173,7 @@ private:
     std::unordered_map<u64, OGLShaderStage> shaders;
 
     OGLPipeline pipeline;
+    std::array<GLuint, 3> attached_stages{};
     std::unordered_map<u64, OGLProgram> program_cache;
 };
 
@@ -1114,8 +1227,18 @@ void ShaderProgramManager::ObserveBoundVertexProgram(GLuint expected_program, un
     impl->ObserveBoundVertexProgram(expected_program,input_mode);
 }
 
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+bool ShaderProgramManager::TryApplyAsyncIndexed(OpenGLState& state) {
+    return impl->TryApplyAsyncIndexed(state);
+}
+#endif
+
 void ShaderProgramManager::ApplyTo(OpenGLState& state) {
     impl->ApplyTo(state);
+}
+
+GLuint ShaderProgramManager::GetSeparableVertexProgram() {
+    return impl->GetSeparableVertexProgram();
 }
 
 } // namespace OpenGL

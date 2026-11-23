@@ -28,12 +28,39 @@ OGLStreamBuffer::OGLStreamBuffer(GLenum target, GLsizeiptr size) : gl_target(Str
     explicit_flush = !(implicit && std::strcmp(implicit, "1") == 0);
     gl_buffer.Create();
     glBindBuffer(gl_target, gl_buffer.handle);
+    gl_target_invalidate_hack = Settings::values.stream_buffer_hack ? GL_TEXTURE_BUFFER : 0;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    const char* persistent_uniforms = std::getenv("CARA_GLES_PERSISTENT_UNIFORMS");
+    if (gl_target == GL_UNIFORM_BUFFER && !CommandQueue::Enabled() &&
+        persistent_uniforms && std::strcmp(persistent_uniforms, "1") == 0 &&
+        GLAD_GL_EXT_buffer_storage && glBufferStorageEXT) {
+        constexpr GLbitfield flags =
+            GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT;
+        const auto bytes = buffer_size * PersistentPageCount;
+        glBufferStorageEXT(gl_target, bytes, nullptr, flags);
+        if (glGetError() == GL_NO_ERROR)
+            persistent_data = static_cast<u8*>(glMapBufferRange(gl_target, 0, bytes, flags));
+        if (persistent_data)
+            return;
+
+        // Immutable allocation cannot fall back to BufferData on the same name.
+        glGetError();
+        gl_buffer.Release();
+        gl_buffer.Create();
+        glBindBuffer(gl_target, gl_buffer.handle);
+    }
+#endif
     // prefer `glBufferData` than `glBufferStorage` on mobile device
     glBufferData(gl_target, buffer_size, nullptr, GL_STREAM_DRAW);
-    gl_target_invalidate_hack = Settings::values.stream_buffer_hack ? GL_TEXTURE_BUFFER : 0;
 }
 
 OGLStreamBuffer::~OGLStreamBuffer() {
+#ifdef CARA_ANDROID_GLES_ATLAS
+    for (const auto fence : persistent_page_fences) {
+        if (fence)
+            glDeleteSync(fence);
+    }
+#endif
     gl_buffer.Release();
 }
 
@@ -48,6 +75,45 @@ GLsizeiptr OGLStreamBuffer::GetSize() const {
 std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr alignment) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::StreamMap);
     if (Common::FrameTiming::counters.enabled) Common::FrameTiming::counters.stream_mapped_bytes += size;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    if (persistent_data) {
+        if (size <= 0 || size > buffer_size || alignment <= 0 || buffer_size % alignment != 0)
+            throw std::invalid_argument("Invalid persistent uniform buffer reservation");
+        buffer_pos = Common::AlignUp<std::size_t>(buffer_pos, alignment);
+        const bool rotate = buffer_pos + size > buffer_size;
+        if (rotate) {
+            // All draws reading the departing page have been submitted.
+            auto& departing = persistent_page_fences[persistent_page];
+            departing = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            if (!departing)
+                glFinish();
+
+            persistent_page = (persistent_page + 1) % PersistentPageCount;
+            auto& incoming = persistent_page_fences[persistent_page];
+            if (incoming) {
+                const auto ready = glClientWaitSync(incoming, 0, 0);
+                if (ready == GL_TIMEOUT_EXPIRED) {
+                    if (Common::FrameTiming::counters.enabled)
+                        ++Common::FrameTiming::counters.persistent_uniform_waits;
+                    const auto waited = glClientWaitSync(incoming, GL_SYNC_FLUSH_COMMANDS_BIT,
+                                                         GL_TIMEOUT_IGNORED);
+                    if (waited != GL_CONDITION_SATISFIED && waited != GL_ALREADY_SIGNALED)
+                        glFinish();
+                } else if (ready != GL_CONDITION_SATISFIED && ready != GL_ALREADY_SIGNALED) {
+                    glFinish();
+                }
+                glDeleteSync(incoming);
+                incoming = nullptr;
+            }
+            buffer_pos = 0;
+        }
+        if (Common::FrameTiming::counters.enabled)
+            ++Common::FrameTiming::counters.persistent_uniform_writes;
+        const auto offset = persistent_page * buffer_size + buffer_pos;
+        // The caller repopulates all bound, live uniforms at each rotation.
+        return {persistent_data + offset, offset, rotate};
+    }
+#endif
     if (CommandQueue::Enabled() &&
         (size <= 0 || size > buffer_size || alignment <= 0 || queued_reserved != 0))
         throw std::invalid_argument("Invalid owned stream upload reservation");
@@ -78,6 +144,12 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
 
 void OGLStreamBuffer::Unmap(GLsizeiptr size) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::StreamUnmap);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    if (persistent_data) {
+        buffer_pos += size;
+        return;
+    }
+#endif
     if (CommandQueue::Enabled()&&!queued_native_map) {
         if (queued_reserved == 0 || size < 0 || size > queued_reserved)
             throw std::invalid_argument("Invalid owned stream upload completion");

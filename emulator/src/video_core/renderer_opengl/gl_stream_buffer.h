@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <array>
 #include <tuple>
 #include <vector>
 #include <memory>
@@ -55,6 +56,12 @@ private:
     bool explicit_flush = true;
     GLintptr buffer_pos = 0;
     GLsizeiptr buffer_size = 0;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static constexpr unsigned PersistentPageCount = 3;
+    u8* persistent_data = nullptr;
+    unsigned persistent_page = 0;
+    std::array<GLsync, PersistentPageCount> persistent_page_fences{};
+#endif
 #ifdef CARA_IOS_GLES
     std::vector<u8> staging;
     GLsizeiptr staging_reserved = 0;

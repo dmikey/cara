@@ -1,0 +1,144 @@
+stage_arm	span_ms	offcpu_observed_ms	api	caller	offcpu_ms	mali_sem_ms	mali_sync_object_ms	switches	cpu_samples
+lab-A	3017.32	1823.49	other	worker queue	574.97	0.0	0.0	4563	1
+lab-A	3017.32	1823.49	glDrawElements	-	477.35	473.51	0.0	314	28
+lab-A	3017.32	1823.49	glBlitFramebuffer	-	280.47	278.08	0.0	327	9
+lab-A	3017.32	1823.49	glDrawArrays	-	207.53	205.88	0.0	139	44
+lab-A	3017.32	1823.49	glClear	-	195.08	194.86	0.0	70	0
+lab-A	3017.32	1823.49	glFramebufferTexture2D	-	31.38	0.0	0.0	337	33
+lab-A	3017.32	1823.49	glClearBufferfv	-	19.0	17.22	0.0	140	4
+lab-A	3017.32	1823.49	glUnmapBuffer	-	7.72	0.0	0.0	363	8
+lab-A	3017.32	1823.49	glBindFramebuffer	-	7.48	0.0	0.0	186	15
+lab-A	3017.32	1823.49	glMapBufferRange	-	7.22	0.0	0.0	241	2
+lab-A	3017.32	1823.49	glClearBufferfi	-	7.09	6.64	0.0	58	0
+lab-A	3017.32	1823.49	glTexSubImage2D	-	1.19	0.0	0.0	42	10
+lab-A	3017.32	1823.49	glBufferData	-	0.77	0.0	0.0	21	1
+lab-A	3017.32	1823.49	glIsEnabled	worker queue	0.55	0.0	0.0	1	0
+lab-A	3017.32	1823.49	glFenceSync	-	0.38	0.0	0.0	25	3
+lab-A	3017.32	1823.49	other	-	0.28	0.0	0.0	9	36
+lab-A	3017.32	1823.49	glBindBuffer	-	0.25	0.0	0.0	3	4
+lab-A	3017.32	1823.49	glBindTexture	-	0.12	0.0	0.0	3	18
+lab-A	3017.32	1823.49	unresolved-Mali	-	0.08	0.0	0.0	3	11
+lab-A	3017.32	1823.49	glUseProgram	-	0.07	0.0	0.0	2	1
+lab-A	3017.32	1823.49	glFlushMappedBufferRange	-	0.06	0.0	0.0	1	1
+lab-A	3017.32	1823.49	glGetError	worker queue	0.02	0.0	0.0	1	0
+lab-A	3017.32	1823.49	glBlendFuncSeparate	-	0.0	0.0	0.0	0	1
+lab-A	3017.32	1823.49	glDisable	-	0.0	0.0	0.0	0	1
+lab-A	3017.32	1823.49	glDeleteSync	-	0.0	0.0	0.0	0	1
+lab-A	3017.32	1823.49	glBindBufferRange	-	0.0	0.0	0.0	0	3
+lab-A	3017.32	1823.49	glStencilMask	-	0.0	0.0	0.0	0	1
+lab-A	3017.32	1823.49	glColorMask	-	0.0	0.0	0.0	0	1
+lab-A	3017.32	1823.49	glBindSampler	-	0.0	0.0	0.0	0	1
+title-A	3012.05	2044.8	glTexSubImage2D	LUT	1901.26	0.0	1900.73	377	4
+title-A	3012.05	2044.8	other	worker queue	133.35	0.0	0.0	1535	0
+title-A	3012.05	2044.8	glFramebufferTexture2D	-	3.66	0.0	0.0	117	19
+title-A	3012.05	2044.8	glBindFramebuffer	-	1.5	0.0	0.0	71	14
+title-A	3012.05	2044.8	glUnmapBuffer	-	1.05	0.0	0.0	50	3
+title-A	3012.05	2044.8	glBufferData	-	0.85	0.0	0.0	57	4
+title-A	3012.05	2044.8	glTexSubImage2D	-	0.8	0.0	0.0	49	26
+title-A	3012.05	2044.8	glDrawArrays	-	0.68	0.0	0.0	8	20
+title-A	3012.05	2044.8	other	-	0.5	0.0	0.0	4	35
+title-A	3012.05	2044.8	glDrawElements	-	0.47	0.0	0.0	22	26
+title-A	3012.05	2044.8	glMapBufferRange	-	0.45	0.0	0.0	29	3
+title-A	3012.05	2044.8	glClearBufferfv	-	0.11	0.0	0.0	5	4
+title-A	3012.05	2044.8	glBlitFramebuffer	-	0.08	0.0	0.0	2	2
+title-A	3012.05	2044.8	glFenceSync	-	0.02	0.0	0.0	1	1
+title-A	3012.05	2044.8	glClear	-	0.01	0.0	0.0	1	0
+title-A	3012.05	2044.8	glBindTexture	-	0.01	0.0	0.0	1	9
+title-A	3012.05	2044.8	glIsEnabled	-	0.0	0.0	0.0	0	2
+title-A	3012.05	2044.8	glClearBufferfi	-	0.0	0.0	0.0	0	1
+title-A	3012.05	2044.8	glBlendFuncSeparate	-	0.0	0.0	0.0	0	1
+title-A	3012.05	2044.8	glCheckFramebufferStatus	worker queue	0.0	0.0	0.0	0	1
+title-A	3012.05	2044.8	unresolved-Mali	-	0.0	0.0	0.0	0	6
+title-A	3012.05	2044.8	glUseProgram	-	0.0	0.0	0.0	0	2
+title-A	3012.05	2044.8	glBindBuffer	-	0.0	0.0	0.0	0	4
+title-A	3012.05	2044.8	glColorMask	-	0.0	0.0	0.0	0	1
+title-A	3012.05	2044.8	glStencilFunc	-	0.0	0.0	0.0	0	1
+title-A	3012.05	2044.8	glFlushMappedBufferRange	-	0.0	0.0	0.0	0	2
+title-A	3012.05	2044.8	glIsEnabled	worker queue	0.0	0.0	0.0	0	1
+title-I	3012.19	1593.94	glDrawElements	-	934.9	933.42	0.0	664	51
+title-I	3012.19	1593.94	glFramebufferTexture2D	-	295.72	0.0	0.0	750	42
+title-I	3012.19	1593.94	other	worker queue	266.25	0.0	0.0	3277	2
+title-I	3012.19	1593.94	glBindFramebuffer	-	59.21	0.0	0.0	258	12
+title-I	3012.19	1593.94	glTexSubImage2D	-	9.89	0.0	0.0	363	36
+title-I	3012.19	1593.94	glMapBufferRange	-	7.64	0.0	0.0	254	2
+title-I	3012.19	1593.94	glBufferData	-	7.21	0.0	0.0	353	9
+title-I	3012.19	1593.94	glUnmapBuffer	-	5.24	0.0	0.0	300	8
+title-I	3012.19	1593.94	glClearBufferfv	-	2.27	1.03	0.0	36	6
+title-I	3012.19	1593.94	glBlitFramebuffer	-	2.02	0.0	0.0	52	7
+title-I	3012.19	1593.94	glDrawArrays	-	1.52	0.0	0.0	47	25
+title-I	3012.19	1593.94	glBindTexture	-	0.62	0.0	0.0	3	13
+title-I	3012.19	1593.94	glFenceSync	-	0.59	0.0	0.0	4	0
+title-I	3012.19	1593.94	glTexImage2D	LUT	0.34	0.0	0.0	11	7
+title-I	3012.19	1593.94	other	-	0.31	0.0	0.0	12	29
+title-I	3012.19	1593.94	glClearBufferfi	-	0.22	0.0	0.0	7	2
+title-I	3012.19	1593.94	glBlendFuncSeparate	-	0.0	0.0	0.0	0	1
+title-I	3012.19	1593.94	glUniformMatrix3x2fv	-	0.0	0.0	0.0	0	2
+title-I	3012.19	1593.94	unresolved-Mali	-	0.0	0.0	0.0	0	10
+title-I	3012.19	1593.94	glCheckFramebufferStatus	worker queue	0.0	0.0	0.0	0	1
+title-I	3012.19	1593.94	glUseProgram	-	0.0	0.0	0.0	0	3
+title-I	3012.19	1593.94	glDeleteSync	-	0.0	0.0	0.0	0	2
+title-I	3012.19	1593.94	glBindBuffer	-	0.0	0.0	0.0	0	6
+title-I	3012.19	1593.94	glBindBufferRange	-	0.0	0.0	0.0	0	1
+title-I	3012.19	1593.94	glUniform4iv	-	0.0	0.0	0.0	0	1
+title-I	3012.19	1593.94	glColorMask	-	0.0	0.0	0.0	0	1
+title-I	3012.19	1593.94	glBindSampler	-	0.0	0.0	0.0	0	2
+title-I	3012.19	1593.94	glSamplerParameterf	-	0.0	0.0	0.0	0	1
+title-I	3012.19	1593.94	glIsEnabled	worker queue	0.0	0.0	0.0	0	1
+lab-G	3026.15	1785.3	other	worker queue	587.72	0.0	0.0	4686	6
+lab-G	3026.15	1785.3	glDrawElements	-	451.44	448.03	0.0	248	27
+lab-G	3026.15	1785.3	glClear	-	226.75	226.37	0.0	80	0
+lab-G	3026.15	1785.3	glDrawArrays	-	217.46	213.53	0.0	155	48
+lab-G	3026.15	1785.3	glBlitFramebuffer	-	209.18	207.62	0.0	309	11
+lab-G	3026.15	1785.3	glFramebufferTexture2D	-	40.81	0.0	0.0	394	41
+lab-G	3026.15	1785.3	glClearBufferfv	-	17.25	16.56	0.0	110	5
+lab-G	3026.15	1785.3	glClearBufferfi	-	8.24	7.8	0.0	49	0
+lab-G	3026.15	1785.3	glMapBufferRange	-	8.01	0.0	0.0	230	4
+lab-G	3026.15	1785.3	glUnmapBuffer	-	6.78	0.0	0.0	282	9
+lab-G	3026.15	1785.3	glBindFramebuffer	-	5.47	0.0	0.0	210	15
+lab-G	3026.15	1785.3	glBufferData	-	1.55	0.0	0.0	37	1
+lab-G	3026.15	1785.3	glFenceSync	-	1.26	0.0	0.0	37	0
+lab-G	3026.15	1785.3	glTexSubImage2D	-	0.81	0.0	0.0	28	6
+lab-G	3026.15	1785.3	other	-	0.59	0.0	0.0	14	22
+lab-G	3026.15	1785.3	unresolved-Mali	-	0.52	0.0	0.0	7	13
+lab-G	3026.15	1785.3	glFenceSync	worker queue	0.47	0.0	0.0	1	0
+lab-G	3026.15	1785.3	glBindTexture	-	0.28	0.0	0.0	6	21
+lab-G	3026.15	1785.3	glFlushMappedBufferRange	-	0.03	0.0	0.0	1	3
+lab-G	3026.15	1785.3	glUseProgram	-	0.03	0.0	0.0	1	2
+lab-G	3026.15	1785.3	glBindBufferRange	-	0.0	0.0	0.0	0	1
+lab-G	3026.15	1785.3	glIsEnabled	worker queue	0.0	0.0	0.0	0	2
+lab-G	3026.15	1785.3	glSamplerParameterf	-	0.0	0.0	0.0	0	2
+lab-G	3026.15	1785.3	glBindBuffer	-	0.0	0.0	0.0	0	5
+lab-G	3026.15	1785.3	glColorMask	-	0.0	0.0	0.0	0	1
+lab-G	3026.15	1785.3	glSamplerParameteri	-	0.0	0.0	0.0	0	1
+lab-G	3026.15	1785.3	glUniform4f	-	0.0	0.0	0.0	0	1
+title-G	3021.34	1578.38	glDrawElements	-	951.54	948.62	0.0	648	49
+title-G	3021.34	1578.38	glFramebufferTexture2D	-	276.65	0.0	0.0	693	36
+title-G	3021.34	1578.38	other	worker queue	243.7	0.0	0.0	2792	0
+title-G	3021.34	1578.38	glBindFramebuffer	-	60.52	0.0	0.0	217	19
+title-G	3021.34	1578.38	glMapBufferRange	-	11.53	0.0	0.0	266	2
+title-G	3021.34	1578.38	glTexSubImage2D	-	10.25	0.0	0.0	337	36
+title-G	3021.34	1578.38	glBufferData	-	9.73	0.0	0.0	391	4
+title-G	3021.34	1578.38	glUnmapBuffer	-	5.46	0.0	0.0	336	8
+title-G	3021.34	1578.38	glBlitFramebuffer	-	2.58	0.0	0.0	55	7
+title-G	3021.34	1578.38	glDrawArrays	-	2.07	0.0	0.0	49	23
+title-G	3021.34	1578.38	other	-	1.32	0.0	0.0	12	36
+title-G	3021.34	1578.38	glSamplerParameterf	-	0.69	0.0	0.0	1	1
+title-G	3021.34	1578.38	glClearBufferfv	-	0.6	0.0	0.0	28	5
+title-G	3021.34	1578.38	glBindBuffer	-	0.35	0.0	0.0	1	8
+title-G	3021.34	1578.38	glIsEnabled	worker queue	0.32	0.0	0.0	1	0
+title-G	3021.34	1578.38	glTexImage2D	LUT	0.29	0.0	0.0	8	7
+title-G	3021.34	1578.38	glBindTexture	-	0.11	0.0	0.0	4	16
+title-G	3021.34	1578.38	unresolved-Mali	-	0.06	0.0	0.0	1	10
+title-G	3021.34	1578.38	glClearBufferfi	-	0.04	0.0	0.0	2	2
+title-G	3021.34	1578.38	glClear	-	0.03	0.0	0.0	2	0
+title-G	3021.34	1578.38	glBindSampler	-	0.02	0.0	0.0	1	1
+title-G	3021.34	1578.38	glFenceSync	-	0.01	0.0	0.0	1	1
+title-G	3021.34	1578.38	glUseProgram	-	0.0	0.0	0.0	0	6
+title-G	3021.34	1578.38	glDepthMask	-	0.0	0.0	0.0	0	1
+title-G	3021.34	1578.38	glTexParameteri	LUT	0.0	0.0	0.0	0	1
+title-G	3021.34	1578.38	glBlendFuncSeparate	-	0.0	0.0	0.0	0	3
+title-G	3021.34	1578.38	glFlushMappedBufferRange	-	0.0	0.0	0.0	0	1
+title-G	3021.34	1578.38	glColorMask	-	0.0	0.0	0.0	0	1
+title-G	3021.34	1578.38	glUniform4i	-	0.0	0.0	0.0	0	1
+title-G	3021.34	1578.38	glUniformMatrix3x2fv	-	0.0	0.0	0.0	0	1
+title-G	3021.34	1578.38	glBindTexture	LUT	0.0	0.0	0.0	0	1

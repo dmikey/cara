@@ -3,6 +3,14 @@ name: Android GLES ARM64
 on:
   workflow_dispatch:
     inputs:
+      device_release:
+        description: Build the production Cara package for local device signing
+        type: boolean
+        default: false
+      probe_only:
+        description: Build only standalone ARM64 EGL fixtures
+        type: boolean
+        default: false
       preview:
         description: Build an installable side-by-side preview
         type: boolean
@@ -21,6 +29,7 @@ permissions:
 
 jobs:
   apk:
+    if: ${{ !inputs.device_release && !inputs.probe_only }}
     name: APK (${{ matrix.renderer }})
     strategy:
       fail-fast: false
@@ -34,6 +43,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -72,3 +83,73 @@ jobs:
           name: cara-android-arm64-${{ matrix.renderer }}-cpu-jit${{ inputs.preview && '-preview' || '' }}
           if-no-files-found: error
           path: emulator/src/android/app/build/outputs/apk/debug/app-debug.apk
+
+  device-release:
+    if: ${{ inputs.device_release }}
+    name: Build production ARM64 Cara APK for local signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
+          packages: platform-tools
+
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;29.0.14206865' 'cmake;3.31.6'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build and inspect release APK
+        working-directory: emulator/src/android
+        run: |
+          sed -i 's|mavenCentral()|maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }|g' build.gradle
+          gradle --no-daemon --max-workers=3 :app:assembleRelease -x :app:lintVitalAnalyzeRelease -x :app:lintVitalReportRelease -x :app:lintVitalRelease -PcaraOrderedGles=ON -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          git restore build.gradle
+          git diff --exit-code
+          mkdir -p "$RUNNER_TEMP/rg-slide"
+          build_tools="$ANDROID_HOME/build-tools/35.0.0"
+          apk="$RUNNER_TEMP/rg-slide/Cara-Android-arm64-unsigned.apk"
+          "$build_tools/zipalign" -P 16 -f 4 app/build/outputs/apk/release/app-release-unsigned.apk "$apk"
+          "$build_tools/zipalign" -c -P 16 4 "$apk"
+          "$build_tools/aapt" dump badging "$apk" > "$RUNNER_TEMP/rg-slide/apk-badging.txt"
+          grep "^package: name='org.cara.emu'" "$RUNNER_TEMP/rg-slide/apk-badging.txt"
+          native="$(find app/build/intermediates/cxx -path '*/obj/arm64-v8a/libmain.so' -print -quit)"
+          test -n "$native"
+          "$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"             -n -S -C --defined-only "$native" | gzip > "$RUNNER_TEMP/rg-slide/native-symbols.txt.gz"
+          zcat "$RUNNER_TEMP/rg-slide/native-symbols.txt.gz" > "$RUNNER_TEMP/android-device-symbols.txt"
+          grep -F 'ARM_Dynarmic::Run()' "$RUNNER_TEMP/android-device-symbols.txt"
+          grep -F 'ARM_FastInterp::Run()' "$RUNNER_TEMP/android-device-symbols.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/rg-slide/source-revision.txt"
+          cp "$build_tools/lib/apksigner.jar" "$RUNNER_TEMP/rg-slide/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cara-android-device-release
+          path: ${{ runner.temp }}/rg-slide/*
+          if-no-files-found: error
+
+  ordered-gles-probe:
+    if: ${{ inputs.probe_only || inputs.device_release }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build original and thread-local dispatch probes
+        run: |
+          compiler="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang++"
+          for mode in original tls; do
+            tools/build-android-ordered-gles-probe.sh "$RUNNER_TEMP/probes/$mode" "$compiler" "$mode"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cara-ordered-gles-probe
+          path: ${{ runner.temp }}/probes/*/cara_ordered_gles_probe
+          if-no-files-found: error

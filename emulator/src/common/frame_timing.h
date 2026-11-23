@@ -29,7 +29,12 @@ struct TextureAcquisitionSamples {
 struct Counters {
     bool enabled = false;
     // Requests, not unique frames: repeated command lists/draws/swaps count again.
+    std::uint64_t pica_batch_irqs = 0;
+    std::uint64_t repeat_candidates = 0;
+    std::uint64_t repeat_issued = 0;
     std::uint64_t pica_command_lists = 0;
+    std::uint64_t pica_shader_stream_packets = 0;
+    std::uint64_t pica_shader_stream_words = 0;
     std::uint64_t pica_draw_requests = 0;
     std::uint64_t pica_post_irq_submissions = 0;
     std::uint64_t pica_post_irq_writes = 0;
@@ -86,6 +91,8 @@ struct Counters {
     PhaseCPUSamples surface_read_pixels_cpu_samples;
     std::array<TextureAcquisitionSamples, static_cast<std::size_t>(TextureAcquisitionPhase::Count)>
         texture_acquisition_samples{};
+    std::uint64_t surface_subrect_candidates = 0;
+    std::uint64_t surface_subrect_early_rejects = 0;
     std::uint64_t texture_exact_candidates = 0;
     std::uint64_t texture_exact_wrong_layout = 0;
     std::uint64_t texture_exact_early_rejects = 0;
@@ -98,6 +105,16 @@ struct Counters {
     std::uint64_t vertex_index_cache_hits = 0;
     std::uint64_t vertex_index_cache_misses = 0;
     std::uint64_t vertex_index_cache_bytes = 0;
+    std::uint64_t vertex_index_compare_span_bytes = 0;
+    std::uint64_t packed_vertices_guest_copy_bytes = 0;
+    std::uint64_t packed_vertices_constant_copy_bytes = 0;
+    std::uint64_t packed_vertices_resize_zero_bytes = 0;
+    std::uint64_t packed_vertices_clear_bytes = 0;
+    std::uint64_t packed_vertices_leased_bytes = 0;
+    std::uint64_t vertex_shared_upload_bytes = 0;
+    double texture_feedback_copy_seconds = 0;
+    std::uint64_t texture_feedback_copies = 0;
+    std::uint64_t texture_feedback_copy_bytes = 0;
     std::uint64_t lit_pair_probe_draws = 0;
     std::uint64_t lit_pair_probe_unavailable_draws = 0;
     std::uint64_t lit_pair_probe_vertices = 0;
@@ -141,6 +158,13 @@ struct Counters {
     std::uint64_t stream_mapped_bytes = 0;
     double uniform_upload_seconds = 0;
     double draw_lut_upload_seconds = 0;
+    double lighting_fog_lut_seconds = 0;
+    double procedural_lut_seconds = 0;
+    double lut_texture_setup_seconds = 0;
+    double lut_texture_transfer_seconds = 0;
+    double lut_texture_restore_seconds = 0;
+    std::uint64_t lut_texture_uploads = 0;
+    std::uint64_t lut_texture_bytes = 0;
     double state_apply_seconds = 0;
     double draw_submit_seconds = 0;
     double surface_remap_seconds = 0;
@@ -172,6 +196,25 @@ struct Counters {
     std::uint64_t gpu_lit_pair_draws = 0;
     std::uint64_t gpu_lit_pair_vertices = 0;
     std::uint64_t gpu_lit_pair_ids = 0;
+    struct LitIndexSelection {
+        std::uint64_t packed_input_required = 0;
+        std::uint64_t shadow_route = 0;
+        std::uint64_t feedback_route = 0;
+        std::uint64_t pair_data_unavailable = 0;
+        std::uint64_t reuse_below_threshold = 0;
+        std::uint64_t selected = 0;
+        std::uint64_t program_pending = 0;
+        std::array<std::uint64_t, 4> topology{};
+    } lit_index_selection;
+    std::uint64_t gpu_indexed_shader_fallbacks = 0;
+    std::uint64_t gpu_native_element_draws = 0;
+    std::uint64_t gpu_native_elements_saved = 0;
+    std::uint64_t runtime_tev_selections = 0;
+    std::uint64_t deferred_lighting_fog_lut_syncs = 0;
+    std::uint64_t persistent_uniform_writes = 0;
+    std::uint64_t persistent_uniform_waits = 0;
+    std::uint64_t draw_fbo_hits = 0;
+    std::uint64_t draw_fbo_builds = 0;
     std::uint64_t gpu_direct_vertex_draws = 0;
     std::uint64_t gpu_direct_vertices = 0;
     std::uint64_t gpu_direct_unique_inputs = 0;
@@ -266,7 +309,8 @@ inline bool RenderBookkeepingProfileEnabled() {
     return enabled;
 }
 
-enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, LUTUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
+enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, LUTUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, TextureFeedbackCopy, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck, LightingFogLUT, ProceduralLUT,
+                   LUTTextureSetup, LUTTextureTransfer, LUTTextureRestore };
 class Scope {
 public:
     explicit Scope(Phase phase_, bool enabled = true) : phase(phase_), active(counters.enabled && enabled) {
@@ -320,6 +364,17 @@ public:
             counters.uniform_upload_seconds += seconds;
         } else if (phase == Phase::LUTUpload) {
             counters.draw_lut_upload_seconds += seconds;
+        } else if (phase == Phase::LightingFogLUT) {
+            counters.lighting_fog_lut_seconds += seconds;
+        } else if (phase == Phase::ProceduralLUT) {
+            counters.procedural_lut_seconds += seconds;
+        } else if (phase == Phase::LUTTextureSetup) {
+            counters.lut_texture_setup_seconds += seconds;
+        } else if (phase == Phase::LUTTextureTransfer) {
+            counters.lut_texture_transfer_seconds += seconds;
+            ++counters.lut_texture_uploads;
+        } else if (phase == Phase::LUTTextureRestore) {
+            counters.lut_texture_restore_seconds += seconds;
         } else if (phase == Phase::StreamMap) {
             counters.stream_map_seconds += seconds;
             ++counters.stream_map_calls;
@@ -365,6 +420,8 @@ public:
         } else if (phase == Phase::DrawTextureAcquire) {
             counters.draw_texture_acquire_seconds += seconds;
             ++counters.draw_texture_acquire_calls;
+        } else if (phase == Phase::TextureFeedbackCopy) {
+            counters.texture_feedback_copy_seconds += seconds;
         } else if (phase == Phase::DrawShaderSetup) {
             counters.draw_shader_setup_seconds += seconds;
             ++counters.draw_shader_setup_calls;

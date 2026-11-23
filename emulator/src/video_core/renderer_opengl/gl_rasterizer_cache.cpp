@@ -1170,8 +1170,28 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
         if (selected_copy_interval) *selected_copy_interval = {};
     }
 
+    const bool subrect_prefilter = [] {
+        if constexpr (find_flags == (MatchFlags::SubRect | MatchFlags::Invalid)) {
+            static const bool enabled = [] {
+                const char* value = std::getenv("CARA_SURFACE_SUBRECT_PREFILTER");
+                return value && std::strcmp(value, "1") == 0;
+            }();
+            return enabled;
+        }
+        return false;
+    }();
     for (const auto& pair : RangeFromInterval(surface_cache, params.GetInterval())) {
         for (const auto& surface : pair.second) {
+            if (subrect_prefilter) {
+                auto& timing = Common::FrameTiming::counters;
+                if (timing.enabled) ++timing.surface_subrect_candidates;
+                // CanSubRect only examines the surface layout. Keep scale,
+                // validity, rank, and iteration order for every survivor.
+                if (!surface->CanSubRect(params)) {
+                    if (timing.enabled) ++timing.surface_subrect_early_rejects;
+                    continue;
+                }
+            }
             if constexpr (find_flags == (MatchFlags::Exact | MatchFlags::Invalid)) {
                 const bool profile = Common::FrameTiming::TextureAcquisitionTracingActive();
                 if (profile) ++Common::FrameTiming::counters.texture_exact_candidates;
@@ -1248,7 +1268,7 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
                 return std::make_pair(surface->ExactMatch(params), surface->GetInterval());
             });
             IsMatch_Helper(std::integral_constant<MatchFlags, MatchFlags::SubRect>{}, [&] {
-                return std::make_pair(surface->CanSubRect(params), surface->GetInterval());
+                return std::make_pair(subrect_prefilter || surface->CanSubRect(params), surface->GetInterval());
             });
             IsMatch_Helper(std::integral_constant<MatchFlags, MatchFlags::Copy>{}, [&] {
                 ASSERT(validate_interval);
@@ -2576,6 +2596,15 @@ RasterizerCacheOpenGL::~RasterizerCacheOpenGL() {
 }
 
 GLuint RasterizerCacheOpenGL::GetTextureCopyHandle(const Surface& surface) {
+    namespace Timing = Common::FrameTiming;
+    auto& counters = Timing::counters;
+    const bool profile = counters.enabled && Timing::RenderBookkeepingProfileEnabled();
+    Timing::Scope timing(Timing::Phase::TextureFeedbackCopy, profile);
+    if (profile) {
+        ++counters.texture_feedback_copies;
+        counters.texture_feedback_copy_bytes += u64(surface->GetScaledWidth()) *
+            surface->GetScaledHeight() * CachedSurface::GetGLBytesPerPixel(surface->pixel_format);
+    }
     if (!validation_copy_trace || !validation_copy_trace->InWindow())
         return surface->GetTextureCopyHandle();
     auto& trace = *validation_copy_trace;
@@ -3551,6 +3580,10 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                 if (!surface_remapper->RemapRGBA8(source->texture.handle, *source,
                                                   destination->texture.handle, *destination,
                                                   destination->GetSubRect(params), !GLES)) continue;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+                if (RemapOriginProfile::Enabled())
+                    RemapOriginProfile::Observe(*source, *destination, boost::icl::first(interval), boost::icl::last_next(interval));
+#endif
                 destination->InvalidateAllWatcher();
                 if (Common::FrameTiming::counters.enabled) {
                     ++Common::FrameTiming::counters.surface_remap_calls;
@@ -3597,6 +3630,10 @@ bool RasterizerCacheOpenGL::TryRemapSurface(const Surface& destination, const Su
                 if (!surface_remapper->RemapBytes(source->texture.handle, *source,
                                                   destination->texture.handle, *destination,
                                                   destination->GetSubRect(copy_params), !GLES)) continue;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+                if (RemapOriginProfile::Enabled())
+                    RemapOriginProfile::Observe(*source, *destination, span.begin, span.end);
+#endif
                 destination->InvalidateAllWatcher();
                 if (Common::FrameTiming::counters.enabled) {
                     ++Common::FrameTiming::counters.surface_remap_calls;
@@ -4077,6 +4114,15 @@ void RasterizerCacheOpenGL::InvalidateRegion(PAddr addr, u32 size, const Surface
         return;
     }
 
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (region_owner && RemapOriginProfile::Enabled()) {
+        const bool draw = origin == SurfaceInvalidationOrigin::DrawColor ||
+                          origin == SurfaceInvalidationOrigin::DrawDepth;
+        region_owner->last_remap_owner = {origin,
+            draw ? static_cast<int>(Pica::g_state.regs.vs.main_offset.Value()) : -1,
+            addr, std::uint64_t(addr) + size};
+    }
+#endif
     const SurfaceInterval invalid_interval(addr, addr + size);
     std::optional<ValidationCopyTrace::Provenance> invalidation_event;
     if (validation_copy_trace)

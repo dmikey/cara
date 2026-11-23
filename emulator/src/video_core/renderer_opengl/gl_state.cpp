@@ -483,6 +483,14 @@ GLuint OpenGLState::BindTexture2D(int index, GLuint texture) {
     return previous;
 }
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+void OpenGLState::BindLightingLUT(GLuint texture) {
+    glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
+    glBindTexture(GL_TEXTURE_2D, texture);
+    cur_state.texture_buffer_lut_lf.texture_buffer = texture;
+}
+#endif
+
 GLuint OpenGLState::BindSampler(int index, GLuint sampler) {
     GLuint previous = cur_state.texture_units[index].sampler;
     glBindSampler(index, sampler);
@@ -520,6 +528,18 @@ GLuint OpenGLState::BindShaderProgram(GLuint program) {
     cur_state.draw.shader_program = program;
     return previous;
 }
+
+#ifdef CARA_ANDROID_GLES_ATLAS
+void OpenGLState::ForgetDeletedPicaTexture(GLuint handle) {
+    // GLES clears these bindings on deletion in the worker context. Keep the
+    // producer's state in step before a later allocation can reuse the name.
+    for (auto& unit : cur_state.texture_units) {
+        if (unit.texture_2d == handle) {
+            unit.texture_2d = 0;
+        }
+    }
+}
+#endif
 
 void OpenGLState::ResetTexture(GLuint handle) {
     for (unsigned i = 0; i < ARRAY_SIZE(cur_state.texture_units); ++i) {

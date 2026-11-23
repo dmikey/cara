@@ -175,6 +175,9 @@ public:
     static GLuint BindVertexBuffer(GLuint buffer);
     static GLuint BindUniformBuffer(GLuint buffer);
     static GLuint BindTexture2D(int index, GLuint texture);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static void BindLightingLUT(GLuint texture);
+#endif
     static GLuint BindSampler(int index, GLuint sampler);
     static GLuint BindTextureCube(GLuint texture_cube);
     static GLuint BindReadFramebuffer(GLuint framebuffer);
@@ -184,6 +187,9 @@ public:
 
     /// Resets any references to the given resource
     static void ResetTexture(GLuint handle);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static void ForgetDeletedPicaTexture(GLuint handle);
+#endif
     static void ResetSampler(GLuint handle);
     static void ResetProgram(GLuint handle);
     static void ResetPipeline(GLuint handle);
