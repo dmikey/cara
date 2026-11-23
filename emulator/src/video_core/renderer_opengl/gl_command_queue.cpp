@@ -384,7 +384,7 @@ void TransactionLUT(DriverTransactions::LUTBody body,std::uint32_t texture,unsig
  }
  OwnedCopyScope reservation;auto owned=Copy(data,bytes);const auto charge=owned.capacity();
  Record([=,owned=std::move(owned)]{DriverTransactions::ExecutionScope token;
-   body(texture,unit,format,offset,owned.data(),owned.size());},charge);
+   body(texture,unit,format,offset,owned.data(),owned.size());},charge,RpcApi::UploadLUTOwned);
  ++stats.transaction_lut_calls;
  if(transaction_attribution.value.enabled)transaction_attribution.Add(transaction_attribution.value.async_lut);
 }

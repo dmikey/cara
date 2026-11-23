@@ -156,6 +156,7 @@ enum class RpcApi : std::size_t {
     api_glVertexAttribPointer,
     api_glViewport,
     api_glWaitSync,
+    UploadLUTOwned,
     Count
 };
 inline constexpr std::size_t RpcApiCount=std::size_t(RpcApi::Count);
@@ -313,6 +314,7 @@ inline constexpr std::array<const char*,RpcApiCount> RpcApiNames{{
     "glVertexAttribPointer",
     "glViewport",
     "glWaitSync",
+    "UploadLUTOwned",
 }};
 inline const char* RpcApiName(RpcApi api){const auto i=std::size_t(api);return i<RpcApiCount?RpcApiNames[i]:"Unknown";}
 }
