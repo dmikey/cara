@@ -80,6 +80,15 @@ independent copy commands while preserving every authoritative writer,
 source and destination range, queue dependency and guest-visible byte.
 Report useful copy reductions and unprofiled owner-thread CPU separately.
 
+A private same-buffer coalescer validated all 661,440 raw spans and
+preserved all 169,328,640 copied bytes. It found zero consecutive copies
+with the same Metal buffer and contiguous source and destination offsets.
+Both LCDs and the selected work matched. The replay closed after one
+admission case. The separate source and destination offset checks were
+combined in this gate, so the result leaves the exact backing pattern
+unknown. Reordering or widening copied guest intervals would require
+independent authority and dependency proofs.
+
 ## Preserve the backend boundary
 
 Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
