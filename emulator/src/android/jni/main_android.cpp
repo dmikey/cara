@@ -453,6 +453,19 @@ void BootGame(const std::string& path) {
                                 phases.pica_shader_stream_words, phases.texture_lookup_checks,
                                 phases.texture_lookup_hits, phases.texture_lookup_verify_mismatches,
                                 phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
+                            const auto& lit = phases.lit_index_selection;
+                            if (std::any_of(lit.topology.begin(), lit.topology.end(),
+                                            [](u64 draws) { return draws != 0; })) {
+                                const auto report = fmt::format(
+                                    "lit_index end={} list={} strip={} fan={} shader_topology={} "
+                                    "need_packed={} shadow_guard={} feedback={} missing_pairs={} "
+                                    "low_reuse={} selected={} program_pending={}",
+                                    frame, lit.topology[0], lit.topology[1], lit.topology[2],
+                                    lit.topology[3], lit.packed_input_required, lit.shadow_route,
+                                    lit.feedback_route, lit.pair_data_unavailable,
+                                    lit.reuse_below_threshold, lit.selected, lit.program_pending);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                            }
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", work.c_str());
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", reuse.c_str());
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());

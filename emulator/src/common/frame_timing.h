@@ -176,6 +176,16 @@ struct Counters {
     std::uint64_t gpu_lit_pair_draws = 0;
     std::uint64_t gpu_lit_pair_vertices = 0;
     std::uint64_t gpu_lit_pair_ids = 0;
+    struct LitIndexSelection {
+        std::uint64_t packed_input_required = 0;
+        std::uint64_t shadow_route = 0;
+        std::uint64_t feedback_route = 0;
+        std::uint64_t pair_data_unavailable = 0;
+        std::uint64_t reuse_below_threshold = 0;
+        std::uint64_t selected = 0;
+        std::uint64_t program_pending = 0;
+        std::array<std::uint64_t, 4> topology{};
+    } lit_index_selection;
     std::uint64_t gpu_indexed_shader_fallbacks = 0;
     std::uint64_t gpu_native_element_draws = 0;
     std::uint64_t gpu_native_elements_saved = 0;

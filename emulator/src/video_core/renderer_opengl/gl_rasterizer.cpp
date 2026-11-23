@@ -721,18 +721,37 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
         const char* value = std::getenv("CARA_GPU_LIT_LISTS");
         return value && std::strcmp(value, "1") == 0;
     }();
-    const bool lit_list = try_more_lit_lists &&
-        Pica::g_state.primitive_assembler.GetTopology() ==
-            Pica::PipelineRegs::TriangleTopology::List &&
-        !regs.framebuffer.IsShadowRendering();
-    ios_lit_pair_vertex_reuse = lit_pair_reuse && ios_indexed_vertex_inputs == 2 &&
-        !regs.lighting.disable && (!AllowShadow || lit_list) &&
-        !ios_direct_vertex_reuse && !ios_feedback_vertex_reuse &&
-        ios_cached_index_data && ios_cached_index_data->lit_pair_count > 0 &&
-        ios_cached_index_data->lit_pair_count <= 65535 &&
-        ios_cached_index_data->lit_elements.size() == IOSTriangles().size() &&
-        std::uint64_t(ios_cached_index_data->pair_reuse.lru32_vs_runs) * 4 <=
-            std::uint64_t(ios_cached_index_data->pair_reuse.baseline_vs_runs) * (lit_list ? 4 : 3);
+    ios_lit_pair_vertex_reuse = false;
+    if (lit_pair_reuse && !regs.lighting.disable) {
+        auto& timing = Common::FrameTiming::counters;
+        auto& selection = timing.lit_index_selection;
+        const auto topology = Pica::g_state.primitive_assembler.GetTopology();
+        if (timing.enabled)
+            ++selection.topology[static_cast<u32>(topology)];
+        const bool lit_list = try_more_lit_lists &&
+            topology == Pica::PipelineRegs::TriangleTopology::List &&
+            !regs.framebuffer.IsShadowRendering();
+        const auto count = [&](std::uint64_t& counter) {
+            if (timing.enabled)
+                ++counter;
+        };
+        if (ios_indexed_vertex_inputs != 2) {
+            count(selection.packed_input_required);
+        } else if (AllowShadow && !lit_list) {
+            count(selection.shadow_route);
+        } else if (ios_feedback_vertex_reuse) {
+            count(selection.feedback_route);
+        } else if (!ios_cached_index_data || ios_cached_index_data->lit_pair_count == 0 ||
+                   ios_cached_index_data->lit_pair_count > 65535 ||
+                   ios_cached_index_data->lit_elements.size() != IOSTriangles().size()) {
+            count(selection.pair_data_unavailable);
+        } else {
+            const auto& reuse = ios_cached_index_data->pair_reuse;
+            ios_lit_pair_vertex_reuse = std::uint64_t(reuse.lru32_vs_runs) * 4 <=
+                std::uint64_t(reuse.baseline_vs_runs) * (lit_list ? 4 : 3);
+            count(ios_lit_pair_vertex_reuse ? selection.selected : selection.reuse_below_threshold);
+        }
+    }
 #endif
     if (!SetupVertexShader()) return reject("vertex shader translation");
     if (!SetupGeometryShader()) return reject("geometry setup");
@@ -1273,9 +1292,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     if ((ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse) &&
         !shader_program_manager->TryApplyAsyncIndexed(state)) {
+        auto& timing = Common::FrameTiming::counters;
+        if (timing.enabled && ios_lit_pair_vertex_reuse)
+            ++timing.lit_index_selection.program_pending;
         ios_direct_vertex_reuse = false;
         ios_lit_pair_vertex_reuse = false;
-        ++Common::FrameTiming::counters.gpu_indexed_shader_fallbacks;
+        ++timing.gpu_indexed_shader_fallbacks;
         if (!SetupVertexShader()) return false;
     }
 #endif
