@@ -366,3 +366,10 @@ geometry source digest in its identity. Warm launches report the geometry
 binary hits and source relinks separately. Compare the first visit to Gadd's
 lab, repeated warm windows, and matching pixels before enabling the route
 for ordinary play.
+
+The first app preview reached the GLES 3.2 route but selected zero geometry
+programs. The vertex generator still required the desktop atlas build flag
+and fell back before linking. The corrected build allows Android atlas
+geometry generation and keeps the isolated dispatch path limited to macOS.
+Check for geometry program use in each measured window before attributing a
+frame-time change to the geometry stage.
