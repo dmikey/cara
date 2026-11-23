@@ -756,6 +756,29 @@ static void AppendAlphaTestCondition(std::string& out, FramebufferRegs::CompareF
     }
 }
 
+// Match the operands read by the emitted color and alpha expressions.
+static unsigned TevOperandCount(TevStageConfig::Operation operation, bool alpha) {
+    using Operation = TevStageConfig::Operation;
+    switch (operation) {
+    case Operation::Replace:
+        return 1;
+    case Operation::Modulate:
+    case Operation::Add:
+    case Operation::AddSigned:
+    case Operation::Subtract:
+        return 2;
+    case Operation::Lerp:
+    case Operation::MultiplyThenAdd:
+    case Operation::AddThenMultiply:
+        return 3;
+    case Operation::Dot3_RGB:
+    case Operation::Dot3_RGBA:
+        return alpha ? 0 : 2;
+    default:
+        return 0;
+    }
+}
+
 /// Writes the code to emulate the specified TEV stage
 static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config,
                                  FragmentUsage& usage, u32 index) {
@@ -765,14 +788,16 @@ static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config,
         std::string index_name = std::to_string(index);
 
         std::array<std::string, 3> color_results;
-        AppendColorModifier(color_results[0], config, usage, stage.color_modifier1,
-                            stage.color_source1, index_name);
-        if (stage.color_op != TevStageConfig::Operation::Replace) {
+        const auto color_operands = TevOperandCount(stage.color_op, false);
+        if (color_operands >= 1)
+            AppendColorModifier(color_results[0], config, usage, stage.color_modifier1,
+                                stage.color_source1, index_name);
+        if (color_operands >= 2)
             AppendColorModifier(color_results[1], config, usage, stage.color_modifier2,
                                 stage.color_source2, index_name);
+        if (color_operands == 3)
             AppendColorModifier(color_results[2], config, usage, stage.color_modifier3,
                                 stage.color_source3, index_name);
-        }
 
         // Round the output of each TEV stage to maintain the PICA's 8 bits of precision
         out += "vec3 color_output_" + index_name + " = byteround(";
@@ -784,14 +809,16 @@ static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config,
             out += "float alpha_output_" + index_name + " = color_output_" + index_name + "[0];\n";
         } else {
             std::array<std::string, 3> alpha_results;
-            AppendAlphaModifier(alpha_results[0], config, usage, stage.alpha_modifier1,
-                                stage.alpha_source1, index_name);
-            if (stage.alpha_op != TevStageConfig::Operation::Replace) {
+            const auto alpha_operands = TevOperandCount(stage.alpha_op, true);
+            if (alpha_operands >= 1)
+                AppendAlphaModifier(alpha_results[0], config, usage, stage.alpha_modifier1,
+                                    stage.alpha_source1, index_name);
+            if (alpha_operands >= 2)
                 AppendAlphaModifier(alpha_results[1], config, usage, stage.alpha_modifier2,
                                     stage.alpha_source2, index_name);
+            if (alpha_operands == 3)
                 AppendAlphaModifier(alpha_results[2], config, usage, stage.alpha_modifier3,
                                     stage.alpha_source3, index_name);
-            }
 
             out += "float alpha_output_" + index_name + " = byteround(";
             AppendAlphaCombiner(out, stage.alpha_op, alpha_results);

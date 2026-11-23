@@ -441,3 +441,12 @@ the existing context and preserves guest draw order. An eight-thread host
 fixture reproduced mismatched GLSL with the old shared flags. The corrected
 generator matched 32 serial GLES sources byte for byte and matched all
 32,000 parallel calls.
+
+The shared generator emits TEV dependencies only for operands the selected
+color or alpha expression reads. Previously, a two-input operation walked
+the third source and could mark its texture or fragment lighting as used,
+even though the expression never included that operand. The correction
+adds no branch to the generated shader and leaves alpha and color rounding
+unchanged. A host fixture compared generated GLSL for all 100 color/alpha
+operation combinations while varying inactive sources. Measure cold
+source counts and compare device pixels before adopting the change.
