@@ -570,8 +570,9 @@ void main(){ink = sentinel != 0 ? vec4(1,0,1,1) : vec4(vertexColor,0.5);})");
         glDisable(GL_STENCIL_TEST);
         glDepthMask(GL_TRUE);
         for (GLenum compare : {GL_LESS, GL_GREATER}) {
-            glClearDepthf(compare == GL_LESS ? 1.0f : 0.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            const GLfloat depth = compare == GL_LESS ? 1.0f : 0.0f;
+            glClear(GL_COLOR_BUFFER_BIT);
+            glClearBufferfv(GL_DEPTH, 0, &depth);
             const auto cleared = read();
             glDepthFunc(compare);
             glUniform1f(z, 0);
@@ -582,7 +583,6 @@ void main(){ink = sentinel != 0 ? vec4(1,0,1,1) : vec4(vertexColor,0.5);})");
             draw();
             Check(read() == first, "repeated strict-depth draw changed pixels");
         }
-        glClearDepthf(1.0f);
         if (!indexed) arrays = reference;
         else Check(arrays != reference, "guest index did not affect vertex ID output");
         std::printf("%s repeat: %d blended pixels match, depth reject and stencil=2 verified\n",
