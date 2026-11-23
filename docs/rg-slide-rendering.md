@@ -312,6 +312,51 @@ uploads. These are wall-clock phase measurements from iPad. The equivalent
 RG Slide cost is still unmeasured. See
 [the earlier hardware investigation](hardware-investigation.md#monster-hunter-stories-current-leads).
 
+## Dark Moon indexed draws and Mali geometry counters
+
+The comparison used one release APK on the T820 with Dynarmic JIT, 1× GLES
+Atlas, Performance Mode, a fixed 50% guest CPU clock, and shared P3D/PPF
+pacing. Each run booted from the library into a fresh in-game slot and
+played through the lab arrival. The title and lab rows use matched warm
+120-refresh windows. The indexed option is a developer INI setting with
+a default of off. It selects the shared real element-buffer paths for
+packed draws. The unlit path ran about 14,200 times per lab window. No
+lit ordered-pair draws met the selection rule in the measured windows.
+
+| Run | Lab median | Lab p99 range | Lab worst | Title p99 range | Title worst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Arrays, first control | 32.22 ms | 37.18–40.73 ms | 51.82 ms at 3359 | 57.73–58.99 ms | 60.17 ms at 919 |
+| Indexed, cache seeding run | 29.32 ms | 35.17–50.21 ms | 73.42 ms at 3266 | 57.20–57.71 ms | 62.05 ms at 937 |
+| Indexed, restart with saved cache | 28.81 ms | 34.59–50.19 ms | 59.60 ms at 3010 | 56.55–56.92 ms | 57.77 ms at 1369 |
+| Arrays, recheck | 31.98 ms | 38.16–55.06 ms | 78.28 ms at 3112 | 57.92–61.08 ms | 66.92 ms at 1231 |
+
+Both indexed captures reduced position-shading requests from 751 to
+537–538 per 1,000 input primitives. Varying requests fell more modestly,
+from 78–82 to 73–74. Position request queue stalls dropped from 69–71% to
+55–56% of tiler-active cycles. Tiler-active cycles per input primitive fell
+from 183 to 127–129, and L2 tiler reads fell from 49.5 to 40.3 bytes per
+input primitive. About 9% of primitives survived culling. Shader requests
+and tiler activity overlap. The counters attribute pressure to issuing
+position work and do not measure exclusive stage elapsed times.
+[Arm Mali-G57 counters](https://arm-software.github.io/libGPUCounters/mali-g57_counter_reference.html)
+
+Lab draw submission fell from 4.26–4.31 to 3.69–3.71 ms per refresh.
+Perfetto scheduling estimates still put the emulation thread around
+26.5–27.5 CPU-ms per refresh across both paths. Indexed draws improved
+warm throughput while the emulation thread remained over the 16.67 ms
+refresh budget.
+
+The warmed title held its frame times. Arrival at the title regressed
+on both indexed boots. The worst startup refresh was about 8.51 s on
+indexed versus 2.16–2.18 s on control, with about 11.2 s of compilation
+in the indexed startup window versus 2.1 s on control. The saved
+indexed cache hit the 128-entry admission limit at 30.17 MiB, which
+prevents saving additional variants once it fills. The first lab
+arrival also compiled variants on the indexed restart, outside the warm
+windows above. Keep indexed draws opt-in. A follow-up should preserve
+the existing draw route on shader misses and isolate the remaining
+emulation-thread costs. [Release probe and sampler CI](https://github.com/dmikey/cara/actions/runs/45113654759)
+
 ## Reproducing and extending the measurements
 
 1. Keep **Accuracy Mode, native resolution and JIT** for the first comparison.
