@@ -59,6 +59,8 @@ enum Phase : std::size_t {
     PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
     RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, UniformPreviousVsHit,
     RetileAllocateHost, RetileResolveHost, RetileScratchHost, RetileEncodeHost, RetilePublishHost,
+    RetileFusedProbes, RetileFusedOwnerDeclines, RetileFusedTextureDeclines,
+    RetileFusedPipelineDeclines, RetileFusedPerformed,
     PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
@@ -125,7 +127,9 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws", "runtime_linked_vertex_hit",
     "uniform_previous_vs_hit",
     "retile_allocate_host", "retile_resolve_host", "retile_scratch_host", "retile_encode_host",
-    "retile_publish_host"};
+    "retile_publish_host",
+    "retile_fused_probes", "retile_fused_owner_declines", "retile_fused_texture_declines",
+    "retile_fused_pipeline_declines", "retile_fused_performed"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {

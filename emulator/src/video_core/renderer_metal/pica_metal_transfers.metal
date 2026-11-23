@@ -92,6 +92,34 @@ static uint pica_tiled_word(uint x, uint y, uint width) {
     return (y & ~7u) * width + (x & ~7u) * 8u + morton;
 }
 
+// A mode-0 transfer treats the exported bytes as linear RGBA8 words before
+// retiling them. Pull that byte permutation directly from the tiled owner.
+static uint pica_morton_axis(uint bits) {
+    return (bits & 1u) | ((bits >> 1u) & 2u) | ((bits >> 2u) & 4u);
+}
+
+kernel void cara_pica_display_retile_rgba8_owner(
+    texture2d<float, access::read> source [[texture(0)]],
+    device uchar* destination [[buffer(0)]], constant uint4& args [[buffer(1)]],
+    uint2 xy [[thread_position_in_grid]]) {
+    const uint width = args.x;
+    const uint height = args.y;
+    if (xy.x >= width || xy.y >= height)
+        return;
+
+    const uint pixel = args.z + xy.y * width + xy.x;
+    const uint tile = pixel / 64u;
+    const uint in_tile = pixel % 64u;
+    const uint tiles_per_row = source.get_width() / 8u;
+    const uint x = tile % tiles_per_row * 8u + pica_morton_axis(in_tile);
+    const uint y = tile / tiles_per_row * 8u + pica_morton_axis(in_tile >> 1u);
+    const uchar4 rgba = uchar4(rint(source.read(uint2(x, source.get_height() - 1u - y)) * 255.0f));
+    const uint out_y = args.w ? height - 1u - xy.y : xy.y;
+    const uint offset = 4u * pica_tiled_word(xy.x, out_y, width);
+    for (uint byte = 0; byte < 4u; ++byte)
+        destination[offset + byte] = rgba[3u - byte];
+}
+
 static uint3 read_rgb565(const device uchar* source, uint offset) {
     const uint packed = uint(source[offset]) | (uint(source[offset + 1u]) << 8u);
     const uint3 channels = uint3(packed >> 11u, (packed >> 5u) & 63u, packed & 31u);

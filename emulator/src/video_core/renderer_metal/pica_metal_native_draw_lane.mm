@@ -1273,6 +1273,88 @@ void PicaMetalNativeDrawLane::TransferDisplay(
             submissions.Fail("Invalid linear-to-tiled display transfer ranges");
 
         static std::mutex pipeline_lock;
+        static const bool fuse_retile = [] {
+            const auto* value = std::getenv("CARA_METAL_FUSE_RETILE_RGBA8_OWNER");
+            return value && std::string_view(value) == "1";
+        }();
+        if (fuse_retile && linear_to_tiles && !rgb8_retile && !scaled_crop) {
+            using namespace NativeMetalCost;
+            Count(RetileFusedProbes, 1);
+            const auto source_owner = [&]() -> std::pair<id<MTLTexture>, u32> {
+                const auto segments = authority.NativeSegments(src->begin, src->end);
+                const auto* writer = segments.size() == 1
+                    ? dynamic_cast<const MetalSurfaceWriter*>(segments.front().writer.get())
+                    : nullptr;
+                if (!writer || segments.front().begin != src->begin ||
+                    segments.front().end != src->end || writer->Queue() != queue ||
+                    writer->RawGuestBuffer() || !writer->Covers(src->begin, src->end)) {
+                    Count(RetileFusedOwnerDeclines, 1);
+                    return {};
+                }
+                const auto status = writer->Status();
+                if (status != MetalGuestWriteStatus::Complete &&
+                    (status != MetalGuestWriteStatus::Pending ||
+                     !submissions.IsTrackedProducer(writer->Command()))) {
+                    Count(RetileFusedOwnerDeclines, 1);
+                    return {};
+                }
+                const auto& layout = writer->Rgba8Layout();
+                const auto resource = writer->Resource();
+                const id<MTLTexture> texture = [resource conformsToProtocol:@protocol(MTLTexture)]
+                    ? (id<MTLTexture>)resource : nil;
+                if (!layout || !layout->tiled || !layout->width || !layout->height ||
+                    ((layout->width | layout->height) & 7u) != 0 ||
+                    layout->begin >= layout->end || src->begin < layout->begin ||
+                    src->end > layout->end || (src->begin - layout->begin) % 4u != 0 ||
+                    u64{layout->end - layout->begin} != u64{layout->width} * layout->height * 4u ||
+                    !valid_rgba_source(texture, layout->width, layout->height)) {
+                    Count(RetileFusedTextureDeclines, 1);
+                    return {};
+                }
+                return {texture, (src->begin - layout->begin) / 4u};
+            }();
+            if (source_owner.first) {
+                static id<MTLComputePipelineState> cached_fused_retile;
+                id<MTLComputePipelineState> pipeline;
+                {
+                    const std::lock_guard guard(pipeline_lock);
+                    if (!cached_fused_retile || cached_fused_retile.device != queue.device) {
+                        const auto url = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
+                        const auto library = url ? [queue.device newLibraryWithURL:url error:nullptr] : nil;
+                        const auto kernel = [library newFunctionWithName:@"cara_pica_display_retile_rgba8_owner"];
+                        cached_fused_retile = kernel
+                            ? [queue.device newComputePipelineStateWithFunction:kernel error:nullptr] : nil;
+                    }
+                    pipeline = cached_fused_retile;
+                }
+                if (pipeline && pipeline.maxTotalThreadsPerThreadgroup >= 64) {
+                    Scope allocate(RetileAllocateHost, trace_retile);
+                    const auto command = [queue commandBuffer];
+                    const auto output = AllocateBytes(*dst);
+                    allocate.Stop();
+                    Scope encode(RetileEncodeHost, trace_retile);
+                    const auto encoder = command && output ? [command computeCommandEncoder] : nil;
+                    if (!encoder)
+                        submissions.Fail("Could not encode fused native Metal retile");
+                    const std::array<u32, 4> args{registers.input_width, registers.input_height,
+                                                   source_owner.second, registers.flags & 1u};
+                    [encoder setComputePipelineState:pipeline];
+                    [encoder setTexture:source_owner.first atIndex:0];
+                    [encoder setBuffer:output offset:0 atIndex:0];
+                    [encoder setBytes:args.data() length:sizeof(args) atIndex:1];
+                    [encoder dispatchThreadgroups:MTLSizeMake(args[0] / 8u, args[1] / 8u, 1)
+                             threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                    [encoder endEncoding];
+                    encode.Stop();
+                    Scope publish(RetilePublishHost, trace_retile);
+                    PublishBytes(command, output, DenseRows(*dst));
+                    Count(RetileFusedPerformed, 1);
+                    return;
+                }
+                Count(RetileFusedPipelineDeclines, 1);
+            }
+        }
+
         static id<MTLComputePipelineState> cached_retile;
         static id<MTLComputePipelineState> cached_scaled_crop_rgb8;
         static id<MTLComputePipelineState> cached_rgb8_retile;
