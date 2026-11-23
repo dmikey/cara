@@ -72,3 +72,38 @@ The Slide restored all 128 program binaries on each warm boot of the control and
 | Candidate repeat | 11.34 ms | 29.83–32.72 ms | 37.95–88.37 ms | 104.43 ms @ 2593 |
 
 The register allocator improves the first title transition. Gadd still misses the 16.7 ms budget. Frame-tail differences between the two candidate boots are larger than the median differences versus the control. Every run restored the original signed APK and the checked user configuration and cache. [Exact candidate build](https://github.com/dmikey/cara/actions/runs/45266874010) · [Gadd window data](dark-moon-jit-gadd.tsv) · [Normal-boot freezes and shader links](dark-moon-cold-links.tsv)
+
+## Keeping PICA textures bound across draws
+
+The ordered Mali path now has an experimental `atlas_retain_pica_textures` debug switch, disabled by default. It preserves the three applied 2D PICA bindings after ordinary successful draws. The next draw still resolves the guest surfaces, including feedback copies. The ordered deletion wrapper clears references to deleted names before another allocation can reuse them. Cube and shadow cleanup continue through the ordinary state path. The Mali-G57 EGL fixture verified that deleting a texture cleared both producer slots that used it and the actual driver binding, while preserving an unrelated texture. [Exact APK and EGL fixture](https://github.com/dmikey/cara/actions/runs/45270074705)
+
+Three normal boots with the same APK bracketed the enabled run with two controls. All restored 128 of 128 program binaries and performed zero source links at restoration. The table compares compile-free 120-refresh windows. The lab windows follow the opening and use 349–355 PICA draws per refresh. The worst column is the maximum among the included windows.
+
+| Scene and boot | Commands per refresh | Median, ms | Window p99, ms | Worst, ms |
+| --- | ---: | ---: | ---: | ---: |
+| Title, first control | 10,402–10,413 | 41.93–42.31 | 44.17–46.64 | 54.40 |
+| Title, retained | 8,290–8,300 | 41.92–42.10 | 44.17–48.72 | 49.84 |
+| Title, repeat control | 10,402–10,413 | 42.18–42.39 | 44.37–46.72 | 50.61 |
+| Gadd, first control | 9,622–9,702 | 29.67–32.60 | 37.55–40.09 | 114.70 |
+| Gadd, retained | 7,418–7,528 | 29.82–32.29 | 38.97–48.33 | 85.53 |
+| Gadd, repeat control | 9,674–9,808 | 29.71–32.56 | 40.03–101.76 | 114.62 |
+
+Binding retention reduced ordered commands by about 20% on the title, 22% in the save selector, and 22–24% in Gadd. Graphics CPU in Gadd moved from 11.19–11.32 ms and 11.37–11.72 ms per refresh on the controls to 10.58–11.13 ms with retention. Frame medians changed little and window p99 was mixed, so the switch remains opt-in. [Per-window command and timing data](dark-moon-pica-bindings.tsv)
+
+### Where the driver waits after binding retention
+
+A second set of normal boots used the same build and archive. Simpleperf recorded the GLES worker's scheduler switches and unwound stacks for about three seconds per scene. These are separate captures from the frame-time runs above. The control used partial LUT updates, B retained bindings with the same partial updates, and I retained bindings with whole-image replacements.
+
+| Scene | Variant | Largest driver sleeps in the capture |
+| --- | --- | --- |
+| Smoky title | Control | 1,881.39 ms in LUT `glTexSubImage2D` |
+| Smoky title | Retained bindings | 1,910.15 ms in LUT `glTexSubImage2D` |
+| Smoky title | Retained bindings and whole images | 957.85 ms in `glDrawElements`, 313.65 ms in `glFramebufferTexture2D` |
+| File selection | Control | 1,759.99 ms in LUT `glTexSubImage2D` |
+| File selection | Retained bindings | 1,801.89 ms in LUT `glTexSubImage2D` |
+| File selection | Retained bindings and whole images | 890.03 ms in `glDrawElements`, 301.91 ms in `glBindFramebuffer`, 110.98 ms in `glFramebufferTexture2D` |
+| Warm Gadd | Retained bindings | 487.25 ms in `glDrawElements`, 288.08 ms in `glBlitFramebuffer`, 206.81 ms in `glDrawArrays`, 192.65 ms in `glClear` |
+
+Nearly all of the partial-upload sleep had the vendor's `osup_sync_object_wait` above `pthread_cond_wait`. Whole-image replacement removed the partial-upload wait and shifted the largest remaining wait to a Mali semaphore in indexed draws. Total observed off-CPU time in the title fell from 2,052.68 to 1,633.43 ms. In Gadd, almost all of the draw, blit and clear sleep also had a Mali semaphore on the stack. The worker separately slept for 552.68 ms awaiting commands in that Gadd capture. [All worker sleep attributions](dark-moon-pica-binding-waits.tsv)
+
+A separate Perfetto trace through the opening before Gadd recorded 2,719 completed worker sleeps ending in wakes from `mali-cmar-backe`, totaling 2,845.10 ms. It also recorded 13,571 ending in wakes from the emulation thread, totaling 2,055.23 ms. These durations belong to the opening trace and are independent of the Simpleperf captures. The stock firmware capture reported five ftrace setup errors for the requested Mali job and Linux fence events, and contained scheduling events only. The evidence locates the host API and driver wait primitive. Identifying the specific GPU job or internal backing-store operation needs a trace with usable job or fence events. [Perfetto ftrace setup reporting](https://perfetto.dev/docs/reference/trace-packet-proto)
