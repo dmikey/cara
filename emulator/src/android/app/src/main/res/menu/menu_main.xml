@@ -17,7 +17,7 @@
     <item
         android:id="@+id/menu_input_binding"
         android:icon="@drawable/ic_controller"
-        android:title="@string/grid_menu_input_binding"
+        android:title="@string/cara_controller_mapping"
         app:showAsAction="never"/>
 
     <item

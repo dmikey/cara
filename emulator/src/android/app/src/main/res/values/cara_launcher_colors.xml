@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_cara_background">#f8f4f6</color>
+    <color name="ic_cara_silver_background">#eeeeee</color>
+    <color name="ic_cara_amber_background">#f6e0cb</color>
+    <color name="ic_cara_lime_background">#e7f2d8</color>
+    <color name="ic_cara_onyx_background">#212327</color>
+</resources>

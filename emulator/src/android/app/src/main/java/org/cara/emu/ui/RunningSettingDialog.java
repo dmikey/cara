@@ -603,15 +603,33 @@ public class RunningSettingDialog extends DialogFragment {
 
         public void loadMainMenu() {
             mSettings = new ArrayList<>();
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU, R.string.preferences_settings, SettingsItem.TYPE_TEXT, MENU_SETTINGS));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_EDIT_BUTTONS, R.string.emulation_edit_layout, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_RESET_CAMERA, R.string.menu_emulation_camera, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_ROTATE_SCREEN, R.string.emulation_screen_rotation, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_CHEAT_CODE, R.string.menu_cheat_code, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_MEMORY_VIEWER, R.string.emulation_memory_search, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU, R.string.multiplayer, SettingsItem.TYPE_TEXT, MENU_MULTIPLAYER));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_EDIT_SCREEN, R.string.emulation_screen_layout, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_EXIT_GAME, R.string.emulation_stop_running, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU,
+                    R.string.preferences_settings, SettingsItem.TYPE_TEXT, MENU_SETTINGS));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.setting_header_renderer, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_EDIT_SCREEN,
+                    R.string.cara_edit_screen_layout, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_ROTATE_SCREEN,
+                    R.string.emulation_screen_rotation, SettingsItem.TYPE_TEXT, 0));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.setting_header_controls, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_EDIT_BUTTONS,
+                    R.string.cara_edit_touch_controls, SettingsItem.TYPE_TEXT, 0));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.cara_game_tools, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU,
+                    R.string.multiplayer, SettingsItem.TYPE_TEXT, MENU_MULTIPLAYER));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_CHEAT_CODE,
+                    R.string.menu_cheat_code, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_RESET_CAMERA,
+                    R.string.menu_emulation_camera, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_MEMORY_VIEWER,
+                    R.string.emulation_memory_search, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_EXIT_GAME,
+                    R.string.emulation_stop_running, SettingsItem.TYPE_TEXT, 0));
             notifyDataSetChanged();
         }
 

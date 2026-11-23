@@ -34,7 +34,7 @@
 
         <ImageView
             android:id="@+id/banner"
-            android:src="@mipmap/ic_launcher_foreground"
+            android:src="@mipmap/ic_cara"
             android:scaleType="centerCrop"
             android:layout_width="96dp"
             android:layout_height="94dp"/>

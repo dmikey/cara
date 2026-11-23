@@ -29,6 +29,7 @@
         android:banner="@mipmap/ic_cara"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_cara"
+        android:roundIcon="@mipmap/ic_cara_round"
         android:appCategory="game"
         android:hasFragileUserData="true"
         android:isGame="true"
@@ -40,17 +41,77 @@
             android:name=".ui.MainActivity"
             android:launchMode="singleTop"
             android:theme="@style/CaraTheme"
-            android:exported="true">
+            android:exported="true" />
 
-            <!-- This intentfilter marks this Activity as the one that gets launched from Home screen. -->
+        <activity-alias
+            android:name=".ui.CaraLauncherCitrus"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_cara"
+            android:label="${caraAppLabel}"
+            android:targetActivity=".ui.MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <action android:name="android.intent.action.VIEW" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity-alias>
 
-        </activity>
+        <activity-alias
+            android:name=".ui.CaraLauncherSilver"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_cara_silver"
+            android:label="${caraAppLabel}"
+            android:targetActivity=".ui.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".ui.CaraLauncherAmber"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_cara_amber"
+            android:label="${caraAppLabel}"
+            android:targetActivity=".ui.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".ui.CaraLauncherLime"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_cara_lime"
+            android:label="${caraAppLabel}"
+            android:targetActivity=".ui.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".ui.CaraLauncherOnyx"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_cara_onyx"
+            android:label="${caraAppLabel}"
+            android:targetActivity=".ui.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
         <activity
             android:name=".ui.GameFilePickerActivity"
             android:label="@string/app_name"

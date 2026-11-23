@@ -183,6 +183,10 @@ public final class SettingsActivity extends AppCompatActivity {
     }
 
     public void loadSubMenu(MenuTag menuKey) {
+        if (menuKey == MenuTag.APP_ICON) {
+            AppIconPicker.show(this);
+            return;
+        }
         showSettingsFragment(menuKey, null, true, mGameId);
     }
 
