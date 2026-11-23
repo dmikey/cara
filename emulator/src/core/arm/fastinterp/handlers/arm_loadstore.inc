@@ -331,6 +331,81 @@ handle_LdrStrFourPairsImm: {
     goto handle_LdrImm_al; // no architectural effect has occurred yet
 }
 
+handle_LdrPairImm: {
+    CHECK_COND(LdrPairImm);
+    const auto& second = inst[1];
+    const u32 base = state_.regs[inst->ls.rn];
+    // Independent u32 additions preserve guest address wrap exactly.
+    const u32 first_address = base + inst->ls.offset;
+    const u32 second_address = base + second.ls.offset;
+    const auto page_number = first_address >> FASTINTERP_PAGE_BITS;
+    const auto* page = local_page_ptrs[page_number];
+    const u64 ticks = u64{inst->ticks} + second.ticks;
+    const s64 budget = timer->GetDowncount();
+    if (!stepping_ && !halted_ && budget > 0 &&
+        executed <= static_cast<u64>(budget) && ticks <= static_cast<u64>(budget) - executed &&
+        page_table_ && page_table_->attributes[page_number] == Memory::PageType::Memory &&
+        page && page_number == (second_address >> FASTINTERP_PAGE_BITS) &&
+        (first_address & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 3 &&
+        (second_address & FASTINTERP_PAGE_MASK) <= FASTINTERP_PAGE_MASK - 3) {
+        const auto* first_source = page + (first_address & FASTINTERP_PAGE_MASK);
+        const auto* second_source = page + (second_address & FASTINTERP_PAGE_MASK);
+        const auto disjoint = [](const void* source, const void* object, std::size_t size) {
+            const auto a = reinterpret_cast<std::uintptr_t>(source);
+            const auto b = reinterpret_cast<std::uintptr_t>(object);
+            const auto max = std::numeric_limits<std::uintptr_t>::max();
+            return a <= max - 4 && b <= max - size && (a + 4 <= b || b + size <= a);
+        };
+        const auto safe = [&](const void* source) {
+            return disjoint(source,this,sizeof(*this)) && disjoint(source,block,sizeof(*block)) &&
+                disjoint(source,page_table_.get(),sizeof(*page_table_)) &&
+                disjoint(source,local_page_ptrs,
+                    (std::size_t{1} << (32 - FASTINTERP_PAGE_BITS)) * sizeof(*local_page_ptrs));
+        };
+        if (safe(first_source) && safe(second_source)) {
+            if (LdrPairCensusEnabled()) ++ldr_pair_runtime_counts[0];
+            // Never widen into an eight-byte/speculative read. Preserve the
+            // two original loads and intervening register write in guest order.
+            u32 value;
+            std::memcpy(&value, first_source, 4);
+            state_.regs[inst->rd] = value;
+            executed += inst->ticks;
+            SET_PC(GET_PC() + inst->inst_size);
+            ++inst;
+            std::memcpy(&value, second_source, 4);
+            state_.regs[inst->rd] = value;
+            executed += inst->ticks;
+            SET_PC(GET_PC() + inst->inst_size);
+            DISPATCH();
+        }
+    }
+    // No architectural effect has occurred: callbacks, tracked memory, step,
+    // crossings and short budgets use the exact original first scalar handler.
+    if (LdrPairCensusEnabled()) ++ldr_pair_runtime_counts[1];
+    goto handle_LdrImm_al;
+}
+
+// A direct page read cannot invoke memory callbacks. On other pages, use the
+// scalar handler and its ordinary dispatch to the untouched compare record.
+#define LDR_TO_COMPARE(load, compare)                                                             \
+    handle_##load: {                                                                              \
+        CHECK_COND(load);                                                                         \
+        const u32 address = state_.regs[inst->ls.rn] + inst->ls.offset;                            \
+        const auto* page = local_page_ptrs[address >> FASTINTERP_PAGE_BITS];                       \
+        const u32 offset = address & FASTINTERP_PAGE_MASK;                                        \
+        if (!page || offset > FASTINTERP_PAGE_MASK - 3)                                           \
+            goto handle_LdrImm_al;                                                               \
+        std::memcpy(&state_.regs[inst->rd], page + offset, 4);                                     \
+        executed += inst->ticks;                                                                  \
+        SET_PC(GET_PC() + inst->inst_size);                                                        \
+        KEEP_PAGE_TABLE_REGISTER();                                                               \
+        ++inst;                                                                                   \
+        goto handle_##compare;                                                                   \
+    }
+LDR_TO_COMPARE(LdrCmpImmBcc, FusedCmpBcc)
+LDR_TO_COMPARE(LdrCmpRegBcc, FusedCmpRegBcc)
+#undef LDR_TO_COMPARE
+
 handle_LdrImm: {
     CHECK_COND(LdrImm);
     MEM_READ32(state_.regs[inst->ls.rn] + inst->ls.offset, state_.regs[inst->rd]);
