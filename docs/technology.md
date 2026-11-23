@@ -89,3 +89,5 @@ Cara app is the playable build provided here.
 Cara builds on GPL-2.0-or-later emulator code. Original copyright notices are
 preserved. See [NOTICE](../NOTICE), [source revisions](../emulator/VENDORED_SOURCE.json),
 and [FastInterp provenance](fastinterp-upstream.json) for contributors and pinned revisions.
+
+See the [renderer performance notes for a future Vulkan backend](renderer-vulkan-handoff.md) for resource lifetime, GPU ownership, and reproducible Metal experiments.
