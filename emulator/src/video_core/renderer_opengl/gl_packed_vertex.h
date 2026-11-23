@@ -60,6 +60,19 @@ vec4 cara_decode_vertex(int vertex, int reg) {
         int next = texel + 1;
         second = texelFetch(cara_vertex_inputs, ivec2(next % 128, next / 128), 0);
     }
+    // Aligned f32 inputs need only component selection. Reinterpret the four
+    // words together and avoid the scalar byte extraction loop.
+    if (info.z == 3 && (offset & 3) == 0) {
+        uvec4 words;
+        switch (offset >> 2) {
+        case 0: words = first; break;
+        case 1: words = uvec4(first.yzw, second.x); break;
+        case 2: words = uvec4(first.zw, second.xy); break;
+        default: words = uvec4(first.w, second.xyz); break;
+        }
+        return mix(vec4(0.0, 0.0, 0.0, 1.0), uintBitsToFloat(words),
+                   lessThan(ivec4(0, 1, 2, 3), ivec4(info.w)));
+    }
     vec4 value = vec4(0.0, 0.0, 0.0, 1.0);
     for (int c = 0; c < 4; ++c) {
         if (c >= info.w) break;
