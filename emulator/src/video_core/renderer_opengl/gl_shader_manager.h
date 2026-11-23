@@ -146,6 +146,7 @@ public:
     void ObserveBoundVertexProgram(GLuint expected_program, unsigned input_mode);
 
     void ApplyTo(OpenGLState& state);
+    GLuint GetSeparableVertexProgram();
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     // False means the caller must use the regular vertex program for this draw.
     bool TryApplyAsyncIndexed(OpenGLState& state);

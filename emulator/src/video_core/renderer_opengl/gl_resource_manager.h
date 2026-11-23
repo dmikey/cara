@@ -104,7 +104,7 @@ public:
         return *this;
     }
 
-    void Create(const char* source, GLenum type);
+    void Create(const char* source, GLenum type, bool separable = false);
 
     void Release();
 

@@ -58,10 +58,10 @@ void OGLSampler::Release() {
     handle = 0;
 }
 
-void OGLShader::Create(const char* source, GLenum type) {
+void OGLShader::Create(const char* source, GLenum type, bool separable) {
     if (handle != 0)
         return;
-    handle = LoadShader(source, type);
+    handle = LoadShader(source, type, separable);
 }
 
 void OGLShader::Release() {

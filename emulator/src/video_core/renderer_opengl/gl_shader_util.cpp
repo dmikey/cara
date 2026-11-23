@@ -22,7 +22,7 @@
 
 namespace OpenGL {
 
-GLuint LoadShader(const char* source, GLenum type) {
+GLuint LoadShader(const char* source, GLenum type, bool separable) {
     Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ShaderCompile);
     std::string version = GLES ? R"(#version 320 es
 
@@ -43,7 +43,13 @@ GLuint LoadShader(const char* source, GLenum type) {
 #ifdef CARA_MAC_ATLAS_PIPELINE
     version = "#version 410 core\n";
 #else
-    version = "#version 300 es\n";
+    version = separable ? "#version 320 es\n"
+#if !defined(CARA_MAC_ATLAS_PIPELINE)
+                        "#if defined(GL_EXT_clip_cull_distance)\n"
+                        "#extension GL_EXT_clip_cull_distance : enable\n"
+                        "#endif\n"
+#endif
+                        : "#version 300 es\n";
 #endif
     version += R"(#define CARA_GLES
 precision highp int;
@@ -74,7 +80,12 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
     ReplaceAll("samplerBuffer texture_buffer_lut_", "sampler2D texture_buffer_lut_");
 #else
     if (UseNativeLUTBuffers()) {
-        version = "#version 320 es\n#define CARA_GLES\nprecision highp int;\n"
+        version = "#version 320 es\n";
+        if (separable)
+            version += "#if defined(GL_EXT_clip_cull_distance)\n"
+                       "#extension GL_EXT_clip_cull_distance : enable\n"
+                       "#endif\n";
+        version += "#define CARA_GLES\nprecision highp int;\n"
                   "precision highp float;\nprecision highp sampler2D;\n"
                   "precision highp samplerBuffer;\n";
     } else {

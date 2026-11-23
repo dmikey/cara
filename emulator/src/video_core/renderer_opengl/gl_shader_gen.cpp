@@ -111,7 +111,7 @@ struct FragmentUsage {
 };
 
 static std::string GetVertexInterfaceDeclaration(bool is_output, bool separable_shader,
-                                                 std::string_view prefix = {}) {
+                                                 std::string_view prefix = {}, bool gles = false) {
     std::string out;
 
     const auto append_variable = [&](std::string_view var, int location) {
@@ -130,7 +130,7 @@ static std::string GetVertexInterfaceDeclaration(bool is_output, bool separable_
     append_variable("vec4 normquat", ATTRIBUTE_NORMQUAT);
     append_variable("vec3 view", ATTRIBUTE_VIEW);
 
-    if (is_output && separable_shader) {
+    if (is_output && separable_shader && !gles) {
         // gl_PerVertex redeclaration is required for separate shader object
         out += R"(
 out gl_PerVertex {
@@ -1602,7 +1602,7 @@ std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_sh
     bool shadow_rendering = false;
     bool shader_logic_ops = false;
 
-    if (separable_shader) {
+    if (separable_shader && !target.gles) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
 
@@ -1631,7 +1631,7 @@ std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_sh
 )";
     }
 
-    out += GetVertexInterfaceDeclaration(false, separable_shader);
+    out += GetVertexInterfaceDeclaration(false, separable_shader, {}, target.gles);
     out += R"(
 #ifndef CARA_GLES
 in vec4 gl_FragCoord;
@@ -2041,7 +2041,7 @@ std::string GenerateTrivialVertexShader(bool separable_shader) {
 #ifdef CARA_IOS_GLES
     out += "#define CARA_FULL_DEPTH_RANGE 1\n";
 #endif
-    if (separable_shader) {
+    if (separable_shader && !GLES) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
 
@@ -2062,7 +2062,7 @@ std::string GenerateTrivialVertexShader(bool separable_shader) {
     out +=
         fmt::format("layout(location = {}) in vec3 vert_view;\n", static_cast<int>(ATTRIBUTE_VIEW));
 
-    out += GetVertexInterfaceDeclaration(true, separable_shader);
+    out += GetVertexInterfaceDeclaration(true, separable_shader, {}, GLES);
 
     out += UniformBlockDef;
 
@@ -2103,7 +2103,7 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
     if(native_quaternion_geometry || native_isolated_dispatch) return {};
 #endif
     if (ios_output && ios_indexed_inputs==5) {
-        out=GetVertexInterfaceDeclaration(true,false);
+        out = GetVertexInterfaceDeclaration(true, separable_shader && GLES, {}, GLES);
         out+=R"(
 uniform highp sampler2D cara_vertex_outputs;
 uniform highp usampler2D cara_vertex_indices;
@@ -2136,7 +2136,7 @@ void main() {
         out+="}\n";
         return out;
     }
-    if (separable_shader) {
+    if (separable_shader && !GLES) {
         out += "#extension GL_ARB_separate_shader_objects : enable\n";
     }
 
@@ -2184,7 +2184,8 @@ layout (std140) uniform vs_config {
 
     // output attributes declaration
     for (u32 i = 0; i < config.state.num_outputs; ++i) {
-        out += (separable_shader ? "layout(location = " + std::to_string(i) + ")" : std::string{}) +
+        out += (separable_shader && !ios_output ?
+                    "layout(location = " + std::to_string(i) + ")" : std::string{}) +
                (ios_output ? " vec4 vs_out_attr" : " out vec4 vs_out_attr") + std::to_string(i) + ";\n";
     }
 
@@ -2255,7 +2256,8 @@ layout (std140) uniform vs_config {
                 }
             }
         }
-        out += GetVertexInterfaceDeclaration(true, false, native_quaternion_geometry?"vs_":"");
+        out += GetVertexInterfaceDeclaration(true, separable_shader && GLES,
+                                             native_quaternion_geometry ? "vs_" : "", GLES);
         if (ios_indexed_inputs==4)
             for (unsigned field=0;field<6;++field)
                 out+=fmt::format("out highp vec4 cara_feedback{};\n",field);

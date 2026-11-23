@@ -139,14 +139,13 @@ public:
         this->hash = hash;
         if (separable) {
             OGLShader shader;
-            shader.Create(shader_code.c_str(), type);
+            shader.Create(shader_code.c_str(), type, true);
             if (!shader.handle) return;
             program.Create(true, {shader.handle});
             if (!program.handle) return;
             SetShaderUniformBlockBindings(program.handle);
-            if (type == GL_FRAGMENT_SHADER) {
+            if (type == GL_FRAGMENT_SHADER || type == GL_VERTEX_SHADER)
                 SetShaderSamplerBindings(program.handle);
-            }
         } else if (!defer) {
             this->shader.Create(shader_code.c_str(), type);
         }
@@ -549,6 +548,10 @@ public:
         current_shaders.gs = native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
     }
 
+    GLuint GetSeparableVertexProgram() {
+        return separable && current_shaders.vs ? current_shaders.vs->GetHandle() : 0;
+    }
+
     void ApplyTo(OpenGLState& state) {
         if (!current_shaders.vs || !current_shaders.fs) {
             state.draw.shader_program = 0;
@@ -567,10 +570,19 @@ public:
         GLuint gs = current_shaders.gs->GetHandle();
         GLuint fs = current_shaders.fs->GetHandle();
         if (separable) {
-            glUseProgramStages(pipeline.handle, GL_VERTEX_SHADER_BIT, vs);
-            glUseProgramStages(pipeline.handle, GL_GEOMETRY_SHADER_BIT, gs);
-            glUseProgramStages(pipeline.handle, GL_FRAGMENT_SHADER_BIT, fs);
             state.draw.shader_program = 0;
+            state.draw.program_pipeline = 0;
+            if (!vs || !fs || !pipeline.handle)
+                return;
+            constexpr std::array<GLbitfield, 3> stage_bits{
+                GL_VERTEX_SHADER_BIT, GL_GEOMETRY_SHADER_BIT, GL_FRAGMENT_SHADER_BIT};
+            const std::array<GLuint, 3> stages{vs, gs, fs};
+            for (std::size_t i = 0; i < stages.size(); ++i) {
+                if (attached_stages[i] != stages[i]) {
+                    glUseProgramStages(pipeline.handle, stage_bits[i], stages[i]);
+                    attached_stages[i] = stages[i];
+                }
+            }
             state.draw.program_pipeline = pipeline.handle;
         } else {
             const std::array<u64, 3> bundle{
@@ -1135,6 +1147,7 @@ private:
     std::unordered_map<u64, OGLShaderStage> shaders;
 
     OGLPipeline pipeline;
+    std::array<GLuint, 3> attached_stages{};
     std::unordered_map<u64, OGLProgram> program_cache;
 };
 
@@ -1196,6 +1209,10 @@ bool ShaderProgramManager::TryApplyAsyncIndexed(OpenGLState& state) {
 
 void ShaderProgramManager::ApplyTo(OpenGLState& state) {
     impl->ApplyTo(state);
+}
+
+GLuint ShaderProgramManager::GetSeparableVertexProgram() {
+    return impl->GetSeparableVertexProgram();
 }
 
 } // namespace OpenGL

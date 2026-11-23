@@ -21,3 +21,19 @@ Preserve guest depth, stencil, sampling and ordering when testing any
 performance change. Match draw counts, compare output, and keep p99 and
 worst refreshes alongside guest FPS and SPD. The fog transfer trace is
 documented in [the phase report](lit-index-followup.md).
+
+## Mali separable-program experiment
+
+With `[Debug] atlas_separable_programs = True`, Android Atlas can link
+GLSL ES 3.20 stages individually on the Mali GLES 3.2 route. This uses
+matching explicit shader input and output locations and writes packed
+vertex-layout uniforms to the vertex program. Pipeline objects update
+only the stages that change. The default uses linked programs and its
+existing program-binary cache. The separable experiment keeps stages in
+memory during a session and does not yet archive them between launches.
+
+Compare both configurations on one build from independent empty Cara
+caches with the driver cache state recorded. Collect emulator-thread
+compile and link wall time, first draw and visible output alongside
+startup latency, p99, and worst refreshes. Verify cold and warm behavior
+before considering wider adoption.

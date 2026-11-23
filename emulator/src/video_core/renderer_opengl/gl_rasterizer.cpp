@@ -383,12 +383,17 @@ RasterizerOpenGL::RasterizerOpenGL()
 
     bool use_separable_shader = Settings::values.use_separable_shader;
 #if defined(CARA_IOS_GLES) && !defined(CARA_MAC_ATLAS_PIPELINE)
-    // Atlas uses a GLSL ES 3.00 shader ABI and sets vertex uniforms on the
-    // linked program. The legacy separable route generates desktop GLSL.
-    if (use_separable_shader) {
-        LOG_INFO(Render_OpenGL, "GLSL ES Atlas uses linked vertex/fragment programs");
-        use_separable_shader = false;
-    }
+    if (use_separable_shader)
+        LOG_INFO(Render_OpenGL, "GLSL ES Atlas uses linked vertex/fragment programs by default");
+    use_separable_shader = false;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    const char* separable_probe = std::getenv("CARA_MALI_SEPARABLE_PROGRAMS");
+    use_separable_shader = separable_probe && std::strcmp(separable_probe, "1") == 0 &&
+        is_mali_gpu && GLES && GLAD_GL_ES_VERSION_3_2 && glGenProgramPipelines &&
+        glBindProgramPipeline && glUseProgramStages && glProgramUniform4iv;
+    if (use_separable_shader)
+        LOG_INFO(Render_OpenGL, "Mali GLSL ES 3.20 separable program probe enabled");
+#endif
 #endif
     shader_program_manager = std::make_unique<ShaderProgramManager>(use_separable_shader);
 
@@ -1347,7 +1352,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                                    Common::FrameTiming::RenderBookkeepingProfileEnabled());
         shader_program_manager->ApplyTo(state);
     }
-    if (!state.draw.shader_program) return false;
+    if (!state.draw.shader_program && !state.draw.program_pipeline) return false;
     state.Apply();
     const bool raw_inputs = ios_indexed_vertex_inputs == 2;
     if (PackedPoolObserver::Enabled() && packed_pool_observation.state==PackedPoolObserver::State::Pending &&
@@ -1358,14 +1363,26 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const GLenum input_type = raw_inputs ? GL_UNSIGNED_INT : GL_FLOAT;
     if (raw_inputs) {
         static const bool reuse_layout=[] { const char* v=std::getenv("CARA_GL_STATE_REUSE"); const char* layout=std::getenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE"); return (v && std::strcmp(v,"1")==0) || (layout && std::strcmp(layout,"1")==0); }();
+        const auto vertex_program = state.draw.program_pipeline ?
+            shader_program_manager->GetSeparableVertexProgram() : state.draw.shader_program;
+        const auto update_layout = [&](GLint location) {
+            if (state.draw.program_pipeline)
+                glProgramUniform4iv(vertex_program, location, 16, ios_packed_layout[0].data());
+            else
+                glUniform4iv(location, 16, ios_packed_layout[0].data());
+        };
         if (reuse_layout) {
-            auto& cached=ios_layout_uniforms[state.draw.shader_program];
-            if (!cached.initialized) cached.location=glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]");
-            if (!cached.initialized || cached.values!=ios_packed_layout) {
-                glUniform4iv(cached.location,16,ios_packed_layout[0].data());
-                cached.values=ios_packed_layout; cached.initialized=true;
+            auto& cached = ios_layout_uniforms[vertex_program];
+            if (!cached.initialized)
+                cached.location = glGetUniformLocation(vertex_program, "cara_vertex_layout[0]");
+            if (!cached.initialized || cached.values != ios_packed_layout) {
+                update_layout(cached.location);
+                cached.values = ios_packed_layout;
+                cached.initialized = true;
             }
-        } else glUniform4iv(glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]"),16,ios_packed_layout[0].data());
+        } else {
+            update_layout(glGetUniformLocation(vertex_program, "cara_vertex_layout[0]"));
+        }
     }
     glActiveTexture(GL_TEXTURE7);
     const unsigned upload_rows = static_cast<unsigned>(input_bytes / (IOS_VERTEX_INPUT_WIDTH*sizeof(GLvec4)));
