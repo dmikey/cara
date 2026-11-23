@@ -53,7 +53,7 @@ static std::atomic<bool> s_stop_running;
 static std::atomic<bool> s_is_running;
 static std::mutex s_running_mutex;
 static std::condition_variable s_running_cv;
-constexpr jsize RunningSettingsCount = 18;
+constexpr jsize RunningSettingsCount = 19;
 using RunningSettings = std::array<jint, RunningSettingsCount>;
 static std::optional<RunningSettings> s_pending_settings;
 
@@ -147,6 +147,9 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
     Config::Set(Config::FIXED_GUEST_CLOCK, settings[i++] != 0);
     Config::Set(Config::GUEST_CLOCK_PERCENT, static_cast<u16>(std::clamp(settings[i++], 25, 200)));
 
+    const bool show_fps = settings[i++] != 0;
+    Config::Set(Config::SHOW_FPS, show_fps);
+    OSD::SetShowFPS(show_fps);
     VideoCore::SettingUpdate();
 
 }
@@ -828,6 +831,7 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(J
     settings[i++] = Config::Get(Config::ADAPTIVE_FRAME_SKIP);
     settings[i++] = Config::Get(Config::FIXED_GUEST_CLOCK);
     settings[i++] = Config::Get(Config::GUEST_CLOCK_PERCENT);
+    settings[i++] = Config::Get(Config::SHOW_FPS);
 
     jintArray array = env->NewIntArray(i);
     if (array)

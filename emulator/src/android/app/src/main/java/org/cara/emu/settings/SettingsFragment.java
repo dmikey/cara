@@ -32,6 +32,7 @@ import org.cara.emu.settings.view.SettingsItem;
 import org.cara.emu.settings.view.SingleChoiceSetting;
 import org.cara.emu.settings.view.SliderSetting;
 import org.cara.emu.settings.view.StringSingleChoiceSetting;
+import org.cara.emu.settings.view.SubmenuSetting;
 import org.cara.emu.utils.CaraDirectory;
 
 public final class SettingsFragment extends Fragment {
@@ -112,6 +113,8 @@ public final class SettingsFragment extends Fragment {
         mSettings = settings;
         if (mMenuTag == MenuTag.INPUT) {
             mSettingsList = loadBindingsList();
+        } else if (mMenuTag == MenuTag.ADVANCED) {
+            mSettingsList = loadAdvancedSettings();
         } else {
             mSettingsList = loadSettingsList();
         }
@@ -123,33 +126,32 @@ public final class SettingsFragment extends Fragment {
     private ArrayList<SettingsItem> loadSettingsList() {
         ArrayList<SettingsItem> sl = new ArrayList<>();
 
-        // renderer
+        SettingSection playSection = mSettings.getSection(Settings.SECTION_INI_PLAY);
+        sl.add(new HeaderSetting(null, null, R.string.setting_header_play, 0));
+        sl.add(new CheckBoxSetting(SettingsFile.KEY_ACCURACY_MODE, Settings.SECTION_INI_PLAY,
+                R.string.setting_accuracy_mode, R.string.setting_accuracy_mode_desc, false,
+                playSection.getSetting(SettingsFile.KEY_ACCURACY_MODE)));
+
         sl.add(new HeaderSetting(null, null, R.string.setting_header_renderer, 0));
         SettingSection rendererSection = mSettings.getSection(Settings.SECTION_INI_RENDERER);
         Setting layoutOption = rendererSection.getSetting(SettingsFile.KEY_LAYOUT_OPTION);
+        Setting landscapeLayout = rendererSection.getSetting(SettingsFile.KEY_LANDSCAPE_LAYOUT_OPTION);
         Setting showFPS = rendererSection.getSetting(SettingsFile.KEY_SHOW_FPS);
         Setting resolution = rendererSection.getSetting(SettingsFile.KEY_RESOLUTION_FACTOR);
-        Setting hwShader = rendererSection.getSetting(SettingsFile.KEY_USE_HW_SHADER);
-        Setting accurateMul = rendererSection.getSetting(SettingsFile.KEY_SHADERS_ACCURATE_MUL);
-        Setting useFenceSync = rendererSection.getSetting(SettingsFile.KEY_USE_FENCE_SYNC);
-        Setting shader = rendererSection.getSetting(SettingsFile.KEY_POST_PROCESSING_SHADER);
-        Setting frameLimit = rendererSection.getSetting(SettingsFile.KEY_FRAME_LIMIT);
-        Setting customTex = rendererSection.getSetting(SettingsFile.KEY_CUSTOM_TEXTURES);
-        Setting factor3d = rendererSection.getSetting(SettingsFile.KEY_FACTOR_3D);
 
         SettingSection debugSection = mSettings.getSection(Settings.SECTION_INI_DEBUG);
-        Setting shaderType = debugSection.getSetting(SettingsFile.KEY_SHADER_TYPE);
-        Setting presentThread = debugSection.getSetting(SettingsFile.KEY_USE_PRESENT_THREAD);
-        Setting cpuLimit = debugSection.getSetting(SettingsFile.KEY_CPU_USAGE_LIMIT);
         Setting ocrKey = debugSection.getSetting(SettingsFile.KEY_BAIDU_OCR_KEY);
         Setting ocrSecret = debugSection.getSetting(SettingsFile.KEY_BAIDU_OCR_SECRET);
 
         sl.add(new SingleChoiceSetting(
-            SettingsFile.KEY_LAYOUT_OPTION, Settings.SECTION_INI_RENDERER, R.string.layout_option,
+            SettingsFile.KEY_LAYOUT_OPTION, Settings.SECTION_INI_RENDERER, R.string.setting_portrait_layout,
             0, R.array.layoutOptionEntries, R.array.layoutOptionValues, 0, layoutOption));
+        sl.add(new SingleChoiceSetting(SettingsFile.KEY_LANDSCAPE_LAYOUT_OPTION,
+            Settings.SECTION_INI_RENDERER, R.string.setting_landscape_layout,
+            0, R.array.layoutOptionEntries, R.array.layoutOptionValues, 0, landscapeLayout));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_RESOLUTION_FACTOR,
                                        Settings.SECTION_INI_RENDERER, R.string.internal_resolution,
-                                       0, R.array.internalResolutionEntries,
+                                       R.string.setting_resolution_desc, R.array.internalResolutionEntries,
                                        R.array.internalResolutionValues, 1, resolution));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_SHOW_FPS, Settings.SECTION_INI_RENDERER,
                                    R.string.show_fps, 0, true, showFPS));
@@ -157,60 +159,6 @@ public final class SettingsFragment extends Fragment {
                 Settings.SECTION_INI_DEBUG, R.string.setting_force_texture_filter, 0,
                 R.array.textureFilterEntries, R.array.textureFilterValues, 0,
                 debugSection.getSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER)));
-        sl.add(new HeaderSetting(null, null, R.string.setting_header_advanced, 0));
-        if (BuildConfig.CPU_JIT_AVAILABLE) {
-            Setting jit = mSettings.getSection(Settings.SECTION_INI_CORE).getSetting(SettingsFile.KEY_USE_CPU_JIT);
-            sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_CPU_JIT, Settings.SECTION_INI_CORE,
-                    R.string.setting_enable_cpu_jit, R.string.setting_enable_cpu_jit_desc, true, jit));
-        }
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_PRESENT_THREAD, Settings.SECTION_INI_DEBUG,
-                R.string.setting_use_present_thread, R.string.setting_use_present_thread_desc, true, presentThread));
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_HW_SHADER, Settings.SECTION_INI_RENDERER,
-                                   R.string.setting_hw_shader, R.string.setting_hw_shader_desc, true, hwShader));
-        sl.add(new SingleChoiceSetting(SettingsFile.KEY_SHADERS_ACCURATE_MUL,
-                Settings.SECTION_INI_RENDERER, R.string.setting_shaders_accurate_mul,
-                R.string.setting_shaders_accurate_mul_desc, R.array.accurateMulEntries,
-                R.array.accurateMulValues, 0, accurateMul));
-        sl.add(new SingleChoiceSetting(SettingsFile.KEY_SHADER_TYPE, Settings.SECTION_INI_DEBUG,
-                R.string.setting_shader_type, 0, R.array.shaderEntries,
-                R.array.shaderValues, 1, shaderType));
-        // post process shaders
-        String[] stringValues = getShaderValues();
-        String[] stringEntries = getSettingEntries(stringValues);
-        sl.add(new StringSingleChoiceSetting(
-            SettingsFile.KEY_POST_PROCESSING_SHADER, Settings.SECTION_INI_RENDERER,
-            R.string.post_processing_shader, 0, stringEntries, stringValues, "", shader));
-
-        // custom textures
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_CUSTOM_TEXTURES, Settings.SECTION_INI_RENDERER,
-                                   R.string.setting_custom_textures, R.string.setting_custom_textures_description, false, customTex));
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_CPU_USAGE_LIMIT, Settings.SECTION_INI_DEBUG,
-                R.string.cpu_usage_limit, R.string.cpu_usage_limit_description, false, cpuLimit));
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_FENCE_SYNC, Settings.SECTION_INI_RENDERER,
-                R.string.setting_use_fence_sync, R.string.setting_use_fence_sync_description, false, useFenceSync));
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_ACCURACY_MODE, Settings.SECTION_INI_PLAY,
-                R.string.setting_accuracy_mode, R.string.setting_accuracy_mode_desc, false,
-                mSettings.getSection(Settings.SECTION_INI_PLAY).getSetting(SettingsFile.KEY_ACCURACY_MODE)));
-        SettingSection playSection = mSettings.getSection(Settings.SECTION_INI_PLAY);
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP, Settings.SECTION_INI_PLAY,
-                R.string.setting_adaptive_frame_skip, R.string.setting_adaptive_frame_skip_desc, true,
-                playSection.getSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP)));
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_FIXED_GUEST_CLOCK, Settings.SECTION_INI_PLAY,
-                R.string.setting_fixed_guest_clock, R.string.setting_fixed_guest_clock_desc, false,
-                playSection.getSetting(SettingsFile.KEY_FIXED_GUEST_CLOCK)));
-        sl.add(new SliderSetting(SettingsFile.KEY_GUEST_CLOCK_PERCENT, Settings.SECTION_INI_PLAY,
-                R.string.setting_guest_clock_percent, 0, 25, 200, "%", 100,
-                playSection.getSetting(SettingsFile.KEY_GUEST_CLOCK_PERCENT)));
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
-                R.string.setting_limit_speed, 0, true,
-                rendererSection.getSetting(SettingsFile.KEY_USE_FRAME_LIMIT)));
-        sl.add(new SliderSetting(SettingsFile.KEY_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
-                R.string.frame_limit_slider, R.string.frame_limit_slider_description, 50, 200, "",
-                100, frameLimit));
-        sl.add(new SliderSetting(SettingsFile.KEY_FACTOR_3D, Settings.SECTION_INI_RENDERER,
-                R.string.setting_factor_3d, 0, 10, "",
-                0, factor3d));
-
         // core
         sl.add(new HeaderSetting(null, null, R.string.setting_header_core, 0));
         SettingSection coreSection = mSettings.getSection(Settings.SECTION_INI_CORE);
@@ -241,8 +189,8 @@ public final class SettingsFragment extends Fragment {
                 font));
 
         // theme
-        stringValues = getThemeValues();
-        stringEntries = getSettingEntries(stringValues);
+        String[] stringValues = getThemeValues();
+        String[] stringEntries = getSettingEntries(stringValues);
         sl.add(new StringSingleChoiceSetting(
                 SettingsFile.KEY_THEME_PACKAGE, Settings.SECTION_INI_CORE,
                 R.string.setting_theme_package, 0, stringEntries, stringValues, "default", theme));
@@ -281,7 +229,78 @@ public final class SettingsFragment extends Fragment {
             sl.add(new EditorSetting(SettingsFile.KEY_BAIDU_OCR_SECRET, Settings.SECTION_INI_DEBUG, ocrSecret, R.string.baidu_ocr_secret, 0));
         }
 
+        sl.add(new SubmenuSetting(null, null, R.string.setting_header_advanced, 0, MenuTag.ADVANCED));
         return sl;
+    }
+
+    private ArrayList<SettingsItem> loadAdvancedSettings() {
+        ArrayList<SettingsItem> tuning = new ArrayList<>();
+        SettingSection playSection = mSettings.getSection(Settings.SECTION_INI_PLAY);
+        SettingSection rendererSection = mSettings.getSection(Settings.SECTION_INI_RENDERER);
+        SettingSection debugSection = mSettings.getSection(Settings.SECTION_INI_DEBUG);
+        Setting hwShader = rendererSection.getSetting(SettingsFile.KEY_USE_HW_SHADER);
+        Setting accurateMul = rendererSection.getSetting(SettingsFile.KEY_SHADERS_ACCURATE_MUL);
+        Setting useFenceSync = rendererSection.getSetting(SettingsFile.KEY_USE_FENCE_SYNC);
+        Setting shader = rendererSection.getSetting(SettingsFile.KEY_POST_PROCESSING_SHADER);
+        Setting frameLimit = rendererSection.getSetting(SettingsFile.KEY_FRAME_LIMIT);
+        Setting customTex = rendererSection.getSetting(SettingsFile.KEY_CUSTOM_TEXTURES);
+        Setting factor3d = rendererSection.getSetting(SettingsFile.KEY_FACTOR_3D);
+        Setting shaderType = debugSection.getSetting(SettingsFile.KEY_SHADER_TYPE);
+        Setting presentThread = debugSection.getSetting(SettingsFile.KEY_USE_PRESENT_THREAD);
+        Setting cpuLimit = debugSection.getSetting(SettingsFile.KEY_CPU_USAGE_LIMIT);
+
+        tuning.add(new HeaderSetting(null, null, R.string.setting_header_emulation, 0));
+        tuning.add(new CheckBoxSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP, Settings.SECTION_INI_PLAY,
+                R.string.setting_adaptive_frame_skip, R.string.setting_adaptive_frame_skip_desc, true,
+                playSection.getSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP)));
+        tuning.add(new CheckBoxSetting(SettingsFile.KEY_FIXED_GUEST_CLOCK, Settings.SECTION_INI_PLAY,
+                R.string.setting_fixed_guest_clock, R.string.setting_fixed_guest_clock_desc, false,
+                playSection.getSetting(SettingsFile.KEY_FIXED_GUEST_CLOCK)));
+        tuning.add(new SliderSetting(SettingsFile.KEY_GUEST_CLOCK_PERCENT, Settings.SECTION_INI_PLAY,
+                R.string.setting_guest_clock_percent, 0, 25, 200, "%", 100,
+                playSection.getSetting(SettingsFile.KEY_GUEST_CLOCK_PERCENT)));
+        tuning.add(new CheckBoxSetting(SettingsFile.KEY_USE_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
+                R.string.setting_limit_speed, 0, true,
+                rendererSection.getSetting(SettingsFile.KEY_USE_FRAME_LIMIT)));
+        tuning.add(new SliderSetting(SettingsFile.KEY_FRAME_LIMIT, Settings.SECTION_INI_RENDERER,
+                R.string.frame_limit_slider, R.string.frame_limit_slider_description, 50, 200, "%",
+                100, frameLimit));
+        if (BuildConfig.CPU_JIT_AVAILABLE) {
+            Setting jit = mSettings.getSection(Settings.SECTION_INI_CORE).getSetting(SettingsFile.KEY_USE_CPU_JIT);
+            tuning.add(new CheckBoxSetting(SettingsFile.KEY_USE_CPU_JIT, Settings.SECTION_INI_CORE,
+                    R.string.setting_enable_cpu_jit, R.string.setting_enable_cpu_jit_desc, true, jit));
+        }
+        tuning.add(new HeaderSetting(null, null, R.string.setting_header_renderer, 0));
+        tuning.add(new SliderSetting(SettingsFile.KEY_FACTOR_3D, Settings.SECTION_INI_RENDERER,
+                R.string.setting_factor_3d, 0, 10, "",
+                0, factor3d));
+
+        tuning.add(new CheckBoxSetting(SettingsFile.KEY_USE_PRESENT_THREAD, Settings.SECTION_INI_DEBUG,
+                R.string.setting_use_present_thread, R.string.setting_use_present_thread_desc, true, presentThread));
+        tuning.add(new CheckBoxSetting(SettingsFile.KEY_USE_HW_SHADER, Settings.SECTION_INI_RENDERER,
+                                   R.string.setting_hw_shader, R.string.setting_hw_shader_desc, true, hwShader));
+        tuning.add(new SingleChoiceSetting(SettingsFile.KEY_SHADERS_ACCURATE_MUL,
+                Settings.SECTION_INI_RENDERER, R.string.setting_shaders_accurate_mul,
+                R.string.setting_shaders_accurate_mul_desc, R.array.accurateMulEntries,
+                R.array.accurateMulValues, 0, accurateMul));
+        tuning.add(new SingleChoiceSetting(SettingsFile.KEY_SHADER_TYPE, Settings.SECTION_INI_DEBUG,
+                R.string.setting_shader_type, 0, R.array.shaderEntries,
+                R.array.shaderValues, 1, shaderType));
+        // post process shaders
+        String[] stringValues = getShaderValues();
+        String[] stringEntries = getSettingEntries(stringValues);
+        tuning.add(new StringSingleChoiceSetting(
+            SettingsFile.KEY_POST_PROCESSING_SHADER, Settings.SECTION_INI_RENDERER,
+            R.string.post_processing_shader, 0, stringEntries, stringValues, "", shader));
+
+        // custom textures
+        tuning.add(new CheckBoxSetting(SettingsFile.KEY_CUSTOM_TEXTURES, Settings.SECTION_INI_RENDERER,
+                                   R.string.setting_custom_textures, R.string.setting_custom_textures_description, false, customTex));
+        tuning.add(new CheckBoxSetting(SettingsFile.KEY_CPU_USAGE_LIMIT, Settings.SECTION_INI_DEBUG,
+                R.string.cpu_usage_limit, R.string.cpu_usage_limit_description, false, cpuLimit));
+        tuning.add(new CheckBoxSetting(SettingsFile.KEY_USE_FENCE_SYNC, Settings.SECTION_INI_RENDERER,
+                R.string.setting_use_fence_sync, R.string.setting_use_fence_sync_description, false, useFenceSync));
+        return tuning;
     }
 
     private ArrayList<SettingsItem> loadBindingsList() {

@@ -6,7 +6,7 @@
     android:clickable="true"
     android:layout_height="wrap_content">
 
-    <CheckBox
+    <androidx.appcompat.widget.SwitchCompat
         android:id="@+id/checkbox"
         android:focusable="false"
         android:clickable="false"

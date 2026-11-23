@@ -32,9 +32,9 @@
     </integer-array>
 
     <string-array name="textureFilterEntries">
-        <item>@string/auto</item>
-        <item>@string/nearest</item>
-        <item>@string/linear</item>
+        <item>@string/setting_filter_default</item>
+        <item>@string/setting_filter_nearest</item>
+        <item>@string/setting_filter_bilinear</item>
     </string-array>
     <integer-array name="textureFilterValues">
         <item>0</item>

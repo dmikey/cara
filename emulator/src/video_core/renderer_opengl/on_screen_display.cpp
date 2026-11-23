@@ -426,27 +426,50 @@ void RasterFont::Draw(const Frontend::EmuWindow& window, const Layout::Framebuff
 }
 
 static std::unique_ptr<RasterFont> s_raster_font;
+#ifdef __ANDROID__
+static std::atomic<bool> s_show_fps{false};
+
+void SetShowFPS(bool enabled) {
+    s_show_fps.store(enabled, std::memory_order_relaxed);
+}
+#endif
+
+static bool ShouldShowFPS() {
+#ifdef __ANDROID__
+    return s_show_fps.load(std::memory_order_relaxed);
+#else
+    return Settings::values.show_fps;
+#endif
+}
 
 void Initialize() {
     s_raster_font = std::make_unique<RasterFont>();
     s_raster_font->Initialize();
-    // fps placeholder
+#ifdef __ANDROID__
+    // Keep the entry available if the user enables the HUD during play.
+    s_raster_font->AddMessage("", MessageType::FPS, Duration::FOREVER, Color::BLUE);
+    SetShowFPS(Settings::values.show_fps);
+#else
     AddMessage("", MessageType::FPS, Duration::FOREVER, Color::BLUE);
+#endif
 }
 
 void AddMessage(const std::string& message, MessageType type, u32 duration, u32 color) {
-    if (Settings::values.show_fps) {
+    if (ShouldShowFPS()) {
         s_raster_font->AddMessage(message, type, duration, color);
     }
 }
 
 void DrawMessage(const Frontend::EmuWindow& window, const Layout::FramebufferLayout& layout) {
-    if (Settings::values.show_fps) {
+    if (ShouldShowFPS()) {
         s_raster_font->Draw(window, layout);
     }
 }
 
 void Shutdown() {
+#ifdef __ANDROID__
+    SetShowFPS(false);
+#endif
     s_raster_font.reset();
 }
 
