@@ -2555,8 +2555,22 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     // Sync the LUTs within the texture buffer
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::LUTUpload);
-        SyncAndUploadLUTs();
-        SyncAndUploadLUTsLF();
+        static const bool defer_unused_luts = [] {
+            const char* value = std::getenv("CARA_GLES_DEFER_UNUSED_LUTS");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        // SetFragmentShader's inputs come from these same registers. Leave
+        // the dirty tables pending until a draw can actually sample them.
+        // Each stream still handles its own wrap and reuploads all live tables.
+        if (!defer_unused_luts || regs.texturing.main_config.texture3_enable)
+            SyncAndUploadLUTs();
+        if (!defer_unused_luts || !regs.lighting.disable ||
+            regs.texturing.fog_mode != Pica::TexturingRegs::FogMode::None) {
+            SyncAndUploadLUTsLF();
+        } else if (Common::FrameTiming::counters.enabled &&
+                   (uniform_block_data.lighting_lut_dirty_any || uniform_block_data.fog_lut_dirty)) {
+            ++Common::FrameTiming::counters.deferred_lighting_fog_lut_syncs;
+        }
     }
 
     // Sync the uniform data
