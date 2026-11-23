@@ -112,8 +112,11 @@ jobs:
           done < <(compgen -A variable CARA_)
           test "$missing" -eq 0
           fingerprint=${CARA_ANDROID_UPLOAD_CERT_SHA256//:/}
-          [[ "$fingerprint" =~ ^[0-9a-fA-F]{64}$ ]]
-          printf 'android_cert=%s\n' "${fingerprint,,}" >> "$GITHUB_OUTPUT"
+          [[ "$fingerprint" =~ ^[0-9a-fA-F]{64}$ ]] || {
+            echo "CARA_ANDROID_UPLOAD_CERT_SHA256 must be a SHA-256 certificate fingerprint."
+            exit 1
+          }
+          printf 'android_cert=%s\n' "$(printf %s "$fingerprint" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
   mac:
     needs: [source, signing-ready]
