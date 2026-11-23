@@ -114,6 +114,127 @@ void main(){outputColor=color;})");
     return pixels;
 }
 
+// Compare one instance pair against the full ordinary reference, including the
+// vertex ID supplied by an EBO and side effects in the depth/stencil attachment.
+void CheckInstancedDraws() {
+    const auto vs = Compile(GL_VERTEX_SHADER, R"(#version 300 es
+const vec2 points[3] = vec2[3](vec2(-1,-1),vec2(3,-1),vec2(-1,3));
+uniform float z;
+out vec3 vertexColor;
+void main() {
+    int corner = gl_VertexID % 3;
+    gl_Position = vec4(points[corner], z, 1);
+    vertexColor = vec3(float(gl_VertexID) / 4.0, float(corner) / 2.0, 0.25);
+})");
+    const auto fs = Compile(GL_FRAGMENT_SHADER, R"(#version 300 es
+precision highp float;
+in vec3 vertexColor;
+uniform int sentinel;
+out vec4 ink;
+void main(){ink = sentinel != 0 ? vec4(1,0,1,1) : vec4(vertexColor,0.5);})");
+    const auto program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    GLint linked = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    Check(linked == GL_TRUE, "instance program link");
+    glUseProgram(program);
+    const GLint z = glGetUniformLocation(program, "z");
+    const GLint sentinel = glGetUniformLocation(program, "sentinel");
+    Check(z >= 0 && sentinel >= 0, "instance uniforms");
+
+    GLuint indices = 0, vao = 0;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glGenBuffers(1, &indices);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
+    // Vertex 3 has the same position as vertex 0, with a different color.
+    const GLushort stream[] = {3, 1, 2};
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(stream), stream, GL_STATIC_DRAW);
+    const auto read = [] {
+        Pixels result{};
+        glReadPixels(0, 0, width, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+        return result;
+    };
+
+    Pixels arrays{};
+    for (bool indexed : {false, true}) {
+        auto draw = [indexed] {
+            if (indexed) glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_SHORT, nullptr);
+            else glDrawArrays(GL_TRIANGLES, 0, 3);
+        };
+        auto repeat = [indexed] {
+            if (indexed) glDrawElementsInstanced(GL_TRIANGLES, 3, GL_UNSIGNED_SHORT, nullptr, 2);
+            else glDrawArraysInstanced(GL_TRIANGLES, 0, 3, 2);
+        };
+        Pixels reference{}, single{};
+        for (bool instanced : {false, true}) {
+            glViewport(0, 0, width, 1);
+            glDisable(GL_SCISSOR_TEST);
+            glStencilMask(0xff);
+            glDepthMask(GL_TRUE);
+            glClearColor(0, 0, 0, 1);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+            glEnable(GL_DEPTH_TEST);
+            glEnable(GL_STENCIL_TEST);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthFunc(GL_LEQUAL);
+            glStencilFunc(GL_ALWAYS, 0, 0xff);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+            glUniform1f(z, 0);
+            glUniform1i(sentinel, 0);
+            if (instanced) {
+                repeat();
+            } else {
+                draw();
+                single = read();
+                draw();
+            }
+            const auto blended = read();
+            if (!instanced) {
+                Check(blended != single, "second blended draw did not affect color");
+                reference = blended;
+            } else {
+                Check(blended == reference, "instanced blended colors differ");
+            }
+            // The depth written by the first pair must reject this farther draw.
+            glDisable(GL_BLEND);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+            glUniform1i(sentinel, 1);
+            glUniform1f(z, 0.5f);
+            draw();
+            Check(read() == blended, "farther sentinel changed depth-tested color");
+            // Verify both passes updated stencil, and preserve the rest of the row.
+            glUniform1f(z, 0);
+            glStencilFunc(GL_EQUAL, 2, 0xff);
+            glEnable(GL_SCISSOR_TEST);
+            glScissor(0, 0, 1, 1);
+            draw();
+            Pixels expected = blended;
+            expected[0] = expected[2] = expected[3] = 255;
+            expected[1] = 0;
+            Check(read() == expected && expected != blended, "stencil count must equal two");
+            Check(glGetError() == GL_NO_ERROR, "instance draw GL error");
+        }
+        if (!indexed) arrays = reference;
+        else Check(arrays != reference, "guest index did not affect vertex ID output");
+        std::printf("%s repeat: %d blended pixels match, depth reject and stencil=2 verified\n",
+                    indexed ? "elements" : "arrays", width);
+    }
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(0);
+    glDeleteBuffers(1, &indices);
+    glDeleteVertexArrays(1, &vao);
+    glUseProgram(0);
+    glDeleteProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+}
+
 template <typename F>
 bool CheckHelperCall(const char* name, F call) {
     try {
@@ -191,6 +312,9 @@ void Run(EGLDisplay display, EGLConfig config) {
     Queue::Uninstall();
     worker.Stop();
     glad_glDrawArrays = driver_draw;
+    rendering.Bind();
+    CheckInstancedDraws();
+    rendering.Release();
 }
 } // namespace
 
@@ -202,7 +326,7 @@ int main() {
         const EGLint attrs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
                                 EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
                                 EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                                EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 16, EGL_NONE};
+                                EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 16, EGL_STENCIL_SIZE, 8, EGL_NONE};
         EGLConfig config{};
         EGLint count{};
         Check(eglChooseConfig(display, attrs, &config, 1, &count) && count == 1, "ES3 RGBA8 config");
