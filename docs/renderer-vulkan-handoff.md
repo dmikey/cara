@@ -50,6 +50,36 @@ In the M1 Luigi replay, the candidate used 25.759 ms of owner-thread CPU per ref
 
 A separate Xenoblade replay skipped 499,694 of 637,312 Metal raster state setter calls. Its host time was 16.814 ms per refresh against 16.825 and 17.595 ms in the controls. Owner-thread CPU was 6.687 ms against 6.609 and 7.866 ms. Both LCDs at 12 checkpoints, guest SD files and selected work counts matched. Leave this option off: the 0.010 ms host margin is below control drift and owner CPU exceeded the lower control. Call counts alone are an insufficient reason to adopt more state tracking in another backend. Local receipts are in `cara-m1-metal-fastinterp-raster-reuse-20261123`.
 
+### Luigi display transfer fragmentation
+
+On the M1, a private Luigi's Mansion: Dark Moon replay at 100% FastInterp
+matched both LCDs at 15 checkpoints, selected work, and guest SD files.
+Over refreshes 2401–2800, 795 linear-to-tiled transfers spent 704 ms of
+host time inside the retile path. Resolving the source interval accounted
+for 661 ms, or 1.65 ms per refresh. No shader libraries or render
+pipelines were built in that window.
+
+A finer trace found that all 795 source intervals were fully covered by
+multiple native buffer owners. They issued 661,440 staged raw-buffer
+copies, averaging 832 spans per transfer and 256 bytes per span, for
+169,328,640 logical bytes. The retile resolver recorded no guest RAM reads
+or synchronous texture exports in this window. A global queued-color
+counter happened to equal the retile count because it covered other
+operations. Use route-specific counters to attribute a transfer path.
+
+The finer trace recorded 861 ms of owner-thread CPU across the window.
+Raw backing checks and blit encoding accounted for 274 and 291 ms
+respectively. The finer trace sampled clocks at each span and adds
+measurable overhead. These numbers locate the work and are unsuitable
+as a baseline for the cost without diagnostics.
+
+An exact single-texture fusion matched all 22 cases in the Metal byte
+fixture but failed the source coverage admission for every gameplay
+transfer. It stayed off. This workload points to processing fewer
+independent copy commands while preserving every authoritative writer,
+source and destination range, queue dependency and guest-visible byte.
+Report useful copy reductions and unprofiled owner-thread CPU separately.
+
 ## Preserve the backend boundary
 
 Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
