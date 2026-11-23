@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 #include <glad/glad.h>
@@ -44,6 +45,11 @@ Common::HostRenderQueue* Queue();
 #ifdef CARA_GL_CONTEXT_DISPATCH
 #ifdef __ANDROID__
 // Durations of producer-side synchronous requests during an enabled frame profile.
+struct RemapState;
+std::shared_ptr<RemapState> SaveRemapStateIfEnabled();
+void RestoreRemapState(std::shared_ptr<RemapState> state);
+bool CheckedRemapDraw(std::function<bool()> draw);
+
 struct SyncTiming {
     std::uint64_t count{}, before_driver_ns{}, in_driver_ns{}, after_driver_ns{};
 };

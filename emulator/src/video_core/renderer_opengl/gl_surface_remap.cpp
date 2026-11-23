@@ -1,4 +1,7 @@
 #include "video_core/renderer_opengl/gl_backlog_profile.h"
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 #include "video_core/renderer_opengl/gl_driver_transactions.h"
 // Copyright 2026 Cara contributors
 // Licensed under GPLv2 or any later version
@@ -166,14 +169,28 @@ bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& sou
         byte_offset > std::numeric_limits<GLint>::max()) return false;
     const OpenGLState previous = OpenGLState::GetCurState();
     GLint previous_active_texture = GL_TEXTURE0;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
-    const GLboolean previous_dither = glIsEnabled(GL_DITHER);
-    const GLboolean previous_discard = glIsEnabled(GL_RASTERIZER_DISCARD);
+    GLboolean previous_dither = GL_FALSE, previous_discard = GL_FALSE;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    const auto queued_state = CommandQueue::SaveRemapStateIfEnabled();
+    if (!queued_state)
+#endif
+    {
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
+        previous_dither = glIsEnabled(GL_DITHER);
+        previous_discard = glIsEnabled(GL_RASTERIZER_DISCARD);
+    }
     SCOPE_EXIT({
-        if (previous_dither) glEnable(GL_DITHER);
-        if (previous_discard) glEnable(GL_RASTERIZER_DISCARD);
         previous.Apply();
-        glActiveTexture(previous_active_texture);
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+        if (queued_state) {
+            CommandQueue::RestoreRemapState(queued_state);
+        } else
+#endif
+        {
+            if (previous_dither) glEnable(GL_DITHER);
+            if (previous_discard) glEnable(GL_RASTERIZER_DISCARD);
+            glActiveTexture(previous_active_texture);
+        }
     });
     if (!Initialize())
         return false;
@@ -197,17 +214,25 @@ bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& sou
     SCOPE_EXIT({
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
     });
-    if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        return false;
-    glUniform4i(source_layout_location, source.width, source.height, source.stride, source.is_tiled);
-    glUniform4i(destination_layout_location, destination.width, destination.height,
-                destination.stride, destination.is_tiled);
-    glUniform1i(byte_offset_location, static_cast<GLint>(byte_offset));
-    glUniform2i(bytes_per_pixel_location, source.GetFormatBpp() / 8,
-                destination.GetFormatBpp() / 8);
-    glUniform1i(native_reverse_location, !GLES && native_encoding.reverse_components);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    return glGetError() == GL_NO_ERROR;
+    // This private VAO uses gl_VertexID. The producer owns all renderer metadata
+    // and waits for the real framebuffer status and draw error before returning.
+    const auto checked_draw = [&] {
+        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            return false;
+        glUniform4i(source_layout_location, source.width, source.height, source.stride, source.is_tiled);
+        glUniform4i(destination_layout_location, destination.width, destination.height,
+                    destination.stride, destination.is_tiled);
+        glUniform1i(byte_offset_location, static_cast<GLint>(byte_offset));
+        glUniform2i(bytes_per_pixel_location, source.GetFormatBpp() / 8,
+                    destination.GetFormatBpp() / 8);
+        glUniform1i(native_reverse_location, !GLES && native_encoding.reverse_components);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        return glGetError() == GL_NO_ERROR;
+    };
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (queued_state) return CommandQueue::CheckedRemapDraw(checked_draw);
+#endif
+    return checked_draw();
 }
 
 } // namespace OpenGL

@@ -456,6 +456,40 @@ void Install(Common::HostRenderQueue& queue) {
 #endif
 }
 #ifdef CARA_GL_CONTEXT_DISPATCH
+#ifdef __ANDROID__
+struct RemapState {
+    GLint active_texture = GL_TEXTURE0;
+    GLboolean dither = GL_FALSE;
+    GLboolean discard = GL_FALSE;
+};
+
+std::shared_ptr<RemapState> SaveRemapStateIfEnabled() {
+    static const bool requested = [] {
+        const char* value = std::getenv("CARA_CHECKED_REMAP_PACKET");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (!requested || !Enabled()) return {};
+    auto state = std::make_shared<RemapState>();
+    RecordApi(RpcApi::SaveRemapState, [state] {
+        raw_glGetIntegerv(GL_ACTIVE_TEXTURE, &state->active_texture);
+        state->dither = raw_glIsEnabled(GL_DITHER);
+        state->discard = raw_glIsEnabled(GL_RASTERIZER_DISCARD);
+    });
+    return state;
+}
+
+void RestoreRemapState(std::shared_ptr<RemapState> state) {
+    RecordApi(RpcApi::RestoreRemapState, [state = std::move(state)] {
+        if (state->dither) raw_glEnable(GL_DITHER);
+        if (state->discard) raw_glEnable(GL_RASTERIZER_DISCARD);
+        raw_glActiveTexture(state->active_texture);
+    });
+}
+
+bool CheckedRemapDraw(std::function<bool()> draw) {
+    return SyncApi(RpcApi::CheckedRemapDraw, std::move(draw));
+}
+#endif
 void QueueLUT(DriverTransactions::LUTBody body, GLuint texture, unsigned unit, GLenum format,
               std::size_t offset, const std::uint8_t* data, std::size_t bytes) {
     TransactionLUT(body, texture, unit, format, offset, data, bytes);
