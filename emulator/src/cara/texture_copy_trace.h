@@ -46,8 +46,10 @@ inline Clocks ReadClocks() {
     }
 #endif
 #ifdef CLOCK_THREAD_CPUTIME_ID
-    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0) {
-        out.cpu_valid = true; out.cpu = std::uint64_t(value.tv_sec)*1000000000ULL+value.tv_nsec;
+    timespec cpu_value{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_value) == 0) {
+        out.cpu_valid = true;
+        out.cpu = std::uint64_t(cpu_value.tv_sec)*1000000000ULL+cpu_value.tv_nsec;
     }
 #endif
     return out;
