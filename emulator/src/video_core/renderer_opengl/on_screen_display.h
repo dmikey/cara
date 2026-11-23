@@ -42,6 +42,10 @@ constexpr u32 FOREVER = -1;
 
 void Initialize();
 
+#ifdef __ANDROID__
+void SetGuestClockPercent(u32 percent);
+#endif
+
 void AddMessage(const std::string& message, MessageType type, u32 duration, u32 color);
 
 void DrawMessage(const Frontend::EmuWindow& window, const Layout::FramebufferLayout& layout);
