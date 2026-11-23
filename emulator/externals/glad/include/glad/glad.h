@@ -19701,4 +19701,8 @@ GLAPI int GLAD_GL_VIV_shader_binary;
 }
 #endif
 
+#if defined(__cplusplus) && defined(CARA_GL_CONTEXT_DISPATCH)
+#include "video_core/renderer_opengl/gl_context_dispatch_generated.h"
+#endif
+
 #endif

@@ -4,6 +4,10 @@
 #include <glad/glad.h>
 #include <array>
 
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "common/thread.h"
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 #include "jni_common.h"
 #include "video_core/renderer_base.h"
 #include "video_core/video_core.h"
@@ -45,12 +49,12 @@ public:
         }
     }
 
-    void MakeCurrent() {
-        eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
+    bool MakeCurrent() {
+        return eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
     }
 
-    void DoneCurrent() {
-        eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    bool DoneCurrent() {
+        return eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
 
 private:
@@ -179,7 +183,43 @@ void EGLAndroid::DestroyContext() {
     egl_display = EGL_NO_DISPLAY;
 }
 
+#ifdef CARA_GL_CONTEXT_DISPATCH
+bool EGLAndroid::StartSubmissionWorker() {
+    if (!core_context || !core_context->DoneCurrent())
+        return false;
+    try {
+        submission = std::make_unique<Common::HostRenderQueue>(128, 8 * 1024 * 1024,
+            [this] {
+                Common::SetCurrentThreadName("CaraGLES");
+                if (!core_context->MakeCurrent())
+                    throw std::runtime_error("EGL pbuffer ownership transfer failed");
+            }, [this] { core_context->DoneCurrent(); });
+        OpenGL::CommandQueue::Install(*submission);
+        return true;
+    } catch (const std::exception& error) {
+        LOG_ERROR(Frontend, "Submission worker startup failed: {}", error.what());
+        submission.reset();
+        if (!core_context->MakeCurrent())
+            throw std::runtime_error("Failed to restore core EGL context");
+        return false;
+    }
+}
+
+void EGLAndroid::StopSubmissionWorker() {
+    if (submission) {
+        OpenGL::CommandQueue::Uninstall();
+        submission->Stop();
+        submission.reset();
+        if (!core_context->MakeCurrent())
+            throw std::runtime_error("Failed to restore core EGL context");
+    }
+}
+#endif
+
 EGLAndroid::~EGLAndroid() {
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    StopSubmissionWorker();
+#endif
     core_context.reset();
     DestroyWindowSurface();
     DestroyContext();
@@ -239,6 +279,10 @@ void EGLAndroid::PollEvents() {
 }
 
 void EGLAndroid::MakeCurrent() {
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    // Window-surface recreation on the producer must not steal the worker pbuffer.
+    if (submission) return;
+#endif
     if (use_shared_context) {
         core_context->MakeCurrent();
     } else {

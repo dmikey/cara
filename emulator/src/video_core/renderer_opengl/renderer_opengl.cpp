@@ -11,6 +11,9 @@
 #include <string_view>
 #include <memory>
 #include <glad/glad.h>
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 #include <queue>
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -488,6 +491,10 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
     frame->render_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     glFlush();
 
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    // Publish the shared fence only after its creating context flushed.
+    CommandQueue::Drain();
+#endif
     mailbox->ReleaseRenderFrame(frame);
 }
 

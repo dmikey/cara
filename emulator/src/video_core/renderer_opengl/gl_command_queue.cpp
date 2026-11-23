@@ -351,9 +351,13 @@ void Install(Common::HostRenderQueue& queue) {
  transform_feedback_active=false;owner.store(&queue,std::memory_order_release);
  DriverTransactions::unchecked_blit_commands_recorded.store(0,std::memory_order_relaxed);
  transaction_attribution.BeginInstall(attribution_requested);
+ // Android keeps mutable renderer state and its profiling counters on the producer.
+ // Only owned GL driver calls may run on the worker in this experiment.
+#ifndef CARA_GL_CONTEXT_DISPATCH
  DriverTransactions::hooks.store(&transaction_hooks,std::memory_order_release);
  DriverTransactions::unchecked_blit_producer_gate.store(
      UncheckedBlitProducerRequested()?&UncheckedBlitProducerGate:nullptr,std::memory_order_release);
+#endif
 }
 void Flush() {
  auto* active=owner.load();if(!active)return;auto& q=*active;if(q.IsWorkerThread())throw std::logic_error("GL Flush requires producer");Producer();if(pending.empty())return;
@@ -380,7 +384,7 @@ void Uninstall() {
  stats.pending_commands=0;stats.pending_bytes=0;
  if(failure)std::rethrow_exception(failure);
 }
-bool ForwardsGetError(PFNGLGETERRORPROC expected){return Enabled()?raw_glGetError==expected&&glad_glGetError==Wrap_glGetError:glad_glGetError==expected;}
+bool ForwardsGetError(PFNGLGETERRORPROC expected){return Enabled()?raw_glGetError==expected&&glGetError==Wrap_glGetError:glGetError==expected;}
 bool Enabled(){return owner.load(std::memory_order_acquire)!=nullptr;}
 bool UncheckedBlitProducerRequested(){static const bool enabled=[] {const char* v=std::getenv("CARA_GL_QUEUE_UNCHECKED_BLIT_PRODUCER");return v&&std::strcmp(v,"1")==0;}();return enabled;}
 UncheckedBlitProducerStats GetUncheckedBlitProducerStats(){return {
@@ -438,7 +442,7 @@ void UploadBufferOwned(GLenum target,GLintptr offset,std::vector<std::uint8_t> b
 }
 Stats SnapshotStats(){ Stats s;{std::lock_guard lock(budget_mutex);s.owned_budget_live=budget_live;s.owned_budget_high=budget_high;}
  for(std::size_t i=0;i<RpcApiCount;++i)s.rpc_by_api[i]=rpc_counts[i].load();
- s.uniform_location_rpcs=s.rpc_by_api[std::size_t(RpcApi::glGetUniformLocation)];
+ s.uniform_location_rpcs=s.rpc_by_api[std::size_t(RpcApi::api_glGetUniformLocation)];
 #define COPY_STAT(n) s.n=stats.n.load()
  COPY_STAT(owned_native_map_uploads);COPY_STAT(transaction_inline_calls);COPY_STAT(transaction_sync_calls);COPY_STAT(transaction_state_fallbacks);COPY_STAT(transaction_lut_calls);COPY_STAT(owned_unmap_error_queries);COPY_STAT(owned_budget_waits);
  COPY_STAT(recorded_commands);COPY_STAT(submitted_batches);COPY_STAT(synchronous_calls);COPY_STAT(owned_payload_bytes);

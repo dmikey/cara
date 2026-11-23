@@ -152,12 +152,17 @@ void Run(EGLDisplay display, EGLConfig config) {
                     static_cast<unsigned long long>(counters.synchronous_calls));
         std::async(std::launch::async, [&] {
             helper.Bind();
-            CheckHelperCall("present glBindFramebuffer", [] { glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); });
-            CheckHelperCall("shader worker glCreateShader", [] {
+            const bool presenter = CheckHelperCall("present glBindFramebuffer", [] { glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); });
+            const bool compiler = CheckHelperCall("shader worker glCreateShader", [] {
                 const auto shader = glCreateShader(GL_FRAGMENT_SHADER);
                 Check(shader != 0, "helper shader name");
                 glDeleteShader(shader);
             });
+#ifdef CARA_GL_CONTEXT_DISPATCH
+            Check(presenter && compiler, "thread-local dispatch failed on sibling EGL context");
+#else
+            Check(!presenter && !compiler, "single producer guard no longer reproduced");
+#endif
             raw_bind(GL_DRAW_FRAMEBUFFER, 0);
             const auto shader = raw_create(GL_FRAGMENT_SHADER);
             Check(shader != 0, "raw helper shader name");

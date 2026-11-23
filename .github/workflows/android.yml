@@ -43,7 +43,7 @@ jobs:
           GRADLE
           sed -i '/<\/application>/i\        <profileable android:shell="true" />' app/src/main/AndroidManifest.xml
           sed -i 's|mavenCentral()|maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }|g' build.gradle
-          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-profile.init.gradle" :app:assembleRelease -x :app:lintVitalAnalyzeRelease -x :app:lintVitalReportRelease -x :app:lintVitalRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-profile.init.gradle" :app:assembleRelease -x :app:lintVitalAnalyzeRelease -x :app:lintVitalReportRelease -x :app:lintVitalRelease -PcaraOrderedGles=ON -PcaraGlesAtlas=ON -PcaraCpuJit=true
           git restore build.gradle app/src/main/AndroidManifest.xml
           git diff --exit-code
           mkdir -p "$RUNNER_TEMP/rg-slide"
