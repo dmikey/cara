@@ -42,9 +42,8 @@ constexpr u32 FOREVER = -1;
 
 void Initialize();
 
-void SetShowFPS(bool enabled);
-
 #ifdef __ANDROID__
+void SetShowFPS(bool enabled);
 void SetGuestClockPercent(u32 percent);
 #endif
 
