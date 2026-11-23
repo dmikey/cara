@@ -16,10 +16,22 @@ env:
   CARA_BUILD: "1"
 
 jobs:
+  verify-draft-access:
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check read-only access before requesting a Mac runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/releases/assets/784127434" |
+            jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256" '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
   submit:
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.run_attempt == 1
-    permissions:
-      contents: write # Temporary, needed to read this one private draft.
+    needs: verify-draft-access
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
     runs-on: macos-15
     environment: nightly-signing
     timeout-minutes: 25
@@ -30,12 +42,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release view testflight-preview-9a99f46 --json isDraft,isPrerelease,targetCommitish |
-            jq -e '.isDraft and .isPrerelease and .targetCommitish == "9a99f46d1706e84013d14b3abe44546d2f8641d0"' >/dev/null
           asset="repos/$GH_REPO/releases/assets/784127434"
           gh api "$asset" |
             jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256" '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
-          gh release download testflight-preview-9a99f46 --pattern "$CARA_IPA"
+          gh api -H 'Accept: application/octet-stream' "$asset" > "$CARA_IPA"
           printf '%s  %s\n' "$CARA_SHA256" "$CARA_IPA" | shasum -a 256 -c -
           ditto -x -k "$CARA_IPA" inspection
           app=inspection/Payload/Cara.app
