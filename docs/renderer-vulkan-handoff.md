@@ -150,6 +150,26 @@ to a synchronization mechanism. The candidate remains private and off
 by default. This comparison uses the M1 only and does not establish a
 GLES-relative gain.
 
+### LCD presentation and receipt waits
+
+One instrumented M1 Luigi replay with the two-buffer retile enabled
+split presentation into its existing stages. Presentation took
+1.705 ms elapsed and 0.788 ms of owner-thread CPU per refresh in
+refreshes 2401–2800. The 108 checked receipt waits accounted for
+0.868 ms elapsed and 0.004 ms of CPU per refresh. Resolving both
+LCD sources accounted for 0.652 ms elapsed and 0.621 ms of CPU.
+Drawable acquisition accounted for 0.021 ms elapsed. The receipt
+and LCD measurements are within the total presentation scope.
+Both LCDs matched at 15 checkpoints, along with the selected work
+and guest SD files. The window presented 400 drawables with no misses.
+
+Keep receipt validation in place. The CPU target in this run is
+resolving the current LCD bytes. When the decoder reads only pixel
+bytes inside each row, test whether one tracked writer covers all
+those rows and can supply them from its existing buffer. Keep the
+original path for mixed owners, unproven coverage, or an incompatible
+queue. Measure any savings across the full refresh.
+
 ## Preserve the backend boundary
 
 Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
