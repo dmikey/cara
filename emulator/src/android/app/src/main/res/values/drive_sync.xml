@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="drive_sync">Google Drive Sync</string>
-    <string name="drive_description">Sync in-game saves and save states with your Google Drive account when you return to the library. Cara uses its own private Drive folder.</string>
+    <string name="drive_description">Choose what Cara syncs when you return to the library. Cara uses its own private Drive folder.</string>
+    <string name="drive_game_saves">In-Game Saves</string>
+    <string name="drive_save_states">Save States</string>
     <string name="drive_connected">Google Drive is connected.</string>
     <string name="drive_connect">Connect</string>
     <string name="drive_sync_now">Sync Now</string>

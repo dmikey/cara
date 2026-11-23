@@ -42,7 +42,15 @@ public final class DriveSaveSync {
             ".*\\.(?:3ds|z3ds|zcci|cci|cxi|cia|app|3dsx|nds|elf|axf|7z|zip|deltaskin|tmp|part)$",
             Pattern.CASE_INSENSITIVE);
 
+    static final int GAME_SAVES = 1;
+    static final int SAVE_STATES = 2;
+
     enum Choice { NONE, DEVICE, DRIVE }
+
+    static boolean selected(String path, int contents) {
+        return limit(path) >= 0 &&
+                (contents & (path.startsWith("states/") ? SAVE_STATES : GAME_SAVES)) != 0;
+    }
 
     static final class Result {
         int uploaded;
@@ -102,18 +110,24 @@ public final class DriveSaveSync {
         return SAVE.matcher(path).matches() && !EXCLUDED.matcher(path).matches() ? SAVE_LIMIT : -1;
     }
 
-    Result sync(String account, Choice choice) throws IOException, JSONException {
+    Result sync(String account, int contents, Choice choice) throws IOException, JSONException {
         SharedPreferences baseline = context.getSharedPreferences("drive-baseline-" + account, 0);
         Map<String, List<DriveStorage.Version>> remote = new HashMap<>();
-        for (DriveStorage.Version version : drive.versions()) {
-            remote.computeIfAbsent(version.path, key -> new ArrayList<>()).add(version);
+        for (DriveStorage.Version version : drive.versions(contents)) {
+            if (selected(version.path, contents)) {
+                remote.computeIfAbsent(version.path, key -> new ArrayList<>()).add(version);
+            }
         }
 
         Set<String> paths = new TreeSet<>(remote.keySet());
         lockLocal();
         try {
-            for (String directory : new String[] {"sdmc/Nintendo 3DS", "nand/data", "states"}) {
-                collect(directory, paths);
+            if ((contents & GAME_SAVES) != 0) {
+                collect("sdmc/Nintendo 3DS", paths);
+                collect("nand/data", paths);
+            }
+            if ((contents & SAVE_STATES) != 0) {
+                collect("states", paths);
             }
         } finally {
             LOCAL_IO.unlock();

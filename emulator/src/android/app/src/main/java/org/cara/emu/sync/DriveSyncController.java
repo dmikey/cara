@@ -7,6 +7,9 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.widget.CheckBox;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -33,6 +36,7 @@ public final class DriveSyncController {
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
     private static final String ACCOUNT = "account";
     private static final String STATUS = "status";
+    private static final String CONTENTS = "contents";
     private static long lastAutomatic = -60000;
 
     private final AppCompatActivity activity;
@@ -62,21 +66,47 @@ public final class DriveSyncController {
         }
         SharedPreferences state = state(activity);
         boolean connected = state.contains(ACCOUNT);
-        AlertDialog.Builder dialog = new AlertDialog.Builder(activity)
-                .setTitle(R.string.drive_sync)
-                .setMessage(connected ? state.getString(STATUS,
-                        activity.getString(R.string.drive_connected))
-                        : activity.getString(R.string.drive_description))
+        LinearLayout body = new LinearLayout(activity);
+        body.setOrientation(LinearLayout.VERTICAL);
+        int padding = Math.round(24 * activity.getResources().getDisplayMetrics().density);
+        body.setPadding(padding, padding / 2, padding, 0);
+        TextView status = new TextView(activity);
+        status.setText(connected ? state.getString(STATUS, activity.getString(R.string.drive_connected))
+                : activity.getString(R.string.drive_description));
+        status.setPadding(0, 0, 0, padding / 2);
+        body.addView(status);
+
+        CheckBox saves = new CheckBox(activity);
+        CheckBox states = new CheckBox(activity);
+        saves.setText(R.string.drive_game_saves);
+        states.setText(R.string.drive_save_states);
+        int contents = state.getInt(CONTENTS, 0);
+        saves.setChecked((contents & DriveSaveSync.GAME_SAVES) != 0);
+        states.setChecked((contents & DriveSaveSync.SAVE_STATES) != 0);
+        body.addView(saves);
+        body.addView(states);
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(activity)
+                .setTitle(R.string.drive_sync).setView(body)
                 .setPositiveButton(connected ? R.string.drive_sync_now : R.string.drive_connect,
-                        (d, button) -> authorize(DriveSaveSync.Choice.NONE))
+                        (dialog, button) -> authorize(DriveSaveSync.Choice.NONE))
                 .setNegativeButton(android.R.string.cancel, null);
         if (connected) {
-            dialog.setNeutralButton(R.string.drive_disconnect, (d, button) -> {
-                state.edit().remove(ACCOUNT).remove(STATUS).apply();
+            builder.setNeutralButton(R.string.drive_disconnect, (dialog, button) -> {
+                state.edit().remove(ACCOUNT).remove(STATUS).remove(CONTENTS).apply();
                 message(R.string.drive_disconnected);
             });
         }
-        dialog.show();
+        AlertDialog dialog = builder.show();
+        Runnable updateContents = () -> {
+            int selected = (saves.isChecked() ? DriveSaveSync.GAME_SAVES : 0) |
+                    (states.isChecked() ? DriveSaveSync.SAVE_STATES : 0);
+            state.edit().putInt(CONTENTS, selected).apply();
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(selected != 0);
+        };
+        saves.setOnCheckedChangeListener((view, checked) -> updateContents.run());
+        states.setOnCheckedChangeListener((view, checked) -> updateContents.run());
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(contents != 0);
     }
 
     private void authorize(DriveSaveSync.Choice action) {
@@ -142,7 +172,7 @@ public final class DriveSyncController {
     private static void automatic(Context context, boolean afterGame) {
         SharedPreferences state = state(context);
         long now = SystemClock.elapsedRealtime();
-        if (!state.contains(ACCOUNT) || RUNNING.get() ||
+        if (!state.contains(ACCOUNT) || state.getInt(CONTENTS, 0) == 0 || RUNNING.get() ||
                 (!afterGame && now - lastAutomatic < 60000)) {
             return;
         }
@@ -178,6 +208,10 @@ public final class DriveSyncController {
             SharedPreferences preferences = state(context);
             DriveSaveSync.Result outcome = null;
             try {
+                int contents = preferences.getInt(CONTENTS, 0);
+                if (contents == 0) {
+                    return;
+                }
                 DriveStorage drive = new DriveStorage(token);
                 String account = DriveSaveSync.accountKey(drive.account());
                 String connected = preferences.getString(ACCOUNT, null);
@@ -185,7 +219,7 @@ public final class DriveSyncController {
                     preferences.edit().putString(STATUS, context.getString(R.string.drive_account_changed)).apply();
                 } else if (connected != null || manual) {
                     preferences.edit().putString(ACCOUNT, account).apply();
-                    outcome = new DriveSaveSync(context, drive).sync(account, choice);
+                    outcome = new DriveSaveSync(context, drive).sync(account, contents, choice);
                     String status = outcome.conflicts > 0
                             ? context.getString(R.string.drive_conflicts_pending)
                             : context.getString(R.string.drive_complete, outcome.uploaded, outcome.restored);
