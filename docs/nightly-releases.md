@@ -19,6 +19,24 @@ pass verification. It includes signing and source receipts plus
 Builds without both sets of signing credentials retain their unsigned
 workflow artifacts and identify missing secret names in the run summary.
 
+## Release candidates
+
+Use `Cara.RC.YYYYMMDDNN` for the GitHub prerelease title and tag. Use the UTC
+release date and a two-digit sequence starting at `01` for that day. For
+example, the first candidate on November 23, 2026 is `Cara.RC.2026112301`.
+
+Dispatch **Release packages** on **main** with the **RC version** input
+set to this tag. Leave both the nightly switch and the existing release
+tag blank. Each run pins one source commit, verifies it against the
+signed Mac build manifest, and publishes a prerelease with the notarized
+Mac ZIP, its manifest, and checksums. An existing tag or release blocks
+reuse of the version. Stable releases and scheduled nightlies retain
+their existing tags.
+
+iOS candidates are distributed separately through TestFlight. The RC
+release does not attach an IPA. Android builds are managed through the
+Android release workflow.
+
 ## Signing environment
 
 Before adding secrets, create a GitHub Actions environment named
