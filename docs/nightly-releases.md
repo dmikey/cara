@@ -27,15 +27,27 @@ example, the first candidate on November 23, 2026 is `Cara.RC.2026112301`.
 
 Dispatch **Release packages** on **main** with the **RC version** input
 set to this tag. Leave both the nightly switch and the existing release
-tag blank. Each run pins one source commit, verifies it against the
-signed Mac build manifest, and publishes a prerelease with the notarized
-Mac ZIP, its manifest, and checksums. An existing tag or release blocks
-reuse of the version. Stable releases and scheduled nightlies retain
-their existing tags.
+tag blank. Each run pins one source commit for all three platforms and
+publishes a numbered prerelease after verification. The candidate contains:
 
-iOS candidates are distributed separately through TestFlight. The RC
-release does not attach an IPA. Android builds are managed through the
-Android release workflow.
+- A Developer ID-signed and notarized Apple Silicon Mac ZIP.
+- An unsigned arm64 GLES3 IPA for personal sideloading. Re-sign it before
+  installing. TestFlight remains a separate Apple distribution channel.
+- An ARM64 Android APK and a Play Console AAB signed with the configured
+  upload key. Users with a Play installation should update through the Play
+  testing track because Play may sign installs with a different key.
+- Build receipts and `SHA256SUMS.txt`.
+
+An existing tag or release blocks reuse of the version. If the Mac or Android
+signing configuration is unavailable, the build artifacts remain in Actions
+and no numbered release is published. Stable releases and scheduled nightlies
+retain their existing tags and package policies.
+
+The landing page links to the newest published numbered candidate with its
+Mac ZIP, unsigned IPA, and checksums. It shows the Android candidate APK only
+when that release includes the signed APK and its receipt. The initial
+numbered candidate and the older experimental Android download serve as
+explicit fallbacks when the public release listing is unavailable.
 
 ## Signing environment
 
@@ -57,6 +69,18 @@ signing secrets, which could be used by another branch's workflow.
 | `CARA_IOS_CERTIFICATE_BASE64` | Base64-encoded Apple Distribution PKCS#12 export for the iOS build |
 | `CARA_IOS_CERTIFICATE_PASSWORD` | Password for that PKCS#12 export |
 | `CARA_IOS_APP_STORE_PROFILE_BASE64` | Base64-encoded iOS App Store distribution provisioning profile for `com.dmikey.cara` that includes the distribution certificate |
+| `CARA_ANDROID_KEYSTORE_BASE64` | Base64-encoded Android upload keystore for `org.cara.emu` |
+| `CARA_ANDROID_KEYSTORE_PASSWORD` | Android upload keystore password |
+| `CARA_ANDROID_KEY_ALIAS` | Android upload key alias |
+| `CARA_ANDROID_KEY_PASSWORD` | Android upload key password |
+
+Set the `nightly-signing` environment variable
+`CARA_ANDROID_UPLOAD_CERT_SHA256` to the expected upload certificate
+fingerprint from Play Console. Build version codes use the release workflow run
+number plus the optional repository variable `CARA_ANDROID_VERSION_CODE_BASE`.
+Set the offset so new codes exceed the highest version already uploaded to
+Play Console.
+
 
 Use dedicated automation signing material and keep it in Actions secrets.
 Private keys and PKCS#12 files stay in temporary runner storage. A public

@@ -11,6 +11,9 @@ on:
       - 'tools/audit_no_jit.py'
       - 'tools/package_*.py'
       - 'tools/sign_nightly.py'
+      - 'tools/sign_android_nightly.py'
+      - 'tools/verify_release_candidate.py'
+      - '.github/workflows/android-release.yml'
       - 'tools/mac_bundle.py'
       - 'tools/mac_app_launcher.mm'
       - 'tools/mac_runtime.json'
@@ -42,7 +45,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   source:
-    name: Pin one source commit for both binaries
+    name: Pin one source commit for release packages
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.source.outputs.sha }}
@@ -256,10 +259,120 @@ jobs:
       - id: result
         if: steps.mac.outputs.signed == 'true' && (inputs.release_candidate != '' || steps.ios.outputs.signed == 'true')
         run: echo "signed=true" >> "$GITHUB_OUTPUT"
+  rc-android:
+    name: Build Android release candidate
+    needs: source
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.release_candidate != ''
+    uses: ./.github/workflows/android-release.yml
+    with:
+      source_sha: ${{ needs.source.outputs.sha }}
+
+  rc-sign-android:
+    name: Sign and audit Android release candidate
+    needs: [source, rc-android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: nightly-signing
+    outputs:
+      certificate: ${{ steps.sign.outputs.certificate }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-Android-arm64-unsigned
+          path: work/unsigned-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'build-tools;36.0.0'
+      - name: Sign matching APK and App Bundle
+        id: sign
+        env:
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+          CARA_ANDROID_KEYSTORE_BASE64: ${{ secrets.CARA_ANDROID_KEYSTORE_BASE64 }}
+          CARA_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.CARA_ANDROID_KEYSTORE_PASSWORD }}
+          CARA_ANDROID_KEY_ALIAS: ${{ secrets.CARA_ANDROID_KEY_ALIAS }}
+          CARA_ANDROID_KEY_PASSWORD: ${{ secrets.CARA_ANDROID_KEY_PASSWORD }}
+          CARA_ANDROID_UPLOAD_CERT_SHA256: ${{ vars.CARA_ANDROID_UPLOAD_CERT_SHA256 }}
+        run: |
+          python3 tools/sign_android_nightly.py --artifact-dir work/unsigned-android \
+            --output work/signed-android --source-revision "$EXPECTED_SHA"
+          certificate=$(jq -er '.certificate_sha256' work/signed-android/android-signed.json)
+          [[ "$certificate" =~ ^[0-9a-f]{64}$ ]]
+          echo "certificate=$certificate" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rc-signed-android
+          path: work/signed-android/*
+          if-no-files-found: error
+
+  rc-publish:
+    name: Publish verified numbered candidate
+    needs: [source, ios, nightly-sign, rc-sign-android]
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.release_candidate != '' && needs.nightly-sign.outputs.signed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightly-signed
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-iOS-arm64-GLES3-unsigned
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: rc-signed-android
+          path: dist
+      - name: Verify exact packages and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+          RC_TAG: ${{ inputs.release_candidate }}
+          ANDROID_CERT_SHA256: ${{ needs.rc-sign-android.outputs.certificate }}
+        run: |
+          python3 tools/verify_release_candidate.py dist --source-revision "$EXPECTED_SHA" \
+            --android-cert-sha256 "$ANDROID_CERT_SHA256"
+          (cd dist && sha256sum -- * > ../SHA256SUMS.txt)
+          cat > notes.md <<EOF
+          Cara release candidate from $EXPECTED_SHA.
+
+          - macOS: Developer ID-signed and notarized arm64 app with optional CPU JIT.
+          - iPhone and iPad: unsigned arm64 GLES3 IPA for personal sideloading. Re-sign before installing. TestFlight remains a separate Apple distribution channel.
+          - Android: ARM64 APK for direct installation and AAB for Play Console, both signed with the configured upload key. An APK signed by the upload key can differ from the key Play uses for installs.
+
+          Verify downloads using SHA256SUMS.txt.
+          EOF
+          gh release create "$RC_TAG" dist/* SHA256SUMS.txt --draft --prerelease --latest=false \
+            --target "$EXPECTED_SHA" --title "$RC_TAG" --notes-file notes.md
+          gh release edit "$RC_TAG" --draft=false --latest=false
+          url=$(gh release view "$RC_TAG" --json url,isDraft,isPrerelease \
+            --jq 'select(.isDraft == false and .isPrerelease == true) | .url')
+          test -n "$url"
+          printf '%s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
+
   nightly-publish:
     name: Publish signed Apple prerelease
     needs: [source, nightly-sign]
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release_candidate != ''))) && needs.nightly-sign.outputs.signed == 'true'
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)) && needs.nightly-sign.outputs.signed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -273,7 +386,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EXPECTED_SHA: ${{ needs.source.outputs.sha }}
-          RC_TAG: ${{ inputs.release_candidate }}
         run: |
           python3 - <<'PYCODE'
           import hashlib
@@ -283,11 +395,10 @@ jobs:
 
           assets = {
               'Cara-macOS-arm64-JIT-signed.zip': {'signing':'developer-id','notarized':True,'cpu_jit':True},
-          }
-          if not os.environ['RC_TAG']:
-              assets['Cara-iOS-arm64-GLES3-signed.ipa'] = {
+              'Cara-iOS-arm64-GLES3-signed.ipa': {
                   'signing':'apple-distribution','distribution':'app-store-connect','cpu_jit':False,
-              }
+              },
+          }
           assert {p.name for p in Path('dist').iterdir()} == {
               name + ext for name in assets for ext in ('', '.json')}, 'Unexpected release assets'
           versions = set()
@@ -302,19 +413,6 @@ jobs:
               versions.add(manifest['build_version'])
           assert len(versions) == 1
           PYCODE
-          if [[ -n "$RC_TAG" ]]; then
-            mac=Cara-macOS-arm64-JIT-signed.zip
-            (cd dist && sha256sum -- "$mac" "$mac.json" > ../SHA256SUMS.txt)
-            gh release create "$RC_TAG" "dist/$mac" "dist/$mac.json" SHA256SUMS.txt \
-              --draft --prerelease --latest=false --target "$EXPECTED_SHA" --title "$RC_TAG" \
-              --notes "Cara release candidate from $EXPECTED_SHA. The arm64 Mac app is signed and notarized with optional CPU JIT. iOS distribution is through TestFlight."
-            gh release edit "$RC_TAG" --draft=false --latest=false
-            url=$(gh release view "$RC_TAG" --json url,isDraft,isPrerelease \
-              --jq 'select(.isDraft == false and .isPrerelease == true) | .url')
-            test -n "$url"
-            printf '%s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
           (cd dist && sha256sum -- * > ../SHA256SUMS.txt)
           stamp=$(date -u +%Y%m%d)
           tag="nightly-$stamp-${EXPECTED_SHA:0:12}-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
