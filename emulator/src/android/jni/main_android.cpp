@@ -18,7 +18,6 @@
 #include "common/common_paths.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
-#include "video_core/renderer_opengl/on_screen_display.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
@@ -32,6 +31,7 @@
 #include "core/settings.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/video_core.h"
+#include "video_core/renderer_opengl/on_screen_display.h"
 
 #include "camera/ndk_camera.h"
 #include "camera/still_image_camera.h"
