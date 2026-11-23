@@ -486,6 +486,32 @@ bool TryQueueVertexUpload(GLsizei width, GLsizei height, GLenum format, GLenum t
     return true;
 }
 
+bool MailboxFencePacketEnabled() {
+    static const bool requested = [] {
+        const char* value = std::getenv("CARA_MAILBOX_FENCE_PACKET");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return requested && Enabled();
+}
+
+void QueueConsumedPresentFence(GLsync fence) {
+    // The old owner handed this handle to the render context. Only that
+    // context consumes the wait result. All subsequent frame commands follow.
+    RecordApi(RpcApi::ConsumePresentFence, [fence] {
+        raw_glClientWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
+        raw_glWaitSync(fence, 0, GL_TIMEOUT_IGNORED);
+        raw_glDeleteSync(fence);
+    });
+}
+
+GLsync CreatePublishedRenderFence() {
+    return SyncApi(RpcApi::PublishRenderFence, [] {
+        const auto fence = raw_glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        raw_glFlush();
+        return fence;
+    });
+}
+
 struct RemapState {
     GLint active_texture = GL_TEXTURE0;
     GLboolean dither = GL_FALSE;

@@ -48,6 +48,9 @@ Common::HostRenderQueue* Queue();
 // Durations of producer-side synchronous requests during an enabled frame profile.
 bool TryQueueVertexUpload(GLsizei width, GLsizei height, GLenum format, GLenum type,
                           const void* pixels, std::size_t bytes, SharedVertexShadow& retained);
+bool MailboxFencePacketEnabled();
+void QueueConsumedPresentFence(GLsync fence);
+GLsync CreatePublishedRenderFence();
 struct RemapState;
 std::shared_ptr<RemapState> SaveRemapStateIfEnabled();
 void RestoreRemapState(std::shared_ptr<RemapState> state);
