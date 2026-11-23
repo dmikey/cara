@@ -700,8 +700,13 @@ public:
     }
     void LoadIOSPipelines() {
         ios_identity = IOSIdentity();
-        ios_cache_path = GetCacheFile() +
-                         (UseNativeLUTBuffers() ? ".native-lut.cara-pso1" : ".cara-pso1");
+        ios_cache_path = GetCacheFile();
+#ifdef CARA_ANDROID_GLES_ATLAS
+        if (ShaderDecompiler::UsesStructuredJumpDispatch()) {
+            ios_cache_path += ".structured-dispatch";
+        }
+#endif
+        ios_cache_path += UseNativeLUTBuffers() ? ".native-lut.cara-pso1" : ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
         std::ifstream file(ios_cache_path, std::ios::binary | std::ios::ate);
