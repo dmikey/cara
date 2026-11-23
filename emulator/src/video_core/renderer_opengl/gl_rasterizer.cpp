@@ -3431,6 +3431,8 @@ void RasterizerOpenGL::SetShader() {
     if (probe_runtime_tev) {
         ShaderProgramManager::RuntimeTevWords next{};
         if (!native_borrow_fragment_selected && shader_program_manager->TryRuntimeTev(Pica::g_state.regs, next)) {
+            if (Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.runtime_tev_selections;
             if (runtime_tev_words != next) {
                 runtime_tev_words = next;
                 uniform_block_data.light_dirty = true;

@@ -179,6 +179,7 @@ struct Counters {
     std::uint64_t gpu_indexed_shader_fallbacks = 0;
     std::uint64_t gpu_native_element_draws = 0;
     std::uint64_t gpu_native_elements_saved = 0;
+    std::uint64_t runtime_tev_selections = 0;
     std::uint64_t gpu_direct_vertex_draws = 0;
     std::uint64_t gpu_direct_vertices = 0;
     std::uint64_t gpu_direct_unique_inputs = 0;
