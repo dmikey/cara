@@ -4,6 +4,7 @@
 #include "video_core/renderer_metal/exporter-adapter/pica_metal_queued_color_export.hh"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "video_core/renderer_metal/pica_metal_depth_clear_encoding.hh"
+#include "video_core/renderer_metal/pica_metal_raw_retile_pair.h"
 
 #include <algorithm>
 #include <array>
@@ -605,6 +606,55 @@ struct ScopedJoinedDepthCheck {
 };
 } // namespace
 
+const MetalSurfaceWriter* PicaMetalNativeDrawLane::ValidRawWriter(
+    const MetalGuestWrite& segment) const {
+    const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
+    if (!writer || writer->Queue() != queue || !writer->RawGuestBuffer() ||
+        writer->RawGuestBuffer().device != queue.device ||
+        writer->RawGuestBuffer().hazardTrackingMode != MTLHazardTrackingModeTracked ||
+        segment.begin < writer->RawGuestBegin() ||
+        segment.end - writer->RawGuestBegin() > writer->RawGuestBuffer().length)
+        return nullptr;
+    if (writer->Status() != MetalGuestWriteStatus::Complete &&
+        !submissions.IsTrackedProducer(writer->Command()))
+        return nullptr;
+    return writer;
+}
+
+std::optional<PicaMetalNativeDrawLane::RawRetilePair> PicaMetalNativeDrawLane::ResolveRawRetilePair(
+    id<MTLCommandBuffer> command, MetalTransfer::GuestInterval source, u32 row_bytes, u32 rows) {
+    if (!command || command.commandQueue != queue || !command.retainedReferences ||
+        command.status != MTLCommandBufferStatusNotEnqueued || source.begin >= source.end ||
+        source.Size() > MaxBackingBytes || u64{row_bytes} * rows != source.Size() || !rows)
+        return std::nullopt;
+
+    const auto current = authority.NativeSegments(source.begin, source.end);
+    if (current.size() != 2 * u64{rows} || current[0].begin != source.begin)
+        return std::nullopt;
+    const auto* left = ValidRawWriter(current[0]);
+    const auto* right = ValidRawWriter(current[1]);
+    if (!left || !right || left == right || left->RawGuestBuffer() == right->RawGuestBuffer())
+        return std::nullopt;
+
+    const MetalTransfer::RawRetilePairLayout layout{
+        source.begin, row_bytes, rows, current[0].end - current[0].begin,
+        {current[0].begin - left->RawGuestBegin(), current[1].begin - right->RawGuestBegin()}};
+    if (!layout.Valid())
+        return std::nullopt;
+    const std::array writers{left, right};
+    for (std::size_t index = 0; index < current.size(); ++index) {
+        const auto& span = current[index];
+        // The first two spans already passed the raw checks above. Preserve
+        // every later span's original status, queue, range and backing checks.
+        const auto* writer = index < 2 ? writers[index] : ValidRawWriter(span);
+        if (!writer || writer != writers[index % 2] ||
+            !layout.Matches(index, span.begin, span.end, span.begin - writer->RawGuestBegin()))
+            return std::nullopt;
+    }
+    return RawRetilePair{{left->RawGuestBuffer(), right->RawGuestBuffer()},
+                         layout.split_bytes, layout.source_offsets};
+}
+
 std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
     const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
@@ -619,19 +669,6 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         return std::nullopt;
 
     const auto current = authority.NativeSegments(bytes.begin, bytes.end);
-    const auto raw = [&](const MetalGuestWrite& segment) -> const MetalSurfaceWriter* {
-        const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
-        if (!writer || writer->Queue() != queue || !writer->RawGuestBuffer() ||
-            writer->RawGuestBuffer().device != queue.device ||
-            writer->RawGuestBuffer().hazardTrackingMode != MTLHazardTrackingModeTracked ||
-            segment.begin < writer->RawGuestBegin() ||
-            segment.end - writer->RawGuestBegin() > writer->RawGuestBuffer().length)
-            return nullptr;
-        if (writer->Status() != MetalGuestWriteStatus::Complete &&
-            !submissions.IsTrackedProducer(writer->Command()))
-            return nullptr;
-        return writer;
-    };
     const auto queue_texture_export = [&](const MetalGuestWrite& segment, PAddr first, PAddr last)
         -> id<MTLBuffer> {
         const bool packed = display_transfer && packed_color_export &&
@@ -721,7 +758,7 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             return value && std::string_view(value) == "1";
         }();
         if (borrow_striped_source && HasOneStripedSourceOwner(rows, current)) {
-            if (const auto* writer = raw(current.front())) {
+            if (const auto* writer = ValidRawWriter(current.front())) {
                 const auto buffer = writer->RawGuestBuffer();
                 const auto offset = bytes.begin - writer->RawGuestBegin();
                 if (offset % alignment == 0 && bytes.end - writer->RawGuestBegin() <= buffer.length) {
@@ -736,7 +773,7 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     // Common case: the last transfer produced the complete packed surface.
     if (current.size() == 1 && current.front().begin == bytes.begin &&
         current.front().end == bytes.end) {
-        if (const auto* writer = raw(current.front())) {
+        if (const auto* writer = ValidRawWriter(current.front())) {
             const auto offset = bytes.begin - writer->RawGuestBegin();
             if (offset % alignment == 0)
                 return MetalTransfer::ByteView{writer->RawGuestBuffer(), bytes, offset};
@@ -791,7 +828,7 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             const auto last = std::min(row.end, owner->end);
             if (!read_gap(cursor, first))
                 return std::nullopt;
-            const auto* writer = raw(*owner);
+            const auto* writer = ValidRawWriter(*owner);
             const NSUInteger to = first - bytes.begin;
             const NSUInteger size = last - first;
             const NSUInteger from = writer ? first - writer->RawGuestBegin() : 0;
@@ -1327,6 +1364,58 @@ void PicaMetalNativeDrawLane::TransferDisplay(
             }
         }
         NativeMetalCost::Scope resolve(NativeMetalCost::RetileResolveHost, trace_retile);
+        static const bool fuse_raw_pair = [] {
+            const auto* value = std::getenv("CARA_METAL_FUSE_RAW_RETILE_PAIR");
+            return value && std::string_view(value) == "1";
+        }();
+        if (fuse_raw_pair && linear_to_tiles && !rgb8_retile && !scaled_crop) {
+            using namespace NativeMetalCost;
+            Count(RetileRawPairProbes, 1);
+            const auto pair = ResolveRawRetilePair(command, *src, 4u * registers.input_width,
+                                                   registers.input_height);
+            if (pair) {
+                static id<MTLComputePipelineState> cached_pair;
+                id<MTLComputePipelineState> pipeline;
+                {
+                    const std::lock_guard guard(pipeline_lock);
+                    if (!cached_pair || cached_pair.device != queue.device) {
+                        const auto url = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
+                        const auto library = url ? [queue.device newLibraryWithURL:url error:nullptr] : nil;
+                        const auto kernel = [library newFunctionWithName:@"cara_pica_display_retile_raw_pair"];
+                        cached_pair = kernel
+                            ? [queue.device newComputePipelineStateWithFunction:kernel error:nullptr] : nil;
+                    }
+                    pipeline = cached_pair;
+                }
+                if (pipeline && pipeline.maxTotalThreadsPerThreadgroup >= 64) {
+                    resolve.Stop();
+                    Scope encode(RetileEncodeHost, trace_retile);
+                    const auto encoder = output ? [command computeCommandEncoder] : nil;
+                    if (!encoder)
+                        submissions.Fail("Could not encode native raw Metal retile pair");
+                    const std::array<u32, 6> args{registers.input_width, registers.input_height,
+                        pair->split_bytes / 4u, pair->offsets[0], pair->offsets[1], registers.flags & 1u};
+                    [encoder setComputePipelineState:pipeline];
+                    [encoder setBuffer:pair->buffers[0] offset:0 atIndex:0];
+                    [encoder setBuffer:pair->buffers[1] offset:0 atIndex:1];
+                    [encoder setBuffer:output offset:0 atIndex:2];
+                    [encoder setBytes:args.data() length:sizeof(args) atIndex:3];
+                    [encoder dispatchThreadgroups:MTLSizeMake(args[0] / 8u, args[1] / 8u, 1)
+                             threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                    [encoder endEncoding];
+                    encode.Stop();
+                    Scope publish(RetilePublishHost, trace_retile);
+                    PublishBytes(command, output, DenseRows(*dst));
+                    Count(RetileRawPairPerformed, 1);
+                    Count(RetileRawPairAvoidedSpans, 2u * registers.input_height);
+                    Count(RetileRawPairAvoidedStageBytes, src->Size());
+                    return;
+                }
+                Count(RetileRawPairPipelineDeclines, 1);
+            } else {
+                Count(RetileRawPairDeclines, 1);
+            }
+        }
         auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer);
         resolve.Stop();
         if (command && !source) {

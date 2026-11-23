@@ -98,6 +98,14 @@ private:
     std::optional<MetalTransfer::ByteView> ResolveBytes(
         id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
         const MetalGuestAuthority::GuestReader& ram, ByteUse use = ByteUse::General);
+    const MetalSurfaceWriter* ValidRawWriter(const MetalGuestWrite& segment) const;
+    struct RawRetilePair {
+        std::array<id<MTLBuffer>, 2> buffers;
+        u32 split_bytes;
+        std::array<u32, 2> offsets;
+    };
+    std::optional<RawRetilePair> ResolveRawRetilePair(id<MTLCommandBuffer> command,
+        MetalTransfer::GuestInterval source, u32 row_bytes, u32 rows);
     id<MTLBuffer> AllocateBytes(MetalTransfer::GuestInterval bytes);
     void PublishBytes(id<MTLCommandBuffer> command, id<MTLBuffer> buffer,
                       const MetalTransfer::Rows& rows);
