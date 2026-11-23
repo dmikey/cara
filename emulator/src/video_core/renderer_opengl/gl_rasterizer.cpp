@@ -4370,10 +4370,14 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                 if (next_lighting_texture == LightingTextureBatchSize) {
                     // These names belong to earlier, already submitted draws. GLES
                     // retains their storage for pending work after deletion.
-                    for (auto& retired : lighting_texture_batch) {
-                        retired.Release();
-                    }
                     std::array<GLuint, LightingTextureBatchSize> names{};
+                    for (size_t i = 0; i < names.size(); ++i) {
+                        names[i] = std::exchange(lighting_texture_batch[i].handle, 0);
+                    }
+                    if (names.back() != 0) {
+                        glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
+                    }
+                    names.fill(0);
                     glGenTextures(static_cast<GLsizei>(names.size()), names.data());
                     if (std::any_of(names.begin(), names.end(), [](GLuint name) { return name == 0; })) {
                         glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
@@ -4389,18 +4393,18 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                               lighting_texture_batch[next_lighting_texture++]);
                     texture = lighting_texture_generation.handle;
                 }
-                // Bind the new name in order. The previous draw has its own
-                // texture object, even if its GPU work is still in flight.
-                ReplaceLightingLUTImage(texture, TextureUnits::TextureBufferLUT_LF.id,
-                                        lighting_lut_image.data(), lighting_lut_image.size());
+            }
+#endif
+            ReplaceLightingLUTImage(texture, TextureUnits::TextureBufferLUT_LF.id,
+                                    lighting_lut_image.data(), lighting_lut_image.size());
+#ifdef CARA_ANDROID_GLES_ATLAS
+            if (distinct_lighting_images) {
+                // Publish after initialization. All earlier commands keep their
+                // own texture objects, including draws still in flight.
                 OpenGLState::BindLightingLUT(texture);
                 state.texture_buffer_lut_lf.texture_buffer = texture;
-            } else
-#endif
-            {
-                ReplaceLightingLUTImage(texture, TextureUnits::TextureBufferLUT_LF.id,
-                                        lighting_lut_image.data(), lighting_lut_image.size());
             }
+#endif
         }
     } else if (!UseNativeLUTBuffers()) {
         UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,

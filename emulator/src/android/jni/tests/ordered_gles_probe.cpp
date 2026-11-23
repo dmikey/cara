@@ -71,10 +71,10 @@ GLuint Compile(GLenum stage, const char* source) {
 
 // Use the same float texture format, width and padded rows as all 24 lighting tables plus fog.
 // Queue both generations and mutate the source before reading either rendered target.
-void CheckLightingImages() {
+void CheckLightingImages(bool distinct) {
     constexpr int w = OpenGL::LUTTextureWidth, h = 7;
-    GLuint textures[3], fbo, vao;
-    glGenTextures(3, textures);
+    GLuint textures[4], fbo, vao;
+    glGenTextures(4, textures);
     glGenFramebuffers(1, &fbo);
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
@@ -118,8 +118,16 @@ void main() { color=vec4(texelFetch(lut,ivec2(gl_FragCoord.xy),0).rg,0.,1.); })"
             table[i] = static_cast<float>(value(i,generation)) / 255.f;
         glActiveTexture(GL_TEXTURE3);
         glPixelStorei(GL_UNPACK_SKIP_PIXELS, 4);
-        OpenGL::ReplaceLightingLUTImage(textures[0], 0, reinterpret_cast<const u8*>(table.data()),
+        const GLuint table_texture = textures[distinct && generation != 0 ? 3 : 0];
+        OpenGL::ReplaceLightingLUTImage(table_texture, 0, reinterpret_cast<const u8*>(table.data()),
                                         table.size()*sizeof(float));
+        if (distinct) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, table_texture);
+            glActiveTexture(GL_TEXTURE3);
+            if (generation != 0)
+                glDeleteTextures(1, &textures[0]);
+        }
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[generation+1], 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
@@ -143,12 +151,15 @@ void main() { color=vec4(texelFetch(lut,ivec2(gl_FragCoord.xy),0).rg,0.,1.); })"
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &fbo);
     glDeleteVertexArrays(1, &vao);
-    glDeleteTextures(3, textures);
+    if (distinct)
+        textures[0] = 0;
+    glDeleteTextures(4, textures);
     glUseProgram(0);
     glDeleteProgram(program);
     glDeleteShader(vs);
     glDeleteShader(fs);
-    std::puts("two complete lighting images matched all 14336 pixels");
+    std::puts(distinct ? "two distinct lighting textures matched all 14336 pixels across deletion"
+                       : "two complete lighting images matched all 14336 pixels");
 }
 
 void CheckRemapPixels() {
@@ -563,7 +574,8 @@ void Run(EGLDisplay display, EGLConfig config) {
 #ifdef CARA_GL_CONTEXT_DISPATCH
         CheckRemapQueue();
         CheckSharedVertexUpload();
-        CheckLightingImages();
+        CheckLightingImages(false);
+        CheckLightingImages(true);
         published = Queue::CreatePublishedRenderFence();
         Check(published != nullptr, "render fence not created");
 #endif
