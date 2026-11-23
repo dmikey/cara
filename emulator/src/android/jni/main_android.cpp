@@ -174,6 +174,7 @@ void BootGame(const std::string& path) {
     select_probe("texture_lookup_verify", "CARA_TEXTURE_LOOKUP_VERIFY");
     select_probe("texture_exact_prefilter", "CARA_TEXTURE_EXACT_PREFILTER");
     select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
+    select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
     const Config::ConfigInfo<bool> render_phase_trace{{"Debug", "trace_render_phases"}, false};
     const bool trace_render_phases = Config::Get(render_phase_trace);
     const char* render_phase_value = trace_render_phases ? "1" : "0";

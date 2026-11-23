@@ -105,7 +105,11 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
     }
 
     std::array<const char*, 2> src_arr{version.data(), compatible_source.c_str()};
-    GLuint shader_id = glCreateShader(type);
+    const GLuint shader_id = glCreateShader(type);
+    if (!shader_id) {
+        LOG_ERROR(Render_OpenGL, "Unable to create {} shader object", debug_type);
+        return 0;
+    }
     LOG_DEBUG(Render_OpenGL, "Compiling {} shader: {}", debug_type, shader_id);
     glShaderSource(shader_id, static_cast<GLsizei>(src_arr.size()), src_arr.data(), nullptr);
     const bool census = ShaderCensus::Enabled();
@@ -113,7 +117,7 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
     glCompileShader(shader_id);
 
     GLint result = GL_FALSE;
-    GLint info_log_length;
+    GLint info_log_length = 0;
     glGetShaderiv(shader_id, GL_COMPILE_STATUS, &result);
     if (census) {
         const auto elapsed = ShaderCensus::ElapsedUs(compile_start);
@@ -142,14 +146,15 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
             shader.append("\n\n");
             shader.append(shader_error.data(), shader_error.size());
             FileUtil::WriteStringToFile(true, filepath, shader);
-            glDeleteShader(shader_id);
-            shader_id = 0;
         }
     }
 
-#ifdef CARA_MAC_ATLAS_PIPELINE
-    if (result != GL_TRUE && shader_id) { glDeleteShader(shader_id); shader_id=0; }
-#endif
+    if (result != GL_TRUE) {
+        if (info_log_length <= 1)
+            LOG_ERROR(Render_OpenGL, "Compilation of {} shader failed without a driver log", debug_type);
+        glDeleteShader(shader_id);
+        return 0;
+    }
     return shader_id;
 }
 
@@ -158,7 +163,11 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
     // Link the program
     LOG_DEBUG(Render_OpenGL, "Linking program...");
 
-    GLuint program_id = glCreateProgram();
+    const GLuint program_id = glCreateProgram();
+    if (!program_id) {
+        LOG_ERROR(Render_OpenGL, "Unable to create shader program object");
+        return 0;
+    }
 
     for (GLuint shader : shaders) {
         if (shader != 0) {
@@ -183,7 +192,7 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
 
     // Check the program
     GLint result = GL_FALSE;
-    GLint info_log_length;
+    GLint info_log_length = 0;
     glGetProgramiv(program_id, GL_LINK_STATUS, &result);
     if (census) {
         const auto elapsed = ShaderCensus::ElapsedUs(link_start);

@@ -381,8 +381,15 @@ RasterizerOpenGL::RasterizerOpenGL()
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, index_buffer.GetHandle());
 
-    // 845需要开启分离着色器，但开启后Mali GPU会挂掉，究极日也有显示问题！
-    const bool use_separable_shader = Settings::values.use_separable_shader;
+    bool use_separable_shader = Settings::values.use_separable_shader;
+#if defined(CARA_IOS_GLES) && !defined(CARA_MAC_ATLAS_PIPELINE)
+    // Atlas uses a GLSL ES 3.00 shader ABI and sets vertex uniforms on the
+    // linked program. The legacy separable route generates desktop GLSL.
+    if (use_separable_shader) {
+        LOG_INFO(Render_OpenGL, "GLSL ES Atlas uses linked vertex/fragment programs");
+        use_separable_shader = false;
+    }
+#endif
     shader_program_manager = std::make_unique<ShaderProgramManager>(use_separable_shader);
 
     OpenGLState::InvalidateRasterState();
@@ -2757,9 +2764,10 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             shader_program_manager->ApplyTo(state);
         }
         state.Apply();
+        succeeded = state.draw.shader_program || state.draw.program_pipeline;
 
         std::size_t max_vertices = 3 * (VERTEX_BUFFER_SIZE / (3 * sizeof(HardwareVertex)));
-        for (std::size_t base_vertex = 0; base_vertex < vertex_batch.size();
+        for (std::size_t base_vertex = 0; succeeded && base_vertex < vertex_batch.size();
              base_vertex += max_vertices) {
             const std::size_t vertices = std::min(max_vertices, vertex_batch.size() - base_vertex);
             const std::size_t vertex_size = vertices * sizeof(HardwareVertex);
@@ -2804,6 +2812,9 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         state.image_shadow_buffer = 0;
     }
     state.Apply();
+
+    if (!succeeded)
+        return false;
 
     if (shadow_rendering) {
         glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |

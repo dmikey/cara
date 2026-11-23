@@ -90,18 +90,20 @@ void OGLProgram::Create(const char* vert_shader, const char* frag_shader) {
 void OGLProgram::Create(const char* compute_shader) {
     OGLShader shader;
     shader.Create(compute_shader, GL_COMPUTE_SHADER);
-
-    Create(false, {shader.handle});
+    if (shader.handle)
+        Create(false, {shader.handle});
 }
 
 void OGLProgram::Create(GLenum format, const std::vector<GLbyte>& binary) {
     handle = glCreateProgram();
+    if (!handle)
+        return;
     const bool census = ShaderCensus::Enabled();
     const auto start = census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
     glProgramBinary(handle, format, binary.data(), binary.size());
 
     // Check the link status. If this fails, it means the binary was invalid.
-    GLint link_status;
+    GLint link_status = GL_FALSE;
     glGetProgramiv(handle, GL_LINK_STATUS, &link_status);
     if (census)
         ShaderCensus::Record("binary program={} ok={} us={}", handle, link_status,

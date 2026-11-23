@@ -4,11 +4,17 @@
 // Refer to the license.txt file included.
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
+#include <string_view>
 #include <memory>
 #include <glad/glad.h>
 #include <queue>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include "common/frame_timing.h"
 #include "common/bit_field.h"
 #include "common/logging/log.h"
@@ -948,11 +954,59 @@ void RendererOpenGL::DrawScreens(const Layout::FramebufferLayout& layout, bool i
     OSD::DrawMessage(render_window, layout);
 }
 
+static void APIENTRY ObserveGLESDebugMessage(GLenum source, GLenum type, GLuint id,
+                                             GLenum severity, GLsizei length,
+                                             const GLchar* message, const void*) {
+    if (type != GL_DEBUG_TYPE_ERROR && type != GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR)
+        return;
+
+    // Keep repeating draw-time validation errors from flooding the log.
+    const std::array<GLuint, 3> key{source, type, id};
+    static thread_local std::array<std::array<GLuint, 3>, 64> seen{};
+    static thread_local std::size_t count = 0;
+    const auto end = seen.begin() + count;
+    if (count == seen.size() || std::find(seen.begin(), end, key) != end)
+        return;
+    seen[count++] = key;
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_WARN, "CaraGLES", "source=0x%x type=0x%x id=%u severity=0x%x %.*s",
+                        source, type, id, severity, length, message);
+#else
+    LOG_WARNING(Render_OpenGL, "GLES source={:x} type={:x} id={} severity={:x} {}",
+                source, type, id, severity, std::string_view(message, length));
+#endif
+}
+
+static void InstallGLESDebugObserver() {
+    const char* enabled = std::getenv("CARA_GLES_DEBUG");
+    if (!GLES || !enabled || std::strcmp(enabled, "1") != 0)
+        return;
+
+    if (GLAD_GL_ES_VERSION_3_2 && glDebugMessageCallback) {
+        glDebugMessageCallback(ObserveGLESDebugMessage, nullptr);
+    } else if (GLAD_GL_KHR_debug && glDebugMessageCallbackKHR) {
+        glDebugMessageCallbackKHR(ObserveGLESDebugMessage, nullptr);
+    } else {
+        LOG_INFO(Render_OpenGL, "GLES debug output is unavailable in this context");
+        return;
+    }
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+#ifdef __ANDROID__
+    __android_log_write(ANDROID_LOG_INFO, "CaraGLES", "GLES debug observer installed on renderer context");
+#endif
+}
+
 /// Initialize the renderer
 VideoCore::ResultStatus RendererOpenGL::Init() {
     const char* gl_version{reinterpret_cast<char const*>(glGetString(GL_VERSION))};
     const char* gpu_vendor{reinterpret_cast<char const*>(glGetString(GL_VENDOR))};
     const char* gpu_model{reinterpret_cast<char const*>(glGetString(GL_RENDERER))};
+
+    if (!gl_version || !gpu_vendor || !gpu_model) {
+        LOG_ERROR(Render_OpenGL, "No usable GL context during renderer initialization");
+        return VideoCore::ResultStatus::ErrorGenericDrivers;
+    }
 
     LOG_INFO(Render_OpenGL, "GL_VERSION: {}", gl_version);
     LOG_INFO(Render_OpenGL, "GL_VENDOR: {}", gpu_vendor);
@@ -985,6 +1039,7 @@ VideoCore::ResultStatus RendererOpenGL::Init() {
         return VideoCore::ResultStatus::ErrorGenericDrivers;
     }
 #endif
+    InstallGLESDebugObserver();
     InitOpenGLObjects();
 
     return VideoCore::ResultStatus::Success;

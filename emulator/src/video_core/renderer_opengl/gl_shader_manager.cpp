@@ -140,7 +140,9 @@ public:
         if (separable) {
             OGLShader shader;
             shader.Create(shader_code.c_str(), type);
+            if (!shader.handle) return;
             program.Create(true, {shader.handle});
+            if (!program.handle) return;
             SetShaderUniformBlockBindings(program.handle);
             if (type == GL_FRAGMENT_SHADER) {
                 SetShaderSamplerBindings(program.handle);
@@ -548,6 +550,11 @@ public:
     }
 
     void ApplyTo(OpenGLState& state) {
+        if (!current_shaders.vs || !current_shaders.fs) {
+            state.draw.shader_program = 0;
+            state.draw.program_pipeline = 0;
+            return;
+        }
         // Also covers a programmable-mode change during feedback fallback.
         if(native_geometry_enabled) current_shaders.gs=native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
 #ifdef CARA_IOS_GLES
