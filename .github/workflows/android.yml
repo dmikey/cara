@@ -34,6 +34,16 @@ jobs:
         run: |
           cat > "$RUNNER_TEMP/rg-slide-profile.init.gradle" <<'GRADLE'
           gradle.beforeProject { project ->
+              if (project.name == 'app') {
+                  project.repositories {
+                      exclusiveContent {
+                          forRepository {
+                              maven { url = uri('https://maven-central.storage-download.googleapis.com/maven2/') }
+                          }
+                          filter { includeGroup('com.google.errorprone') }
+                      }
+                  }
+              }
               project.pluginManager.withPlugin('com.android.application') {
                   project.androidComponents.finalizeDsl { android ->
                       android.defaultConfig.versionCode = 275
