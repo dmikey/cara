@@ -3663,7 +3663,12 @@ void RasterizerOpenGL::SyncDepthOffset() {
 }
 
 void RasterizerOpenGL::SyncBlendEnabled() {
-    state.blend.enabled = (Pica::g_state.regs.framebuffer.output_merger.alphablend_enable == 1);
+    const bool enabled = Pica::g_state.regs.framebuffer.output_merger.alphablend_enable == 1;
+    if (GLES && state.blend.enabled != enabled) {
+        shader_dirty = true;
+        SyncColorWriteMask();
+    }
+    state.blend.enabled = enabled;
 }
 
 void RasterizerOpenGL::SyncBlendFuncs() {
@@ -3770,32 +3775,22 @@ void RasterizerOpenGL::SyncAlphaTest() {
 }
 
 void RasterizerOpenGL::SyncLogicOp() {
-    const auto& regs = Pica::g_state.regs;
-    state.logic_op = PicaToGL::LogicOp(regs.framebuffer.output_merger.logic_op);
-    /*if (GLES && (GLAD_GL_ARM_shader_framebuffer_fetch || GLAD_GL_EXT_shader_framebuffer_fetch)) {
+    const auto& merger = Pica::g_state.regs.framebuffer.output_merger;
+    const auto logic_op = PicaToGL::LogicOp(merger.logic_op);
+    if (GLES && !merger.alphablend_enable && state.logic_op != logic_op)
         shader_dirty = true;
-    }*/
-    if (GLES) {
-        if (!regs.framebuffer.output_merger.alphablend_enable) {
-            if (regs.framebuffer.output_merger.logic_op == Pica::FramebufferRegs::LogicOp::NoOp) {
-                // Color output is disabled by logic operation. We use color write mask to skip
-                // color but allow depth write.
-                state.color_mask = {};
-            }
-        }
-    }
+    state.logic_op = logic_op;
+    if (GLES)
+        SyncColorWriteMask();
 }
 
 void RasterizerOpenGL::SyncColorWriteMask() {
     const auto& regs = Pica::g_state.regs;
-    if (GLES) {
-        if (!regs.framebuffer.output_merger.alphablend_enable) {
-            if (regs.framebuffer.output_merger.logic_op == Pica::FramebufferRegs::LogicOp::NoOp) {
-                // Color output is disabled by logic operation. We use color write mask to skip
-                // color but allow depth write. Return early to avoid overwriting this.
-                return;
-            }
-        }
+    if (GLES && !regs.framebuffer.output_merger.alphablend_enable &&
+        regs.framebuffer.output_merger.logic_op == Pica::FramebufferRegs::LogicOp::NoOp) {
+        // Preserve depth updates while suppressing all color writes.
+        state.color_mask = {};
+        return;
     }
 
     auto IsColorWriteEnabled = [&](u32 value) {

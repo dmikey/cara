@@ -2007,7 +2007,8 @@ gl_FragDepth = uintBitsToFloat(cara_depth_float_bits);
             // Take the color output as-is
             break;
         case FramebufferRegs::LogicOp::CopyInverted:
-            out += "color = ~color;\n";
+            // Complement the already quantized UNORM channels.
+            out += "color = vec4(1.0) - color;\n";
             break;
         case FramebufferRegs::LogicOp::NoOp:
             // We need to discard the color, but not necessarily the depth. This is not possible
