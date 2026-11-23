@@ -66,7 +66,8 @@ GLuint Compile(GLenum stage, const char* source) {
 Pixels Draw() {
     const GLuint vs = Compile(GL_VERTEX_SHADER, R"(#version 300 es
 const vec2 positions[3] = vec2[3](vec2(-1,-1),vec2(3,-1),vec2(-1,3));
-void main(){gl_Position=vec4(positions[gl_VertexID],0,1);})");
+uniform float z;
+void main(){gl_Position=vec4(positions[gl_VertexID],z,1);})");
     const GLuint fs = Compile(GL_FRAGMENT_SHADER, R"(#version 300 es
 precision mediump float;
 uniform vec4 color;
@@ -83,6 +84,13 @@ void main(){outputColor=color;})");
     const GLint color = glGetUniformLocation(program, "color");
     Check(color >= 0, "color uniform");
     glViewport(0, 0, width, 1);
+    const GLint z = glGetUniformLocation(program, "z");
+    Check(z >= 0, "depth uniform");
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glUniform1f(z, 0);
     glEnable(GL_SCISSOR_TEST);
     glScissor(0, 0, width / 2, 1);
     glUniform4f(color, 1, 0, 0, 1);
@@ -90,10 +98,15 @@ void main(){outputColor=color;})");
     glScissor(width / 2, 0, width / 2, 1);
     glUniform4f(color, 0, 1, 0, 1);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    // A later, more distant red draw must preserve the nearer right-hand green.
+    glUniform1f(z, 0.5f);
+    glUniform4f(color, 1, 0, 0, 1);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
     Pixels pixels{};
     glReadPixels(0, 0, width, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
     Check(glGetError() == GL_NO_ERROR, "driver error after ordered readback");
     glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
     glUseProgram(0);
     glDeleteProgram(program);
     glDeleteShader(fs);
@@ -141,7 +154,7 @@ void Run(EGLDisplay display, EGLConfig config) {
     try {
         const auto queued = Draw();
         Queue::Drain();
-        Check(queued == direct && direct_draws == 2 && queued_draws == 2,
+        Check(queued == direct && direct_draws == 3 && queued_draws == 3,
               "driver ownership or pixel mismatch");
         const auto counters = Queue::SnapshotStats();
         std::printf("render: direct_draws=%u worker_draws=%u identical_pixels=%d "
@@ -189,7 +202,7 @@ int main() {
         const EGLint attrs[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
                                 EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
                                 EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
-                                EGL_ALPHA_SIZE, 8, EGL_NONE};
+                                EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 16, EGL_NONE};
         EGLConfig config{};
         EGLint count{};
         Check(eglChooseConfig(display, attrs, &config, 1, &count) && count == 1, "ES3 RGBA8 config");
