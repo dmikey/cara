@@ -44,3 +44,34 @@ To reproduce the scheduler calculation, pass the emulation TID from CaraPerf and
 ```sh
 python3 summarize-gles-schedule.py worker-schedule.txt 6565 6578 --to-epoch-ms 1795462972198
 ```
+
+## Combining equivalent draws on the worker
+
+The combined Android build records both instanced draw entry points in order. Client arrays and client index pointers still complete synchronously. On the G57, the eight-pixel EGL fixture compared two ordinary draws with one two-instance submission for both arrays and an index buffer. Color blending, depth rejection, two stencil increments and indexed vertex ID matched in the worker and direct contexts. The first worker fixture used a blend entry point outside the renderer dispatch. Switching it to the renderer's actual separate blend function fixed the fixture. Full-game pixel equivalence at identical guest refreshes remains unverified. [APK build](https://github.com/dmikey/cara/actions/runs/45251659704) · [Fixture build](https://github.com/dmikey/cara/actions/runs/45252023601)
+
+Both normal boots enabled the GLES worker and raster reuse. The same APK ran first with independent submissions and then with proven draw pairs. Gadd combined 17,316 of 167,913 guest triggers (10.31% fewer submissions). The control processed 169,649 guest triggers. Four 120-refresh windows averaged 11.21 to 10.55 ms of graphics CPU on the producer, and 11.35 to 10.58 ms of worker CPU. The counter sample still showed 538.6 position requests per 1,000 input primitives in both arms.
+
+| Window ending at refresh | Control p99 / worst, ms | Paired p99 / worst, ms |
+| ---: | ---: | ---: |
+| 2641 | 103.40 / 104.10 | 36.88 / 51.19 |
+| 2761 | 44.15 / 82.23 | 42.46 / 62.74 |
+| 2881 | 46.92 / 48.83 | 38.49 / 45.84 |
+| 3001 | 41.91 / 49.18 | 38.17 / 39.53 |
+
+Worst frames were 2549 (control) and 2701 (paired). The first control window was an outlier relative to prior normal boots. At title refresh 961 the candidate merged zero pairs. P50 moved from 42.24 to 42.32 ms, p99 from 47.00 to 45.72 ms, and graphics CPU from 11.42 to 11.66 ms. This first comparison supports a reduction in preparation and submission cost in Gadd. Repeated boots are needed to quantify the effect on frame tails. The launcher control averaged 2.75 million active GPU cycles per second over 2.90 seconds, versus roughly 839 million in the lab.
+
+## Cost of returning a synchronous GLES result
+
+A profile build bracketed the producer flush and queue call, the worker's raw API invocation and the return to the producer with a monotonic clock. Times are wall milliseconds per system refresh, summed over the four warm windows at 2641, 2761, 2881 and 3001. Profiling targets the synchronous API wrappers. Internal drains and ordinary asynchronous draw calls have separate timing. The query that first needs a result can inherit the backlog of preceding draws.
+
+| Warm Gadd API | Calls/refresh | Before the driver call | In the driver call | Return to producer | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| glGetIntegerv | 3.04 | 5.588 | 0.008 | 0.038 | 5.634 |
+| glFenceSync | 1.00 | 1.642 | 0.120 | 0.011 | 1.772 |
+| glGetError | 3.04 | 1.590 | 0.001 | 0.021 | 1.612 |
+| glClientWaitSync | 1.00 | 1.156 | 0.002 | 0.014 | 1.172 |
+| All measured synchronous calls | 20.27 | 10.396 | 0.143 | 0.162 | 10.701 |
+
+At title refresh 961, three integer queries per refresh spent 21.007 ms waiting to enter the driver and 0.006 ms in it. The surface remap helper saves the active texture unit and checks two enable bits before submitting its conversion draw. The measured approximately 3 integer queries, 6 enable checks, 3 framebuffer status checks and 3 error checks per warm refresh match that helper's shape. This per-API profile does not identify the caller of each query. Across the same four windows the entire remap scope averaged 7.53 ms per refresh. Durations inside remapping overlap the synchronous call figures. In particular, removing a single synchronous query can move its wait to the next result dependency. Moving more work off the producer requires preserving the result dependency for validation and guest reads.
+
+The instrumented workload had p99s of 58.75, 35.33, 47.79 and 47.63 ms. The worst was 86.00 ms at refresh 2620. The fixed-clock four-window run had zero measured shader compilations. The shader links described above occurred later in a separate normal boot. [Profile build](https://github.com/dmikey/cara/actions/runs/45252277457) · [All synchronous API costs](gadd-sync-costs.tsv)
