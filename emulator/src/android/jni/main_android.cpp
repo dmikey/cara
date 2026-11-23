@@ -190,6 +190,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> clear_padding_only{{"Debug", "packed_vertex_padding_only"}, false};
     const Config::ConfigInfo<bool> indexed_draws{{"Debug", "atlas_indexed_draws"}, false};
     const Config::ConfigInfo<bool> async_indexed{{"Debug", "atlas_async_indexed_shaders"}, true};
+    const Config::ConfigInfo<bool> native_elements{{"Debug", "atlas_native_elements"}, false};
+    const Config::ConfigInfo<bool> retain_bindings{{"Debug", "atlas_retain_vertex_bindings"}, false};
     const Config::ConfigInfo<bool> reuse_layout{{"Debug", "packed_layout_uniform_reuse"}, false};
     const bool retain_uploads = Config::Get(resident_uploads);
     setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
@@ -200,6 +202,9 @@ void BootGame(const std::string& path) {
     const char* indexed_draws_value = Config::Get(indexed_draws) ? "1" : "0";
     setenv("CARA_GPU_VERTEX_REUSE", indexed_draws_value, 1);
     setenv("CARA_GPU_LIT_PAIR_REUSE", indexed_draws_value, 1);
+    setenv("CARA_GPU_NATIVE_ELEMENTS",
+           Config::Get(indexed_draws) && Config::Get(native_elements) ? "1" : "0", 1);
+    setenv("CARA_GPU_RETAIN_INPUT_BINDINGS", Config::Get(retain_bindings) ? "1" : "0", 1);
     setenv("CARA_ANDROID_ASYNC_INDEXED_SHADERS",
            Config::Get(indexed_draws) && Config::Get(async_indexed) ? "1" : "0", 1);
     setenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE", Config::Get(reuse_layout) ? "1" : "0", 1);
@@ -394,14 +399,16 @@ void BootGame(const std::string& path) {
                                 "reuse end={} prep_ms={:.2f} draw_ms={:.2f} "
                                 "index_hits={} index_misses={} index_bytes={} "
                                 "reused_upload_bytes={} vertex_upload_bytes={} index_upload_bytes={} packed_draws={} "
-                                "indexed_direct={} indexed_lit={} indexed_lit_vertices={} indexed_lit_ids={} indexed_fallbacks={}",
+                                "indexed_direct={} indexed_lit={} indexed_lit_vertices={} indexed_lit_ids={} indexed_fallbacks={} "
+                                "native_elements={} native_indices_saved={}",
                                 frame, phases.vertex_prepare_seconds * 1000, phases.draw_seconds * 1000,
                                 phases.vertex_index_cache_hits, phases.vertex_index_cache_misses,
                                 phases.vertex_index_cache_bytes, phases.vertex_upload_reused_bytes,
                                 phases.vertex_upload_bytes, phases.vertex_index_upload_bytes,
                                 phases.gpu_packed_input_draws, phases.gpu_direct_vertex_draws,
                                 phases.gpu_lit_pair_draws, phases.gpu_lit_pair_vertices,
-                                phases.gpu_lit_pair_ids, phases.gpu_indexed_shader_fallbacks);
+                                phases.gpu_lit_pair_ids, phases.gpu_indexed_shader_fallbacks,
+                                phases.gpu_native_element_draws, phases.gpu_native_elements_saved);
                             if (cpu_categories) {
                                 const auto cpu = Common::CPUCategoryTiming::Snapshot();
                                 const auto report = fmt::format(

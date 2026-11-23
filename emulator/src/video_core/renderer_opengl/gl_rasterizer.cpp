@@ -1073,6 +1073,10 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         const char* value = std::getenv("CARA_GPU_LIT_PAIR_REUSE");
         return value && std::strcmp(value, "1") == 0;
     }();
+    static const bool native_elements = [] {
+        const char* value = std::getenv("CARA_GPU_NATIVE_ELEMENTS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
     ios_cached_index_data=nullptr;
     const IOSVertexIndexCache::Key key{is_indexed?index_address:0,count,
         is_indexed?0:u32(pipeline.vertex_offset),static_cast<u32>(topology),
@@ -1098,7 +1102,9 @@ bool RasterizerOpenGL::PrepareIOSVertices(bool is_indexed) {
         }
         if (ios_triangle_indices.empty()) return false;
         if (cache_enabled)
-            ios_cached_index_data=ios_vertex_index_cache.Store(key,indices,source_size,ios_triangle_indices, pair_probe_enabled, build_lit_pairs);
+            ios_cached_index_data = ios_vertex_index_cache.Store(
+                key, indices, source_size, ios_triangle_indices, pair_probe_enabled, build_lit_pairs,
+                native_elements && strip);
     }
     const auto& triangles=IOSTriangles();
     if (Common::FrameTiming::counters.enabled)
@@ -1254,8 +1260,13 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 #endif
     const auto* input_data=IOSVertexInputData();
     const size_t input_bytes=IOSVertexInputBytes();
-    const auto& input_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_pairs : IOSInputIndices();
-    const auto& element_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_elements : IOSInputIndices();
+    const bool native_elements = ios_direct_vertex_reuse && ios_cached_index_data &&
+                                 !ios_cached_index_data->native_elements.empty();
+    const auto& input_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_pairs :
+                                native_elements ? ios_cached_index_data->native_elements :
+                                                  IOSInputIndices();
+    const auto& element_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_elements :
+                                                            input_indices;
     // Identity is ONLY the current immutable cached packed-index payload. It is
     // not a guest-address, input snapshot, VS output or register-generation hint.
     const IndexPayloadReuse::Identity current_index_identity =
@@ -1615,8 +1626,18 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             {
                 DrawCostProfile::Scope draw_cost(DrawCostProfile::Path::AcceleratedElements,
                                                 triangles.size());
-                if (!SuppressEffectFamilyHostDraw(triangles.size()))
-                    glDrawElements(GL_TRIANGLES,static_cast<GLsizei>(triangles.size()),GL_UNSIGNED_SHORT,nullptr);
+                if (!SuppressEffectFamilyHostDraw(triangles.size())) {
+                    const auto topology = Pica::g_state.primitive_assembler.GetTopology();
+                    const GLenum mode = native_elements ?
+                        (topology == Pica::PipelineRegs::TriangleTopology::Strip ?
+                            GL_TRIANGLE_STRIP : GL_TRIANGLE_FAN) : GL_TRIANGLES;
+                    const auto count = native_elements ? element_indices.size() : triangles.size();
+                    glDrawElements(mode, static_cast<GLsizei>(count), GL_UNSIGNED_SHORT, nullptr);
+                    if (native_elements && Common::FrameTiming::counters.enabled) {
+                        ++Common::FrameTiming::counters.gpu_native_element_draws;
+                        Common::FrameTiming::counters.gpu_native_elements_saved += triangles.size() - count;
+                    }
+                }
             }
             if (ios_lit_pair_vertex_reuse) {
                 ++Common::FrameTiming::counters.gpu_lit_pair_draws;
