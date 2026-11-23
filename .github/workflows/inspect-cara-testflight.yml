@@ -1,0 +1,44 @@
+name: Inspect Cara TestFlight upload
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
+    environment: nightly-signing
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Read the existing upload records from Apple
+        env:
+          ASC_KEY: ${{ secrets.CARA_ASC_UPLOAD_KEY_BASE64 }}
+          ASC_ID: ${{ secrets.CARA_ASC_UPLOAD_KEY_ID }}
+          ASC_ISSUER: ${{ secrets.CARA_ASC_UPLOAD_ISSUER_ID }}
+        shell: bash
+        run: |
+          node <<'JS'
+          const { createPrivateKey, sign } = require('node:crypto')
+          const key = createPrivateKey(Buffer.from(process.env.ASC_KEY, 'base64'))
+          const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url')
+          const now = Math.floor(Date.now() / 1000)
+          const payload = b64({ alg:'ES256', kid:process.env.ASC_ID, typ:'JWT' }) + '.' +
+            b64({ iss:process.env.ASC_ISSUER, iat:now, exp:now+300, aud:'appstoreconnect-v1' })
+          const token = payload + '.' + sign('sha256', Buffer.from(payload), { key, dsaEncoding:'ieee-p1363' }).toString('base64url')
+          async function inspect() {
+            const paths = [
+              '/v1/buildUploads/b80af088-2162-44f7-af1c-ad4df5e0b5c9?fields%5BbuildUploads%5D=state,cfBundleVersion,cfBundleShortVersionString,platform',
+              '/v1/buildUploadFiles/d0c42fd1-09b7-4e70-926a-84d8a4d09f99?fields%5BbuildUploadFiles%5D=fileName,fileSize,assetType,assetDeliveryState,sourceFileChecksums'
+            ]
+            for (const path of paths) {
+              const res = await fetch('https://api.appstoreconnect.apple.com' + path, {
+                headers: {Authorization:'Bearer ' + token}, redirect:'error', signal:AbortSignal.timeout(30000)
+              })
+              const record = await res.json()
+              const errors = record.errors?.map(({code, title, detail}) => ({code,title,detail})) ?? []
+              console.log(JSON.stringify({status:res.status,attributes:record.data?.attributes,errors}))
+              if (!res.ok) process.exitCode = 1
+            }
+          }
+          inspect().catch(() => { console.error('Apple upload status request failed'); process.exitCode = 1 })
+          JS
