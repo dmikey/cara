@@ -2071,7 +2071,10 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
     if (native_isolated_dispatch && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
     if (native_quaternion_geometry && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
 #ifndef CARA_MAC_ATLAS_PIPELINE
-    if(native_quaternion_geometry || native_isolated_dispatch) return {};
+    if (native_isolated_dispatch) return {};
+#endif
+#if !defined(CARA_MAC_ATLAS_PIPELINE) && !defined(CARA_ANDROID_GLES_ATLAS)
+    if (native_quaternion_geometry) return {};
 #endif
     if (ios_output && ios_indexed_inputs==5) {
         out=GetVertexInterfaceDeclaration(true,false);

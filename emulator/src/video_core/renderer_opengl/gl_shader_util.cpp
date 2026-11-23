@@ -142,6 +142,14 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
 
 #ifdef CARA_MAC_ATLAS_PIPELINE
     if (result != GL_TRUE && shader_id) { glDeleteShader(shader_id); shader_id=0; }
+#elif defined(CARA_ANDROID_GLES_ATLAS)
+    // Some compiler failures have an empty info log. Treat them as failures
+    // so the fixed geometry route can retry the baseline shader.
+    if (result != GL_TRUE && shader_id &&
+        compatible_source.starts_with(NativeQuaternionGeometry::AndroidEsslMarker)) {
+        glDeleteShader(shader_id);
+        shader_id = 0;
+    }
 #endif
     return shader_id;
 }
