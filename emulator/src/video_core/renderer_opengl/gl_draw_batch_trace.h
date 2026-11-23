@@ -102,6 +102,30 @@ inline void Record(const State& s, const void* vertices, size_t vb, const void* 
     if (s.feedback || prev.feedback) bits |= Feedback;
     for (int shift = 12; shift >= 0; shift -= 4)
         masks.push_back("0123456789abcdef"[(bits >> shift) & 15]);
+    // Inspect a bounded sample of individual command packets for identical-input
+    // neighbors. Never use command addresses or these observations to skip work.
+    const auto& commands = Pica::g_state.cmd_list;
+    static thread_local const u32* previous_head = nullptr;
+    static thread_local size_t previous_end = 0;
+    static thread_local u32 detail_frame = ~0u;
+    static thread_local unsigned details = 0;
+    if (s.frame != detail_frame) { detail_frame = s.frame; details = 0; }
+    if (commands.head_ptr && commands.current_ptr) {
+        const size_t end = commands.current_ptr - commands.head_ptr;
+        if (s.frame % 120 == 0 && bits == Storage && details < 12 &&
+            commands.head_ptr == previous_head && previous_end <= end && end <= commands.length) {
+            std::string words;
+            for (size_t pos = previous_end; pos < end && pos - previous_end < 192; ++pos)
+                words += fmt::format("{:08x}", commands.head_ptr[pos]);
+            __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                "batch_packets frame=%u draw=%u route=%u vertices=%u begin=%zu end=%zu words=%s",
+                s.frame, offset + unsigned(masks.size()/4) - 1, s.route, s.count,
+                previous_end, end, words.c_str());
+            ++details;
+        }
+        previous_head = commands.head_ptr;
+        previous_end = end;
+    }
     prev = s;
     started = true;
 }
