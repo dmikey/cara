@@ -10,9 +10,9 @@ import tempfile
 from sign_nightly import decode_secret, hash_file
 
 
-KEY = "CARA_NOTARY_KEY_BASE64"
-KEY_ID = "CARA_NOTARY_KEY_ID"
-ISSUER = "CARA_NOTARY_ISSUER_ID"
+KEY = "CARA_ASC_UPLOAD_KEY_BASE64"
+KEY_ID = "CARA_ASC_UPLOAD_KEY_ID"
+ISSUER = "CARA_ASC_UPLOAD_ISSUER_ID"
 IPA_NAME = "Cara-iOS-arm64-GLES3-signed.ipa"
 IPA_POLICY = {
     "signing": "apple-distribution",

@@ -82,8 +82,15 @@ route builds and signs only iOS, so it can run while Mac and Android signing
 are still being configured. It preserves the signed IPA in Actions, verifies
 the bundle ID and source receipt and submits the IPA to App Store Connect.
 
-Set the three `CARA_IOS_*` secrets and the three `CARA_NOTARY_*` secrets in the
-protected environment. The latter identify the App Store Connect team API
-key used for upload and Mac notarization. A successful upload moves the build
-to Apple processing. Assign it to a TestFlight group after processing and
-review any required export or beta questions in App Store Connect.
+Set the three `CARA_IOS_*` secrets and these App Store Connect upload credentials
+in the protected environment:
+
+| Name | Value |
+| --- | --- |
+| `CARA_ASC_UPLOAD_KEY_BASE64` | Base64 App Store Connect team API key for TestFlight uploads |
+| `CARA_ASC_UPLOAD_KEY_ID` | TestFlight upload API key ID |
+| `CARA_ASC_UPLOAD_ISSUER_ID` | App Store Connect API issuer ID |
+
+Mac notarization uses its own `CARA_NOTARY_*` credentials. A successful upload
+moves the build to Apple processing. Assign it to a TestFlight group after
+processing and review any required export or beta questions in App Store Connect.

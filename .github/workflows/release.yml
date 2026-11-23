@@ -104,6 +104,9 @@ jobs:
           CARA_NOTARY_KEY_BASE64: ${{ secrets.CARA_NOTARY_KEY_BASE64 }}
           CARA_NOTARY_KEY_ID: ${{ secrets.CARA_NOTARY_KEY_ID }}
           CARA_NOTARY_ISSUER_ID: ${{ secrets.CARA_NOTARY_ISSUER_ID }}
+          CARA_ASC_UPLOAD_KEY_BASE64: ${{ secrets.CARA_ASC_UPLOAD_KEY_BASE64 }}
+          CARA_ASC_UPLOAD_KEY_ID: ${{ secrets.CARA_ASC_UPLOAD_KEY_ID }}
+          CARA_ASC_UPLOAD_ISSUER_ID: ${{ secrets.CARA_ASC_UPLOAD_ISSUER_ID }}
           CARA_IOS_CERTIFICATE_BASE64: ${{ secrets.CARA_IOS_CERTIFICATE_BASE64 }}
           CARA_IOS_CERTIFICATE_PASSWORD: ${{ secrets.CARA_IOS_CERTIFICATE_PASSWORD }}
           CARA_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.CARA_IOS_APP_STORE_PROFILE_BASE64 }}
@@ -116,7 +119,10 @@ jobs:
           set -euo pipefail
           missing=0
           while IFS= read -r name; do
-            if [[ "$MODE" = testflight && "$name" != CARA_IOS_* && "$name" != CARA_NOTARY_* ]]; then
+            if [[ "$MODE" = testflight && "$name" != CARA_IOS_* && "$name" != CARA_ASC_UPLOAD_* ]]; then
+              continue
+            fi
+            if [[ "$MODE" != testflight && "$name" = CARA_ASC_UPLOAD_* ]]; then
               continue
             fi
             if [[ -z "${!name}" ]]; then
@@ -318,9 +324,9 @@ jobs:
       - name: Upload the signed IPA to App Store Connect
         if: needs.source.outputs.mode == 'testflight' && steps.ios.outputs.signed == 'true'
         env:
-          CARA_NOTARY_KEY_BASE64: ${{ secrets.CARA_NOTARY_KEY_BASE64 }}
-          CARA_NOTARY_KEY_ID: ${{ secrets.CARA_NOTARY_KEY_ID }}
-          CARA_NOTARY_ISSUER_ID: ${{ secrets.CARA_NOTARY_ISSUER_ID }}
+          CARA_ASC_UPLOAD_KEY_BASE64: ${{ secrets.CARA_ASC_UPLOAD_KEY_BASE64 }}
+          CARA_ASC_UPLOAD_KEY_ID: ${{ secrets.CARA_ASC_UPLOAD_KEY_ID }}
+          CARA_ASC_UPLOAD_ISSUER_ID: ${{ secrets.CARA_ASC_UPLOAD_ISSUER_ID }}
           EXPECTED_SHA: ${{ needs.source.outputs.sha }}
         run: |
           export DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer
