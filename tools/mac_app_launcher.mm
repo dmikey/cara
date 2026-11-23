@@ -56,8 +56,9 @@ int main(int argc, char** argv) {
             if([name hasPrefix:@"CARA_"] || ([name hasPrefix:@"DYLD_"] && !(verify_package && [name isEqual:@"DYLD_PRINT_LIBRARIES"])) || [name isEqual:@"SDL_DYNAMIC_API"] || [name isEqual:@"SDL3_DYNAMIC_API"])unsetenv(name.UTF8String);
         NSDictionary* runtime=JSON([resources stringByAppendingPathComponent:@"runtime.json"]);
         for(NSString* name in runtime){Require([runtime[name] isKindOfClass:NSString.class],"Invalid runtime settings");setenv(name.UTF8String,[runtime[name] UTF8String],1);}
-        if(!verify_package)setenv("CARA_USER_DIR",user.fileSystemRepresentation,1);
         if(!verify_package){
+        setenv("CARA_USER_DIR",user.fileSystemRepresentation,1);
+        setenv("CARA_NATIVE_GUI_OPEN","1",1);
         int log=open([[user stringByAppendingPathComponent:@"last-launch.log"] fileSystemRepresentation],O_WRONLY|O_CREAT|O_APPEND|O_NOFOLLOW,0600);
         Require(log>=0,"Could not open the game log");dup2(log,STDOUT_FILENO);dup2(log,STDERR_FILENO);close(log);
         }
