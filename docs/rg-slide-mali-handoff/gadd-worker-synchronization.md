@@ -131,3 +131,21 @@ The slowest refreshes were 2620 and 2591 respectively. All eight warm windows re
 ```sh
 python3 summarize-pica-backlog.py gadd-pica-backlog-vertex.log.gz 2641 2761 2881 3001
 ```
+
+## What blocked both threads at once
+
+A further normal boot used the synchronous-timing build without per-command PICA instrumentation. Android Simpleperf recorded the emulation and CaraGLES threads in the same 3-second warm Gadd interval with `--trace-offcpu -e cpu-clock -f 199 --call-graph dwarf,8192`. We joined each switch-out sample to the next switch-out and subsequent switch-in for its own TID, symbolized the stack with the matching ARM64 build, and intersected the two threads' intervals. Of the switch-out samples, 1,892/1,892 on the producer and 6,461/6,462 on the worker matched. The first dual capture was truncated during host disk pressure and discarded. The repeated capture had 3,008.65 ms of shared scheduler time. The production APK, configuration, and shader cache were restored after the run.
+
+| Emulation thread | GLES worker | Wall time, ms | Share of common interval |
+| --- | --- | ---: | ---: |
+| Running | Running | 852.49 | 28.3% |
+| Waiting for GLES result | Inside Mali semaphore wait | 746.67 | 24.8% |
+| Running | Sleeping on Cara's work queue | 572.99 | 19.0% |
+| Running | Inside Mali semaphore wait | 393.11 | 13.1% |
+| Waiting for GLES result | Running | 359.03 | 11.9% |
+
+Of the 746.67 ms with both blocked, four query/worker pairs explain 725.85 ms. The guest waited on `glGetIntegerv` while Mali slept in `glDrawElements` for 292.15 ms. Its `glGetError` overlapped 175.67 ms inside `glDrawArrays`. Its `glFenceSync` overlapped 167.37 ms inside `glClear`. Its `glClientWaitSync` overlapped 90.66 ms inside `glBlitFramebuffer`. These independently sampled pairs agree with the tagged PICA boot. They include time spent waiting for earlier GPU commands.
+
+Both threads also had real work to execute. While the producer waited for a GLES result and the worker ran, 20 of 77 worker CPU stack samples landed in framebuffer attachment changes. When both ran, 91 of 166 producer CPU samples included `AccelerateDrawBatch`. When the guest ran and the worker slept on the Cara queue, 16 of 115 producer samples landed in Dynarmic's ARM64 block lookup/emission entry point. Several guest addresses could not be symbolized. The samples support optimizing draw preparation and attachment churn alongside synchronization. They do not establish the time saved by a new JIT or a larger queue.
+
+At a representative 30 ms/refresh, the observed 24.8% simultaneous result/semaphore wait corresponds to about 7.4 ms. Even if all of it disappeared without shifting the wait, about 22.6 ms would remain. The 16.7 ms target also requires removing or overlapping other work. A hardware-timed experiment should test the unlit indexed pass feeding remap separately from attachment reuse, and retain exact surface and presentation dependencies. [Joint states and call pairs](gadd-dual-thread-waits.tsv)
