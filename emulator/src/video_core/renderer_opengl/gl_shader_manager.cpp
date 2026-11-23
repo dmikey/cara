@@ -732,18 +732,27 @@ public:
     }
     void LoadIOSPipelines() {
         ios_identity = IOSIdentity();
-        ios_cache_path = GetCacheFile() +
-                         (UseNativeLUTBuffers() ? ".native-lut.cara-pso1" : ".cara-pso1");
+        std::string suffix = UseNativeLUTBuffers() ? ".native-lut" : "";
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        const char* expanded = std::getenv("CARA_MALI_EXTENDED_PROGRAM_CACHE");
+        const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        if (expanded && std::strcmp(expanded, "1") == 0 && renderer &&
+            std::strstr(renderer, "Mali")) {
+            ios_cache_limits = IOSPipelineCache::ExtendedMaliLimits;
+            suffix += ".mali-extended";
+        }
+#endif
+        ios_cache_path = GetCacheFile() + suffix + ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
         std::ifstream file(ios_cache_path, std::ios::binary | std::ios::ate);
         if (!file) return;
         const auto size = file.tellg();
-        if (size < 0 || size > static_cast<std::streamoff>(IOSPipelineCache::MaxBytes)) return;
+        if (size < 0 || size > static_cast<std::streamoff>(ios_cache_limits.bytes)) return;
         std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
         file.seekg(0);
         if (!file.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) ||
-            !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries)) return;
+            !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries, ios_cache_limits)) return;
         const auto start = std::chrono::steady_clock::now();
         unsigned binary_hits = 0, source_links = 0;
         // A stage shared by several saved programs needs compiling only once.
@@ -776,6 +785,9 @@ public:
             }
             BindIOSProgram(p);
         }
+        if (shader_census)
+            ShaderCensus::Record("cache_restore entries={} binary_hits={} source_links={} bytes={}",
+                                 ios_entries.size(), binary_hits, source_links, bytes.size());
         LOG_INFO(Render_OpenGL, "Cara iOS prewarm: {} binary hits, {} source links, {} us; {} formats",
                  binary_hits, source_links,
                  std::chrono::duration_cast<std::chrono::microseconds>(
@@ -798,7 +810,7 @@ public:
         std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
         if (!file) { fail("open"); return; }
         // Serialize at most once per permitted attempt, never on a denied retry.
-        const auto bytes = IOSPipelineCache::Encode(ios_identity, ios_entries);
+        const auto bytes = IOSPipelineCache::Encode(ios_identity, ios_entries, ios_cache_limits);
         if (bytes.empty()) { file.close(); fail("encode"); return; }
         file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
         file.close();
@@ -811,7 +823,7 @@ public:
     }
     void RememberIOSPipeline(u64 key, const OGLProgram& program, const std::string& vs_source,
                              const std::string& fs_source) {
-        if (ios_entries.size() >= IOSPipelineCache::MaxEntries ||
+        if (ios_entries.size() >= ios_cache_limits.entries ||
             vs_source.size() > IOSPipelineCache::MaxSource ||
             fs_source.size() > IOSPipelineCache::MaxSource)
             return;
@@ -829,7 +841,7 @@ public:
             }
         }
         const auto cost = entry.vertex.size() + entry.fragment.size() + entry.binary.size() + 16;
-        if (cost > IOSPipelineCache::MaxBytes || ios_bytes > IOSPipelineCache::MaxBytes - cost)
+        if (cost > ios_cache_limits.bytes || ios_bytes > ios_cache_limits.bytes - cost)
             return;
         ios_bytes += cost;
         ios_entries.push_back(std::move(entry));
@@ -1127,6 +1139,7 @@ private:
     std::vector<GLint> ios_formats;
     std::string ios_identity;
     std::string ios_cache_path;
+    IOSPipelineCache::Limits ios_cache_limits = IOSPipelineCache::DefaultLimits;
     IOSPipelineCache::CheckpointRetry ios_checkpoint_retry;
     std::size_t ios_bytes = 8192; // Header/identity/checksum reserve included in the disk budget.
     bool ios_dirty = false;

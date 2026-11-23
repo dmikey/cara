@@ -15,6 +15,12 @@ constexpr std::size_t MaxBytes = 32 * 1024 * 1024;
 constexpr std::size_t MaxEntries = 128;
 constexpr std::size_t MaxSource = 256 * 1024;
 constexpr std::size_t MaxBinary = 1024 * 1024;
+struct Limits {
+    std::size_t bytes;
+    std::size_t entries;
+};
+constexpr Limits DefaultLimits{MaxBytes, MaxEntries};
+constexpr Limits ExtendedMaliLimits{64 * 1024 * 1024, 256};
 struct Entry {
     std::string vertex, fragment;
     std::uint32_t format = 0;
@@ -78,8 +84,10 @@ inline void Blob(std::vector<std::uint8_t>& out, const void* data, std::size_t s
     }
 }
 inline std::vector<std::uint8_t> Encode(const std::string& identity,
-                                      const std::vector<Entry>& entries) {
-    if (identity.size() > 4096 || entries.size() > MaxEntries) return {};
+                                      const std::vector<Entry>& entries,
+                                      Limits limits = DefaultLimits) {
+    if (identity.size() > 4096 || entries.size() > limits.entries ||
+        limits.bytes < 24 + identity.size()) return {};
     std::vector<std::uint8_t> out;
     Put(out, 0x4341524150534F01ULL, 8); // CARA pipeline store, schema 1
     Blob(out, identity.data(), identity.size());
@@ -91,14 +99,14 @@ inline std::vector<std::uint8_t> Encode(const std::string& identity,
         Blob(out, e.fragment.data(), e.fragment.size());
         Put(out, e.format, 4);
         Blob(out, e.binary.data(), e.binary.size());
-        if (out.size() > MaxBytes - 8) return {};
+        if (out.size() > limits.bytes - 8) return {};
     }
     Put(out, Digest(out.data(), out.size()), 8);
     return out;
 }
 inline bool Decode(const std::vector<std::uint8_t>& in, const std::string& identity,
-                   std::vector<Entry>& entries) {
-    if (in.size() < 28 || in.size() > MaxBytes) return false;
+                   std::vector<Entry>& entries, Limits limits = DefaultLimits) {
+    if (in.size() < 28 || in.size() > limits.bytes) return false;
     std::size_t pos = 0;
     bool good = true;
     const auto number = [&](unsigned width) {
@@ -120,7 +128,7 @@ inline bool Decode(const std::vector<std::uint8_t>& in, const std::string& ident
     blob(4096, found);
     if (!good || found != identity) return false;
     const auto count = number(4);
-    if (!good || count > MaxEntries) return false;
+    if (!good || count > limits.entries) return false;
     std::vector<Entry> decoded;
     for (std::size_t i = 0; i < count && good; ++i) {
         Entry e;

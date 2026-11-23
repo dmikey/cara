@@ -37,3 +37,14 @@ caches with the driver cache state recorded. Collect emulator-thread
 compile and link wall time, first draw and visible output alongside
 startup latency, p99, and worst refreshes. Verify cold and warm behavior
 before considering wider adoption.
+
+## Bounded Mali binary archive experiment
+
+`[Debug] atlas_extended_program_cache = True` selects a separate binary
+archive on Android Atlas with a Mali renderer. The experiment can record
+up to 256 pairs and 64 MiB. The existing archive defaults remain
+128 pairs and 32 MiB. Both modes check shader/driver identity, source and
+binary size, and the checksum before submitting saved binaries to GLES.
+Use `trace_gl_shader_census` to record the restore count and binary hits.
+Compare a late lab checkpoint beyond the first 128 programs, and check
+checkpoint cost, title startup and shader-related p99 before promotion.
