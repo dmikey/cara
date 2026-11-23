@@ -1,0 +1,23 @@
+{
+  "status": "publisher-attestation",
+  "confirmed": "2026-11-20",
+  "sounds": {
+    "provider": "ElevenLabs",
+    "publisher_statement": "Publisher confirms a paid ElevenLabs account. Invoice, generation dates and applicable plan terms are retained by the publisher, not verified in this repository.",
+    "files_sha256": {
+      "back.caf": "0be9f234cc39714b2aacfe4695905f38127663d5ab9438cd875a5e83dbe86a1d",
+      "cancel.caf": "bc42b9d1249b3dbef2509744be71f556fda053f0f256e0f1c8c3bc719679a8ae",
+      "confirm.caf": "631045d0c6a3fc19ce6f4a6a68b854f0b01ffbf86f6ad6af6d687f4c92f0dfe8",
+      "favorite.caf": "8bcc79ab86414fc6851f50de822556fc0f292b68c785812ecd3318c54bcd448e",
+      "focus.caf": "7831f9eeece5dabfd1bc7fb03eecf295205e28571b316c73db442e038de19982",
+      "launch.caf": "43853ada9b5584671ee59daded8d8aa2d3c2befa55697eb9c2af71fb4f4b244a",
+      "select.caf": "440aa09b7d8eb2748e0d191cdd4c79fc005eba20ada4e5cde68e675ada85919f",
+      "toggle.caf": "45824bef0785cb821902a8e9a3c3ee88711f8d9df398261e3a15713293cc5270"
+    }
+  },
+  "skin": {
+    "name": "Cara Carbon Duo",
+    "source_generator": "tools/make_skin.py",
+    "provenance": "Generator describes the skin as original Cara artwork."
+  }
+}

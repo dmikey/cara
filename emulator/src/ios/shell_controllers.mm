@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Modified for Cara on 2026-11-20: frontend presentation and attribution.
 #import "ios/shell_controllers.h"
+#import "ios/ui_theme.h"
 #import <QuartzCore/QuartzCore.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -15,7 +17,7 @@ static NSDictionary<NSString*,NSNumber*>* CaraMenuSoundIDs;
 static void CaraPrepareMenuSounds() {
     static dispatch_once_t once;
     dispatch_once(&once,^{
-        [NSUserDefaults.standardUserDefaults registerDefaults:@{@"libraryMenuSounds":@YES,@"libraryTheme":@1}];
+        [NSUserDefaults.standardUserDefaults registerDefaults:@{@"libraryMenuSounds":@YES,@"libraryTheme":@2}];
         NSMutableDictionary* sounds=[NSMutableDictionary new];
         for(NSString* name in @[@"focus",@"select",@"back",@"favorite",@"confirm",@"cancel",@"launch",@"toggle"]) {
             NSURL* url=[NSBundle.mainBundle URLForResource:name withExtension:@"caf" subdirectory:@"MenuSounds"];
@@ -38,16 +40,9 @@ static void CaraMenuSound(NSString* name) {
     if(identifier) { last=now; AudioServicesPlaySystemSound(identifier); }
 }
 
-static UIColor* CaraOrange() { return [UIColor colorWithRed:1 green:.48 blue:.24 alpha:1]; }
-static UIColor* CaraAccent() {
-    NSInteger index=[NSUserDefaults.standardUserDefaults integerForKey:@"libraryAccent"];
-    return @[[UIColor colorWithRed:0 green:.67 blue:.70 alpha:1],UIColor.systemBlueColor,UIColor.systemPinkColor,UIColor.systemPurpleColor,UIColor.systemGrayColor][MAX(0,MIN(4,index))];
-}
-static UIColor* CaraBackground() {
-    return [UIColor colorWithDynamicProvider:^UIColor*(UITraitCollection* traits) {
-        return traits.userInterfaceStyle==UIUserInterfaceStyleDark?[UIColor colorWithRed:.08 green:.09 blue:.10 alpha:1]:[UIColor colorWithRed:.98 green:.97 blue:.97 alpha:1];
-    }];
-}
+static UIColor* CaraAccent() { return CaraUIAccent(); }
+static UIColor* CaraOrange() { return CaraUIAccent(); }
+static UIColor* CaraBackground() { return CaraUIBackground(); }
 
 // Read only the unencrypted icon section; never initialize or borrow the active
 // emulator, decrypt a game, or read the whole ROM just to decorate the library.
@@ -124,13 +119,13 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     if ((self=[super initWithFrame:frame])) {
         UIView* tile=[UIView new]; tile.translatesAutoresizingMaskIntoConstraints=NO;
         tile.backgroundColor=[UIColor colorWithDynamicProvider:^UIColor*(UITraitCollection* t) { return t.userInterfaceStyle==UIUserInterfaceStyleDark?[UIColor colorWithRed:.10 green:.20 blue:.21 alpha:1]:[UIColor colorWithRed:.84 green:.95 blue:.94 alpha:1]; }];
-        tile.layer.cornerRadius=22; tile.clipsToBounds=YES;
+        tile.layer.cornerRadius=22; tile.layer.cornerCurve=kCACornerCurveContinuous; tile.clipsToBounds=YES;
         _artwork=[UIImageView new]; _artwork.translatesAutoresizingMaskIntoConstraints=NO; _artwork.contentMode=UIViewContentModeScaleAspectFill; _artwork.clipsToBounds=YES;
         _monogram=[UILabel new]; _monogram.translatesAutoresizingMaskIntoConstraints=NO; _monogram.font=[UIFont systemFontOfSize:42 weight:UIFontWeightSemibold]; _monogram.textColor=CaraAccent(); _monogram.textAlignment=NSTextAlignmentCenter;
         [tile addSubview:_artwork]; [tile addSubview:_monogram];
         _titleLabel=[UILabel new]; _titleLabel.numberOfLines=2; _titleLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; _titleLabel.adjustsFontForContentSizeCategory=YES;
         _subtitle=[UILabel new]; _subtitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; _subtitle.adjustsFontForContentSizeCategory=YES; _subtitle.textColor=UIColor.secondaryLabelColor;
-        UIStackView* stack=[[UIStackView alloc] initWithArrangedSubviews:@[tile,_titleLabel,_subtitle]]; stack.axis=UILayoutConstraintAxisVertical; stack.spacing=6; stack.translatesAutoresizingMaskIntoConstraints=NO; stack.alignment=UIStackViewAlignmentFill;
+        UIStackView* stack=[[UIStackView alloc] initWithArrangedSubviews:@[tile,_titleLabel,_subtitle]]; stack.axis=UILayoutConstraintAxisVertical; stack.spacing=8; stack.translatesAutoresizingMaskIntoConstraints=NO; stack.alignment=UIStackViewAlignmentFill;
         [self.contentView addSubview:stack];
         [NSLayoutConstraint activateConstraints:@[
             [stack.topAnchor constraintEqualToAnchor:self.contentView.topAnchor], [stack.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor], [stack.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor], [stack.bottomAnchor constraintLessThanOrEqualToAnchor:self.contentView.bottomAnchor],
@@ -144,7 +139,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
 }
 - (void)configure:(CaraLibraryGame*)game {
     self.gameKey=[NSString stringWithFormat:@"%@-%@-%llu",game.url.absoluteString,game.modified,game.fileSize];
-    self.artwork.image=nil; self.monogram.hidden=NO;
+    self.artwork.image=nil; self.monogram.hidden=NO; self.monogram.textColor=CaraAccent();
     NSArray* words=[game.title componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSMutableString* initials=[NSMutableString new];
     for (NSString* word in words) if (word.length && initials.length<2) [initials appendString:[word substringToIndex:1].uppercaseString];
@@ -183,6 +178,12 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     BOOL sortRecent;
     UILabel* syncLabel;
     UIStackView* libraryBody;
+    UIScrollView* libraryRail;
+    NSArray<UIButton*>* librarySections;
+    NSLayoutConstraint* bodyLeading;
+    NSLayoutConstraint* heroArtWidth;
+    UIBarButtonItem* librarySettingsItem;
+    UIButton* addGamesButton;
 }
 - (void)viewDidLoad {
     [super viewDidLoad]; CaraPrepareMenuSounds(); self.title=@"Cara"; self.view.backgroundColor=CaraBackground(); self.view.tintColor=CaraAccent();
@@ -191,24 +192,48 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     [tabs addTarget:self action:@selector(tabChanged) forControlEvents:UIControlEventValueChanged]; self.navigationItem.titleView=tabs;
     UIBarButtonItem* settings=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"gearshape"] style:UIBarButtonItemStylePlain target:self action:@selector(settingsTapped)]; settings.accessibilityLabel=@"Settings";
     UIImageView* brandIcon=[[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"rectangle.on.rectangle"]]; brandIcon.contentMode=UIViewContentModeScaleAspectFit; [brandIcon.widthAnchor constraintEqualToConstant:28].active=YES;
-    UILabel* brandTitle=[UILabel new]; brandTitle.text=@"Cara"; brandTitle.font=[UIFont systemFontOfSize:25 weight:UIFontWeightBold]; UIStackView* brand=[[UIStackView alloc] initWithArrangedSubviews:@[brandIcon,brandTitle]]; brand.spacing=8; brand.alignment=UIStackViewAlignmentCenter; brand.userInteractionEnabled=NO;
+    UILabel* brandTitle=[UILabel new]; brandTitle.text=@"Cara"; brandTitle.font=CaraUIDisplayFont(25,UIFontTextStyleTitle2); brandTitle.adjustsFontForContentSizeCategory=YES; UIStackView* brand=[[UIStackView alloc] initWithArrangedSubviews:@[brandIcon,brandTitle]]; brand.spacing=8; brand.alignment=UIStackViewAlignmentCenter; brand.userInteractionEnabled=NO;
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithCustomView:brand];
-    self.navigationItem.rightBarButtonItem=settings;
+    librarySettingsItem=settings; self.navigationItem.rightBarButtonItem=settings;
     search=[[UISearchController alloc] initWithSearchResultsController:nil]; search.searchResultsUpdater=self; search.obscuresBackgroundDuringPresentation=NO; search.searchBar.placeholder=@"Search your collection"; self.navigationItem.searchController=search; self.navigationItem.hidesSearchBarWhenScrolling=NO; self.definesPresentationContext=YES;
+    libraryRail=[UIScrollView new]; libraryRail.accessibilityIdentifier=@"library-sidebar";
+    UIStackView* rail=[UIStackView new]; rail.axis=UILayoutConstraintAxisVertical; rail.spacing=8; rail.translatesAutoresizingMaskIntoConstraints=NO;
+    UILabel* railTitle=[UILabel new]; railTitle.text=@"LIBRARY"; railTitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; railTitle.textColor=UIColor.secondaryLabelColor; railTitle.adjustsFontForContentSizeCategory=YES;
+    [rail addArrangedSubview:railTitle];
+    NSMutableArray* sections=[NSMutableArray new];
+    NSArray* symbols=@[@"square.grid.2x2.fill",@"heart.fill",@"clock.fill",@"plus.circle",@"gearshape"];
+    NSArray* names=@[@"Collection",@"Favorites",@"Recently played",@"Add games",@"Settings"];
+    for(NSInteger i=0;i<names.count;++i) {
+        UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem];
+        UIButtonConfiguration* config=[UIButtonConfiguration plainButtonConfiguration];
+        config.title=names[i]; config.image=[UIImage systemImageNamed:symbols[i]]; config.imagePadding=12;
+        config.contentInsets=NSDirectionalEdgeInsetsMake(14,14,14,14); config.cornerStyle=UIButtonConfigurationCornerStyleMedium;
+        button.configuration=config; button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading; button.tag=i;
+        [button.heightAnchor constraintGreaterThanOrEqualToConstant:50].active=YES;
+        [button addTarget:self action:@selector(librarySectionTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [rail addArrangedSubview:button]; if(i<3) [sections addObject:button];
+    }
+    librarySections=sections; [libraryRail addSubview:rail]; [self.view addSubview:libraryRail];
+    [NSLayoutConstraint activateConstraints:@[
+        [rail.topAnchor constraintEqualToAnchor:libraryRail.contentLayoutGuide.topAnchor constant:12],
+        [rail.bottomAnchor constraintEqualToAnchor:libraryRail.contentLayoutGuide.bottomAnchor constant:-12],
+        [rail.leadingAnchor constraintEqualToAnchor:libraryRail.contentLayoutGuide.leadingAnchor],
+        [rail.trailingAnchor constraintEqualToAnchor:libraryRail.contentLayoutGuide.trailingAnchor],
+        [rail.widthAnchor constraintEqualToAnchor:libraryRail.frameLayoutGuide.widthAnchor]]];
     artworkCache=[NSCache new]; artworkCache.totalCostLimit=32*1024*1024; artworkCache.countLimit=80;
     NSURL* artworkRoot=[[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject URLByAppendingPathComponent:@"CaraArtwork"];
     artworkStore=[[CaraArtworkStore alloc] initWithRoot:artworkRoot];
     artworkQueue=dispatch_queue_create("com.dmikey.cara.library.artwork",DISPATCH_QUEUE_SERIAL);
-    hero=[UIView new]; hero.backgroundColor=UIColor.secondarySystemGroupedBackgroundColor; hero.layer.cornerRadius=24; hero.clipsToBounds=YES;
+    hero=[UIView new]; hero.backgroundColor=UIColor.secondarySystemGroupedBackgroundColor; hero.layer.cornerRadius=24; hero.layer.cornerCurve=kCACornerCurveContinuous; hero.clipsToBounds=YES;
     heroArtwork=[UIImageView new]; heroArtwork.contentMode=UIViewContentModeScaleAspectFit; heroArtwork.layer.cornerRadius=20; heroArtwork.clipsToBounds=YES; heroArtwork.tintColor=CaraAccent();
-    UILabel* eyebrow=[UILabel new]; eyebrow.text=@"JUMP BACK IN"; eyebrow.font=[UIFont systemFontOfSize:12 weight:UIFontWeightBold]; eyebrow.textColor=CaraAccent();
-    heroTitle=[UILabel new]; heroTitle.font=[UIFont systemFontOfSize:28 weight:UIFontWeightBold]; heroTitle.numberOfLines=2;
-    heroSubtitle=[UILabel new]; heroSubtitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; heroSubtitle.textColor=UIColor.secondaryLabelColor; heroSubtitle.numberOfLines=2;
-    heroPlay=[UIButton buttonWithType:UIButtonTypeSystem]; heroPlay.configuration=[UIButtonConfiguration filledButtonConfiguration]; [heroPlay addTarget:self action:@selector(openRecent) forControlEvents:UIControlEventTouchUpInside]; heroPlay.layer.cornerRadius=20;
+    UILabel* eyebrow=[UILabel new]; eyebrow.text=@"JUMP BACK IN"; eyebrow.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; eyebrow.adjustsFontForContentSizeCategory=YES; eyebrow.textColor=CaraAccent();
+    heroTitle=[UILabel new]; heroTitle.font=CaraUIDisplayFont(28,UIFontTextStyleTitle1); heroTitle.adjustsFontForContentSizeCategory=YES; heroTitle.numberOfLines=2;
+    heroSubtitle=[UILabel new]; heroSubtitle.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; heroSubtitle.textColor=UIColor.secondaryLabelColor; heroSubtitle.numberOfLines=2; heroSubtitle.adjustsFontForContentSizeCategory=YES;
+    heroPlay=[UIButton buttonWithType:UIButtonTypeSystem]; UIButtonConfiguration* playConfig=[UIButtonConfiguration filledButtonConfiguration]; playConfig.cornerStyle=UIButtonConfigurationCornerStyleCapsule; playConfig.image=[UIImage systemImageNamed:@"play.fill"]; playConfig.imagePadding=8; playConfig.contentInsets=NSDirectionalEdgeInsetsMake(12,20,12,20); heroPlay.configuration=playConfig; [heroPlay addTarget:self action:@selector(openRecent) forControlEvents:UIControlEventTouchUpInside]; heroPlay.layer.cornerRadius=20;
     UIStackView* copy=[[UIStackView alloc] initWithArrangedSubviews:@[eyebrow,heroTitle,heroSubtitle,heroPlay]]; copy.axis=UILayoutConstraintAxisVertical; copy.spacing=10;
     UIStackView* heroBody=[[UIStackView alloc] initWithArrangedSubviews:@[copy,heroArtwork]]; heroBody.spacing=24; heroBody.alignment=UIStackViewAlignmentCenter; heroBody.translatesAutoresizingMaskIntoConstraints=NO; [hero addSubview:heroBody];
-    [NSLayoutConstraint activateConstraints:@[[heroBody.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:24],[heroBody.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-24],[heroBody.topAnchor constraintEqualToAnchor:hero.topAnchor constant:20],[heroBody.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:-20],[heroArtwork.widthAnchor constraintEqualToAnchor:heroBody.widthAnchor multiplier:.45],[heroArtwork.heightAnchor constraintEqualToConstant:145]]];
-    countLabel=[UILabel new]; countLabel.font=[UIFont systemFontOfSize:23 weight:UIFontWeightBold]; countLabel.text=@"Your collection";
+    [NSLayoutConstraint activateConstraints:@[[heroBody.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:24],[heroBody.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-24],[heroBody.topAnchor constraintEqualToAnchor:hero.topAnchor constant:20],[heroBody.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:-20],(heroArtWidth=[heroArtwork.widthAnchor constraintEqualToAnchor:heroBody.widthAnchor multiplier:.45]),[heroArtwork.heightAnchor constraintEqualToConstant:145]]];
+    countLabel=[UILabel new]; countLabel.font=CaraUIDisplayFont(23,UIFontTextStyleTitle2); countLabel.adjustsFontForContentSizeCategory=YES; countLabel.text=@"Your collection";
     UIButton* sort=[UIButton buttonWithType:UIButtonTypeSystem]; sort.configuration=[UIButtonConfiguration borderedButtonConfiguration]; [sort setTitle:@"Sort" forState:UIControlStateNormal]; sort.showsMenuAsPrimaryAction=YES;
     __weak CaraLibraryController* owner=self;
     sort.menu=[UIMenu menuWithChildren:@[[UIAction actionWithTitle:@"Title" image:[UIImage systemImageNamed:@"textformat.abc"] identifier:nil handler:^(UIAction* a) { CaraLibraryController* c=owner; if(c) { c->sortRecent=NO; CaraMenuSound(@"select"); [c filterGames]; } }],[UIAction actionWithTitle:@"Recently played" image:[UIImage systemImageNamed:@"clock"] identifier:nil handler:^(UIAction* a) { CaraLibraryController* c=owner; if(c) { c->sortRecent=YES; CaraMenuSound(@"select"); [c filterGames]; } }]]];
@@ -216,24 +241,60 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     UICollectionViewFlowLayout* layout=[UICollectionViewFlowLayout new]; layout.minimumInteritemSpacing=18; layout.minimumLineSpacing=22;
     collection=[[UICollectionView alloc] initWithFrame:CGRectZero collectionViewLayout:layout]; collection.backgroundColor=UIColor.clearColor; collection.alwaysBounceVertical=YES; collection.delegate=self; collection.dataSource=self; [collection registerClass:CaraGameCell.class forCellWithReuseIdentifier:@"game"];
     UIRefreshControl* refresh=[UIRefreshControl new]; [refresh addTarget:self action:@selector(reloadLibrary) forControlEvents:UIControlEventValueChanged]; collection.refreshControl=refresh;
-    UIButton* add=[UIButton buttonWithType:UIButtonTypeSystem]; add.configuration=[UIButtonConfiguration borderedButtonConfiguration]; [add setTitle:@"＋  Add games" forState:UIControlStateNormal]; [add addTarget:self action:@selector(addTapped) forControlEvents:UIControlEventTouchUpInside];
+    UIButton* add=[UIButton buttonWithType:UIButtonTypeSystem]; addGamesButton=add; add.configuration=[UIButtonConfiguration borderedButtonConfiguration]; [add setTitle:@"Add games" forState:UIControlStateNormal]; UIButtonConfiguration* addConfig=add.configuration; addConfig.image=[UIImage systemImageNamed:@"plus"]; addConfig.imagePadding=8; addConfig.contentInsets=NSDirectionalEdgeInsetsMake(12,16,12,16); add.configuration=addConfig; [add addTarget:self action:@selector(addTapped) forControlEvents:UIControlEventTouchUpInside];
     syncLabel=[UILabel new]; syncLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; syncLabel.textColor=UIColor.secondaryLabelColor; syncLabel.numberOfLines=2;
     UIStackView* footer=[[UIStackView alloc] initWithArrangedSubviews:@[add,syncLabel]]; footer.spacing=20; footer.alignment=UIStackViewAlignmentCenter;
     UIStackView* body=[[UIStackView alloc] initWithArrangedSubviews:@[hero,heading,collection,footer]]; libraryBody=body; body.axis=UILayoutConstraintAxisVertical; body.spacing=18; body.translatesAutoresizingMaskIntoConstraints=NO; [self.view addSubview:body];
-    [NSLayoutConstraint activateConstraints:@[[body.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:24],[body.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-24],[body.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],[body.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-12]]];
+    bodyLeading=[body.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:24];
+    [NSLayoutConstraint activateConstraints:@[bodyLeading,[body.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-24],[body.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:12],[body.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-12]]];
     [self reloadLibrary];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self applyAppearance]; }
-- (void)applyAppearance { NSInteger style=[NSUserDefaults.standardUserDefaults integerForKey:@"libraryTheme"]; self.navigationController.overrideUserInterfaceStyle=style==1?UIUserInterfaceStyleLight:style==2?UIUserInterfaceStyleDark:UIUserInterfaceStyleUnspecified; self.view.tintColor=CaraAccent(); self.navigationController.navigationBar.tintColor=CaraAccent(); tabs.selectedSegmentTintColor=CaraAccent(); [collection reloadData]; }
+- (void)applyAppearance { CaraUIApplyChrome(self); NSInteger style=[NSUserDefaults.standardUserDefaults integerForKey:@"libraryTheme"]; self.navigationController.overrideUserInterfaceStyle=style==1?UIUserInterfaceStyleLight:style==2?UIUserInterfaceStyleDark:UIUserInterfaceStyleUnspecified; self.view.tintColor=CaraAccent(); self.navigationController.navigationBar.tintColor=CaraAccent(); tabs.selectedSegmentTintColor=CaraAccent(); [collection reloadData]; }
 - (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews]; CGFloat width=collection.bounds.size.width; NSInteger columns=MAX(2,MIN(6,NSInteger(width/158))); CGFloat side=floor((width-(columns-1)*18)/columns);
-    UICollectionViewFlowLayout* layout=(id)collection.collectionViewLayout; CGSize size=CGSizeMake(side,side+64); if(!CGSizeEqualToSize(layout.itemSize,size)) layout.itemSize=size;
-    hero.hidden=!recent || self.view.bounds.size.height<600; heroArtwork.hidden=self.view.bounds.size.width<600;
+    [super viewDidLayoutSubviews];
+    BOOL accessible=UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
+    BOOL wide=self.view.bounds.size.width>=900 && !accessible;
+    libraryRail.hidden=!wide;
+    self.navigationItem.rightBarButtonItem=wide?nil:librarySettingsItem;
+    addGamesButton.hidden=wide;
+    UIEdgeInsets safe=self.view.safeAreaInsets;
+    libraryRail.frame=CGRectMake(safe.left+16,safe.top+12,200,MAX(0,self.view.bounds.size.height-safe.top-safe.bottom-24));
+    CGFloat inset=wide?240:24; if(bodyLeading.constant!=inset) bodyLeading.constant=inset;
+    CGFloat width=MAX(1,self.view.bounds.size.width-safe.left-safe.right-inset-24);
+    NSInteger columns=MAX(accessible?1:2,MIN(6,NSInteger(width/(accessible?280:158))));
+    CGFloat side=floor((width-(columns-1)*18)/columns);
+    UICollectionViewFlowLayout* layout=(id)collection.collectionViewLayout;
+    CGFloat textHeight=ceil([UIFont preferredFontForTextStyle:UIFontTextStyleHeadline].lineHeight*2+[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1].lineHeight+24);
+    CGSize size=CGSizeMake(side,side+textHeight); if(!CGSizeEqualToSize(layout.itemSize,size)) layout.itemSize=size;
+    hero.hidden=!recent || self.view.bounds.size.height<700 || accessible;
+    heroArtwork.hidden=width<600;
+    heroArtWidth.active=!heroArtwork.hidden;
     tabs.apportionsSegmentWidthsByContent=YES;
-    BOOL narrow=self.view.bounds.size.width<700; self.navigationItem.title=narrow?@"":@"Cara";
-    if(narrow && tabs.superview!=libraryBody) { self.navigationItem.titleView=nil; [libraryBody insertArrangedSubview:tabs atIndex:0]; }
-    else if(!narrow && tabs.superview==libraryBody) { [libraryBody removeArrangedSubview:tabs]; [tabs removeFromSuperview]; self.navigationItem.titleView=tabs; }
-    if(!narrow) tabs.frame=CGRectMake(0,0,MIN(560,self.view.bounds.size.width-200),34);
+    BOOL narrow=self.view.bounds.size.width<700;
+    if(wide) {
+        if(tabs.superview==libraryBody) { [libraryBody removeArrangedSubview:tabs]; [tabs removeFromSuperview]; }
+        self.navigationItem.titleView=nil;
+    } else if(narrow && tabs.superview!=libraryBody) {
+        self.navigationItem.titleView=nil; [libraryBody insertArrangedSubview:tabs atIndex:0];
+    } else if(!narrow) {
+        if(tabs.superview==libraryBody) { [libraryBody removeArrangedSubview:tabs]; [tabs removeFromSuperview]; }
+        self.navigationItem.titleView=tabs;
+        tabs.frame=CGRectMake(0,0,MIN(560,self.view.bounds.size.width-200),34);
+    }
+    for(UIButton* button in librarySections) {
+        BOOL selected=button.tag==tabs.selectedSegmentIndex;
+        UIButtonConfiguration* config=button.configuration;
+        config.baseForegroundColor=selected?CaraAccent():UIColor.secondaryLabelColor;
+        config.background.backgroundColor=selected?[CaraAccent() colorWithAlphaComponent:.16]:UIColor.clearColor;
+        button.configuration=config;
+        button.accessibilityTraits=UIAccessibilityTraitButton|(selected?UIAccessibilityTraitSelected:0);
+    }
+}
+- (void)librarySectionTapped:(UIButton*)button {
+    if(button.tag==3) { [self addTapped]; return; }
+    if(button.tag==4) { [self settingsTapped]; return; }
+    tabs.selectedSegmentIndex=button.tag; [self tabChanged];
 }
 - (void)reloadLibrary { [self applyAppearance]; if(scanning) { reloadPending=YES; return; } scanning=YES; [self.store scan:^(NSArray* result,NSString* error) { self->scanning=NO; self->games=result; [self->collection.refreshControl endRefreshing]; [self filterGames]; if(error) self->syncLabel.text=error; if(self->reloadPending) { self->reloadPending=NO; [self reloadLibrary]; } }]; }
 - (void)tabChanged { CaraMenuSound(@"focus"); [self filterGames]; }
@@ -243,7 +304,7 @@ static NSDictionary* ReadGameArtwork(CaraLibraryGame* game) {
     filtered=[filtered sortedArrayUsingComparator:^NSComparisonResult(CaraLibraryGame* a,CaraLibraryGame* b) { if(self->sortRecent || tab==2) { NSComparisonResult date=[[self.store metadataForGame:b.url][@"lastPlayed"]?:NSDate.distantPast compare:[self.store metadataForGame:a.url][@"lastPlayed"]?:NSDate.distantPast]; if(date!=NSOrderedSame) return date; } return [a.title localizedStandardCompare:b.title]; }];
     countLabel.text=[NSString stringWithFormat:@"%@ · %lu",tab==1?@"Favorites":tab==2?@"Recently played":@"Your collection",(unsigned long)filtered.count];
     recent=nil; NSDate* latest=NSDate.distantPast; for(CaraLibraryGame* game in games) { NSDate* date=[self.store metadataForGame:game.url][@"lastPlayed"]; if(date && [date compare:latest]==NSOrderedDescending) { latest=date; recent=game; } }
-    if(recent) { heroTitle.text=recent.title; heroSubtitle.text=[@"Last played " stringByAppendingString:[NSDateFormatter localizedStringFromDate:latest dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle]]; BOOL resume=self.canResume && [recent.url.URLByStandardizingPath isEqual:self.activeGameURL.URLByStandardizingPath]; [heroPlay setTitle:resume?@"▶  Resume game":@"▶  Game details" forState:UIControlStateNormal]; CaraLibraryGame* heroGame=recent; heroArtwork.image=nil; [self artwork:heroGame completion:^(NSDictionary* m) { if(![self->recent.url isEqual:heroGame.url]) return; self->heroArtwork.image=m[@"hero"]?:m[@"image"]?:[UIImage systemImageNamed:@"gamecontroller"]; self->heroArtwork.contentMode=m[@"hero"]?UIViewContentModeScaleAspectFill:UIViewContentModeScaleAspectFit; self->heroTitle.text=m[@"title"]?:heroGame.title; }]; }
+    if(recent) { heroTitle.text=recent.title; heroSubtitle.text=[@"Last played " stringByAppendingString:[NSDateFormatter localizedStringFromDate:latest dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle]]; BOOL resume=self.canResume && [recent.url.URLByStandardizingPath isEqual:self.activeGameURL.URLByStandardizingPath]; [heroPlay setTitle:resume?@"Resume game":@"Game details" forState:UIControlStateNormal]; CaraLibraryGame* heroGame=recent; heroArtwork.image=nil; [self artwork:heroGame completion:^(NSDictionary* m) { if(![self->recent.url isEqual:heroGame.url]) return; self->heroArtwork.image=m[@"hero"]?:m[@"image"]?:[UIImage systemImageNamed:@"gamecontroller"]; self->heroArtwork.contentMode=m[@"hero"]?UIViewContentModeScaleAspectFill:UIViewContentModeScaleAspectFit; self->heroTitle.text=m[@"title"]?:heroGame.title; }]; }
     syncLabel.text=self.syncDetail?:@"Add games from Files. Your saves stay on this device."; [collection reloadData]; [self.view setNeedsLayout];
     if(!filtered.count) { UILabel* empty=[UILabel new]; empty.text=games.count?@"No games match this view.":@"Your collection starts here.\nAdd a game or choose your ROMs folder."; empty.numberOfLines=0; empty.textAlignment=NSTextAlignmentCenter; empty.textColor=UIColor.secondaryLabelColor; collection.backgroundView=empty; } else collection.backgroundView=nil;
 }
@@ -409,12 +470,12 @@ static UIImage* CaraThemePreview(NSInteger style) {
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
 }
 - (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
+    [super viewWillAppear:animated]; CaraUIApplyChrome(self);
     if(self.categorized || self.usesLibraryAppearance) self.navigationController.view.tintColor=CaraAccent();
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    BOOL wide=self.categorized && self.view.bounds.size.width>=800;
+    BOOL wide=self.categorized && self.view.bounds.size.width>=800 && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
     CGFloat left=wide?260:0;
     sidebarScroll.hidden=!wide;
     CGFloat top=self.view.safeAreaInsets.top+24;
@@ -456,11 +517,48 @@ static UIImage* CaraThemePreview(NSInteger style) {
         NSMutableArray* accents=[NSMutableArray new]; for(NSInteger i=0;i<5;++i) { NSInteger value=i; [accents addObject:@{@"title":@[@"Teal",@"Blue",@"Rose",@"Purple",@"Graphite"][i],@"tint":@[[UIColor colorWithRed:0 green:.67 blue:.70 alpha:1],UIColor.systemBlueColor,UIColor.systemPinkColor,UIColor.systemPurpleColor,UIColor.systemGrayColor][i],@"symbol":[NSUserDefaults.standardUserDefaults integerForKey:@"libraryAccent"]==i?@"checkmark.circle.fill":@"circle.fill",@"keepOpen":@YES,@"action":^{ CaraMenuSound(@"select"); [NSUserDefaults.standardUserDefaults setInteger:value forKey:@"libraryAccent"]; owner.view.tintColor=CaraAccent(); owner.navigationController.view.tintColor=CaraAccent(); [owner refresh]; }}]; }
         visibleSections=@[@{@"title":@"Accent color",@"rows":accents},@{@"title":@"Collection",@"rows":@[@{@"title":@"Menu sounds",@"symbol":@"speaker.wave.2",@"value":@(![NSUserDefaults.standardUserDefaults objectForKey:@"libraryMenuSounds"] || [NSUserDefaults.standardUserDefaults boolForKey:@"libraryMenuSounds"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:on forKey:@"libraryMenuSounds"]; }},@{@"title":@"Show game titles",@"value":@(![NSUserDefaults.standardUserDefaults boolForKey:@"libraryHideTitles"]),@"change":^(BOOL on) { [NSUserDefaults.standardUserDefaults setBool:!on forKey:@"libraryHideTitles"]; }}],@"footer":@"Make your collection feel like home."}]; return;
     }
-    if([selectedCategory isEqual:@"About Cara"]) { visibleSections=@[@{@"title":@"Cara",@"rows":@[@{@"title":@"Nintendo 3DS emulation",@"subtitle":@"Cara is built on the open-source Citra emulator. See the bundled source and license notices.",@"symbol":@"info.circle"},@{@"title":@"Version",@"subtitle":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"Development build",@"symbol":@"app"}]}]; return; }
+    if([selectedCategory isEqual:@"About Cara"]) {
+        __weak CaraSettingsController* owner=self;
+        NSString* legal=[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"Legal"];
+        NSDictionary* source=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[legal stringByAppendingPathComponent:@"source.json"]]?:[NSData data] options:0 error:nil];
+        NSString* revision=source[@"revision"]?:@"Unavailable";
+        NSString* build=[NSString stringWithFormat:@"%@%@",revision,[source[@"modified"] boolValue]?@" (modified development build)":@""];
+        visibleSections=@[@{@"title":@"Cara",@"rows":@[
+            @{@"title":@"Nintendo 3DS emulation",@"subtitle":@"Copyright 2026 Cara contributors. Based on Citra and Citra MMJ, with Azahar FastInterp. Licensed under GPL-2.0-or-later. Cara is not affiliated with Nintendo or the upstream projects.",@"symbol":@"info.circle"},
+            @{@"title":@"Version",@"subtitle":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"Development build",@"symbol":@"app"},
+            @{@"title":@"Source revision",@"subtitle":build,@"symbol":@"number"}]},
+            @{@"title":@"Open source",@"rows":@[
+            @{@"title":@"Credits & acknowledgements",@"symbol":@"heart",@"keepOpen":@YES,@"action":^{ [owner showLegalDocument:@"NOTICE" title:@"Credits & acknowledgements"]; }},
+            @{@"title":@"GNU General Public License v2",@"symbol":@"doc.text",@"keepOpen":@YES,@"action":^{ [owner showLegalDocument:@"LICENSE" title:@"GNU GPL v2"]; }},
+            @{@"title":@"Third-party licenses",@"symbol":@"doc.on.doc",@"keepOpen":@YES,@"action":^{ [owner showLegalDocument:@"THIRD_PARTY" title:@"Third-party licenses"]; }},
+            @{@"title":@"View source code",@"symbol":@"link",@"keepOpen":@YES,@"action":^{ [UIApplication.sharedApplication openURL:[NSURL URLWithString:source[@"source_url"]?:@"https://github.com/dmikey/cara"] options:@{} completionHandler:nil]; }},
+            @{@"title":@"Download source archive",@"symbol":@"arrow.down.doc",@"keepOpen":@YES,@"enabled":@(source[@"archive_url"]!=nil && ![source[@"modified"] boolValue]),@"action":^{ [UIApplication.sharedApplication openURL:[NSURL URLWithString:source[@"archive_url"]] options:@{} completionHandler:nil]; }}],
+            @"footer":@"You may copy, modify and redistribute Cara under GPL version 2 or any later version. Cara comes without any warranty; see the license for details. Modified development builds require their matching local changes in addition to the linked source."}];
+        return;
+    }
     visibleSections=[self.sections filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary* section,NSDictionary* b) { NSString* title=section[@"title"]; if([self->selectedCategory isEqual:@"General"]) return [title isEqual:@"Current game"] || [title isEqual:@"Play mode"]; if([self->selectedCategory isEqual:@"Controls"]) {
         return [title hasSuffix:@"skin"] || [title isEqual:@"Controllers"];
     } if([self->selectedCategory isEqual:@"Library & storage"]) return [title isEqual:@"Game library"]; if([self->selectedCategory isEqual:@"Save data"]) return [title isEqual:@"iCloud & Files"]; return [title isEqual:self->selectedCategory]; }]];
     if(!visibleSections.count) visibleSections=@[@{@"title":selectedCategory,@"rows":@[@{@"title":@"Ready to play",@"subtitle":@"Use Emulation to choose a play mode, or Library & storage to add your games.",@"symbol":@"checkmark.circle"}]}];
+}
+- (void)showLegalDocument:(NSString*)name title:(NSString*)title {
+    UIViewController* document=[UIViewController new]; document.title=title;
+    document.view.backgroundColor=CaraBackground();
+    UITextView* text=[UITextView new]; text.editable=NO; text.selectable=YES;
+    text.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    text.adjustsFontForContentSizeCategory=YES; text.backgroundColor=CaraBackground(); text.textColor=UIColor.labelColor;
+    text.textContainerInset=UIEdgeInsetsMake(16,16,24,16);
+    NSString* path=[NSBundle.mainBundle pathForResource:name ofType:@"txt" inDirectory:@"Legal"];
+    text.text=path?[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil]:nil;
+    if(!text.text.length) text.text=@"This build is missing its license notices. Please obtain a complete Cara build with bundled Legal resources.";
+    text.accessibilityIdentifier=@"legal-document";
+    [document.view addSubview:text]; text.translatesAutoresizingMaskIntoConstraints=NO;
+    [NSLayoutConstraint activateConstraints:@[
+        [text.leadingAnchor constraintEqualToAnchor:document.view.safeAreaLayoutGuide.leadingAnchor],
+        [text.trailingAnchor constraintEqualToAnchor:document.view.safeAreaLayoutGuide.trailingAnchor],
+        [text.topAnchor constraintEqualToAnchor:document.view.safeAreaLayoutGuide.topAnchor],
+        [text.bottomAnchor constraintEqualToAnchor:document.view.safeAreaLayoutGuide.bottomAnchor]]];
+    [self.navigationController pushViewController:document animated:YES];
 }
 - (void)refresh {
     [self updateVisibleSections];
@@ -479,7 +577,7 @@ static UIImage* CaraThemePreview(NSInteger style) {
     NSDictionary* row=visibleSections[path.section][@"rows"][path.row];
     if (row[@"slider"]) { CaraSliderCell* cell=[[CaraSliderCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil]; [cell configure:row enabled:!row[@"enabled"] || [row[@"enabled"] boolValue] tint:(self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange()]; return cell; }
     UITableViewCell* cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil];
-    cell.textLabel.text=row[@"title"]; cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES; cell.textLabel.numberOfLines=0;
+    cell.directionalLayoutMargins=NSDirectionalEdgeInsetsMake(14,18,14,18); cell.textLabel.text=row[@"title"]; cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES; cell.textLabel.numberOfLines=0;
     cell.detailTextLabel.text=row[@"subtitle"]; cell.detailTextLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; cell.detailTextLabel.adjustsFontForContentSizeCategory=YES; cell.detailTextLabel.numberOfLines=0;
     cell.imageView.image=[UIImage systemImageNamed:row[@"symbol"]?:@"circle"]; cell.imageView.tintColor=row[@"tint"]?:([row[@"destructive"] boolValue]?UIColor.systemRedColor:((self.categorized || self.usesLibraryAppearance)?CaraAccent():CaraOrange()));
     BOOL enabled=!row[@"enabled"] || [row[@"enabled"] boolValue];

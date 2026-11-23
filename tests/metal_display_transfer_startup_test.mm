@@ -52,9 +52,26 @@ int main() {
     constexpr DisplayTransferRegisters retile{
         0x18561400, 0x184e1400, 256, 400, 256, 400, 0x00001002, false};
 
-    constexpr auto cropped = PlanScaledCropRgba8(crop);
+    constexpr auto cropped = PlanScaledColorCrop(crop);
     static_assert(cropped && cropped->source.Size() == 819200 &&
-                  cropped->destination.Size() == 288000 && cropped->destination_bpp == 3);
+                  cropped->destination.Size() == 288000 && cropped->source_bpp == 4 &&
+                  cropped->destination_bpp == 3);
+    constexpr auto packed = PlanScaledColorCrop(
+        {0x1829bfc0, 0x21689c80, 512, 400, 480, 400, 0x01002204, false});
+    static_assert(packed && packed->source.Size() == 409600 &&
+                  packed->destination.Size() == 192000 && packed->output_width == 240 &&
+                  packed->output_height == 400 && packed->source_bpp == 2 &&
+                  packed->destination_bpp == 2);
+    constexpr auto packed_xy = PlanScaledColorCrop(
+        {0x1829bfc0, 0x1806ac00, 512, 400, 512, 400, 0x02002220, false});
+    static_assert(packed_xy && packed_xy->scale_xy_tiled && packed_xy->source.Size() == 409600 &&
+                  packed_xy->destination.Size() == 102400 && packed_xy->output_width == 256 &&
+                  packed_xy->output_height == 200);
+    constexpr auto rgba_xy = PlanScaledColorCrop(
+        {0x18537fc0, 0x1802ab80, 512, 400, 512, 400, 0x02000020, false});
+    static_assert(rgba_xy && rgba_xy->scale_xy_tiled && rgba_xy->source.Size() == 819200 &&
+                  rgba_xy->destination.Size() == 204800 && rgba_xy->source_bpp == 4 &&
+                  rgba_xy->destination_bpp == 4);
     constexpr auto tiled = PlanLinearToTiledRgb8(retile);
     static_assert(tiled && tiled->source.Size() == 409600 && tiled->destination.Size() == 307200);
 

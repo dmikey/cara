@@ -34,6 +34,12 @@ struct DecodeRecordSelfTestAccess {
         return result;
     }
     static MemoryRef VfpBacking(ARM_FastInterp& cpu) { return TestMemory(cpu.state_.vfp_regs); }
+    static MemoryRef RegisterBacking(ARM_FastInterp& cpu) { return TestMemory(cpu.state_.regs); }
+    static std::array<u64, 2> LdrPairCounts() { return ARM_FastInterp::LdrPairRuntimeCounts(); }
+    static u64 ExecuteWithoutStep(ARM_FastInterp& cpu, BasicBlock& block) {
+        cpu.stepping_ = false; cpu.halted_ = false;
+        return cpu.ExecuteBlock(&block);
+    }
     static unsigned CacheCapacity(const ARM_FastInterp& cpu) {return cpu.cache_.Capacity();}
     static void ConfigureSecondary(ARM_FastInterp& cpu,bool enabled) {cpu.secondary_link_=enabled;cpu.cache_.SetProfiling(true);cpu.ClearInstructionCache();}
     static void ConfigureBLRunChain(ARM_FastInterp& cpu, bool enabled) {
@@ -91,6 +97,8 @@ struct DecodeRecordSelfTestAccess {
 #include "fastinterp_pc_boundary_self_test.h"
 #include "fastinterp_short_vector_self_test.h"
 #include "fastinterp_vldr_pair_self_test.h"
+#include "fastinterp_ldr_pair_self_test.h"
+#include "fastinterp_ldr_cmp_branch_self_test.h"
 
 static int VerifyDecodedMetadata(Core::System& system) {
     using namespace Core::FastInterp;
@@ -133,6 +141,10 @@ int main() {
     auto& system = Core::System::GetInstance();
     if (std::getenv("CARA_FASTINTERP_DECODED_METADATA_TEST"))
         return VerifyDecodedMetadata(system);
+    if (std::getenv("CARA_FASTINTERP_LDR_PAIR_TEST"))
+        return VerifyFastInterpLdrPairs(system);
+    if (std::getenv("CARA_FASTINTERP_LDR_CMP_BRANCH_TEST"))
+        return VerifyFastInterpLdrCmpBranch(system);
     if (std::getenv("CARA_FASTINTERP_VLDR_PAIR_TEST"))
         return VerifyFastInterpVldrPairs(system);
     if (std::getenv("CARA_FASTINTERP_SHORT_VECTOR_TEST"))

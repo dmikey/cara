@@ -66,7 +66,22 @@ PicaMetalNativeUniforms CapturePicaMetalUniforms(const Pica::State& state, bool 
         dest.dist_atten_bias = Pica::float20::FromRaw(source.dist_atten_bias).ToFloat32();
         dest.dist_atten_scale = Pica::float20::FromRaw(source.dist_atten_scale).ToFloat32();
     }
-    // The caller rejects procedural and shadow rendering before using this layout.
+    if (t.main_config.texture3_enable) {
+        using Atlas = PicaMetalLutData;
+        common.proctex_noise_lut_offset = Atlas::noise_offset;
+        common.proctex_color_map_offset = Atlas::color_map_offset;
+        common.proctex_alpha_map_offset = Atlas::alpha_map_offset;
+        common.proctex_lut_offset = Atlas::color_offset;
+        common.proctex_diff_lut_offset = Atlas::diff_offset;
+        common.proctex_bias =
+            Pica::float16::FromRaw(t.proctex.bias_low | (t.proctex_lut.bias_high << 8)).ToFloat32();
+        common.proctex_noise_f = {Pica::float16::FromRaw(t.proctex_noise_frequency.u).ToFloat32(),
+                                 Pica::float16::FromRaw(t.proctex_noise_frequency.v).ToFloat32()};
+        common.proctex_noise_a = {t.proctex_noise_u.amplitude / 4095.0f,
+                                 t.proctex_noise_v.amplitude / 4095.0f};
+        common.proctex_noise_p = {Pica::float16::FromRaw(t.proctex_noise_u.phase).ToFloat32(),
+                                 Pica::float16::FromRaw(t.proctex_noise_v.phase).ToFloat32()};
+    }
     return out;
 }
 

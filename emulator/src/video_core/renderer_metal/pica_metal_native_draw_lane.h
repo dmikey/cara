@@ -25,8 +25,15 @@ struct PicaMetalNativeAttachment {
 class PicaMetalNativeDrawLane {
 public:
     using GuestWriteNotice = std::function<void(PAddr begin, PAddr end)>;
+    // Synchronous owner-thread RAM view. Its bytes must remain stable until
+    // DecodeTexture returns or invokes another callback. Must not reenter the
+    // lane or mutate guest memory. Never retained by
+    // the lane or submitted to Metal; return empty when unavailable.
+    using GuestRamView = std::function<std::span<const u8>(PAddr, std::size_t)>;
     PicaMetalNativeDrawLane(id<MTLCommandQueue> queue, NSUInteger upload_page_bytes,
-                          GuestWriteNotice notice = {});
+                          GuestWriteNotice notice = {}, GuestRamView ram_view = {});
+    ~PicaMetalNativeDrawLane();
+    void Abort() noexcept;
     void FlushGuest(PAddr begin, PAddr end,
                     const std::function<bool(PAddr, std::span<const u8>)>& write);
     void Record(const TexturedMetalDraw& draw, const PicaMetalDrawViews& views,
@@ -63,13 +70,17 @@ public:
     PicaMetalNativeAttachment AcquireTiledDepthStencil(
         MetalTransfer::GuestInterval bytes, u32 width, u32 height,
         const PicaMetalDepthImportPipelines& pipelines, id<MTLComputePipelineState> tiled_export,
-        id<MTLComputePipelineState> depth_pack, const MetalGuestAuthority::GuestReader& ram);
+        id<MTLComputePipelineState> depth_pack, const MetalGuestAuthority::GuestReader& ram,
+        bool has_stencil = true);
     // Ordered immutable texture initialization on this lane's Metal queue.
     // Submission errors retire through the same checks as draw and transfer work.
     void SubmitSampledTextureBuild(id<MTLCommandBuffer> command);
     void PublishPending();
     bool ReadGuest(PAddr begin, std::span<u8> scratch, const MetalGuestAuthority::GuestReader& ram);
     void InvalidateGuest(PAddr begin, PAddr end);
+    // Owner-thread metadata proof only; never waits for GPU completion. Both
+    // this FCRAM page and its successor must be free of watch dependencies.
+    bool CanReleaseFcramWatchPage(PAddr page);
     void Drain();
 
 private:
@@ -88,10 +99,12 @@ private:
     void PublishBytes(id<MTLCommandBuffer> command, id<MTLBuffer> buffer,
                       const MetalTransfer::Rows& rows);
     id<MTLTexture> ResolveRgba8(const MetalRgba8Layout& layout, u64* backing_generation = nullptr);
-    void Track(id<MTLCommandBuffer> command);
+    void Track(id<MTLCommandBuffer> command,
+               std::shared_ptr<const PicaMetalValidationReceipt> validation = {});
     void InvalidateAttachments(PicaGuestRange bytes, const PicaMetalSurfaceView* same_view = nullptr);
     const id<MTLCommandQueue> queue;
     const GuestWriteNotice write_notice;
+    const GuestRamView ram_view;
     u64 byte_generation = 0;
     u64 attachment_generation = 0;
     std::optional<PicaMetalNativeAttachment> resident_color;

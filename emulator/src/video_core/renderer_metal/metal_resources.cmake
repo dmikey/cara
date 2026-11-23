@@ -3,9 +3,17 @@
 find_program(CARA_XCRUN xcrun REQUIRED)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(CARA_PICA_METAL_SDK iphoneos)
+    set(CARA_PICA_METAL_TARGET air64-apple-ios16.0)
+    set(CARA_PICA_METAL_STANDARD ios-metal2.3)
 else()
     set(CARA_PICA_METAL_SDK macosx)
+    set(CARA_PICA_METAL_TARGET air64-apple-macos13.0)
+    set(CARA_PICA_METAL_STANDARD macos-metal2.3)
 endif()
+# xcrun's SDK selection alone otherwise targets the installed SDK's OS release.
+# Keep bundled AIR compatible with the renderer's actual reflection/API floor.
+set(CARA_PICA_METAL_COMPILE_FLAGS -target "${CARA_PICA_METAL_TARGET}"
+    "-std=${CARA_PICA_METAL_STANDARD}")
 
 set(CARA_PICA_METAL_SOURCES
     pica_depth_transfer
@@ -26,7 +34,7 @@ foreach(shader IN LISTS CARA_PICA_METAL_SOURCES)
         list(APPEND dependencies "${CMAKE_CURRENT_LIST_DIR}/depth_conversion.h")
     endif()
     add_custom_command(OUTPUT "${object}"
-        COMMAND "${CARA_XCRUN}" --sdk "${CARA_PICA_METAL_SDK}" metal -c "${source}" -o "${object}"
+        COMMAND "${CARA_XCRUN}" --sdk "${CARA_PICA_METAL_SDK}" metal ${CARA_PICA_METAL_COMPILE_FLAGS} -c "${source}" -o "${object}"
         DEPENDS ${dependencies}
         VERBATIM)
     list(APPEND CARA_PICA_METAL_OBJECTS "${object}")
@@ -41,7 +49,7 @@ set(CARA_PICA_SCALED_CROP_AIR "${CMAKE_CURRENT_BINARY_DIR}/pica_metal_scaled_cro
 set(CARA_PICA_SCALED_CROP_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/cara-scaled-crop-rgb8.metallib")
 set(scaled_crop_source "${CMAKE_CURRENT_LIST_DIR}/pica_metal_scaled_crop_rgb8.metal")
 add_custom_command(OUTPUT "${CARA_PICA_SCALED_CROP_AIR}"
-    COMMAND "${CARA_XCRUN}" --sdk "${CARA_PICA_METAL_SDK}" metal -c
+    COMMAND "${CARA_XCRUN}" --sdk "${CARA_PICA_METAL_SDK}" metal ${CARA_PICA_METAL_COMPILE_FLAGS} -c
         "${scaled_crop_source}" -o "${CARA_PICA_SCALED_CROP_AIR}"
     DEPENDS "${scaled_crop_source}"
     VERBATIM)

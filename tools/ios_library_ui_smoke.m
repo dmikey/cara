@@ -3,36 +3,90 @@
 @end
 @implementation CaraUISmoke
 - (void)shot:(XCUIApplication*)app name:(NSString*)name { XCTAttachment* shot=[XCTAttachment attachmentWithScreenshot:app.screenshot]; shot.name=name; shot.lifetime=XCTAttachmentLifetimeKeepAlways; [self addAttachment:shot]; }
+- (void)testAboutDocumentsAndBackNavigation {
+ self.continueAfterFailure=NO;
+ XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
+ app.launchEnvironment=@{@"CARA_UI_SCENE":@"settings"}; [app launch];
+ XCTAssertTrue([app.buttons[@"Done"] waitForExistenceWithTimeout:15]);
+ if(!app.buttons[@"About Cara"].hittable) [app.buttons[@"Categories"] tap];
+ [app.buttons[@"About Cara"] tap];
+ for(NSString* title in @[@"Credits & acknowledgements",@"GNU General Public License v2",@"Third-party licenses"]) {
+     XCUIElement* row=app.staticTexts[title];
+     for(int i=0;i<5 && !row.hittable;++i) [app.tables.firstMatch swipeUp];
+     XCTAssertTrue(row.hittable); [row tap];
+     XCUIElement* text=app.textViews[@"legal-document"];
+     XCTAssertTrue([text waitForExistenceWithTimeout:5]);
+     XCTAssertGreaterThan([[text value] length],100u);
+     XCTAssertFalse([[text value] containsString:@"missing its license notices"]);
+     [self shot:app name:title];
+     [app.navigationBars.buttons.firstMatch tap];
+     XCTAssertTrue([app.navigationBars[@"About Cara"] waitForExistenceWithTimeout:5]);
+ }
+ XCUIDevice.sharedDevice.orientation=UIDeviceOrientationLandscapeLeft;
+ [self shot:app name:@"About Cara landscape"];
+ XCUIDevice.sharedDevice.orientation=UIDeviceOrientationPortrait;
+}
+- (void)testLibraryLandscapeSidebarNavigation {
+ self.continueAfterFailure=NO;
+ XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
+ XCUIDevice.sharedDevice.orientation=UIDeviceOrientationLandscapeLeft;
+ [app launch]; XCTAssertTrue([app.collectionViews.firstMatch waitForExistenceWithTimeout:15]);
+ [self shot:app name:@"Library landscape navigation"];
+ [app.buttons[@"Favorites"] tap]; XCTAssertTrue([app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"label BEGINSWITH %@",@"Favorites ·"]].firstMatch.exists);
+ [app.buttons[@"Collection"] tap]; XCTAssertEqual(app.collectionViews.cells.count,8);
+ [app.buttons[@"Settings"] tap]; XCTAssertTrue([app.buttons[@"Done"] waitForExistenceWithTimeout:5]);
+ XCUIDevice.sharedDevice.orientation=UIDeviceOrientationPortrait;
+}
 - (void)testInGameSettingsNavigation {
  self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
  app.launchEnvironment=@{@"CARA_UI_SCENE":@"in-game-settings"}; [app launch];
  XCTAssertTrue([app.buttons[@"Game settings"] waitForExistenceWithTimeout:15]); [app.buttons[@"Game settings"] tap];
  XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
- [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
+ [app.staticTexts[@"Control layout"] tap]; XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:5]);
  [app.navigationBars.buttons[@"Save"] tap]; XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
- [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
+ [app.staticTexts[@"Control layout"] tap]; XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:5]);
  [app.navigationBars.buttons[@"Cancel"] tap]; XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
  [app.navigationBars.buttons[@"Done"] tap]; XCTAssertTrue([app.staticTexts[@"Running fixture game"] waitForExistenceWithTimeout:5]);
  XCTAssertFalse(app.navigationBars[@"Fixture game settings"].exists);
  // The quick menu remains the presentation delegate even with the editor on its stack.
- [app terminate]; [app launch]; [app.buttons[@"Game settings"] tap]; [app.staticTexts[@"Controller Demapping"] tap];
- XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
- [app.navigationBars[@"Controller Demapping"] swipeDown];
+ [app terminate]; [app launch]; [app.buttons[@"Game settings"] tap]; [app.staticTexts[@"Control layout"] tap];
+ XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:5]);
+ [app.navigationBars[@"Control layout"] swipeDown];
  XCTAssertTrue([app.staticTexts[@"Running fixture game"] waitForExistenceWithTimeout:5]);
 }
 - (void)testStoppedGameSettingsDoesNotStartGame {
  self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
  app.launchEnvironment=@{@"CARA_UI_SCENE":@"stopped-game-settings"}; [app launch];
  XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:15]);
- [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
+ [app.staticTexts[@"Control layout"] tap]; XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:5]);
  [app.navigationBars.buttons[@"Cancel"] tap]; [app.navigationBars.buttons[@"Done"] tap];
  XCTAssertTrue([app.staticTexts[@"Stopped fixture · Library"] waitForExistenceWithTimeout:5]);
  XCTAssertFalse(app.staticTexts[@"Running fixture game"].exists);
 }
+- (void)testButtonComboAssignmentAndPersistence {
+ self.continueAfterFailure=NO;
+ XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
+ app.launchEnvironment=@{@"CARA_UI_SCENE":@"actions"}; [app launch];
+ XCTAssertTrue([app.buttons[@"＋ Action"] waitForExistenceWithTimeout:15]);
+ [app.buttons[@"＋ Action"] tap]; [app.buttons[@"Jump"] tap];
+ XCUIElement* assign=app.buttons[@"Assign buttons / combo…"];
+ for(int i=0;i<4 && !assign.hittable;++i) [app.scrollViews.firstMatch swipeUp];
+ XCTAssertTrue(assign.hittable); [assign tap];
+ XCTAssertTrue([app.navigationBars[@"Button combo"] waitForExistenceWithTimeout:5]);
+ [app.tables.cells.staticTexts[@"A"] tap]; [app.tables.cells.staticTexts[@"B"] tap];
+ [app.navigationBars.buttons[@"Apply"] tap];
+ XCTAssertTrue([app.buttons[@"Buttons: A + B"] waitForExistenceWithTimeout:5]);
+ [self shot:app name:@"Glyph with simultaneous A plus B combo"];
+ [app.navigationBars.buttons[@"Save"] tap]; [app.staticTexts[@"Control layout"] tap];
+ XCUIElement* canvas=app.otherElements[@"Action canvas"];
+ [[canvas coordinateWithNormalizedOffset:CGVectorMake(.49,.725)] tap];
+ XCTAssertTrue([app.buttons[@"Buttons: A + B"] waitForExistenceWithTimeout:5]);
+ [app.navigationBars.buttons[@"Cancel"] tap];
+}
 - (void)testActionLayoutEditor {
  self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
  XCUIDevice.sharedDevice.orientation=UIDeviceOrientationPortrait; app.launchEnvironment=@{@"CARA_UI_SCENE":@"actions"}; [app launch];
- XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:15]);
+ XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:15]);
  [self shot:app name:@"Action editor portrait"];
  [app.buttons[@"＋ Action"] tap]; [app.buttons[@"Invisible Look zone · C-stick"] tap];
  XCTAssertTrue([app.buttons[@"Bind: CSTICK"] waitForExistenceWithTimeout:5]);
@@ -41,7 +95,7 @@
  [app.segmentedControls.buttons[@"Landscape"] tap]; [app.buttons[@"＋ Action"] tap]; [app.buttons[@"Invisible Move zone · Circle Pad"] tap];
  XCTAssertTrue([app.buttons[@"Bind: CIRCLE"] waitForExistenceWithTimeout:5]); [self shot:app name:@"Independent landscape Move zone"];
  [app.navigationBars.buttons[@"Save"] tap]; XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
- [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]);
+ [app.staticTexts[@"Control layout"] tap]; XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:5]);
  // Portrait retains Look while landscape retains Move, across a fresh editor instance.
  XCUIElement* canvas=app.otherElements[@"Action canvas"]; XCTAssertTrue(canvas.exists);
  XCUICoordinate* look=[canvas coordinateWithNormalizedOffset:CGVectorMake(.8,.4)]; [look tap]; XCTAssertTrue(app.buttons[@"Bind: CSTICK"].exists);
@@ -52,7 +106,7 @@
 - (void)testActionDragResizeAndRestore {
  self.continueAfterFailure=NO; XCUIApplication* app=[[XCUIApplication alloc] initWithBundleIdentifier:@"com.dmikey.cara.shellpreview"];
  XCUIDevice.sharedDevice.orientation=UIDeviceOrientationPortrait; app.launchEnvironment=@{@"CARA_UI_SCENE":@"actions",@"CARA_UI_CHECK_GEOMETRY":@"1"}; [app launch];
- XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:15]);
+ XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:15]);
  XCUIElement* canvas=app.otherElements[@"Action canvas"];
  [[canvas coordinateWithNormalizedOffset:CGVectorMake(.19,.78)] pressForDuration:.2 thenDragToCoordinate:[canvas coordinateWithNormalizedOffset:CGVectorMake(.32,.78)]];
  // Read the exposed selection frame so the corner gesture remains valid at both device sizes.
@@ -62,10 +116,10 @@
  [[canvas coordinateWithNormalizedOffset:CGVectorMake(x+w-.005,y+h-.005)] pressForDuration:.2 thenDragToCoordinate:[canvas coordinateWithNormalizedOffset:CGVectorMake(MIN(.95,x+w+.12),MIN(.98,y+h+.08))]];
  [self shot:app name:@"Dragged and resized action control"];
  [app.switches.firstMatch tap]; [app.navigationBars.buttons[@"Save"] tap]; XCTAssertTrue([app.navigationBars[@"Fixture game settings"] waitForExistenceWithTimeout:5]);
- [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]); XCTAssertEqualObjects(app.switches.firstMatch.value,@"1");
+ [app.staticTexts[@"Control layout"] tap]; XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:5]); XCTAssertEqualObjects(app.switches.firstMatch.value,@"1");
  [app.buttons[@"Layout…"] tap]; [app.buttons[@"Restore classic controls"] tap]; XCTAssertEqualObjects(app.switches.firstMatch.value,@"0");
  // Cancel discards that restore; the saved enabled layout must remain enabled.
- [app.navigationBars.buttons[@"Cancel"] tap]; [app.staticTexts[@"Controller Demapping"] tap]; XCTAssertTrue([app.navigationBars[@"Controller Demapping"] waitForExistenceWithTimeout:5]); XCTAssertEqualObjects(app.switches.firstMatch.value,@"1");
+ [app.navigationBars.buttons[@"Cancel"] tap]; [app.staticTexts[@"Control layout"] tap]; XCTAssertTrue([app.navigationBars[@"Control layout"] waitForExistenceWithTimeout:5]); XCTAssertEqualObjects(app.switches.firstMatch.value,@"1");
  XCUIDevice.sharedDevice.orientation=UIDeviceOrientationLandscapeLeft; [app.segmentedControls.buttons[@"Landscape"] tap]; [self shot:app name:@"Editor in physical landscape"];
  XCUIDevice.sharedDevice.orientation=UIDeviceOrientationPortrait;
 }

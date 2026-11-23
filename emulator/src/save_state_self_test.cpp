@@ -151,6 +151,7 @@ int main(int argc, char** argv) {
         Run(system, 500); const auto future = Inspect(system);
         if (saved == future) throw std::runtime_error("Guest did not advance after save");
         Pica::g_state.vs.program_code[17] ^= 0x12345678;
+        Pica::g_state.vs.MarkProgramCodeDirty();
         system.Memory().GetPhysicalPointer(Memory::VRAM_PADDR)[0] ^= 0x80;
         std::weak_ptr<Kernel::Process> previous_process=system.Kernel().GetCurrentProcess();
         system.LoadStateFromPath(path);

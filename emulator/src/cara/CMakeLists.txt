@@ -117,6 +117,8 @@ if (CARA_PRIVATE_MAC_METAL_HOST)
         nihstro-headers SDL2 Threads::Threads "-framework Metal" "-framework QuartzCore"
         "-framework Foundation")
     set_target_properties(cara-metal-rom PROPERTIES
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.cara.mac.metal-runtime"
+        MACOSX_BUNDLE_BUNDLE_NAME "Cara Metal"
         OBJCXX_STANDARD 20 OBJCXX_STANDARD_REQUIRED YES)
     target_compile_options(cara-metal-rom PRIVATE -fobjc-arc)
     if (CARA_MAC_CPU_JIT)

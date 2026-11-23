@@ -10,6 +10,7 @@ import platform
 import plistlib
 import re
 import shutil
+import shlex
 import subprocess
 import tempfile
 
@@ -59,6 +60,8 @@ def configure_args(args, build, deps, cmake, ninja):
     mac = args.platform == 'mac'
     switches = {
         'CARA_ENABLE_JIT': False,
+        'CARA_ENABLE_LTO': args.lto,
+        'CARA_FASTINTERP_PGO_GENERATE': getattr(args, 'fastinterp_pgo_generate', False),
         'CARA_MAC_CPU_JIT': args.cpu_jit,
         'CARA_MAC_SDL_DEV_HOST': mac,
         'CARA_MAC_ATLAS_PIPELINE': mac,
@@ -86,17 +89,255 @@ def configure_args(args, build, deps, cmake, ninja):
                f'-DCARA_METAL_SPIRV_CROSS_SOURCE:PATH={deps[1]}',
                f'-DBOOST_ROOT={SOURCE / "externals/boost"}']
     command.extend(f'-D{name}={"ON" if value else "OFF"}' for name, value in switches.items())
+    profile = getattr(args, 'fastinterp_pgo_use', None)
+    command.append('-DCARA_FASTINTERP_PGO_USE:FILEPATH=' + (str(profile.resolve()) if profile else ''))
+    command.append('-DCARA_FASTINTERP_PGO_KIND:STRING=' + getattr(args, 'fastinterp_pgo_kind', 'frontend'))
     if mac:
         prefix = args.prefix_path or Path(read(['brew', '--prefix']))
-        command.extend(['-DCMAKE_OSX_SYSROOT=macosx', f'-DCMAKE_PREFIX_PATH={prefix.resolve()}'])
+        command.extend(['-DCMAKE_OSX_SYSROOT=macosx', '-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0', f'-DCMAKE_PREFIX_PATH={prefix.resolve()}'])
     else:
         command.extend(['-DCMAKE_SYSTEM_NAME=iOS', '-DCMAKE_OSX_SYSROOT=iphoneos',
-                        '-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0',
+                        '-DCMAKE_OSX_DEPLOYMENT_TARGET=16.0',
                         '-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY'])
     return command
 
 
-def bundle_and_audit(build, target, mac, cpu_jit, deps):
+
+def ninja_build_fields(graph, output):
+    match = re.search(r'^build ' + re.escape(output) + r': [^\n]*\n((?:  [^\n]*\n)*)',
+                      graph, flags=re.MULTILINE)
+    if not match:
+        raise RuntimeError(f'Missing compiler policy build recipe: {output}')
+    return dict(re.findall(r'^  ([A-Z_]+) = (.*)$', match[1], flags=re.MULTILINE))
+
+
+def lto_mode(flags):
+    """Report the effective driver option, preserving explicit -fno-lto order."""
+    mode = None
+    for option in shlex.split(flags):
+        if option == '-fno-lto':
+            mode = None
+        elif option == '-flto':
+            mode = 'full'
+        elif option.startswith('-flto='):
+            mode = option.partition('=')[2]
+    return mode
+
+
+def read_cmake_cache(build):
+    return dict(re.findall(r'^([A-Za-z_][A-Za-z_0-9]*):[^=\r\n]+=(.*)$',
+                           (build / 'CMakeCache.txt').read_text(), flags=re.MULTILINE))
+
+
+def objcxx_lto_override(build, enabled):
+    """Own only our appended ThinLTO flag, retaining existing Release flags.
+
+    The sidecar lets a later default/OFF configuration restore the exact prior
+    flags. Unrecognized edits are rejected rather than overwritten. Additional
+    trailing user flags are preserved when removing our known prefix.
+    """
+    record_path = build / 'native-metal-objcxx-lto.json'
+    if not (build / 'CMakeCache.txt').exists():
+        return None
+    current = read_cmake_cache(build).get('CMAKE_OBJCXX_FLAGS_RELEASE')
+    if current is None:
+        return None
+    base = current
+    if record_path.exists():
+        record = json.loads(record_path.read_text())
+        applied, original = record['applied_release_flags'], record['base_release_flags']
+        if current == applied:
+            base = original
+        elif current.startswith(applied + ' '):
+            base = original + current[len(applied):]
+        else:
+            raise RuntimeError('ObjC++ Release flags changed outside the managed LTO override; refusing to overwrite custom flags')
+    elif not enabled:
+        return None
+    desired = base + ' -flto=thin' if enabled else base
+    record = {'base_release_flags': base, 'applied_release_flags': desired} if enabled else None
+    return desired, record
+
+
+def commit_objcxx_lto_override(build, override):
+    if override is None:
+        return
+    desired, record = override
+    if read_cmake_cache(build).get('CMAKE_OBJCXX_FLAGS_RELEASE') != desired:
+        raise RuntimeError('CMake did not retain the requested ObjC++ Release flags')
+    path = build / 'native-metal-objcxx-lto.json'
+    if record is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_text(json.dumps(record, indent=2) + '\n')
+
+
+def profile_instrumentation_kind(profile, compiler):
+    if not compiler:
+        raise RuntimeError('Missing configured compiler for exact-toolchain profile kind audit')
+    profdata = Path(compiler).with_name('llvm-profdata')
+    if not profdata.is_file():
+        raise RuntimeError('Matching compiler toolchain llvm-profdata is unavailable')
+    output = read([str(profdata), 'show', '--profile-version', str(profile)])
+    match = re.search(r'^Instrumentation level: (Front-end|IR)\b', output, flags=re.MULTILINE)
+    if not match:
+        raise RuntimeError('Cannot establish the supplied LLVM profile instrumentation kind')
+    return 'frontend' if match[1] == 'Front-end' else 'ir'
+
+
+def audit_fastinterp_pgo(build, units, link, requested_generate=False, requested_use=None, requested_kind='frontend'):
+    cache = read_cmake_cache(build)
+    generate = cache.get('CARA_FASTINTERP_PGO_GENERATE', 'OFF').upper() in ('ON', 'TRUE', 'YES', '1')
+    use = cache.get('CARA_FASTINTERP_PGO_USE', '')
+    expected_use = str(Path(requested_use).resolve()) if requested_use else ''
+    kind = cache.get('CARA_FASTINTERP_PGO_KIND', 'frontend')
+    if kind not in ('frontend', 'ir') or kind != requested_kind:
+        raise RuntimeError('Configured FastInterp PGO kind differs from requested policy')
+    if generate != requested_generate or use != expected_use:
+        raise RuntimeError('Configured FastInterp PGO differs from requested policy')
+    if generate and use:
+        raise RuntimeError('FastInterp PGO generation and use are mutually exclusive')
+    if (generate or use) and (cache.get('CARA_PGO_GENERATE', 'OFF').upper() in ('ON', 'TRUE', 'YES', '1') or cache.get('CARA_PGO_USE', '')):
+        raise RuntimeError('FastInterp-only PGO cannot be combined with whole-engine PGO')
+    fi = shlex.split(units['fastinterp']['flags'])
+    metal = shlex.split(units['metal_bindings']['flags'])
+    linked = shlex.split(link['flags'])
+    generation_flag = '-fprofile-generate' if kind == 'ir' else '-fprofile-instr-generate'
+    use_flag = '-fprofile-use=' if kind == 'ir' else '-fprofile-instr-use='
+    generation_prefixes = ('-fprofile-instr-generate', '-fprofile-generate')
+    use_prefixes = ('-fprofile-instr-use=', '-fprofile-use=')
+    expected_generation = [generation_flag] if generate else []
+    if ([flag for flag in fi if flag.startswith(generation_prefixes)] != expected_generation or
+            [flag for flag in linked if flag.startswith(generation_prefixes)] != expected_generation or
+            any(flag.startswith(('-fno-profile-instr', '-fno-profile-generate', '-fno-profile-use')) for flag in (*fi, *linked))):
+        raise RuntimeError('FastInterp PGO generation compile/link runtime flags differ from requested policy')
+    use_flags = [flag for flag in fi if flag.startswith(use_prefixes)]
+    if (generation_flag in fi) != generate or (generation_flag in linked) != generate:
+        raise RuntimeError('FastInterp PGO generation compile/link runtime flags differ from requested policy')
+    if use_flags != ([f'{use_flag}{use}'] if use else []):
+        raise RuntimeError('FastInterp PGO use flags differ from requested profile')
+    if any(flag.startswith((*generation_prefixes, *use_prefixes)) for flag in metal):
+        raise RuntimeError('FastInterp-only PGO unexpectedly instruments the Metal bridge')
+    report = {'mode': 'generate' if generate else 'use' if use else 'off',
+              'kind': kind,
+              'profile_kind_verified': None,
+              'profile_path': use or None, 'profile_sha256': None,
+              'instrumented_compile_unit': units['fastinterp']['output'] if generate else None,
+              'generation_runtime_linked': generation_flag in linked,
+              'compiler': cache.get('CMAKE_CXX_COMPILER'),
+              'profile_runtime_output': 'Set LLVM_PROFILE_FILE to an isolated path, preferably including %p',
+              'scope': 'Only fastinterp.cpp; defaults and guest semantics unchanged'}
+    if use:
+        profile = Path(use)
+        if not profile.is_file():
+            raise RuntimeError('FastInterp PGO profile is not an existing file')
+        if not {'-Werror=profile-instr-out-of-date', '-Werror=profile-instr-unprofiled'}.issubset(fi):
+            raise RuntimeError('FastInterp PGO requires exact profile mismatch diagnostics')
+        actual_kind = profile_instrumentation_kind(profile, cache.get('CMAKE_CXX_COMPILER'))
+        if actual_kind != kind:
+            raise RuntimeError('Supplied LLVM profile instrumentation kind differs from requested FastInterp PGO kind')
+        report['profile_kind_verified'] = actual_kind
+        report['profile_sha256'] = hashlib.sha256(profile.read_bytes()).hexdigest()
+    return report
+
+
+def audit_compiler_policy(build, target, mac, requested_lto, fastinterp_pgo_generate=False, fastinterp_pgo_use=None, fastinterp_pgo_kind='frontend'):
+    """Check configured CMake policy against actual generated compile/link flags.
+
+    CMake's IPO switch can omit ObjC++, so require actual ThinLTO in both
+    audited engine languages and the link recipe when --lto is requested.
+    """
+    cache = read_cmake_cache(build)
+    value = cache.get('CARA_ENABLE_LTO', '').upper()
+    if value not in ('ON', 'OFF', 'TRUE', 'FALSE', 'YES', 'NO', '1', '0'):
+        raise RuntimeError('Missing or invalid CARA_ENABLE_LTO in CMakeCache.txt')
+    configured_lto = value in ('ON', 'TRUE', 'YES', '1')
+    if configured_lto != requested_lto:
+        raise RuntimeError('Configured LTO differs from requested native Metal build policy')
+    if cache.get('CARA_CPU_TARGET') != 'generic':
+        raise RuntimeError('The native Metal builder requires the portable generic CPU target')
+    graph = (build / 'build.ninja').read_text()
+    units = {}
+    for name, output in (
+        ('fastinterp', 'src/core/CMakeFiles/core.dir/arm/fastinterp/fastinterp.cpp.o'),
+        ('metal_bindings', 'src/video_core/CMakeFiles/video_core.dir/renderer_metal/pica_metal_native_bindings.mm.o'),
+    ):
+        fields = ninja_build_fields(graph, output)
+        flags = fields.get('FLAGS', '')
+        units[name] = {'output': output, 'flags': flags, 'lto_mode': lto_mode(flags)}
+    binary = f'bin/{target}.app/' + (f'Contents/MacOS/{target}' if mac else target)
+    fields = ninja_build_fields(graph, binary)
+    flags = ' '.join(fields.get(name, '') for name in ('FLAGS', 'LINK_FLAGS')).strip()
+    link = {'output': binary, 'flags': flags, 'lto_mode': lto_mode(flags)}
+    if bool(units['fastinterp']['lto_mode']) != requested_lto:
+        raise RuntimeError('FastInterp compile flags differ from requested LTO policy')
+    if bool(link['lto_mode']) != requested_lto:
+        raise RuntimeError('Executable link flags differ from requested LTO policy')
+    if bool(units['metal_bindings']['lto_mode']) != requested_lto:
+        raise RuntimeError('Metal ObjC++ compile flags differ from requested LTO policy')
+    if requested_lto and any(stage['lto_mode'] != 'thin' for stage in (*units.values(), link)):
+        raise RuntimeError('The native Metal LTO policy requires ThinLTO in C++, ObjC++ and executable link flags')
+    report = {
+        'cpu_target': cache['CARA_CPU_TARGET'],
+        'lto_requested': requested_lto,
+        'lto_configured': configured_lto,
+        'compile_units': units,
+        'executable_link': link,
+        'all_audited_compile_units_lto': all(bool(unit['lto_mode']) for unit in units.values()),
+        'fastinterp_pgo': audit_fastinterp_pgo(build, units, link, fastinterp_pgo_generate, fastinterp_pgo_use, fastinterp_pgo_kind),
+    }
+    (build / 'native-metal-compiler-policy.json').write_text(json.dumps(report, indent=2) + '\n')
+    return report
+
+
+def version_key(value):
+    parts = tuple(map(int, value.split('.')))
+    return parts + (0,) * (3 - len(parts))
+
+
+def minimum_os(binary):
+    commands = read(['otool', '-l', str(binary)])
+    versions = re.findall(r'\bminos (\d+(?:\.\d+)*)', commands)
+    if not versions:
+        versions = re.findall(r'cmd LC_VERSION_MIN_\w+\s+cmdsize \d+\s+version (\d+(?:\.\d+)*)', commands)
+    if not versions:
+        raise RuntimeError(f'Missing deployment version in {binary}')
+    return max(versions, key=version_key)
+
+
+def linked_libraries(binary):
+    return [line.strip().split(' (', 1)[0]
+            for line in read(['otool', '-L', str(binary)]).splitlines()[1:]]
+
+
+def update_bundle_minimum(app, binary, mac, linkage):
+    # Homebrew developer dependencies may require a newer macOS than the core.
+    # Never advertise the core's API floor as the shipped artifact's minimum.
+    versions = ['13.0' if mac else '16.0', minimum_os(binary)]
+    if mac:
+        pending, seen = list(linkage), set()
+        while pending:
+            library = pending.pop()
+            if library.startswith(('/System/Library/', '/usr/lib/')):
+                continue
+            path = Path(library)
+            if not path.is_absolute() or not path.is_file():
+                raise RuntimeError(f'Cannot audit developer runtime deployment version: {library}')
+            path = path.resolve()
+            if path in seen:
+                continue
+            seen.add(path)
+            versions.append(minimum_os(path))
+            pending.extend(linked_libraries(path))
+    minimum = max(versions, key=version_key)
+    info_path = app / ('Contents/Info.plist' if mac else 'Info.plist')
+    info = plistlib.loads(info_path.read_bytes())
+    info['LSMinimumSystemVersion' if mac else 'MinimumOSVersion'] = minimum
+    info_path.write_bytes(plistlib.dumps(info))
+    return minimum
+
+
+def bundle_and_audit(build, target, mac, cpu_jit, deps, lto=False, fastinterp_pgo_generate=False, fastinterp_pgo_use=None, fastinterp_pgo_kind='frontend'):
     app = build / 'bin' / (target + '.app')
     resources = app / 'Contents/Resources' if mac else app
     binary = app / 'Contents/MacOS' / target if mac else app / target
@@ -113,17 +354,6 @@ def bundle_and_audit(build, target, mac, cpu_jit, deps):
         shutil.copyfile(checkout / notice, licenses / notice)
         shutil.copytree(checkout / 'LICENSES', licenses / 'LICENSES', dirs_exist_ok=True)
 
-    # Keep this developer artifact runnable on the build Mac with the same
-    # isolated CPU JIT entitlement used by the existing macOS backend.
-    if mac:
-        sign = ['codesign', '--force', '--sign', '-']
-        if cpu_jit:
-            entitlements = build / 'native-metal-jit-entitlements.plist'
-            entitlements.write_bytes(plistlib.dumps({'com.apple.security.cs.allow-jit': True}))
-            sign.extend(['--entitlements', str(entitlements)])
-        run([*sign, str(app)])
-        run(['codesign', '--verify', '--strict', str(app)])
-
     if read(['lipo', '-archs', str(binary)]) != 'arm64':
         raise RuntimeError('The native Metal bundle must contain only arm64')
     graph = (build / 'build.ninja').read_text()
@@ -137,8 +367,7 @@ def bundle_and_audit(build, target, mac, cpu_jit, deps):
     if 'JitX64Engine' in symbols or ('ARM_Dynarmic' in symbols) != cpu_jit:
         raise RuntimeError('Linked JIT backend differs from the requested policy')
 
-    libs = read(['otool', '-L', str(binary)]).splitlines()[1:]
-    linkage = [line.strip().split(' (', 1)[0] for line in libs]
+    linkage = linked_libraries(binary)
     if any('glslang' in lib.lower() or 'spirv-cross' in lib.lower() for lib in linkage):
         raise RuntimeError('Shader compiler dependencies must link statically')
     if not mac:
@@ -146,14 +375,33 @@ def bundle_and_audit(build, target, mac, cpu_jit, deps):
             raise RuntimeError('Unexpected third-party dylib in the iOS build')
         if re.search(r'\b_(mmap|mprotect|vm_protect)$', symbols, flags=re.MULTILINE):
             raise RuntimeError('Unexpected executable-memory symbols in the iOS build')
+    bundle_minimum = update_bundle_minimum(app, binary, mac, linkage)
+
+    # Keep this developer artifact runnable on the build Mac with the same
+    # isolated CPU JIT entitlement used by the existing macOS backend.
+    if mac:
+        sign = ['codesign', '--force', '--sign', '-']
+        if cpu_jit:
+            entitlements = build / 'native-metal-jit-entitlements.plist'
+            entitlements.write_bytes(plistlib.dumps({'com.apple.security.cs.allow-jit': True}))
+            sign.extend(['--entitlements', str(entitlements)])
+        run([*sign, str(app)])
+        run(['codesign', '--verify', '--strict', str(app)])
+
     report = {
         'source_revision': read(['git', 'rev-parse', 'HEAD'], cwd=ROOT),
         'tracked_source_modified': bool(read(
             ['git', 'status', '--porcelain', '--untracked-files=no', '--', 'emulator'], cwd=ROOT)),
         'renderer': 'native_metal',
+        'renderer_api_minimum': '13.0' if mac else '16.0',
+        'binary_minimum_os': minimum_os(binary),
+        'bundle_minimum_os': bundle_minimum,
+        'metal_language_version': '2.3',
+        'metal_air_minimum_os': '13.0' if mac else '16.0',
         'architecture': 'arm64',
         'platform': 'mac' if mac else 'ios',
         'cpu_jit_enabled': cpu_jit,
+        'compiler_policy': audit_compiler_policy(build, target, mac, lto, fastinterp_pgo_generate, fastinterp_pgo_use, fastinterp_pgo_kind),
         'shader_jit_enabled': False,
         'runtime_shader_compilers': {name: revision for name, _, revision, _, _ in COMPILERS},
         'runtime_metal_libraries': resource_hashes,
@@ -174,6 +422,15 @@ def main():
     parser.add_argument('--prefix-path', type=Path, help='macOS SDL2 and libpng dependency prefix')
     parser.add_argument('--jobs', type=int, default=2)
     parser.add_argument('--cpu-jit', action='store_true', help='Include the optional macOS CPU JIT')
+    parser.add_argument('--lto', action='store_true',
+                        help='Enable the existing CMake link-time optimization policy (default: off)')
+    pgo = parser.add_mutually_exclusive_group()
+    pgo.add_argument('--fastinterp-pgo-generate', action='store_true',
+                     help='Instrument only fastinterp.cpp; set an isolated LLVM_PROFILE_FILE when training')
+    pgo.add_argument('--fastinterp-pgo-use', type=Path,
+                     help='Use an exact profile of the selected kind merged with this compiler toolchain llvm-profdata')
+    parser.add_argument('--fastinterp-pgo-kind', choices=('frontend', 'ir'), default='frontend',
+                        help='Private FI-only PGO instrumentation kind (default: frontend)')
     parser.add_argument('--configure-only', action='store_true')
     args = parser.parse_args()
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
@@ -194,14 +451,29 @@ def main():
     cache = args.shader_sources.resolve() if args.shader_sources else build / 'shader-sources'
     deps = tuple(pinned_source(cache, dependency, not args.shader_sources) for dependency in COMPILERS)
     build.mkdir(parents=True, exist_ok=True)
-    command = configure_args(args, build, deps, cmake, ninja)
-    (build / 'native-metal-configure.json').write_text(json.dumps(command, indent=2) + '\n')
-    run(command)
+    base_command = configure_args(args, build, deps, cmake, ninja)
+    def configure(override):
+        command = list(base_command)
+        if override is not None:
+            command.append('-DCMAKE_OBJCXX_FLAGS_RELEASE:STRING=' + override[0])
+        (build / 'native-metal-configure.json').write_text(json.dumps(command, indent=2) + '\n')
+        run(command)
+        commit_objcxx_lto_override(build, override)
+    configure(objcxx_lto_override(build, args.lto))
+    if args.lto:
+        graph = (build / 'build.ninja').read_text()
+        fields = ninja_build_fields(graph,
+            'src/video_core/CMakeFiles/video_core.dir/renderer_metal/pica_metal_native_bindings.mm.o')
+        if lto_mode(fields.get('FLAGS', '')) != 'thin':
+            # A fresh build has no cached Release defaults until CMake's first
+            # configure. Add only the missing ObjC++ ThinLTO driver option.
+            configure(objcxx_lto_override(build, True))
+    target = 'cara-metal-rom' if args.platform == 'mac' else 'cara-ios'
+    audit_compiler_policy(build, target, args.platform == 'mac', args.lto, args.fastinterp_pgo_generate, args.fastinterp_pgo_use, args.fastinterp_pgo_kind)
     if args.configure_only:
         return
-    target = 'cara-metal-rom' if args.platform == 'mac' else 'cara-ios'
     run([cmake, '--build', str(build), '--target', target, '--parallel', str(args.jobs)])
-    bundle_and_audit(build, target, args.platform == 'mac', args.cpu_jit, deps)
+    bundle_and_audit(build, target, args.platform == 'mac', args.cpu_jit, deps, args.lto, args.fastinterp_pgo_generate, args.fastinterp_pgo_use, args.fastinterp_pgo_kind)
 
 
 if __name__ == '__main__':

@@ -17,6 +17,8 @@ struct ExactPackedMetalResources {
     id<MTLComputePipelineState> mixed_alias = nil;
     id<MTLComputePipelineState> detile_packed_color = nil;
     id<MTLComputePipelineState> tiled_packed_color_export = nil;
+    id<MTLComputePipelineState> detile_depth24 = nil;
+    id<MTLComputePipelineState> tiled_depth24_export = nil;
 };
 
 struct PicaMetalResources {

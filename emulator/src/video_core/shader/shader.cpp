@@ -2,6 +2,8 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include <atomic>
+#include <limits>
 #include <cmath>
 #include <cstring>
 #include "common/bit_set.h"
@@ -11,6 +13,7 @@
 #include "video_core/regs_rasterizer.h"
 #include "video_core/regs_shader.h"
 #include "video_core/shader/shader.h"
+#include "video_core/shader/shader_identity.hh"
 #include "video_core/shader/shader_interpreter.h"
 #if defined(CARA_ENABLE_JIT) && defined(ARCHITECTURE_x86_64)
 #include "video_core/shader/shader_jit_x64.h"
@@ -18,6 +21,17 @@
 #include "video_core/video_core.h"
 
 namespace Pica::Shader {
+namespace {
+std::atomic<u64> next_shader_identity{1};
+}
+
+u64 AllocateShaderIdentity() {
+    return Detail::AllocateIdentity(next_shader_identity);
+}
+
+bool ShaderIdentityAvailable() {
+    return next_shader_identity.load(std::memory_order_relaxed) != std::numeric_limits<u64>::max();
+}
 
 void OutputVertex::ValidateSemantics(const RasterizerRegs& regs) {
     unsigned int num_attributes = regs.vs_output_total;

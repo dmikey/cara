@@ -74,4 +74,34 @@ inline std::map<std::string, std::vector<std::uint8_t>> ReadSkinArchive(
     if (pos != directory_end || !files.count("info.json")) fail();
     return files;
 }
+// Stored ZIP writer for portable enhanced Delta skins. Reuse the reader's
+// limits/path/CRC validation before exposing bytes to the document exporter.
+inline std::vector<std::uint8_t> WriteSkinArchive(
+    const std::map<std::string, std::vector<std::uint8_t>>& files) {
+    std::vector<std::uint8_t> out;
+    struct Entry { std::string name; std::uint32_t offset, crc, size; };
+    std::vector<Entry> entries;
+    const auto u16=[&](std::uint32_t n) { out.push_back(n&255); out.push_back((n>>8)&255); };
+    const auto u32=[&](std::uint32_t n) { u16(n&65535); u16(n>>16); };
+    if (files.empty() || files.size()>64) throw std::runtime_error("Invalid skin file count");
+    for (const auto& [name, bytes] : files) {
+        if (name.empty() || name.size()>1024 || bytes.size()>16*1024*1024 || out.size()+bytes.size()>32*1024*1024)
+            throw std::runtime_error("Oversized skin export");
+        Entry e{name,static_cast<std::uint32_t>(out.size()),static_cast<std::uint32_t>(crc32(0,bytes.data(),bytes.size())),static_cast<std::uint32_t>(bytes.size())};
+        entries.push_back(e);
+        u32(0x04034b50);u16(20);u16(0x800);u16(0);u16(0);u16(0);
+        u32(e.crc);u32(e.size);u32(e.size);u16(name.size());u16(0);
+        out.insert(out.end(),name.begin(),name.end());out.insert(out.end(),bytes.begin(),bytes.end());
+    }
+    const auto start=out.size();
+    for (const auto& e : entries) {
+        u32(0x02014b50);u16(20);u16(20);u16(0x800);u16(0);u16(0);u16(0);
+        u32(e.crc);u32(e.size);u32(e.size);u16(e.name.size());u16(0);u16(0);u16(0);u16(0);u32(0);u32(e.offset);
+        out.insert(out.end(),e.name.begin(),e.name.end());
+    }
+    const auto length=out.size()-start;
+    u32(0x06054b50);u16(0);u16(0);u16(entries.size());u16(entries.size());u32(length);u32(start);u16(0);
+    ReadSkinArchive(out);
+    return out;
+}
 } // namespace Cara

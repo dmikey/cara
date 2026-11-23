@@ -1704,6 +1704,55 @@ void ARM_FastInterp::DecodeBlockInto(BasicBlock* block, u32 pc, CurrentDecodeABI
         }
     }
 
+    // Pair only decoded AL direct-offset word loads. Retain both original
+    // records so budget, tracing, invalidation and scalar fallback stay exact.
+    static const bool ldr_pairs = [] {
+        const auto* value = std::getenv("CARA_FASTINTERP_LDR_PAIRS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (ldr_pairs && !is_thumb) {
+        for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
+            auto& first = block->instructions[slot];
+            const auto& second = block->instructions[slot + 1];
+            if (first.GetOpcode() == Opcode::LdrImm && second.GetOpcode() == Opcode::LdrImm &&
+                first.cond == 0xe && second.cond == 0xe &&
+                first.inst_size == 4 && second.inst_size == 4 &&
+                first.rd < 15 && second.rd < 15 && first.ls.rn < 15 &&
+                first.ls.rn == second.ls.rn && first.rd != first.ls.rn &&
+                first.ls.mode == AddrMode::Offset && second.ls.mode == AddrMode::Offset &&
+                first.ls.rm == 0xff && second.ls.rm == 0xff) {
+                first.SetOpcode(Opcode::LdrPairImm);
+                ++slot;
+            }
+        }
+    }
+
+    static const bool ldr_cmp_branch = [] {
+        const auto* value = std::getenv("CARA_FASTINTERP_LDR_CMP_BRANCH");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (ldr_cmp_branch && !is_thumb) {
+        for (unsigned slot = 0; slot + 1 < block->inst_count; ++slot) {
+            auto& load = block->instructions[slot];
+            const auto& compare = block->instructions[slot + 1];
+            const auto compare_opcode = compare.GetOpcode();
+            if (compare_opcode != Opcode::FusedCmpBcc &&
+                compare_opcode != Opcode::FusedCmpRegBcc)
+                continue;
+            if (load.GetOpcode() != Opcode::LdrImm || load.cond != 0xe ||
+                load.inst_size != 4 || load.rd >= 15 || load.ls.rn >= 15 ||
+                compare.cond != 0xe || compare.inst_size != 8 ||
+                compare.fused.combined_size != 8 || compare.fused.branch_cond >= 14)
+                continue;
+            if (compare_opcode == Opcode::FusedCmpBcc && compare.fused.rn == load.rd) {
+                load.SetOpcode(Opcode::LdrCmpImmBcc);
+            } else if (compare_opcode == Opcode::FusedCmpRegBcc &&
+                       (compare.fused.rn == load.rd || compare.fused.rm == load.rd)) {
+                load.SetOpcode(Opcode::LdrCmpRegBcc);
+            }
+        }
+    }
+
     // Last single-instruction quickening: preserve every slot, raw tick cost,
     // size, boundary, memory callback and existing fusion priority.
     if (ldr_sp_static_ && !is_thumb)

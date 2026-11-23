@@ -10,6 +10,9 @@ on:
       - 'tools/build_mac_sdl.py'
       - 'tools/audit_no_jit.py'
       - 'tools/package_*.py'
+      - 'tools/bundle_ios_licenses.py'
+      - 'LICENSE'
+      - 'NOTICE'
       - 'tools/sign_nightly.py'
       - 'tools/mac_bundle.py'
       - 'tools/mac_app_launcher.mm'
@@ -58,6 +61,24 @@ jobs:
           fi
       - id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  source-archive:
+    name: Matching complete source archive
+    needs: source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
+      - name: Export bundled source and build scripts
+        env:
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+        run: python3 tools/package_source.py --revision "$EXPECTED_SHA" --output "dist/Cara-source-$EXPECTED_SHA.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cara-source
+          path: dist/*
+          if-no-files-found: error
   mac:
     needs: source
     name: Self-contained macOS arm64 / optional CPU JIT included
@@ -126,7 +147,7 @@ jobs:
           if-no-files-found: error
   publish:
     name: Attach audited binaries to the existing release
-    needs: [source, mac, ios]
+    needs: [source, source-archive, mac, ios]
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     runs-on: ubuntu-latest
     permissions:
@@ -144,10 +165,16 @@ jobs:
           EXPECTED_SHA: ${{ needs.source.outputs.sha }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
+          test -f "dist/Cara-source-$EXPECTED_SHA.tar.gz"
           test -f dist/Cara-macOS-arm64-JIT.zip
           test -f dist/Cara-iOS-arm64-GLES3-unsigned.ipa
           python3 - <<'PYCODE'
-          import json, os
+          import hashlib, json, os
+          from pathlib import Path
+          source = Path('dist') / ('Cara-source-' + os.environ['EXPECTED_SHA'] + '.tar.gz')
+          receipt = json.loads(source.with_suffix('.gz.json').read_text())
+          assert receipt['source_revision'] == os.environ['EXPECTED_SHA']
+          assert receipt['sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
           for path in ('dist/mac-build.json', 'dist/Cara-iOS-arm64-GLES3-unsigned.ipa.json'):
               assert json.load(open(path))['source_revision'] == os.environ['EXPECTED_SHA'], 'Source mismatch: ' + path
           PYCODE
@@ -210,7 +237,7 @@ jobs:
         run: echo "signed=true" >> "$GITHUB_OUTPUT"
   nightly-publish:
     name: Publish signed nightly prerelease
-    needs: [source, nightly-sign]
+    needs: [source, source-archive, nightly-sign]
     if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly)) && needs.nightly-sign.outputs.signed == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -219,6 +246,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: nightly-signed
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-source
           path: dist
       - name: Verify and publish matching signed products
         env:
@@ -236,7 +267,11 @@ jobs:
               'Cara-macOS-arm64-JIT-signed.zip': {'signing':'developer-id','notarized':True,'cpu_jit':True},
               'Cara-iOS-arm64-GLES3-signed.ipa': {'signing':'apple-distribution','distribution':'app-store-connect','cpu_jit':False},
           }
-          assert {p.name for p in Path('dist').iterdir()} == {
+          source = Path('dist') / ('Cara-source-' + os.environ['EXPECTED_SHA'] + '.tar.gz')
+          source_receipt = json.loads(source.with_suffix('.gz.json').read_text())
+          assert source_receipt['source_revision'] == os.environ['EXPECTED_SHA']
+          assert source_receipt['sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
+          assert {p.name for p in Path('dist').iterdir()} - {source.name, source.name + '.json'} == {
               name + ext for name in assets for ext in ('', '.json')}, 'Unexpected release assets'
           versions = set()
           for name, requirements in assets.items():
@@ -257,6 +292,7 @@ jobs:
             "Automated Cara nightly from commit $EXPECTED_SHA." \
             "The macOS app is Developer ID-signed and notarized, with optional ARM64 CPU JIT." \
             "The iOS IPA uses App Store distribution signing for App Store Connect. It requires separate installation or distribution through Apple." \
+            "Matching source, bundled dependency source and build scripts are attached in Cara-source-$EXPECTED_SHA.tar.gz." \
             "Verify downloaded files using SHA256SUMS.txt." > notes.md
           gh release create "$tag" dist/* SHA256SUMS.txt --draft --prerelease --latest=false \
             --target "$EXPECTED_SHA" --title "Cara Nightly $stamp · ${EXPECTED_SHA:0:12}" --notes-file notes.md

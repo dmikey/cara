@@ -1,15 +1,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Modified for Cara on 2026-11-20: frontend presentation and attribution.
+#import "ios/ui_theme.h"
 #import "ios/action_layout.h"
 #import "ios/input_hub.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <cmath>
+#include "ios/skin_archive.h"
 
 static NSArray* Buttons() { return @[@"a",@"b",@"x",@"y",@"l",@"r",@"zl",@"zr",@"start",@"select",@"up",@"down",@"left",@"right"]; }
+static NSArray* Glyphs() { return @[@"hand.tap",@"scope",@"arrow.up",@"figure.run",@"bolt.fill",@"arrow.clockwise",@"map",@"backpack",@"plus",@"circle",@"move.3d",@"hand.draw",@"a.circle",@"b.circle",@"x.circle",@"y.circle",@"l.circle",@"r.circle"]; }
+NSArray<NSString*>* CaraActionBindings(NSDictionary* control) {
+    return control[@"bindings"]?:([control[@"binding"] isEqual:@"unbound"]?@[]:@[control[@"binding"]]);
+}
+static NSString* GlyphTitle(NSString* symbol) {
+    return @{@"hand.tap":@"Tap",@"scope":@"Aim",@"arrow.up":@"Jump",@"figure.run":@"Run",@"bolt.fill":@"Action",@"arrow.clockwise":@"Reload",@"map":@"Map",@"backpack":@"Inventory",@"plus":@"Plus",@"circle":@"Circle",@"move.3d":@"Move",@"hand.draw":@"Draw",@"a.circle":@"A",@"b.circle":@"B",@"x.circle":@"X",@"y.circle":@"Y",@"l.circle":@"L",@"r.circle":@"R"}[symbol]?:@"Control";
+}
+static NSString* KindTitle(NSString* kind) {
+    return @{@"button":@"Button",@"stick":@"Fixed stick",@"floating":@"Floating stick",@"dpad":@"D-pad",@"drag":@"Look / drag zone"}[kind]?:@"Control";
+}
 static NSDictionary* Control(NSString* label,NSString* kind,NSString* binding,double x,double y,double w,double h) {
-    return @{@"id":NSUUID.UUID.UUIDString,@"label":label,@"kind":kind,@"binding":binding,@"toggle":@NO,@"hidden":@NO,@"travel":@64,@"frame":@{@"x":@(x),@"y":@(y),@"width":@(w),@"height":@(h)}};
+    return @{@"id":NSUUID.UUID.UUIDString,@"label":label,@"kind":kind,@"binding":binding,@"toggle":@NO,@"hidden":@NO,@"travel":@64,@"glyph":@"hand.tap",@"opacity":@.45,@"frame":@{@"x":@(x),@"y":@(y),@"width":@(w),@"height":@(h)}};
 }
 NSDictionary* CaraActionLayoutSettingsRow(void(^openEditor)(void)) {
-    return @{@"title":@"Controller Demapping",@"subtitle":@"Arrange actions and bind them to 3DS inputs",
+    return @{@"title":@"Control layout",@"subtitle":@"Arrange actions and bind them to 3DS inputs",
              @"symbol":@"hand.draw",@"keepOpen":@YES,@"action":[openEditor copy]};
 }
 
@@ -17,10 +30,10 @@ NSDictionary* CaraNewActionLayout() {
     // Deliberately unbound: action names never imply a particular game's controls.
     NSArray* portrait=@[Control(@"Move",@"stick",@"unbound",.06,.69,.27,.18),Control(@"Fire",@"button",@"unbound",.76,.72,.18,.12),Control(@"Jump",@"button",@"unbound",.56,.81,.18,.12)];
     NSArray* landscape=@[Control(@"Move",@"stick",@"unbound",.05,.55,.20,.34),Control(@"Fire",@"button",@"unbound",.81,.52,.12,.21),Control(@"Jump",@"button",@"unbound",.66,.72,.12,.21)];
-    return @{@"version":@1,@"enabled":@NO,@"portrait":portrait,@"landscape":landscape};
+    return @{@"version":@2,@"enabled":@NO,@"portrait":portrait,@"landscape":landscape};
 }
 BOOL CaraValidateActionLayout(id v,NSError** error) {
-    BOOL ok=[v isKindOfClass:NSDictionary.class] && [v[@"version"] isKindOfClass:NSNumber.class] && [v[@"version"] isEqualToNumber:@1] && [v[@"enabled"] isKindOfClass:NSNumber.class];
+    BOOL ok=[v isKindOfClass:NSDictionary.class] && [v[@"version"] isKindOfClass:NSNumber.class] && ([v[@"version"] isEqualToNumber:@1] || [v[@"version"] isEqualToNumber:@2]) && [v[@"enabled"] isKindOfClass:NSNumber.class];
     for (NSString* orientation in @[@"portrait",@"landscape"]) {
         id controls=ok?v[orientation]:nil;
         if (![controls isKindOfClass:NSArray.class] || [controls count]>24) { ok=NO; break; }
@@ -33,6 +46,15 @@ BOOL CaraValidateActionLayout(id v,NSError** error) {
             NSArray* allowed=[kind isEqual:@"button"]?[Buttons() arrayByAddingObject:@"unbound"]:[@[@"circle",@"cstick",@"unbound"] arrayByAddingObjectsFromArray:[kind isEqual:@"dpad"]?@[@"dpad"]:@[]];
             if (![allowed containsObject:binding] || (![kind isEqual:@"button"] && [c[@"toggle"] boolValue]) || ![c[@"frame"] isKindOfClass:NSDictionary.class]) { ok=NO; break; }
             if ((c[@"hidden"] && ![c[@"hidden"] isKindOfClass:NSNumber.class]) || (c[@"travel"] && (![c[@"travel"] isKindOfClass:NSNumber.class] || !std::isfinite([c[@"travel"] doubleValue]) || [c[@"travel"] doubleValue]<24 || [c[@"travel"] doubleValue]>160))) { ok=NO; break; }
+            if (c[@"bindings"]) {
+                id bindings=c[@"bindings"];
+                if (![kind isEqual:@"button"] || ![bindings isKindOfClass:NSArray.class] || [bindings count]>8) { ok=NO; break; }
+                NSMutableSet* seen=[NSMutableSet new];
+                for(id input in bindings) { if (![input isKindOfClass:NSString.class] || ![Buttons() containsObject:input] || [seen containsObject:input]) { ok=NO; break; } [seen addObject:input]; }
+                if (!ok) break;
+            }
+            if (c[@"glyph"] && (![c[@"glyph"] isKindOfClass:NSString.class] || ![Glyphs() containsObject:c[@"glyph"]])) { ok=NO; break; }
+            if (c[@"opacity"] && (![c[@"opacity"] isKindOfClass:NSNumber.class] || !std::isfinite([c[@"opacity"] doubleValue]) || [c[@"opacity"] doubleValue]<.1 || [c[@"opacity"] doubleValue]>.9)) { ok=NO; break; }
             NSDictionary* f=c[@"frame"];
             for (NSString* k in @[@"x",@"y",@"width",@"height"]) if (![f[k] isKindOfClass:NSNumber.class] || !std::isfinite([f[k] doubleValue]) || [f[k] doubleValue]<0 || [f[k] doubleValue]>1) ok=NO;
             if (!ok) break;
@@ -40,9 +62,78 @@ BOOL CaraValidateActionLayout(id v,NSError** error) {
             if (!ok) break;
         }
     }
+    if (ok && v[@"registrationID"] && (![v[@"registrationID"] isKindOfClass:NSString.class] || ![[NSUUID alloc] initWithUUIDString:v[@"registrationID"]])) ok=NO;
+    if (ok && v[@"name"] && (![v[@"name"] isKindOfClass:NSString.class] || ![v[@"name"] length] || [v[@"name"] length]>128)) ok=NO;
+    if (ok && v[@"representations"]) {
+        if (![v[@"representations"] isKindOfClass:NSDictionary.class]) ok=NO;
+        else for(NSString* orientation in @[@"portrait",@"landscape"]) if (!CaraValidateRepresentation(v[@"representations"][orientation])) ok=NO;
+    }
     if (!ok && error) *error=[NSError errorWithDomain:@"CaraActionLayout" code:1 userInfo:@{NSLocalizedDescriptionKey:@"This layout is invalid or uses an unsupported version. Your saved layout has not changed."}];
     return ok;
 }
+NSDictionary* CaraActionLayoutFromSkin(CaraSkin* skin,NSError** error) {
+    id value=skin.info[@"caraActionLayout"];
+    return CaraValidateActionLayout(value,error)?value:nil;
+}
+NSData* CaraActionSkinData(NSDictionary* layout,NSError** error) {
+    if(!CaraValidateActionLayout(layout,error)) return nil;
+    NSMutableDictionary* enhanced=[layout mutableCopy]; enhanced[@"version"]=@2;
+    NSMutableDictionary* variants=[NSMutableDictionary new];
+    for(NSString* orientation in @[@"portrait",@"landscape"]) {
+        NSMutableDictionary* rep=[(layout[@"representations"][orientation]?:CaraControllerSkinRepresentation([orientation isEqual:@"landscape"])) mutableCopy];
+        NSMutableArray* items=[NSMutableArray new];
+        for(NSDictionary* item in rep[@"items"]) if([item[@"inputs"] isKindOfClass:NSDictionary.class] && [item[@"inputs"][@"x"] isEqual:@"touchScreenX"]) [items addObject:item];
+        CGFloat width=[rep[@"mappingSize"][@"width"] doubleValue],height=[rep[@"mappingSize"][@"height"] doubleValue];
+        for(NSDictionary* control in layout[orientation]) {
+            NSDictionary* frame=control[@"frame"]; id inputs=nil;
+            if([control[@"kind"] isEqual:@"button"]) inputs=CaraActionBindings(control);
+            else if([control[@"binding"] isEqual:@"circle"]) inputs=@{@"x":@"circlePadX",@"y":@"circlePadY"};
+            else if([control[@"binding"] isEqual:@"cstick"]) inputs=@{@"x":@"cStickX",@"y":@"cStickY"};
+            else if([control[@"binding"] isEqual:@"dpad"]) inputs=@{@"up":@"up",@"down":@"down",@"left":@"left",@"right":@"right"};
+            if([inputs count]) [items addObject:@{@"inputs":inputs,@"frame":@{@"x":@([frame[@"x"] doubleValue]*width),@"y":@([frame[@"y"] doubleValue]*height),@"width":@([frame[@"width"] doubleValue]*width),@"height":@([frame[@"height"] doubleValue]*height)}}];
+        }
+        rep[@"items"]=items; rep[@"assets"]=@{@"resizable":@"transparent.png"}; variants[orientation]=rep;
+    }
+    enhanced[@"representations"]=variants;
+    NSDictionary* info=@{@"name":layout[@"name"]?:@"Cara demapped controls",@"identifier":[@"com.dmikey.cara.demap." stringByAppendingString:NSUUID.UUID.UUIDString],@"gameTypeIdentifier":@"com.dmikey.cara.game.3ds",@"representations":@{@"ipad":@{@"standard":variants},@"iphone":@{@"standard":variants}},@"caraActionLayout":enhanced};
+    NSData* json=[NSJSONSerialization dataWithJSONObject:info options:NSJSONWritingPrettyPrinted error:error]; if(!json) return nil;
+    UIGraphicsImageRendererFormat* format=[UIGraphicsImageRendererFormat defaultFormat]; format.opaque=NO; format.scale=1;
+    UIGraphicsImageRenderer* renderer=[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(2,2) format:format];
+    NSData* png=UIImagePNGRepresentation([renderer imageWithActions:^(UIGraphicsImageRendererContext* context) { CGContextClearRect(context.CGContext,CGRectMake(0,0,2,2)); }]);
+    try {
+        std::map<std::string,std::vector<std::uint8_t>> files;
+        for(NSString* name in @[@"info.json",@"transparent.png"]) {
+            NSData* data=[name isEqual:@"info.json"]?json:png;
+            const auto* bytes=static_cast<const std::uint8_t*>(data.bytes);
+            files[name.UTF8String]=std::vector<std::uint8_t>(bytes,bytes+data.length);
+        }
+        const auto archive=Cara::WriteSkinArchive(files);
+        return [NSData dataWithBytes:archive.data() length:archive.size()];
+    } catch(const std::exception& exception) {
+        if(error)*error=[NSError errorWithDomain:@"CaraActionLayout" code:2 userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithUTF8String:exception.what()]}];
+        return nil;
+    }
+}
+
+NSURL* CaraActionPresetDirectory() {
+    NSURL* root=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    return [root URLByAppendingPathComponent:@"CaraControlSkins" isDirectory:YES];
+}
+NSDictionary* CaraRegisterActionLayout(NSDictionary* layout,NSURL* directory,NSError** error) {
+    if(!CaraValidateActionLayout(layout,error)) return nil;
+    if(!directory.isFileURL) {
+        if(error)*error=[NSError errorWithDomain:@"CaraActionLayout" code:3 userInfo:@{NSLocalizedDescriptionKey:@"Control skins require a local preset directory."}];
+        return nil;
+    }
+    NSMutableDictionary* registered=[layout mutableCopy];
+    NSUUID* identity=registered[@"registrationID"]?[[NSUUID alloc] initWithUUIDString:registered[@"registrationID"]]:NSUUID.UUID;
+    registered[@"registrationID"]=identity.UUIDString;
+    NSData* package=CaraActionSkinData(registered,error); if(!package) return nil;
+    if(![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:error]) return nil;
+    NSURL* path=[directory URLByAppendingPathComponent:[identity.UUIDString stringByAppendingPathExtension:@"deltaskin"]];
+    return [package writeToURL:path options:NSDataWritingAtomic error:error]?[registered copy]:nil;
+}
+
 CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     NSDictionary* f=c[@"frame"]; CGFloat w=MIN(size.width,MAX(44,[f[@"width"] doubleValue]*size.width)),h=MIN(size.height,MAX(44,[f[@"height"] doubleValue]*size.height));
     return CGRectMake(MIN(MAX(0,[f[@"x"] doubleValue]*size.width),MAX(0,size.width-w)),MIN(MAX(0,[f[@"y"] doubleValue]*size.height),MAX(0,size.height-h)),w,h);
@@ -90,9 +181,9 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     // Iterate controls in stable order for deterministic duplicate analog bindings.
     for (NSDictionary* c in self.controls) {
         NSDictionary* contact=nil; for (NSDictionary* value in contacts.allValues) if ([value[@"control"][@"id"] isEqual:c[@"id"]]) { contact=value; break; }
-        NSString* kind=c[@"kind"],*binding=c[@"binding"]; if ([binding isEqual:@"unbound"]) continue;
+        NSString* kind=c[@"kind"],*binding=c[@"binding"]; if ([binding isEqual:@"unbound"] && ![c[@"bindings"] count]) continue;
         CGRect r=CaraActionFrame(c,self.bounds.size); CGPoint p=[contact[@"point"] CGPointValue];
-        if ([kind isEqual:@"button"]) { if ([toggles containsObject:c[@"id"]] || (contact && ![c[@"toggle"] boolValue] && CGRectContainsPoint(r,p))) [pressed addObject:binding]; continue; }
+        if ([kind isEqual:@"button"]) { if ([toggles containsObject:c[@"id"]] || (contact && ![c[@"toggle"] boolValue] && CGRectContainsPoint(r,p))) [pressed addObjectsFromArray:CaraActionBindings(c)]; continue; }
         if (!contact) continue;
         CGPoint vector;
         if ([kind isEqual:@"floating"] || [kind isEqual:@"drag"]) { CGPoint origin=[contact[@"origin"] CGPointValue]; CGFloat travel=c[@"travel"]?[c[@"travel"] doubleValue]:64; r=CGRectMake(origin.x-travel,origin.y-travel,travel*2,travel*2); }
@@ -111,15 +202,20 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
         CGRect r=CaraActionFrame(c,self.bounds.size); BOOL active=[toggles containsObject:c[@"id"]];
         for (NSDictionary* contact in contacts.allValues) if ([contact[@"control"][@"id"] isEqual:c[@"id"]]) active=YES;
         UIBezierPath* path=[UIBezierPath bezierPathWithRoundedRect:CGRectInset(r,1,1) cornerRadius:[c[@"kind"] isEqual:@"button"]?MIN(r.size.width,r.size.height)/2:20];
-        [(hidden?[UIColor colorWithRed:.25 green:.65 blue:.8 alpha:.12]:active?[UIColor colorWithRed:1 green:.48 blue:.24 alpha:.7]:[UIColor colorWithWhite:.12 alpha:.82]) setFill]; [path fill];
+        [(hidden?[UIColor colorWithRed:.25 green:.65 blue:.8 alpha:.12]:active?[UIColor colorWithWhite:1 alpha:.22]:[UIColor colorWithWhite:1 alpha:.045]) setFill]; [path fill];
         if (hidden) { CGFloat dash[]={6,4}; [path setLineDash:dash count:2 phase:0]; }
         [[UIColor colorWithWhite:1 alpha:.4] setStroke]; path.lineWidth=1.5; [path stroke];
-        NSString* subtitle=hidden?@"Invisible zone":[c[@"binding"] isEqual:@"unbound"]?@"Bind input":[c[@"kind"] isEqual:@"dpad"]?@"✚":[c[@"kind"] isEqual:@"button"]?([c[@"toggle"] boolValue]?@"Toggle":@"Hold"):[c[@"kind"] isEqual:@"drag"]?@"Drag →":@"◎";
-        NSMutableParagraphStyle* style=[NSMutableParagraphStyle new]; style.alignment=NSTextAlignmentCenter; style.lineBreakMode=NSLineBreakByTruncatingTail;
-        CGFloat fontSize=15;
-        while (fontSize>8 && [c[@"label"] sizeWithAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:fontSize weight:UIFontWeightSemibold]}].width>r.size.width-8) --fontSize;
-        [c[@"label"] drawInRect:CGRectMake(r.origin.x+4,CGRectGetMidY(r)-17,r.size.width-8,22) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:fontSize weight:UIFontWeightSemibold],NSForegroundColorAttributeName:UIColor.whiteColor,NSParagraphStyleAttributeName:style}];
-        [subtitle drawInRect:CGRectMake(r.origin.x+3,CGRectGetMidY(r)+5,r.size.width-6,18) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:10 weight:UIFontWeightMedium],NSForegroundColorAttributeName:[UIColor colorWithWhite:1 alpha:.65],NSParagraphStyleAttributeName:style}];
+        CGFloat opacity=c[@"opacity"]?[c[@"opacity"] doubleValue]:.45;
+        UIImage* glyph=[UIImage systemImageNamed:c[@"glyph"]?:([c[@"kind"] isEqual:@"button"]?@"hand.tap":@"move.3d") withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:MIN(r.size.width,r.size.height)*.38 weight:UIImageSymbolWeightRegular]];
+        glyph=[glyph imageWithTintColor:[UIColor colorWithWhite:1 alpha:active?1:opacity] renderingMode:UIImageRenderingModeAlwaysOriginal];
+        CGFloat side=MIN(r.size.width,r.size.height)*.48;
+        [glyph drawInRect:CGRectMake(CGRectGetMidX(r)-side/2,CGRectGetMidY(r)-side/2,side,side)];
+        if(self.showsHiddenControls) {
+            NSMutableParagraphStyle* style=[NSMutableParagraphStyle new]; style.alignment=NSTextAlignmentCenter; style.lineBreakMode=NSLineBreakByTruncatingTail;
+            NSString* inputs=[CaraActionBindings(c) componentsJoinedByString:@" + "];
+            NSString* label=[NSString stringWithFormat:@"%@ · %@",c[@"label"],inputs.length?inputs.uppercaseString:@"Unbound"];
+            [label drawInRect:CGRectMake(r.origin.x,CGRectGetMaxY(r)+2,r.size.width,18) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:10 weight:UIFontWeightMedium],NSForegroundColorAttributeName:UIColor.whiteColor,NSParagraphStyleAttributeName:style}];
+        }
     }
 }
 @end
@@ -139,7 +235,7 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
         self.backgroundColor=UIColor.blackColor; self.layer.cornerRadius=24; self.clipsToBounds=YES;
-        _controlsView=[[CaraActionControls alloc] initWithFrame:self.bounds]; _controlsView.showsHiddenControls=YES; [self addSubview:_controlsView];
+        _controlsView=[[CaraActionControls alloc] initWithFrame:self.bounds]; _controlsView.showsHiddenControls=YES; _controlsView.userInteractionEnabled=NO; [self addSubview:_controlsView];
         UITapGestureRecognizer* tap=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(selectAt:)]; [self addGestureRecognizer:tap];
         UIPanGestureRecognizer* pan=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(move:)]; pan.maximumNumberOfTouches=1; [self addGestureRecognizer:pan];
     } return self;
@@ -153,6 +249,7 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     for (NSDictionary* c in self.controls.reverseObjectEnumerator) if (CGRectContainsPoint(CGRectInset(CaraActionFrame(c,self.bounds.size),-8,-8),p)) return c; return nil; }
 - (void)selectAt:(UITapGestureRecognizer*)g { NSDictionary* c=[self hit:[g locationInView:self]]; if (c && self.selectedControl) self.selectedControl(c[@"id"]); }
 - (void)move:(UIPanGestureRecognizer*)g {
+    if(self.bounds.size.width<=0 || self.bounds.size.height<=0) return;
     CGPoint p=[g locationInView:self];
     if (g.state==UIGestureRecognizerStateBegan) {
         NSDictionary* c=[self hit:p]; dragging=c[@"id"]; if (!dragging) return; starting=CaraActionFrame(c,self.bounds.size); anchor=p;
@@ -162,7 +259,7 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     if (!dragging) return;
     if (g.state==UIGestureRecognizerStateChanged || g.state==UIGestureRecognizerStateEnded) {
         CGRect r=starting; CGFloat dx=p.x-anchor.x,dy=p.y-anchor.y;
-        if (resizing) { r.size.width=MIN(self.bounds.size.width-r.origin.x,MAX(44,r.size.width+dx)); r.size.height=MIN(self.bounds.size.height-r.origin.y,MAX(44,r.size.height+dy)); }
+        if (resizing) { r.size.width=MIN(self.bounds.size.width-r.origin.x,MAX(MAX(44,self.bounds.size.width*.04),r.size.width+dx)); r.size.height=MIN(self.bounds.size.height-r.origin.y,MAX(MAX(44,self.bounds.size.height*.04),r.size.height+dy)); }
         else { r.origin.x=MIN(MAX(0,r.origin.x+dx),self.bounds.size.width-r.size.width); r.origin.y=MIN(MAX(0,r.origin.y+dy),self.bounds.size.height-r.size.height); }
         if (self.movedControl) self.movedControl(dragging,CGRectMake(r.origin.x/self.bounds.size.width,r.origin.y/self.bounds.size.height,r.size.width/self.bounds.size.width,r.size.height/self.bounds.size.height));
     }
@@ -187,6 +284,33 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
 }
 @end
 
+@interface CaraComboPicker : UITableViewController
+@property(nonatomic,strong) NSMutableSet<NSString*>* chosen;
+@property(nonatomic,copy) void(^committed)(NSArray*);
+@end
+@implementation CaraComboPicker
+- (void)viewDidLoad {
+    [super viewDidLoad]; self.title=@"Button combo"; CaraUIApplyChrome(self);
+    self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Apply" style:UIBarButtonItemStyleDone target:self action:@selector(apply)];
+    self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(cancel)];
+}
+- (NSInteger)tableView:(UITableView*)table numberOfRowsInSection:(NSInteger)section { return Buttons().count; }
+- (NSString*)tableView:(UITableView*)table titleForHeaderInSection:(NSInteger)section { return @"Hold these inputs together"; }
+- (NSString*)tableView:(UITableView*)table titleForFooterInSection:(NSInteger)section { return @"Select up to eight buttons. One touch holds the whole combo; lifting releases it. Clear all buttons to leave the glyph unbound."; }
+- (UITableViewCell*)tableView:(UITableView*)table cellForRowAtIndexPath:(NSIndexPath*)path {
+    NSString* input=Buttons()[path.row]; UITableViewCell* cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    cell.textLabel.text=input.uppercaseString; cell.textLabel.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody]; cell.textLabel.adjustsFontForContentSizeCategory=YES;
+    BOOL selected=[self.chosen containsObject:input]; cell.accessoryType=selected?UITableViewCellAccessoryCheckmark:UITableViewCellAccessoryNone;
+    cell.accessibilityTraits=UIAccessibilityTraitButton|(selected?UIAccessibilityTraitSelected:0); return cell;
+}
+- (void)tableView:(UITableView*)table didSelectRowAtIndexPath:(NSIndexPath*)path {
+    NSString* input=Buttons()[path.row]; if([self.chosen containsObject:input]) [self.chosen removeObject:input]; else if(self.chosen.count<8) [self.chosen addObject:input];
+    [table reloadData];
+}
+- (void)apply { NSMutableArray* ordered=[NSMutableArray new]; for(NSString* input in Buttons()) if([self.chosen containsObject:input]) [ordered addObject:input]; if(self.committed) self.committed(ordered); [self.navigationController popViewControllerAnimated:YES]; }
+- (void)cancel { [self.navigationController popViewControllerAnimated:YES]; }
+@end
+
 @implementation CaraActionLayoutEditor {
     NSMutableDictionary* draft;
     CaraLayoutCanvas* canvas;
@@ -200,6 +324,7 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     UIView* selectionRing;
     UISwitch* enabled;
     NSURL* exportURL;
+    BOOL exporting;
     CaraInputHub* previewHub;
 }
 - (NSString*)variant { return orientation.selectedSegmentIndex?@"landscape":@"portrait"; }
@@ -210,16 +335,22 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     UIButton* b=[UIButton buttonWithConfiguration:config primaryAction:[UIAction actionWithHandler:^(UIAction* a) { action(); }]]; b.titleLabel.font=[UIFont systemFontOfSize:14 weight:UIFontWeightMedium]; return b;
 }
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title=@"Controller Demapping"; self.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
-    self.view.backgroundColor=[UIColor colorWithRed:.045 green:.05 blue:.065 alpha:1]; self.view.tintColor=[UIColor colorWithRed:1 green:.48 blue:.24 alpha:1];
-    draft=[(CaraValidateActionLayout(self.layout,nil)?self.layout:CaraNewActionLayout()) mutableCopy];
+    [super viewDidLoad]; self.title=@"Control layout"; self.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
+    CaraUIApplyChrome(self);
+    draft=[(CaraValidateActionLayout(self.layout,nil)?self.layout:CaraNewActionLayout()) mutableCopy]; draft[@"version"]=@2; if(!draft[@"name"] && self.presetName.length) draft[@"name"]=[self.presetName substringToIndex:MIN((NSUInteger)128,self.presetName.length)];
+    if(!draft[@"representations"] && self.skin) {
+        BOOL pad=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad;
+        NSDictionary* portrait=[self.skin representationForPad:pad landscape:NO];
+        NSDictionary* landscape=[(self.landscapeSkin?:self.skin) representationForPad:pad landscape:YES];
+        if(portrait && landscape) draft[@"representations"]=@{@"portrait":portrait,@"landscape":landscape};
+    }
     UINavigationBarAppearance* bar=[UINavigationBarAppearance new]; [bar configureWithOpaqueBackground]; bar.backgroundColor=self.view.backgroundColor; bar.titleTextAttributes=@{NSForegroundColorAttributeName:UIColor.whiteColor};
     self.navigationItem.standardAppearance=bar; self.navigationItem.scrollEdgeAppearance=bar; self.navigationItem.compactAppearance=bar;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Save" style:UIBarButtonItemStyleDone target:self action:@selector(save)];
     self.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Cancel" style:UIBarButtonItemStylePlain target:self action:@selector(cancel)];
     orientation=[[UISegmentedControl alloc] initWithItems:@[@"Portrait",@"Landscape"]]; orientation.selectedSegmentIndex=0; [orientation addTarget:self action:@selector(refreshVariant) forControlEvents:UIControlEventValueChanged]; [self.view addSubview:orientation];
     mode=[[UISegmentedControl alloc] initWithItems:@[@"Arrange",@"Test touches"]]; mode.selectedSegmentIndex=0; [mode addTarget:self action:@selector(changeMode) forControlEvents:UIControlEventValueChanged]; [self.view addSubview:mode];
-    help=[UILabel new]; help.text=@"Drag to move · Drag the corner to resize\nGreen guides show safe edges and approximate thumb reach."; help.numberOfLines=2; help.textAlignment=NSTextAlignmentCenter; help.font=[UIFont systemFontOfSize:12]; help.textColor=UIColor.secondaryLabelColor; [self.view addSubview:help];
+    help=[UILabel new]; help.text=@"Drag a glyph to move · Drag its corner to resize\nSelect a glyph, then assign its buttons or combo."; help.numberOfLines=2; help.textAlignment=NSTextAlignmentCenter; help.font=[UIFont systemFontOfSize:12]; help.textColor=UIColor.secondaryLabelColor; [self.view addSubview:help];
     canvas=[[CaraLayoutCanvas alloc] initWithFrame:CGRectZero]; canvas.accessibilityIdentifier=@"Action canvas"; [self.view addSubview:canvas];
     selectionRing=[UIView new]; selectionRing.userInteractionEnabled=NO; selectionRing.layer.borderWidth=2; selectionRing.layer.borderColor=self.view.tintColor.CGColor; selectionRing.layer.cornerRadius=14; [canvas addSubview:selectionRing];
     UILabel* handle=[UILabel new]; handle.text=@"↘"; handle.textAlignment=NSTextAlignmentCenter; handle.backgroundColor=self.view.tintColor; handle.layer.cornerRadius=12; handle.clipsToBounds=YES; handle.frame=CGRectMake(0,0,26,26); handle.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleTopMargin; [selectionRing addSubview:handle];
@@ -246,20 +377,20 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     inspectorScroll.frame=columns?CGRectMake(CGRectGetMaxX(safe)-inspectorWidth-12,y,inspectorWidth,CGRectGetMaxY(safe)-y):CGRectMake(safe.origin.x+12,CGRectGetMaxY(area)+38,w-24,bottom-4); [self positionSelection];
 }
 - (void)positionSelection {
-    canvas.selected=selection; selectionRing.hidden=canvas.testing || !self.selected; if (!self.selected) return;
+    canvas.selected=selection; selectionRing.hidden=canvas.testing || !self.selected; if (!self.selected || canvas.bounds.size.width<=0 || canvas.bounds.size.height<=0) return;
     CGRect selectionFrame=CaraActionFrame(self.selected,canvas.bounds.size);
     canvas.accessibilityValue=[NSString stringWithFormat:@"%.5f,%.5f,%.5f,%.5f",selectionFrame.origin.x/canvas.bounds.size.width,selectionFrame.origin.y/canvas.bounds.size.height,selectionFrame.size.width/canvas.bounds.size.width,selectionFrame.size.height/canvas.bounds.size.height];
     selectionRing.frame=selectionFrame; UIView* handle=selectionRing.subviews.firstObject; handle.frame=CGRectMake(selectionRing.bounds.size.width-21,selectionRing.bounds.size.height-21,26,26);
 }
 - (void)refreshVariant {
-    [canvas.controlsView reset]; canvas.controls=self.controls; canvas.representation=[(orientation.selectedSegmentIndex==1?(self.landscapeSkin?:self.skin):self.skin) representationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:orientation.selectedSegmentIndex==1];
+    [canvas.controlsView reset]; canvas.controls=self.controls; canvas.representation=draft[@"representations"][self.variant]?:[(orientation.selectedSegmentIndex==1?(self.landscapeSkin?:self.skin):self.skin) representationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:orientation.selectedSegmentIndex==1];
     if (!self.selected) selection=self.controls.firstObject[@"id"]; [self refreshInspector]; [self.view setNeedsLayout];
 }
 - (void)changeMode { canvas.testing=mode.selectedSegmentIndex==1; [self positionSelection]; }
 - (void)update:(NSDictionary*)changes {
     NSMutableArray* array=[self.controls mutableCopy];
-    for (NSUInteger i=0;i<array.count;++i) if ([array[i][@"id"] isEqual:selection]) { NSMutableDictionary* c=[array[i] mutableCopy]; [c addEntriesFromDictionary:changes]; array[i]=c; break; }
-    draft[self.variant]=array; canvas.controls=array; [self positionSelection];
+    for (NSUInteger i=0;i<array.count;++i) if ([array[i][@"id"] isEqual:selection]) { NSMutableDictionary* c=[array[i] mutableCopy]; [c addEntriesFromDictionary:changes]; if(changes[@"kind"]) [c removeObjectForKey:@"bindings"]; if(![c[@"kind"] isEqual:@"button"]) [c removeObjectForKey:@"bindings"]; array[i]=c; break; }
+    draft[@"version"]=@2; draft[self.variant]=array; canvas.controls=array; [self positionSelection];
 }
 - (void)refreshInspector {
     for (UIView* v in inspector.arrangedSubviews) { [inspector removeArrangedSubview:v]; [v removeFromSuperview]; }
@@ -268,8 +399,10 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     [toolbar addArrangedSubview:[self button:@"＋ Action" action:^{ [owner addAction]; }]];
     UIButton* more=[self button:@"Layout…" action:^{}];
     more.menu=[UIMenu menuWithChildren:@[
-        [UIAction actionWithTitle:@"Import layout…" image:[UIImage systemImageNamed:@"square.and.arrow.down"] identifier:nil handler:^(UIAction* a) { [owner importLayout]; }],
-        [UIAction actionWithTitle:@"Export layout…" image:[UIImage systemImageNamed:@"square.and.arrow.up"] identifier:nil handler:^(UIAction* a) { [owner exportLayout]; }],
+        [UIAction actionWithTitle:@"Import .deltaskin…" image:[UIImage systemImageNamed:@"square.and.arrow.down"] identifier:nil handler:^(UIAction* a) { [owner importLayout]; }],
+        [UIAction actionWithTitle:@"Export .deltaskin…" image:[UIImage systemImageNamed:@"square.and.arrow.up"] identifier:nil handler:^(UIAction* a) { [owner exportLayout]; }],
+        [UIAction actionWithTitle:@"Name layout…" image:[UIImage systemImageNamed:@"pencil"] identifier:nil handler:^(UIAction* a) { [owner renameLayout]; }],
+        [UIAction actionWithTitle:@"Registered presets…" image:[UIImage systemImageNamed:@"square.grid.2x2"] identifier:nil handler:^(UIAction* a) { [owner choosePreset]; }],
         [UIAction actionWithTitle:@"Reset this orientation…" image:[UIImage systemImageNamed:@"arrow.counterclockwise"] identifier:nil handler:^(UIAction* a) { [owner resetVariant]; }],
         [UIAction actionWithTitle:@"Restore classic controls" image:[UIImage systemImageNamed:@"gamecontroller"] identifier:nil handler:^(UIAction* a) { CaraActionLayoutEditor* s=owner; if(s) { s->draft[@"enabled"]=@NO; [s refreshInspector]; } }]]]; more.showsMenuAsPrimaryAction=YES; [toolbar addArrangedSubview:more]; [inspector addArrangedSubview:toolbar];
     UIStackView* activation=[UIStackView new]; UILabel* label=[UILabel new]; label.text=@"Use action layout for this game"; label.font=[UIFont systemFontOfSize:14 weight:UIFontWeightMedium]; [activation addArrangedSubview:label]; enabled=[UISwitch new]; enabled.on=[draft[@"enabled"] boolValue]; [enabled addTarget:self action:@selector(enableChanged) forControlEvents:UIControlEventValueChanged]; [activation addArrangedSubview:enabled]; [inspector addArrangedSubview:activation];
@@ -279,11 +412,20 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
         [row addArrangedSubview:[self button:[c[@"label"] stringByAppendingString:@" ✎"] action:^{ [owner rename]; }]];
         UIButton* bind=[self button:[@"Bind: " stringByAppendingString:[c[@"binding"] uppercaseString]] action:^{}]; NSMutableArray* actions=[NSMutableArray new];
         NSArray* bindings=[c[@"kind"] isEqual:@"button"]?[Buttons() arrayByAddingObject:@"unbound"]:[c[@"kind"] isEqual:@"dpad"]?@[@"circle",@"cstick",@"dpad",@"unbound"]:@[@"circle",@"cstick",@"unbound"];
-        for (NSString* binding in bindings) [actions addObject:[UIAction actionWithTitle:binding.uppercaseString image:nil identifier:nil handler:^(UIAction* a) { [owner update:@{@"binding":binding}]; [owner refreshInspector]; }]];
-        bind.menu=[UIMenu menuWithChildren:actions]; bind.showsMenuAsPrimaryAction=YES; [row addArrangedSubview:bind]; [inspector addArrangedSubview:row];
+        for (NSString* binding in bindings) [actions addObject:[UIAction actionWithTitle:binding.uppercaseString image:nil identifier:nil handler:^(UIAction* a) { [owner update:@{@"binding":binding,@"bindings":[binding isEqual:@"unbound"]?@[]:@[binding]}]; [owner refreshInspector]; }]];
+        bind.menu=[UIMenu menuWithChildren:actions]; bind.showsMenuAsPrimaryAction=YES; if(![c[@"kind"] isEqual:@"button"]) [row addArrangedSubview:bind]; [inspector addArrangedSubview:row];
+        if([c[@"kind"] isEqual:@"button"]) {
+            NSString* summary=[[CaraActionBindings(c) componentsJoinedByString:@" + "] uppercaseString];
+            [inspector addArrangedSubview:[self button:summary.length?[@"Buttons: " stringByAppendingString:summary]:@"Assign buttons / combo…" action:^{ [owner chooseCombo]; }]];
+        }
+        UIButton* glyph=[self button:@"Glyph" action:^{}]; NSMutableArray* glyphActions=[NSMutableArray new];
+        for(NSString* symbol in Glyphs()) [glyphActions addObject:[UIAction actionWithTitle:GlyphTitle(symbol) image:[UIImage systemImageNamed:symbol] identifier:nil handler:^(UIAction* a) { [owner update:@{@"glyph":symbol}]; }]];
+        glyph.menu=[UIMenu menuWithChildren:glyphActions]; glyph.showsMenuAsPrimaryAction=YES; [inspector addArrangedSubview:glyph];
+        UISlider* opacity=[UISlider new]; opacity.minimumValue=.1; opacity.maximumValue=.9; opacity.value=c[@"opacity"]?[c[@"opacity"] floatValue]:.45; opacity.accessibilityLabel=@"Glyph opacity";
+        [opacity addTarget:self action:@selector(opacityChanged:) forControlEvents:UIControlEventValueChanged]; [inspector addArrangedSubview:opacity];
         UIStackView* types=[UIStackView new]; types.spacing=8; types.distribution=UIStackViewDistributionFillEqually;
-        UIButton* kind=[self button:c[@"kind"] action:^{}]; NSMutableArray* kinds=[NSMutableArray new];
-        for (NSString* k in @[@"button",@"stick",@"floating",@"dpad",@"drag"]) [kinds addObject:[UIAction actionWithTitle:k image:nil identifier:nil handler:^(UIAction* a) { [owner update:@{@"kind":k,@"binding":@"unbound",@"toggle":@NO}]; [owner refreshInspector]; }]];
+        UIButton* kind=[self button:KindTitle(c[@"kind"]) action:^{}]; NSMutableArray* kinds=[NSMutableArray new];
+        for (NSString* k in @[@"button",@"stick",@"floating",@"dpad",@"drag"]) [kinds addObject:[UIAction actionWithTitle:KindTitle(k) image:nil identifier:nil handler:^(UIAction* a) { [owner update:@{@"kind":k,@"binding":@"unbound",@"toggle":@NO}]; [owner refreshInspector]; }]];
         kind.menu=[UIMenu menuWithChildren:kinds]; kind.showsMenuAsPrimaryAction=YES; [types addArrangedSubview:kind];
         if ([c[@"kind"] isEqual:@"button"]) [types addArrangedSubview:[self button:[c[@"toggle"] boolValue]?@"Toggle ✓":@"Hold" action:^{ [owner update:@{@"toggle":@(![owner.selected[@"toggle"] boolValue])}]; [owner refreshInspector]; }]];
         [types addArrangedSubview:[self button:@"Remove" action:^{ CaraActionLayoutEditor* s=owner; if (!s) return; NSMutableArray* a=[s.controls mutableCopy]; [a removeObject:s.selected]; s->draft[s.variant]=a; s->selection=nil; [s refreshVariant]; }]]; [inspector addArrangedSubview:types];
@@ -297,6 +439,47 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
         [inspector addArrangedSubview:mobile];
     }
     UILabel* note=[UILabel new]; note.text=@"Choose bindings to match your game. Invisible zones are outlined only while arranging. Floating / drag zones start wherever you touch; travel sets the distance to full tilt. Lift to center. Toggles release on pause or cancel. Save applies both orientations."; note.numberOfLines=0; note.font=[UIFont systemFontOfSize:12]; note.textColor=UIColor.secondaryLabelColor; [inspector addArrangedSubview:note]; [self positionSelection];
+}
+- (void)opacityChanged:(UISlider*)slider { [self update:@{@"opacity":@(slider.value)}]; }
+- (void)chooseCombo {
+    CaraComboPicker* picker=[[CaraComboPicker alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    picker.chosen=[NSMutableSet setWithArray:CaraActionBindings(self.selected)];
+    __weak CaraActionLayoutEditor* owner=self;
+    picker.committed=^(NSArray* inputs) { [owner update:@{@"bindings":inputs,@"binding":inputs.firstObject?:@"unbound"}]; [owner refreshInspector]; };
+    [self.navigationController pushViewController:picker animated:YES];
+}
+- (BOOL)registerDraft:(NSError**)error {
+    NSDictionary* registered=CaraRegisterActionLayout(draft,CaraActionPresetDirectory(),error);
+    if(!registered) return NO;
+    draft=[registered mutableCopy]; return YES;
+}
+- (void)choosePreset {
+    NSString* directory=[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"ControlPresets"];
+    NSArray* entries=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:@"registry.json"]]?:[NSData data] options:0 error:nil];
+    NSMutableArray* presets=[NSMutableArray new];
+    for(NSDictionary* entry in entries) [presets addObject:@{@"name":entry[@"name"],@"url":[NSURL fileURLWithPath:[directory stringByAppendingPathComponent:entry[@"file"]]]}];
+    NSArray* local=[NSFileManager.defaultManager contentsOfDirectoryAtURL:CaraActionPresetDirectory() includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+    for(NSURL* url in [local sortedArrayUsingComparator:^NSComparisonResult(NSURL* a,NSURL* b) { return [a.lastPathComponent localizedStandardCompare:b.lastPathComponent]; }]) {
+        if(presets.count>=128) break;
+        if(![url.pathExtension.lowercaseString isEqual:@"deltaskin"]) continue;
+        @autoreleasepool {
+            CaraSkin* skin=[CaraSkin loadURL:url error:nil];
+            if(CaraActionLayoutFromSkin(skin,nil)) [presets addObject:@{@"name":skin.info[@"name"],@"url":url}];
+        }
+    }
+    UIAlertController* menu=[UIAlertController alertControllerWithTitle:@"Registered control skins" message:@"Loads a draft for this game. Review bindings in Test touches, then Save to replace the standard controls." preferredStyle:UIAlertControllerStyleActionSheet];
+    for(NSDictionary* entry in presets) [menu addAction:[UIAlertAction actionWithTitle:entry[@"name"] style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) {
+        NSError* error=nil; CaraSkin* skin=[CaraSkin loadURL:entry[@"url"] error:&error];
+        NSDictionary* layout=CaraActionLayoutFromSkin(skin,&error);
+        if(!layout) { [self message:error.localizedDescription?:@"Preset unavailable"]; return; }
+        self->draft=[layout mutableCopy]; self->draft[@"enabled"]=@YES;
+        if(self.presetName.length) self->draft[@"name"]=[self.presetName substringToIndex:MIN((NSUInteger)128,self.presetName.length)];
+        [self->draft removeObjectForKey:@"registrationID"]; // applying elsewhere creates an independent editable copy
+        self->selection=nil; [self refreshVariant];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    menu.popoverPresentationController.sourceView=inspector; menu.popoverPresentationController.sourceRect=inspector.bounds;
+    [self presentViewController:menu animated:YES completion:nil];
 }
 - (void)enableChanged { draft[@"enabled"]=@(enabled.on); }
 - (void)addAction {
@@ -314,6 +497,16 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     NSMutableDictionary* c=[Control(look?@"Look":@"Move",@"floating",look?@"cstick":@"circle",look?.52:.02,.3,.46,.68) mutableCopy]; c[@"hidden"]=@YES;
     draft[self.variant]=[self.controls arrayByAddingObject:c]; selection=c[@"id"]; [self refreshVariant];
 }
+- (void)renameLayout {
+    UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Layout name" message:@"Shown in your registered control skins. Maximum 128 characters." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField* field) { field.text=self->draft[@"name"]?:self.presetName?:@"My controls"; field.autocapitalizationType=UITextAutocapitalizationTypeWords; }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Apply" style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) {
+        NSString* name=[alert.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if(name.length && name.length<=128) self->draft[@"name"]=name;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
 - (void)rename {
     UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Action name" message:@"Visible on the control. Maximum 32 characters." preferredStyle:UIAlertControllerStyleAlert]; [alert addTextFieldWithConfigurationHandler:^(UITextField* f) { f.text=self.selected[@"label"]; f.autocapitalizationType=UITextAutocapitalizationTypeWords; }];
     [alert addAction:[UIAlertAction actionWithTitle:@"Apply" style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { NSString* name=[alert.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; if (name.length && name.length<=32) { [self update:@{@"label":name}]; [self refreshInspector]; } }]]; [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil];
@@ -323,21 +516,25 @@ CGRect CaraActionFrame(NSDictionary* c,CGSize size) {
     [alert addAction:[UIAlertAction actionWithTitle:@"Reset" style:UIAlertActionStyleDestructive handler:^(UIAlertAction* a) { self->draft[self.variant]=CaraNewActionLayout()[self.variant]; self->selection=nil; [self refreshVariant]; }]]; [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]]; [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)message:(NSString*)message { UIAlertController* alert=[UIAlertController alertControllerWithTitle:@"Controller layout" message:message preferredStyle:UIAlertControllerStyleAlert]; [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]]; [self presentViewController:alert animated:YES completion:nil]; }
-- (void)importLayout { UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeJSON] asCopy:YES]; picker.delegate=self; [self presentViewController:picker animated:YES completion:nil]; }
+- (void)importLayout { exporting=NO; UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeItem] asCopy:YES]; picker.delegate=self; [self presentViewController:picker animated:YES completion:nil]; }
 - (void)exportLayout {
-    NSError* error=nil; NSData* data=[NSJSONSerialization dataWithJSONObject:draft options:NSJSONWritingPrettyPrinted error:&error]; if (!data) { [self message:error.localizedDescription]; return; }
-    NSURL* folder=[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES]; [NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil]; exportURL=[folder URLByAppendingPathComponent:@"Cara-controller-v1.json"];
+    NSError* error=nil; NSData* data=CaraActionSkinData(draft,&error); if (!data) { [self message:error.localizedDescription]; return; }
+    NSURL* folder=[[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES]; [NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil]; exportURL=[folder URLByAppendingPathComponent:@"Cara-demapped.deltaskin"];
     if (![data writeToURL:exportURL options:NSDataWritingAtomic error:&error]) { [self message:error.localizedDescription]; return; }
-    UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForExportingURLs:@[exportURL] asCopy:YES]; [self presentViewController:picker animated:YES completion:nil];
+    exporting=YES; UIDocumentPickerViewController* picker=[[UIDocumentPickerViewController alloc] initForExportingURLs:@[exportURL] asCopy:YES]; [self presentViewController:picker animated:YES completion:nil];
 }
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)picker { exporting=NO; }
 - (void)documentPicker:(UIDocumentPickerViewController*)picker didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
+    if(exporting) { exporting=NO; return; }
     NSURL* url=urls.firstObject; BOOL scoped=[url startAccessingSecurityScopedResource]; NSError* error=nil; NSNumber* size=nil; [url getResourceValue:&size forKey:NSURLFileSizeKey error:&error];
-    NSData* data=size && size.unsignedLongLongValue<=262144?[NSData dataWithContentsOfURL:url options:0 error:&error]:nil; id layout=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:&error]:nil;
+    NSData* data=size && size.unsignedLongLongValue<=32*1024*1024?[NSData dataWithContentsOfURL:url options:0 error:&error]:nil; id layout=nil;
+    if([url.pathExtension.lowercaseString isEqual:@"json"]) layout=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:&error]:nil;
+    else if(data) layout=CaraActionLayoutFromSkin([CaraSkin loadURL:url error:&error],&error);
     if (scoped) [url stopAccessingSecurityScopedResource];
     if (!CaraValidateActionLayout(layout,&error)) { [self message:error.localizedDescription]; return; }
-    draft=[layout mutableCopy]; selection=nil; [self refreshVariant];
+    draft=[layout mutableCopy]; [draft removeObjectForKey:@"registrationID"]; selection=nil; [self refreshVariant];
 }
-- (void)save { NSError* error=nil; if (!CaraValidateActionLayout(draft,&error)) { [self message:error.localizedDescription]; return; } [canvas.controlsView reset]; if (self.saved) self.saved([draft copy]); [self.navigationController popViewControllerAnimated:YES]; }
+- (void)save { NSError* error=nil; if (!CaraValidateActionLayout(draft,&error) || ![self registerDraft:&error]) { [self message:error.localizedDescription]; return; } [canvas.controlsView reset]; if (self.saved) self.saved([draft copy]); [self.navigationController popViewControllerAnimated:YES]; }
 - (void)cancel { [canvas.controlsView reset]; [self.navigationController popViewControllerAnimated:YES]; }
 - (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [canvas.controlsView reset]; }
 @end

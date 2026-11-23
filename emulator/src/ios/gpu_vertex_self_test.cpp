@@ -116,8 +116,10 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     Pica::Shader::ShaderSetup setup{};
     std::transform(binary.program.begin(), binary.program.end(), setup.program_code.begin(),
                    [](auto instruction) { return instruction.hex; });
+    setup.MarkProgramCodeDirty();
     std::transform(binary.swizzle_table.begin(), binary.swizzle_table.end(), setup.swizzle_data.begin(),
                    [](auto swizzle) { return swizzle.hex; });
+    setup.MarkSwizzleDataDirty();
     // The bundled inline assembler constructs MAD operands but its binary
     // compiler does not handle MultiplyAdd. Encode this original fixture
     // instruction directly, as we do for the flow-control instructions below.
@@ -132,6 +134,7 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     }
     const unsigned mad_descriptor=static_cast<unsigned>(binary.swizzle_table.size());
     setup.swizzle_data[mad_descriptor]=mad_swizzle.hex;
+    setup.MarkSwizzleDataDirty();
     nihstro::Instruction mad{};
     mad.opcode=O::Id::MAD;
     mad.mad.dest=D::MakeOutput(1);
@@ -140,14 +143,17 @@ static bool RunVertexLayoutFixture(u16 input_mask, std::string& error, size_t ve
     mad.mad.src3=S::MakeInput(1);
     mad.mad.operand_desc_id=mad_descriptor;
     setup.program_code[1]=mad.hex;
+    setup.MarkProgramCodeDirty();
     nihstro::Instruction jump{};
     jump.opcode = O::Id::JMPU;
     jump.flow_control.dest_offset = 7;
     setup.program_code[3] = jump.hex;
+    setup.MarkProgramCodeDirty();
     nihstro::Instruction loop{};
     loop.opcode = O::Id::LOOP;
     loop.flow_control.dest_offset = 5;
     setup.program_code[4] = loop.hex;
+    setup.MarkProgramCodeDirty();
     setup.uniforms.i[0] = {1, 0, 1, 0};
     Pica::Regs regs{};
     regs.vs.output_mask.Assign(7);
@@ -721,7 +727,9 @@ static bool RunLitVertexReuseFixture(unsigned source_count, std::string& error) 
     });
     Pica::Shader::ShaderSetup setup{};
     std::transform(binary.program.begin(),binary.program.end(),setup.program_code.begin(),[](auto v){return v.hex;});
+    setup.MarkProgramCodeDirty();
     std::transform(binary.swizzle_table.begin(),binary.swizzle_table.end(),setup.swizzle_data.begin(),[](auto v){return v.hex;});
+    setup.MarkSwizzleDataDirty();
     Pica::Regs regs{};
     regs.vs.output_mask.Assign(0x3f); regs.vs.max_input_attribute_index.Assign(5);
     regs.vs.input_attribute_to_register_map_low=0x543210;

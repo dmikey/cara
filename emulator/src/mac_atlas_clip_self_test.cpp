@@ -61,7 +61,9 @@ bool RunMacAtlasClipSelfTest(std::string& error) {
             {O::Id::MOV,D::MakeOutput(0),S::MakeInput(0)},{O::Id::END}});
         Pica::Shader::ShaderSetup setup;
         std::transform(binary.program.begin(),binary.program.end(),setup.program_code.begin(),[](auto instruction){return instruction.hex;});
+        setup.MarkProgramCodeDirty();
         std::transform(binary.swizzle_table.begin(),binary.swizzle_table.end(),setup.swizzle_data.begin(),[](auto s){return s.hex;});
+        setup.MarkSwizzleDataDirty();
         Pica::Regs regs{};regs.vs.output_mask.Assign(1);regs.vs.max_input_attribute_index.Assign(0);
         regs.rasterizer.vs_output_total.Assign(1);
         auto& mapping=regs.rasterizer.vs_output_attributes[0];

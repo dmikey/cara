@@ -45,16 +45,33 @@ bool RunShaderStreamBatchSelfTest(std::string& result) {
             g_state.regs.pipeline.gs_unit_exclusive_configuration.Assign(exclusive);
             g_state.regs.pipeline.use_gs.Assign(use_gs?PipelineRegs::UseGS::Yes:PipelineRegs::UseGS::No);
             g_state.regs.vs.program.offset=start;g_state.regs.vs.swizzle_patterns.offset=start;
-            for(unsigned i=0;i<g_state.vs.program_code.size();++i){g_state.vs.program_code[i]=0xabc00000u+i;g_state.gs.program_code[i]=0xdef00000u+i;}
-            for(unsigned i=0;i<g_state.vs.swizzle_data.size();++i){g_state.vs.swizzle_data[i]=0x12300000u+i;g_state.gs.swizzle_data[i]=0x45600000u+i;}
+            for (unsigned i = 0; i < g_state.vs.program_code.size(); ++i) {
+                g_state.vs.program_code[i] = 0xabc00000u + i;
+                g_state.gs.program_code[i] = 0xdef00000u + i;
+            }
+            g_state.vs.MarkProgramCodeDirty();
+            g_state.gs.MarkProgramCodeDirty();
+            for (unsigned i = 0; i < g_state.vs.swizzle_data.size(); ++i) {
+                g_state.vs.swizzle_data[i] = 0x12300000u + i;
+                g_state.gs.swizzle_data[i] = 0x45600000u + i;
+            }
+            g_state.vs.MarkSwizzleDataDirty();
+            g_state.gs.MarkSwizzleDataDirty();
             // Seed private hash-dirty state false, then compare serialization after
             // each word. Repeated identical payloads must still mark dirty OFF.
             g_state.vs.GetProgramCodeHash();g_state.vs.GetSwizzleDataHash();
             g_state.gs.GetProgramCodeHash();g_state.gs.GetSwizzleDataHash();
             u32* source=payload.data();
-            if(alias){source=alias==1?g_state.vs.program_code.data():g_state.gs.program_code.data();
-                require(count+4<=g_state.vs.program_code.size(),"alias test capacity");
-                std::copy(payload.begin(),payload.end(),source);}
+            if (alias) {
+                source = alias == 1 ? g_state.vs.program_code.data() : g_state.gs.program_code.data();
+                require(count + 4 <= g_state.vs.program_code.size(), "alias test capacity");
+                std::copy(payload.begin(), payload.end(), source);
+                if (alias == 1) {
+                    g_state.vs.MarkProgramCodeDirty();
+                } else {
+                    g_state.gs.MarkProgramCodeDirty();
+                }
+            }
             g_state.cmd_list.head_ptr=g_state.cmd_list.current_ptr=source;
             g_state.cmd_list.length=truncated&&count?count-1:count;
             const auto beginning=ShaderStreamSaved::Take();const auto initial_whole=WholeShaderStreamPicaBytes();auto expected=beginning;

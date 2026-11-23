@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Modified for Cara on 2026-11-20: frontend presentation and attribution.
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include "cara/guest_gpu_trace.h"
@@ -67,7 +68,11 @@ extern "C" int __llvm_profile_write_file(void);
 #include <iomanip>
 #include <thread>
 #include <sstream>
+#include <stdexcept>
 #include "common/detached_tasks.h"
+#include "common/apple_emulation_policy.h"
+#include "common/apple_fastinterp_policy.h"
+#include "common/apple_metal_policy.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
 #include "common/cpu_category_timing.h"
@@ -738,11 +743,11 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)reloadActionLayout {
     NSDictionary* saved=gameURL?[libraryStore metadataForGame:gameURL][@"actionLayout"]:nil;
-    actionLayout=CaraValidateActionLayout(saved,nil)?saved:nil; actionVariant=nil;
+    actionLayout=CaraValidateActionLayout(saved,nil)?saved:CaraActionLayoutFromSkin(portraitSkin,nil); actionVariant=nil;
     [self resetSkinInput]; currentRepresentation=nil; [self.view setNeedsLayout];
 }
 - (void)editActionLayout:(NSURL*)url navigation:(UINavigationController*)navigation {
-    CaraActionLayoutEditor* editor=[CaraActionLayoutEditor new]; editor.layout=[libraryStore metadataForGame:url][@"actionLayout"]; editor.skin=portraitSkin?:[CaraSkin loadURL:[self defaultSkinURL] error:nil]; editor.landscapeSkin=landscapeSkin;
+    CaraActionLayoutEditor* editor=[CaraActionLayoutEditor new]; editor.presetName=[url.lastPathComponent stringByDeletingPathExtension]; editor.layout=[libraryStore metadataForGame:url][@"actionLayout"]?:CaraActionLayoutFromSkin(portraitSkin,nil); editor.skin=portraitSkin?:[CaraSkin loadURL:[self defaultSkinURL] error:nil]; editor.landscapeSkin=landscapeSkin;
     __weak EmulatorController* owner=self;
     editor.saved=^(NSDictionary* layout) { EmulatorController* c=owner; if (!c) return; [c->libraryStore setMetadata:@{@"actionLayout":layout} forGame:url]; if ([c->gameURL.URLByStandardizingPath isEqual:url.URLByStandardizingPath]) [c reloadActionLayout]; };
     [navigation pushViewController:editor animated:YES];
@@ -814,6 +819,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 }
 - (void)viewDidLoad {
     [super viewDidLoad]; self.view.backgroundColor=UIColor.blackColor;
+    Common::ApplyAppleFastInterpDefaults();
     relayClient=Network::RelayClient::Create();
     Network::InstallRelaySession(relayClient);
 #ifdef CARA_IOS_GLES
@@ -823,18 +829,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     if (!std::getenv("CARA_GPU_SURFACE_REMAP")) setenv("CARA_GPU_SURFACE_REMAP","1",0);
     if (!std::getenv("CARA_GPU_DEPTH_REINTERPRET")) setenv("CARA_GPU_DEPTH_REINTERPRET","1",0);
     if (!std::getenv("CARA_VS_UNIFORM_REUSE")) setenv("CARA_VS_UNIFORM_REUSE","1",0);
-    if (!std::getenv("CARA_FASTINTERP_ALU_OPERANDS")) setenv("CARA_FASTINTERP_ALU_OPERANDS","1",0);
-    if (!std::getenv("CARA_FASTINTERP_TICK_BUCKETS")) setenv("CARA_FASTINTERP_TICK_BUCKETS","1",0);
-    if (!std::getenv("CARA_FASTINTERP_CHAIN_BUDGET")) setenv("CARA_FASTINTERP_CHAIN_BUDGET","1",0);
-    if (!std::getenv("CARA_FASTINTERP_CACHE_WAYS")) setenv("CARA_FASTINTERP_CACHE_WAYS","8",0);
-    // A larger decoded working set reduces repeated interpretation setup on
-    // devices with enough RAM. Explicit diagnostic overrides remain intact.
-    if (!std::getenv("CARA_FASTINTERP_CACHE_ENTRIES") &&
-        NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
-        setenv("CARA_FASTINTERP_CACHE_ENTRIES","32768",0);
     if (!std::getenv("CARA_GL_STATE_REUSE")) setenv("CARA_GL_STATE_REUSE","1",0);
-    if (!std::getenv("CARA_FASTINTERP_RAM_BURST")) setenv("CARA_FASTINTERP_RAM_BURST","1",0);
-    if (!std::getenv("CARA_FASTINTERP_AL_DISPATCH")) setenv("CARA_FASTINTERP_AL_DISPATCH","1",0);
     if (!std::getenv("CARA_VERTEX_UPLOAD_BANK_MIB") &&
         std::strcmp(std::getenv("CARA_GPU_PACKED_INPUTS"),"1")==0 &&
         NSProcessInfo.processInfo.physicalMemory>=6ULL*1024*1024*1024)
@@ -960,6 +955,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     const BOOL defaultControllerSkin=physicalSkin && !rep;
     if (defaultControllerSkin) rep=CaraControllerSkinRepresentation(landscape);
     BOOL actionsEnabled=!physicalSkin && [actionLayout[@"enabled"] boolValue];
+    if(actionsEnabled && actionLayout[@"representations"]) rep=actionLayout[@"representations"][landscape?@"landscape":@"portrait"];
     menuFallback.hidden=rep && !actionsEnabled && (!physicalSkin || CaraSkinHasTouchMenu(rep));
     if (actionsEnabled) menuFallback.frame=CGRectMake(self.view.safeAreaInsets.left+16,self.view.safeAreaInsets.top+8,100,44);
     skinArt.hidden=actionsEnabled; actionControls.hidden=!actionsEnabled;
@@ -1450,7 +1446,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     NSMutableArray* actions=[NSMutableArray new];
     if (gameURL && ([self sessionPresentation]==Cara::SessionPresentation::Paused || [self sessionPresentation]==Cara::SessionPresentation::Running)) {
         NSURL* currentGame=gameURL;
-        [actions addObject:@{@"title":@"Game settings",@"subtitle":@"Controller Demapping and per-game preferences",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ EmulatorController* c=owner; if (c) [c showGameSettings:currentGame navigation:(UINavigationController*)c.presentedViewController]; }}];
+        [actions addObject:@{@"title":@"Game settings",@"subtitle":@"Control layout and per-game preferences",@"symbol":@"slider.horizontal.3",@"keepOpen":@YES,@"action":^{ EmulatorController* c=owner; if (c) [c showGameSettings:currentGame navigation:(UINavigationController*)c.presentedViewController]; }}];
         [actions addObject:@{@"title":@"Save state",@"symbol":@"square.and.arrow.down",@"action":^{ [owner showStateSlots:YES]; }}];
         [actions addObject:@{@"title":@"Load state",@"symbol":@"arrow.counterclockwise",@"action":^{ [owner showStateSlots:NO]; }}];
     }
@@ -1531,6 +1527,22 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
     const BOOL scoped=[url startAccessingSecurityScopedResource];
     NSError* error=nil; CaraSkin* skin=[CaraSkin loadURL:url error:&error];
     if (!skin) { if (scoped) [url stopAccessingSecurityScopedResource]; [self skinError:error.localizedDescription?:@"Unsupported skin."]; return; }
+    if(skin.info[@"caraActionLayout"]) {
+        NSDictionary* layout=CaraActionLayoutFromSkin(skin,&error);
+        if(scoped) [url stopAccessingSecurityScopedResource];
+        if(!layout) { [self skinError:error.localizedDescription]; return; }
+        NSMutableDictionary* enabledLayout=[layout mutableCopy]; enabledLayout[@"enabled"]=@YES;
+        [enabledLayout removeObjectForKey:@"registrationID"];
+        NSDictionary* registered=CaraRegisterActionLayout(enabledLayout,CaraActionPresetDirectory(),&error);
+        if(!registered) { [self skinError:error.localizedDescription?:@"Could not register control skin."]; return; }
+        if(!gameURL || physicalController) {
+            UIAlertController* notice=[UIAlertController alertControllerWithTitle:@"Control skin registered" message:@"Choose a game, then open Control layout → Layout → Registered presets to use it. This touch layout does not replace your physical-controller skin." preferredStyle:UIAlertControllerStyleAlert];
+            [notice addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction* a) { [self resumeFromMenu]; }]];
+            [self presentViewController:notice animated:YES completion:nil]; return;
+        }
+        [libraryStore setMetadata:@{@"actionLayout":registered} forGame:gameURL];
+        [self reloadActionLayout]; [self resumeFromMenu]; return;
+    }
     NSDictionary* rep=[skin strictRepresentationForPad:UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad landscape:[orientation isEqual:@"Landscape"]];
     CaraSkinControls* check=[[CaraSkinControls alloc] initWithFrame:CGRectZero]; check.skin=skin;
     if (rep) check.representation=rep;
@@ -1772,6 +1784,9 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     emuWindow->native_metal_only = CaraMetalRendererRequested();
     if (emuWindow->native_metal_only) {
+        // Explicit compatibility launches retain their requested options.
+        if (!std::getenv("CARA_PRIVATE_IOS_METAL_ONLY"))
+            Common::ApplyAppleMetalDefaults(true);
         if (!metalLcdSurface)
             metalLcdSurface = [[CaraNativeMetalLcdView alloc] initWithFrame:self.view.bounds];
         [self.view insertSubview:metalLcdSurface belowSubview:gpuSurface];
@@ -1845,13 +1860,14 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
         [weakSelf showFrame:s width:w height:h pixels:p frame:frame session:session];
     };
     worker = std::thread([self,rom,user,session,url,requestedState] {
-        // Diagnostic only: requested QoS is not evidence of P/E-core placement.
+        // User-initiated by default; the interactive diagnostic remains explicit.
+        // Requested QoS is guidance to the OS, not proof of P/E-core placement.
         const char* interactive_qos_env = std::getenv("CARA_WORKER_INTERACTIVE_QOS");
         const bool worker_interactive_qos = interactive_qos_env &&
                                             std::strcmp(interactive_qos_env, "1") == 0;
-        const auto worker_qos_initial = qos_class_self();
-        const int worker_qos_set_result = worker_interactive_qos
-            ? pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) : 0;
+        const auto worker_policy=Common::ApplyAppleEmulationQoS(worker_interactive_qos);
+        const auto worker_qos_initial=worker_policy.initial;
+        const int worker_qos_set_result=worker_policy.result;
         @autoreleasepool {
             Common::DetachedTasks tasks;
             FileUtil::SetUserPath(user);
@@ -2017,7 +2033,7 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
             }
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
             const bool learn_metal = result == Core::System::ResultStatus::Success &&
-                emuWindow->native_metal_only && !target_frames && Cara::ConfigureNativeMetalLearning(
+                emuWindow->native_metal_only && Common::AppleMetalPipelineLearning(target_frames != 0) && Cara::ConfigureNativeMetalLearning(
                     user, system.GetTitleID(), system.StateGameHash(),
                     system.GetAppLoader().ReadOnlineGameVersion()) && Cara::BeginNativeMetalWarmup();
 #endif
@@ -2664,7 +2680,8 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                                           << ",\"cpu_category_clock_ns_per_read\":" << category_clock_ns_per_read
                                           << ",\"cpu_category_names\":[\"others\",\"cpu_execution_including_memory\",\"hle_svc\",\"gpu_command\",\"dsp_hle_tick\"]"
                                           << ",\"worker_interactive_qos_requested\":" << (worker_interactive_qos?"true":"false")
-                                          << ",\"worker_qos_set_result\":" << (worker_interactive_qos?std::to_string(worker_qos_set_result):"null")
+                                          << ",\"worker_qos_set_result\":" << worker_qos_set_result
+                                          << ",\"worker_qos_requested_class\":" << static_cast<unsigned>(worker_policy.requested)
                                           << ",\"worker_qos_initial_class_self\":" << static_cast<unsigned>(worker_qos_initial)
                                           << ",\"worker_qos_class_self\":" << static_cast<unsigned>(qos_class_self())
                                           << ",\"vertex_reuse_probe\":" << (std::getenv("CARA_VERTEX_REUSE_TRACE")?"true":"false")
@@ -2708,6 +2725,27 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
                         paced_frame=emuWindow->frames;
                     }
                 }
+#ifdef CARA_PRIVATE_IOS_METAL_LCD
+                // A completed GPU command may still carry a failed checked
+                // transfer. Consume those receipts before reporting success,
+                // including ordinary user-initiated session shutdown.
+                if (emuWindow->native_metal_only) {
+                    try {
+                        if (auto* rasterizer = VideoCore::Rasterizer())
+                            rasterizer->FlushDeferredDraws();
+                        if (result == Core::System::ResultStatus::Success && target_frames &&
+                            std::getenv("CARA_BENCHMARK_CAPTURE") &&
+                            !Cara::WriteNativeMetalCapture(user))
+                            throw std::runtime_error("The selected Metal benchmark frame was not captured");
+                    } catch (const std::exception& error) {
+                        Cara::AbortNativeMetalRendering();
+                        if (emuWindow->graphics_error.empty())
+                            emuWindow->graphics_error = error.what();
+                        LOG_ERROR(Frontend, "Metal completion failed: {}", error.what());
+                        result = Core::System::ResultStatus::ErrorVideoCore;
+                    }
+                }
+#endif
                 if (target_frames) {
                     const double wall_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - benchmark_start).count();
                     const double pause_elapsed = std::chrono::duration<double>(paused_duration).count();
@@ -2753,11 +2791,6 @@ static NSString* SkinPreferenceKey(NSString* orientation,BOOL physicalController
 #ifdef CARA_IOS_GLES
                 // Capture only after measured work ends, before renderer destruction.
                 // Raw pixels avoid UIKit/display color conversion in replay comparisons.
-#ifdef CARA_PRIVATE_IOS_METAL_LCD
-                if (target_frames && std::getenv("CARA_BENCHMARK_CAPTURE") &&
-                    emuWindow->native_metal_only && !Cara::WriteNativeMetalCapture(user))
-                    LOG_ERROR(Frontend, "The selected Metal benchmark frame was not captured");
-#endif
                 if (target_frames && std::getenv("CARA_BENCHMARK_CAPTURE")
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
                     && !emuWindow->native_metal_only
@@ -2892,29 +2925,6 @@ int main(int argc, char** argv) {
     @autoreleasepool {
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
         [NSUserDefaults.standardUserDefaults registerDefaults:@{CaraMetalRendererKey: @NO}];
-        // Explicit native test launches choose their own options.
-        if (!std::getenv("CARA_PRIVATE_IOS_METAL_ONLY")) {
-            for (const char* option : {
-                     "CARA_METAL_REDUCE_COPY_QUEUE_WORK",
-                     "CARA_METAL_FUSE_DEPTH_CLEAR",
-                     "CARA_METAL_DIRECT_COLOR_EXPORT",
-                     "CARA_METAL_SETUP_REUSE",
-                     "CARA_METAL_TEXTURE_RESIDENCY",
-                     "CARA_METAL_GROUPED_PASS",
-                     "CARA_METAL_DRAW_INPUT_REUSE",
-                     "CARA_METAL_DEFER_UNRELATED_PUBLICATION",
-                     "CARA_METAL_REUSE_SELECTION",
-                     "CARA_METAL_EXACT_DEPTH_CLEAR",
-                     "CARA_METAL_QUEUE_COLOR_EXPORT",
-                     "CARA_METAL_EIGHT_UPLOAD_PAGES",
-                     "CARA_METAL_OVERLAP_TRANSFERS",
-                     "CARA_METAL_RAW_INDICES",
-                     "CARA_METAL_RAW_INDEX_CONSTANTS",
-                     "CARA_METAL_REUSE_RENDER_PIPELINES",
-                 }) {
-                setenv(option, "1", 0);
-            }
-        }
 #endif
         return UIApplicationMain(argc, argv, nil, NSStringFromClass(AppDelegate.class));
     }

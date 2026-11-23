@@ -92,6 +92,12 @@ static uint pica_tiled_word(uint x, uint y, uint width) {
     return (y & ~7u) * width + (x & ~7u) * 8u + morton;
 }
 
+static uint3 read_rgb565(const device uchar* source, uint offset) {
+    const uint packed = uint(source[offset]) | (uint(source[offset + 1u]) << 8u);
+    const uint3 channels = uint3(packed >> 11u, (packed >> 5u) & 63u, packed & 31u);
+    return (channels << uint3(3u, 2u, 3u)) | (channels >> uint3(2u, 4u, 2u));
+}
+
 kernel void cara_pica_display_raw_rgba_layout(
     const device uchar* source [[buffer(0)]], device uchar* destination [[buffer(1)]],
     constant uint* args [[buffer(2)]], uint2 xy [[thread_position_in_grid]]) {
@@ -102,15 +108,36 @@ kernel void cara_pica_display_raw_rgba_layout(
         return;
     const uint y = args[2] ? output_height - 1 - xy.y : xy.y;
     const uint x = xy.x;
-    if (args[3] == 5) {
-        // PICA's horizontal box filter averages two adjacent tiled texels
-        // with integer truncation before reducing each 8-bit color channel.
-        const uint first = 4u * pica_tiled_word(2u * x, xy.y, width);
-        const uint r = (uint(source[first + 3u]) + source[first + 7u]) >> 4u;
-        const uint g = (uint(source[first + 2u]) + source[first + 6u]) >> 3u;
-        const uint b = (uint(source[first + 1u]) + source[first + 5u]) >> 4u;
-        const uint packed = (r << 11u) | (g << 5u) | b;
-        const uint to = 2u * (y * output_width + x);
+    if (args[3] == 8u) {
+        const uint from = 4u * pica_tiled_word(2u * x, 2u * xy.y, width);
+        const uint to = 4u * pica_tiled_word(x, y, output_width);
+        for (uint byte = 0; byte < 4u; ++byte) {
+            const uint channel = from + byte;
+            destination[to + byte] = uchar((uint(source[channel]) + source[channel + 4u] +
+                                           source[channel + 8u] + source[channel + 12u]) >> 2u);
+        }
+        return;
+    }
+    if (args[3] >= 5u) {
+        const bool scale_xy = args[3] == 7u;
+        const uint first = pica_tiled_word(2u * x, scale_xy ? 2u * xy.y : xy.y, width);
+        uint packed;
+        if (args[3] != 5u) {
+            // Match the guest's expand, average, and truncate order.
+            const uint from = first * 2u;
+            uint3 rgb = read_rgb565(source, from) + read_rgb565(source, from + 2u);
+            if (scale_xy)
+                rgb = (rgb + read_rgb565(source, from + 4u) + read_rgb565(source, from + 6u)) >> 1u;
+            rgb >>= uint3(4u, 3u, 4u);
+            packed = (rgb.r << 11u) | (rgb.g << 5u) | rgb.b;
+        } else {
+            const uint from = first * 4u;
+            const uint r = (uint(source[from + 3u]) + source[from + 7u]) >> 4u;
+            const uint g = (uint(source[from + 2u]) + source[from + 6u]) >> 3u;
+            const uint b = (uint(source[from + 1u]) + source[from + 5u]) >> 4u;
+            packed = (r << 11u) | (g << 5u) | b;
+        }
+        const uint to = 2u * (scale_xy ? pica_tiled_word(x, y, output_width) : y * output_width + x);
         destination[to] = uchar(packed);
         destination[to + 1u] = uchar(packed >> 8u);
         return;
@@ -140,4 +167,26 @@ kernel void cara_pica_display_raw_rgba_layout(
         for (uint i = 0; i < channels; ++i)
             destination[to + i] = source[from + (4u - channels) + i];
     }
+}
+
+// The native color transfer publishes ONLY guest_bytes. This optional variant
+// preserves its float average/rint arithmetic while omitting the transient
+// output texture, which has no authoritative owner or subsequent consumer.
+kernel void cara_pica_display_to_linear_bytes(
+    texture2d<float, access::read> source [[texture(0)]],
+    device uchar* guest_bytes [[buffer(0)]], constant uint4& args [[buffer(1)]],
+    uint2 xy [[thread_position_in_grid]]) {
+    const uint width=args.z, height=args.w;
+    if (xy.x>=width || xy.y>=height) return;
+    const uint source_y=(args.y&1u) ? height-1u-xy.y : xy.y;
+    const bool scale_x=(args.y&2u)!=0;
+    const uint source_x=xy.x<<uint(scale_x);
+    float4 color=source.read(uint2(source_x,source_y));
+    if (scale_x) color=(color+source.read(uint2(source_x+1u,source_y)))*0.5f;
+    const uchar4 packed=uchar4(rint(color*255.0f));
+    const uint offset=(xy.y*width+xy.x)*args.x, alpha_bytes=args.x-3u;
+    guest_bytes[offset+alpha_bytes]=packed.b;
+    guest_bytes[offset+alpha_bytes+1u]=packed.g;
+    guest_bytes[offset+alpha_bytes+2u]=packed.r;
+    if (alpha_bytes) guest_bytes[offset]=packed.a;
 }

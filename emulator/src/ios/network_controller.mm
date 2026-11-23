@@ -1,5 +1,6 @@
 // Copyright 2026 Cara contributors. Licensed under GPL-2.0-or-later.
 #import "ios/network_controller.h"
+#import "ios/ui_theme.h"
 
 @implementation CaraNetworkController {
     UITextField* endpointField;
@@ -25,7 +26,7 @@
     return field;
 }
 - (void)viewDidLoad {
-    [super viewDidLoad];
+    [super viewDidLoad]; CaraUIApplyChrome(self);
     self.title=@"Local multiplayer";
     self.tableView.keyboardDismissMode=UIScrollViewKeyboardDismissModeInteractive;
     self.tableView.accessibilityIdentifier=@"cara.network.rooms";

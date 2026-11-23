@@ -158,6 +158,19 @@ static void WriteCoherent(Memory::MemorySystem& memory, u32 addr, T value) {
 // unmapped-PC check never need a null test on the array itself.
 static u8* empty_page_table[1 << (32 - FASTINTERP_PAGE_BITS)];
 
+static bool LdrPairCensusEnabled() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_FASTINTERP_LDR_PAIR_CENSUS");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+static thread_local std::array<u64, 2> ldr_pair_runtime_counts{};
+
+std::array<u64, 2> ARM_FastInterp::LdrPairRuntimeCounts() {
+    return ldr_pair_runtime_counts;
+}
+
 // Included inside the namespace: the macros reference LazyFlags and CondPassed.
 #ifdef __aarch64__
 #include "core/arm/fastinterp/fastinterp_arm64.inc"
@@ -359,6 +372,9 @@ void ARM_FastInterp::WriteBlockProfile(std::ostream& output) const {
            << ",\"ldr_str_four_pairs_runtime_counters_available\":" << (ldr_str_four_pairs_census_ ? "true" : "false")
            << ",\"ldr_str_four_pairs_fused\":" << ldr_str_four_pairs_fused_
            << ",\"ldr_str_four_pairs_fallback\":" << ldr_str_four_pairs_fallback_
+           << ",\"ldr_pair_runtime_counters_available\":" << (LdrPairCensusEnabled() ? "true" : "false")
+           << ",\"ldr_pair_thread_fused\":" << ldr_pair_runtime_counts[0]
+           << ",\"ldr_pair_thread_fallback\":" << ldr_pair_runtime_counts[1]
            << ",\"ldr_sp_static_enabled\":" << (ldr_sp_static_ ? "true" : "false")
            << ",\"ldr_sp_census\":{\"eligible_resident_blocks\":" << sp_blocks
            << ",\"eligible_resident_decoded_slots\":" << sp_slots
@@ -929,6 +945,9 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         HANDLER(LdrSpImm),
         HANDLER(LdrStrFourPairsImm),
         &&handle_AddCmpRegBccCounted,
+        HANDLER(LdrPairImm),
+        HANDLER(LdrCmpImmBcc),
+        HANDLER(LdrCmpRegBcc),
 
 
         // AL entries share each checked handler body after its predicate gate.
@@ -1234,6 +1253,9 @@ u64 ARM_FastInterp::ExecuteBlock(BasicBlock* block) {
         &&handle_LdrSpImm_al,
         &&handle_LdrStrFourPairsImm_al,
         &&handle_AddCmpRegBcc,
+        &&handle_LdrPairImm_al,
+        &&handle_LdrCmpImmBcc_al,
+        &&handle_LdrCmpRegBcc_al,
     };
 #undef HANDLER
 

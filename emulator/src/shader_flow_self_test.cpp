@@ -43,8 +43,10 @@ static Fixture Make(std::string name, std::initializer_list<A> program, float ex
     const auto binary = A::CompileToRawBinary(program);
     std::transform(binary.program.begin(), binary.program.end(), f.setup.program_code.begin(),
                    [](auto word) { return word.hex; });
+    f.setup.MarkProgramCodeDirty();
     std::transform(binary.swizzle_table.begin(), binary.swizzle_table.end(), f.setup.swizzle_data.begin(),
                    [](auto word) { return word.hex; });
+    f.setup.MarkSwizzleDataDirty();
     return f;
 }
 static void Flow(Fixture& f, unsigned pc, O::Id opcode, unsigned target, unsigned count = 0,
@@ -56,6 +58,7 @@ static void Flow(Fixture& f, unsigned pc, O::Id opcode, unsigned target, unsigne
         i.flow_control.op = I::FlowControlType::JustX; i.flow_control.refx = true;
     }
     f.setup.program_code[pc] = i.hex;
+    f.setup.MarkProgramCodeDirty();
 }
 static void CompareLess(Fixture& f, unsigned pc, S left, S right) {
     I i{}; i.opcode = O::Id::CMP; i.common.src1 = left; i.common.src2 = right;
@@ -63,6 +66,7 @@ static void CompareLess(Fixture& f, unsigned pc, S left, S right) {
     i.common.compare_op.x = I::Common::CompareOpType::LessThan;
     i.common.compare_op.y = I::Common::CompareOpType::LessThan;
     f.setup.program_code[pc] = i.hex;
+    f.setup.MarkProgramCodeDirty();
 }
 static std::vector<Fixture> Fixtures() {
     std::vector<Fixture> out;

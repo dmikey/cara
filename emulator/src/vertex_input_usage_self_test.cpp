@@ -17,8 +17,10 @@ static Pica::Shader::ShaderSetup Make(std::initializer_list<nihstro::InlineAsm> 
     Pica::Shader::ShaderSetup result{};
     std::transform(binary.program.begin(), binary.program.end(), result.program_code.begin(),
                    [](auto word) { return word.hex; });
+    result.MarkProgramCodeDirty();
     std::transform(binary.swizzle_table.begin(), binary.swizzle_table.end(), result.swizzle_data.begin(),
                    [](auto word) { return word.hex; });
+    result.MarkSwizzleDataDirty();
     return result;
 }
 static std::optional<u16> Read(const Pica::Shader::ShaderSetup& setup, u32 entry = 0) {
@@ -45,6 +47,7 @@ static void CheckAnalysis() {
     branch.flow_control.dest_offset = 3;
     branch.flow_control.num_instructions = 2;
     setup.program_code[0] = branch.hex;
+    setup.MarkProgramCodeDirty();
     auto mask = Read(setup);
     Require(mask && (*mask & (1u << 2)) && (*mask & (1u << 9)), "both uniform branch inputs required");
     // CALLU reaches a separately emitted subroutine, irrespective of the bool value.
@@ -56,6 +59,7 @@ static void CheckAnalysis() {
     branch.flow_control.dest_offset = 5;
     branch.flow_control.num_instructions = 2;
     setup.program_code[0] = branch.hex;
+    setup.MarkProgramCodeDirty();
     mask = Read(setup);
     Require(mask && (*mask & (1u << 1)) && (*mask & (1u << 11)), "subroutine input required");
     // Address registers affect uniforms, not the literal input register index.
@@ -64,6 +68,7 @@ static void CheckAnalysis() {
     nihstro::Instruction indirect{setup.program_code[0]};
     indirect.common.address_register_index = 1;
     setup.program_code[0] = indirect.hex;
+    setup.MarkProgramCodeDirty();
     mask = Read(setup);
     Require(mask && (*mask & (1u << 12)), "indirect uniform must retain other operand input");
     setup = {};

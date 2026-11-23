@@ -17,9 +17,18 @@ constexpr std::uintmax_t LearnMaxArchiveBytes = 128 * 1024 * 1024;
 struct WarmupConfiguration {
     std::string path;
     unsigned mode{};
+    bool device_bound = false;
 };
 
 thread_local WarmupConfiguration warmup_configuration;
+
+bool CompleteLearnedPrewarm() {
+    static const bool complete = [] {
+        const auto* flag = std::getenv("CARA_METAL_PREWARM_ALL");
+        return flag && std::string_view(flag) == "1";
+    }();
+    return complete;
+}
 
 bool WriteWord(std::ostream& out, std::uint32_t value) {
     const std::array<unsigned char, 4> bytes{
@@ -84,10 +93,15 @@ public:
 
 bool ReadMslPair(std::istream& in, RuntimeMslDiskCache::Pair& pair) {
     auto& shader = pair.shaders;
-    if (!ReadWord(in, pair.mode) || pair.mode > unsigned(PicaMetalVertexMode::StageIn) ||
+    if (!ReadWord(in, pair.mode) ||
+        (pair.mode > unsigned(PicaMetalVertexMode::StageIn) &&
+         pair.mode != unsigned(PicaMetalVertexMode::PairIndexed)) ||
         !ReadSource(in, pair.vertex) || !ReadSource(in, pair.fragment) ||
         !ReadSource(in, shader.vertex) || !ReadSource(in, shader.fragment))
         return false;
+    if (HasSimdVertexTag(pair.vertex) != ValidSimdVertexMsl(shader.vertex)) return false;
+    if (HasSimdVertexTag(pair.vertex) &&
+        (pair.mode != unsigned(PicaMetalVertexMode::Packed) || !RemoveVertexReference(pair.vertex))) return false;
     for (auto& unit : shader.units)
         if (!ReadWord(in, unit) || unit > 3)
             return false;
@@ -161,14 +175,15 @@ bool SaveMslCache(const auto& pairs) {
         std::string_view vertex, fragment;
         unsigned mode;
         const RuntimeMetalShaderPair* shaders;
+        std::string_view msl_vertex, msl_fragment;
     };
     std::vector<View> selected;
     selected.reserve(MslCacheMaxPairs);
     std::size_t bytes = 64 + MslCacheMagic.size() + cache.identity.size() + sizeof(std::uint32_t);
     const auto add = [&](View view) {
         const auto& stages = *view.shaders;
-        const std::array sources{view.vertex, view.fragment, std::string_view(stages.vertex),
-                                 std::string_view(stages.fragment)};
+        if (HasSimdVertexTag(view.vertex) != ValidSimdVertexMsl(view.msl_vertex)) return false;
+        const std::array sources{view.vertex, view.fragment, view.msl_vertex, view.msl_fragment};
         std::size_t size = sizeof(std::uint32_t) *
             (1 + sources.size() + stages.units.size() + stages.slots.size() + 4);
         for (const auto source : sources) {
@@ -189,14 +204,16 @@ bool SaveMslCache(const auto& pairs) {
         return true;
     };
     for (const auto& pair : pairs) {
-        if (!add({pair.vertex_source, pair.fragment_source, unsigned(pair.mode), &pair.stages}) &&
+        if (!add({pair.vertex_source, pair.fragment_source, unsigned(pair.mode), &pair.stages,
+                  pair.msl_vertex,pair.msl_fragment}) &&
             !cache.learn)
             return false;
     }
     if (cache.learn) {
         // Keep previously learned entries when a session visits only part of the game.
         for (const auto& pair : cache.pairs)
-            add({pair.vertex, pair.fragment, pair.mode, &pair.shaders});
+            add({pair.vertex, pair.fragment, pair.mode, &pair.shaders,
+                 pair.shaders.vertex,pair.shaders.fragment});
     }
     if (selected.empty())
         return false;
@@ -207,8 +224,8 @@ bool SaveMslCache(const auto& pairs) {
     for (const auto& pair : selected) {
         const auto& shaders = *pair.shaders;
         if (!WriteWord(out, pair.mode) || !WriteSource(out, pair.vertex) ||
-            !WriteSource(out, pair.fragment) || !WriteSource(out, shaders.vertex) ||
-            !WriteSource(out, shaders.fragment))
+            !WriteSource(out, pair.fragment) || !WriteSource(out, pair.msl_vertex) ||
+            !WriteSource(out, pair.msl_fragment))
             return false;
         for (const auto unit : shaders.units) WriteWord(out, unit);
         for (const auto slot : shaders.slots) WriteWord(out, slot);
@@ -339,6 +356,29 @@ bool ConfigureNativeMetalLearning(const std::string& user, std::uint64_t title,
 
 bool PicaMetalPipelines::BeginWarmup() {
     auto& msl = runtime_msl_disk;
+    if (warmup_configuration.mode == WarmupLearn && !warmup_configuration.device_bound) {
+        // Bind the cache to the device actually used by this renderer, rather
+        // than assuming the system default device matches this pipeline owner.
+        // The existing prefix already includes title/content/build/OS policy.
+        std::string identity = std::string(device.name.UTF8String ?: "") + ':' +
+            std::to_string(device.registryID) + ':';
+#ifdef CARA_SHADER_CACHE_SIGNATURE
+        identity += CARA_SHADER_CACHE_SIGNATURE;
+#else
+        identity += Core::GetSaveStateBuildFingerprint();
+#endif
+        const auto device_key = SourceDigest(identity);
+        warmup_configuration.path += '-' + std::string(device_key.data(), device_key.size());
+        warmup_configuration.device_bound = true;
+        if (msl.learn) {
+            msl.path = warmup_configuration.path + ".msl";
+            const auto source_identity = std::string(msl.identity.data(), msl.identity.size()) +
+                ':' + identity;
+            msl.identity = SourceDigest(source_identity);
+        }
+        LOG_INFO(Render_OpenGL, "Metal learned cache device={} registry_id={} full_prewarm={}",
+                 device.name.UTF8String ?: "", device.registryID, CompleteLearnedPrewarm());
+    }
     if (!msl.learn && (msl.read || msl.record)) {
         const auto* background = std::getenv("CARA_METAL_ASYNC_MSL_LOAD");
         if (msl.read && background && std::string_view(background) == "1" &&
@@ -377,9 +417,10 @@ bool PicaMetalPipelines::BeginWarmup() {
     }
     const auto ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start).count();
-    LOG_INFO(Render_OpenGL, "Metal warmup startup loaded={} recipes={} archive_hits={} "
-             "archive_misses={} wall_ms={}", loaded, entries.size(), warmup_archive_hits,
-             warmup_archive_misses, ms);
+    LOG_INFO(Render_OpenGL, "Metal warmup startup loaded={} prepared={} recipes={} archive_hits={} "
+             "archive_misses={} full_prewarm={} wall_ms={}", loaded, warmup_prepared,
+             entries.size(), warmup_archive_hits, warmup_archive_misses,
+             CompleteLearnedPrewarm(), ms);
     warming = false;
     return warmup_mode == WarmupLearn || loaded;
 }
@@ -402,7 +443,9 @@ bool PicaMetalPipelines::LoadWarmup() {
         for (unsigned i = 0; i < count; ++i) {
             WarmupRecipe recipe;
             if (!ReadSource(in, recipe.vertex) || !ReadSource(in, recipe.fragment) ||
-                !ReadWord(in, recipe.mode) || recipe.mode > unsigned(PicaMetalVertexMode::StageIn))
+                !ReadWord(in, recipe.mode) ||
+                (recipe.mode > unsigned(PicaMetalVertexMode::StageIn) &&
+                 recipe.mode != unsigned(PicaMetalVertexMode::PairIndexed)))
                 return false;
             for (auto& unit : recipe.units)
                 if (!ReadWord(in, unit) || unit > NoMaterialUnit)
@@ -428,17 +471,25 @@ bool PicaMetalPipelines::LoadWarmup() {
         if (warmup_mode == WarmupLearn) {
             warmup_recipes = std::move(recipes);
             warmup_recipe_bytes = recipe_bytes;
-            if (!warmup_archive)
+            if (!warmup_archive && !CompleteLearnedPrewarm())
                 return false;
             const auto deadline = std::chrono::steady_clock::now() + LearnPreloadBudget;
+            const bool complete = CompleteLearnedPrewarm();
+            unsigned ready = 0;
             warming = true;
             for (const auto& recipe : warmup_recipes) {
-                if (warmup_prepared == LearnPreloadLimit ||
-                    std::chrono::steady_clock::now() >= deadline)
+                if (!complete && (warmup_prepared == LearnPreloadLimit ||
+                    std::chrono::steady_clock::now() >= deadline))
                     break;
                 ++warmup_prepared;
-                PrepareRecipe(recipe);
+                if (PrepareRecipe(recipe))
+                    ++ready;
+                else
+                    LOG_WARNING(Render_OpenGL, "Metal learned prewarm recipe {} unavailable; runtime fallback retained",
+                                warmup_prepared);
             }
+            LOG_INFO(Render_OpenGL, "Metal learned prewarm attempted={} ready={} unavailable={} total={} full={}",
+                     warmup_prepared, ready, warmup_prepared - ready, warmup_recipes.size(), complete);
         } else {
             warming = true;
             for (const auto& recipe : recipes)
@@ -457,7 +508,8 @@ bool PicaMetalPipelines::PrepareRecipe(const WarmupRecipe& recipe) {
     p.vertex = recipe.vertex;
     p.fragment = recipe.fragment;
     p.vertex_mode = static_cast<PicaMetalVertexMode>(recipe.mode);
-    p.packed_arrays = p.vertex_mode == PicaMetalVertexMode::Packed;
+    p.packed_arrays = p.vertex_mode == PicaMetalVertexMode::Packed ||
+                      p.vertex_mode == PicaMetalVertexMode::PairIndexed;
     p.sampled_unit = recipe.units[0];
     p.secondary_unit = recipe.units[1];
     p.tertiary_unit = recipe.units[2];
@@ -496,7 +548,7 @@ bool PicaMetalPipelines::PrepareRecipe(const WarmupRecipe& recipe) {
 
 void PicaMetalPipelines::RememberLearnedPipeline(const PicaPipelineInputs& p, const Key& key,
                                                 MTLRenderPipelineDescriptor* descriptor) {
-    if (warming || !descriptor || warmup_descriptors.size() >= LearnMaxDescriptors ||
+    if ((warming && !CompleteLearnedPrewarm()) ||
         p.vertex.empty() || p.fragment.empty() ||
         p.vertex.size() > WarmupMaxSource || p.fragment.size() > WarmupMaxSource)
         return;
@@ -507,8 +559,15 @@ void PicaMetalPipelines::RememberLearnedPipeline(const PicaPipelineInputs& p, co
             recipe.vertex == p.vertex && recipe.fragment == p.fragment &&
             std::equal(recipe.key.begin() + 1, recipe.key.end(), key.begin() + 1);
     };
+    // The caller supplies a descriptor only when this pipeline missed the
+    // archive. Recipe coverage has its own larger budget; exhausting this
+    // session's archive-addition budget must not hide later observed recipes.
+    const auto remember_descriptor = [&] {
+        if (descriptor && warmup_descriptors.size() < LearnMaxDescriptors)
+            warmup_descriptors.push_back([descriptor copy]);
+    };
     if (std::any_of(warmup_recipes.begin(), warmup_recipes.end(), same_recipe)) {
-        warmup_descriptors.push_back([descriptor copy]);
+        remember_descriptor();
         return;
     }
     if (!warmup_recipe_bytes)
@@ -520,7 +579,7 @@ void PicaMetalPipelines::RememberLearnedPipeline(const PicaPipelineInputs& p, co
     warmup_recipes.push_back({std::string(p.vertex), std::string(p.fragment), key, units,
                               unsigned(p.vertex_mode)});
     warmup_recipe_bytes += bytes;
-    warmup_descriptors.push_back([descriptor copy]);
+    remember_descriptor();
     ++warmup_new_recipes;
 }
 
@@ -557,20 +616,27 @@ bool PicaMetalPipelines::FinishWarmup() {
         }
         // Local diagnostic counts only. Source and binary archives stay in the app container.
         LOG_INFO(Render_OpenGL, "Metal pipeline learning preload_attempts={} archive_hits={} "
-                 "archive_misses={} draw_misses={} learned={}", warmup_prepared,
-                 warmup_archive_hits, warmup_archive_misses, warmup_draw_misses, warmup_new_recipes);
-        if (warmup_descriptors.empty())
+                 "archive_misses={} draw_misses={} learned={} recipes_total={} archive_additions={}",
+                 warmup_prepared, warmup_archive_hits, warmup_archive_misses,
+                 warmup_draw_misses, warmup_new_recipes, warmup_recipes.size(),
+                 warmup_descriptors.size());
+        if (warmup_descriptors.empty() && !warmup_new_recipes)
             return true;
         try {
-            return std::async(std::launch::async, [this] {
+            const bool saved = std::async(std::launch::async, [this] {
                 @autoreleasepool {
                     return SaveWarmup();
                 }
             }).get();
+            if (!saved)
+                LOG_WARNING(Render_OpenGL,
+                            "Metal learned cache persistence incomplete; rendering and runtime compilation remain available");
         } catch (const std::exception& failure) {
             LOG_WARNING(Render_OpenGL, "Metal pipeline cache save: {}", failure.what());
-            return false;
         }
+        // Learning is an optional startup-performance cache. Its failure must
+        // never turn successfully rendered guest work into a frontend failure.
+        return true;
     }
     if (warmup_recording_failed || warmup_recipes.empty())
         return false;
@@ -630,23 +696,35 @@ bool PicaMetalPipelines::SaveWarmup() {
                 break;
             }
         }
-        archived = archived && warmup_descriptors.size() &&
-                   [archive serializeToURL:ArchiveUrl(archive_temp) error:&error];
+        // A new sampler/recipe can reuse an already archived PSO. Publish that
+        // recipe without requiring a new archive descriptor or rewriting the
+        // unchanged archive. Archive hits never consume the addition budget.
+        const bool unchanged_archive = learning && warmup_archive && warmup_descriptors.empty();
+        archived = archived && (unchanged_archive || (warmup_descriptors.size() &&
+                   [archive serializeToURL:ArchiveUrl(archive_temp) error:&error]));
         std::error_code ec;
-        if (archived && learning) {
+        if (archived && learning && !unchanged_archive) {
             const auto bytes = std::filesystem::file_size(archive_temp, ec);
             archived = !ec && bytes <= LearnMaxArchiveBytes;
         }
-        if (archived) {
+        if (archived && !unchanged_archive) {
             std::filesystem::rename(archive_temp, archive_path, ec);
             archived = !ec;
         }
         LOG_INFO(Render_OpenGL, "Metal warmup binary archive saved={} detail={}", archived,
                  error.localizedDescription.UTF8String ?: "");
         success = !learning || archived;
-        if (success) {
+        if (success || learning) {
+            // Known recipes remain useful to full prewarm even when Apple's
+            // binary serializer cannot represent a pipeline. Publish only the
+            // completely written recipe file; leave the old archive untouched
+            // unless a complete replacement was serialized and renamed above.
+            ec.clear();
             std::filesystem::rename(recipe_temp, recipe_path, ec);
-            success = !ec;
+            const bool recipes_saved = !ec;
+            LOG_INFO(Render_OpenGL, "Metal warmup recipes saved={} archive_saved={} learning={}",
+                     recipes_saved, archived, learning);
+            success = success && recipes_saved;
         }
     }
     std::error_code ignored;

@@ -21,11 +21,17 @@ def main():
     pgo = parser.add_mutually_exclusive_group()
     pgo.add_argument('--pgo-generate', action='store_true')
     pgo.add_argument('--pgo-use', type=Path)
+    pgo.add_argument('--fastinterp-pgo-generate', action='store_true',
+                     help='Instrument only FastInterp for local training')
+    pgo.add_argument('--fastinterp-pgo-use', type=Path,
+                     help='Apply a matching LLVM profile to FastInterp only')
+    parser.add_argument('--fastinterp-pgo-kind', choices=['frontend', 'ir'], default='frontend')
     parser.add_argument('--build-dir', type=Path)
     args = parser.parse_args()
     if args.cpu == 'apple-m4' and args.platform != 'ios':
         parser.error('apple-m4 requires a physical-device iOS build')
-    if args.pgo_use and not args.pgo_use.is_file():
+    profile = args.pgo_use or args.fastinterp_pgo_use
+    if profile and not profile.is_file():
         parser.error('PGO profile file does not exist')
     source = ROOT / 'emulator'
     if not (source / 'VENDORED_SOURCE.json').exists():
@@ -56,6 +62,10 @@ def main():
                '-DCARA_FASTINTERP_COMPACT_DECODED=' + ('ON' if args.compact_decoded else 'OFF'),
                '-DCARA_PGO_GENERATE=' + ('ON' if args.pgo_generate else 'OFF'),
                '-DCARA_PGO_USE=' + (str(args.pgo_use.resolve()) if args.pgo_use else ''),
+               '-DCARA_FASTINTERP_PGO_GENERATE=' + ('ON' if args.fastinterp_pgo_generate else 'OFF'),
+               '-DCARA_FASTINTERP_PGO_USE:FILEPATH=' +
+               (str(args.fastinterp_pgo_use.resolve()) if args.fastinterp_pgo_use else ''),
+               '-DCARA_FASTINTERP_PGO_KIND:STRING=' + args.fastinterp_pgo_kind,
                '-DCARA_INTERPRETER_GUEST_DEBUG=' + ('ON' if args.guest_debugger else 'OFF'),
                '-DCARA_ENABLE_JIT=OFF', '-DCARA_SOFTWARE_PRESENTATION=ON',
                '-DENABLE_QT=OFF', '-DENABLE_SDL2=OFF', '-DENABLE_WEB_SERVICE=OFF',

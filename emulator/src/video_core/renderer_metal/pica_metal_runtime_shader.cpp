@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "pica_metal_runtime_shader.h"
+#include "simd_vertex_source.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -27,6 +28,9 @@ precision highp float;
 precision highp sampler2D;
 vec4 CaraLUTFetch(sampler2D lut, int index) {
     return texelFetch(lut, ivec2(index & 1023, index >> 10), 0);
+}
+vec4 CaraProcTexColorFetch(sampler2D lut, int index) {
+    return vec4(CaraLUTFetch(lut, 2 * index).rg, CaraLUTFetch(lut, 2 * index + 1).rg);
 }
 )";
 
@@ -105,6 +109,8 @@ std::string PrepareSource(std::string_view original, bool desktop_clip,
     Replace(source, "precision highp uimage2D;", "");
     Replace(source, "#define fma_safe(x, y, z) fma(x, y, z)",
             "#define fma_safe(x, y, z) ((x) * (y) + (z))");
+    Replace(source, "texelFetch(texture_buffer_lut_rgba,", "CaraProcTexColorFetch(texture_buffer_lut_lf,");
+    Replace(source, "texelFetch(texture_buffer_lut_rg,", "CaraLUTFetch(texture_buffer_lut_lf,");
     Replace(source, "texelFetch(texture_buffer_lut_", "CaraLUTFetch(texture_buffer_lut_");
     if (raw_indices) {
         std::string lookup(RawLookup);
@@ -348,6 +354,24 @@ void BindFragment(Stage& stage, RuntimeMetalShaderPair& pair) {
 std::optional<RuntimeMetalShaderPair> TranslateRuntimeMetalShaders(
     std::string_view vs, std::string_view fs, RuntimeMetalVertexMode mode,
     bool raw_indices, bool raw_index_constants, std::string& error) {
+    if (HasSimdVertexTag(vs)) {
+        const auto full = StripSimdVertexTag(vs);
+        const auto actual = RemoveVertexReference(full);
+        if (mode == RuntimeMetalVertexMode::Packed && raw_indices && actual) {
+            auto pair = TranslateRuntimeMetalShaders(*actual, fs, mode, raw_indices,
+                                                     raw_index_constants, error);
+            if (pair) {
+                if (auto shared = MakeVertexReferenceSource(pair->vertex, true)) {
+                    pair->vertex = std::move(*shared);
+                    return pair;
+                }
+            }
+        }
+        // A tagged request can fail admission. Return the complete original
+        // shader; selection/reflection must never advertise this as SIMD.
+        return TranslateRuntimeMetalShaders(full, fs, mode, raw_indices,
+                                            raw_index_constants, error);
+    }
     try {
         static const bool initialized = glslang::InitializeProcess();
         Require(initialized, "glslang process initialization");

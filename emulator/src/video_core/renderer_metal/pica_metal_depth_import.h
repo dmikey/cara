@@ -13,9 +13,12 @@ struct PicaMetalDepthImportPipelines {
 };
 
 // The caller owns the input and destination. Initialize errors before encode,
-// then check it after the command completes and before using the texture.
+// then check it after completion before CPU consumption or successful publication.
+// Ordered GPU consumers may precede that check only when a retained validation
+// receipt propagates failure through every dependent writer and final boundary.
 bool EncodeDepthImport(id<MTLCommandBuffer> command, const PicaMetalDepthImportPipelines& pipelines,
                        id<MTLBuffer> source, NSUInteger offset, id<MTLTexture> texture,
-                       id<MTLBuffer> errors, const PicaGuestTilePatch* patch = nullptr);
+                       id<MTLBuffer> errors, const PicaGuestTilePatch* patch = nullptr,
+                       bool has_stencil = true);
 
 } // namespace Cara

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// Modified for Cara on 2026-11-20: frontend presentation and attribution.
+#import "ios/ui_theme.h"
 #import "ios/feature_controllers.h"
 
 NSString* CaraInputActionTitle(NSString* action) {
@@ -11,7 +13,7 @@ static void FeatureError(UIViewController* owner,NSString* message) {
 @implementation CaraMappingController
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title=self.keyboard?@"Keyboard mappings":@"Controller mappings";
+    [super viewDidLoad]; CaraUIApplyChrome(self); self.title=self.keyboard?@"Keyboard mappings":@"Controller mappings";
     self.tableView.rowHeight=UITableViewAutomaticDimension; self.tableView.estimatedRowHeight=58;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Reset" style:UIBarButtonItemStylePlain target:self action:@selector(reset)];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh:) name:CaraInputHubDidChangeNotification object:self.hub];
@@ -52,7 +54,7 @@ static void FeatureError(UIViewController* owner,NSString* message) {
 }
 - (instancetype)init { return [super initWithStyle:UITableViewStyleInsetGrouped]; }
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title=@"Save states"; self.tableView.rowHeight=UITableViewAutomaticDimension; self.tableView.estimatedRowHeight=68;
+    [super viewDidLoad]; CaraUIApplyChrome(self); self.title=@"Save states"; self.tableView.rowHeight=UITableViewAutomaticDimension; self.tableView.estimatedRowHeight=68;
     self.navigationItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(newState)];
     self.navigationItem.rightBarButtonItem.accessibilityLabel=@"Create save state";
     [self reloadStates];

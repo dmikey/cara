@@ -514,6 +514,10 @@ enum class Opcode : u16 {
 
     AddCmpRegBcc, // Ordered ADD-immediate then original retained register-CMP/Bcc.
 
+    LdrPairImm, // Two original AL word loads; retained records, ticks and scalar fallback.
+    LdrCmpImmBcc, // Direct word load to the retained immediate compare/branch.
+    LdrCmpRegBcc, // Direct word load to the retained register compare/branch.
+
     OpcodeCount
 };
 

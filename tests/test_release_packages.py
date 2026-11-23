@@ -15,6 +15,7 @@ import zipfile
 TOOLS = Path(__file__).resolve().parents[1] / 'tools'
 sys.path.insert(0, str(TOOLS))
 import package_ipa
+import bundle_ios_licenses
 import mac_bundle
 import package_mac_app
 import sign_nightly
@@ -33,6 +34,7 @@ class IPATests(unittest.TestCase):
         self.audit = self.root / 'audit.json'
         self.audit.write_text(json.dumps(dict(platform='ios', jit_enabled=False, renderer='gles3', binary_sha256=hashlib.sha256(b'fixture executable').hexdigest())))
         self.out = self.root / 'dist/Cara-unsigned.ipa'
+        bundle_ios_licenses.bundle(self.app)
 
     def package(self):
         return package_ipa.package(self.app, self.audit, self.out)
@@ -41,8 +43,33 @@ class IPATests(unittest.TestCase):
         report = self.package()
         self.assertTrue(report['requires_resigning'])
         with zipfile.ZipFile(self.out) as archive:
-            self.assertEqual(sorted(archive.namelist()), ['Payload/Cara.app/Info.plist', 'Payload/Cara.app/cara-ios'])
+            self.assertEqual(sorted(archive.namelist()), ['Payload/Cara.app/Info.plist', 'Payload/Cara.app/Legal/LICENSE.txt', 'Payload/Cara.app/Legal/NOTICE.txt', 'Payload/Cara.app/Legal/THIRD_PARTY.txt', 'Payload/Cara.app/Legal/source.json', 'Payload/Cara.app/cara-ios'])
             self.assertTrue(archive.getinfo('Payload/Cara.app/cara-ios').external_attr >> 16 & stat.S_IXUSR)
+
+    def test_altered_license_rejected(self):
+        (self.app / 'Legal/LICENSE.txt').write_text('incomplete license')
+        with self.assertRaisesRegex(ValueError, 'differs from its manifest'):
+            self.package()
+
+    def test_embedded_notices_included(self):
+        notices = (self.app / 'Legal/THIRD_PARTY.txt').read_text()
+        for name in ('The Khronos Group', 'Niels Lohmann', 'unlicense.org', 'Markus Franz Xaver Johannes Oberhumer', 'Olli Parviainen'):
+            self.assertIn(name, notices)
+
+    def test_missing_license_rejected(self):
+        (self.app / 'Legal/LICENSE.txt').unlink()
+        with self.assertRaisesRegex(ValueError, 'Missing bundled'):
+            self.package()
+
+    def test_modified_release_source_rejected(self):
+        report = json.loads(self.audit.read_text())
+        report['source_revision'] = 'fixture'
+        self.audit.write_text(json.dumps(report))
+        source = json.loads((self.app / 'Legal/source.json').read_text())
+        source.update(revision='fixture', modified=True)
+        (self.app / 'Legal/source.json').write_text(json.dumps(source))
+        with self.assertRaisesRegex(ValueError, 'clean release revision'):
+            package_ipa.package(self.app, self.audit, self.out, expected_revision='fixture')
 
     def test_wrong_product_rejected(self):
         for values in (dict(platform='mac', jit_enabled=False), dict(platform='ios', jit_enabled=True)):

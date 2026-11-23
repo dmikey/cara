@@ -194,8 +194,8 @@ struct ColorExportContext {
 };
 thread_local std::unique_ptr<ColorExportContext> color_export;
 
-// Registered only by the private native iPad rasterizer on its owner thread.
-// This diagnostic state does not become part of the guest checkpoint.
+// Explicitly registered by the native Apple rasterizer on its owner thread.
+// This submission state does not become part of the guest checkpoint.
 struct TextureCopyBatch {
     struct Copy {
         id<MTLBuffer> buffer = nil;
@@ -276,21 +276,12 @@ bool ValidRgba8(const PicaMetalNativeAttachment& attachment) {
 } // namespace
 
 void RegisterNativeMetalTextureCopyBatch(PicaMetalNativeDrawLane& lane) {
-#if defined(CARA_PRIVATE_GATE_METAL_CATALOG) && TARGET_OS_IOS
-    const auto enabled = [](const char* key) {
-        const auto* value = std::getenv(key);
-        return value && std::string_view(value) == "1";
-    };
-    if (!enabled("CARA_METAL_BATCH_TEXTURE_COPIES") ||
-        !enabled("CARA_IOS_GATE_CAPTURE_PROFILE") ||
-        !enabled("CARA_PRIVATE_IOS_METAL_ONLY") || !std::getenv("CARA_BENCHMARK_FRAMES"))
+    const auto* value = std::getenv("CARA_METAL_BATCH_TEXTURE_COPIES");
+    if (!value || std::string_view(value) != "1")
         return;
     if (texture_copy_batch.owner)
         throw std::logic_error("Native Metal texture copy batch already owns this thread");
     texture_copy_batch.owner = &lane;
-#else
-    (void)lane;
-#endif
 }
 
 void UnregisterNativeMetalTextureCopyBatch(PicaMetalNativeDrawLane& lane) noexcept {
@@ -314,9 +305,26 @@ void ReportNativeMetalTextureResidency(const std::string& path) {
 
 PicaMetalNativeDrawLane::PicaMetalNativeDrawLane(id<MTLCommandQueue> owner_queue,
                                                NSUInteger upload_page_bytes,
-                                               GuestWriteNotice notice)
-    : queue(owner_queue), write_notice(std::move(notice)), submissions(queue, [this] { authority.RejectSubmittedWrites(); }),
+                                               GuestWriteNotice notice, GuestRamView ram_view_)
+    : queue(owner_queue), write_notice(std::move(notice)), ram_view(std::move(ram_view_)),
+      submissions(queue, [this] { authority.RejectSubmittedWrites(); }),
       group(queue, upload_page_bytes) {}
+
+PicaMetalNativeDrawLane::~PicaMetalNativeDrawLane() { Abort(); }
+
+void PicaMetalNativeDrawLane::Abort() noexcept {
+    // Group cleanup enforces the same owner thread as normal encoding. Reject
+    // authority before waiting so no failed renderer can resume guest access.
+    authority.RejectSubmittedWrites();
+    group.Abort();
+    pending.reset();
+    UnregisterNativeMetalTextureCopyBatch(*this);
+    submissions.Abort();
+    resident_color.reset();
+    resident_depth.reset();
+    previous_lcd = {};
+    flush_readback.writer.reset();
+}
 
 void PicaMetalNativeDrawLane::Record(const TexturedMetalDraw& draw, const PicaMetalDrawViews& views,
                                     const PicaMetalNativeAttachment& color,
@@ -443,6 +451,14 @@ namespace {
 
 constexpr NSUInteger MaxBackingBytes = 16 * 1024 * 1024;
 
+bool RetireCachedInputsAtRecord() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_METAL_RETIRE_CACHED_INPUTS_AT_RECORD");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
 MetalTransfer::Rows DenseRows(MetalTransfer::GuestInterval bytes) {
     return {bytes, bytes.Size(), bytes.Size(), 1};
 }
@@ -458,9 +474,11 @@ id<MTLBuffer> PicaMetalNativeDrawLane::AllocateBytes(MetalTransfer::GuestInterva
     return [queue.device newBufferWithLength:bytes.Size() options:options];
 }
 
-void PicaMetalNativeDrawLane::Track(id<MTLCommandBuffer> command) {
+void PicaMetalNativeDrawLane::Track(id<MTLCommandBuffer> command,
+                                  std::shared_ptr<const PicaMetalValidationReceipt> validation) {
     PicaMetalDrawTicket ticket;
     ticket.command = command;
+    ticket.validation = std::move(validation);
     submissions.Track(ticket);
 }
 
@@ -533,8 +551,38 @@ bool JoinCheckedDepthImport() {
     }();
     return on;
 }
+bool AsyncCheckedDepthImport() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_METAL_ASYNC_CHECKED_DEPTH_IMPORT");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
+bool QueuePendingDepthExport() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_METAL_QUEUE_PENDING_DEPTH_EXPORT");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled && AsyncCheckedDepthImport();
+}
+
+bool ValidatePresentationReceipts(const MetalProducerPredecessors& predecessors) {
+    if (predecessors.count > predecessors.commands.size() ||
+        predecessors.count > predecessors.validations.size())
+        return false;
+    for (std::size_t i = 0; i < predecessors.count; ++i) {
+        const auto& receipt = predecessors.validations[i];
+        if (receipt && (receipt->Command() != predecessors.commands[i] ||
+                        receipt->Wait() != PicaMetalCompletion::Complete))
+            return false;
+    }
+    return true;
+}
+
 struct JoinedDepthCheck {
     MetalGuestWriterRef producer;
+    std::shared_ptr<const MetalSurfaceWriter> pending_source;
     id<MTLBuffer> errors = nil;
 };
 thread_local JoinedDepthCheck* active_depth_check = nullptr;
@@ -603,6 +651,47 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         return EncodeQueuedColorExport(command, color_export->tiled_pack,
                                        (id<MTLTexture>)resource, *writer->Rgba8Layout(), {first,last});
     };
+    const auto queue_depth_export = [&](const MetalGuestWrite& segment, PAddr first, PAddr last)
+        -> id<MTLBuffer> {
+        if (!active_depth_check || active_depth_check->producer)
+            return nil;
+        const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
+        if (!writer || writer->Queue() != queue)
+            return nil;
+        const auto status = writer->Status();
+        const bool pending = status == MetalGuestWriteStatus::Pending && QueuePendingDepthExport() &&
+                             submissions.IsTrackedProducer(writer->Command());
+        if (status != MetalGuestWriteStatus::Complete && !pending)
+            return nil;
+
+        const DepthExportProof* proof = nullptr;
+        const auto& exporter = writer->Exporter();
+        if (const auto* deferred = exporter.target<DeferredDepthExport>(); deferred && *deferred->initialized)
+            proof = &deferred->proof;
+        else if (const auto* checked = exporter.target<CheckedDepthExporter>())
+            proof = &checked->proof;
+        if (!proof || proof->texture != writer->Resource() ||
+            proof->generation != writer->Generation() || !writer->Covers(first, last))
+            return nil;
+
+        const auto errors = [queue.device newBufferWithLength:sizeof(u32)
+                                               options:MTLResourceStorageModeShared];
+        if (!errors)
+            submissions.Fail("Could not allocate queued depth export validation");
+        *static_cast<u32*>(errors.contents) = 0;
+        const auto exported = EncodeQueuedCheckedDepthExport(command, proof->texture, proof->surface,
+            {first,last}, proof->tiled_export, proof->depth_pack, errors);
+        if (!exported)
+            submissions.Fail("Could not encode certified queued depth export");
+        active_depth_check->producer = segment.writer;
+        if (pending) {
+            active_depth_check->pending_source =
+                std::shared_ptr<const MetalSurfaceWriter>(segment.writer, writer);
+            NativeMetalCost::Count(NativeMetalCost::QueuedPendingDepthExports, 1);
+        }
+        active_depth_check->errors = errors;
+        return exported;
+    };
 
     if (use == ByteUse::TextureCopy && rows.count > 1) {
         static const bool borrow_striped_source = [] {
@@ -629,6 +718,11 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             const auto offset = bytes.begin - writer->RawGuestBegin();
             if (offset % alignment == 0)
                 return MetalTransfer::ByteView{writer->RawGuestBuffer(), bytes, offset};
+        }
+        if (active_depth_check && QueuePendingDepthExport() &&
+            (rows.count == 1 || rows.width_bytes == rows.stride_bytes) && bytes.Size() % 4 == 0) {
+            if (const auto exported = queue_depth_export(current.front(), bytes.begin, bytes.end))
+                return MetalTransfer::ByteView{exported, bytes, 0};
         }
         static const bool direct_export = [] {
             const auto* value = std::getenv("CARA_METAL_DIRECT_EXPORT_CONSUMPTION");
@@ -684,37 +778,11 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             } else {
                 auto exported = ((to | size) & 3u) == 0
                     ? queue_texture_export(*owner, first, last) : nil;
-                bool joined_depth_export = false;
-                if (!exported && active_depth_check && !active_depth_check->producer && ((to | size) & 3u) == 0) {
-                    const auto* depth_writer = dynamic_cast<const MetalSurfaceWriter*>(owner->writer.get());
-                    const DepthExportProof* proof = nullptr;
-                    if (depth_writer && depth_writer->Queue() == queue &&
-                        depth_writer->Status() == MetalGuestWriteStatus::Complete) {
-                        const auto& exporter = depth_writer->Exporter();
-                        if (const auto* deferred = exporter.target<DeferredDepthExport>(); deferred && *deferred->initialized)
-                            proof = &deferred->proof;
-                        else if (const auto* checked = exporter.target<CheckedDepthExporter>())
-                            proof = &checked->proof;
-                    }
-                    if (proof && proof->texture == depth_writer->Resource() &&
-                        proof->generation == depth_writer->Generation() &&
-                        depth_writer->Covers(first,last)) {
-                        const auto errors = [queue.device newBufferWithLength:sizeof(u32)
-                                                               options:MTLResourceStorageModeShared];
-                        if (!errors)
-                            submissions.Fail("Could not allocate queued depth export validation");
-                        *static_cast<u32*>(errors.contents) = 0;
-                        exported = EncodeQueuedCheckedDepthExport(command, proof->texture, proof->surface,
-                            {first,last}, proof->tiled_export, proof->depth_pack, errors);
-                        if (!exported)
-                            submissions.Fail("Could not encode certified queued depth export");
-                        joined_depth_export = true;
-                        active_depth_check->producer = owner->writer;
-                        active_depth_check->errors = errors;
-                    }
-                }
+                const bool color_exported = exported != nil;
+                if (!exported && ((to | size) & 3u) == 0)
+                    exported = queue_depth_export(*owner, first, last);
                 if (exported) {
-                    if (!joined_depth_export)
+                    if (color_exported)
                         NativeMetalCost::Count(NativeMetalCost::QueuedColorExportHost, 1);
                     copies.push_back({exported, 0, to, size});
                 } else {
@@ -1036,7 +1104,90 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                  : registers.output_width == registers.input_width &&
                    registers.output_height == registers.input_height);
     std::optional<MetalTransfer::LinearColorTransferPlan> detile_plan;
-    const auto scaled_crop = MetalTransfer::PlanScaledCropRgba8(registers);
+    const auto scaled_crop = MetalTransfer::PlanScaledColorCrop(registers);
+    static const bool fuse_crop = [] {
+        const auto* value = std::getenv("CARA_METAL_FUSE_TEXTURE_CROP");
+        return value && std::string_view(value) == "1";
+    }();
+    static const bool linear_bytes_only = [] {
+        const auto* value = std::getenv("CARA_METAL_LINEAR_COLOR_BYTES_ONLY");
+        return value && std::string_view(value) == "1";
+    }();
+    // Optional kernels use per-device caches; failed admission retains the
+    // existing byte pipeline and its complete mixed-owner/padding behavior.
+    const auto optional_kernel = [&](bool crop) -> id<MTLComputePipelineState> {
+        static std::mutex lock;
+        static id<MTLDevice> device;
+        static id<MTLComputePipelineState> crop_pipeline, bytes_pipeline;
+        const std::lock_guard guard(lock);
+        if (device != queue.device) {
+            device = queue.device;
+            crop_pipeline = nil;
+            bytes_pipeline = nil;
+        }
+        auto& pipeline = crop ? crop_pipeline : bytes_pipeline;
+        if (!pipeline) {
+            const auto url = [NSBundle.mainBundle URLForResource:crop ? @"cara-scaled-crop-rgb8" : @"cara-pica"
+                                                 withExtension:@"metallib"];
+            const auto library = url ? [queue.device newLibraryWithURL:url error:nullptr] : nil;
+            const auto function = [library newFunctionWithName:crop ? @"cara_pica_display_texture_scaled_crop"
+                                                                 : @"cara_pica_display_to_linear_bytes"];
+            if (function)
+                pipeline = [queue.device newComputePipelineStateWithFunction:function error:nullptr];
+        }
+        return pipeline;
+    };
+    const auto valid_rgba_source = [&](id<MTLTexture> texture, u32 width, u32 height) {
+        return texture && texture.device == queue.device && texture.width == width &&
+            texture.height == height && texture.textureType == MTLTextureType2D &&
+            texture.pixelFormat == MTLPixelFormatRGBA8Unorm && texture.sampleCount == 1 &&
+            texture.mipmapLevelCount == 1 && texture.arrayLength == 1 &&
+            texture.hazardTrackingMode == MTLHazardTrackingModeTracked &&
+            texture.storageMode != MTLStorageModeMemoryless && !texture.framebufferOnly &&
+            !texture.heap && !texture.buffer && !texture.parentTexture && !texture.iosurface &&
+            (texture.usage & MTLTextureUsageShaderRead);
+    };
+    if (scaled_crop && !scaled_crop->scale_xy_tiled && scaled_crop->source_bpp == 4u &&
+        (NativeMetalCost::Enabled() || fuse_crop)) {
+        NativeMetalCost::Count(scaled_crop->destination_bpp == 3u ?
+            NativeMetalCost::DisplayCropRgb8Candidates : NativeMetalCost::DisplayCrop565Candidates, 1);
+        const auto texture = ResolveRgba8({scaled_crop->source.begin, scaled_crop->source.end,
+            registers.input_width, registers.input_height, true});
+        const bool owned = valid_rgba_source(texture, registers.input_width, registers.input_height);
+        NativeMetalCost::Count(owned ? NativeMetalCost::DisplayCropOwnerHits :
+                                      NativeMetalCost::DisplayCropOwnerMisses, 1);
+        const auto pipeline = fuse_crop && owned ? optional_kernel(true) : nil;
+        if (pipeline && pipeline.maxTotalThreadsPerThreadgroup >= 64) {
+            NativeMetalCost::Scope route(NativeMetalCost::RawDetileHost);
+            const auto command = [queue commandBuffer];
+            const auto output = AllocateBytes(scaled_crop->destination);
+            const auto encoder = command && output ? [command computeCommandEncoder] : nil;
+            if (!encoder)
+                submissions.Fail("Could not encode fused native Metal crop");
+            const std::array<u32,4> args{scaled_crop->output_width, scaled_crop->output_height,
+                scaled_crop->destination_bpp, registers.flags & 1u};
+            [encoder setComputePipelineState:pipeline];
+            [encoder setTexture:texture atIndex:0];
+            [encoder setBuffer:output offset:0 atIndex:0];
+            [encoder setBytes:args.data() length:sizeof(args) atIndex:1];
+            [encoder dispatchThreadgroups:MTLSizeMake((args[0]+7u)/8u,(args[1]+7u)/8u,1)
+                    threadsPerThreadgroup:MTLSizeMake(8,8,1)];
+            [encoder endEncoding];
+            NativeMetalCost::Count(NativeMetalCost::DisplayCropFused, 1);
+            NativeMetalCost::Count(NativeMetalCost::DisplayCropSourceBytesAvoided, scaled_crop->source.Size());
+            if (scaled_crop->destination_bpp == 2u)
+                NativeMetalCost::Count(NativeMetalCost::DisplayScaledCropRgb565, 1);
+            PublishBytes(command, output, DenseRows(scaled_crop->destination));
+            return;
+        }
+    }
+    if (rgb8_retile && NativeMetalCost::Enabled()) {
+        NativeMetalCost::Count(NativeMetalCost::DisplayRgb8RetileCandidates, 1);
+        const auto texture = ResolveRgba8({rgb8_retile->source.begin, rgb8_retile->source.end,
+            registers.input_width, registers.input_height, true});
+        if (valid_rgba_source(texture, registers.input_width, registers.input_height))
+            NativeMetalCost::Count(NativeMetalCost::DisplayRgb8RetileOwnerHits, 1);
+    }
     if (valid_extent && !registers.address_override_enabled &&
         ((registers.input_width | registers.input_height) & 7u) == 0) {
         if (rgb565 || packed16 || block32_rgb8 || cropped) {
@@ -1066,7 +1217,8 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                                          ? NativeMetalCost::RetileHost
                                          : NativeMetalCost::RawDetileHost);
         using MetalTransfer::AlignedGuestInterval;
-        const u64 size = u64{registers.input_width} * registers.input_height * (packed16 ? 2u : 4u);
+        const u32 source_bpp = scaled_crop ? scaled_crop->source_bpp : packed16 ? 2u : 4u;
+        const u64 size = u64{registers.input_width} * registers.input_height * source_bpp;
         std::optional<MetalTransfer::GuestInterval> src, dst;
         if (rgb8_retile) {
             src = rgb8_retile->source;
@@ -1123,8 +1275,15 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         const auto encoder = [command computeCommandEncoder];
         if (!encoder)
             submissions.Fail("Could not encode linear-to-tiled Metal transfer");
-        const u32 mode = scaled_crop ? 5u : packed16 ? 1u
-                        : (linear_to_tiles || rgb8_retile) ? 0u : detile_plan->destination_bpp;
+        u32 mode = 0;
+        if (scaled_crop && scaled_crop->scale_xy_tiled)
+            mode = source_bpp == 2u ? 7u : 8u;
+        else if (scaled_crop)
+            mode = source_bpp == 2u ? 6u : 5u;
+        else if (packed16)
+            mode = 1;
+        else if (!linear_to_tiles && !rgb8_retile)
+            mode = detile_plan->destination_bpp;
         const u32 output_width = scaled_crop ? scaled_crop->output_width : registers.output_width;
         const u32 output_height = scaled_crop ? scaled_crop->output_height : registers.output_height;
         const std::array<u32, 6> arguments{registers.input_width, registers.input_height,
@@ -1137,7 +1296,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
         [encoder dispatchThreadgroups:MTLSizeMake((output_width + 7u) / 8,
                                                  (output_height + 7u) / 8, 1)
                 threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
-        if (scaled_crop && !scaled_crop_rgb8)
+        if (scaled_crop && scaled_crop->destination_bpp == 2u)
             NativeMetalCost::Count(NativeMetalCost::DisplayScaledCropRgb565, 1);
         [encoder endEncoding];
         PublishBytes(command, output, DenseRows(*dst));
@@ -1173,6 +1332,29 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                     submissions.Fail("Could not import scaled native Metal color source");
             }
             const auto width = color->destination.Size() / color->destination_bpp / color->height;
+            const auto bytes_pipeline = linear_bytes_only &&
+                valid_rgba_source(src, color->width, color->height) ? optional_kernel(false) : nil;
+            if (bytes_pipeline && bytes_pipeline.maxTotalThreadsPerThreadgroup >= 64) {
+                const auto buffer = AllocateBytes(color->destination);
+                const auto encoder = command && buffer ? [command computeCommandEncoder] : nil;
+                if (!encoder)
+                    submissions.Fail("Could not encode native Metal color bytes");
+                const std::array<u32,4> args{color->destination_bpp,
+                    unsigned(color->source_tiled != color->flip) | (unsigned(scale_x) << 1u),
+                    static_cast<u32>(width), color->height};
+                [encoder setComputePipelineState:bytes_pipeline];
+                [encoder setTexture:src atIndex:0];
+                [encoder setBuffer:buffer offset:0 atIndex:0];
+                [encoder setBytes:args.data() length:sizeof(args) atIndex:1];
+                [encoder dispatchThreadgroups:MTLSizeMake((width+7u)/8u,(color->height+7u)/8u,1)
+                        threadsPerThreadgroup:MTLSizeMake(8,8,1)];
+                [encoder endEncoding];
+                NativeMetalCost::Count(NativeMetalCost::DisplayLinearBufferOnly, 1);
+                NativeMetalCost::Count(NativeMetalCost::DisplayLinearTextureBytesAvoided,
+                    u64{width} * color->height * 4u);
+                PublishBytes(command, buffer, DenseRows(color->destination));
+                return;
+            }
             const auto dst = make_texture(width);
             const auto buffer = AllocateBytes(color->destination);
             if (!dst || !buffer ||
@@ -1333,12 +1515,33 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
     }();
     const bool keyed = small && allow_keyed;
     bool snapshot = false;
+    std::span<const u8> comparison;
+    bool borrowed = false;
+    static const bool borrow_compare = [] {
+        const auto* value = std::getenv("CARA_METAL_BORROW_RAM_SNAPSHOT_COMPARE");
+        return value && std::string_view(value) == "1";
+    }();
     if (!tracked && (small || large) && ram) {
         if (authority.NativeSegments(bytes.begin, bytes.end).empty()) {
-            scratch.resize(bytes.Size());
-            snapshot = ram(bytes.begin, scratch);
+            if (borrow_compare && ram_view) {
+                try {
+                    const auto view = ram_view(bytes.begin, bytes.Size());
+                    if (view.data() && view.size() == bytes.Size()) {
+                        comparison = view;
+                        snapshot = borrowed = true;
+                    }
+                } catch (...) {
+                    // An unavailable view does not weaken the original reader.
+                }
+            }
+            if (!snapshot) {
+                scratch.resize(bytes.Size());
+                snapshot = ram(bytes.begin, scratch);
+                if (snapshot)
+                    comparison = scratch;
+            }
             if (snapshot)
-                NativeMetalCost::Count(NativeMetalCost::SnapshotComparedBytes, scratch.size());
+                NativeMetalCost::Count(NativeMetalCost::SnapshotComparedBytes, comparison.size());
         } else {
             NativeMetalCost::Count(NativeMetalCost::SnapshotNativeOwners, 1);
         }
@@ -1346,10 +1549,16 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
         NativeMetalCost::Count(NativeMetalCost::SnapshotOutsideLimits, 1);
     }
 
+    const auto same_snapshot = [&](const std::vector<u8>& owned) {
+        return owned.size() == comparison.size() &&
+               std::memcmp(owned.data(), comparison.data(), comparison.size()) == 0;
+    };
+
     const auto reuse = [&](id<MTLTexture> texture) {
         NativeMetalCost::Count(NativeMetalCost::SnapshotHits, 1);
         if (defer) {
-            submissions.Retire(false);
+            if (!RetireCachedInputsAtRecord())
+                submissions.Retire(false);
             NativeMetalCost::Count(NativeMetalCost::SnapshotReadNoPublish, 1);
         } else if (NativeMetalCost::ReduceCopyQueueWork()) {
             // PublishPending already checked the queue and this reuse needs no slot.
@@ -1361,7 +1570,7 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
     };
     if (snapshot && large) {
         const auto entry = cache->large_samples.find(key);
-        if (entry != cache->large_samples.end() && entry->second.guest_bytes == scratch) {
+        if (entry != cache->large_samples.end() && same_snapshot(entry->second.guest_bytes)) {
             entry->second.last_use = ++cache->large_time;
             NativeMetalCost::Count(NativeMetalCost::LargeSnapshotHits, 1);
             return reuse(entry->second.texture);
@@ -1371,7 +1580,7 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
         const auto entry = cache->keyed.find(key);
         if (entry == cache->keyed.end()) {
             NativeMetalCost::Count(NativeMetalCost::KeyedSnapshotKeyMisses, 1);
-        } else if (entry->second.guest_bytes == scratch) {
+        } else if (same_snapshot(entry->second.guest_bytes)) {
             cache->recent.splice(cache->recent.end(), cache->recent, entry->second.recent);
             NativeMetalCost::Count(NativeMetalCost::KeyedSnapshotHits, 1);
             return reuse(entry->second.texture);
@@ -1382,9 +1591,16 @@ id<MTLTexture> PicaMetalNativeDrawLane::DecodeTexture(
         for (const auto& sample : samples) {
             if (sample && sample->address == bytes.begin && sample->row_bytes == tile_row_bytes &&
                 sample->width == width && sample->height == height && sample->format == format &&
-                sample->disable_alpha == disable_alpha && sample->guest_bytes == scratch)
+                sample->disable_alpha == disable_alpha && same_snapshot(sample->guest_bytes))
                 return reuse(sample->texture);
         }
+    }
+
+    if (borrowed) {
+        // Own a miss before PublishPending, allocation, read callbacks or any
+        // deferred GPU work. Cached snapshots never borrow the RAM view.
+        scratch.assign(comparison.begin(), comparison.end());
+        comparison = {};
     }
 
     if (defer)
@@ -1473,6 +1689,15 @@ MetalLCD::Receipt PicaMetalNativeDrawLane::Present(
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Present);
     PublishPending();
     submissions.Reserve();
+    if ((present_drawable || capture) && AsyncCheckedDepthImport()) {
+        // Queued GPU consumers may overlap unchecked imports, but neither a
+        // drawable nor a captured image may expose a failed shader-side check.
+        // Wait only for validation commands, not unrelated later GPU work.
+        const auto predecessors = submissions.Predecessors();
+        if (predecessors && !ValidatePresentationReceipts(*predecessors))
+            submissions.Fail("Native Metal presentation depends on failed validation");
+        submissions.Retire(false);
+    }
     auto result = MetalLCD::PresentNative(queue, layer, layout, pipelines, filter, edge,
         [&](id<MTLCommandBuffer> command, const MetalLCD::Scanout& scanout) -> id<MTLTexture> {
             const auto source = ResolveBytes(command, scanout.rows, 1, ram);
@@ -1516,7 +1741,9 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledColor(
     submissions.CheckThread();
     if (HasTextureCopyBatch(this))
         PublishPending();
-    submissions.Retire(false);
+    const bool retire_at_record = RetireCachedInputsAtRecord();
+    if (!retire_at_record)
+        submissions.Retire(false);
     if (NativeMetalCost::QueueColorExports() && (!color_export || color_export->queue != queue))
         color_export = std::make_unique<ColorExportContext>(ColorExportContext{queue, tiled_export});
     const bool rgba8 = metal_format == MTLPixelFormatRGBA8Unorm;
@@ -1542,11 +1769,23 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledColor(
             return *resident_color;
     }
 
+    // Cache hits only hand back the existing lease. Record still retires
+    // before encoding, and PublishPending retires before new imports.
     PublishPending();
-    submissions.Reserve();
+    static const bool color_lease_no_reserve = [] {
+        const auto* value = std::getenv("CARA_METAL_COLOR_LEASE_NO_RESERVE");
+        return value && std::string_view(value) == "1";
+    }();
+    if (!color_lease_no_reserve)
+        submissions.Reserve();
     u64 generation = 0;
     id<MTLTexture> texture = rgba8 ? ResolveRgba8(layout, &generation) : nil;
     if (!texture || !(texture.usage & MTLTextureUsageRenderTarget)) {
+        // Exact authority recovery above only acquires existing immutable
+        // metadata. Reserve a submission slot when an actual import command
+        // is needed; all existing owner/status checks and publication stay.
+        if (color_lease_no_reserve)
+            submissions.Reserve();
         const auto command = [queue commandBuffer];
         auto source = ResolveBytes(command, DenseRows(bytes), 256, ram);
         if (!source)
@@ -1593,17 +1832,19 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledColor(
 PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     MetalTransfer::GuestInterval bytes, u32 width, u32 height,
     const PicaMetalDepthImportPipelines& pipelines, id<MTLComputePipelineState> tiled_export,
-    id<MTLComputePipelineState> depth_pack, const MetalGuestAuthority::GuestReader& ram) {
+    id<MTLComputePipelineState> depth_pack, const MetalGuestAuthority::GuestReader& ram,
+    bool has_stencil) {
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Sample);
     submissions.CheckThread();
     if (HasTextureCopyBatch(this))
         PublishPending();
-    submissions.Retire(false);
+    if (!RetireCachedInputsAtRecord())
+        submissions.Retire(false);
+    const u32 pixel_bytes = has_stencil ? 4u : 3u;
     if (!width || !height || ((width | height) & 7u) || bytes.begin >= bytes.end ||
-        bytes.Size() > MaxBackingBytes || bytes.Size() % 4 ||
-        u64{width} * height != bytes.Size() / 4 ||
+        bytes.Size() > MaxBackingBytes || u64{width} * height * pixel_bytes != bytes.Size() ||
         attachment_generation == std::numeric_limits<u64>::max())
-        submissions.Fail("Unsupported native Metal D24S8 surface");
+        submissions.Fail("Unsupported native Metal depth surface");
 
     if (resident_depth) {
         const auto& view = resident_depth->view;
@@ -1614,10 +1855,11 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     }
 
     PublishPending();
-    const bool allow_fuse = NativeMetalCost::FuseDepthClear();
+    const bool allow_fuse = has_stencil && NativeMetalCost::FuseDepthClear();
     if (!allow_fuse)
         submissions.Reserve();
-    const auto clear_word = FullDepthFill(queue, authority, bytes, submissions);
+    const auto clear_word = has_stencil ? FullDepthFill(queue, authority, bytes, submissions)
+                                        : std::nullopt;
     const bool deferred_clear = allow_fuse && clear_word.has_value();
     if (allow_fuse && !deferred_clear)
         submissions.Reserve();
@@ -1650,7 +1892,9 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
     const auto generation = ++attachment_generation;
     const PicaGuestRange range{bytes.begin, bytes.end};
     auto exporter = MakePicaTiledVisibilityExporter(
-        texture, generation, range, PicaExportFormat::Depth24Stencil8, tiled_export, depth_pack);
+        texture, generation, range,
+        has_stencil ? PicaExportFormat::Depth24Stencil8 : PicaExportFormat::Depth24,
+        tiled_export, depth_pack);
     if (!exporter)
         submissions.Fail("Could not certify native Metal depth/stencil export");
 
@@ -1686,25 +1930,36 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
         if (!errors)
             submissions.Fail("Could not allocate native Metal depth-validation buffer");
         *static_cast<u32*>(errors.contents) = 0;
-        if (!EncodeDepthImport(command, pipelines, source->buffer, source->buffer_offset, texture, errors))
-            submissions.Fail("Could not encode native Metal D24S8 import");
+        if (!EncodeDepthImport(command, pipelines, source->buffer, source->buffer_offset, texture,
+                               errors, nullptr, has_stencil))
+            submissions.Fail("Could not encode native Metal depth import");
+        // Preserve both GPU checks and, for the queued path, the original
+        // producer's transitive validity across retirement and guest reads.
+        std::shared_ptr<const PicaMetalValidationReceipt> validation;
+        if (AsyncCheckedDepthImport() && joined.producer) {
+            validation = std::make_shared<PicaMetalValidationReceipt>(command,
+                std::array<id<MTLBuffer>, 2>{errors, joined.errors}, std::move(joined.pending_source));
+            NativeMetalCost::Count(NativeMetalCost::AsyncDepthImports, 1);
+        }
         [command commit];
-        Track(command);
-        [command waitUntilCompleted];
-        submissions.Retire(false);
-        if (command.status != MTLCommandBufferStatusCompleted || command.error ||
-            *static_cast<const u32*>(errors.contents) != 0)
-            submissions.Fail("Native Metal D24S8 import failed validation");
-        if (joined.producer) {
-            const auto* writer = static_cast<const MetalSurfaceWriter*>(joined.producer.get());
-            if (!writer->ValidateProducerCompletion() ||
-                *static_cast<const u32*>(joined.errors.contents) != 0)
-                submissions.Fail("Queued depth import source failed validation");
+        Track(command, validation);
+        if (!validation) {
+            [command waitUntilCompleted];
+            submissions.Retire(false);
+            if (command.status != MTLCommandBufferStatusCompleted || command.error ||
+                *static_cast<const u32*>(errors.contents) != 0)
+                submissions.Fail("Native Metal D24S8 import failed validation");
+            if (joined.producer) {
+                const auto* writer = static_cast<const MetalSurfaceWriter*>(joined.producer.get());
+                if (!writer->ValidateProducerCompletion() ||
+                    *static_cast<const u32*>(joined.errors.contents) != 0)
+                    submissions.Fail("Queued depth import source failed validation");
+            }
         }
 
     }
 
-    if (!deferred_clear && JoinCheckedDepthImport())
+    if (has_stencil && !deferred_clear && JoinCheckedDepthImport())
         exporter = CheckedDepthExporter{std::move(exporter), proof};
     resident_depth = PicaMetalNativeAttachment{{texture, range, generation}, std::move(exporter),
                                               std::nullopt};
@@ -1798,14 +2053,15 @@ void PicaMetalNativeDrawLane::PublishPending() {
             return a.backing_generation == b.backing_generation &&
                    a.bytes.begin == b.bytes.begin && a.bytes.end == b.bytes.end;
         };
-        const auto& first = submitted.publications.front();
+        const auto publications = submitted.Publications();
+        const auto& first = publications.front();
         auto count = submitted.count;
         // Publications are visible only after this command's completed output.
         // Identical records for each of its disjoint attachments have the same
         // bytes, generation, resource, export callback and predecessor chain.
         if (dedup && count > 1 &&
-            std::all_of(submitted.publications.begin() + 1,
-                        submitted.publications.begin() + count, [&](const auto& draw) {
+            std::all_of(publications.begin() + 1,
+                        publications.begin() + count, [&](const auto& draw) {
                 return same_write(first.color, draw.color) &&
                        same_write(first.depth_stencil, draw.depth_stencil);
             })) {
@@ -1833,7 +2089,7 @@ void PicaMetalNativeDrawLane::PublishPending() {
             std::vector<MetalGuestWrite> writes;
             writes.reserve(submitted.count * 2);
             for (std::size_t i = 0; i < count; ++i) {
-                const auto& draw = submitted.publications[i];
+                const auto& draw = publications[i];
                 if (auto color = make_write(draw.color, pending->color))
                     writes.push_back(std::move(*color));
                 if (auto depth = make_write(draw.depth_stencil, pending->depth))
@@ -1897,6 +2153,27 @@ void PicaMetalNativeDrawLane::InvalidateGuest(PAddr begin, PAddr end) {
         submissions.RejectWrites();
         throw;
     }
+}
+
+bool PicaMetalNativeDrawLane::CanReleaseFcramWatchPage(PAddr page) {
+    submissions.CheckThread();
+    if (page < Memory::FCRAM_PADDR || page >= Memory::FCRAM_N3DS_PADDR_END ||
+        (page & Memory::PAGE_MASK) || HasTextureCopyBatch(this))
+        return false;
+    const auto free = [&](PAddr first) {
+        const auto last = first + Memory::PAGE_SIZE;
+        if ((resident_color && OverlapsAttachment(first, last, *resident_color)) ||
+            (resident_depth && OverlapsAttachment(first, last, *resident_depth)) ||
+            (pending && (OverlapsAttachment(first, last, pending->color) ||
+                         OverlapsAttachment(first, last, pending->depth))))
+            return false;
+        // Also validates any surviving producer's ownership and fault status.
+        return authority.NativeSegments(first, last).empty();
+    };
+    if (!free(page))
+        return false;
+    const auto next = page + Memory::PAGE_SIZE;
+    return next == Memory::FCRAM_N3DS_PADDR_END || free(next);
 }
 
 bool PicaMetalNativeDrawLane::ExportFlushBytes(const MetalGuestWrite& piece,

@@ -1,0 +1,30 @@
+[
+  {
+    "name": "3DS transparent controls",
+    "file": "standard.deltaskin",
+    "identifier": "com.dmikey.cara.demap.standard",
+    "title_id": null,
+    "validation": "starting-layout; gameplay-unverified"
+  },
+  {
+    "name": "Luigi\u2019s Mansion: Dark Moon \u00b7 3DS buttons",
+    "file": "luigi-dark-moon.deltaskin",
+    "identifier": "com.dmikey.cara.demap.luigi-dark-moon",
+    "title_id": "0004000000055F00",
+    "validation": "starting-layout; gameplay-unverified"
+  },
+  {
+    "name": "Zelda \u00b7 3DS buttons",
+    "file": "zelda.deltaskin",
+    "identifier": "com.dmikey.cara.demap.zelda",
+    "title_id": null,
+    "validation": "starting-layout; gameplay-unverified"
+  },
+  {
+    "name": "Xenoblade \u00b7 3DS buttons",
+    "file": "xenoblade.deltaskin",
+    "identifier": "com.dmikey.cara.demap.xenoblade",
+    "title_id": null,
+    "validation": "starting-layout; gameplay-unverified"
+  }
+]

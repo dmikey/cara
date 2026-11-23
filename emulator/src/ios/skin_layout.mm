@@ -133,6 +133,9 @@ BOOL CaraValidateRepresentation(NSDictionary* rep) {
     NSString* problem=@"This is not a supported dual-screen Delta/Cara skin.";
     @try {
         if (!url.isFileURL) @throw [NSException exceptionWithName:@"CaraSkin" reason:@"Expected a local skin file" userInfo:nil];
+        NSNumber* fileSize=nil;
+        if(![url getResourceValue:&fileSize forKey:NSURLFileSizeKey error:error] || fileSize.unsignedLongLongValue<22 || fileSize.unsignedLongLongValue>32*1024*1024)
+            @throw [NSException exceptionWithName:@"CaraSkin" reason:@"Invalid or oversized skin archive" userInfo:nil];
         NSData* data=[NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:error];
         if (!data) return nil;
         try {

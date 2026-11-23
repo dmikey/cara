@@ -1,4 +1,6 @@
 #include <SDL.h>
+#include "common/apple_emulation_policy.h"
+#include "common/apple_fastinterp_policy.h"
 #include "cara/native_mac/native_command_policy.h"
 #include "cara/native_mac/game_menu.h"
 #include "cara/native_mac/mac_preferences_ui.h"
@@ -21,6 +23,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Native macOS SDL developer host adapted to Cara's current EmuWindow API.
 #include <csignal>
+#include <chrono>
 #include <cerrno>
 #include <cstring>
 #include <cstdio>
@@ -32,6 +35,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <SDL_video.h>
 #include <glad/glad.h>
 #include <unistd.h>
@@ -75,28 +79,37 @@ static bool NativeAuditHookConnected() {
     return Cara::NativeGLQueryCensus::AuditConnected(NativeAuditedGetError) ||
            OpenGL::CommandQueue::ForwardsGetError(NativeAuditedGetError);
 }
-static void NativeCPUDefaults() {
-    for (const auto& item : {std::pair{"CARA_CPU_BACKEND", "fastinterp"},
-                             {"CARA_FASTINTERP_ALU_OPERANDS", "1"},
-                             {"CARA_FASTINTERP_TICK_BUCKETS", "1"},
-                             {"CARA_FASTINTERP_CHAIN_BUDGET", "1"},
-                             {"CARA_FASTINTERP_CACHE_WAYS", "8"},
-                             {"CARA_FASTINTERP_CACHE_ENTRIES", "32768"},
-                             {"CARA_FASTINTERP_RAM_BURST", "1"},
-                             {"CARA_FASTINTERP_AL_DISPATCH", "1"}}) {
-        if (!std::getenv(item.first))
-            setenv(item.first, item.second, 0);
-    }
-}
+static void NativeCPUDefaults() { Common::ApplyAppleFastInterpDefaults(); }
 static void WriteNativeManifest(const std::string& directory) {
     auto& system=Core::System::GetInstance();
     const auto& v = Settings::values;
+    unsigned jit_cores = 0, fastinterp_cores = 0;
+    for (unsigned i = 0; i < system.GetNumCores(); ++i) {
+#ifdef CARA_MAC_CPU_JIT
+        jit_cores += dynamic_cast<ARM_Dynarmic*>(&system.GetCore(i)) != nullptr;
+#endif
+        fastinterp_cores += dynamic_cast<Core::FastInterp::ARM_FastInterp*>(&system.GetCore(i)) != nullptr;
+    }
+    if ((v.use_cpu_jit && jit_cores != system.GetNumCores()) ||
+        (!v.use_cpu_jit && fastinterp_cores != system.GetNumCores()))
+        throw std::runtime_error("Requested CPU backend did not initialize on every core");
+    std::cout << "CPU_BACKEND " << (v.use_cpu_jit ? "jit" : "fastinterp")
+              << " jit_cores=" << jit_cores << " fastinterp_cores=" << fastinterp_cores
+              << " cores=" << system.GetNumCores() << " is_new_3ds=" << v.is_new_3ds
+              << " core_ticks_hack=" << v.core_ticks_hack << std::endl;
     std::ofstream out(directory + "native-settings.json");
     out << std::boolalpha;
     out << "{\"guest_cpu_percent\":" << Cara::NativeDiagnosticClock::EffectivePercent(system.CoreTiming())
         << ",\"maximum_speed_percent\":" << v.frame_limit << ",\"diagnostic_clock\":";
     Cara::NativeDiagnosticClock::WriteJSON(out,system.CoreTiming(),system.GetNumCores());
     out << ",\"use_cpu_jit\":" << v.use_cpu_jit;
+    out << ",\"cpu_backend\":\"" << (v.use_cpu_jit ? "jit" : "fastinterp") << "\""
+        << ",\"jit_cores\":" << jit_cores << ",\"fastinterp_cores\":" << fastinterp_cores
+        << ",\"core_count\":" << system.GetNumCores() << ",\"is_new_3ds\":" << v.is_new_3ds
+        << ",\"core_ticks_hack\":" << v.core_ticks_hack << ",\"clock_scales\":[";
+    for (unsigned i = 0; i < system.GetNumCores(); ++i)
+        out << (i ? "," : "") << system.CoreTiming().GetTimer(i)->GetClockScaleForDiagnostics();
+    out << ']';
     out << ",\"use_shader_jit\":" << v.use_shader_jit;
     out << ",\"use_gles\":" << v.use_gles;
     out << ",\"use_hw_renderer\":" << v.use_hw_renderer;
@@ -139,7 +152,8 @@ static void WriteNativeManifest(const std::string& directory) {
     for (const auto* name : {"CARA_CPU_BACKEND", "CARA_FASTINTERP_ALU_OPERANDS",
                              "CARA_FASTINTERP_TICK_BUCKETS", "CARA_FASTINTERP_CHAIN_BUDGET",
                              "CARA_FASTINTERP_CACHE_WAYS", "CARA_FASTINTERP_CACHE_ENTRIES",
-                             "CARA_FASTINTERP_RAM_BURST", "CARA_FASTINTERP_AL_DISPATCH"}) {
+                             "CARA_FASTINTERP_RAM_BURST", "CARA_FASTINTERP_AL_DISPATCH",
+                             "CARA_FASTINTERP_ALU_PAIRS"}) {
         const char* value = std::getenv(name);
         out << (comma ? "," : "") << "\"" << name << "\":\"" << (value ? value : "") << "\"";
         comma = true;
@@ -170,6 +184,11 @@ static void StopNative(int) {
     stop_requested = 1;
 }
 static int RunNativeMain(int argc, char** argv) {
+    const auto host_policy=Common::ApplyAppleEmulationQoS();
+    std::cout << "HOST_QOS initial=" << static_cast<unsigned>(host_policy.initial)
+              << " requested=" << static_cast<unsigned>(host_policy.requested)
+              << " effective=" << static_cast<unsigned>(host_policy.effective)
+              << " result=" << host_policy.result << std::endl;
     try {
         if (argc < 2 || std::string(argv[1]) == "--help") {
             std::cout << "Cara Mac host\nUsage: cara [ROM] [--fullscreen] [--relay-stdin]\nSet "
@@ -527,6 +546,15 @@ static int RunNativeMain(int argc, char** argv) {
         if (const char* benchmark = std::getenv("CARA_NATIVE_BENCHMARK");
             diagnostics && benchmark && std::string(benchmark) == "1")
             window.BeginBenchmark();
+        const auto* cadence_option = std::getenv("CARA_NATIVE_REFRESH_CADENCE");
+        const bool capture_cadence = diagnostics && cadence_option &&
+                                     std::strcmp(cadence_option, "1") == 0;
+        std::vector<std::pair<u32, double>> refresh_intervals;
+        constexpr std::size_t max_refresh_intervals = 100000;
+        if (capture_cadence)
+            refresh_intervals.reserve(max_refresh_intervals);
+        auto last_refresh = VideoCore::GetCurrentFrame();
+        auto last_refresh_at = std::chrono::steady_clock::now();
         while (window.IsOpen() && !stop_requested) {
             if (relay) {
                 const auto frame=VideoCore::GetCurrentFrame();
@@ -541,6 +569,18 @@ static int RunNativeMain(int argc, char** argv) {
                 Network::DrainRelayPackets(system);
             }
             const auto result = system.RunLoop();
+            if (capture_cadence) {
+                const auto frame = VideoCore::GetCurrentFrame();
+                if (frame != last_refresh) {
+                    if (refresh_intervals.size() == max_refresh_intervals)
+                        throw std::runtime_error("Native refresh cadence capacity exceeded");
+                    const auto now = std::chrono::steady_clock::now();
+                    const auto elapsed = std::chrono::duration<double, std::milli>(now - last_refresh_at);
+                    refresh_intervals.emplace_back(frame, elapsed.count());
+                    last_refresh = frame;
+                    last_refresh_at = now;
+                }
+            }
             flush_copy_trace(false);
             // Export only after RunLoop and nested GPU/kernel hooks have returned.
             if (gpu_trace_requested)
@@ -599,6 +639,17 @@ static int RunNativeMain(int argc, char** argv) {
             }
             if (window.TakeBenchmarkStop())
                 break;
+        }
+        if (capture_cadence) {
+            // Match the Metal runner's RunLoop boundaries. Write after sampling.
+            std::ofstream cadence(directory + "native-gl-refresh-intervals.csv");
+            cadence.precision(17);
+            cadence << "refresh,wall_ms\n";
+            for (const auto& [refresh, milliseconds] : refresh_intervals)
+                cadence << refresh << ',' << milliseconds << '\n';
+            cadence.flush();
+            if (!cadence)
+                throw std::runtime_error("Could not write native refresh cadence");
         }
         // Explicit test boundary, after the measured run and before GL teardown.
         // Normal play performs no additional queries. Nonzero errors fail closed.

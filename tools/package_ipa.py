@@ -20,6 +20,21 @@ def package(app, audit, destination, expected_revision=None):
         raise ValueError('An audited no-JIT physical-device iOS build is required')
     if expected_revision is not None and report.get('source_revision') != expected_revision:
         raise ValueError('iOS audit belongs to another source revision')
+    for name in ('LICENSE.txt', 'NOTICE.txt', 'THIRD_PARTY.txt', 'source.json'):
+        path = app / 'Legal' / name
+        if not path.is_file() or not path.stat().st_size:
+            raise ValueError('Missing bundled iOS legal resource: ' + name)
+    source = json.loads((app / 'Legal/source.json').read_text())
+    for name in ('LICENSE.txt', 'NOTICE.txt', 'THIRD_PARTY.txt'):
+        actual = hashlib.sha256((app / 'Legal' / name).read_bytes()).hexdigest()
+        if source.get('legal_sha256', {}).get(name) != actual:
+            raise ValueError('Bundled legal resource differs from its manifest: ' + name)
+    root = Path(__file__).resolve().parents[1]
+    for name in ('LICENSE', 'NOTICE'):
+        if (app / 'Legal' / (name + '.txt')).read_bytes() != (root / name).read_bytes():
+            raise ValueError('Bundled legal resource differs from source: ' + name)
+    if expected_revision is not None and (source.get('revision') != expected_revision or source.get('modified') is not False):
+        raise ValueError('iOS legal source identity must match the clean release revision')
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     name = info['CFBundleExecutable']
     if Path(name).name != name or not (app / name).is_file():

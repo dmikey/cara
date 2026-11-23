@@ -312,6 +312,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     file(GLOB CARA_MENU_SOUNDS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ios/MenuSounds/*.caf")
     target_sources(cara-ios PRIVATE ${CARA_MENU_SOUNDS} ios/MenuSounds/NOTICE)
     set_source_files_properties(${CARA_MENU_SOUNDS} ios/MenuSounds/NOTICE PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/MenuSounds")
+    file(GLOB CARA_CONTROL_PRESETS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ios/ControlPresets/*")
+    target_sources(cara-ios PRIVATE ${CARA_CONTROL_PRESETS})
+    set_source_files_properties(${CARA_CONTROL_PRESETS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/ControlPresets")
     target_compile_options(cara-ios PRIVATE -fobjc-arc)
     if (CARA_PRIVATE_IOS_METAL_LCD)
         add_dependencies(cara-ios cara-pica-metallib)
@@ -349,6 +352,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
 
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_custom_target(cara-ios-legal
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../../tools/bundle_ios_licenses.py"
+            --app "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/cara-ios.app"
+            --extra-licenses "${CARA_METAL_GLSLANG_SOURCE}" "${CARA_METAL_SPIRV_CROSS_SOURCE}"
+        VERBATIM)
+    add_dependencies(cara-ios cara-ios-legal)
     find_program(CARA_XCRUN xcrun REQUIRED)
     set(CARA_ICON_PLATFORM iphoneos)
     if (CMAKE_OSX_SYSROOT MATCHES "iphonesimulator|iPhoneSimulator")

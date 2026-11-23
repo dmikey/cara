@@ -1,11 +1,30 @@
 name: Native Metal developer builds
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-metal.yml'
+      - 'emulator/**'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'tests/metal_display_transfer_startup_test.mm'
+      - 'tests/skin_archive_roundtrip_test.cpp'
+      - 'tests/test_control_presets.py'
+      - 'tools/build_native_metal.py'
+      - 'tools/bundle_ios_licenses.py'
+      - 'tools/generate_control_presets.py'
   pull_request:
     paths:
       - '.github/workflows/native-metal.yml'
       - 'emulator/**'
+      - 'LICENSE'
+      - 'NOTICE'
       - 'tests/metal_display_transfer_startup_test.mm'
+      - 'tests/skin_archive_roundtrip_test.cpp'
+      - 'tests/test_control_presets.py'
       - 'tools/build_native_metal.py'
+      - 'tools/bundle_ios_licenses.py'
+      - 'tools/generate_control_presets.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,7 +33,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    name: "Native Metal ${{ matrix.target }} / compile and audit"
+    name: "Native Metal ${{ matrix.name }} / compile and audit"
     runs-on: macos-15
     timeout-minutes: 45
     strategy:
@@ -22,8 +41,16 @@ jobs:
       matrix:
         include:
           - target: mac
+            name: macOS / optional CPU JIT
+            artifact: mac
             flags: --cpu-jit
+          - target: mac
+            name: macOS / FastInterp only
+            artifact: mac-fastinterp
+            flags: ''
           - target: ios
+            name: iOS / FastInterp only
+            artifact: ios
             flags: ''
     steps:
       - uses: actions/checkout@v4
@@ -39,17 +66,24 @@ jobs:
         if: matrix.target == 'mac'
         run: brew install sdl2 libpng
       - name: Check exact display-transfer planning without a ROM
-        if: matrix.target == 'mac'
+        if: matrix.artifact == 'mac-fastinterp'
         run: |
           xcrun clang++ -std=c++20 -fobjc-arc -I emulator/src \
             tests/metal_display_transfer_startup_test.mm \
             emulator/src/video_core/renderer_metal/pica_metal_transfers.mm \
             -framework Metal -framework Foundation -o "$RUNNER_TEMP/metal-transfer-test"
           "$RUNNER_TEMP/metal-transfer-test"
+      - name: Verify enhanced control skin archives without a ROM
+        if: matrix.artifact == 'mac-fastinterp'
+        run: |
+          xcrun clang++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -I emulator/src tests/skin_archive_roundtrip_test.cpp -lz -o "$RUNNER_TEMP/skin-archive-test"
+          "$RUNNER_TEMP/skin-archive-test" emulator/src/ios/ControlPresets/*.deltaskin
+          python3 -m unittest discover -s tests -p test_control_presets.py
       - name: Build and audit without private shader assets
         run: python3 tools/build_native_metal.py ${{ matrix.target }} ${{ matrix.flags }} --jobs 2
       - uses: actions/upload-artifact@v4
         with:
-          name: native-metal-${{ matrix.target }}-audit
+          name: native-metal-${{ matrix.artifact }}-audit
           path: work/build-native-metal-${{ matrix.target }}/native-metal-audit.json
           if-no-files-found: error

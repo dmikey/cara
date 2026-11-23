@@ -33,5 +33,8 @@ shutil.copy2(ROOT / 'emulator/src/ios/skins/CarbonDuo.deltaskin', app / 'CarbonD
 sounds = ROOT / 'emulator/src/ios/MenuSounds'
 if sounds.is_dir():
     shutil.copytree(sounds, app / 'MenuSounds', dirs_exist_ok=True)
+shutil.copytree(ROOT / 'emulator/src/ios/ControlPresets', app / 'ControlPresets', dirs_exist_ok=True)
+from bundle_ios_licenses import bundle
+bundle(app)
 subprocess.run(['codesign', '--force', '--sign', '-', str(app)], env=env, check=True)
 print(app)

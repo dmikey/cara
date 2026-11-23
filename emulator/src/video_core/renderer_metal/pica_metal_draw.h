@@ -4,11 +4,14 @@
 #include "pica_metal_upload.h"
 #include "pica_metal_batch_program.h"
 #include <memory>
+#include <bit>
 #include "pica_metal_dual_material.h"
 
 namespace Cara {
 
-enum class PicaMetalVertexMode { Packed, DecodedIndexed, StageIn };
+// Value3 is the existing internal raw-index draw marker.
+enum class PicaMetalVertexMode { Packed, DecodedIndexed, StageIn, PairIndexed = 4 };
+struct MetalPairIndexPayload;
 
 // Existing stage-in stream ABI. Field order matches PICA output locations 0–7.
 struct PicaMetalStageVertex {
@@ -21,6 +24,30 @@ struct PicaMetalStageVertex {
 static_assert(sizeof(PicaMetalStageVertex) == 88);
 
 MTLVertexDescriptor* MakePicaStageInDescriptor();
+
+// Failure-only owner-thread cleanup. End an existing encoder and abandon owned
+// deferred packets without encoding or submitting any additional guest draws.
+void AbortGroupedMetalDraw(id<MTLCommandBuffer> command) noexcept;
+
+inline constexpr std::array<const char*,8> NativeMetalRasterStateNames{
+    "pipeline", "depth", "stencil_ref", "blend_color", "viewport", "scissor", "cull", "winding"};
+// Each pair is [requests, skipped calls], collected only with renderer profiling.
+std::array<std::array<std::uint64_t,2>,8> ReadNativeMetalRasterStateProfile() noexcept;
+
+inline bool EqualMetalBlendColorBits(const std::array<float,4>& a,
+                                    const std::array<float,4>& b) noexcept {
+    return std::bit_cast<std::array<std::uint32_t,4>>(a) ==
+           std::bit_cast<std::array<std::uint32_t,4>>(b);
+}
+
+inline bool EqualMetalViewportBits(const MTLViewport& a, const MTLViewport& b) noexcept {
+    const auto same=[](double x,double y) {
+        return std::bit_cast<std::uint64_t>(x)==std::bit_cast<std::uint64_t>(y);
+    };
+    return same(a.originX,b.originX) && same(a.originY,b.originY) &&
+           same(a.width,b.width) && same(a.height,b.height) &&
+           same(a.znear,b.znear) && same(a.zfar,b.zfar);
+}
 
 
 struct SecondaryPicaMaterial {
@@ -57,6 +84,8 @@ struct TexturedMetalDraw {
     bool isolate_color_blend = false;
     std::shared_ptr<const BatchedMetalVertexProgram> batched_vertex;
     std::uint32_t unique_source_vertices = 0;
+    bool simd_reference = false;
+    std::shared_ptr<const MetalPairIndexPayload> pair_indices;
 };
 
 // Requires an uncommitted command and an acquired upload lease. The caller

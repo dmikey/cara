@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "pica_metal_pipelines.h"
+#include "simd_vertex_source.h"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
+#include "pica_metal_render_pipeline_key.h"
 #include "video_core/renderer_metal/pica_metal_raw_index_format.hh"
 #include <TargetConditionals.h>
 #include <CommonCrypto/CommonDigest.h>
@@ -155,15 +157,13 @@ GatePairLookup FindGatePair(std::string_view vertex, std::string_view fragment,
 }
 
 bool ReuseRenderPipelines() {
-#if TARGET_OS_IOS
+    // The validated descriptor identity is shared by the Apple backends.
+    // Remain explicit opt-in on every host; do not promote the Mac default.
     static const bool enabled = [] {
         const char* option = std::getenv("CARA_METAL_REUSE_RENDER_PIPELINES");
         return option && std::string_view(option) == "1";
     }();
     return enabled;
-#else
-    return false;
-#endif
 }
 
 #if defined(CARA_PRIVATE_GATE_METAL_CATALOG) && TARGET_OS_IOS
@@ -260,11 +260,6 @@ struct GatePipelineArchive {
 thread_local GatePipelineArchive pipeline_archive;
 #endif
 
-// Relationship to MakeKey: pair, blend enable, color write mask and the six
-// blend fields describe the render pipeline. Depth/stencil and both sampler
-// recipes are used only for the separate binding objects.
-constexpr std::size_t RenderPipelineKeyFields = 10;
-
 constexpr unsigned PairCount = std::size(RawCorpus) + std::size(Catalog);
 Pair PairAt(unsigned index, const std::vector<PicaMetalDualAsset>& dual) {
     if (index < PairCount)
@@ -360,6 +355,7 @@ id<MTLFunction> Compile(id<MTLDevice> device, std::string_view source, NSString*
     if (!body)
         return nil;
     MTLCompileOptions* options = [MTLCompileOptions new];
+    if (source.find(SimdVertexMslTag)!=source.npos) options.languageVersion=MTLLanguageVersion2_3;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     options.fastMathEnabled = NO;
@@ -479,7 +475,7 @@ bool CoversBindings(NSArray<id<MTLBinding>>* bindings, const std::set<Binding>& 
 }
 
 bool CheckReflection(MTLRenderPipelineReflection* reflection, const Pair& pair,
-                     bool& primary_material_cube) {
+                     bool& primary_material_cube, bool simd_reference = false) {
     if (@available(macOS 13.0, iOS 16.0, *)) {
         if (!reflection)
             return false;
@@ -500,9 +496,11 @@ bool CheckReflection(MTLRenderPipelineReflection* reflection, const Pair& pair,
             }
         }
         std::set<Binding> vertex = {{buffer, 0}};
+        if (simd_reference) vertex.emplace(buffer, 3);
         if (pair.vertex_mode != PicaMetalVertexMode::StageIn)
             vertex.insert({{buffer, 1}, {texture, 0}, {texture, 1}});
-        if (pair.vertex_mode == PicaMetalVertexMode::Packed)
+        if (pair.vertex_mode == PicaMetalVertexMode::Packed ||
+            pair.vertex_mode == PicaMetalVertexMode::PairIndexed)
             vertex.emplace(buffer, 2);
         std::set<Binding> fragment = {{buffer,common}};
         if (lut != NSNotFound)
@@ -592,6 +590,7 @@ std::optional<MTLSamplerAddressMode> GateAddressMode(unsigned mode) {
     case 0x2901: return MTLSamplerAddressModeRepeat;
     case 0x8370: return MTLSamplerAddressModeMirrorRepeat;
     case 0x812f: return MTLSamplerAddressModeClampToEdge;
+    case 0x812d: return MTLSamplerAddressModeClampToZero; // RGBA8 transparent border
     default: return std::nullopt;
     }
 }
@@ -756,13 +755,13 @@ std::optional<std::array<unsigned, 3>> PicaMetalPipelines::RuntimeMaterialUnits(
         LOG_ERROR(Render_OpenGL, "Metal warmup runtime translation miss");
         return std::nullopt;
     }
-    constexpr std::size_t SourceBudget = 64 * 1024 * 1024;
     constexpr std::size_t PairLimit = 4096;
-    if (runtime_pairs.size() >= PairLimit || runtime_source_bytes >= SourceBudget) {
+    if (runtime_pairs.size() >= PairLimit) {
         LOG_ERROR(Render_OpenGL, "Runtime Metal shader cache budget exhausted");
         return std::nullopt;
     }
-    const auto translate_mode = mode == PicaMetalVertexMode::Packed ? RuntimeMetalVertexMode::Packed
+    const auto translate_mode = (mode == PicaMetalVertexMode::Packed || mode == PicaMetalVertexMode::PairIndexed)
+        ? RuntimeMetalVertexMode::Packed
         : mode == PicaMetalVertexMode::DecodedIndexed ? RuntimeMetalVertexMode::DecodedIndexed
                                                      : RuntimeMetalVertexMode::StageIn;
     std::string error;
@@ -779,14 +778,21 @@ std::optional<std::array<unsigned, 3>> PicaMetalPipelines::RuntimeMaterialUnits(
                   unsigned(mode), error);
         return std::nullopt;
     }
-    const auto bytes = vertex.size() + fragment.size() + stages->vertex.size() + stages->fragment.size();
-    if (bytes > SourceBudget - runtime_source_bytes) {
-        LOG_ERROR(Render_OpenGL, "Runtime Metal shader exceeds remaining source budget");
+    const auto logical_bytes = vertex.size() + fragment.size() + stages->vertex.size() + stages->fragment.size();
+    const auto owned = runtime_sources.Intern({vertex,fragment,stages->vertex,stages->fragment});
+    if (!owned) {
+        LOG_ERROR(Render_OpenGL, "Runtime Metal shader exceeds unique source budget pairs={} unique_bytes={} incoming_logical_bytes={}",
+                  runtime_pairs.size(), runtime_sources.Bytes(), logical_bytes);
         return std::nullopt;
     }
     const auto units = stages->units;
-    runtime_pairs.push_back({std::string(vertex), std::string(fragment), mode, std::move(*stages)});
-    runtime_source_bytes += bytes;
+    std::string{}.swap(stages->vertex);
+    std::string{}.swap(stages->fragment);
+    runtime_pairs.push_back({owned->sources[0],owned->sources[1],mode,std::move(*stages),
+                             owned->sources[2],owned->sources[3]});
+    NativeMetalCost::Count(NativeMetalCost::RuntimeSourceLogicalBytes, logical_bytes);
+    NativeMetalCost::Count(NativeMetalCost::RuntimeSourceUniqueBytes, owned->added_bytes);
+    NativeMetalCost::Count(NativeMetalCost::RuntimeSourceInternHits, owned->hits);
     return units;
 #else
     return std::nullopt;
@@ -845,7 +851,8 @@ std::optional<PicaMetalPipelines::Key> PicaMetalPipelines::MakeKey(
         return std::nullopt;
     const bool unsupported_dither =
         p.dither && (!rgba8 || !rgba8_dither_verified_host || !SupportedDitheredColorState(p));
-    if ((p.vertex_mode == PicaMetalVertexMode::Packed && !p.packed_arrays) ||
+    if (((p.vertex_mode == PicaMetalVertexMode::Packed || p.vertex_mode == PicaMetalVertexMode::PairIndexed) &&
+         !p.packed_arrays) ||
         unsupported_dither || p.shadow || p.polygon_offset || p.discard ||
         p.sample_control || p.active_logic_op || !p.clip0 ||
         (p.clip1 != p.vertex.starts_with(RuntimeMetalUserClip)) ||
@@ -1000,7 +1007,7 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                 };
                 std::array<NSUInteger, 6> slots{};
                 std::transform(shader.slots.begin(), shader.slots.end(), slots.begin(), metal_slot);
-                pair = {runtime.vertex_source, runtime.fragment_source, shader.vertex, shader.fragment,
+                pair = {runtime.vertex_source, runtime.fragment_source, runtime.msl_vertex, runtime.msl_fragment,
                         shader.units[0], slots, shader.units[1], metal_slot(shader.secondary_texture),
                         metal_slot(shader.secondary_sampler), false, runtime.mode, true,
                         shader.units[2], metal_slot(shader.tertiary_texture),
@@ -1024,13 +1031,13 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
             PicaMetalPipelineSelection selection{};
             const auto render = ReuseRenderPipelines() && (pair.precompiled || pair.runtime) ?
                 std::find_if(entries.cbegin(), entries.cend(), [&](const Entry& entry) {
-                    return std::equal(key->begin(), key->begin() + RenderPipelineKeyFields,
-                                      entry.key.begin());
+                    return SamePicaMetalRenderPipeline(*key, entry.key);
                 }) : entries.cend();
             if (render != entries.cend()) {
                 // Same catalog entry and render descriptor. The reflected
                 // slots and the process-wide raw-index policy also match.
                 selection.pipeline = render->selection.pipeline;
+                selection.simd_reference = render->selection.simd_reference;
                 selection.vertex_mode = render->selection.vertex_mode;
                 selection.batched_vertex = render->selection.batched_vertex;
                 selection.primary_material_cube = render->selection.primary_material_cube;
@@ -1069,6 +1076,25 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                     return function;
                 };
                 bool raw_index_function = false;
+                selection.simd_reference = pair.runtime && ValidSimdVertexMsl(pair.msl_vertex);
+                const bool simd_attempt = selection.simd_reference;
+                if (HasSimdVertexTag(pair.vertex)) NativeMetalCost::Count(NativeMetalCost::SimdReferenceRequests,1);
+                const auto fallback_simd = [&] {
+                    if (!selection.simd_reference) return false;
+                    selection.simd_reference=false;
+                    NativeMetalCost::Count(NativeMetalCost::SimdReferenceFallbacks,1);
+                    LOG_INFO(Render_OpenGL,"SIMD vertex compile/reflection rejected; compiling full original shader");
+                    std::string error;
+                    auto full=TranslateRuntimeMetalShaders(StripSimdVertexTag(pair.vertex),pair.fragment,
+                        RuntimeMetalVertexMode::Packed,true,UseMetalRawIndexConstants(),error);
+                    if (!full) return false;
+                    auto owned=runtime_sources.Intern({StripSimdVertexTag(pair.vertex),pair.fragment,full->vertex,full->fragment});
+                    if (!owned) return false;
+                    NativeMetalCost::Count(NativeMetalCost::RuntimeSourceUniqueBytes,owned->added_bytes);
+                    ps.vertexFunction=prepare_stage(vertex_functions,owned->sources[2],@"cara_pica_vert",NativeMetalCost::RuntimeVertexLibrary);
+                    ps.fragmentFunction=prepare_stage(fragment_functions,owned->sources[3],@"cara_pica_frag",NativeMetalCost::RuntimeFragmentLibrary);
+                    return ps.vertexFunction && ps.fragmentFunction;
+                };
                 if (pair.precompiled) {
                     const auto load = [&](std::string_view entry) {
                         auto* name = [[NSString alloc] initWithBytes:entry.data() length:entry.size()
@@ -1091,12 +1117,16 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                 } else {
                     raw_index_function = pair.runtime && pair.vertex_mode == PicaMetalVertexMode::Packed &&
                                          UseMetalRawIndices();
-                    ps.vertexFunction = prepare_stage(vertex_functions, pair.msl_vertex, @"cara_pica_vert",
-                                                      NativeMetalCost::RuntimeVertexLibrary);
-                    ps.fragmentFunction = prepare_stage(fragment_functions, pair.msl_fragment, @"cara_pica_frag",
-                                                        NativeMetalCost::RuntimeFragmentLibrary);
+                    if (selection.simd_reference && ![device supportsFamily:MTLGPUFamilyApple7]) {
+                        if (!fallback_simd()) return false;
+                    } else {
+                        ps.vertexFunction = prepare_stage(vertex_functions, pair.msl_vertex, @"cara_pica_vert",
+                                                          NativeMetalCost::RuntimeVertexLibrary);
+                        ps.fragmentFunction = prepare_stage(fragment_functions, pair.msl_fragment, @"cara_pica_frag",
+                                                            NativeMetalCost::RuntimeFragmentLibrary);
+                    }
                 }
-                if (!ps.vertexFunction || !ps.fragmentFunction)
+                if ((!ps.vertexFunction || !ps.fragmentFunction) && !fallback_simd())
                     return false;
                 MTLPipelineOption options = MTLPipelineOptionBindingInfo;
 #if defined(CARA_PRIVATE_GATE_METAL_CATALOG) && TARGET_OS_IOS
@@ -1130,12 +1160,21 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                             ++warmup_archive_misses;
                         ps.binaryArchives = nil;
                     }
-                    if (!selection.pipeline && warming && warmup_mode == WarmupLearn)
+                    if (!selection.pipeline && warming && warmup_mode == WarmupLearn &&
+                        !CompleteLearnedPrewarm())
                         return false;
                     if (!selection.pipeline) {
                         pipeline_error = nil;
                         selection.pipeline = [device newRenderPipelineStateWithDescriptor:ps
                             options:options reflection:&reflection error:&pipeline_error];
+                    }
+                }
+                if (selection.simd_reference && (!selection.pipeline ||
+                    !CheckReflection(reflection,pair,selection.primary_material_cube,true))) {
+                    if (fallback_simd()) {
+                        ps.binaryArchives=nil;
+                        selection.pipeline=[device newRenderPipelineStateWithDescriptor:ps
+                            options:MTLPipelineOptionBindingInfo reflection:&reflection error:&pipeline_error];
                     }
                 }
                 if (!selection.pipeline) {
@@ -1161,10 +1200,15 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                 }
 #endif
 
-                if (!CheckReflection(reflection, pair, selection.primary_material_cube))
+                if (!CheckReflection(reflection, pair, selection.primary_material_cube, selection.simd_reference))
                     return false;
 #ifdef CARA_RUNTIME_METAL_SHADERS
-                if (pair.runtime && raw_index_function) {
+                if (selection.simd_reference) NativeMetalCost::Count(NativeMetalCost::SimdReferenceCompiled,1);
+                else if (HasSimdVertexTag(pair.vertex) && !simd_attempt) {
+                    NativeMetalCost::Count(NativeMetalCost::SimdReferenceRejected,1);
+                    LOG_INFO(Render_OpenGL,"SIMD vertex translation admission rejected; full shader selected");
+                }
+                if (pair.runtime && raw_index_function && !selection.simd_reference) {
                     if (const auto batch = PrepareComputeFunctions(device, pair.msl_vertex,
                                                                   p.vertex, p.fragment)) {
                         MTLRenderPipelineDescriptor* alternate = [ps copy];
@@ -1270,6 +1314,7 @@ std::optional<PicaMetalPipelineSelection> PicaMetalPipelines::Select(
 void PicaMetalPipelineSelection::Apply(TexturedMetalDraw& draw) const {
     draw.pipeline = pipeline;
     draw.batched_vertex = batched_vertex;
+    draw.simd_reference = simd_reference;
     draw.depth_stencil_state = depth;
     draw.texel_fetch_sampler = texel_fetch;
     draw.texture0_sampler = material;

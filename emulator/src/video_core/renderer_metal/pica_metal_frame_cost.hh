@@ -48,7 +48,13 @@ enum Phase : std::size_t {
     ExportFallbackRawBuffer, ExportFallbackOther, RuntimeMslDiskHits, IndexScanEightBit, IndexScanSixteenBit, IndexMemoHits, IndexMemoMisses, RuntimeMslLoadHost,
     DrawWritesElided, DrawGroupsAtCapacity, DrawPublishOther, DrawPublishFromDraw,
     DrawPublishFromCopy, DrawPublishFromFill, DrawPublishFromDisplay, DrawPublishFromSample,
-    DrawPublishFromPresent, DrawPublishFromDrain, DrawPublishAuthority, DrawEncodeWhileQueueFull, DrawBoundaryCapacity, DrawBoundaryBacking, FillLeaseFullQueue, ExactWriteNodeReuse, TextureCopyStripedSourceReuse, TextureCopyStagingBytesAvoided, PhaseCount
+    DrawPublishFromPresent, DrawPublishFromDrain, DrawPublishAuthority, DrawEncodeWhileQueueFull, DrawBoundaryCapacity, DrawBoundaryBacking, FillLeaseFullQueue, ExactWriteNodeReuse, TextureCopyStripedSourceReuse, TextureCopyStagingBytesAvoided,
+    VertexCacheHash, VertexCacheHashBytes, VertexCacheCompare, VertexCacheCompareBytes,
+    VertexCacheTransport, VertexCacheTransportBytes, VertexCacheEvictions, VertexCacheEvictedBytes,
+    VertexArenaTransport, VertexArenaTransportBytes, VertexCacheRecentProbes, VertexCacheRecentHits,
+    VertexTransformDedupCandidates, VertexTransformDedupHits, VertexTransformsAvoided,
+    RuntimeSourceLogicalBytes, RuntimeSourceUniqueBytes, RuntimeSourceInternHits,
+    SimdReferenceRequests, SimdReferenceCompiled, SimdReferenceRejected, SimdReferenceFallbacks, SimdReferenceDraws, DisplayCropRgb8Candidates, DisplayCrop565Candidates, DisplayCropOwnerHits, DisplayCropOwnerMisses, DisplayCropFused, DisplayCropSourceBytesAvoided, DisplayRgb8RetileCandidates, DisplayRgb8RetileOwnerHits, DisplayLinearBufferOnly, DisplayLinearTextureBytesAvoided, LinearTextureAlignmentQueries, LinearTextureAlignmentHits, ShaderIdentityFullChecks, ShaderIdentityComparedBytes, ShaderIdentityFastHits, ShaderIdentityValidationFailures, AsyncDepthImports, AsyncDepthChecksPassed, AsyncDepthChecksFailed, QueuedPendingDepthExports, PhaseCount
 };
 inline constexpr std::array<const char*, PhaseCount> names{
     "color_acquire", "depth_acquire", "lut_refresh", "record_total", "encode_total",
@@ -101,7 +107,13 @@ inline constexpr std::array<const char*, PhaseCount> names{
     "draw_publish_from_copy", "draw_publish_from_fill", "draw_publish_from_display",
     "draw_publish_from_sample", "draw_publish_from_present", "draw_publish_from_drain",
     "draw_publish_authority", "draw_encode_while_queue_full",
-    "draw_boundary_capacity", "draw_boundary_backing", "fill_lease_full_queue", "exact_write_node_reuse", "texture_copy_striped_source_reuse", "texture_copy_staging_bytes_avoided"};
+    "draw_boundary_capacity", "draw_boundary_backing", "fill_lease_full_queue", "exact_write_node_reuse", "texture_copy_striped_source_reuse", "texture_copy_staging_bytes_avoided",
+    "vertex_cache_hash", "vertex_cache_hash_bytes", "vertex_cache_compare", "vertex_cache_compare_bytes",
+    "vertex_cache_transport", "vertex_cache_transport_bytes", "vertex_cache_evictions", "vertex_cache_evicted_bytes",
+    "vertex_arena_transport", "vertex_arena_transport_bytes", "vertex_cache_recent_probes", "vertex_cache_recent_hits",
+    "vertex_transform_dedup_candidates", "vertex_transform_dedup_hits", "vertex_transforms_avoided",
+    "runtime_source_logical_bytes", "runtime_source_unique_bytes", "runtime_source_intern_hits",
+    "simd_reference_requests", "simd_reference_compiled", "simd_reference_rejected", "simd_reference_fallbacks", "simd_reference_draws", "display_crop_rgb8_candidates", "display_crop_rgb565_candidates", "display_crop_owner_hits", "display_crop_owner_misses", "display_crop_fused", "display_crop_source_bytes_avoided", "display_rgb8_retile_candidates", "display_rgb8_retile_owner_hits", "display_linear_buffer_only", "display_linear_texture_bytes_avoided", "linear_texture_alignment_queries", "linear_texture_alignment_hits", "shader_identity_full_checks", "shader_identity_compared_bytes", "shader_identity_fast_hits", "shader_identity_validation_failures", "async_depth_imports", "async_depth_checks_passed", "async_depth_checks_failed", "queued_pending_depth_exports"};
 struct Span { std::uint64_t calls{}, ns{}; };
 inline thread_local std::array<Span, PhaseCount> spans{};
 inline bool Enabled() {
@@ -182,11 +194,25 @@ inline bool QueueColorExports() {
     return enabled;
 }
 inline std::size_t DrawGroupLimit() {
-    static const bool wide = [] {
+    static const std::size_t limit = []() -> std::size_t {
+        // Bounded experiments in tile-pass lifetime; explicit numeric selection
+        // takes precedence over the existing 32/64 switch. Defaults stay intact.
+        if (const auto* numeric = std::getenv("CARA_METAL_DRAW_GROUP_LIMIT")) {
+            const std::string_view value(numeric);
+            if (value == "32") return 32;
+            if (value == "64") return 64;
+            if (value == "128") return 128;
+            if (value == "256") return 256;
+        }
         const auto* value = std::getenv("CARA_METAL_DRAW_GROUP_64");
-        return value && std::string_view(value) == "1";
+        return value && std::string_view(value) == "1" ? 64 : 32;
     }();
-    return wide ? 64 : 32;
+    return limit;
+}
+inline std::size_t DrawComputeGroupLimit() {
+    // Wider raster groups must not expand the existing deferred output budget.
+    const auto limit = DrawGroupLimit();
+    return limit > 64 ? 64 : limit;
 }
 inline bool ReduceCopyQueueWork() {
     static const bool enabled = [] {
