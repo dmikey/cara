@@ -170,6 +170,14 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
+    // Use the shared atlas implementations so Android and Apple keep the same validation and fallbacks.
+    const Config::ConfigInfo<bool> resident_uploads{{"Debug", "resident_vertex_uploads"}, false};
+    const Config::ConfigInfo<bool> prepared_indices{{"Debug", "prepared_vertex_indices"}, false};
+    const bool retain_uploads = Config::Get(resident_uploads);
+    const bool retain_indices = Config::Get(prepared_indices);
+    setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
+    setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", retain_uploads ? "1" : "0", 1);
+    setenv("CARA_VERTEX_INDEX_CACHE", retain_indices ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
              Config::Get(packed_fetch_reuse));
 #endif
@@ -353,6 +361,16 @@ void BootGame(const std::string& path) {
                                 phases.surface_download_seconds * 1000,
                                 phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
                                 phases.gpu_wait_seconds * 1000);
+                            const auto reuse = fmt::format(
+                                "reuse end={} prep_ms={:.2f} draw_ms={:.2f} "
+                                "index_hits={} index_misses={} index_bytes={} "
+                                "reused_upload_bytes={} vertex_upload_bytes={} index_upload_bytes={} packed_draws={}",
+                                frame, phases.vertex_prepare_seconds * 1000, phases.draw_seconds * 1000,
+                                phases.vertex_index_cache_hits, phases.vertex_index_cache_misses,
+                                phases.vertex_index_cache_bytes, phases.vertex_upload_reused_bytes,
+                                phases.vertex_upload_bytes, phases.vertex_index_upload_bytes,
+                                phases.gpu_packed_input_draws);
+                            __android_log_write(ANDROID_LOG_INFO, "CaraPerf", reuse.c_str());
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
                             reset_trace();
                         }
