@@ -189,7 +189,7 @@ struct EndEncoderOnExit {
 using UniformRange = std::optional<PicaMetalUploadArena::Range>;
 
 struct UniformUploads {
-    UniformRange common, light, vs;
+    UniformRange common, light, vs, previous_vs;
 };
 
 struct RasterStateSnapshot {
@@ -259,6 +259,14 @@ bool ReuseDeferredUniformUploads() {
     return enabled;
 }
 
+bool ReusePreviousVertexUniform() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_METAL_REUSE_PREVIOUS_VS_UNIFORM");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
 struct UniformUploadMetrics {
     NativeMetalCost::Phase requests, hits, requested_bytes, copied_bytes;
 };
@@ -274,23 +282,34 @@ constexpr UniformUploadMetrics vs_upload_metrics{
     NativeMetalCost::UniformVsRequestedBytes, NativeMetalCost::UniformVsCopiedBytes};
 
 UniformRange CopyDrawUniform(PicaMetalUploadArena& arena, std::span<const std::byte> source,
-                             UniformRange* cached, const UniformUploadMetrics& metrics) {
-    if (cached && *cached && (*cached)->bytes == source.size_bytes()) {
-        // The open pass owns this arena lease. Ranges returned by Copy are
-        // immutable within the pass and never used as GPU write destinations.
-        const auto* previous = static_cast<const std::byte*>((*cached)->buffer.contents) +
-                               (*cached)->offset;
-        if (std::memcmp(previous, source.data(), source.size_bytes()) == 0) {
-            NativeMetalCost::Count(metrics.requests, 1);
-            NativeMetalCost::Count(metrics.hits, 1);
-            NativeMetalCost::Count(metrics.requested_bytes, source.size_bytes());
-            return *cached;
-        }
+                             UniformRange* cached, const UniformUploadMetrics& metrics,
+                             UniformRange* older = nullptr) {
+    // Ranges in this memo belong to the same live arena lease. The draw and
+    // deferred compute paths use them as read-only input.
+    const auto matches = [&](const UniformRange* range) {
+        return range && *range && (*range)->bytes == source.size_bytes() &&
+               std::memcmp(static_cast<const std::byte*>((*range)->buffer.contents) +
+                               (*range)->offset, source.data(), source.size_bytes()) == 0;
+    };
+    const bool hit = matches(cached);
+    const bool older_hit = cached && !hit && matches(older);
+    if (older_hit) {
+        std::swap(*cached, *older);
+        NativeMetalCost::Count(NativeMetalCost::UniformPreviousVsHit, 1);
+    }
+    if (hit || older_hit) {
+        NativeMetalCost::Count(metrics.requests, 1);
+        NativeMetalCost::Count(metrics.hits, 1);
+        NativeMetalCost::Count(metrics.requested_bytes, source.size_bytes());
+        return *cached;
     }
     const auto range = arena.Copy(source, constant_alignment);
     if (range) {
-        if (cached)
+        if (cached) {
+            if (older)
+                *older = *cached;
             *cached = range;
+        }
         NativeMetalCost::Count(metrics.requests, 1);
         NativeMetalCost::Count(metrics.requested_bytes, source.size_bytes());
         NativeMetalCost::Count(metrics.copied_bytes, source.size_bytes());
@@ -378,7 +397,8 @@ std::optional<DrawUploads> UploadDraw(id<MTLCommandBuffer> commands, PicaMetalUp
     const auto stream = stage_in ? arena.Copy(d.packed_vertices, constant_alignment) : std::nullopt;
     const auto layout = packed ? arena.Copy(d.layout_uniform, constant_alignment) : std::nullopt;
     const auto vs = !stage_in ?
-        CopyDrawUniform(arena, d.vs_uniform, cached ? &cached->vs : nullptr, vs_upload_metrics) :
+        CopyDrawUniform(arena, d.vs_uniform, cached ? &cached->vs : nullptr, vs_upload_metrics,
+                        cached && ReusePreviousVertexUniform() ? &cached->previous_vs : nullptr) :
         std::nullopt;
     id<MTLTexture> vertices = nil, indices = nil;
     if (!stage_in) {

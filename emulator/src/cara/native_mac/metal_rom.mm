@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -408,6 +409,8 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
             std::cout << "METAL_PIPELINE_LEARNING active=1" << std::endl;
         }
         const bool record_refresh_timing = std::getenv("CARA_REFRESH_TIMING");
+        const auto* cpu_profile = std::getenv("CARA_METAL_OWNER_CPU_PROFILE");
+        const bool record_owner_cpu = cpu_profile && std::string_view(cpu_profile) == "1";
         auto last_refresh = Clock::now();
         std::vector<std::pair<unsigned, std::int64_t>> timing;
         size_t next_input = 0;
@@ -445,6 +448,14 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                 if (bounded_frame_pacing)
                     core.perf_stats->ResetFramePacing();
                 discard_clock_sample = true;
+                if (record_owner_cpu) {
+                    timespec thread_cpu{};
+                    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &thread_cpu) != 0)
+                        throw std::runtime_error("Could not read Metal owner thread CPU time");
+                    const auto cpu_ns = std::int64_t{thread_cpu.tv_sec} * 1'000'000'000 +
+                                        thread_cpu.tv_nsec;
+                    std::cout << "METAL_OWNER_CPU frame=" << frame << " ns=" << cpu_ns << '\n';
+                }
                 std::cout << "CAPTURE frame=" << frame << std::endl;
             }
             if (frame != previous_frame) {
