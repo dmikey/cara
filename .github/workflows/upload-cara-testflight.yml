@@ -30,9 +30,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release view "$CARA_TAG" --json isDraft,isPrerelease,targetCommitish |
-            jq -e --arg revision "$CARA_REVISION" '.isDraft and .isPrerelease and .targetCommitish == $revision' >/dev/null
-          gh release download "$CARA_TAG" --pattern "$CARA_IPA"
+          asset="repos/$GH_REPO/releases/assets/784127434"
+          gh api "$asset" |
+            jq -e --arg name "$CARA_IPA" --arg digest "sha256:$CARA_SHA256"               '.name == $name and .digest == $digest and .state == "uploaded"' >/dev/null
+          gh api -H 'Accept: application/octet-stream' "$asset" > "$CARA_IPA"
           printf '%s  %s\n' "$CARA_SHA256" "$CARA_IPA" | shasum -a 256 -c -
           ditto -x -k "$CARA_IPA" inspection
           app=inspection/Payload/Cara.app
