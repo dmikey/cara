@@ -67,6 +67,7 @@ struct OGLTextureMailbox {
     std::queue<OGLFrame*> free_queue;
     std::deque<OGLFrame*> present_queue;
     OGLFrame* previous_frame = nullptr;
+    u64 presentation_generation = 0;
     std::chrono::milliseconds elapsed{};
 
     OGLTextureMailbox() {
@@ -91,13 +92,13 @@ struct OGLTextureMailbox {
 
     /// called in core thread
     void ResetPresent() {
-        if (!present_queue.empty()) {
-            std::scoped_lock lock(swap_chain_lock);
-            for (auto& frame : present_queue) {
-                free_queue.push(frame);
-            }
-            present_queue.clear();
+        std::scoped_lock lock(swap_chain_lock);
+        ++presentation_generation;
+        for (auto* frame : present_queue) {
+            free_queue.push(frame);
         }
+        present_queue.clear();
+        free_cv.notify_all();
     }
 
     /// called in core thread
@@ -125,40 +126,47 @@ struct OGLTextureMailbox {
     }
 
     /// called in core thread
-    OGLFrame* GetRenderFrame() {
+    OGLFrame* GetRenderFrame(u64& generation) {
         std::unique_lock<std::mutex> lock(swap_chain_lock);
-
-        // If theres no free frames, we will reuse the oldest render frame
         if (free_queue.empty()) {
-            // wait for new entries in the present_queue
             free_cv.wait_for(lock, elapsed, [this] { return !free_queue.empty(); });
-            if (free_queue.empty()) {
-                auto frame = present_queue.front();
-                present_queue.pop_front();
-
-                // recycle one more pending frame
-                free_queue.push(present_queue.front());
-                present_queue.pop_front();
-
-                return frame;
-            }
         }
-
-        OGLFrame* frame = free_queue.front();
-        free_queue.pop();
+        generation = presentation_generation;
+        if (!free_queue.empty()) {
+            auto* frame = free_queue.front();
+            free_queue.pop();
+            return frame;
+        }
+        if (present_queue.empty()) {
+            return nullptr;
+        }
+        auto* frame = present_queue.front();
+        present_queue.pop_front();
+        if (!present_queue.empty()) {
+            free_queue.push(present_queue.front());
+            present_queue.pop_front();
+        }
         return frame;
     }
 
-    /// called in core thread
-    void ReleaseRenderFrame(OGLFrame* frame) {
-        std::unique_lock<std::mutex> lock(swap_chain_lock);
-        present_queue.push_back(frame);
+    // Called by the producer or by the worker after flushing the fence.
+    void ReleaseRenderFrame(OGLFrame* frame, u64 generation) {
+        std::scoped_lock lock(swap_chain_lock);
+        if (generation == presentation_generation) {
+            present_queue.push_back(frame);
+        } else {
+            free_queue.push(frame);
+        }
+        free_cv.notify_one();
     }
 
     /// called in present thread
     OGLFrame* GetPresentFrame() {
         std::unique_lock<std::mutex> lock(swap_chain_lock);
 
+        if (present_queue.empty()) {
+            return nullptr;
+        }
         // free the previous frame and add it back to the free queue
         if (previous_frame) {
             free_queue.push(previous_frame);
@@ -176,11 +184,6 @@ struct OGLTextureMailbox {
         }
 
         return previous_frame;
-    }
-
-    /// called in present thread
-    bool IsPresentEmpty() const {
-        return present_queue.empty();
     }
 
     /// called in present thread
@@ -364,6 +367,15 @@ RendererOpenGL::RendererOpenGL(Frontend::EmuWindow& window, bool use_gles) : Ren
 }
 
 RendererOpenGL::~RendererOpenGL() {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (CommandQueue::Enabled()) {
+        try {
+            CommandQueue::Drain();
+        } catch (const std::exception& error) {
+            LOG_ERROR(Render_OpenGL, "Could not drain GLES mailbox work: {}", error.what());
+        }
+    }
+#endif
     OSD::Shutdown();
 }
 
@@ -461,11 +473,25 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
     CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::Display);
 #endif
-    OGLFrame* frame = mailbox->GetRenderFrame();
+    u64 generation = 0;
+    OGLFrame* frame = mailbox->GetRenderFrame(generation);
 
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
-    const bool packet_fences = CommandQueue::MailboxFencePacketEnabled();
+    static const bool async_requested = [] {
+        const char* value = std::getenv("CARA_MAILBOX_ASYNC_PUBLISH");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    const bool async_publish = async_requested && GLES && CommandQueue::Enabled();
+    const bool packet_fences = async_publish || CommandQueue::MailboxFencePacketEnabled();
+    if (!frame && async_publish) {
+        // The bounded mailbox is full. Drain outside the mailbox lock.
+        CommandQueue::Drain();
+        frame = mailbox->GetRenderFrame(generation);
+    }
 #endif
+    if (!frame) {
+        return;
+    }
 
     // Clean up sync objects before drawing
 
@@ -475,7 +501,7 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::GPUWait);
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
         if (packet_fences) {
-            CommandQueue::QueueConsumedPresentFence(frame->present_fence);
+            CommandQueue::QueueConsumedPresentFence(frame->present_fence, async_publish);
         } else
 #endif
         {
@@ -504,6 +530,14 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
     }
     // Create a fence for the frontend to wait on and swap this frame to OffTex
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (async_publish) {
+        CommandQueue::QueuePublishedRenderFence(
+            [owner = mailbox.get(), frame, generation](GLsync fence) {
+                frame->render_fence = fence;
+                owner->ReleaseRenderFrame(frame, generation);
+            });
+        return;
+    }
     if (packet_fences) {
         frame->render_fence = CommandQueue::CreatePublishedRenderFence();
     } else
@@ -515,17 +549,16 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
         CommandQueue::Drain();
 #endif
     }
-    mailbox->ReleaseRenderFrame(frame);
+    mailbox->ReleaseRenderFrame(frame, generation);
 }
 
 /// run in present thread
 bool RendererOpenGL::TryPresent() {
-    if (mailbox->IsPresentEmpty()) {
+    auto* frame = mailbox->GetPresentFrame();
+    if (!frame) {
         LOG_TRACE(Render_OpenGL, "mailbox no frame to present");
         return false;
     }
-
-    auto frame = mailbox->GetPresentFrame();
     const auto& layout = render_window.GetFramebufferLayout();
 
     // Clearing before a full overwrite of a fbo can signal to drivers that they can avoid a

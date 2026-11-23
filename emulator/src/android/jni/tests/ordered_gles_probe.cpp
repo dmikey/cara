@@ -576,7 +576,11 @@ void Run(EGLDisplay display, EGLConfig config) {
         CheckSharedVertexUpload();
         CheckLightingImages(false);
         CheckLightingImages(true);
-        published = Queue::CreatePublishedRenderFence();
+        std::promise<GLsync> publication;
+        auto ready = publication.get_future();
+        Queue::QueuePublishedRenderFence([&publication](GLsync fence) { publication.set_value(fence); });
+        Queue::Drain();
+        published = ready.get();
         Check(published != nullptr, "render fence not created");
 #endif
         Queue::Drain();
@@ -610,7 +614,7 @@ void Run(EGLDisplay display, EGLConfig config) {
             helper.Release();
         }).get();
 #ifdef CARA_GL_CONTEXT_DISPATCH
-        Queue::QueueConsumedPresentFence(published);
+        Queue::QueueConsumedPresentFence(published, true);
         Queue::Drain();
         Check(worker.Call([&] { return !glIsSync(published); }) && glGetError() == GL_NO_ERROR, "present fence was not retired");
         std::puts("render and present fence round trip passed across EGL contexts");
