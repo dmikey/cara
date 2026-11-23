@@ -320,8 +320,16 @@ static bool TryShaderStreamExtras(u32 id,u32 count,u32 mask,bool grouped,
         if(mirror)WriteShaderWord(g_state.gs,offset,value,swizzle);
         ++offset;step(i);
     }
-    if(count_runtime){++shader_stream_batch_stats.packets;shader_stream_batch_stats.words+=count;
-        if(mirror)shader_stream_batch_stats.mirrored_words+=count;}
+    if (count_runtime) {
+        ++shader_stream_batch_stats.packets;
+        shader_stream_batch_stats.words += count;
+        if (mirror) shader_stream_batch_stats.mirrored_words += count;
+        auto& timing = Common::FrameTiming::counters;
+        if (timing.enabled) {
+            ++timing.pica_shader_stream_packets;
+            timing.pica_shader_stream_words += count;
+        }
+    }
     return true;
 }
 

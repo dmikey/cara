@@ -1170,8 +1170,28 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
         if (selected_copy_interval) *selected_copy_interval = {};
     }
 
+    const bool subrect_prefilter = [] {
+        if constexpr (find_flags == (MatchFlags::SubRect | MatchFlags::Invalid)) {
+            static const bool enabled = [] {
+                const char* value = std::getenv("CARA_SURFACE_SUBRECT_PREFILTER");
+                return value && std::strcmp(value, "1") == 0;
+            }();
+            return enabled;
+        }
+        return false;
+    }();
     for (const auto& pair : RangeFromInterval(surface_cache, params.GetInterval())) {
         for (const auto& surface : pair.second) {
+            if (subrect_prefilter) {
+                auto& timing = Common::FrameTiming::counters;
+                if (timing.enabled) ++timing.surface_subrect_candidates;
+                // CanSubRect only examines the surface layout. Keep scale,
+                // validity, rank, and iteration order for every survivor.
+                if (!surface->CanSubRect(params)) {
+                    if (timing.enabled) ++timing.surface_subrect_early_rejects;
+                    continue;
+                }
+            }
             if constexpr (find_flags == (MatchFlags::Exact | MatchFlags::Invalid)) {
                 const bool profile = Common::FrameTiming::TextureAcquisitionTracingActive();
                 if (profile) ++Common::FrameTiming::counters.texture_exact_candidates;
@@ -1248,7 +1268,7 @@ static Surface FindMatch(const SurfaceCache& surface_cache, const SurfaceParams&
                 return std::make_pair(surface->ExactMatch(params), surface->GetInterval());
             });
             IsMatch_Helper(std::integral_constant<MatchFlags, MatchFlags::SubRect>{}, [&] {
-                return std::make_pair(surface->CanSubRect(params), surface->GetInterval());
+                return std::make_pair(subrect_prefilter || surface->CanSubRect(params), surface->GetInterval());
             });
             IsMatch_Helper(std::integral_constant<MatchFlags, MatchFlags::Copy>{}, [&] {
                 ASSERT(validate_interval);

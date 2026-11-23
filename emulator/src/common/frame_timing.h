@@ -30,6 +30,8 @@ struct Counters {
     bool enabled = false;
     // Requests, not unique frames: repeated command lists/draws/swaps count again.
     std::uint64_t pica_command_lists = 0;
+    std::uint64_t pica_shader_stream_packets = 0;
+    std::uint64_t pica_shader_stream_words = 0;
     std::uint64_t pica_draw_requests = 0;
     std::uint64_t pica_post_irq_submissions = 0;
     std::uint64_t pica_post_irq_writes = 0;
@@ -86,6 +88,8 @@ struct Counters {
     PhaseCPUSamples surface_read_pixels_cpu_samples;
     std::array<TextureAcquisitionSamples, static_cast<std::size_t>(TextureAcquisitionPhase::Count)>
         texture_acquisition_samples{};
+    std::uint64_t surface_subrect_candidates = 0;
+    std::uint64_t surface_subrect_early_rejects = 0;
     std::uint64_t texture_exact_candidates = 0;
     std::uint64_t texture_exact_wrong_layout = 0;
     std::uint64_t texture_exact_early_rejects = 0;

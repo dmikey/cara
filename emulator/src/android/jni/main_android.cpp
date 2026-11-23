@@ -163,6 +163,17 @@ void BootGame(const std::string& path) {
         return;
     }
 
+    // Isolate shared renderer and command-processor optimizations on device.
+    const auto select_probe = [](const char* key, const char* variable) {
+        const Config::ConfigInfo<bool> option{{"Debug", key}, false};
+        setenv(variable, Config::Get(option) ? "1" : "0", 1);
+    };
+    select_probe("pica_shader_stream_batch", "CARA_PICA_SHADER_STREAM_BATCH");
+    select_probe("lut_effective_change", "CARA_LUT_EFFECTIVE_CHANGE");
+    select_probe("texture_lookup_reuse", "CARA_TEXTURE_LOOKUP_REUSE");
+    select_probe("texture_lookup_verify", "CARA_TEXTURE_LOOKUP_VERIFY");
+    select_probe("texture_exact_prefilter", "CARA_TEXTURE_EXACT_PREFILTER");
+    select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
     // This residency path was tested on Mali with both GLES backends.
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
     setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
@@ -401,6 +412,15 @@ void BootGame(const std::string& path) {
                                     cpu.counter_overflows);
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
                             }
+                            const auto work = fmt::format(
+                                "work end={} pica_lists={} shader_stream_packets={} shader_stream_words={} "
+                                "texture_lookup_checks={} texture_lookup_hits={} texture_verify_mismatches={} "
+                                "subrect_candidates={} subrect_rejected={}",
+                                frame, phases.pica_command_lists, phases.pica_shader_stream_packets,
+                                phases.pica_shader_stream_words, phases.texture_lookup_checks,
+                                phases.texture_lookup_hits, phases.texture_lookup_verify_mismatches,
+                                phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
+                            __android_log_write(ANDROID_LOG_INFO, "CaraPerf", work.c_str());
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", reuse.c_str());
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
                             reset_trace();
