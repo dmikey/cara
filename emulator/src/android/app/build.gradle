@@ -3,10 +3,19 @@ apply plugin: 'com.android.application'
 
 def caraPreview = (project.findProperty('caraPreview') ?: 'false').toBoolean()
 def caraCpuJit = (project.findProperty('caraCpuJit') ?: 'true').toBoolean()
+def caraNotices = layout.buildDirectory.dir('generated/caraNotices')
+def copyCaraNotices = tasks.register('copyCaraNotices', Sync) {
+    from(rootProject.file('../../..')) {
+        include 'LICENSE', 'NOTICE'
+        into 'licenses'
+    }
+    into caraNotices
+}
 
 android {
-    compileSdkVersion 35
+    compileSdkVersion 36
     buildFeatures { buildConfig true }
+    sourceSets.main.assets.srcDir(caraNotices)
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -19,8 +28,9 @@ android {
         manifestPlaceholders = [caraAppLabel: caraPreview ? "Cara Mali Preview" : "Cara"]
         buildConfigField "boolean", "CPU_JIT_AVAILABLE", caraCpuJit.toString()
         minSdkVersion 24
-        targetSdkVersion 33
-        versionCode(getBuildVersionCode())
+        targetSdkVersion 36
+        versionCode(providers.gradleProperty("caraReleaseVersionCode").map { Integer.parseInt(it) }
+                    .getOrElse(getBuildVersionCode()))
         versionName "${getVersion()}"
     }
 
@@ -73,6 +83,8 @@ android {
         }
     }
 }
+
+tasks.named("preBuild").configure { dependsOn(copyCaraNotices) }
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.4.0'

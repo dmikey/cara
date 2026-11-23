@@ -147,6 +147,7 @@ def mac_package(app, audit, out, revision, version, folder):
     notary = json.loads(run(XCRUN, 'notarytool', 'submit', submission, '--key', key,
                             '--key-id', os.environ[MAC_VARIABLES[3]], '--issuer', os.environ[MAC_VARIABLES[4]],
                             '--wait', '--timeout', '20m', '--output-format', 'json', capture=True))
+    key.unlink()
     if notary.get('status') != 'Accepted':
         raise RuntimeError(f"Apple notarization was not accepted (submission {notary.get('id', 'unknown')})")
     run(XCRUN, 'stapler', 'staple', app)
@@ -287,6 +288,7 @@ def main():
     parser.add_argument('platform', choices=['mac', 'ios'])
     parser.add_argument('--artifact-dir', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--source-revision', required=True)
     args = parser.parse_args()
     required = MAC_VARIABLES if args.platform == 'mac' else IOS_VARIABLES
     missing = [key for key in required if not os.environ.get(key)]
@@ -296,8 +298,10 @@ def main():
         if summary := os.environ.get('GITHUB_STEP_SUMMARY'):
             with open(summary, 'a') as file:
                 file.write(message + '\n\n')
-        return
-    revision = run('git', 'rev-parse', 'HEAD', capture=True).decode().strip()
+        raise SystemExit(1)
+    revision = args.source_revision
+    if not re.fullmatch(r'[0-9a-f]{40}', revision):
+        raise ValueError('Expected a full source commit SHA')
     version = build_version(int(os.environ['GITHUB_RUN_NUMBER']))
     output = args.output.resolve()
     if output.exists() or output.with_suffix(output.suffix + '.json').exists():
