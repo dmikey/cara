@@ -75,3 +75,20 @@ A profile build bracketed the producer flush and queue call, the worker's raw AP
 At title refresh 961, three integer queries per refresh spent 21.007 ms waiting to enter the driver and 0.006 ms in it. The surface remap helper saves the active texture unit and checks two enable bits before submitting its conversion draw. The measured approximately 3 integer queries, 6 enable checks, 3 framebuffer status checks and 3 error checks per warm refresh match that helper's shape. This per-API profile does not identify the caller of each query. Across the same four windows the entire remap scope averaged 7.53 ms per refresh. Durations inside remapping overlap the synchronous call figures. In particular, removing a single synchronous query can move its wait to the next result dependency. Moving more work off the producer requires preserving the result dependency for validation and guest reads.
 
 The instrumented workload had p99s of 58.75, 35.33, 47.79 and 47.63 ms. The worst was 86.00 ms at refresh 2620. The fixed-clock four-window run had zero measured shader compilations. The shader links described above occurred later in a separate normal boot. [Profile build](https://github.com/dmikey/cara/actions/runs/45252277457) · [All synchronous API costs](gadd-sync-costs.tsv)
+
+## Which driver calls put the worker to sleep
+
+A separate normal boot profiled the CaraGLES thread with Android Simpleperf during the warm lab. The collector recorded CPU-clock samples and switch-out call chains with `--trace-offcpu`. For each switch sample we joined the next switch-out record and its immediately following switch-in on that thread, counting only the off-core interval. This matched all 6,351 switch samples and 1,809.54 of the 1,813.64 ms of observed off-core intervals over 3,026.20 ms. Earlier sparse sampling, driver return times and these scheduler durations measure different things.
+
+| Worker call or activity | Off CPU, ms | Switch samples | Of those ms with a driver semaphore wait on stack |
+| --- | ---: | ---: | ---: |
+| Waiting on Cara's queue | 550.18 | 4,095 | — |
+| glDrawElements | 538.26 | 281 | 535.01 |
+| glBlitFramebuffer | 257.76 | 326 | 255.33 |
+| glDrawArrays | 199.17 | 139 | 196.18 |
+| glClear | 167.79 | 73 | 167.53 |
+| glFramebufferTexture2D | 33.39 | 372 | 0 |
+| glClearBufferfv | 21.11 | 122 | 20.36 |
+| glBindTexture | 0.80 | 12 | 0 |
+
+The driver actually blocked in draws, blits and clears. Texture binds still consumed on-core time. A driver semaphore can reflect earlier outstanding work. It does not identify a GPU instruction or prove that the particular draw entering the driver is the draw taking the GPU time. The separate texture-packet experiment reduced queue records by 33.1%, but increased producer graphics CPU and failed to improve tails consistently. [Texture packet results](https://github.com/dmikey/cara/blob/1fb11c0/docs/rg-slide-mali-handoff/ordered-gles-worker.md#worker-packet-result)
