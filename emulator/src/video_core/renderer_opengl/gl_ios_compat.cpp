@@ -93,6 +93,9 @@ static void UploadLUT(GLuint texture, unsigned unit, GLenum format, std::size_t 
             const std::size_t row_bytes = LUTTextureWidth * stride;
             if (offset != 0 || format != GL_RG || bytes % row_bytes != 0)
                 throw std::invalid_argument("Incomplete lighting table image");
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, LUTTextureWidth,
                          static_cast<GLsizei>(bytes / row_bytes), 0, GL_RG, GL_FLOAT, data);
         } else {

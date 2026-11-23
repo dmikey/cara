@@ -178,6 +178,7 @@ void BootGame(const std::string& path) {
     select_probe("packed_staging_reuse", "CARA_PACKED_STAGING_REUSE");
     select_probe("mailbox_fence_packet", "CARA_MAILBOX_FENCE_PACKET");
     select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
+    select_probe("lighting_lut_generations", "CARA_LIGHTING_LUT_GENERATIONS");
     select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");
     select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
     select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");

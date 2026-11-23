@@ -483,6 +483,14 @@ GLuint OpenGLState::BindTexture2D(int index, GLuint texture) {
     return previous;
 }
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+void OpenGLState::BindLightingLUT(GLuint texture) {
+    glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
+    glBindTexture(GL_TEXTURE_2D, texture);
+    cur_state.texture_buffer_lut_lf.texture_buffer = texture;
+}
+#endif
+
 GLuint OpenGLState::BindSampler(int index, GLuint sampler) {
     GLuint previous = cur_state.texture_units[index].sampler;
     glBindSampler(index, sampler);

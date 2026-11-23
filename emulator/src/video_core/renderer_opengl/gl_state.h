@@ -175,6 +175,9 @@ public:
     static GLuint BindVertexBuffer(GLuint buffer);
     static GLuint BindUniformBuffer(GLuint buffer);
     static GLuint BindTexture2D(int index, GLuint texture);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static void BindLightingLUT(GLuint texture);
+#endif
     static GLuint BindSampler(int index, GLuint sampler);
     static GLuint BindTextureCube(GLuint texture_cube);
     static GLuint BindReadFramebuffer(GLuint framebuffer);

@@ -501,6 +501,12 @@ private:
 #ifdef CARA_IOS_GLES
     std::vector<u8> lighting_lut_image;
 #endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static constexpr size_t LightingTextureBatchSize = 32;
+    std::array<OGLTexture, LightingTextureBatchSize> lighting_texture_batch;
+    size_t next_lighting_texture = LightingTextureBatchSize;
+    OGLTexture lighting_texture_generation;
+#endif
     OGLTexture texture_buffer_lut_lf;
     OGLTexture texture_buffer_lut_rg;
     OGLTexture texture_buffer_lut_rgba;

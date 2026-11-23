@@ -4359,10 +4359,49 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
 
 #ifdef CARA_IOS_GLES
     if (UseLightingLUTSnapshots()) {
-        // Previous draws can finish against the old image as GLES replaces all live tables.
-        if (bytes_used)
-            ReplaceLightingLUTImage(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id,
-                                    lighting_lut_image.data(), lighting_lut_image.size());
+        if (bytes_used) {
+            GLuint texture = texture_buffer_lut_lf.handle;
+#ifdef CARA_ANDROID_GLES_ATLAS
+            static const bool distinct_lighting_images = [] {
+                const char* value = std::getenv("CARA_LIGHTING_LUT_GENERATIONS");
+                return value && std::strcmp(value, "1") == 0;
+            }();
+            if (distinct_lighting_images) {
+                if (next_lighting_texture == LightingTextureBatchSize) {
+                    // These names belong to earlier, already submitted draws. GLES
+                    // retains their storage for pending work after deletion.
+                    for (auto& retired : lighting_texture_batch) {
+                        retired.Release();
+                    }
+                    std::array<GLuint, LightingTextureBatchSize> names{};
+                    glGenTextures(static_cast<GLsizei>(names.size()), names.data());
+                    if (std::any_of(names.begin(), names.end(), [](GLuint name) { return name == 0; })) {
+                        glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
+                    } else {
+                        for (size_t i = 0; i < names.size(); ++i) {
+                            lighting_texture_batch[i].handle = names[i];
+                        }
+                        next_lighting_texture = 0;
+                    }
+                }
+                if (next_lighting_texture < LightingTextureBatchSize) {
+                    std::swap(lighting_texture_generation,
+                              lighting_texture_batch[next_lighting_texture++]);
+                    texture = lighting_texture_generation.handle;
+                }
+                // Bind the new name in order. The previous draw has its own
+                // texture object, even if its GPU work is still in flight.
+                ReplaceLightingLUTImage(texture, TextureUnits::TextureBufferLUT_LF.id,
+                                        lighting_lut_image.data(), lighting_lut_image.size());
+                OpenGLState::BindLightingLUT(texture);
+                state.texture_buffer_lut_lf.texture_buffer = texture;
+            } else
+#endif
+            {
+                ReplaceLightingLUTImage(texture, TextureUnits::TextureBufferLUT_LF.id,
+                                        lighting_lut_image.data(), lighting_lut_image.size());
+            }
+        }
     } else if (!UseNativeLUTBuffers()) {
         UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
                      offset, buffer, bytes_used);
