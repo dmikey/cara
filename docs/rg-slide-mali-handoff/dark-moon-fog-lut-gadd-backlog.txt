@@ -1,0 +1,69 @@
+Pre-driver wait 11.633 ms/refresh
+Inside preceding recorded worker commands 10.982 ms/refresh
+Waiting requester and query
+  5.469 ms/refresh  ('remap', 'glGetIntegerv')
+  1.961 ms/refresh  ('remap', 'glGetError')
+  1.933 ms/refresh  ('display', 'glFenceSync')
+  1.395 ms/refresh  ('display', 'glClientWaitSync')
+  0.100 ms/refresh  ('lit_pica', 'glGenTextures')
+  0.084 ms/refresh  ('remap', 'glCheckFramebufferStatus')
+  0.023 ms/refresh  ('unlit_pica', 'glGenTextures')
+  0.012 ms/refresh  ('unlit_pica', 'glGenBuffers')
+  0.002 ms/refresh  ('lit_pica', 'glGetUniformLocation')
+  0.001 ms/refresh  ('unlit_pica', 'glGetUniformLocation')
+Origin of earlier command
+  4.902 ms/refresh  unlit_pica
+  2.224 ms/refresh  remap
+  1.933 ms/refresh  display
+  1.281 ms/refresh  display_transfer
+  0.318 ms/refresh  texture_copy
+  0.302 ms/refresh  lit_pica
+  0.023 ms/refresh  other
+Earlier command by origin
+  3.620 ms/refresh  ('unlit_pica', 'glDrawElements')
+  1.953 ms/refresh  ('remap', 'glDrawArrays')
+  1.774 ms/refresh  ('display', 'glClear')
+  1.062 ms/refresh  ('display_transfer', 'glBlitFramebuffer')
+  0.666 ms/refresh  ('unlit_pica', 'glFramebufferTexture2D')
+  0.209 ms/refresh  ('unlit_pica', 'UploadBufferOwned')
+  0.181 ms/refresh  ('display_transfer', 'glBindFramebuffer')
+  0.171 ms/refresh  ('texture_copy', 'glBlitFramebuffer')
+  0.147 ms/refresh  ('remap', 'glFramebufferTexture2D')
+  0.127 ms/refresh  ('lit_pica', 'glDrawArrays')
+  0.094 ms/refresh  ('unlit_pica', 'glBindTexture')
+  0.088 ms/refresh  ('display', 'glDrawArrays')
+  0.088 ms/refresh  ('unlit_pica', 'glTexSubImage2D')
+  0.067 ms/refresh  ('unlit_pica', 'glBindBuffer')
+  0.066 ms/refresh  ('texture_copy', 'glClearBufferfv')
+Earlier command by origin and vertex entry
+  3.110 ms/refresh  ('unlit_pica', 'glDrawElements', '327')
+  1.953 ms/refresh  ('remap', 'glDrawArrays', '-1')
+  1.774 ms/refresh  ('display', 'glClear', '-1')
+  1.062 ms/refresh  ('display_transfer', 'glBlitFramebuffer', '-1')
+  0.666 ms/refresh  ('unlit_pica', 'glFramebufferTexture2D', '-1')
+  0.361 ms/refresh  ('unlit_pica', 'glDrawElements', '315')
+  0.209 ms/refresh  ('unlit_pica', 'UploadBufferOwned', '-1')
+  0.181 ms/refresh  ('display_transfer', 'glBindFramebuffer', '-1')
+  0.171 ms/refresh  ('texture_copy', 'glBlitFramebuffer', '-1')
+  0.147 ms/refresh  ('remap', 'glFramebufferTexture2D', '-1')
+  0.100 ms/refresh  ('unlit_pica', 'glDrawElements', '344')
+  0.094 ms/refresh  ('unlit_pica', 'glBindTexture', '-1')
+  0.088 ms/refresh  ('display', 'glDrawArrays', '-1')
+  0.088 ms/refresh  ('unlit_pica', 'glTexSubImage2D', '-1')
+  0.067 ms/refresh  ('unlit_pica', 'glBindBuffer', '-1')
+Largest individual handoffs
+  3.100 ms/refresh  (('remap', 'glGetIntegerv'), ('unlit_pica', 'glDrawElements', '327'))
+  1.953 ms/refresh  (('remap', 'glGetError'), ('remap', 'glDrawArrays', '-1'))
+  1.774 ms/refresh  (('display', 'glFenceSync'), ('display', 'glClear', '-1'))
+  0.974 ms/refresh  (('display', 'glClientWaitSync'), ('display_transfer', 'glBlitFramebuffer', '-1'))
+  0.649 ms/refresh  (('remap', 'glGetIntegerv'), ('unlit_pica', 'glFramebufferTexture2D', '-1'))
+  0.335 ms/refresh  (('remap', 'glGetIntegerv'), ('unlit_pica', 'glDrawElements', '315'))
+  0.201 ms/refresh  (('remap', 'glGetIntegerv'), ('unlit_pica', 'UploadBufferOwned', '-1'))
+  0.102 ms/refresh  (('remap', 'glGetIntegerv'), ('display_transfer', 'glBindFramebuffer', '-1'))
+  0.101 ms/refresh  (('display', 'glClientWaitSync'), ('texture_copy', 'glBlitFramebuffer', '-1'))
+  0.097 ms/refresh  (('remap', 'glGetIntegerv'), ('unlit_pica', 'glDrawElements', '344'))
+  0.088 ms/refresh  (('remap', 'glGetIntegerv'), ('unlit_pica', 'glBindTexture', '-1'))
+  0.088 ms/refresh  (('display', 'glFenceSync'), ('display', 'glDrawArrays', '-1'))
+  0.079 ms/refresh  (('remap', 'glGetIntegerv'), ('remap', 'glFramebufferTexture2D', '-1'))
+  0.076 ms/refresh  (('display', 'glClientWaitSync'), ('display_transfer', 'glBindFramebuffer', '-1'))
+  0.076 ms/refresh  (('remap', 'glGetIntegerv'), ('unlit_pica', 'glTexSubImage2D', '-1'))
