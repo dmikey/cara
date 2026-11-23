@@ -48,3 +48,7 @@ add_library(main SHARED
 
 target_link_libraries(main android camera2ndk EGL log core input_common network yuv glad)
 target_include_directories(main PRIVATE "./")
+
+# Optional shell-side probe. Built explicitly by the experiment workflow.
+add_executable(cara_ordered_gles_probe EXCLUDE_FROM_ALL tests/ordered_gles_probe.cpp)
+target_link_libraries(cara_ordered_gles_probe PRIVATE video_core common glad EGL android log)

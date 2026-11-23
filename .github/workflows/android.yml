@@ -56,6 +56,11 @@ jobs:
           native="$(find app/build/intermediates/cxx -path '*/obj/arm64-v8a/libmain.so' -print -quit)"
           test -n "$native"
           "$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"             -n -S -C --defined-only "$native" | gzip > "$RUNNER_TEMP/rg-slide/native-symbols.txt.gz"
+          build_dir="$(find app/.cxx -name build.ninja -path '*/arm64-v8a/*' -print -quit)"
+          "$ANDROID_HOME/cmake/3.31.6/bin/cmake" --build "$(dirname "$build_dir")" --target cara_ordered_gles_probe --parallel 3
+          probe="$(find app/.cxx app/build -type f -name cara_ordered_gles_probe -print -quit)"
+          test -x "$probe"
+          cp "$probe" "$RUNNER_TEMP/rg-slide/"
           git rev-parse HEAD > "$RUNNER_TEMP/rg-slide/source-revision.txt"
           cp "$build_tools/lib/apksigner.jar" "$RUNNER_TEMP/rg-slide/"
       - uses: actions/upload-artifact@v4
