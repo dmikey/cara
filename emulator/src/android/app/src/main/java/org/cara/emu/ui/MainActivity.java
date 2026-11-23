@@ -50,6 +50,7 @@ import java.util.List;
 
 import org.cara.emu.NativeLibrary;
 import org.cara.emu.R;
+import org.cara.emu.sync.DriveSyncController;
 import org.cara.emu.model.GameFile;
 import org.cara.emu.settings.MenuTag;
 import org.cara.emu.settings.SettingsActivity;
@@ -481,6 +482,7 @@ public final class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        DriveSyncController.libraryOpened(this);
         if (mDirToAdd != null) {
             mTabIndex = 0;
             new RefreshTask(mDirToAdd).execute(false);

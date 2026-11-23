@@ -9,6 +9,11 @@
         app:showAsAction="ifRoom"/>
 
     <item
+        android:id="@+id/menu_drive_sync"
+        android:title="@string/drive_sync"
+        app:showAsAction="never"/>
+
+    <item
         android:id="@+id/menu_reset_setting"
         android:title="@string/reset_setting"
         android:icon="@drawable/ic_refresh"

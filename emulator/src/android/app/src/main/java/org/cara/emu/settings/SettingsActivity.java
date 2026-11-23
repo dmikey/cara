@@ -14,6 +14,7 @@ import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.FragmentTransaction;
 
 import org.cara.emu.R;
+import org.cara.emu.sync.DriveSyncController;
 import org.cara.emu.settings.model.Setting;
 import org.cara.emu.utils.CaraDirectory;
 
@@ -27,6 +28,7 @@ public final class SettingsActivity extends AppCompatActivity {
     private static final String KEY_GAME_ID = "game_id";
     private static final String KEY_GAME_NAME = "game_name";
 
+    private DriveSyncController mDriveSync;
     private Settings mSettings = new Settings();
     private boolean mShouldSave;
     private MenuTag mMenuTag;
@@ -44,6 +46,7 @@ public final class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        mDriveSync = new DriveSyncController(this);
         setContentView(R.layout.activity_settings);
 
         Toolbar toolbar = findViewById(R.id.toolbar);
@@ -102,11 +105,16 @@ public final class SettingsActivity extends AppCompatActivity {
     public boolean onCreateOptionsMenu(Menu menu) {
         MenuInflater inflater = getMenuInflater();
         inflater.inflate(R.menu.menu_setting, menu);
+        menu.findItem(R.id.menu_drive_sync).setVisible(mGameId.isEmpty());
         return true;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == R.id.menu_drive_sync) {
+            mDriveSync.show();
+            return true;
+        }
         if (item.getItemId() == R.id.menu_reset_setting) {
             File ini = new File(CaraDirectory.getConfigFile());
             File ini2 = new File(CaraDirectory.getConfigDirectory() + "/config-games.ini");

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="drive_sync">Google Drive Sync</string>
+    <string name="drive_description">Sync in-game saves and save states with your Google Drive account when you return to the library. Cara uses its own private Drive folder.</string>
+    <string name="drive_connected">Google Drive is connected.</string>
+    <string name="drive_connect">Connect</string>
+    <string name="drive_sync_now">Sync Now</string>
+    <string name="drive_disconnect">Disconnect</string>
+    <string name="drive_disconnected">Google Drive disconnected. Your local and cloud saves are kept.</string>
+    <string name="drive_syncing">Syncing saves with Google Drive…</string>
+    <string name="drive_authorization_failed">Google Drive authorization failed. Check Google Play services and try again.</string>
+    <string name="drive_reconnect">Open Google Drive Sync to renew access.</string>
+    <string name="drive_sync_failed">Google Drive sync could not finish. Check your connection and try again.</string>
+    <string name="drive_complete">Sync complete. %1$d uploaded, %2$d restored.</string>
+    <string name="drive_account_changed">Google returned a different account. Disconnect before connecting this account.</string>
+    <string name="drive_close_game">Close the running game before syncing saves.</string>
+    <string name="drive_conflicts_title">Save Versions Differ</string>
+    <string name="drive_conflicts_pending">Save versions differ. Choose Sync Now to review them.</string>
+    <string name="drive_keep_device">Use Device</string>
+    <string name="drive_keep_cloud">Use Drive</string>
+    <plurals name="drive_conflicts">
+        <item quantity="one">%d file changed on both sides. Choose which copy to use. Cara keeps the previous versions.</item>
+        <item quantity="other">%d files changed on both sides. Choose which copies to use. Cara keeps the previous versions.</item>
+    </plurals>
+</resources>

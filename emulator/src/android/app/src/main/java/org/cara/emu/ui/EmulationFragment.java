@@ -3,6 +3,7 @@ package org.cara.emu.ui;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
@@ -34,6 +35,7 @@ import androidx.fragment.app.Fragment;
 
 import org.cara.emu.NativeLibrary;
 import org.cara.emu.R;
+import org.cara.emu.sync.DriveSaveSync;
 import org.cara.emu.overlay.InputOverlay;
 import org.cara.emu.overlay.ResizeOverlay;
 import org.cara.emu.utils.NetPlayManager;
@@ -407,7 +409,10 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
         mRunWhenSurfaceIsValid = false;
         if (mState == EmulationState.STOPPED) {
             NativeLibrary.SurfaceChanged(mSurface);
-            new Thread(() -> NativeLibrary.Run(mPath), "NativeEmulation").start();
+            Context application = requireContext().getApplicationContext();
+            String path = mPath;
+            new Thread(() -> DriveSaveSync.runGame(application, () -> NativeLibrary.Run(path)),
+                       "NativeEmulation").start();
         } else if (mState == EmulationState.PAUSED) {
             NativeLibrary.SurfaceChanged(mSurface);
             NativeLibrary.ResumeEmulation();
