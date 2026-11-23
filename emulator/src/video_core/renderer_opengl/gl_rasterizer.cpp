@@ -1243,6 +1243,15 @@ static GLenum GetCurrentPrimitiveMode() {
 
 bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 #ifdef CARA_IOS_GLES
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    if ((ios_direct_vertex_reuse || ios_lit_pair_vertex_reuse) &&
+        !shader_program_manager->TryApplyAsyncIndexed(state)) {
+        ios_direct_vertex_reuse = false;
+        ios_lit_pair_vertex_reuse = false;
+        ++Common::FrameTiming::counters.gpu_indexed_shader_fallbacks;
+        if (!SetupVertexShader()) return false;
+    }
+#endif
     const auto* input_data=IOSVertexInputData();
     const size_t input_bytes=IOSVertexInputBytes();
     const auto& input_indices = ios_lit_pair_vertex_reuse ? ios_cached_index_data->lit_pairs : IOSInputIndices();
@@ -1284,7 +1293,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const GLenum input_format = raw_inputs ? GL_RGBA_INTEGER : GL_RGBA;
     const GLenum input_type = raw_inputs ? GL_UNSIGNED_INT : GL_FLOAT;
     if (raw_inputs) {
-        static const bool reuse_layout=[] { const char* v=std::getenv("CARA_GL_STATE_REUSE"); return v && std::strcmp(v,"1")==0; }();
+        static const bool reuse_layout=[] { const char* v=std::getenv("CARA_GL_STATE_REUSE"); const char* layout=std::getenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE"); return (v && std::strcmp(v,"1")==0) || (layout && std::strcmp(layout,"1")==0); }();
         if (reuse_layout) {
             auto& cached=ios_layout_uniforms[state.draw.shader_program];
             if (!cached.initialized) cached.location=glGetUniformLocation(state.draw.shader_program,"cara_vertex_layout[0]");

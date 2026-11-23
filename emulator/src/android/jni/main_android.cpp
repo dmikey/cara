@@ -18,6 +18,7 @@
 #include "common/common_paths.h"
 #include "common/file_util.h"
 #include "common/frame_timing.h"
+#include "common/cpu_category_timing.h"
 #include "core/cheats/cheats.h"
 #include "core/core.h"
 #include "core/frontend/applets/default_applets.h"
@@ -177,6 +178,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> index_identity{{"Debug", "vertex_index_identity_reuse"}, false};
     const Config::ConfigInfo<bool> clear_padding_only{{"Debug", "packed_vertex_padding_only"}, false};
     const Config::ConfigInfo<bool> indexed_draws{{"Debug", "atlas_indexed_draws"}, false};
+    const Config::ConfigInfo<bool> async_indexed{{"Debug", "atlas_async_indexed_shaders"}, true};
+    const Config::ConfigInfo<bool> reuse_layout{{"Debug", "packed_layout_uniform_reuse"}, false};
     const bool retain_uploads = Config::Get(resident_uploads);
     setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
     setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", retain_uploads ? "1" : "0", 1);
@@ -186,15 +189,21 @@ void BootGame(const std::string& path) {
     const char* indexed_draws_value = Config::Get(indexed_draws) ? "1" : "0";
     setenv("CARA_GPU_VERTEX_REUSE", indexed_draws_value, 1);
     setenv("CARA_GPU_LIT_PAIR_REUSE", indexed_draws_value, 1);
+    setenv("CARA_ANDROID_ASYNC_INDEXED_SHADERS",
+           Config::Get(indexed_draws) && Config::Get(async_indexed) ? "1" : "0", 1);
+    setenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE", Config::Get(reuse_layout) ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
              Config::Get(packed_fetch_reuse));
 #endif
     LOG_INFO(Frontend, "Android CPU engine: {}",
              Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");
     const Config::ConfigInfo<bool> trace_timing{{"Debug", "trace_renderer_timing"}, false};
+    const Config::ConfigInfo<bool> trace_cpu{{"Debug", "trace_cpu_categories"}, false};
+    setenv("CARA_CPU_CATEGORY_TIMING", Config::Get(trace_cpu) ? "1" : "0", 1);
     auto& phases = Common::FrameTiming::counters;
     phases = {};
     phases.enabled = Config::Get(trace_timing);
+    const bool cpu_categories = phases.enabled && Common::CPUCategoryTiming::DiagnosticEnabled();
     const auto gpu_policy = Cara::GetGPUCompletionPolicy(ReadPlayMode() == Cara::PlayMode::Performance);
     Cara::gpu_completion_policy = gpu_policy;
     if (phases.enabled) {
@@ -292,6 +301,7 @@ void BootGame(const std::string& path) {
         const bool enabled = phases.enabled;
         phases = {};
         phases.enabled = enabled;
+        if (cpu_categories) Common::CPUCategoryTiming::Reset();
     };
     const auto apply_play_policy = [&] {
         const auto policy = ReadPlayPolicy();
@@ -373,14 +383,24 @@ void BootGame(const std::string& path) {
                                 "reuse end={} prep_ms={:.2f} draw_ms={:.2f} "
                                 "index_hits={} index_misses={} index_bytes={} "
                                 "reused_upload_bytes={} vertex_upload_bytes={} index_upload_bytes={} packed_draws={} "
-                                "indexed_direct={} indexed_lit={} indexed_lit_vertices={} indexed_lit_ids={}",
+                                "indexed_direct={} indexed_lit={} indexed_lit_vertices={} indexed_lit_ids={} indexed_fallbacks={}",
                                 frame, phases.vertex_prepare_seconds * 1000, phases.draw_seconds * 1000,
                                 phases.vertex_index_cache_hits, phases.vertex_index_cache_misses,
                                 phases.vertex_index_cache_bytes, phases.vertex_upload_reused_bytes,
                                 phases.vertex_upload_bytes, phases.vertex_index_upload_bytes,
                                 phases.gpu_packed_input_draws, phases.gpu_direct_vertex_draws,
                                 phases.gpu_lit_pair_draws, phases.gpu_lit_pair_vertices,
-                                phases.gpu_lit_pair_ids);
+                                phases.gpu_lit_pair_ids, phases.gpu_indexed_shader_fallbacks);
+                            if (cpu_categories) {
+                                const auto cpu = Common::CPUCategoryTiming::Snapshot();
+                                const auto report = fmt::format(
+                                    "cpu end={} other_ms={:.2f} execution_ms={:.2f} svc_ms={:.2f} "
+                                    "gpu_command_ms={:.2f} dsp_ms={:.2f} failures={} overflows={}",
+                                    frame, cpu.cpu_ns[0] / 1e6, cpu.cpu_ns[1] / 1e6, cpu.cpu_ns[2] / 1e6,
+                                    cpu.cpu_ns[3] / 1e6, cpu.cpu_ns[4] / 1e6, cpu.clock_failures,
+                                    cpu.counter_overflows);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                            }
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", reuse.c_str());
                             __android_log_write(ANDROID_LOG_INFO, "CaraPerf", message.c_str());
                             reset_trace();

@@ -172,6 +172,7 @@ struct Counters {
     std::uint64_t gpu_lit_pair_draws = 0;
     std::uint64_t gpu_lit_pair_vertices = 0;
     std::uint64_t gpu_lit_pair_ids = 0;
+    std::uint64_t gpu_indexed_shader_fallbacks = 0;
     std::uint64_t gpu_direct_vertex_draws = 0;
     std::uint64_t gpu_direct_vertices = 0;
     std::uint64_t gpu_direct_unique_inputs = 0;

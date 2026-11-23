@@ -5,6 +5,7 @@
 
 #include "core/settings.h"
 #include <array>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <glad/glad.h>
@@ -122,9 +123,9 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
                       &shader_error[0]);
             LOG_ERROR(Render_OpenGL, "Shader source code:\n{}{}", src_arr[0], src_arr[1]);
             // dump shader source code to file
-            static u32 file_id = 0;
+            static std::atomic<u32> file_id{0};
             const std::string& log_dir = FileUtil::GetUserPath(FileUtil::UserPath::LogDir);
-            const std::string filepath = fmt::format("{}{}_{}.txt", log_dir, debug_type, file_id++);
+            const std::string filepath = fmt::format("{}{}_{}.txt", log_dir, debug_type, file_id.fetch_add(1, std::memory_order_relaxed));
             std::string shader(src_arr[0]);
             shader.append(src_arr[1]);
             shader.append("\n\n");

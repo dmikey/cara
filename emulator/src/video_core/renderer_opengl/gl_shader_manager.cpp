@@ -21,6 +21,9 @@
 #include <sys/sysctl.h>
 #elif defined(__ANDROID__)
 #include <sys/system_properties.h>
+#ifdef CARA_ANDROID_GLES_ATLAS
+#include "video_core/renderer_opengl/gl_android_shader_worker.h"
+#endif
 #endif
 #include "video_core/renderer_opengl/ios_pipeline_cache.h"
 #endif
@@ -290,12 +293,13 @@ public:
         }
     }
 
-    OGLShaderStage* GetShaderStageRef(const std::string& shader_code, GLenum shader_type) {
+    OGLShaderStage* GetShaderStageRef(const std::string& shader_code, GLenum shader_type,
+                                       bool defer = false) {
         const u64 code_hash = Common::ComputeHash64(shader_code.data(), shader_code.size());
         auto [iter, new_shader] = shaders.emplace(code_hash, separable);
         OGLShaderStage& cached_shader = iter->second;
         if (new_shader) {
-            cached_shader.Create(shader_code, shader_type, code_hash, CanDeferIOSStage(shader_code));
+            cached_shader.Create(shader_code, shader_type, code_hash, defer || CanDeferIOSStage(shader_code));
             if (!cached_shader.IsValid()) {
                 LOG_WARNING(Render_OpenGL, "shader {:04X} create failed!", shader_type);
                 shaders.erase(code_hash);
@@ -367,7 +371,11 @@ public:
                         vs_code += "\n#error Cara optional shader retry test\n";
                 }
 #endif
-                current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER);
+                bool defer = false;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+                defer = (ios_indexed_inputs == 3 || ios_indexed_inputs == 6) && AsyncIndexedEnabled();
+#endif
+                current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER, defer);
 #ifdef CARA_IOS_GLES
                 if (!current_shaders.vs) {
                     auto baseline = GenerateVertexShader(setup, key, separable,
@@ -774,6 +782,44 @@ public:
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline checkpoint: {} pipelines, {} bytes",
                  ios_entries.size(), bytes.size());
     }
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    bool AsyncIndexedEnabled() const {
+        static const bool enabled = [] {
+            const char* value = std::getenv("CARA_ANDROID_ASYNC_INDEXED_SHADERS");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        return enabled && !separable && Settings::values.use_shader_cache &&
+            NativeQuaternionGeometry::TwoStageCache(true, native_geometry_enabled);
+    }
+
+    bool TryApplyAsyncIndexed(OpenGLState& state) {
+        if (!AsyncIndexedEnabled()) {
+            return true;
+        }
+        const auto& pair = ios_stage_pairs.Get(current_shaders.vs, current_shaders.fs, [&] {
+            const auto key = IOSPipelineCache::KeyFromDigests(current_shaders.vs->GetSourceDigest(),
+                                                            current_shaders.fs->GetSourceDigest());
+            return IOSStagePair{key, &program_cache[key]};
+        });
+        auto& cached_program = *pair.program;
+        if (!cached_program.handle) {
+            if (!android_shader_worker) {
+                android_shader_worker = std::make_unique<AndroidShaderWorker>();
+            }
+            auto ready = android_shader_worker->Request(pair.key, current_shaders.vs->GetSource(),
+                                                        current_shaders.fs->GetSource());
+            if (!ready.handle) {
+                return false;
+            }
+            cached_program = std::move(ready);
+            BindIOSProgram(cached_program);
+        }
+        state.draw.shader_program = cached_program.handle;
+        state.draw.program_pipeline = 0;
+        return true;
+    }
+#endif
+
     void ApplyIOSPipeline(OpenGLState& state) {
         const auto& vs_source = current_shaders.vs->GetSource();
         const auto& fs_source = current_shaders.fs->GetSource();
@@ -1053,6 +1099,9 @@ private:
     OGLShader feedback_fragment;
     std::unordered_set<u64> failed_ios_vertex_shaders;
     std::unordered_set<u64> failed_ios_programs;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    std::unique_ptr<AndroidShaderWorker> android_shader_worker;
+#endif
 #endif
 #ifdef CARA_MAC_ATLAS_PIPELINE
     std::unique_ptr<VertexProvenance::Ledger<>> vertex_provenance;
@@ -1113,6 +1162,12 @@ GLuint ShaderProgramManager::GetIOSVertexFeedbackProgram(const Pica::Regs& regs,
 void ShaderProgramManager::ObserveBoundVertexProgram(GLuint expected_program, unsigned input_mode) {
     impl->ObserveBoundVertexProgram(expected_program,input_mode);
 }
+
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+bool ShaderProgramManager::TryApplyAsyncIndexed(OpenGLState& state) {
+    return impl->TryApplyAsyncIndexed(state);
+}
+#endif
 
 void ShaderProgramManager::ApplyTo(OpenGLState& state) {
     impl->ApplyTo(state);
