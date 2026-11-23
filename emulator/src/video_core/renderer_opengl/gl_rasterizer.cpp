@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
 #include "cara/quad_uv_plan.h"
 #include "cara/guest_gpu_trace.h"
 #include "cara/quad_input_capture_trace.h"
@@ -704,6 +705,9 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if(SoftwareBatching::CensusEnabled())software_census_after_draw=true;
     if(SoftwareBatching::Active()) {software_batch_planner.Hardware();FlushSoftwareBatch(SoftwareBatching::Reason::HardwareDraw,false);}
     const auto& regs = Pica::g_state.regs;
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(regs.lighting.disable ? CommandQueue::Backlog::Source::UnlitPica : CommandQueue::Backlog::Source::LitPica);
+#endif
     const auto reject=[&](const char* reason) {
 #ifdef CARA_IOS_GLES
         static const bool trace=std::getenv("CARA_VERTEX_FALLBACK_TRACE")!=nullptr;

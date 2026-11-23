@@ -1,3 +1,4 @@
+#include "video_core/renderer_opengl/gl_backlog_profile.h"
 #include "video_core/renderer_opengl/gl_driver_transactions.h"
 // Copyright 2026 Cara contributors
 // Licensed under GPLv2 or any later version
@@ -122,6 +123,9 @@ bool SurfaceRemapper::RemapRGBA8(GLuint source_texture, const SurfaceParams& sou
 bool SurfaceRemapper::RemapBytes(GLuint source_texture, const SurfaceParams& source,
                                GLuint destination_texture, const SurfaceParams& destination,
                                const Common::Rectangle<u32>& rectangle, bool native_rgba8) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::SurfaceRemap);
+#endif
     if (const auto* bridge=DriverTransactions::Pending())
         return bridge->sync_bool(DriverTransactions::Kind::Remap,[&] {
             return RemapBytes(source_texture,source,destination_texture,destination,rectangle,native_rgba8);
