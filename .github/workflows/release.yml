@@ -13,6 +13,7 @@ on:
       - 'tools/sign_nightly.py'
       - 'tools/sign_android_nightly.py'
       - 'tools/verify_signed_release.py'
+      - 'tools/upload_testflight.py'
       - '.github/workflows/android-release.yml'
       - 'tools/mac_bundle.py'
       - 'tools/mac_app_launcher.mm'
@@ -23,6 +24,11 @@ on:
     - cron: '23 8 * * *'
   workflow_dispatch:
     inputs:
+      testflight:
+        description: 'Sign and upload the iOS build to App Store Connect from main'
+        required: false
+        type: boolean
+        default: false
       nightly:
         description: 'Build signed prerelease packages from main'
         required: false
@@ -35,7 +41,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: release-packages-${{ (github.event_name == 'schedule' || inputs.nightly) && 'nightly' || inputs.release_tag || github.ref }}
+  group: release-packages-${{ (github.event_name == 'schedule' || inputs.nightly) && 'nightly' || inputs.testflight && 'testflight' || inputs.release_tag || github.ref }}
   cancel-in-progress: false
 jobs:
   source:
@@ -53,15 +59,19 @@ jobs:
       - id: source
         env:
           NIGHTLY: ${{ inputs.nightly }}
+          TESTFLIGHT: ${{ inputs.testflight }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           mode=build
           sha=$(git rev-parse HEAD)
-          if [[ "$GITHUB_EVENT_NAME" = schedule || "$NIGHTLY" = true || -n "$RELEASE_TAG" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" = schedule || "$NIGHTLY" = true || "$TESTFLIGHT" = true || -n "$RELEASE_TAG" ]]; then
             test "$GITHUB_REPOSITORY" = dmikey/cara
             test "$GITHUB_REF" = refs/heads/main
-            if [[ "$GITHUB_EVENT_NAME" = schedule || "$NIGHTLY" = true ]]; then
+            if [[ "$TESTFLIGHT" = true ]]; then
+              [[ "$NIGHTLY" != true && -z "$RELEASE_TAG" ]] || exit 1
+              mode=testflight
+            elif [[ "$GITHUB_EVENT_NAME" = schedule || "$NIGHTLY" = true ]]; then
               test -z "$RELEASE_TAG"
               mode=nightly
             else
@@ -88,6 +98,7 @@ jobs:
       - name: Require every signing credential and certificate pin
         id: config
         env:
+          MODE: ${{ needs.source.outputs.mode }}
           CARA_MAC_CERTIFICATE_BASE64: ${{ secrets.CARA_MAC_CERTIFICATE_BASE64 }}
           CARA_MAC_CERTIFICATE_PASSWORD: ${{ secrets.CARA_MAC_CERTIFICATE_PASSWORD }}
           CARA_NOTARY_KEY_BASE64: ${{ secrets.CARA_NOTARY_KEY_BASE64 }}
@@ -105,12 +116,16 @@ jobs:
           set -euo pipefail
           missing=0
           while IFS= read -r name; do
+            if [[ "$MODE" = testflight && "$name" != CARA_IOS_* && "$name" != CARA_NOTARY_* ]]; then
+              continue
+            fi
             if [[ -z "${!name}" ]]; then
               printf 'Missing release configuration: %s\n' "$name" | tee -a "$GITHUB_STEP_SUMMARY"
               missing=1
             fi
           done < <(compgen -A variable CARA_)
           test "$missing" -eq 0
+          if [[ "$MODE" = testflight ]]; then exit 0; fi
           fingerprint=${CARA_ANDROID_UPLOAD_CERT_SHA256//:/}
           [[ "$fingerprint" =~ ^[0-9a-fA-F]{64}$ ]] || {
             echo "CARA_ANDROID_UPLOAD_CERT_SHA256 must be a SHA-256 certificate fingerprint."
@@ -120,7 +135,7 @@ jobs:
 
   mac:
     needs: [source, signing-ready]
-    if: ${{ !cancelled() && needs.source.result == 'success' && (needs.source.outputs.mode == 'build' || needs.signing-ready.result == 'success') }}
+    if: ${{ !cancelled() && needs.source.result == 'success' && needs.source.outputs.mode != 'testflight' && (needs.source.outputs.mode == 'build' || needs.signing-ready.result == 'success') }}
     name: Self-contained macOS arm64 / optional CPU JIT included
     runs-on: macos-15
     timeout-minutes: 45
@@ -193,7 +208,7 @@ jobs:
           if-no-files-found: error
   android:
     needs: [source, signing-ready]
-    if: needs.source.outputs.mode != 'build'
+    if: needs.source.outputs.mode == 'nightly' || needs.source.outputs.mode == 'tagged'
     uses: ./.github/workflows/android-release.yml
     with:
       source_sha: ${{ needs.source.outputs.sha }}
@@ -245,6 +260,7 @@ jobs:
   sign-apple:
     name: Sign the audited Apple release packages
     needs: [source, signing-ready, mac, ios]
+    if: ${{ !cancelled() && needs.signing-ready.result == 'success' && needs.ios.result == 'success' && (needs.source.outputs.mode == 'testflight' || needs.mac.result == 'success') }}
     runs-on: macos-15
     timeout-minutes: 35
     environment: nightly-signing
@@ -256,6 +272,7 @@ jobs:
           persist-credentials: false
           ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
+        if: needs.source.outputs.mode != 'testflight'
         with:
           name: Cara-macOS-arm64-JIT
           path: work/unsigned-mac
@@ -264,6 +281,7 @@ jobs:
           name: Cara-iOS-arm64-GLES3-unsigned
           path: work/unsigned-ios
       - name: Sign and notarize the Mac release
+        if: needs.source.outputs.mode != 'testflight'
         id: mac
         env:
           EXPECTED_SHA: ${{ needs.source.outputs.sha }}
@@ -291,6 +309,22 @@ jobs:
           name: signed-apple
           path: work/signed/*
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: needs.source.outputs.mode == 'testflight' && steps.ios.outputs.signed == 'true'
+        with:
+          name: testflight-signed-ipa
+          path: work/signed/*
+          if-no-files-found: error
+      - name: Upload the signed IPA to App Store Connect
+        if: needs.source.outputs.mode == 'testflight' && steps.ios.outputs.signed == 'true'
+        env:
+          CARA_NOTARY_KEY_BASE64: ${{ secrets.CARA_NOTARY_KEY_BASE64 }}
+          CARA_NOTARY_KEY_ID: ${{ secrets.CARA_NOTARY_KEY_ID }}
+          CARA_NOTARY_ISSUER_ID: ${{ secrets.CARA_NOTARY_ISSUER_ID }}
+          EXPECTED_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          export DEVELOPER_DIR=/Applications/Xcode_26.3.app/Contents/Developer
+          python3 tools/upload_testflight.py work/signed/Cara-iOS-arm64-GLES3-signed.ipa "$EXPECTED_SHA"
       - id: result
         if: steps.mac.outputs.signed == 'true' && steps.ios.outputs.signed == 'true'
         run: echo "signed=true" >> "$GITHUB_OUTPUT"

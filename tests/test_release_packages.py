@@ -1,8 +1,10 @@
 """Release layout and dependency-policy fixtures; no game or compiler is invoked."""
+import base64
 import datetime
 import importlib.util
 import hashlib
 import json
+import os
 from pathlib import Path
 import plistlib
 import stat
@@ -19,6 +21,7 @@ import mac_bundle
 import package_mac_app
 import sign_nightly
 import verify_signed_release
+import upload_testflight
 
 
 class IPATests(unittest.TestCase):
@@ -285,6 +288,51 @@ class SignedReleaseTests(unittest.TestCase):
         path.symlink_to(self.root / "Cara-Android-arm64-signed.apk")
         with self.assertRaisesRegex(ValueError, "ordinary file"):
             self.verify()
+
+
+class TestFlightUploadTests(unittest.TestCase):
+    revision = "a" * 40
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.asset = Path(directory.name) / upload_testflight.IPA_NAME
+        self.asset.write_bytes(b"fixture ipa")
+        self.receipt = self.asset.with_suffix(".ipa.json")
+        self.policy = dict(upload_testflight.IPA_POLICY, source_revision=self.revision,
+                           cpu_jit=False, shader_jit=False,
+                           asset_sha256=hashlib.sha256(self.asset.read_bytes()).hexdigest())
+        self.receipt.write_text(json.dumps(self.policy))
+
+    def test_only_matching_signed_ios_assets_can_upload(self):
+        upload_testflight.verify_ipa(self.asset, self.revision)
+        for change in (dict(cpu_jit=True), dict(bundle_id="org.example.app"),
+                       dict(asset_sha256="b" * 64), dict(source_revision="c" * 40)):
+            self.receipt.write_text(json.dumps(self.policy | change))
+            with self.assertRaisesRegex(ValueError, "TestFlight policy"):
+                upload_testflight.verify_ipa(self.asset, self.revision)
+
+    def test_temporary_key_is_not_inherited_by_apple_uploader(self):
+        key_id = "ABCDE12345"
+        roles = {
+            upload_testflight.KEY: base64.b64encode(b"fixture key").decode(),
+            upload_testflight.KEY_ID: key_id,
+            upload_testflight.ISSUER: "11111111-2222-3333-4444-555555555555",
+        }
+
+        def check_upload(command, *, cwd, env, timeout):
+            key_file = cwd / f"AuthKey_{key_id}.p8"
+            self.assertEqual(key_file.read_bytes(), b"fixture key")
+            self.assertEqual(stat.S_IMODE(key_file.stat().st_mode), 0o600)
+            self.assertEqual(env["API_PRIVATE_KEYS_DIR"], str(cwd))
+            self.assertTrue(roles.keys().isdisjoint(env))
+            self.assertIn(self.asset, command)
+            return type("SuccessfulUpload", (), {"returncode": 0})()
+
+        with patch.dict(os.environ, roles), patch.object(
+                upload_testflight.subprocess, "run", side_effect=check_upload) as mocked:
+            upload_testflight.upload(self.asset, self.revision)
+        self.assertFalse(mocked.call_args.kwargs["cwd"].exists())
 
 
 if __name__ == '__main__':

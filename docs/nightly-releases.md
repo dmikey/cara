@@ -73,3 +73,17 @@ The signing runners keep private material in temporary storage. The iOS signing
 tool rejects development, ad hoc and enterprise profiles. GitHub CI can test
 Android packaging with a disposable keystore. That test leaves distribution
 secrets unused.
+
+## Upload an iOS build for TestFlight
+
+From **Release packages → Run workflow**, choose `main`, enable
+**testflight**, leave **nightly** off and leave the release tag blank. This
+route builds and signs only iOS, so it can run while Mac and Android signing
+are still being configured. It preserves the signed IPA in Actions, verifies
+the bundle ID and source receipt and submits the IPA to App Store Connect.
+
+Set the three `CARA_IOS_*` secrets and the three `CARA_NOTARY_*` secrets in the
+protected environment. The latter identify the App Store Connect team API
+key used for upload and Mac notarization. A successful upload moves the build
+to Apple processing. Assign it to a TestFlight group after processing and
+review any required export or beta questions in App Store Connect.
