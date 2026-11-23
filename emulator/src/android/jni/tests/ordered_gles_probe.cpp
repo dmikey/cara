@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdlib>
 #include "video_core/renderer_opengl/gl_surface_remap_shaders.h"
 #include "video_core/renderer_opengl/gl_shared_vertex_shadow.h"
@@ -17,6 +18,7 @@
 #include "video_core/renderer_opengl/gl_command_queue.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/gl_state.h"
+#include "video_core/renderer_opengl/gl_packed_vertex.h"
 
 namespace {
 namespace Queue = OpenGL::CommandQueue;
@@ -67,6 +69,81 @@ GLuint Compile(GLenum stage, const char* source) {
     glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
     Check(compiled == GL_TRUE, "probe shader compilation");
     return shader;
+}
+
+void CheckPackedFloatDecoder() {
+    GLuint textures[2]{}, fbo = 0, vao = 0;
+    glGenTextures(2, textures);
+    glGenFramebuffers(1, &fbo);
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textures[1]);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, 12, 1);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[1], 0);
+    Check(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "packed fixture FBO");
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+    std::array<GLuint, 128 * 2 * 4> words{};
+    for (unsigned i = 0; i < words.size(); ++i) {
+        words[i] = std::bit_cast<GLuint>(float(i) * 0.125f - 32.0f);
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32UI, 128, 2, 0, GL_RGBA_INTEGER,
+                 GL_UNSIGNED_INT, words.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glViewport(0, 0, 12, 1);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    const auto vs = Compile(GL_VERTEX_SHADER, R"(#version 300 es
+void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); })");
+    const auto fragment = std::string("#version 300 es\nprecision highp float; precision highp int;\n") +
+        OpenGL::PackedVertexFetchReuseGLSL + R"(
+layout(location=0) out highp uvec4 result;
+void main() { result = floatBitsToUint(cara_decode_vertex(int(gl_FragCoord.x), 0)); }
+)";
+    const auto fs = Compile(GL_FRAGMENT_SHADER, fragment.c_str());
+    const auto program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    GLint linked = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    Check(linked == GL_TRUE, "packed float fixture link");
+    glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program, "cara_vertex_inputs"), 0);
+    const auto layout = glGetUniformLocation(program, "cara_vertex_layout[0]");
+    Check(layout >= 0, "packed float layout uniform");
+    for (int stride : {4, 12, 16, 20}) {
+        for (int offset : {0, 4, 8, 12, 2028, 2032, 2036, 2040, 2044}) {
+            for (int count = 0; count <= 4; ++count) {
+                glUniform4i(layout, offset, stride, 3, count);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                std::array<GLuint, 12 * 4> pixels{};
+                glReadPixels(0, 0, 12, 1, GL_RGBA_INTEGER, GL_UNSIGNED_INT, pixels.data());
+                for (int vertex = 0; vertex < 12; ++vertex) {
+                    for (int component = 0; component < 4; ++component) {
+                        const auto expected = component < count ? words[(offset + vertex * stride) / 4 + component] :
+                            std::bit_cast<GLuint>(component == 3 ? 1.0f : 0.0f);
+                        Check(pixels[vertex * 4 + component] == expected, "packed float vector differs from input");
+                    }
+                }
+            }
+        }
+    }
+    Check(glGetError() == GL_NO_ERROR, "packed float fixture GLES error");
+    glUseProgram(0);
+    glDeleteProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteVertexArrays(1, &vao);
+    glDeleteTextures(2, textures);
+    std::puts("packed float decoder matched 2160 vectors across texel and row boundaries");
 }
 
 // Use the same float texture format, width and padded rows as all 24 lighting tables plus fog.
@@ -629,6 +706,7 @@ void Run(EGLDisplay display, EGLConfig config) {
     rendering.Bind();
     CheckInstancedDraws();
     CheckRemapPixels();
+    CheckPackedFloatDecoder();
     rendering.Release();
 }
 } // namespace
