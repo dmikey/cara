@@ -196,6 +196,12 @@
 
     .section-heading a { font-size: 0.9375rem; }
 
+    .download-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.2rem 1rem;
+    }
+
     .build-list {
       overflow: hidden;
       border: 1px solid var(--rule);
@@ -322,7 +328,10 @@
       <section class="downloads" id="get-cara" aria-labelledby="downloads-heading">
         <div class="section-heading">
           <h2 id="downloads-heading">Downloads</h2>
-          <a href="https://github.com/dmikey/cara/releases">Release notes and checksums</a>
+          <div class="download-links">
+            <a href="https://github.com/dmikey/cara/releases/tag/experimental-2026-11-13">Release notes</a>
+            <a href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/SHA256SUMS.txt">SHA-256 checksums</a>
+          </div>
         </div>
         <ul class="build-list">
           <li>
@@ -331,7 +340,10 @@
           </li>
           <li>
             <span class="build-platform">iPhone and iPad</span>
-            <span class="build-note">Public TestFlight invite pending</span>
+            <div class="build-availability">
+              <span class="build-note">Developer preview. For sideloading, re-sign for your device. Public TestFlight invite pending.</span>
+              <a href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/Cara-iOS-gles3-Derek-Anderson-signed.ipa">Download IPA</a>
+            </div>
           </li>
           <li>
             <span class="build-platform">Android</span>
