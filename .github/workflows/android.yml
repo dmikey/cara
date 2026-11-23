@@ -42,7 +42,7 @@ jobs:
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
-      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;29.0.14206865' 'cmake;3.31.6'
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.31.6'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
@@ -54,7 +54,7 @@ jobs:
       - name: Verify the APK
         run: |
           apk=emulator/src/android/app/build/outputs/apk/debug/app-debug.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$apk"
           unzip -l "$apk" | grep 'lib/arm64-v8a/libmain.so'
           native="$(find emulator/src/android/app/build/intermediates/cxx -path '*/obj/arm64-v8a/libmain.so' -print -quit)"
           test -n "$native"

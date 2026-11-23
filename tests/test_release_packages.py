@@ -1,8 +1,10 @@
 """Release layout and dependency-policy fixtures; no game or compiler is invoked."""
+import base64
 import datetime
 import importlib.util
 import hashlib
 import json
+import os
 from pathlib import Path
 import plistlib
 import stat
@@ -18,6 +20,8 @@ import package_ipa
 import mac_bundle
 import package_mac_app
 import sign_nightly
+import verify_signed_release
+import upload_testflight
 
 
 class IPATests(unittest.TestCase):
@@ -223,6 +227,112 @@ class NightlySigningPolicyTests(unittest.TestCase):
         for first, second in [(1, 2), (99, 100), (9999, 10000)]:
             key = lambda run: tuple(map(int, sign_nightly.build_version(run).split('.')))
             self.assertLess(key(first), key(second))
+
+
+class SignedReleaseTests(unittest.TestCase):
+    revision = "a" * 40
+    certificate = "b" * 64
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        for name, policy in verify_signed_release.APPLE.items():
+            checksum = self.asset(name)
+            self.receipt(f"{name}.json", dict(policy, source_revision=self.revision,
+                                              build_version="1200.1.2", shader_jit=False,
+                                              asset_sha256=checksum))
+        self.receipt("android-signed.json", dict(
+            source_revision=self.revision, signing="android-upload-key",
+            certificate_sha256=self.certificate, application_id="org.cara.emu",
+            target_sdk=36, architecture="arm64-v8a", renderer="gles-atlas",
+            cpu_jit=True, shader_jit=False, version_code=1100,
+            assets={name: self.asset(name) for name in verify_signed_release.ANDROID}))
+
+    def asset(self, name):
+        data = name.encode()
+        (self.root / name).write_bytes(data)
+        return hashlib.sha256(data).hexdigest()
+
+    def receipt(self, name, data):
+        (self.root / name).write_text(json.dumps(data))
+
+    def verify(self, certificate=None):
+        verify_signed_release.verify(self.root, self.revision, certificate or self.certificate)
+
+    def test_only_the_exact_complete_signed_assets_are_accepted(self):
+        self.verify()
+        (self.root / "unsigned.ipa").touch()
+        with self.assertRaisesRegex(ValueError, "Unexpected signed asset set"):
+            self.verify()
+
+    def test_wrong_source_is_rejected(self):
+        asset = "Cara-iOS-arm64-GLES3-signed.ipa.json"
+        metadata = json.loads((self.root / asset).read_text())
+        self.receipt(asset, dict(metadata, source_revision="c" * 40))
+        with self.assertRaisesRegex(ValueError, "Source mismatch"):
+            self.verify()
+
+    def test_wrong_signing_certificate_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unexpected Android upload signer"):
+            self.verify("c" * 64)
+
+    def test_checksum_mismatch_is_rejected(self):
+        (self.root / "Cara-Android-arm64-signed.aab").write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "Package digest mismatch"):
+            self.verify()
+
+    def test_symlink_is_rejected_even_with_matching_asset_name(self):
+        path = self.root / "Cara-Android-arm64-signed.aab"
+        path.unlink()
+        path.symlink_to(self.root / "Cara-Android-arm64-signed.apk")
+        with self.assertRaisesRegex(ValueError, "ordinary file"):
+            self.verify()
+
+
+class TestFlightUploadTests(unittest.TestCase):
+    revision = "a" * 40
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.asset = Path(directory.name) / upload_testflight.IPA_NAME
+        self.asset.write_bytes(b"fixture ipa")
+        self.receipt = self.asset.with_suffix(".ipa.json")
+        self.policy = dict(upload_testflight.IPA_POLICY, source_revision=self.revision,
+                           cpu_jit=False, shader_jit=False,
+                           asset_sha256=hashlib.sha256(self.asset.read_bytes()).hexdigest())
+        self.receipt.write_text(json.dumps(self.policy))
+
+    def test_only_matching_signed_ios_assets_can_upload(self):
+        upload_testflight.verify_ipa(self.asset, self.revision)
+        for change in (dict(cpu_jit=True), dict(bundle_id="org.example.app"),
+                       dict(asset_sha256="b" * 64), dict(source_revision="c" * 40)):
+            self.receipt.write_text(json.dumps(self.policy | change))
+            with self.assertRaisesRegex(ValueError, "TestFlight policy"):
+                upload_testflight.verify_ipa(self.asset, self.revision)
+
+    def test_temporary_key_is_not_inherited_by_apple_uploader(self):
+        key_id = "ABCDE12345"
+        roles = {
+            upload_testflight.KEY: base64.b64encode(b"fixture key").decode(),
+            upload_testflight.KEY_ID: key_id,
+            upload_testflight.ISSUER: "11111111-2222-3333-4444-555555555555",
+        }
+
+        def check_upload(command, *, cwd, env, timeout):
+            key_file = cwd / f"AuthKey_{key_id}.p8"
+            self.assertEqual(key_file.read_bytes(), b"fixture key")
+            self.assertEqual(stat.S_IMODE(key_file.stat().st_mode), 0o600)
+            self.assertEqual(env["API_PRIVATE_KEYS_DIR"], str(cwd))
+            self.assertTrue(roles.keys().isdisjoint(env))
+            self.assertIn(self.asset, command)
+            return type("SuccessfulUpload", (), {"returncode": 0})()
+
+        with patch.dict(os.environ, roles), patch.object(
+                upload_testflight.subprocess, "run", side_effect=check_upload) as mocked:
+            upload_testflight.upload(self.asset, self.revision)
+        self.assertFalse(mocked.call_args.kwargs["cwd"].exists())
 
 
 if __name__ == '__main__':

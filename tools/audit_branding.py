@@ -16,6 +16,7 @@ ALLOWED = {
     'emulator/src/video_core/command_processor.cpp': ['Azahar PR2318, c688076ac96491bd0d390fc8e6d8325fd3fb420f,'],
     'emulator/src/core/cheats/gateway_cheat.cpp': ['"*citra_enabled"'],
     'emulator/src/common/file_util.cpp': ['"citra-emu"'],
+    'emulator/src/common/z3ds_rom.cpp': ["Azahar's v1 Z3DS header precedes optional metadata"],
     'emulator/src/web_service/verify_user_jwt.cpp': ['issuer("citra-core")'],
     'emulator/src/cara/config.cpp': ['"citra_username"', '"citra_token"'],
     'emulator/src/cara_qt/configuration/config.cpp': ['"citra_username"', '"citra_token"'],
