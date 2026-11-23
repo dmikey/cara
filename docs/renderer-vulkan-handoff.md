@@ -36,6 +36,14 @@ Both LCDs, guest SD files, and recorded draws, transfers and presentations match
 
 For Vulkan and Metal, investigate an exact state identity at draw preparation, before rebuilding and copying the packed block. The starting points are [PICA uniform writes](../emulator/src/video_core/command_processor.cpp) and [Metal uniform capture](../emulator/src/video_core/renderer_metal/pica_metal_native_uniforms.cpp). A revision can certify consecutive unchanged state only if every contributing write and state restoration invalidates it. Shader layout and any fields derived outside the register bank still matter. Repeated A→B→A workloads require a separately proven exact identity. Measure invalidation frequency and compare against serialized bytes before using an identity to bypass the existing path. The uniform experiment receipts are in the workspace output `cara-m1-metal-fastinterp-uniform-20261123`.
 
+### Poll submission retirement at the consumer
+
+An isolated Metal replay moved nonblocking retirement polls out of cached input acquisition and into the already existing draw record check. On the M1 with FastInterp and 100% guest CPU, owner-thread CPU per refresh was 6.673 and 6.701 ms in the two controls and 6.573 ms in the candidate. The 0.100–0.129 ms reduction exceeded the 0.028 ms control difference. Wall time remained inside the control range. Both LCDs at 12 checkpoints, SD files, and draw, grouped submission, transfer, color export and presentation counts matched. The option remains default-off.
+
+A cached input lookup still needs an exact backing identity and a live lease. Keep CPU-visible reads, attachment imports, submission admission, error retirement and publication validations on their existing dependency paths. The timed replay preserved those checks and changed only where duplicate nonblocking polls run. In Vulkan, explicit submission completion can similarly be checked at the renderer's real consumers and admission points, provided resource reuse, queue-family ownership and externally observable completion remain correct.
+
+The next check is a matched repeat on a second draw workload and the physical iPhone 13 using the same guest work and audio. Continue recording owner-thread CPU, full-process CPU, queue waits, missed deadlines and both displays. Do not promote from one M1 opening or a paced frame-time average. Local receipts are in the workspace output `cara-m1-metal-fastinterp-retire-20261123`.
+
 ## Preserve the backend boundary
 
 Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
