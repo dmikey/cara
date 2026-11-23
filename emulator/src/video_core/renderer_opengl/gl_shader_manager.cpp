@@ -23,6 +23,9 @@
 #include <sys/system_properties.h>
 #ifdef CARA_ANDROID_GLES_ATLAS
 #include "video_core/renderer_opengl/gl_android_shader_worker.h"
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 #endif
 #endif
 #include "video_core/renderer_opengl/ios_pipeline_cache.h"
@@ -872,7 +875,17 @@ public:
         auto& cached_program = *pair.program;
         if (!cached_program.handle) {
             if (!android_shader_worker) {
-                android_shader_worker = std::make_unique<AndroidShaderWorker>();
+                auto create_worker = [] { return std::make_unique<AndroidShaderWorker>(); };
+#ifdef CARA_GL_CONTEXT_DISPATCH
+                // The constructor creates its shared context from the current core context.
+                if (auto* queue = CommandQueue::Queue()) {
+                    CommandQueue::Flush();
+                    android_shader_worker = queue->Call(create_worker);
+                } else
+#endif
+                {
+                    android_shader_worker = create_worker();
+                }
             }
             auto ready = android_shader_worker->Request(pair.key, current_shaders.vs->GetSource(),
                                                         current_shaders.fs->GetSource());

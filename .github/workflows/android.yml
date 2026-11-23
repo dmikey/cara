@@ -2,12 +2,18 @@ name: Android GLES ARM64
 
 on:
   workflow_dispatch:
+    inputs:
+      probe_only:
+        description: Run only standalone ARM64 EGL fixtures
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   rg-slide:
+    if: ${{ !inputs.probe_only }}
     name: Build exact main ARM64 release APK for local signing
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -43,7 +49,7 @@ jobs:
           GRADLE
           sed -i '/<\/application>/i\        <profileable android:shell="true" />' app/src/main/AndroidManifest.xml
           sed -i 's|mavenCentral()|maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }|g' build.gradle
-          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-profile.init.gradle" :app:assembleRelease -x :app:lintVitalAnalyzeRelease -x :app:lintVitalReportRelease -x :app:lintVitalRelease -PcaraGlesAtlas=ON -PcaraCpuJit=true
+          gradle --no-daemon --max-workers=3 --init-script "$RUNNER_TEMP/rg-slide-profile.init.gradle" :app:assembleRelease -x :app:lintVitalAnalyzeRelease -x :app:lintVitalReportRelease -x :app:lintVitalRelease -PcaraOrderedGles=ON -PcaraGlesAtlas=ON -PcaraCpuJit=true
           git restore build.gradle app/src/main/AndroidManifest.xml
           git diff --exit-code
           mkdir -p "$RUNNER_TEMP/rg-slide"
@@ -62,4 +68,22 @@ jobs:
         with:
           name: cara-rg-slide-pica-cpu-apk
           path: ${{ runner.temp }}/rg-slide/*
+          if-no-files-found: error
+
+  ordered-gles-probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build original and thread-local dispatch probes
+        run: |
+          compiler="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android30-clang++"
+          for mode in original tls; do
+            tools/build-android-ordered-gles-probe.sh "$RUNNER_TEMP/probes/$mode" "$compiler" "$mode"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cara-ordered-gles-probe
+          path: ${{ runner.temp }}/probes/*/cara_ordered_gles_probe
           if-no-files-found: error

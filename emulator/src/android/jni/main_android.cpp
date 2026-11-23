@@ -30,6 +30,9 @@
 #include "core/hle/service/ptm/ptm.h"
 #include "core/loader/smdh.h"
 #include "core/settings.h"
+#ifdef CARA_GL_CONTEXT_DISPATCH
+#include "video_core/renderer_opengl/gl_command_queue.h"
+#endif
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/video_core.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
@@ -278,6 +281,23 @@ void BootGame(const std::string& path) {
     // cfg->SetCountryCode(49); // USA
     // cfg->UpdateConfigNANDSavegame();
 
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    const Config::ConfigInfo<bool> ordered_worker{{"Debug", "ordered_gles_worker"}, false};
+    if (Config::Get(ordered_worker)) {
+        setenv("CARA_GL_QUEUE_NATIVE_MAP_UPLOAD", "1", 1);
+        if (const char* debug = std::getenv("CARA_GLES_DEBUG"); debug && std::strcmp(debug, "1") == 0) {
+            __android_log_print(ANDROID_LOG_WARN, "CaraPerf", "ordered_gles disabled while debug callback is active");
+        } else {
+            const bool active = s_render_window->StartSubmissionWorker();
+            __android_log_print(ANDROID_LOG_INFO, "CaraPerf", "ordered_gles active=%d", active);
+            if (!active && !s_render_window->HasCoreContext()) {
+                NativeLibrary::ShowMessageDialog(0, "The OpenGL ES context was lost during startup.");
+                s_render_window.reset();
+                return;
+            }
+        }
+    }
+#endif
     Core::System::ResultStatus result = system.Load(*s_render_window, path);
     if (result != Core::System::ResultStatus::Success) {
         switch (result) {
@@ -426,6 +446,27 @@ void BootGame(const std::string& path) {
                                 phases.surface_download_seconds * 1000,
                                 phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
                                 phases.gpu_wait_seconds * 1000);
+#ifdef CARA_GL_CONTEXT_DISPATCH
+                            if (OpenGL::CommandQueue::Enabled()) {
+                                using namespace OpenGL::CommandQueue;
+                                const auto q = SnapshotStats();
+                                const auto rpc = [&](RpcApi api) {
+                                    return static_cast<unsigned long long>(q.rpc_by_api[static_cast<size_t>(api)]);
+                                };
+                                __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                    "ordered_gles end=%u worker_cpu_ns=%llu commands=%llu batches=%llu "
+                                    "sync=%llu uniform_location=%llu map=%llu unmap=%llu create_program=%llu create_shader=%llu get_integer=%llu lut_jobs=%llu",
+                                    static_cast<unsigned>(frame),
+                                    static_cast<unsigned long long>(ReadWorkerCPUForProfile()),
+                                    static_cast<unsigned long long>(q.recorded_commands),
+                                    static_cast<unsigned long long>(q.submitted_batches),
+                                    static_cast<unsigned long long>(q.synchronous_calls),
+                                    rpc(RpcApi::api_glGetUniformLocation), rpc(RpcApi::api_glMapBufferRange),
+                                    rpc(RpcApi::api_glUnmapBuffer), rpc(RpcApi::api_glCreateProgram),
+                                    rpc(RpcApi::api_glCreateShader), rpc(RpcApi::api_glGetIntegerv),
+                                    static_cast<unsigned long long>(q.transaction_lut_calls));
+                            }
+#endif
                             const auto reuse = fmt::format(
                                 "reuse end={} prep_ms={:.2f} draw_ms={:.2f} "
                                 "index_hits={} index_misses={} index_bytes={} "
@@ -596,9 +637,22 @@ void BootGame(const std::string& path) {
     }
 
     // Shutdown the core emulation
-    s_render_window->DoneCurrent();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    const bool had_worker = OpenGL::CommandQueue::Enabled();
+    if (had_worker) {
+        // Give the producer a live context for resource destruction.
+        s_render_window->StopSubmissionWorker();
+    } else
+#endif
+    {
+        s_render_window->DoneCurrent();
+    }
     hid.reset();
     system.Shutdown();
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    if (had_worker)
+        s_render_window->DoneCurrent();
+#endif
     s_render_window.reset();
     s_is_running = false;
     resetSearchResults();
