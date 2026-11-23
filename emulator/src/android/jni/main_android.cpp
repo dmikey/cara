@@ -170,14 +170,18 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
     setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
-    // Use the shared atlas implementations so Android and Apple keep the same validation and fallbacks.
-    const Config::ConfigInfo<bool> resident_uploads{{"Debug", "resident_vertex_uploads"}, false};
-    const Config::ConfigInfo<bool> prepared_indices{{"Debug", "prepared_vertex_indices"}, false};
+    // EGL sets the shipping geometry reuse defaults. Separate debug overrides
+    // let a matched trace isolate each shared atlas path.
+    const Config::ConfigInfo<bool> resident_uploads{{"Debug", "resident_vertex_uploads"}, true};
+    const Config::ConfigInfo<bool> prepared_indices{{"Debug", "prepared_vertex_indices"}, true};
+    const Config::ConfigInfo<bool> index_identity{{"Debug", "vertex_index_identity_reuse"}, false};
+    const Config::ConfigInfo<bool> clear_padding_only{{"Debug", "packed_vertex_padding_only"}, false};
     const bool retain_uploads = Config::Get(resident_uploads);
-    const bool retain_indices = Config::Get(prepared_indices);
     setenv("CARA_VERTEX_UPLOAD_REUSE", retain_uploads ? "1" : "0", 1);
     setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", retain_uploads ? "1" : "0", 1);
-    setenv("CARA_VERTEX_INDEX_CACHE", retain_indices ? "1" : "0", 1);
+    setenv("CARA_VERTEX_INDEX_CACHE", Config::Get(prepared_indices) ? "1" : "0", 1);
+    setenv("CARA_VERTEX_INDEX_IDENTITY_REUSE", Config::Get(index_identity) ? "1" : "0", 1);
+    setenv("CARA_PACKED_PADDING_ONLY_ZERO", Config::Get(clear_padding_only) ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
              Config::Get(packed_fetch_reuse));
 #endif
