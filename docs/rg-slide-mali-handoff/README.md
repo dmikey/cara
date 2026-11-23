@@ -5,6 +5,7 @@ fragment generator changes. Re-establish the benchmark baseline when
 integrating changes from main.
 
 - [Renderer and profiling options](../rg-slide-rendering.md)
+- [Single resident vertex check, layout-uniform reuse and sampled driver call costs](resident-vertex-handoff.md)
 - [Cold and warm shader census and trace data](shader-census.md)
 - [GLES validation, Apple parity audit and separate-stage measurements](gles-validation.md)
 - [Active lit indexing and fog transfer measurements](lit-index-followup.md)
