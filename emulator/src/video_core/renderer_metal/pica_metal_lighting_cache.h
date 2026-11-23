@@ -2,7 +2,9 @@
 #pragma once
 
 #import <Metal/Metal.h>
+#include <array>
 #include <span>
+#include <vector>
 #include "common/common_types.h"
 
 namespace Cara {
@@ -21,12 +23,25 @@ struct PicaLightingLutSnapshot {
 class PicaMetalLightingCache {
 public:
     explicit PicaMetalLightingCache(id<MTLCommandQueue> queue);
+    ~PicaMetalLightingCache();
     id<MTLTexture> Resolve(id<MTLCommandQueue> queue, const PicaLightingLutSnapshot& snapshot);
 
 private:
     const id<MTLCommandQueue> owner_queue;
     id<MTLTexture> current = nil;
     u64 generation = 0;
+
+    // Cached textures are immutable. Recorded commands keep the textures
+    // they consume alive even after the cache drops its own reference.
+    struct RetainedImage {
+        id<MTLTexture> texture = nil;
+        std::vector<u8> bytes;
+    };
+    std::array<RetainedImage, 4> recent_images;
+    std::size_t next_image = 0;
+    u64 requests = 0;
+    u64 hits = 0;
+    u64 uploaded_bytes = 0;
 };
 
 } // namespace Cara
