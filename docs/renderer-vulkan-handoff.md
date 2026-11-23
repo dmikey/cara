@@ -178,6 +178,37 @@ split. The aggregate counts alone cannot establish the split or writer
 identities. Preserve the original receipt checks and retain staging
 for layouts or ownership that the decoder cannot prove.
 
+### Direct LCD decode from two current buffers
+
+The padded-row candidate completed four same-binary M1 Luigi replays in
+ON/OFF/OFF/ON order. Each ran 3,000 refreshes with FastInterp at 100%
+guest CPU, SDL audio, and no CPU vertex fallback. Both LCDs matched at
+all 15 checkpoints, along with guest SD files and selected draw,
+transfer, and presentation counts. Every owned process exited cleanly.
+
+| Refreshes 2401–2800 | ON1 | OFF1 | OFF2 | ON2 |
+| --- | ---: | ---: | ---: | ---: |
+| LCD staging blits | 0 | 320,000 | 320,000 | 0 |
+| LCD staged bytes | 0 | 115,200,000 | 115,200,000 | 0 |
+| LCD source resolution CPU, ms/ref | 0.113 | 0.573 | 0.561 | 0.113 |
+| LCD decode encoding CPU, ms/ref | 0.044 | 0.033 | 0.033 | 0.043 |
+| Presentation CPU, ms/ref | 0.234 | 0.681 | 0.666 | 0.231 |
+| Owner-thread CPU, ms/ref | 22.656 | 22.892 | 22.806 | 22.524 |
+| Whole refresh elapsed, ms/ref | 23.039 | 23.336 | 23.022 | 22.841 |
+| Whole refresh elapsed p99, ms/ref | 38.173 | 33.648 | 31.648 | 30.122 |
+
+Each enabled run decoded directly from two existing buffers in 400
+of the 800 LCD source resolutions. The existing one-buffer path served
+the other 400. The paired path checks current ownership, buffer
+identity, row pitch, whole-pixel split, bounds, queue, and tracked
+producer status before decoding. It samples no padding. The CPU saving
+inside presentation was 0.432–0.450 ms per refresh across every
+ON/OFF comparison. The owner thread saved 0.150–0.368 ms per refresh,
+compared with 0.086 ms between controls. The enabled and control
+elapsed timings overlap. The p99 values varied, so the replay does
+not establish a frame-time or hitch improvement. Keep this private
+option off by default. These are Metal host measurements on the M1.
+
 ## Preserve the backend boundary
 
 Share PICA register decoding, ordered guest operations, the guest-address authority map, and guest completion semantics. Each backend should own its host images, buffers, pipelines, encoders and completion objects. Keep two kinds of completion distinct. Guest time decides when the PICA reports completion to an emulated title. Host completion decides when backing storage can be read safely or reused. Always honor a guest read that needs the latest bytes.
