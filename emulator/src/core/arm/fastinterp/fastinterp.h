@@ -190,6 +190,7 @@ private:
     u64 ldr_str_four_pairs_fused_{}, ldr_str_four_pairs_fallback_{};
     bool secondary_link_{false};
     static bool AluPairsEnabled();
+    static std::array<u64, 2> LdrPairRuntimeCounts();
     void QuickenLdrSpStatic(DecodedInst& inst, bool is_thumb) const;
     u64 cache_mode_redecodes_{};
     u64 cache_page_table_changes_{};
