@@ -179,7 +179,8 @@ void main(){ink = sentinel != 0 ? vec4(1,0,1,1) : vec4(vertexColor,0.5);})");
             glEnable(GL_DEPTH_TEST);
             glEnable(GL_STENCIL_TEST);
             glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                                GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDepthFunc(GL_LEQUAL);
             glStencilFunc(GL_ALWAYS, 0, 0xff);
             glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
