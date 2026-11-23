@@ -1,5 +1,6 @@
 """Rank work that was executing on the GLES worker while its producer needed a result."""
 import argparse
+import gzip
 from collections import Counter
 import re
 
@@ -11,11 +12,14 @@ ends = set(args.ends)
 owners = Counter()
 sources = Counter()
 commands = Counter()
+source_apis = Counter()
 per_request = Counter()
 waits = Counter()
 observations = set()
 seen_windows = set()
-with open(args.log) as log:
+sync_keys = set()
+open_log = gzip.open if args.log.endswith(".gz") else open
+with open_log(args.log, "rt") as log:
     for line in log:
         match = re.search(r"CaraPerf: (backlog|sync_time|window) end=(\d+) (.*)", line)
         if not match or int(match[2]) not in ends:
@@ -27,6 +31,10 @@ with open(args.log) as log:
                 parser.error("Found repeated window, supply a single boot")
             seen_windows.add(end)
         elif kind == "sync_time":
+            key = (end, data["api"])
+            if key in sync_keys:
+                parser.error("Duplicate synchronous API for a window")
+            sync_keys.add(key)
             waits[data["api"]] += int(data["before_ns"])
         else:
             request = data['requester'], data['query']
@@ -39,8 +47,11 @@ with open(args.log) as log:
             owners[request] += ns
             sources[command[0]] += ns
             commands[command] += ns
+            source_apis[command[:2]] += ns
             per_request[(request, command)] += ns
-if {int(end) for end in seen_windows} != ends or not observations or not waits:
+if ({int(end) for end in seen_windows} != ends or
+        {int(end) for end, _ in sync_keys} != ends or
+        {int(end) for end, _, _ in observations} != ends):
     parser.error("Missing complete window or backlog data")
 scale = len(ends) * 120 * 1e6
 def show(title, counter, limit):
@@ -51,5 +62,6 @@ print(f"Pre-driver wait {sum(waits.values())/scale:.3f} ms/refresh")
 print(f"Inside preceding recorded worker commands {sum(commands.values())/scale:.3f} ms/refresh")
 show("Waiting requester and query", owners, 10)
 show("Origin of earlier command", sources, 10)
-show("Earlier command by origin", commands, 15)
+show("Earlier command by origin", source_apis, 15)
+show("Earlier command by origin and vertex entry", commands, 15)
 show("Largest individual handoffs", per_request, 15)

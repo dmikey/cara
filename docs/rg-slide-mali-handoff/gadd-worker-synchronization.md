@@ -92,3 +92,42 @@ A separate normal boot profiled the CaraGLES thread with Android Simpleperf duri
 | glBindTexture | 0.80 | 12 | 0 |
 
 The driver actually blocked in draws, blits and clears. Texture binds still consumed on-core time. A driver semaphore can reflect earlier outstanding work. It does not identify a GPU instruction or prove that the particular draw entering the driver is the draw taking the GPU time. The separate texture-packet experiment reduced queue records by 33.1%, but increased producer graphics CPU and failed to improve tails consistently. [Texture packet results](https://github.com/dmikey/cara/blob/1fb11c0/docs/rg-slide-mali-handoff/ordered-gles-worker.md#worker-packet-result)
+
+## Following a producer wait back to its PICA command
+
+Two normal boots on the RG Slide used Dark Moon, Performance Mode, Dynarmic JIT, GLES at 1× and CLK 100%, with the ordered render worker and raster state reuse enabled. Draw pairing was off. The trace carries the original guest operation with each queued GLES command. When the emulation thread requests a synchronous result, it measures how much of its pre-driver wait overlaps each earlier worker command. Time outside those commands includes queue bookkeeping and scheduling. These overlapping wall times belong to the same refresh. Adding them to the producer CPU time would double count part of the work.
+
+On the first boot, earlier commands accounted for 9.584 of the 10.341 ms pre-driver wait per warm refresh. The largest overlap behind a remap query was an unlit indexed draw at 2.817 ms/refresh. The error check at the end of remapping overlapped the remap's own full-screen triangle for 1.401 ms. The display fence overlapped a display clear for 1.202 ms. This locates three different dependencies inside the apparent query cost.
+
+At title window 961, the worker spent 13.567 ms/refresh on queued lookup-table uploads from lit draws while the producer waited. Four uploads per refresh carried 5,394,432 bytes across the 120-refresh window. The procedural LUT scope was idle. The coarse capture labels these uploads `Internal`. The only queued command using that default label in this build is `TransactionLUT` in the GLES queue. Subsequent builds explicitly label the command `UploadLUTOwned`. The measured wall interval includes driver waits for earlier GPU work. An earlier direct-renderer profile independently placed 17.08–18.18 ms/refresh inside the 2D texture transfer at the title. The same worker upload accounted for only 0.122 ms/refresh in warm Gadd. [Coarse capture](gadd-pica-backlog-coarse.log.gz) · [Direct transfer trace and fog experiments](lit-index-followup.md#lighting-and-fog-transfer-result)
+
+The standalone GLES fixture on the physical G57 returned 64 counter bits for both elapsed time and timestamp queries. That verifies that this driver advertises both query targets. The game results above and below measure CPU/driver overlap. Measuring hardware time for an individual pass would require an actual query range, delayed collection, and rejection of disjoint samples. A timestamp on a tile renderer can include work from earlier submissions. [Khronos disjoint timer specification](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_disjoint_timer_query.txt)
+
+The second boot separated display transfers from texture copies and tagged draws with their PICA vertex entry offsets. Pre-driver waits averaged 11.212 ms/refresh. Earlier worker commands accounted for 10.390 ms (92.7%). In aggregate, unlit PICA work occupied 4.686 ms and lit PICA work 0.815 ms of the producer's wait. This is a conditional measurement of what the worker was doing when the producer requested a result. It excludes work the worker did while the guest could continue.
+
+| Earlier work in warm Gadd | Worker time overlapping the producer wait, ms/refresh |
+| --- | ---: |
+| Unlit indexed draws, all vertex entries | 3.214 |
+| Of those indexed draws, PICA entry 327 | 2.668 |
+| Surface-remap triangle | 1.638 |
+| Mailbox display clear | 1.487 |
+| Guest display-transfer blit | 0.749 |
+| Unlit framebuffer attachment change | 0.745 |
+| Lit array draws, all entries | 0.288 |
+| Guest texture-copy blit | 0.169 |
+| Lookup-table upload for lit draws | 0.125 |
+
+Entry 327 accounted for 83% of the indexed-draw overlap. Almost all of it coincided with the remapper querying the active texture unit. This entry is a PICA instruction offset. Different guest programs can use the same offset. The trace alone cannot identify the gameplay effect or show how many nanoseconds a shader instruction spent on the hardware. The remapper's final error check overlapped its conversion triangle for 1.638 ms. The mailbox fence overlapped its clear for 1.487 ms. The client wait on the presentation fence overlapped a guest display-transfer blit for 0.677 ms. At the title, lookup-table uploads again led at 13.919 ms/refresh.
+
+| Gadd window ending at refresh | First trace p50 / p99 / worst, ms | Vertex-tagged repeat p50 / p99 / worst, ms |
+| ---: | ---: | ---: |
+| 2641 | 32.46 / 106.45 / 107.16 | 33.20 / 107.35 / 107.94 |
+| 2761 | 29.26 / 39.01 / 82.02 | 29.98 / 46.66 / 46.93 |
+| 2881 | 29.04 / 46.30 / 48.12 | 29.89 / 35.73 / 36.45 |
+| 3001 | 29.50 / 42.27 / 49.10 | 30.16 / 37.58 / 50.72 |
+
+The slowest refreshes were 2620 and 2591 respectively. All eight warm windows recorded zero shader compiles. The diagnostics read a clock for every worker command and maintain counters during producer waits. Use separate timing-only boots to judge a performance patch. Both profile restores matched the original configuration and cache checksums. [Detailed capture](gadd-pica-backlog-vertex.log.gz) · [First APK build](https://github.com/dmikey/cara/actions/runs/45254847117) · [Repeat APK build](https://github.com/dmikey/cara/actions/runs/45255452952)
+
+```sh
+python3 summarize-pica-backlog.py gadd-pica-backlog-vertex.log.gz 2641 2761 2881 3001
+```
