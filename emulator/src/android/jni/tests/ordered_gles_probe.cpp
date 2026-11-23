@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdlib>
 #include "video_core/renderer_opengl/gl_surface_remap_shaders.h"
+#include "video_core/renderer_opengl/gl_shared_vertex_shadow.h"
 #include <cstdio>
 #include <future>
 #include <stdexcept>
@@ -145,6 +146,39 @@ void CheckRemapPixels() {
 }
 
 #ifdef CARA_GL_CONTEXT_DISPATCH
+void CheckSharedVertexUpload() {
+    GLuint textures[2], framebuffer;
+    glGenTextures(2, textures);
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    OpenGL::SharedVertexShadow retained;
+    Pixels source, expected[2];
+    for (int generation = 0; generation < 2; ++generation) {
+        for (unsigned byte = 0; byte < source.size(); ++byte)
+            source[byte] = GLubyte(byte + 71 * generation);
+        expected[generation] = source;
+        glBindTexture(GL_TEXTURE_2D, textures[generation]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        Check(!Queue::TryQueueVertexUpload(width, 1, GL_RGBA, GL_UNSIGNED_BYTE, source.data(),
+                                           source.size() - 1, retained), "bad upload span accepted");
+        Check(Queue::TryQueueVertexUpload(width, 1, GL_RGBA, GL_UNSIGNED_BYTE, source.data(),
+                                          source.size(), retained), "shared upload rejected");
+        Check(std::equal(source.begin(), source.end(), retained.data()), "retained bytes differ");
+        source.fill(0);
+    }
+    retained.clear();
+    for (int generation = 0; generation < 2; ++generation) {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[generation], 0);
+        Pixels pixels;
+        glReadPixels(0, 0, width, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        Check(glGetError() == GL_NO_ERROR && pixels == expected[generation], "queued vertex bytes changed");
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &framebuffer);
+    glDeleteTextures(2, textures);
+    std::puts("two shared upload generations survived source and cache mutation");
+}
+
 void CheckRemapQueue() {
     for (const bool enable : {false, true}) {
         glActiveTexture(GL_TEXTURE3);
@@ -399,6 +433,7 @@ void Run(EGLDisplay display, EGLConfig config) {
         [&] { rendering.Bind(); submission_worker = true; },
         [&] { rendering.Release(); });
     setenv("CARA_CHECKED_REMAP_PACKET", "1", 1);
+    setenv("CARA_SHARED_VERTEX_UPLOAD", "1", 1);
     Queue::Install(worker);
     try {
         const auto queued = Draw();
@@ -415,6 +450,7 @@ void Run(EGLDisplay display, EGLConfig config) {
         CheckInstancedDraws();
 #ifdef CARA_GL_CONTEXT_DISPATCH
         CheckRemapQueue();
+        CheckSharedVertexUpload();
 #endif
         Queue::Drain();
         std::puts("queued instanced draws passed");
