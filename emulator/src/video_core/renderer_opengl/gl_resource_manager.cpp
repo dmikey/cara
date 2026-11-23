@@ -40,6 +40,11 @@ void OGLTexture::Release() {
         return;
 
     glDeleteTextures(1, &handle);
+#if defined(CARA_ANDROID_GLES_ATLAS) && defined(CARA_GL_CONTEXT_DISPATCH)
+    if (CaraGL::overrides) {
+        OpenGLState::ForgetDeletedPicaTexture(handle);
+    }
+#endif
     handle = 0;
 }
 

@@ -213,6 +213,8 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> async_indexed{{"Debug", "atlas_async_indexed_shaders"}, true};
     const Config::ConfigInfo<bool> native_elements{{"Debug", "atlas_native_elements"}, false};
     const Config::ConfigInfo<bool> retain_bindings{{"Debug", "atlas_retain_vertex_bindings"}, false};
+    const Config::ConfigInfo<bool> retain_pica_textures{{"Debug", "atlas_retain_pica_textures"}, false};
+    setenv("CARA_GLES_RETAIN_PICA_TEXTURES", Config::Get(retain_pica_textures) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> runtime_tev{{"Debug", "atlas_runtime_tev"}, false};
     const Config::ConfigInfo<bool> reuse_vs_uniforms{{"Debug", "atlas_reuse_vs_uniforms"}, false};
     const Config::ConfigInfo<bool> reuse_raster_state{{"Debug", "atlas_reuse_raster_state"}, false};

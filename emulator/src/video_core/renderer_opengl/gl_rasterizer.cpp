@@ -3008,9 +3008,27 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     vertex_batch.clear();
     host_include_scope.Restore();
 
-    // Reset textures in rasterizer state context because the rasterizer cache might delete them
-    for (auto& texture_unit : state.texture_units) {
-        texture_unit.texture_2d = 0;
+    bool retain_texture_bindings = false;
+#if defined(CARA_ANDROID_GLES_ATLAS) && defined(CARA_GL_CONTEXT_DISPATCH)
+    static const bool retain_pica_textures = [] {
+        const char* value = std::getenv("CARA_GLES_RETAIN_PICA_TEXTURES");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    retain_texture_bindings = retain_pica_textures && is_mali_gpu && CommandQueue::Enabled() &&
+                              succeeded && !shadow_rendering;
+    if (retain_texture_bindings) {
+        // Preserve the applied bindings through cleanup. Each draw resolves its own
+        // surfaces, including feedback copies, before applying its next bindings.
+        const auto& applied = OpenGLState::GetCurState();
+        for (unsigned i = 0; i < std::size(state.texture_units); ++i) {
+            state.texture_units[i].texture_2d = applied.texture_units[i].texture_2d;
+        }
+    }
+#endif
+    if (!retain_texture_bindings) {
+        for (auto& texture_unit : state.texture_units) {
+            texture_unit.texture_2d = 0;
+        }
     }
     state.texture_cube_unit.texture_cube = 0;
     if (AllowShadow) {
@@ -3023,6 +3041,13 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         state.image_shadow_buffer = 0;
     }
     state.Apply();
+    if (retain_texture_bindings) {
+        // Drop the rasterizer's desired names. Only the applied GL state keeps
+        // them, and texture deletion clears those references.
+        for (auto& texture_unit : state.texture_units) {
+            texture_unit.texture_2d = 0;
+        }
+    }
 
     if (!succeeded)
         return false;

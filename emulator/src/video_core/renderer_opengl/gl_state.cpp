@@ -521,6 +521,18 @@ GLuint OpenGLState::BindShaderProgram(GLuint program) {
     return previous;
 }
 
+#if defined(CARA_ANDROID_GLES_ATLAS) && defined(CARA_GL_CONTEXT_DISPATCH)
+void OpenGLState::ForgetDeletedPicaTexture(GLuint handle) {
+    // GLES clears these bindings on deletion in the worker context. Keep the
+    // producer's state in step before a later allocation can reuse the name.
+    for (auto& unit : cur_state.texture_units) {
+        if (unit.texture_2d == handle) {
+            unit.texture_2d = 0;
+        }
+    }
+}
+#endif
+
 void OpenGLState::ResetTexture(GLuint handle) {
     for (unsigned i = 0; i < ARRAY_SIZE(cur_state.texture_units); ++i) {
         if (cur_state.texture_units[i].texture_2d == handle) {
