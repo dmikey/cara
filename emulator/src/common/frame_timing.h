@@ -145,6 +145,13 @@ struct Counters {
     std::uint64_t stream_mapped_bytes = 0;
     double uniform_upload_seconds = 0;
     double draw_lut_upload_seconds = 0;
+    double lighting_fog_lut_seconds = 0;
+    double procedural_lut_seconds = 0;
+    double lut_texture_setup_seconds = 0;
+    double lut_texture_transfer_seconds = 0;
+    double lut_texture_restore_seconds = 0;
+    std::uint64_t lut_texture_uploads = 0;
+    std::uint64_t lut_texture_bytes = 0;
     double state_apply_seconds = 0;
     double draw_submit_seconds = 0;
     double surface_remap_seconds = 0;
@@ -289,7 +296,8 @@ inline bool RenderBookkeepingProfileEnabled() {
     return enabled;
 }
 
-enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, LUTUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck };
+enum class Phase { SurfaceRemap, SurfacePack, UniformUpload, LUTUpload, StreamMap, StreamUnmap, StateApply, Shader, Readback, Present, GuestCPU, Draw, VertexPrepare, VertexUpload, VertexReuseCheck, VertexOrphanUpload, VertexStorageAllocate, VertexSubImageUpload, DrawSubmit, SurfaceDownload, SurfaceReadPixels, ShaderCompile, GPUWait, DrawFramebufferAcquire, DrawTextureAcquire, DrawShaderSetup, DrawDirtyInvalidate, ReinterpretCheck, LightingFogLUT, ProceduralLUT,
+                   LUTTextureSetup, LUTTextureTransfer, LUTTextureRestore };
 class Scope {
 public:
     explicit Scope(Phase phase_, bool enabled = true) : phase(phase_), active(counters.enabled && enabled) {
@@ -343,6 +351,17 @@ public:
             counters.uniform_upload_seconds += seconds;
         } else if (phase == Phase::LUTUpload) {
             counters.draw_lut_upload_seconds += seconds;
+        } else if (phase == Phase::LightingFogLUT) {
+            counters.lighting_fog_lut_seconds += seconds;
+        } else if (phase == Phase::ProceduralLUT) {
+            counters.procedural_lut_seconds += seconds;
+        } else if (phase == Phase::LUTTextureSetup) {
+            counters.lut_texture_setup_seconds += seconds;
+        } else if (phase == Phase::LUTTextureTransfer) {
+            counters.lut_texture_transfer_seconds += seconds;
+            ++counters.lut_texture_uploads;
+        } else if (phase == Phase::LUTTextureRestore) {
+            counters.lut_texture_restore_seconds += seconds;
         } else if (phase == Phase::StreamMap) {
             counters.stream_map_seconds += seconds;
             ++counters.stream_map_calls;

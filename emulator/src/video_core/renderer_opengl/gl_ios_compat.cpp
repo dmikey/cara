@@ -1,3 +1,4 @@
+#include "common/frame_timing.h"
 #include "video_core/renderer_opengl/gl_driver_transactions.h"
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_opengl/gl_ios_compat.h"
@@ -43,39 +44,52 @@ void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offs
     if ((format != GL_RG && format != GL_RGBA) || !data || offset % stride || bytes % stride) {
         throw std::invalid_argument("Invalid CPU LUT upload span");
     }
+    namespace Timing = Common::FrameTiming;
+    const bool trace = Timing::counters.enabled && Timing::RenderBookkeepingProfileEnabled();
+    if (trace)
+        Timing::counters.lut_texture_bytes += bytes;
     GLint active, binding, row_length, alignment, skip_rows, skip_pixels, unpack_buffer;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
-    glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);
-    glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
-    glGetIntegerv(GL_UNPACK_SKIP_ROWS, &skip_rows);
-    glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &skip_pixels);
-    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
-    glActiveTexture(GL_TEXTURE0 + unit);
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-    // data is ordinary owned CPU memory, never a GL mapping or a buffer offset.
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    std::size_t first = offset / stride, count = bytes / stride;
-    while (count) {
-        const unsigned x = first % LUT_WIDTH, y = first / LUT_WIDTH;
-        const unsigned rows = x == 0 ? static_cast<unsigned>(count / LUT_WIDTH) : 0;
-        const unsigned width = rows ? LUT_WIDTH : std::min<std::size_t>(count, LUT_WIDTH - x);
-        const unsigned height = rows ? rows : 1;
-        glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, format, GL_FLOAT, data);
-        const unsigned used = width * height;
-        first += used; count -= used; data += used * stride;
+    {
+        Timing::Scope scope(Timing::Phase::LUTTextureSetup, trace);
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &active);
+        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);
+        glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+        glGetIntegerv(GL_UNPACK_SKIP_ROWS, &skip_rows);
+        glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &skip_pixels);
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
+        glActiveTexture(GL_TEXTURE0 + unit);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+        // data is ordinary owned CPU memory, never a GL mapping or a buffer offset.
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     }
-    glBindTexture(GL_TEXTURE_2D, binding);
-    glActiveTexture(active);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
-    glPixelStorei(GL_UNPACK_SKIP_ROWS, skip_rows);
-    glPixelStorei(GL_UNPACK_SKIP_PIXELS, skip_pixels);
-    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpack_buffer));
+    {
+        Timing::Scope scope(Timing::Phase::LUTTextureTransfer, trace);
+        std::size_t first = offset / stride, count = bytes / stride;
+        while (count) {
+            const unsigned x = first % LUT_WIDTH, y = first / LUT_WIDTH;
+            const unsigned rows = x == 0 ? static_cast<unsigned>(count / LUT_WIDTH) : 0;
+            const unsigned width = rows ? LUT_WIDTH : std::min<std::size_t>(count, LUT_WIDTH - x);
+            const unsigned height = rows ? rows : 1;
+            glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, format, GL_FLOAT, data);
+            const unsigned used = width * height;
+            first += used; count -= used; data += used * stride;
+        }
+    }
+    {
+        Timing::Scope scope(Timing::Phase::LUTTextureRestore, trace);
+        glBindTexture(GL_TEXTURE_2D, binding);
+        glActiveTexture(active);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, skip_rows);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, skip_pixels);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpack_buffer));
+    }
 }
 }
 #endif

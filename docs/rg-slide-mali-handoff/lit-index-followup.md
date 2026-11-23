@@ -41,3 +41,26 @@ The opt-in now admits Shader topology after the existing geometry-stage
 rejection, for ordinary non-shadow draws. The mode draws the same
 assembled triangles as the regular path, so pair indices preserve the
 same triangle order and first-vertex orientation reference.
+
+## Phase-level Android tracing
+
+Set `trace_renderer_timing = True`, `trace_cpu_categories = True`, and
+`trace_render_phases = True` under `[Debug]`. Keep JIT, GLES Atlas, the
+gameplay mode and guest clock fixed, then capture `adb logcat -v epoch -s CaraPerf`.
+
+- `cpu` attributes thread CPU time to exclusive emulator categories.
+- `draw_phases` reports wall time for framebuffer acquisition, texture
+  acquisition, shader setup, resource invalidation, index/input reuse
+  checks, stream mapping and surface remap.
+- `lut_phases` separates lighting/fog from procedural LUT updates. Within
+  the 2D LUT path it splits saving and setting GL state, texture transfer,
+  and restoring GL state. Upload count and bytes are also logged. Subtract
+  the three texture scopes from the combined LUT scopes to estimate
+  the remaining staging and conversion time. The native texture-buffer
+  path contributes to LUT totals but has no 2D texture transfer scope.
+- `draw_sample` and `texture_phase` report sampled thread CPU and wall time
+  plus sample counts. They refer to sampled calls only. Nested phases
+  overlap, and should be compared across matching 120-refresh windows.
+
+Use a trace-disabled comparison for final performance claims. Keep
+GPU sampler measurements separate from CPU phase wall times.

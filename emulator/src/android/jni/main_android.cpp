@@ -174,6 +174,12 @@ void BootGame(const std::string& path) {
     select_probe("texture_lookup_verify", "CARA_TEXTURE_LOOKUP_VERIFY");
     select_probe("texture_exact_prefilter", "CARA_TEXTURE_EXACT_PREFILTER");
     select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
+    const Config::ConfigInfo<bool> render_phase_trace{{"Debug", "trace_render_phases"}, false};
+    const bool trace_render_phases = Config::Get(render_phase_trace);
+    const char* render_phase_value = trace_render_phases ? "1" : "0";
+    setenv("CARA_RENDER_BOOKKEEPING_PROFILE", render_phase_value, 1);
+    setenv("CARA_TEXTURE_ACQUISITION_PROFILE", render_phase_value, 1);
+    setenv("CARA_PHASE_CPU_TIMING", render_phase_value, 1);
     // This residency path was tested on Mali with both GLES backends.
     const Config::ConfigInfo<bool> surface_remap{{"Debug", "gpu_surface_remap"}, true};
     setenv("CARA_GPU_SURFACE_REMAP", Config::Get(surface_remap) ? "1" : "0", 1);
@@ -453,6 +459,67 @@ void BootGame(const std::string& path) {
                                 phases.pica_shader_stream_words, phases.texture_lookup_checks,
                                 phases.texture_lookup_hits, phases.texture_lookup_verify_mismatches,
                                 phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
+                            if (trace_render_phases) {
+                                const auto draw_phases = fmt::format(
+                                    "draw_phases end={} framebuffer_ms={:.2f} textures_ms={:.2f} "
+                                    "shader_setup_ms={:.2f} invalidation_ms={:.2f} index_reuse_ms={:.2f} "
+                                    "stream_map_ms={:.2f} stream_unmap_ms={:.2f} remap_ms={:.2f}",
+                                    frame, phases.draw_framebuffer_acquire_seconds * 1000,
+                                    phases.draw_texture_acquire_seconds * 1000,
+                                    phases.draw_shader_setup_seconds * 1000,
+                                    phases.draw_dirty_invalidate_seconds * 1000,
+                                    phases.vertex_reuse_check_seconds * 1000,
+                                    phases.stream_map_seconds * 1000, phases.stream_unmap_seconds * 1000,
+                                    phases.surface_remap_seconds * 1000);
+                                const auto lut_phases = fmt::format(
+                                    "lut_phases end={} lighting_fog_ms={:.2f} procedural_ms={:.2f} "
+                                    "texture_setup_ms={:.2f} texture_transfer_ms={:.2f} "
+                                    "texture_restore_ms={:.2f} uploads={} bytes={}",
+                                    frame, phases.lighting_fog_lut_seconds * 1000,
+                                    phases.procedural_lut_seconds * 1000,
+                                    phases.lut_texture_setup_seconds * 1000,
+                                    phases.lut_texture_transfer_seconds * 1000,
+                                    phases.lut_texture_restore_seconds * 1000,
+                                    phases.lut_texture_uploads, phases.lut_texture_bytes);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", draw_phases.c_str());
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", lut_phases.c_str());
+
+                                constexpr std::array texture_phases = {
+                                    "acquire", "selection", "validation", "reinterpretation",
+                                    "allocation", "load", "upload", "mipmap"};
+                                static_assert(texture_phases.size() == static_cast<std::size_t>(
+                                    Common::FrameTiming::TextureAcquisitionPhase::Count));
+                                for (std::size_t i = 0; i < texture_phases.size(); ++i) {
+                                    const auto& phase = phases.texture_acquisition_samples[i];
+                                    if (phase.calls == 0)
+                                        continue;
+                                    const auto& sample = phase.timing;
+                                    const auto report = fmt::format(
+                                        "texture_phase end={} phase={} calls={} samples={} "
+                                        "sample_cpu_ms={:.2f} sample_wall_ms={:.2f} failures={}",
+                                        frame, texture_phases[i], phase.calls, sample.samples,
+                                        sample.cpu_seconds * 1000, sample.wall_seconds * 1000,
+                                        sample.clock_failures);
+                                    __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                                }
+
+                                const auto sample_phase = [frame](const char* name, const auto& sample) {
+                                    if (sample.samples == 0 && sample.clock_failures == 0)
+                                        return;
+                                    const auto report = fmt::format(
+                                        "draw_sample end={} phase={} samples={} sample_cpu_ms={:.2f} "
+                                        "sample_wall_ms={:.2f} failures={}",
+                                        frame, name, sample.samples, sample.cpu_seconds * 1000,
+                                        sample.wall_seconds * 1000, sample.clock_failures);
+                                    __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                                };
+                                sample_phase("submit", phases.draw_submit_cpu_samples);
+                                sample_phase("uniform_upload", phases.uniform_upload_cpu_samples);
+                                sample_phase("stream_map", phases.stream_map_cpu_samples);
+                                sample_phase("stream_unmap", phases.stream_unmap_cpu_samples);
+                                sample_phase("vertex_subimage", phases.vertex_subimage_cpu_samples);
+                                sample_phase("vertex_orphan", phases.vertex_orphan_cpu_samples);
+                            }
                             const auto& lit = phases.lit_index_selection;
                             if (std::any_of(lit.topology.begin(), lit.topology.end(),
                                             [](u64 draws) { return draws != 0; })) {

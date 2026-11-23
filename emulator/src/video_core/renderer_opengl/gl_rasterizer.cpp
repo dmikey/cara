@@ -4000,6 +4000,8 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         return;
     }
 
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::LightingFogLUT,
+                                      Common::FrameTiming::RenderBookkeepingProfileEnabled());
     u8* buffer;
     GLintptr offset;
     bool invalidate;
@@ -4087,6 +4089,8 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
         return;
     }
 
+    Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::ProceduralLUT,
+                                      Common::FrameTiming::RenderBookkeepingProfileEnabled());
     u8* buffer;
     GLintptr offset;
     bool invalidate;
