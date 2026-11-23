@@ -95,3 +95,37 @@ The bounded search combined 3.15% of the guest draws in Gadd. Average graphics
 CPU was 19.15 ms enabled and 19.11 ms disabled. It merged zero pairs at the
 title, where the search increased graphics CPU by 0.32 ms per refresh across
 the two boots per arm. This variant did not earn activation.
+
+## Allowing disjoint mip levels
+
+The [second APK](https://github.com/dmikey/cara/actions/runs/45245219403)
+also checks each existing mip-level source selected by the surface cache.
+Each watcher must still be valid and disjoint from the color and depth outputs
+in guest memory and in host texture identity. Incomplete and custom mip chains
+use the ordinary path. Each warm Gadd lookahead that passed the packet proof
+in these three boots could also pass the renderer proof when enabled.
+
+| Same APK, normal boot | Gadd pairs combined / guest draws | Gadd graphics CPU per refresh | Window p99 range | Worst @ refresh | Title graphics CPU per refresh | Title worst |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| [On 1](gadd-mip-on.log.gz) | 17,460 / 169,266 | 18.49 | 34.71–50.77 | 72.52 @ 2929 | 23.58 | 59.01 |
+| [Off](gadd-mip-off.log.gz) | 0 / 169,614 | 19.06 | 35.03–50.99 | 54.34 @ 2593 | 22.90 | 59.03 |
+| [On 2](gadd-mip-repeat.log.gz) | 17,424 / 168,916 | 18.12 | 35.50–50.08 | 53.60 @ 2929 | 23.15 | 63.91 |
+
+Combining about 36 pairs per refresh eliminated 10.3% of host submissions
+and saved 0.58–0.95 ms of emulation-thread graphics CPU in Gadd against the
+intervening control. The title merged zero pairs and the candidate cost
+0.25–0.68 ms of graphics CPU there. The slowest window in each boot still had
+a p99 above 50 ms. Guest draw totals vary across normal boots; all three
+restored 197/197 program binaries with zero source links and zero measured
+lab-window compilation. The original package/profile was restored after
+each boot. A host disk-space interruption in an earlier run occurred before
+title measurement and was excluded; the repeated run completed.
+
+A separate eight-pixel fixture on this Mali-G57 compared two direct array
+draws against one two-instance array draw and repeated the comparison with
+an element buffer. Its vertex-ID colors distinguish the indexed and array
+paths. The results matched within each comparison after blending, a farther
+depth-rejected draw and a stencil-equals-two test. This verifies GLES
+instancing behavior for the fixture. Exact output parity for the real
+multi-pass Gadd scene and cross-title regression coverage remain open.
+[Standalone fixture](https://github.com/dmikey/cara/blob/aa58aa1/emulator/src/android/jni/tests/ordered_gles_probe.cpp)
