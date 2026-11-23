@@ -25,7 +25,7 @@
       font: 1rem / 1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     .page {
-      width: min(calc(100% - 4rem), 60rem);
+      width: min(calc(100% - 4rem), 71rem);
       margin-inline: auto;
     }
     header, footer { font-size: 0.9375rem; }
@@ -39,11 +39,21 @@
       border-bottom: 1px solid var(--rule);
     }
     .project-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
       margin: 0;
-      font-size: 1.28rem;
+      font-size: 1.5rem;
       color: var(--leaf);
       font-weight: 760;
       letter-spacing: -0.035em;
+    }
+    .brand-mark {
+      display: block;
+      width: 2.5rem;
+      height: 2.5rem;
+      mix-blend-mode: multiply;
+      mask-image: radial-gradient(ellipse 49% 45% at 50% 50%, #000 58%, transparent 98%);
     }
     ul {
       padding: 0;
@@ -75,36 +85,59 @@
     .skip-link:focus { transform: none; }
     .hero {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(12rem, 19rem);
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
       align-items: center;
-      gap: clamp(1.25rem, 5vw, 4rem);
-      padding-block: clamp(3rem, 8vw, 6rem);
+      gap: clamp(2rem, 6vw, 5rem);
+      padding-block: clamp(2.75rem, 6.6vw, 5.5rem);
     }
     .hero-copy { min-width: 0; }
     .hero-art {
-      display: grid;
-      place-items: center;
+      position: relative;
       min-width: 0;
+      margin: 0;
+      padding: clamp(0.6rem, 2vw, 1.35rem) clamp(0.6rem, 2vw, 1.3rem) 0;
+      background: radial-gradient(ellipse at 61% 37%, #f2e5c8 0, transparent 73%);
+    }
+    .demo-screen {
+      position: relative;
+      overflow: hidden;
+      margin: 0;
+      padding: 0.35rem;
+      border: 1px solid #284247;
+      border-radius: 0.75rem;
+      background: #183138;
+      box-shadow: 0 1.1rem 2.3rem -1.1rem #17343165, 0 0.2rem 0.5rem #17343121;
+    }
+    .demo-screen img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 0.41rem;
+    }
+    .demo-map {
+      width: 53%;
+      margin-top: clamp(-2.5rem, -3vw, -1.25rem);
+      margin-inline-start: auto;
+      margin-inline-end: 4%;
+    }
+    .hero-art figcaption {
+      margin-top: 0.8rem;
+      text-align: end;
+      color: var(--muted);
+      font-size: 0.875rem;
     }
     h1, h2 {
       margin: 0;
       line-height: 1.1;
       letter-spacing: -0.04em;
     }
-    h1 { font-size: clamp(2.5rem, 5.4vw, 4rem); }
+    h1 { font-size: clamp(2.6rem, 5.6vw, 4.65rem); text-wrap: balance; }
     h2 { font-size: clamp(1.35rem, 2.1vw, 1.65rem); }
     p { margin-block: 0.8rem 0; }
     .intro {
       color: var(--muted);
       font-size: clamp(1.05rem, 2vw, 1.19rem);
       max-width: 48ch;
-    }
-    .icon {
-      display: block;
-      width: 100%;
-      height: auto;
-      mix-blend-mode: multiply;
-      mask-image: radial-gradient(ellipse 49% 45% at 50% 50%, #000 58%, transparent 98%);
     }
     .actions {
       margin-top: 1.45rem;
@@ -114,8 +147,8 @@
       display: inline-flex;
       align-items: center;
       min-height: 2.75rem;
-      padding: 0.48rem 1.05rem;
-      border-radius: 0.45rem;
+      padding: 0.58rem 1.18rem;
+      border-radius: 0.5rem;
       background: var(--button);
       color: white;
       font-weight: 650;
@@ -168,12 +201,15 @@
     footer p + p { margin-top: 0.4rem; }
     @media (max-width: 44rem) {
       .page { width: calc(100% - 2.5rem); }
-      .hero { grid-template-columns: minmax(0, 1fr); }
-      .hero-art {
-        grid-row: 1;
-        justify-items: start;
+      .hero {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 1.65rem;
       }
-      .icon { width: min(30vw, 8rem); }
+      .hero-art {
+        width: min(100%, 31rem);
+        justify-self: center;
+        padding-inline: 0;
+      }
       .details, .build-list li { grid-template-columns: 1fr; }
     }
     @media (max-width: 24rem) {
@@ -185,7 +221,10 @@
   <a class="skip-link" href="#content">Skip to content</a>
   <div class="page">
     <header>
-      <p class="project-name">Cara</p>
+      <p class="project-name">
+        <img class="brand-mark" src="assets/cara-citrus-1024.png" width="1024" height="1024" alt="">
+        Cara
+      </p>
       <nav aria-label="Project">
         <ul>
           <li><a href="#get-cara">Get Cara</a></li>
@@ -197,16 +236,22 @@
     <main id="content" tabindex="-1">
       <section class="hero" aria-labelledby="intro">
         <div class="hero-copy">
-          <h1 id="intro">Nintendo 3DS emulator</h1>
+          <h1 id="intro">Nintendo&nbsp;3DS emulator</h1>
           <p class="intro">Cara is a new Fast, Accurate, Portable Emulation core for the Nintendo 3DS. We tune it for Apple hardware first and keep it portable, with the same focus on accuracy across platforms.</p>
           <ul class="actions">
             <li><a class="release-link" href="#get-cara">Downloads</a></li>
             <li><a href="https://github.com/dmikey/cara">View source</a></li>
           </ul>
         </div>
-        <div class="hero-art">
-          <img class="icon" src="assets/cara-citrus-1024.png" width="1024" height="1024" alt="">
-        </div>
+        <figure class="hero-art">
+          <div class="demo-screen">
+            <img src="assets/cara-survey-scene.webp" width="960" height="576" alt="Illustrated island observatory and survey craft at sunset">
+          </div>
+          <div class="demo-screen demo-map">
+            <img src="assets/cara-survey-map.webp" width="768" height="576" alt="Topographic survey map marking the route to the observatory">
+          </div>
+          <figcaption>Simulated dual-screen demo</figcaption>
+        </figure>
       </section>
 
       <section class="downloads" id="get-cara" aria-labelledby="downloads-heading">
