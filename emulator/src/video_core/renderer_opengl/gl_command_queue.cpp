@@ -44,7 +44,7 @@ std::int64_t ProfileNowNs() {
      std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 unsigned TagIndex(Backlog::Tag tag) {
- return static_cast<unsigned>(tag.source) * RpcApiCount + static_cast<unsigned>(tag.api);
+ return ((static_cast<unsigned>(tag.source) * static_cast<unsigned>(RpcApiCount) + static_cast<unsigned>(tag.api)) << 16) | tag.entry;
 }
 void RunProfiled(Backlog::Tag command, std::function<void()>& job) {
  const auto pending_at_entry = wait_start_ns.load(std::memory_order_acquire);
@@ -56,7 +56,7 @@ void RunProfiled(Backlog::Tag command, std::function<void()>& job) {
  const auto request = wait_tag.load(std::memory_order_relaxed);
  const std::uint64_t key = (std::uint64_t(request) << 32) | TagIndex(command);
  auto& row = worker_backlog[key];
- row.request = {static_cast<Backlog::Source>(request / RpcApiCount), static_cast<RpcApi>(request % RpcApiCount)};
+ row.request = {static_cast<Backlog::Source>((request >> 16) / RpcApiCount), static_cast<RpcApi>((request >> 16) % RpcApiCount), Backlog::NoEntry};
  row.command = command;
  ++row.calls;
  row.ns += end - std::max(wait, begin);
@@ -156,8 +156,12 @@ void Record(std::function<void()> job,std::size_t bytes=0,RpcApi api=RpcApi::Int
    job=[holder]{holder->job();};
  }
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
- if (Common::FrameTiming::counters.enabled && Backlog::Enabled())
-  pending_tags[pending.size()] = {Backlog::source, api};
+ if (Common::FrameTiming::counters.enabled && Backlog::Enabled()) {
+  const bool draw = api == RpcApi::api_glDrawArrays || api == RpcApi::api_glDrawElements ||
+                    api == RpcApi::api_glDrawArraysInstanced || api == RpcApi::api_glDrawElementsInstanced ||
+                    api == RpcApi::api_glDrawRangeElementsBaseVertex;
+  pending_tags[pending.size()] = {Backlog::source, api, draw ? Backlog::vertex_entry : Backlog::NoEntry};
+ }
 #endif
  pending.emplace_back(std::move(job));pending_bytes+=footprint;
  if(pending.size()==1)pending_slots->MarkQueued();

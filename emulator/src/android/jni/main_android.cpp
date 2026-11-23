@@ -471,12 +471,13 @@ void BootGame(const std::string& path) {
                                 if (Backlog::Enabled()) {
                                     for (const auto& row : Backlog::Take()) {
                                         __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
-                                            "backlog end=%u requester=%s query=%s source=%s command=%s calls=%llu ns=%llu",
+                                            "backlog end=%u requester=%s query=%s source=%s command=%s vs_entry=%d calls=%llu ns=%llu",
                                             static_cast<unsigned>(frame),
                                             Backlog::SourceNames[static_cast<unsigned>(row.request.source)],
                                             RpcApiName(row.request.api),
                                             Backlog::SourceNames[static_cast<unsigned>(row.command.source)],
                                             RpcApiName(row.command.api),
+                                            row.command.entry == Backlog::NoEntry ? -1 : int(row.command.entry),
                                             static_cast<unsigned long long>(row.calls),
                                             static_cast<unsigned long long>(row.ns));
                                     }

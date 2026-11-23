@@ -706,7 +706,9 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if(SoftwareBatching::Active()) {software_batch_planner.Hardware();FlushSoftwareBatch(SoftwareBatching::Reason::HardwareDraw,false);}
     const auto& regs = Pica::g_state.regs;
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
-    CommandQueue::Backlog::Scope scope(regs.lighting.disable ? CommandQueue::Backlog::Source::UnlitPica : CommandQueue::Backlog::Source::LitPica);
+    using CommandQueue::Backlog::Source;
+    CommandQueue::Backlog::Scope source_scope(regs.lighting.disable ? Source::UnlitPica : Source::LitPica,
+                                               static_cast<std::uint16_t>(regs.vs.main_offset));
 #endif
     const auto reject=[&](const char* reason) {
 #ifdef CARA_IOS_GLES
@@ -3481,6 +3483,9 @@ void RasterizerOpenGL::FlushAndInvalidateRegion(PAddr addr, u32 size) {
 }
 
 bool RasterizerOpenGL::AccelerateDisplayTransfer(const GPU::Regs::DisplayTransferConfig& config) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::DisplayTransfer);
+#endif
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     DrawBatchTrace::Fence();
 #endif
@@ -3557,6 +3562,9 @@ bool RasterizerOpenGL::AccelerateDisplayTransfer(const GPU::Regs::DisplayTransfe
 }
 
 bool RasterizerOpenGL::AccelerateTextureCopy(const GPU::Regs::DisplayTransferConfig& config) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::TextureCopy);
+#endif
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     DrawBatchTrace::Fence();
 #endif
@@ -3655,6 +3663,9 @@ bool RasterizerOpenGL::AccelerateTextureCopy(const GPU::Regs::DisplayTransferCon
 }
 
 bool RasterizerOpenGL::AccelerateFill(const GPU::Regs::MemoryFillConfig& config) {
+#if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
+    CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::MemoryFill);
+#endif
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     DrawBatchTrace::Fence();
 #endif
