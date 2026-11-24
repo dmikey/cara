@@ -117,17 +117,9 @@ public class RunningSettingDialog extends DialogFragment {
 
     public class SettingsItem {
         // setting type
-        public static final int SETTING_CORE_TICKS_HACK = 0;
-        public static final int SETTING_SKIP_SLOW_DRAW = 1;
-        public static final int SETTING_SKIP_CPU_WRITE = 2;
-        public static final int SETTING_SKIP_TEXTURE_COPY = 3;
         public static final int SETTING_FORCE_TEXTURE_FILTER = 4;
-        public static final int SETTING_HW_GS_MODE = 5;
-        public static final int SETTING_SHADOW_RENDERING = 6;
-        public static final int SETTING_ASYNC_SHADER_COMPILE = 7;
         public static final int SETTING_SCALE_FACTOR = 8;
         public static final int SETTING_SCREEN_LAYOUT = 9;
-        public static final int SETTING_ACCURATE_MUL = 10;
         public static final int SETTING_CUSTOM_LAYOUT = 11;
         public static final int SETTING_FRAME_LIMIT = 12;
         public static final int SETTING_ACCURACY_MODE = 13;
@@ -374,6 +366,7 @@ public class RunningSettingDialog extends DialogFragment {
         extends SettingViewHolder implements CompoundButton.OnCheckedChangeListener {
         SettingsItem mItem;
         private TextView mTextSettingName;
+        private TextView mDescription;
         private CompoundButton mCheckbox;
 
         public CheckBoxSettingViewHolder(View itemView) {
@@ -383,6 +376,7 @@ public class RunningSettingDialog extends DialogFragment {
         @Override
         protected void findViews(View root) {
             mTextSettingName = root.findViewById(R.id.text_setting_name);
+            mDescription = root.findViewById(R.id.text_setting_description);
             mCheckbox = root.findViewById(R.id.checkbox);
             mCheckbox.setOnCheckedChangeListener(this);
         }
@@ -391,6 +385,11 @@ public class RunningSettingDialog extends DialogFragment {
         public void bind(SettingsItem item) {
             mItem = item;
             mTextSettingName.setText(item.getName());
+            boolean showModeHelp = item.getSetting() == SettingsItem.SETTING_ACCURACY_MODE;
+            mDescription.setVisibility(showModeHelp ? View.VISIBLE : View.GONE);
+            if (showModeHelp) {
+                mDescription.setText(R.string.setting_accuracy_mode_desc);
+            }
             mCheckbox.setOnCheckedChangeListener(null);
             mCheckbox.setChecked(mItem.getValue() > 0);
             mCheckbox.setOnCheckedChangeListener(this);
@@ -472,18 +471,6 @@ public class RunningSettingDialog extends DialogFragment {
                 RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
                 radio3.setVisibility(View.VISIBLE);
                 radio3.setText("4×");
-            } else if (item.getSetting() == SettingsItem.SETTING_ACCURATE_MUL) {
-                RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
-                radio0.setText(R.string.accurate_mul_off);
-
-                RadioButton radio1 = mRadioGroup.findViewById(R.id.radio1);
-                radio1.setText(R.string.accurate_mul_fast);
-
-                RadioButton radio2 = mRadioGroup.findViewById(R.id.radio2);
-                radio2.setText(R.string.accurate_mul_accurate);
-
-                RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
-                radio3.setVisibility(View.GONE);
             } else if (item.getSetting() == SettingsItem.SETTING_FORCE_TEXTURE_FILTER) {
                 RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
                 radio0.setText(R.string.setting_filter_default);
@@ -493,18 +480,6 @@ public class RunningSettingDialog extends DialogFragment {
 
                 RadioButton radio2 = mRadioGroup.findViewById(R.id.radio2);
                 radio2.setText(R.string.setting_filter_bilinear);
-
-                RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
-                radio3.setVisibility(View.GONE);
-            } else if (item.getSetting() == SettingsItem.SETTING_HW_GS_MODE) {
-                RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
-                radio0.setText(R.string.auto);
-
-                RadioButton radio1 = mRadioGroup.findViewById(R.id.radio1);
-                radio1.setText(R.string.enable);
-
-                RadioButton radio2 = mRadioGroup.findViewById(R.id.radio2);
-                radio2.setText(R.string.off);
 
                 RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
                 radio3.setVisibility(View.GONE);
@@ -731,27 +706,6 @@ public class RunningSettingDialog extends DialogFragment {
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SHOW_ADVANCED,
                     R.string.setting_header_advanced, SettingsItem.TYPE_TEXT, 0));
             mAdvancedSettings = new ArrayList<>();
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_CORE_TICKS_HACK,
-                    R.string.setting_core_ticks_hack,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_CORE_TICKS_HACK]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_SLOW_DRAW,
-                    R.string.setting_skip_slow_draw,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_SLOW_DRAW]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_CPU_WRITE,
-                    R.string.setting_skip_cpu_write,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_CPU_WRITE]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_TEXTURE_COPY,
-                    R.string.setting_skip_texture_copy,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_TEXTURE_COPY]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_HW_GS_MODE,
-                    R.string.setting_hw_gs_mode,
-                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_HW_GS_MODE]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SHADOW_RENDERING,
-                    R.string.setting_shadow_rendering,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SHADOW_RENDERING]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURATE_MUL,
-                    R.string.running_accurate_mul, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[SettingsItem.SETTING_ACCURATE_MUL]));
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP,
                     R.string.setting_adaptive_frame_skip,
                     SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP]));

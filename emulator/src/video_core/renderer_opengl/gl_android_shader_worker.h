@@ -72,7 +72,7 @@ public:
         OGLProgram program;
     };
 
-    Result Request(u64 key, const std::string& vertex, const std::string& fragment) {
+    Result Request(u64 key, const std::string& vertex, const std::string& fragment, bool reuse_stages) {
         std::lock_guard lock(mutex);
         if (!thread.joinable() || unavailable) {
             return {};
@@ -98,7 +98,7 @@ public:
             }
         }
         results.emplace(key, Result{Status::Pending, {}});
-        jobs.push_back({key, vertex, fragment});
+        jobs.push_back({key, vertex, fragment, reuse_stages});
         wake.notify_one();
         return {Status::Pending, {}};
     }
@@ -108,6 +108,7 @@ private:
         u64 key;
         std::string vertex;
         std::string fragment;
+        bool reuse_stages;
     };
     static constexpr std::size_t MaxQueued = 8;
     static constexpr std::size_t MaxTracked = 64;
@@ -121,7 +122,7 @@ private:
             return;
         }
         const char* reuse = std::getenv("CARA_ANDROID_SHADER_STAGE_REUSE");
-        const bool reuse_stages = reuse && std::strcmp(reuse, "1") == 0;
+        const bool force_stage_reuse = reuse && std::strcmp(reuse, "1") == 0;
         std::unordered_map<std::string, OGLShader> vertices, fragments;
         const auto get_stage = [](auto& stages, const std::string& source, GLenum type) {
             auto found = stages.find(source);
@@ -147,7 +148,7 @@ private:
                 jobs.pop_front();
             }
             OGLProgram program;
-            if (reuse_stages) {
+            if (job.reuse_stages || force_stage_reuse) {
                 const auto vertex = get_stage(vertices, job.vertex, GL_VERTEX_SHADER);
                 const auto fragment = get_stage(fragments, job.fragment, GL_FRAGMENT_SHADER);
                 if (vertex && fragment)

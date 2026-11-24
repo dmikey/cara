@@ -225,11 +225,14 @@ draws use their existing synchronous route. If a worker context cannot be
 created or the worker declines a build, the regular path can link inline.
 Completed programs enter the same cache as synchronous builds.
 
-The diagnostic is controlled by Android’s
-`atlas_async_programmable_shaders` debug key and remains off by default.
-Android provides the EGL context, while selection is based on the program
-and draw requirements. The separate quaternion-elision probe uses the
-same GLES fragment dependency check across Atlas hosts.
+The benchmark APK selected the worker with an internal debug key.
+The Android Atlas renderer now selects it automatically in Performance
+Mode, including when the mode changes in-game. Accuracy Mode links new
+regular programs synchronously. The worker reuses compiled stages in
+Performance Mode, as in the benchmark. Android provides the EGL context.
+Program eligibility depends on the shader pipeline and whether the
+software vertex route can draw safely. The separate quaternion-elision
+probe uses the same GLES fragment dependency check across Atlas hosts.
 
 The same Atlas preview APK at `2bcc5b8` booted Bravely Second from the
 title screen on the stock Slide at JIT, 1×, and CLK 100%. The first
@@ -311,3 +314,21 @@ The worst emulated refresh was 305.08 ms in save selection, with
 was 25.13 ms, with a 166.55 ms startup maximum. Warm Black Bane
 returned 30 FPS at 100% speed and measured 25.10 ms p99 and 25.12 ms
 worst. All 67 saved binaries restored. [Retest build](https://github.com/dmikey/cara/actions/runs/45422534508)
+
+
+To reproduce the timing comparison, start from the same Bravely Second
+prologue save on the RG Slide and boot via the title screen. Use JIT and
+Atlas GLES at 1×, fix the guest clock at 100%, and turn adaptive frame
+skip off. Use an empty app pipeline archive for each cold run and retain
+the same archive for its warm run. Record renderer refresh timing and the
+GL shader census with thread IDs. Compare present intervals from the
+same game layer. Follow Continue, the first dialogue, Radiant Blast and
+Black Bane. The app cache procedure does not control driver-private
+cache state.
+
+The original post-Continue trace attributed 3,043.79 ms to six
+`glLinkProgram` and status intervals. Four of those pairs shared the
+same packed vertex source and consumed its quaternion in the fragment
+stage. The shader generators completed in tens of microseconds and
+first draws took 64–121 µs to submit. These observations distinguish
+driver linking from shader generation and draw submission.

@@ -878,16 +878,13 @@ public:
     }
 
     bool AsyncProgrammableEnabled() const {
-        static const bool enabled = [] {
-            const char* value = std::getenv("CARA_GLES_ASYNC_PROGRAMMABLE_SHADERS");
-            return value && std::strcmp(value, "1") == 0;
-        }();
-        return enabled && !Settings::values.skip_slow_draw && !separable &&
+        return Settings::values.gles_async_programmable_shaders &&
+               !Settings::values.skip_slow_draw && !separable &&
                NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,
                                                        native_geometry_enabled);
     }
 
-    AndroidShaderWorker::Status TryBuildSharedProgram(const IOSStagePair& pair) {
+    AndroidShaderWorker::Status TryBuildSharedProgram(const IOSStagePair& pair, bool reuse_stages) {
         if (!android_shader_worker) {
             const auto create_worker = [] { return std::make_unique<AndroidShaderWorker>(); };
 #ifdef CARA_GL_CONTEXT_DISPATCH
@@ -903,7 +900,7 @@ public:
         }
         const auto& vs = current_shaders.vs->GetSource();
         const auto& fs = current_shaders.fs->GetSource();
-        auto result = android_shader_worker->Request(pair.key, vs, fs);
+        auto result = android_shader_worker->Request(pair.key, vs, fs, reuse_stages);
         if (result.status == AndroidShaderWorker::Status::Ready) {
             *pair.program = std::move(result.program);
             BindIOSProgram(*pair.program);
@@ -923,7 +920,7 @@ public:
         });
         auto& cached_program = *pair.program;
         if (!cached_program.handle &&
-            TryBuildSharedProgram(pair) != AndroidShaderWorker::Status::Ready)
+            TryBuildSharedProgram(pair, false) != AndroidShaderWorker::Status::Ready)
             return false;
         state.draw.shader_program = cached_program.handle;
         state.draw.program_pipeline = 0;
@@ -944,7 +941,7 @@ public:
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
         if (!p.handle && !failed_ios_programs.count(key) && allow_software_vertices &&
             !native_dispatch_selected && AsyncProgrammableEnabled() &&
-            TryBuildSharedProgram(pair) == AndroidShaderWorker::Status::Pending) {
+            TryBuildSharedProgram(pair, true) == AndroidShaderWorker::Status::Pending) {
             // The caller retries the same PICA draw with CPU-transformed vertices.
             // No draw has happened, and the fragment shader and targets stay identical.
             state.draw.shader_program = 0;

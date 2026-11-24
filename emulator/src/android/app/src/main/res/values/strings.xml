@@ -185,7 +185,7 @@
     <string name="frame_limit_enable">Enable Speed Limit</string>
     <string name="frame_limit_enable_description">When enabled, emulation speed will be limited to a specified percentage of normal speed.</string>
     <string name="setting_accuracy_mode">Accuracy mode</string>
-    <string name="setting_accuracy_mode_desc">Locks game speed and guest CPU clock at 100%. Turn off for Performance mode. GPU timing follows your choice when you reopen the game.</string>
+    <string name="setting_accuracy_mode_desc">Performance Mode is the default and builds GLES shaders in the background. Accuracy Mode fixes speed and the guest clock at 100%. Reopen the game to apply its GPU timing policy.</string>
     <string name="setting_limit_speed">Limit game speed</string>
     <string name="frame_limit_slider">Maximum speed</string>
     <string name="frame_limit_slider_description">With the default of 100% emulation will be limited to normal speed. Values higher or lower will increase or decrease the speed limit.</string>

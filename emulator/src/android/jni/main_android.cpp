@@ -179,6 +179,7 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
     // Frame Limit
     Config::Set(Config::FRAME_LIMIT, std::clamp(settings[i++], 50, 200));
     Config::Set(Config::ACCURACY_MODE, settings[i++] != 0);
+    Settings::values.gles_async_programmable_shaders = ReadPlayMode() == Cara::PlayMode::Performance;
     Config::Set(Config::USE_FRAME_LIMIT, settings[i++] != 0);
     Config::Set(Config::ADAPTIVE_FRAME_SKIP, settings[i++] != 0);
     Config::Set(Config::FIXED_GUEST_CLOCK, settings[i++] != 0);
@@ -225,7 +226,7 @@ void BootGame(const std::string& path) {
     select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
-    select_probe("atlas_async_programmable_shaders", "CARA_GLES_ASYNC_PROGRAMMABLE_SHADERS");
+    Settings::values.gles_async_programmable_shaders = ReadPlayMode() == Cara::PlayMode::Performance;
     select_probe("atlas_extended_program_cache", "CARA_MALI_EXTENDED_PROGRAM_CACHE");
     const Config::ConfigInfo<bool> render_phase_trace{{"Debug", "trace_render_phases"}, false};
     const bool trace_render_phases = Config::Get(render_phase_trace);
