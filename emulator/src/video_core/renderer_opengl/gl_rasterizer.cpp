@@ -1954,6 +1954,10 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         sample.interrupts = counters.pica_batch_irqs;
         sample.lut_uploads = counters.lut_texture_uploads;
         sample.attachments = DrawBatchTrace::attachments;
+        const auto& framebuffer = Pica::g_state.regs.framebuffer.framebuffer;
+        sample.color_address = framebuffer.GetColorBufferPhysicalAddress();
+        sample.depth_address = framebuffer.GetDepthBufferPhysicalAddress();
+        sample.lit = !Pica::g_state.regs.lighting.disable;
         sample.shader = state.draw.shader_program;
         sample.pipeline = state.draw.program_pipeline;
         sample.route = ios_lit_pair_vertex_reuse ? 6 : ios_feedback_vertex_reuse ? 5 :
@@ -3740,6 +3744,15 @@ bool RasterizerOpenGL::AccelerateDisplayTransfer(const GPU::Regs::DisplayTransfe
 #endif
 
     FlushSoftwareBatch(SoftwareBatching::Reason::Transfer);
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    if (DrawBatchTrace::Enabled() && VideoCore::GetCurrentFrame() % 120 == 0) {
+        __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                            "batch_transfer frame=%u src=%08x dst=%08x width=%u height=%u",
+                            VideoCore::GetCurrentFrame(), config.GetPhysicalInputAddress(),
+                            config.GetPhysicalOutputAddress(), config.output_width.Value(),
+                            config.output_height.Value());
+    }
+#endif
     SurfaceParams src_params;
     src_params.addr = config.GetPhysicalInputAddress();
     src_params.width = config.output_width;

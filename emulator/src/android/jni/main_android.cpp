@@ -246,6 +246,7 @@ void BootGame(const std::string& path) {
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
     select_probe("adreno_separable_programs", "CARA_ADRENO_SEPARABLE_PROGRAMS");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
+    select_probe("atlas_quaternion_slice", "CARA_GPU_QUATERNION_SLICE");
     Settings::values.gles_async_programmable_shaders = ReadPlayMode() == Cara::PlayMode::Performance;
     select_probe("atlas_extended_program_cache", "CARA_MALI_EXTENDED_PROGRAM_CACHE");
     const Config::ConfigInfo<bool> render_phase_trace{{"Debug", "trace_render_phases"}, false};
