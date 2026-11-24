@@ -150,8 +150,6 @@
 
     <string name="setting_use_game_config">Включить профили настроек</string>
     <string name="setting_use_game_config_desc">Индивидуальные игровые настройки будут сохраняться в папку: cara-emu/load/configs/.</string>
-    <string name="setting_is_new_3ds">Режим новой 3DS</string>
-    <string name="setting_is_new_3ds_desc">Новая модель 3DS имеет отличия памяти и процессора и часть игр запускается только на ней.</string>
     <string name="setting_use_virtual_sd">Использовать виртуальную SD-карту</string>
     <string name="setting_enable_cpu_jit">Включить CPU JIT</string>
     <string name="setting_region_value">Регион эмуляции</string>

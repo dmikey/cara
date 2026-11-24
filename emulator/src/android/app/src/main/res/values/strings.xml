@@ -160,8 +160,6 @@
 
     <string name="setting_use_game_config">Enable Per-Game Settings</string>
     <string name="setting_use_game_config_desc">Game independent settings will be saved in directory: cara-emu/load/configs/.</string>
-    <string name="setting_is_new_3ds">New 3DS Mode</string>
-    <string name="setting_is_new_3ds_desc">The New 3DS has different memory and processor, and some games can only start on the New 3DS.</string>
     <string name="setting_use_virtual_sd">Use Virtual SD</string>
     <string name="setting_enable_cpu_jit">Dynarmic JIT</string>
     <string name="setting_enable_cpu_jit_desc">Turn off to use FastInterp. Reopen the game after changing this setting.</string>

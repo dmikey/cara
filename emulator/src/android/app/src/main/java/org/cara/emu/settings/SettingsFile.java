@@ -24,7 +24,6 @@ import org.cara.emu.utils.CaraDirectory;
 public final class SettingsFile {
     // Core
     public static final String KEY_USE_CPU_JIT = "use_cpu_jit";
-    public static final String KEY_IS_NEW_3DS = "is_new_3ds";
     public static final String KEY_USE_GAME_CONFIG = "use_game_config";
     public static final String KEY_SYSTEM_REGION = "region_value";
     public static final String KEY_SYSTEM_LANGUAGE = "language";

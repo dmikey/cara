@@ -182,7 +182,6 @@ public final class SettingsFragment extends Fragment {
         // core
         sl.add(new HeaderSetting(null, null, R.string.setting_header_core, 0));
         SettingSection coreSection = mSettings.getSection(Settings.SECTION_INI_CORE);
-        Setting isNew3DS = coreSection.getSetting(SettingsFile.KEY_IS_NEW_3DS);
         Setting systemRegion = coreSection.getSetting(SettingsFile.KEY_SYSTEM_REGION);
         Setting language = coreSection.getSetting(SettingsFile.KEY_SYSTEM_LANGUAGE);
 
@@ -191,8 +190,6 @@ public final class SettingsFragment extends Fragment {
             sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_GAME_CONFIG, Settings.SECTION_INI_CORE,
                     R.string.setting_use_game_config, R.string.setting_use_game_config_desc, false, useGameConfig));
         }
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_IS_NEW_3DS, Settings.SECTION_INI_CORE,
-                R.string.setting_is_new_3ds, R.string.setting_is_new_3ds_desc, false, isNew3DS));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_SYSTEM_REGION, Settings.SECTION_INI_CORE,
                 R.string.setting_region_value, 0,
                 R.array.systemRegionEntries, R.array.systemRegionValues, -1,
