@@ -408,7 +408,7 @@ void CheckDeletedTextureBindings() {
 }
 #endif
 
-Pixels Draw() {
+GLuint LinkDrawProgram() {
     const GLuint vs = Compile(GL_VERTEX_SHADER, R"(#version 300 es
 const vec2 positions[3] = vec2[3](vec2(-1,-1),vec2(3,-1),vec2(-1,3));
 uniform float z;
@@ -425,6 +425,16 @@ void main(){outputColor=color;})");
     GLint linked = GL_FALSE;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);
     Check(linked == GL_TRUE, "probe program link");
+    glDetachShader(program, vs);
+    glDetachShader(program, fs);
+    glDeleteShader(fs);
+    glDeleteShader(vs);
+    return program;
+}
+
+Pixels Draw(GLuint program = 0) {
+    if (program == 0)
+        program = LinkDrawProgram();
     glUseProgram(program);
     const GLint color = glGetUniformLocation(program, "color");
     Check(color >= 0, "color uniform");
@@ -454,8 +464,6 @@ void main(){outputColor=color;})");
     glDisable(GL_DEPTH_TEST);
     glUseProgram(0);
     glDeleteProgram(program);
-    glDeleteShader(fs);
-    glDeleteShader(vs);
     return pixels;
 }
 
@@ -662,8 +670,9 @@ void Run(EGLDisplay display, EGLConfig config) {
 #endif
         Queue::Drain();
         std::puts("queued instanced draws passed");
-        std::async(std::launch::async, [&] {
+        [[maybe_unused]] const auto sibling_program = std::async(std::launch::async, [&] {
             helper.Bind();
+            GLuint program = 0;
 #ifdef CARA_GL_CONTEXT_DISPATCH
             glWaitSync(published, 0, GL_TIMEOUT_IGNORED);
             glDeleteSync(published);
@@ -688,9 +697,17 @@ void Run(EGLDisplay display, EGLConfig config) {
             raw_delete(shader);
             Check(raw_error() == GL_NO_ERROR, "native sibling context control");
             std::puts("native sibling control passed");
+#ifdef CARA_GL_CONTEXT_DISPATCH
+            program = LinkDrawProgram();
+            glFinish();
+#endif
             helper.Release();
+            return program;
         }).get();
 #ifdef CARA_GL_CONTEXT_DISPATCH
+        Check(sibling_program != 0 && Draw(sibling_program) == direct,
+              "shared program publication changed color or depth results");
+        std::puts("sibling-linked program preserved all draw pixels and depth rejection");
         Queue::QueueConsumedPresentFence(published, true);
         Queue::Drain();
         Check(worker.Call([&] { return !glIsSync(published); }) && glGetError() == GL_NO_ERROR, "present fence was not retired");
