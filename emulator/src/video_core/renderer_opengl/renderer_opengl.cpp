@@ -9,8 +9,9 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
-#include <string_view>
+#include <limits>
 #include <memory>
+#include <string_view>
 #include <glad/glad.h>
 #ifdef CARA_GL_CONTEXT_DISPATCH
 #include "video_core/renderer_opengl/gl_command_queue.h"
@@ -69,6 +70,10 @@ struct GLESRefreshTimer {
             active->pending = true;
             active = nullptr;
         }
+        if (std::none_of(samples.begin(), samples.end(), [](const Sample& sample) {
+                return sample.pending;
+            }))
+            return;
         GLint disjoint = GL_FALSE;
         glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint);
         for (auto& sample : samples) {
@@ -82,9 +87,17 @@ struct GLESRefreshTimer {
             if (!sample.disjoint) {
                 GLuint64 elapsed = 0;
                 glGetQueryObjectui64vEXT(sample.name, GL_QUERY_RESULT_EXT, &elapsed);
-                __android_log_print(ANDROID_LOG_INFO, "CaraGPU", "guest_interval frame=%u ns=%llu",
-                                    static_cast<unsigned>(sample.frame),
-                                    static_cast<unsigned long long>(elapsed));
+                // Some drivers return a wrapped negative interval with the disjoint flag clear.
+                if (elapsed <= static_cast<GLuint64>(std::numeric_limits<GLint64>::max())) {
+                    __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
+                                        "guest_interval frame=%u ns=%llu",
+                                        static_cast<unsigned>(sample.frame),
+                                        static_cast<unsigned long long>(elapsed));
+                } else {
+                    __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
+                                        "guest_interval_invalid frame=%u",
+                                        static_cast<unsigned>(sample.frame));
+                }
             }
             sample.pending = false;
         }

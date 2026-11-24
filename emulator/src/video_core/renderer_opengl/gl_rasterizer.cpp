@@ -393,12 +393,19 @@ RasterizerOpenGL::RasterizerOpenGL()
         LOG_INFO(Render_OpenGL, "GLSL ES Atlas uses linked vertex/fragment programs by default");
     use_separable_shader = false;
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
-    const char* separable_probe = std::getenv("CARA_MALI_SEPARABLE_PROGRAMS");
-    use_separable_shader = separable_probe && std::strcmp(separable_probe, "1") == 0 &&
-        is_mali_gpu && GLES && GLAD_GL_ES_VERSION_3_2 && glGenProgramPipelines &&
-        glBindProgramPipeline && glUseProgramStages && glProgramUniform4iv;
+    const char* mali_probe = std::getenv("CARA_MALI_SEPARABLE_PROGRAMS");
+    const char* adreno_probe = std::getenv("CARA_ADRENO_SEPARABLE_PROGRAMS");
+    bool requested = is_mali_gpu && mali_probe && std::strcmp(mali_probe, "1") == 0;
+    if (!requested && adreno_probe && std::strcmp(adreno_probe, "1") == 0) {
+        const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        requested = renderer && std::strstr(renderer, "Adreno");
+    }
+    use_separable_shader = requested && GLES && GLAD_GL_ES_VERSION_3_2 &&
+        glGenProgramPipelines && glBindProgramPipeline && glUseProgramStages && glProgramUniform4iv;
     if (use_separable_shader)
-        LOG_INFO(Render_OpenGL, "Mali GLSL ES 3.20 separable program probe enabled");
+        LOG_INFO(Render_OpenGL, "GLSL ES 3.20 separable program probe enabled");
+    else if (requested)
+        LOG_WARNING(Render_OpenGL, "GLSL ES 3.20 separable program probe unavailable");
 #endif
 #endif
     shader_program_manager = std::make_unique<ShaderProgramManager>(use_separable_shader);

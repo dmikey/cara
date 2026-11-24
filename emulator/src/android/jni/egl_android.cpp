@@ -36,8 +36,12 @@ static constexpr std::array<EGLint, 4> egl_context_attribs{EGL_CONTEXT_CLIENT_VE
 
 static void SwapWithTiming(EGLDisplay display, EGLSurface surface, const char* route) {
     static const bool enabled = [] {
-        const char* value = std::getenv("CARA_TRACE_GLES_GPU_TIMING");
-        return value && std::strcmp(value, "1") == 0;
+        for (const char* flag : {"CARA_TRACE_GLES_GPU_TIMING", "CARA_TRACE_GLES_SWAP_TIMING"}) {
+            const char* value = std::getenv(flag);
+            if (value && std::strcmp(value, "1") == 0)
+                return true;
+        }
+        return false;
     }();
     if (!enabled) {
         eglSwapBuffers(display, surface);

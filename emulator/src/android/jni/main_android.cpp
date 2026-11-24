@@ -223,6 +223,7 @@ void BootGame(const std::string& path) {
     select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");
     select_probe("adreno_replace_vertex_images", "CARA_ADRENO_REPLACE_VERTEX_IMAGES");
     select_probe("trace_gles_gpu_timing", "CARA_TRACE_GLES_GPU_TIMING");
+    select_probe("trace_gles_swap_timing", "CARA_TRACE_GLES_SWAP_TIMING");
     select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
     select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");
     select_probe("checked_remap_packet", "CARA_CHECKED_REMAP_PACKET");
@@ -232,6 +233,7 @@ void BootGame(const std::string& path) {
     select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
     select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
+    select_probe("adreno_separable_programs", "CARA_ADRENO_SEPARABLE_PROGRAMS");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
     Settings::values.gles_async_programmable_shaders = ReadPlayMode() == Cara::PlayMode::Performance;
     select_probe("atlas_extended_program_cache", "CARA_MALI_EXTENDED_PROGRAM_CACHE");
