@@ -27,7 +27,7 @@ example, the first candidate on November 23, 2026 is `Cara.RC.2026112301`.
 
 Dispatch **Release packages** on **main** with the **RC version** input
 set to this tag. Leave both the nightly switch and the existing release
-tag blank. Each run pins one source commit for all three platforms and
+tag blank. Each run pins one source commit for all five platforms and
 publishes a numbered prerelease after verification. The candidate contains:
 
 - A Developer ID-signed and notarized Apple Silicon Mac ZIP.
@@ -36,7 +36,13 @@ publishes a numbered prerelease after verification. The candidate contains:
 - An ARM64 Android APK and a Play Console AAB signed with the configured
   upload key. Users with a Play installation should update through the Play
   testing track because Play may sign installs with a different key.
+- A Linux x86-64 SDL/OpenGL archive for Ubuntu 24.04 with FastInterp.
+- An unsigned Windows x86-64 SDL/OpenGL ZIP with FastInterp.
 - Build receipts and `SHA256SUMS.txt`.
+
+Choose **Build all candidate packages as Actions artifacts** to verify the
+five builds from a branch without release signing or publication. Get the
+platform packages from that run’s **Artifacts** section.
 
 An existing tag or release blocks reuse of the version. If the Mac or Android
 signing configuration is unavailable, the build artifacts remain in Actions
@@ -44,10 +50,9 @@ and no numbered release is published. Stable releases and scheduled nightlies
 retain their existing tags and package policies.
 
 The landing page links to the newest published numbered candidate with its
-Mac ZIP, unsigned IPA, and checksums. It shows the Android candidate APK only
-when that release includes the signed APK and its receipt. The initial
-numbered candidate and the older experimental Android download serve as
-explicit fallbacks when the public release listing is unavailable.
+complete platform set and checksums. The first numbered candidate and the
+older experimental Android download remain fallbacks when the public release
+listing is unavailable.
 
 ## Signing environment
 
