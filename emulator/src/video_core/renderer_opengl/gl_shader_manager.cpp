@@ -322,7 +322,8 @@ public:
     }
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     unsigned ios_indexed_inputs, u16 selected_input_mask) {
+                                     unsigned ios_indexed_inputs, u16 selected_input_mask,
+                                     bool omit_triangle_quaternion) {
         bool result = false;
         const bool native_geometry = NativeQuaternionGeometry::Selected(native_geometry_enabled,ios_indexed_inputs) &&
             regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No;
@@ -341,6 +342,10 @@ public:
         key_hash ^= Common::ComputeHash64(&ios_indexed_inputs, sizeof(ios_indexed_inputs));
         // Output semantics are part of a fused ES vertex program, not a separate GS.
         key_hash ^= Common::ComputeHash64(&ios_output, sizeof(ios_output));
+        if (omit_triangle_quaternion) {
+            constexpr u32 option = 0x4e515531;
+            key_hash ^= Common::ComputeHash64(&option, sizeof(option));
+        }
         if(native_geometry) {const u32 option=NativeQuaternionGeometry::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
         if(native_dispatch) {const u32 option=0x4e494431;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
         if(native_suffix_sharing) {const u32 option=ShaderSuffixSharing::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
@@ -350,7 +355,8 @@ public:
         if (iter_ref == shaders_ref.end()) {
             std::string vs_code = GenerateVertexShader(setup, key, separable
 #ifdef CARA_IOS_GLES
-                , &ios_output, ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch, native_suffix_sharing
+                , &ios_output, ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch,
+                  native_suffix_sharing, nullptr, omit_triangle_quaternion
 #endif
             );
             if (vs_code.empty()) {
@@ -702,6 +708,9 @@ public:
         const char* single_dispatch = std::getenv("CARA_MALI_SINGLE_VERTEX_DISPATCH");
         if (single_dispatch && std::strcmp(single_dispatch, "1") == 0)
             identity += "\nsingle-vertex-dispatch=1";
+        const char* prune = std::getenv("CARA_GLES_PRUNE_UNUSED_QUATERNION");
+        if (prune && std::strcmp(prune, "1") == 0)
+            identity += "\nprune-unused-quaternion=1";
 #else
         identity += "\nbackend=ios-gles";
 #endif
@@ -1186,8 +1195,11 @@ ShaderProgramManager::ShaderProgramManager(bool separable)
 ShaderProgramManager::~ShaderProgramManager() = default;
 
 bool ShaderProgramManager::UseProgrammableVertexShader(const Pica::Regs& regs,
-                                                       Pica::Shader::ShaderSetup& setup, unsigned ios_indexed_inputs, u16 ios_input_mask) {
-    return impl->UseProgrammableVertexShader(regs, setup, ios_indexed_inputs, ios_input_mask);
+                                                       Pica::Shader::ShaderSetup& setup,
+                                                       unsigned ios_indexed_inputs, u16 ios_input_mask,
+                                                       bool omit_triangle_quaternion) {
+    return impl->UseProgrammableVertexShader(regs, setup, ios_indexed_inputs, ios_input_mask,
+                                             omit_triangle_quaternion);
 }
 
 void ShaderProgramManager::UseTrivialVertexShader() {

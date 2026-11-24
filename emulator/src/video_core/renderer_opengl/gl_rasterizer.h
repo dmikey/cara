@@ -411,6 +411,9 @@ private:
     bool is_mali_gpu;
 
     bool shader_dirty;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    bool fragment_uses_lighting_quaternion = true;
+#endif
 
     struct {
         UniformData data;

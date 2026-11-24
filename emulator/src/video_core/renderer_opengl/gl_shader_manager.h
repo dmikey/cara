@@ -124,7 +124,8 @@ public:
     ~ShaderProgramManager();
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     unsigned ios_indexed_inputs = false, u16 ios_input_mask = 0xffff);
+                                     unsigned ios_indexed_inputs = false, u16 ios_input_mask = 0xffff,
+                                     bool omit_triangle_quaternion = false);
 
     void UseTrivialVertexShader();
 

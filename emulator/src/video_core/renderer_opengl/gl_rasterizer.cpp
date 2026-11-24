@@ -676,14 +676,36 @@ void RasterizerOpenGL::SetupVertexArray(u8* array_ptr, GLintptr buffer_offset,
     }
 }
 
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+static bool PruneUnusedQuaternionEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_GLES_PRUNE_UNUSED_QUATERNION");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+#endif
+
 bool RasterizerOpenGL::SetupVertexShader() {
     MICROPROFILE_SCOPE(OpenGL_VS);
-    return shader_program_manager->UseProgrammableVertexShader(Pica::g_state.regs,
-                                                               Pica::g_state.vs
+    const auto& regs = Pica::g_state.regs;
 #ifdef CARA_IOS_GLES
-                                                               , ios_lit_pair_vertex_reuse ? 6u : ios_feedback_vertex_reuse ? 5u : ios_direct_vertex_reuse ? 3u : ios_indexed_vertex_inputs, ios_vertex_input_mask
+    const unsigned input_mode = ios_lit_pair_vertex_reuse ? 6 : ios_feedback_vertex_reuse ? 5 :
+                                ios_direct_vertex_reuse ? 3 : ios_indexed_vertex_inputs;
+    bool omit_triangle_quaternion = false;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    const bool prune_unused_quaternion = is_mali_gpu && PruneUnusedQuaternionEnabled();
+    if (prune_unused_quaternion && shader_dirty) {
+        fragment_uses_lighting_quaternion = FragmentUsesLightingQuaternion(regs);
+    }
+    omit_triangle_quaternion = prune_unused_quaternion && input_mode < 3 &&
+                               !fragment_uses_lighting_quaternion;
 #endif
-    );
+    return shader_program_manager->UseProgrammableVertexShader(
+        regs, Pica::g_state.vs, input_mode, ios_vertex_input_mask, omit_triangle_quaternion);
+#else
+    return shader_program_manager->UseProgrammableVertexShader(regs, Pica::g_state.vs);
+#endif
 }
 
 bool RasterizerOpenGL::SetupGeometryShader() {
@@ -3336,9 +3358,15 @@ void RasterizerOpenGL::NotifyPicaRegisterChanged(u32 id) {
         SyncCombinerColor();
         break;
 
-    // Fragment lighting switches
-    /*case PICA_REG_INDEX(lighting.disable):
-    case PICA_REG_INDEX(lighting.max_light_index):
+    // Fragment lighting can change independently of the texture combiners.
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    case PICA_REG_INDEX(lighting.disable):
+        if (is_mali_gpu && PruneUnusedQuaternionEnabled()) {
+            shader_dirty = true;
+        }
+        break;
+#endif
+    /*case PICA_REG_INDEX(lighting.max_light_index):
     case PICA_REG_INDEX(lighting.config0):
     case PICA_REG_INDEX(lighting.config1):
     case PICA_REG_INDEX(lighting.abs_lut_input):
@@ -3862,6 +3890,12 @@ void RasterizerOpenGL::SamplerInfo::SyncWithConfig(const TextureConfig& config) 
 }
 
 void RasterizerOpenGL::SetShader() {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    // A software draw can consume shader_dirty before the next accelerated draw.
+    if (is_mali_gpu && PruneUnusedQuaternionEnabled()) {
+        fragment_uses_lighting_quaternion = FragmentUsesLightingQuaternion(Pica::g_state.regs);
+    }
+#endif
     Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
                                            Common::FrameTiming::RenderBookkeepingProfileEnabled());
 #ifdef CARA_IOS_GLES
