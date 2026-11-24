@@ -1106,28 +1106,30 @@ public:
             !shader_hints.Admit(frame, stage.HintedVertexRomMatch()))
             return fallback("refresh_budget");
 
-        auto& worker = GetShaderWorker(hint_vertex_worker);
         const auto start = ShaderCensus::Clock::now();
-        auto build = worker.Request(stage.GetHash(), stage.GetSource(), {}, false);
-        using Status = AndroidShaderWorker::Status;
-        if (build.status == Status::Pending && !stage.HintedVertexQueued()) {
-            stage.MarkHintedVertexQueued();
-            if (shader_census)
-                ShaderCensus::Record("vertex_hint_queue refresh={} source={:016x} rom_match={} cpu_fallback={}",
-                                     frame + 1, stage.GetHash(), int(stage.HintedVertexRomMatch()),
-                                     int(allow_software));
+        OGLProgram ready;
+        if (allow_software) {
+            auto build = GetShaderWorker(hint_vertex_worker).Request(stage.GetHash(), stage.GetSource(), {}, false);
+            using Status = AndroidShaderWorker::Status;
+            if (build.status == Status::Pending && !stage.HintedVertexQueued()) {
+                stage.MarkHintedVertexQueued();
+                if (shader_census)
+                    ShaderCensus::Record("vertex_hint_queue refresh={} source={:016x} rom_match={} cpu_fallback=1",
+                                         frame + 1, stage.GetHash(), int(stage.HintedVertexRomMatch()));
+            }
+            if (build.status == Status::Pending || build.status == Status::Busy)
+                return fallback(build.status == Status::Pending ? "pending" : "queue_full");
+            ready = std::move(build.program);
+        } else if (stage.HintedVertexQueued()) {
+            ready = hint_vertex_worker->TakeRequiredVertexStage(stage.GetHash());
         }
-        if (allow_software && (build.status == Status::Pending || build.status == Status::Busy))
-            return fallback(build.status == Status::Pending ? "pending" : "queue_full");
 
-        if (build.status == Status::Pending)
-            build.program = worker.WaitForVertexStage(stage.GetHash());
-        const bool worker_ready = build.program.handle != 0;
-        stage.ResolveHintedVertex(std::move(build.program));
+        const bool worker_ready = ready.handle != 0;
+        stage.ResolveHintedVertex(std::move(ready));
         if (shader_census)
-            ShaderCensus::Record("vertex_hint_resolve refresh={} source={:016x} rom_match={} worker={} us={}",
+            ShaderCensus::Record("vertex_hint_resolve refresh={} source={:016x} rom_match={} worker={} required={} us={}",
                                  frame + 1, stage.GetHash(), int(stage.HintedVertexRomMatch()),
-                                 int(worker_ready), ShaderCensus::ElapsedUs(start));
+                                 int(worker_ready), int(!allow_software), ShaderCensus::ElapsedUs(start));
         if (stage.IsValid())
             RememberIOSPipeline(stage.GetHash(), stage.SeparableProgram(), stage.GetSource(), {});
         return stage.IsValid();

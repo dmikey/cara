@@ -103,8 +103,18 @@ public:
         return {Status::Pending, {}};
     }
 
-    OGLProgram WaitForVertexStage(u64 key) {
+    OGLProgram TakeRequiredVertexStage(u64 key) {
         std::unique_lock lock(mutex);
+        // The owner can build immediately if the worker hasn't claimed this
+        // request. Only a compile already in progress can delay the draw.
+        const auto queued = std::find_if(jobs.begin(), jobs.end(), [&](const Job& job) {
+            return job.key == key;
+        });
+        if (queued != jobs.end()) {
+            jobs.erase(queued);
+            results.erase(key);
+            return {};
+        }
         completed.wait(lock, [&] {
             const auto result = results.find(key);
             return unavailable || result == results.end() || result->second.status != Status::Pending;

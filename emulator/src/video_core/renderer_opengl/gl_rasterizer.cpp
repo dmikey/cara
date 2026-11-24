@@ -864,6 +864,10 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if(SoftwareBatching::CensusEnabled())software_census_after_draw=true;
     if(SoftwareBatching::Active()) {software_batch_planner.Hardware();FlushSoftwareBatch(SoftwareBatching::Reason::HardwareDraw,false);}
     const auto& regs = Pica::g_state.regs;
+    // Draw() already treats this unsupported pass as handled. Avoid building
+    // vertex shaders for a pass that will return without submitting geometry.
+    if (regs.framebuffer.IsShadowRendering() && !AllowShadow)
+        return true;
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
     using CommandQueue::Backlog::Source;
     CommandQueue::Backlog::Scope source_scope(regs.lighting.disable ? Source::UnlitPica : Source::LitPica,
