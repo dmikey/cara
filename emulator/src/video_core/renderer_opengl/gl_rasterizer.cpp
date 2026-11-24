@@ -864,6 +864,10 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
     if(SoftwareBatching::CensusEnabled())software_census_after_draw=true;
     if(SoftwareBatching::Active()) {software_batch_planner.Hardware();FlushSoftwareBatch(SoftwareBatching::Reason::HardwareDraw,false);}
     const auto& regs = Pica::g_state.regs;
+    // Draw() already treats this unsupported pass as handled. Avoid building
+    // vertex shaders for a pass that will return without submitting geometry.
+    if (regs.framebuffer.IsShadowRendering() && !AllowShadow)
+        return true;
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
     using CommandQueue::Backlog::Source;
     CommandQueue::Backlog::Scope source_scope(regs.lighting.disable ? Source::UnlitPica : Source::LitPica,
@@ -3084,6 +3088,11 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     if(native_borrow_restart) {
         if(native_borrow_attempt!=0)return false;
         native_borrow_disabled_for_draw=true;shader_dirty=true;++native_borrow_stats.baseline_restarts;continue;
+    }
+#endif
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    if (accelerate && !regs.framebuffer.IsShadowRendering()) {
+        shader_program_manager->PrepareHintedProgram(Pica::g_state.vs, u32(regs.vs.main_offset));
     }
 #endif
     // Sync the LUTs within the texture buffer

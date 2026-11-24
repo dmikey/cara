@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_metal/pica_metal_material_filter.h"
 #include "pica_metal_pipelines.h"
+#include "core/core.h"
 #include "pica_metal_binding_names.h"
 #include "simd_vertex_source.h"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
@@ -1071,6 +1072,60 @@ const PicaMetalPipelines::Entry* PicaMetalPipelines::Find(const Key& key) const 
     return match == stop ? nullptr : &*match;
 }
 
+void PicaMetalPipelines::FinishHintedVertex() {
+    const auto source = hinted_vertex->source;
+    try {
+        if (const auto function = hinted_vertex->function.get())
+            vertex_functions.try_emplace(source, function);
+    } catch (const std::exception& error) {
+        LOG_WARNING(Render_OpenGL, "PICA Metal vertex warm failed: {}", error.what());
+    }
+    hinted_vertex.reset();
+}
+
+void PicaMetalPipelines::QueueHintedVertex(const PicaPipelineInputs& p,
+                                          const Pica::Shader::ShaderSetup& setup,
+                                          unsigned entry, u64 vertex_revision,
+                                          u64 fragment_revision) {
+    if (!shader_hints.Loaded())
+        shader_hints.Load(Core::System::GetInstance().GetTitleID());
+    if (!shader_hints.Enabled() || warming || warmup_mode == WarmupReplay ||
+        warmup_mode == WarmupRecord || !device || HasSimdVertexTag(p.vertex))
+        return;
+    if (hinted_vertex && hinted_vertex->function.wait_for(std::chrono::seconds(0)) ==
+                             std::future_status::ready)
+        FinishHintedVertex();
+    if (hinted_vertex || specializer)
+        return;
+    const std::array pair{vertex_revision, fragment_revision, u64(p.vertex_mode)};
+    auto& attempted = hinted_pairs[(vertex_revision * 31 + fragment_revision) % hinted_pairs.size()];
+    if (attempted == pair)
+        return;
+    const auto index = FindRuntime(p.vertex, p.fragment, p.vertex_mode);
+    if (!index) {
+        attempted = pair;
+        return;
+    }
+    const auto source = runtime_pairs[*index].msl_vertex;
+    if (vertex_functions.contains(source)) {
+        attempted = pair;
+        return;
+    }
+    if (!shader_hints.Admit(VideoCore::GetCurrentFrame(), shader_hints.Match(setup, entry)))
+        return;
+    try {
+        auto work = std::async(std::launch::async, [device = device, source] {
+            @autoreleasepool {
+                return Compile(device, source, @"cara_pica_vert");
+            }
+        });
+        hinted_vertex.emplace(HintedVertex{source, std::move(work)});
+        attempted = pair;
+    } catch (const std::system_error& error) {
+        LOG_WARNING(Render_OpenGL, "PICA Metal vertex warm could not start: {}", error.what());
+    }
+}
+
 bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleInputs& sampler,
                                  const std::optional<PicaSampleInputs>& secondary,
                                  const std::optional<PicaSampleInputs>& tertiary) {
@@ -1236,7 +1291,15 @@ bool PicaMetalPipelines::Prepare(const PicaPipelineInputs& p, const PicaSampleIn
                                 return std::string_view(value) == "1";
                             return std::nullopt;
                         }();
-                        if (parallel_override.value_or(UseMetalGeneralFragment()) &&
+                        if (hinted_vertex && hinted_vertex->source == pair.msl_vertex) {
+                            ps.fragmentFunction = prepare_stage(fragment_functions, pair.msl_fragment,
+                                                                @"cara_pica_frag",
+                                                                NativeMetalCost::RuntimeFragmentLibrary);
+                            FinishHintedVertex();
+                            ps.vertexFunction = prepare_stage(vertex_functions, pair.msl_vertex,
+                                                              @"cara_pica_vert",
+                                                              NativeMetalCost::RuntimeVertexLibrary);
+                        } else if (parallel_override.value_or(UseMetalGeneralFragment()) &&
                             !vertex_functions.contains(pair.msl_vertex) &&
                             !fragment_functions.contains(pair.msl_fragment)) {
                             NativeMetalCost::RecordColdVertexDraw();
@@ -1528,6 +1591,11 @@ bool PicaMetalPipelines::StartSpecialization(
     const Key& key, unsigned runtime_index, const PicaPipelineInputs& exact,
     const PicaSampleInputs& sampler, const std::optional<PicaSampleInputs>& secondary,
     const std::optional<PicaSampleInputs>& tertiary) {
+    if (hinted_vertex && hinted_vertex->source == runtime_pairs[runtime_index].msl_vertex) {
+        if (hinted_vertex->function.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return false;
+        FinishHintedVertex();
+    }
     if (specializer)
         return specializer->key == key;
     if (std::find(failed_specializations.begin(), failed_specializations.end(), key) !=

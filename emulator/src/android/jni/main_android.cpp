@@ -438,7 +438,25 @@ void BootGame(const std::string& path) {
     Cara::AdaptiveClock adaptive_clock;
     auto sampled_frame = VideoCore::GetCurrentFrame();
     bool discard_next_sample = true;
-    std::array<double, 120> frame_times{};
+    struct TailCounters {
+        u64 draws = 0, cpu_vertex_draws = 0, gpu_cpu_ns = 0, guest_cpu_ns = 0;
+        double compile = 0, prepare = 0, submit = 0, lut = 0, wait = 0;
+    };
+    const auto read_tail = [&] {
+        const auto cpu = cpu_categories ? Common::CPUCategoryTiming::Snapshot()
+                                        : Common::CPUCategoryTiming::Counters{};
+        return TailCounters{phases.pica_draw_requests, phases.cpu_vertex_draws, cpu.cpu_ns[3],
+                            cpu.cpu_ns[1], phases.shader_compile_seconds,
+                            phases.vertex_prepare_seconds, phases.draw_submit_seconds,
+                            phases.draw_lut_upload_seconds, phases.gpu_wait_seconds};
+    };
+    struct RefreshSample {
+        u32 frame = 0;
+        double elapsed = 0, work = 0;
+        TailCounters before, after;
+    };
+    std::array<RefreshSample, 120> frame_times{};
+    TailCounters previous_tail{};
     std::size_t frame_count = 0;
     u64 worst_frame = 0;
     double worst_time = 0;
@@ -450,6 +468,7 @@ void BootGame(const std::string& path) {
         phases = {};
         phases.enabled = enabled;
         if (cpu_categories) Common::CPUCategoryTiming::Reset();
+        previous_tail = {};
     };
     const auto apply_play_policy = [&] {
         const auto policy = ReadPlayPolicy();
@@ -563,6 +582,8 @@ void BootGame(const std::string& path) {
             }
             const auto frame = VideoCore::GetCurrentFrame();
             if (frame != sampled_frame) {
+                const auto current_tail = trace_render_phases ? read_tail() : TailCounters{};
+                const auto before_tail = std::exchange(previous_tail, current_tail);
                 if (!discard_next_sample && frame == sampled_frame + 1 &&
                     (adaptive_clock.Enabled() || phases.enabled)) {
                     using Seconds = std::chrono::duration<double>;
@@ -578,20 +599,25 @@ void BootGame(const std::string& path) {
                     }
                     if (phases.enabled) {
                         const auto elapsed = Seconds(timing.elapsed).count() * 1000;
-                        frame_times[frame_count++] = elapsed;
+                        frame_times[frame_count++] = {frame, elapsed, Seconds(timing.work).count() * 1000,
+                                                       before_tail, current_tail};
                         if (elapsed > worst_time) {
                             worst_time = elapsed;
                             worst_frame = frame;
                         }
                         if (frame_count == frame_times.size()) {
-                            std::sort(frame_times.begin(), frame_times.end());
+                            std::sort(frame_times.begin(), frame_times.end(),
+                                      [](const auto& left, const auto& right) {
+                                return std::tie(left.elapsed, left.frame) < std::tie(right.elapsed, right.frame);
+                            });
                             const auto guest_clock = adaptive_clock.Enabled()
                                                          ? adaptive_clock.Percent()
                                                          : ReadPlayPolicy().guest_clock;
                             const auto message = fmt::format(
                                 "window end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} worst_frame={} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f}",
                                 frame, guest_clock,
-                                (frame_times[59] + frame_times[60]) / 2, frame_times[118],
+                                (frame_times[59].elapsed + frame_times[60].elapsed) / 2,
+                                frame_times[118].elapsed,
                                 worst_time, worst_frame, phases.pica_draw_requests,
                                 phases.vertex_upload_seconds * 1000, phases.draw_submit_seconds * 1000,
                                 phases.surface_download_seconds * 1000,
@@ -699,6 +725,23 @@ void BootGame(const std::string& path) {
                                 phases.texture_lookup_hits, phases.texture_lookup_verify_mismatches,
                                 phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
                             if (trace_render_phases) {
+                                for (std::size_t rank = 114; rank < frame_times.size(); ++rank) {
+                                    const auto& sample = frame_times[rank];
+                                    const auto& b = sample.before;
+                                    const auto& a = sample.after;
+                                    const auto report = fmt::format(
+                                        "tail end={} rank={} frame={} elapsed_ms={:.2f} work_ms={:.2f} "
+                                        "draws={} cpu_vertex_draws={} gpu_cpu_ms={:.2f} guest_cpu_ms={:.2f} "
+                                        "compile_ms={:.2f} prepare_ms={:.2f} submit_ms={:.2f} lut_ms={:.2f} wait_ms={:.2f}",
+                                        frame, rank + 1, sample.frame, sample.elapsed, sample.work,
+                                        a.draws - b.draws, a.cpu_vertex_draws - b.cpu_vertex_draws,
+                                        (a.gpu_cpu_ns - b.gpu_cpu_ns) / 1e6,
+                                        (a.guest_cpu_ns - b.guest_cpu_ns) / 1e6,
+                                        (a.compile - b.compile) * 1000, (a.prepare - b.prepare) * 1000,
+                                        (a.submit - b.submit) * 1000, (a.lut - b.lut) * 1000,
+                                        (a.wait - b.wait) * 1000);
+                                    __android_log_write(ANDROID_LOG_INFO, "CaraPerf", report.c_str());
+                                }
                                 const auto staging = fmt::format(
                                     "staging end={} repeat_candidates={} repeat_issued={} guest_index_compare_span_bytes={} "
                                     "guest_vertex_copy_bytes={} constants_bytes={} resize_zero_bytes={} "

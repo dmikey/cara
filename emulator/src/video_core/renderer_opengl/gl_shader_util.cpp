@@ -198,6 +198,7 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
     const bool census = ShaderCensus::Enabled();
     const auto link_start = census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
     glLinkProgram(program_id);
+    const auto status_start = census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
 
     // Check the program
     GLint result = GL_FALSE;
@@ -211,6 +212,12 @@ GLuint LoadProgram(bool separable_program, const std::vector<GLuint>& shaders) {
                 fmt::format_to(std::back_inserter(stages), "{}{}", stages.empty() ? "" : ",", shader);
         }
         ShaderCensus::Record("link program={} shaders={} ok={} us={}", program_id, stages, result, elapsed);
+        if (elapsed >= 10000) {
+            const auto link_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                status_start - link_start).count();
+            ShaderCensus::Record("link_phases program={} submit_us={} status_us={}",
+                                 program_id, link_us, elapsed - link_us);
+        }
     }
     glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &info_log_length);
 
