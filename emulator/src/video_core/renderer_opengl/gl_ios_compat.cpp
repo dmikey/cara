@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <stdexcept>
+#include <string_view>
 
 namespace OpenGL {
 #ifdef CARA_ANDROID_GLES_ATLAS
@@ -20,12 +21,17 @@ bool UseLightingLUTSnapshots() {
     }();
     return enabled;
 }
+static bool separate_fog_lut = false;
+
+void ConfigureSeparateFogLUT(const char* renderer) {
+    // Decide before building the shader cache or starting the shader workers.
+    const bool is_g57 = std::string_view{renderer} == "Mali-G57";
+    const char* requested = std::getenv("CARA_GLES_SEPARATE_FOG_LUT");
+    separate_fog_lut = GLES && (requested ? std::string_view{requested} == "1" : is_g57);
+}
+
 bool UseSeparateFogLUT() {
-    static const bool enabled = [] {
-        const char* requested = std::getenv("CARA_GLES_SEPARATE_FOG_LUT");
-        return requested && requested[0] == '1' && !requested[1];
-    }();
-    return enabled && GLES;
+    return separate_fog_lut;
 }
 bool UseNativeLUTBuffers() {
     static const bool enabled = [] {

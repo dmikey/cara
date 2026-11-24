@@ -226,7 +226,12 @@ void BootGame(const std::string& path) {
     select_probe("mailbox_async_publish", "CARA_MAILBOX_ASYNC_PUBLISH");
     select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
     select_probe("lighting_lut_generations", "CARA_LIGHTING_LUT_GENERATIONS");
-    select_probe("separate_fog_lut", "CARA_GLES_SEPARATE_FOG_LUT");
+    const auto fog_override = Config::GetLayer().Get<bool>({"Debug", "separate_fog_lut"});
+    if (fog_override) {
+        setenv("CARA_GLES_SEPARATE_FOG_LUT", *fog_override ? "1" : "0", 1);
+    } else {
+        unsetenv("CARA_GLES_SEPARATE_FOG_LUT");
+    }
     select_probe("lighting_lut_residency", "CARA_LIGHTING_LUT_RESIDENCY");
     select_probe("lighting_lut_pbo", "CARA_LIGHTING_LUT_PBO");
     select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");

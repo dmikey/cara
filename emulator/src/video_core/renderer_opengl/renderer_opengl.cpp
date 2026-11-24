@@ -38,6 +38,7 @@
 #include "core/tracer/recorder.h"
 #include "video_core/debug_utils/debug_utils.h"
 #include "video_core/rasterizer_interface.h"
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/gl_lcd_upload.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_vars.h"
@@ -1522,6 +1523,9 @@ VideoCore::ResultStatus RendererOpenGL::Init() {
         LOG_ERROR(Render_OpenGL,"Mac atlas prototype does not support shadow/image paths");
         return VideoCore::ResultStatus::ErrorGenericDrivers;
     }
+#endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+    ConfigureSeparateFogLUT(gpu_model);
 #endif
     InstallGLESDebugObserver();
     InitOpenGLObjects();

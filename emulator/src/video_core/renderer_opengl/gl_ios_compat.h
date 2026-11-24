@@ -8,6 +8,7 @@ namespace OpenGL {
 #ifdef CARA_ANDROID_GLES_ATLAS
 bool UseNativeLUTBuffers();
 bool UseLightingLUTSnapshots();
+void ConfigureSeparateFogLUT(const char* renderer);
 bool UseSeparateFogLUT();
 #else
 inline constexpr bool UseLightingLUTSnapshots() { return false; }
