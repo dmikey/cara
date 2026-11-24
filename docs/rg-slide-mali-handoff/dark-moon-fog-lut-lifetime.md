@@ -51,3 +51,44 @@ A separate normal boot with distinct textures enabled tagged the queued work dur
 Entry 327 accounts for 86% of the unlit indexed-draw overlap. The producer's active-texture query waited behind it for 3.100 ms per refresh. This reproduces the earlier entry-327 finding with the LUT lifetime change enabled. The blit wait is weighted toward guest display transfers, so optimizing feedback texture copies would attack a different path. The display-transfer implementation may scale or flip, so an image copy is only equivalent when dimensions, orientation and formats allow it. [Matched backlog summary](dark-moon-fog-lut-gadd-backlog.txt) · [Earlier tagged trace](gadd-worker-synchronization.md)
 
 The diagnostic boot is excluded from the timing table. Both test sessions restored the original signed Cara APK, and the app configuration and shader archive checksums matched before and after testing.
+
+## Cold shader-hint follow-up
+
+Three normal boots used the same signed Android APK (`d1a4bc6`),
+an empty Cara shader archive, and the separable GLES Atlas profile
+at native 1× with Dynarmic, Performance Mode, fixed CLK 100%, and
+frame skip off. The driver-private cache was retained. The later
+arms separately tested `atlas_runtime_tev` and distinct whole-image
+LUT generations. The isolated player profile was restored and verified.
+
+| 120-refresh window | Baseline p99 / worst | Unlit runtime TEV p99 / worst | Whole LUT generations p99 / worst |
+| --- | ---: | ---: | ---: |
+| Smoky title, 25,561 draws | 2,286.93 / 2,295.33 ms | 2,247.13 / 2,396.13 ms | 2,235.15 / 2,393.00 ms |
+| Gadd entry, ending 2521 | 175.03 / 1,145.93 ms | 226.41 / 1,206.51 ms | 243.17 / 1,155.52 ms |
+| Following lab window, ending 2641 | 61.32 / 796.12 ms | 64.93 / 787.45 ms | 106.38 / 174.83 ms |
+
+The title recorded zero PICA fog draws. The baseline generated 27
+distinct fragment sources with lighting enabled and ten without
+lighting in the title window. The unlit runtime path took thousands
+of selections and left the large title stall in place.
+
+The baseline lab window ending at 2641 attributed 601.96 ms to fog
+uploads. Total LUT transfer wall time in the corresponding 120-refresh
+window dropped from 601.53 to 9.82 ms with distinct images, while
+uploaded bytes increased from 144,384 to 6,995,968. Across the three
+windows ending at 2521, 2641 and 2761, transfer time dropped from
+632.85 to 14.93 ms. The later foreground fragment burst shifted
+into window 2761 with generations enabled, where the worst refresh
+was 799.34 ms. The window p99s therefore measure different mixtures
+of scene and compiler work. Whole-image generations also increased
+title uploads from 71,680 to 19,955,712 bytes. Keep this experiment
+opt-in. An independent 1 KiB fog resource would let earlier draws
+retain their exact table while preserving the existing lighting
+residency path.
+
+The baseline settled lab window ending at 2881 had zero LUT uploads.
+It spent 21.46 ms per refresh in graphics-command CPU work and 5.85 ms
+in guest CPU execution. Fog resource lifetime, fragment links and
+steady lit draw processing need separate measurements.
+
+[Android build used in all three arms](https://github.com/dmikey/cara/actions/runs/45507523389)
