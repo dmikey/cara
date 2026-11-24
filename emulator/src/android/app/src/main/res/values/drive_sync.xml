@@ -6,9 +6,11 @@
     <string name="drive_save_states">Save States</string>
     <string name="drive_connected">Google Drive is connected.</string>
     <string name="drive_connect">Connect</string>
+    <string name="drive_apply">Apply</string>
     <string name="drive_sync_now">Sync Now</string>
     <string name="drive_disconnect">Disconnect</string>
     <string name="drive_disconnected">Google Drive disconnected. Your local and cloud saves are kept.</string>
+    <string name="drive_revoke_failed">Sync is off on this device. Remove Cara’s access from your Google Account if you want to revoke it.</string>
     <string name="drive_syncing">Syncing saves with Google Drive…</string>
     <string name="drive_authorization_failed">Google Drive authorization failed. Check Google Play services and try again.</string>
     <string name="drive_reconnect">Open Google Drive Sync to renew access.</string>

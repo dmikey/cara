@@ -21,6 +21,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.gms.auth.api.identity.AuthorizationRequest;
 import com.google.android.gms.auth.api.identity.AuthorizationResult;
 import com.google.android.gms.auth.api.identity.Identity;
+import com.google.android.gms.auth.api.identity.RevokeAccessRequest;
 import com.google.android.gms.common.api.Scope;
 
 import org.cara.emu.R;
@@ -34,6 +35,8 @@ public final class DriveSyncController {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final ExecutorService WORK = Executors.newSingleThreadExecutor();
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
+    private static final AtomicBoolean SYNC_AFTER_GAME = new AtomicBoolean();
+    private static final Scope DRIVE_SCOPE = new Scope(DriveStorage.SCOPE);
     private static final String ACCOUNT = "account";
     private static final String STATUS = "status";
     private static final String CONTENTS = "contents";
@@ -89,24 +92,41 @@ public final class DriveSyncController {
         AlertDialog.Builder builder = new AlertDialog.Builder(activity)
                 .setTitle(R.string.drive_sync).setView(body)
                 .setPositiveButton(connected ? R.string.drive_sync_now : R.string.drive_connect,
-                        (dialog, button) -> authorize(DriveSaveSync.Choice.NONE))
+                        (dialog, button) -> {
+                            int selected = selectedContents(saves, states);
+                            state.edit().putInt(CONTENTS, selected).apply();
+                            if (selected != 0) {
+                                authorize(DriveSaveSync.Choice.NONE);
+                            }
+                        })
                 .setNegativeButton(android.R.string.cancel, null);
         if (connected) {
             builder.setNeutralButton(R.string.drive_disconnect, (dialog, button) -> {
                 state.edit().remove(ACCOUNT).remove(STATUS).remove(CONTENTS).apply();
-                message(R.string.drive_disconnected);
+                Identity.getAuthorizationClient(activity)
+                        .revokeAccess(RevokeAccessRequest.builder()
+                                .setScopes(Collections.singletonList(DRIVE_SCOPE)).build())
+                        .addOnSuccessListener(activity, result -> message(R.string.drive_disconnected))
+                        .addOnFailureListener(activity, failure -> message(R.string.drive_revoke_failed));
             });
         }
         AlertDialog dialog = builder.show();
         Runnable updateContents = () -> {
-            int selected = (saves.isChecked() ? DriveSaveSync.GAME_SAVES : 0) |
-                    (states.isChecked() ? DriveSaveSync.SAVE_STATES : 0);
-            state.edit().putInt(CONTENTS, selected).apply();
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(selected != 0);
+            boolean selected = selectedContents(saves, states) != 0;
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(connected || selected);
+            if (connected) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        .setText(selected ? R.string.drive_sync_now : R.string.drive_apply);
+            }
         };
         saves.setOnCheckedChangeListener((view, checked) -> updateContents.run());
         states.setOnCheckedChangeListener((view, checked) -> updateContents.run());
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(contents != 0);
+        updateContents.run();
+    }
+
+    private static int selectedContents(CheckBox saves, CheckBox states) {
+        return (saves.isChecked() ? DriveSaveSync.GAME_SAVES : 0) |
+                (states.isChecked() ? DriveSaveSync.SAVE_STATES : 0);
     }
 
     private void authorize(DriveSaveSync.Choice action) {
@@ -125,7 +145,7 @@ public final class DriveSyncController {
 
     private void manualResult(AuthorizationResult authorization) {
         String token = authorization.getAccessToken();
-        if (token == null) {
+        if (token == null || !authorization.getGrantedScopes().contains(DriveStorage.SCOPE)) {
             message(R.string.drive_authorization_failed);
             return;
         }
@@ -172,16 +192,25 @@ public final class DriveSyncController {
     private static void automatic(Context context, boolean afterGame) {
         SharedPreferences state = state(context);
         long now = SystemClock.elapsedRealtime();
-        if (!state.contains(ACCOUNT) || state.getInt(CONTENTS, 0) == 0 || RUNNING.get() ||
+        if (!state.contains(ACCOUNT) || state.getInt(CONTENTS, 0) == 0 ||
                 (!afterGame && now - lastAutomatic < 60000)) {
+            return;
+        }
+        if (RUNNING.get()) {
+            if (afterGame) {
+                SYNC_AFTER_GAME.set(true);
+            }
             return;
         }
         lastAutomatic = now;
         Identity.getAuthorizationClient(context).authorize(request())
                 .addOnSuccessListener(authorization -> {
                     String token = authorization.getAccessToken();
-                    if (!authorization.hasResolution() && token != null) {
-                        run(context, token, false, DriveSaveSync.Choice.NONE, null);
+                    if (!authorization.hasResolution() && token != null &&
+                            authorization.getGrantedScopes().contains(DriveStorage.SCOPE)) {
+                        if (!run(context, token, false, DriveSaveSync.Choice.NONE, null) && afterGame) {
+                            SYNC_AFTER_GAME.set(true);
+                        }
                     } else {
                         state.edit().putString(STATUS, context.getString(R.string.drive_reconnect)).apply();
                     }
@@ -192,7 +221,7 @@ public final class DriveSyncController {
 
     private static AuthorizationRequest request() {
         return AuthorizationRequest.builder()
-                .setRequestedScopes(Collections.singletonList(new Scope(DriveStorage.SCOPE))).build();
+                .setRequestedScopes(Collections.singletonList(DRIVE_SCOPE)).build();
     }
 
     private interface Completion {
@@ -233,6 +262,11 @@ public final class DriveSyncController {
                 preferences.edit().putString(STATUS, context.getString(R.string.drive_sync_failed)).apply();
             } finally {
                 RUNNING.set(false);
+                MAIN.post(() -> {
+                    if (SYNC_AFTER_GAME.getAndSet(false)) {
+                        automatic(context, true);
+                    }
+                });
                 if (completion != null) {
                     DriveSaveSync.Result result = outcome;
                     MAIN.post(() -> completion.finish(result));
