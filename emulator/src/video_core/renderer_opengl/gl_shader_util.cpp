@@ -43,13 +43,14 @@ GLuint LoadShader(const char* source, GLenum type, bool separable) {
 #ifdef CARA_MAC_ATLAS_PIPELINE
     version = "#version 410 core\n";
 #else
-    version = separable ? "#version 320 es\n"
-#if !defined(CARA_MAC_ATLAS_PIPELINE)
-                        "#if defined(GL_EXT_clip_cull_distance)\n"
-                        "#extension GL_EXT_clip_cull_distance : enable\n"
-                        "#endif\n"
-#endif
-                        : "#version 300 es\n";
+    // The vertex source checks the support macro in both GLSL ES versions.
+    // Drivers may define it before the extension's built-ins are enabled.
+    constexpr char clip_distance_extension[] =
+        "#if defined(GL_EXT_clip_cull_distance)\n"
+        "#extension GL_EXT_clip_cull_distance : enable\n"
+        "#endif\n";
+    version = separable ? "#version 320 es\n" : "#version 300 es\n";
+    version += clip_distance_extension;
 #endif
     version += R"(#define CARA_GLES
 precision highp int;
@@ -81,10 +82,7 @@ vec4 CaraLUTFetch(sampler2D lut, int index) {
 #else
     if (UseNativeLUTBuffers()) {
         version = "#version 320 es\n";
-        if (separable)
-            version += "#if defined(GL_EXT_clip_cull_distance)\n"
-                       "#extension GL_EXT_clip_cull_distance : enable\n"
-                       "#endif\n";
+        version += clip_distance_extension;
         version += "#define CARA_GLES\nprecision highp int;\n"
                   "precision highp float;\nprecision highp sampler2D;\n"
                   "precision highp samplerBuffer;\n";
