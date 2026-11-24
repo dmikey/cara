@@ -233,6 +233,7 @@ void BootGame(const std::string& path) {
     select_probe("trace_gles_gpu_timing", "CARA_TRACE_GLES_GPU_TIMING");
     select_probe("trace_gles_gpu_timestamps", "CARA_TRACE_GLES_GPU_TIMESTAMPS");
     select_probe("trace_gles_gpu_commands", "CARA_TRACE_GLES_GPU_COMMANDS");
+    select_probe("trace_gles_gpu_lists", "CARA_TRACE_GLES_GPU_LISTS");
     select_probe("trace_gles_swap_timing", "CARA_TRACE_GLES_SWAP_TIMING");
     select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
     select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");

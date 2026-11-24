@@ -54,8 +54,8 @@ struct GLESRefreshTimer {
     using Clock = std::chrono::steady_clock;
 
     // A zero bit count selects the existing elapsed query.
-    GLESRefreshTimer(unsigned timestamp_bits, bool command_trace)
-        : timestamp_bits(timestamp_bits), command_trace(command_trace) {}
+    GLESRefreshTimer(unsigned timestamp_bits, bool command_trace, bool list_trace = false)
+        : timestamp_bits(timestamp_bits), command_trace(command_trace), list_trace(list_trace) {}
 
     ~GLESRefreshTimer() {
         if (g_command_trace == this)
@@ -71,6 +71,12 @@ struct GLESRefreshTimer {
                 glDeleteQueriesEXT(1, &sample.section_begin);
             if (sample.section_end)
                 glDeleteQueriesEXT(1, &sample.section_end);
+            for (const auto& list : sample.lists) {
+                if (list.begin)
+                    glDeleteQueriesEXT(1, &list.begin);
+                if (list.end)
+                    glDeleteQueriesEXT(1, &list.end);
+            }
         }
     }
 
@@ -78,10 +84,13 @@ struct GLESRefreshTimer {
         if (active) {
             if (g_command_trace == this)
                 g_command_trace = nullptr;
-            if (timestamp_bits)
+            if (timestamp_bits) {
+                if (list_trace)
+                    active->host_end = SinceSubmission();
                 glQueryCounterEXT(active->end, GL_TIMESTAMP_EXT);
-            else
+            } else {
                 glEndQueryEXT(GL_TIME_ELAPSED_EXT);
+            }
             active->pending = true;
             active = nullptr;
         }
@@ -118,6 +127,8 @@ struct GLESRefreshTimer {
             sample.frame = frame;
             sample.disjoint = false;
             sample.has_section = false;
+            sample.list_count = 0;
+            sample.lists_seen = 0;
             if (timestamp_bits) {
                 sample.submitted = Clock::now();
                 glQueryCounterEXT(sample.begin, GL_TIMESTAMP_EXT);
@@ -132,14 +143,16 @@ struct GLESRefreshTimer {
                 section_index = (sample_number / 2 * 17) %
                                 (section_kind == GLESCommandTraceScope::Kind::Draw ? 256 : 32);
                 sections_seen = 0;
-                g_command_trace = this;
             }
+            if (command_trace || list_trace)
+                g_command_trace = this;
             return;
         }
     }
 
     bool BeginSection(GLESCommandTraceScope::Kind kind, bool lighting, bool fog, std::size_t bytes) {
-        if (kind != section_kind || active->has_section || sections_seen++ != section_index)
+        if (!command_trace || kind != section_kind || active->has_section ||
+            sections_seen++ != section_index)
             return false;
         if (!active->section_begin)
             glGenQueriesEXT(1, &active->section_begin);
@@ -159,7 +172,45 @@ struct GLESRefreshTimer {
         active->has_section = true;
     }
 
+    bool BeginList(u32 bytes) {
+        if (!list_trace)
+            return false;
+        ++active->lists_seen;
+        if (list_active || active->list_count == active->lists.size())
+            return false;
+        auto& list = active->lists[active->list_count];
+        if (!list.begin)
+            glGenQueriesEXT(1, &list.begin);
+        if (!list.end)
+            glGenQueriesEXT(1, &list.end);
+        if (!list.begin || !list.end)
+            return false;
+        list.bytes = bytes;
+        list.draws = Common::FrameTiming::counters.pica_draw_requests;
+        list.host_begin = SinceSubmission();
+        glQueryCounterEXT(list.begin, GL_TIMESTAMP_EXT);
+        list_active = true;
+        return true;
+    }
+
+    void EndList() {
+        auto& list = active->lists[active->list_count++];
+        list.host_end = SinceSubmission();
+        glQueryCounterEXT(list.end, GL_TIMESTAMP_EXT);
+        list.draws = Common::FrameTiming::counters.pica_draw_requests - list.draws;
+        list_active = false;
+    }
+
 private:
+    struct List {
+        GLuint begin = 0;
+        GLuint end = 0;
+        u32 bytes = 0;
+        u64 draws = 0;
+        u64 host_begin = 0;
+        u64 host_end = 0;
+    };
+
     struct Sample {
         GLuint begin = 0;
         GLuint end = 0;
@@ -173,6 +224,10 @@ private:
         bool lighting = false;
         bool fog = false;
         std::size_t bytes = 0;
+        std::array<List, 6> lists{};
+        std::size_t list_count = 0;
+        std::size_t lists_seen = 0;
+        u64 host_end = 0;
     };
 
     static bool Ready(GLuint query) {
@@ -185,6 +240,12 @@ private:
         GLuint64 result = 0;
         glGetQueryObjectui64vEXT(query, GL_QUERY_RESULT_EXT, &result);
         return result;
+    }
+
+    u64 SinceSubmission() const {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   Clock::now() - active->submitted)
+            .count();
     }
 
     GLuint64 Difference(GLuint64 start, GLuint64 end) const {
@@ -216,6 +277,31 @@ private:
                             "guest_interval frame=%u ns=%llu method=%s",
                             static_cast<unsigned>(sample.frame),
                             static_cast<unsigned long long>(elapsed), method);
+        if (list_trace && sample.list_count) {
+            __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
+                                "guest_lists frame=%u lists=%zu captured=%zu host_ns=%llu",
+                                static_cast<unsigned>(sample.frame), sample.lists_seen,
+                                sample.list_count, static_cast<unsigned long long>(sample.host_end));
+            u64 previous_end = 0;
+            for (std::size_t index = 0; index < sample.list_count; ++index) {
+                const auto& list = sample.lists[index];
+                const auto list_begin = Difference(begin, Read(list.begin));
+                const auto list_end = Difference(begin, Read(list.end));
+                if (list_begin < previous_end || list_end < list_begin || list_end > elapsed)
+                    break;
+                previous_end = list_end;
+                __android_log_print(
+                    ANDROID_LOG_INFO, "CaraGPU",
+                    "guest_list frame=%u list=%zu bytes=%u draws=%llu gpu_begin_ns=%llu "
+                    "gpu_end_ns=%llu host_begin_ns=%llu host_end_ns=%llu",
+                    static_cast<unsigned>(sample.frame), index, static_cast<unsigned>(list.bytes),
+                    static_cast<unsigned long long>(list.draws),
+                    static_cast<unsigned long long>(list_begin),
+                    static_cast<unsigned long long>(list_end),
+                    static_cast<unsigned long long>(list.host_begin),
+                    static_cast<unsigned long long>(list.host_end));
+            }
+        }
         if (!sample.has_section)
             return;
         // Readiness of the frame's end marker implies readiness of earlier timestamps.
@@ -235,6 +321,8 @@ private:
 
     const unsigned timestamp_bits;
     const bool command_trace;
+    const bool list_trace;
+    bool list_active = false;
     GLESCommandTraceScope::Kind section_kind{};
     u32 section_index = 0;
     u32 sections_seen = 0;
@@ -250,6 +338,16 @@ GLESCommandTraceScope::GLESCommandTraceScope(Kind kind, bool lighting, bool fog,
 GLESCommandTraceScope::~GLESCommandTraceScope() {
     if (timer)
         timer->EndSection();
+}
+
+GLESCommandListTraceScope::GLESCommandListTraceScope(u32 bytes) {
+    if (g_command_trace && g_command_trace->BeginList(bytes))
+        timer = g_command_trace;
+}
+
+GLESCommandListTraceScope::~GLESCommandListTraceScope() {
+    if (timer)
+        timer->EndList();
 }
 #endif
 
@@ -596,8 +694,11 @@ void RendererOpenGL::SwapBuffers() {
         const char* enabled = std::getenv("CARA_TRACE_GLES_GPU_TIMING");
         const char* timestamp_flag = std::getenv("CARA_TRACE_GLES_GPU_TIMESTAMPS");
         const char* command_flag = std::getenv("CARA_TRACE_GLES_GPU_COMMANDS");
+        const char* list_flag = std::getenv("CARA_TRACE_GLES_GPU_LISTS");
         const bool commands = command_flag && std::strcmp(command_flag, "1") == 0;
-        const bool timestamps = commands || (timestamp_flag && std::strcmp(timestamp_flag, "1") == 0);
+        const bool lists = list_flag && std::strcmp(list_flag, "1") == 0;
+        const bool timestamps = commands || lists ||
+                                (timestamp_flag && std::strcmp(timestamp_flag, "1") == 0);
         const bool elapsed = enabled && std::strcmp(enabled, "1") == 0;
         if ((timestamps || elapsed) && GLES &&
             GLAD_GL_EXT_disjoint_timer_query && glGetQueryivEXT && glGenQueriesEXT &&
@@ -611,7 +712,7 @@ void RendererOpenGL::SwapBuffers() {
             glGetQueryivEXT(timestamps ? GL_TIMESTAMP_EXT : GL_TIME_ELAPSED_EXT,
                             GL_QUERY_COUNTER_BITS_EXT, &bits);
             if (bits > 0 && bits <= 64)
-                gpu_refresh_timer = std::make_unique<GLESRefreshTimer>(timestamps ? bits : 0, commands);
+                gpu_refresh_timer = std::make_unique<GLESRefreshTimer>(timestamps ? bits : 0, commands, lists);
         }
     }
     if (gpu_refresh_timer)

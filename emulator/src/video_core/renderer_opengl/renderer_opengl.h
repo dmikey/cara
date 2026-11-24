@@ -33,6 +33,17 @@ public:
 private:
     GLESRefreshTimer* timer = nullptr;
 };
+
+class GLESCommandListTraceScope {
+public:
+    explicit GLESCommandListTraceScope(u32 bytes);
+    ~GLESCommandListTraceScope();
+    GLESCommandListTraceScope(const GLESCommandListTraceScope&) = delete;
+    GLESCommandListTraceScope& operator=(const GLESCommandListTraceScope&) = delete;
+
+private:
+    GLESRefreshTimer* timer = nullptr;
+};
 #endif
 
 /// Structure used for storing information about the textures for each 3DS screen
