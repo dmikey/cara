@@ -1,4 +1,4 @@
-"""Check the complete Mac, iOS and Android package set before publishing a numbered candidate."""
+"""Check the complete desktop and mobile package set before publishing a numbered candidate."""
 import argparse
 import hashlib
 import json
@@ -8,6 +8,10 @@ import re
 
 MAC = "Cara-macOS-arm64-JIT-signed.zip"
 IOS = "Cara-iOS-arm64-GLES3-unsigned.ipa"
+DESKTOP = {
+    "linux": "Cara-Linux-x86_64-OpenGL.tar.gz",
+    "windows": "Cara-Windows-x86_64-OpenGL.zip",
+}
 ANDROID = {"Cara-Android-arm64-signed.apk", "Cara-Android-arm64-signed.aab"}
 
 
@@ -29,6 +33,8 @@ def verify(directory, revision, upload_cert):
     cert = upload_cert.lower().replace(":", "")
     require(re.fullmatch(r"[0-9a-f]{64}", cert), "Invalid Android upload certificate pin")
     names = ANDROID | {"android-signed.json", MAC, f"{MAC}.json", IOS, f"{IOS}.json"}
+    names.update(DESKTOP.values())
+    names.update(f"{platform}-build.json" for platform in DESKTOP)
     require({p.name for p in directory.iterdir()} == names, "Unexpected release candidate asset set")
     require(all(p.is_file() and not p.is_symlink() for p in directory.iterdir()),
             "Every asset must be an ordinary file")
@@ -48,6 +54,18 @@ def verify(directory, revision, upload_cert):
             and ios.get("renderer") == "gles3" and ios.get("bundle_id") == "com.dmikey.cara",
             "Unexpected iOS package policy")
     verify_digest(directory / IOS, ios["ipa_sha256"])
+
+    for platform, asset in DESKTOP.items():
+        receipt = json.loads((directory / f"{platform}-build.json").read_text())
+        require(receipt["source_revision"] == revision, f"Source mismatch: {asset}")
+        require(receipt.get("platform") == platform and receipt.get("architecture") == "x86_64"
+                and receipt.get("renderer") == "desktop-opengl"
+                and receipt.get("cpu_backend") == "fastinterp"
+                and receipt.get("cpu_jit") is False and receipt.get("shader_jit") is False,
+                f"Unexpected desktop package policy: {asset}")
+        if platform == "windows":
+            require(receipt.get("signing") == "unsigned", f"Unexpected signing policy: {asset}")
+        verify_digest(directory / asset, receipt["asset_sha256"])
 
     android = json.loads((directory / "android-signed.json").read_text())
     require(android["source_revision"] == revision, "Android source mismatch")

@@ -225,7 +225,12 @@ int main(int argc, char** argv) {
             else game = arg;
         }
         if (!self_test && game.empty()) throw std::runtime_error("Provide a game path or --self-test");
-        if (SDL_setenv("CARA_CPU_BACKEND", "fastinterp", 1) != 0) {
+#ifdef _WIN32
+        const int backend_result = _putenv_s("CARA_CPU_BACKEND", "fastinterp");
+#else
+        const int backend_result = setenv("CARA_CPU_BACKEND", "fastinterp", 1);
+#endif
+        if (backend_result != 0) {
             throw std::runtime_error("Unable to select FastInterp");
         }
         if (const char* path = std::getenv("CARA_USER_DIR")) {

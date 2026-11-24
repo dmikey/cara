@@ -14,6 +14,8 @@ on:
       - 'tools/sign_android_nightly.py'
       - 'tools/verify_release_candidate.py'
       - '.github/workflows/android-release.yml'
+      - '.github/workflows/linux-opengl.yml'
+      - '.github/workflows/windows-opengl.yml'
       - 'tools/mac_bundle.py'
       - 'tools/mac_app_launcher.mm'
       - 'tools/mac_runtime.json'
@@ -31,9 +33,14 @@ on:
         type: boolean
         default: false
       release_candidate:
-        description: 'RC version (Cara.RC.YYYYMMDDNN, e.g. Cara.RC.2026112301); build from main'
+        description: 'RC version (Cara.RC.YYYYMMDDNN, e.g. Cara.RC.2026112301)'
         required: false
         type: string
+      candidate_packages_only:
+        description: 'Build all candidate packages as Actions artifacts without release signing or publication'
+        required: false
+        type: boolean
+        default: false
       release_tag:
         description: 'Existing release tag to build and attach to; leave empty for build artifacts only'
         required: false
@@ -50,17 +57,23 @@ jobs:
     outputs:
       sha: ${{ steps.source.outputs.sha }}
     steps:
+      - name: Require a numbered tag for package-only builds
+        if: github.event_name == 'workflow_dispatch' && inputs.candidate_packages_only
+        env:
+          RC_TAG: ${{ inputs.release_candidate }}
+        run: test -n "$RC_TAG"
       - name: Validate release candidate request
         if: github.event_name == 'workflow_dispatch' && inputs.release_candidate != ''
         env:
           RC_TAG: ${{ inputs.release_candidate }}
           EXISTING_TAG: ${{ inputs.release_tag }}
           NIGHTLY: ${{ inputs.nightly }}
+          PACKAGES_ONLY: ${{ inputs.candidate_packages_only }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           test "$GITHUB_REPOSITORY" = dmikey/cara
-          test "$GITHUB_REF" = refs/heads/main
+          test "$PACKAGES_ONLY" = true || test "$GITHUB_REF" = refs/heads/main
           test -z "$EXISTING_TAG"
           test "$NIGHTLY" = false
           python3 - <<'PYCODE'
@@ -210,7 +223,7 @@ jobs:
   nightly-sign:
     name: Sign the audited Apple prerelease packages
     needs: [source, mac, ios]
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release_candidate != '')))
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && !inputs.candidate_packages_only && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release_candidate != '')))
     runs-on: macos-15
     timeout-minutes: 35
     environment: nightly-signing
@@ -262,14 +275,31 @@ jobs:
   rc-android:
     name: Build Android release candidate
     needs: source
-    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.release_candidate != ''
+    if: github.repository == 'dmikey/cara' && github.event_name == 'workflow_dispatch' && inputs.release_candidate != ''
     uses: ./.github/workflows/android-release.yml
+    with:
+      source_sha: ${{ needs.source.outputs.sha }}
+
+  rc-linux:
+    name: Build Linux release candidate
+    needs: source
+    if: github.repository == 'dmikey/cara' && github.event_name == 'workflow_dispatch' && inputs.release_candidate != ''
+    uses: ./.github/workflows/linux-opengl.yml
+    with:
+      source_sha: ${{ needs.source.outputs.sha }}
+
+  rc-windows:
+    name: Build Windows release candidate
+    needs: source
+    if: github.repository == 'dmikey/cara' && github.event_name == 'workflow_dispatch' && inputs.release_candidate != ''
+    uses: ./.github/workflows/windows-opengl.yml
     with:
       source_sha: ${{ needs.source.outputs.sha }}
 
   rc-sign-android:
     name: Sign and audit Android release candidate
     needs: [source, rc-android]
+    if: github.ref == 'refs/heads/main' && !inputs.candidate_packages_only
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: nightly-signing
@@ -316,7 +346,7 @@ jobs:
 
   rc-publish:
     name: Publish verified numbered candidate
-    needs: [source, ios, nightly-sign, rc-sign-android]
+    needs: [source, ios, nightly-sign, rc-sign-android, rc-linux, rc-windows]
     if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.release_candidate != '' && needs.nightly-sign.outputs.signed == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -341,6 +371,14 @@ jobs:
         with:
           name: rc-signed-android
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-Linux-x86_64-OpenGL
+          path: work/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: Cara-Windows-x86_64-OpenGL
+          path: work/windows
       - name: Verify exact packages and publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -349,6 +387,8 @@ jobs:
           RC_TAG: ${{ inputs.release_candidate }}
           ANDROID_CERT_SHA256: ${{ needs.rc-sign-android.outputs.certificate }}
         run: |
+          cp work/linux/Cara-Linux-x86_64-OpenGL.tar.gz work/linux/linux-build.json dist/
+          cp work/windows/Cara-Windows-x86_64-OpenGL.zip work/windows/windows-build.json dist/
           python3 tools/verify_release_candidate.py dist --source-revision "$EXPECTED_SHA" \
             --android-cert-sha256 "$ANDROID_CERT_SHA256"
           (cd dist && sha256sum -- * > ../SHA256SUMS.txt)
@@ -358,6 +398,9 @@ jobs:
           - macOS: Developer ID-signed and notarized arm64 app with optional CPU JIT.
           - iPhone and iPad: unsigned arm64 GLES3 IPA for personal sideloading. Re-sign before installing. TestFlight remains a separate Apple distribution channel.
           - Android: ARM64 APK for direct installation and AAB for Play Console, both signed with the configured upload key. An APK signed by the upload key can differ from the key Play uses for installs.
+
+          - Linux: x86-64 SDL/OpenGL FastInterp build for Ubuntu 24.04.
+          - Windows: unsigned x86-64 SDL/OpenGL FastInterp ZIP.
 
           Verify downloads using SHA256SUMS.txt.
           EOF

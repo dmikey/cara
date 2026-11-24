@@ -6,10 +6,15 @@ on:
   pull_request:
     paths: ['emulator/**', 'tools/prepare.py', 'tools/package_linux.py', 'tools/make_test_elf.py', '.github/workflows/linux-opengl.yml']
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
 permissions:
   contents: read
 concurrency:
-  group: linux-opengl-${{ github.ref }}
+  group: linux-opengl-${{ inputs.source_sha != '' && github.run_id || github.ref }}
   cancel-in-progress: true
 jobs:
   linux:
@@ -25,6 +30,9 @@ jobs:
       CCACHE_COMPILERCHECK: content
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
       - name: Refresh Ubuntu package lists
         timeout-minutes: 3
         run: sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq

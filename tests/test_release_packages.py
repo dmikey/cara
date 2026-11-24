@@ -237,7 +237,7 @@ class ReleaseCandidateTests(unittest.TestCase):
         self.ios = "Cara-iOS-arm64-GLES3-unsigned.ipa"
         self.android = ("Cara-Android-arm64-signed.apk", "Cara-Android-arm64-signed.aab")
         self.hashes = {}
-        for asset in (self.mac, self.ios, *self.android):
+        for asset in (self.mac, self.ios, *self.android, *verify_release_candidate.DESKTOP.values()):
             data = asset.encode()
             (self.root / asset).write_bytes(data)
             self.hashes[asset] = hashlib.sha256(data).hexdigest()
@@ -247,6 +247,11 @@ class ReleaseCandidateTests(unittest.TestCase):
         self.receipt(self.ios + ".json", source_revision=self.revision, unsigned=True,
                      requires_resigning=True, renderer="gles3", bundle_id="com.dmikey.cara",
                      ipa_sha256=self.hashes[self.ios])
+        for platform, asset in verify_release_candidate.DESKTOP.items():
+            self.receipt(f"{platform}-build.json", source_revision=self.revision,
+                         platform=platform, architecture="x86_64", renderer="desktop-opengl",
+                         cpu_backend="fastinterp", cpu_jit=False, shader_jit=False,
+                         signing="unsigned", asset_sha256=self.hashes[asset])
         self.receipt("android-signed.json", source_revision=self.revision, signing="android-upload-key",
                      certificate_sha256=self.certificate, application_id="org.cara.emu",
                      target_sdk=36, architecture="arm64-v8a", renderer="gles-atlas",
@@ -265,6 +270,18 @@ class ReleaseCandidateTests(unittest.TestCase):
     def test_changed_binary_is_rejected(self):
         (self.root / self.android[0]).write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "digest mismatch"):
+            self.verify()
+
+    def test_changed_desktop_archive_is_rejected(self):
+        (self.root / verify_release_candidate.DESKTOP["windows"]).write_bytes(b"stale")
+        with self.assertRaisesRegex(ValueError, "digest mismatch"):
+            self.verify()
+
+    def test_desktop_different_sources_are_rejected(self):
+        receipt = "linux-build.json"
+        data = json.loads((self.root / receipt).read_text())
+        self.receipt(receipt, **dict(data, source_revision="c" * 40))
+        with self.assertRaisesRegex(ValueError, "Source mismatch"):
             self.verify()
 
     def test_missing_asset_is_rejected(self):
