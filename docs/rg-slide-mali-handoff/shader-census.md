@@ -279,3 +279,35 @@ either run. The captured spell frames show the geometry and effects in
 both modes. The animations were captured at different instants, so
 pixel equivalence remains unverified. The preview package was removed
 after the test and the Slide kept production Cara `07a145eb`.
+
+The EGL share group publishes completed programs to the rendering
+context. Framebuffers and draw state stay with the render context. The
+ordered GLES fixture now links in a sibling context and binds the
+program through the production submission queue. The reference color
+pixels and depth-rejected draw matched on the Slide. This fixture
+covers program publication. The game checks separately exercise CPU
+vertex fallback. [OpenGL ES 3.2, chapter 5](https://registry.khronos.org/OpenGL/specs/es/3.2/es_spec_3.2.pdf) · [Fixture build](https://github.com/dmikey/cara/actions/runs/45423701785)
+
+A narrower experiment used the worker only for packed-input vertex
+programs. It linked 64 programs across both threads, compared with 80
+under the broader worker policy. The packed-only cold run had 33.32 ms
+present p99 and a 349.47 ms worst gap. Its synchronous shader work in
+the save-selection window rose to 314.44 ms, up from 244.34 ms in the
+original worker run and 266.26 ms in the repeat. The branch restored
+the broader policy because it produced the shorter worst gaps.
+[Packed-only preview](https://github.com/dmikey/cara/actions/runs/45423329437)
+
+The archive contains 15 distinct fragment sources from the
+save-selection burst, including three lit sources and three unlit
+sources that sample all three ordinary texture units. The differences
+include combiner math, lighting inputs, and texture sampling. Source
+deduplication alone cannot collapse those exact programs.
+
+The broader worker was retested after removing the Mali-only
+single-dispatch probe. This build matched the branch’s final renderer
+source. Cold present p99 was 33.34 ms and the worst gap was 308.19 ms.
+The worst emulated refresh was 305.08 ms in save selection, with
+257.23 ms of foreground shader work in its window. Warm present p99
+was 25.13 ms, with a 166.55 ms startup maximum. Warm Black Bane
+returned 30 FPS at 100% speed and measured 25.10 ms p99 and 25.12 ms
+worst. All 67 saved binaries restored. [Retest build](https://github.com/dmikey/cara/actions/runs/45422534508)
