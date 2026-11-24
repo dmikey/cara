@@ -761,3 +761,116 @@ P99 went from 39.07–40.42 ms to 34.27 ms and the worst from
 and the candidate boot reused more shaders. The Slide player
 installation and configuration were restored.
 [RG Slide direct GLES retest](https://github.com/dmikey/cara/blob/dmikey/mali-gadd-draw-followup/docs/rg-slide-mali-handoff/dark-moon-entry327.md#direct-gles-retest-with-exact-table-residency)
+
+## Indexed draws on stock Adreno 618
+
+The signed `238b8f0a` build ran on the G Cloud from the title screen
+through New Game, the stationary castle map, and World 1-1. Both paths
+used JIT, GLES Atlas, Performance Mode, 1×, fixed CLK 100%, direct draw
+submission with mailbox presentation, and Adaptive Frame Skip off.
+Each eligible timing window contains 120 guest refreshes. The
+stationary map has exactly 36,000 PICA draws per window and the lit
+opening has 12,240. The following ready windows have zero foreground
+shader creation, zero selected draws waiting for their indexed program,
+and no logged background shader compile or link overlapping the window.
+The first arrays boot and warm indexed repeat both restored 128 of 128
+shader binaries. The first indexed boot restored 99 of 99.
+
+| Scene and route | Windows | Median host time per window | p99 range | Worst refresh |
+| --- | ---: | ---: | ---: | ---: |
+| Lit opening, arrays | 4 | 2.712 s | 25.21–26.09 ms | 33.63 ms at 2816 |
+| Lit opening, indexed repeat | 3 | 2.204 s | 20.53–21.75 ms | 29.75 ms at 2655 |
+| Castle map, arrays | 8 | 3.720 s | 34.52–35.65 ms | 37.45 ms at 4547 |
+| Castle map, indexed repeat | 13 | 4.039 s | 37.33–38.71 ms | 42.53 ms at 5027 |
+| Castle map, first indexed use during background builds | 4 | 4.498 s | 41.25–245.35 ms | 391.75 ms at 3807 |
+| World 1-1 opening, arrays | 7 | 2.006 s | 23.84–27.11 ms | 29.86 ms at 5336 |
+| World 1-1 opening, indexed repeat | 7 | 2.006 s | 24.51–27.54 ms | 48.92 ms at 5645 |
+
+The ready map went from 54% to 50% of the paced World 1-1 baseline.
+The opening went from 74% to 91%. The first indexed boot also improved
+the opening, to 2.262 s per window, 21.32–22.80 ms p99, and a 23.84 ms
+worst refresh. At the map, all 19,440 selected indexed draws executed
+with their ready programs on the second indexed boot. Confirmed
+early World 1-1 gameplay reached full speed on both routes. The
+World 1-1 windows use similar draw counts and are separate from the
+exact-count map and cutscene comparisons.
+
+On the map, the indexed draws were lit
+draws. The unlit index route had no eligible draws there. In the
+opening 7,200 lit and 3,360 unlit draws used the indexed routes.
+
+The warmed map used 23.19 ms of emulation-thread CPU time per
+refresh for PICA and GLES with arrays and 24.93 ms indexed, versus
+2.48 and 2.55 ms to run the guest CPU. In the arrays arm the
+lighting/fog transfer API accounted for
+6.97 ms per refresh inside the graphics scope. The map changes 32
+tables on average and transfers about 124 KB per refresh in both
+arms. Draw submission took 4.14 ms, uniform work 2.15 ms, GL state
+application 1.68 ms, and vertex upload 1.20 ms. The corresponding
+indexed timings were 7.95 ms for table transfers, 4.54 ms for draw
+submission, 2.21 ms for uniforms, 1.76 ms for GL state, and 1.23 ms
+for uploads. These API timings are host wall scopes and some are
+nested. An API call
+can include waits on previously submitted GPU work, so its duration
+does not measure the isolated execution cost of that operation.
+In a separate 11.98 s sample on the indexed map, the emulation
+thread was on CPU 86.7% of the time and runnable but unscheduled
+for 0.9%. It ran on cores 6 and 7 with a median big-core policy
+frequency of 2.323 GHz.
+
+Leave indexed draws opt-in on Adreno. The opening and map respond
+differently to the same setting, and the earlier exact LUT-residency
+test on this driver removed transfers at the cost of longer
+presentation waits.
+
+### Paired GPU timestamps
+
+On `d3eb4472`, the paired timestamp probe samples every 16 guest
+refreshes. It polls existing query pairs for availability and rejects
+disjoint data and intervals longer than the corresponding host
+submission-to-result window. A host fixture exercised asynchronous
+availability, 40-bit wrap, a reversed timestamp, disjoint handling,
+and the original elapsed query route under ASan and UBSan.
+[Khronos timestamp query semantics](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_disjoint_timer_query.txt)
+[Android release build](https://github.com/dmikey/cara/actions/runs/45468629340)
+
+The arrays map repeated at 3.714 s per 120 refreshes with this probe,
+versus 3.720 s without GPU queries. Five matching windows gave
+34.08–35.86 ms host p99 and a 36.97 ms worst. The GPU timestamp
+interval had a 30.13 ms median (37 samples, 28.68–31.79 ms). The
+same boot measured 22.12 ms in the lit opening (23 samples) and
+9.02 ms in early World 1-1 (52 samples). The span includes any idle
+time between the timestamp markers. It does not report GPU busy
+time or the duration of individual shader invocations. The stock
+device gave no KGSL ftrace packets through Perfetto with GPU
+frequency, busy, and batch tracepoints requested.
+
+| Timestamp retest | Route | 120-refresh median wall time | Host p99 | Worst host refresh | Median GPU marker span |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Lit opening | Arrays | 2.709 s | 25.16–25.60 ms | 27.61 ms | 22.12 ms (23 samples) |
+| Lit opening | Indexed | 2.201 s | 20.27–23.62 ms | 25.39 ms | 17.98 ms (23 samples) |
+| Stationary map | Arrays | 3.714 s | 34.08–35.86 ms | 36.97 ms | 30.13 ms (37 samples) |
+| Stationary map | Indexed | 4.012 s | 37.83–39.68 ms | 39.76 ms | 32.99 ms (60 samples) |
+
+The paired probes reproduced the map regression and the opening
+improvement. The indexed capture reached the castle map and collected
+eight timing windows. Host disk exhaustion stopped that capture as the
+harness moved to World 1-1. The earlier no-timestamp indexed repeat
+already captured the World 1-1 comparison.
+
+The same build tested the existing persistent coherent uniform stream
+on a normal arrays boot. The map performed 36,000 persistent writes
+and zero uniform-page waits per matched window. Uniform wall time
+fell from 2.06 to 1.09 ms per refresh, and PICA/GLES thread CPU fell
+from 23.68 to 22.24 ms per refresh. Map throughput stayed near 54%.
+The eight matched windows took a median 3.699 s per 120 refreshes
+with 34.70–35.79 ms p99 and a 36.28 ms worst. The GPU marker median
+was 30.54 ms across 60 samples. The normal boot reached 100% in
+early World 1-1 with the probe enabled. The existing default keeps
+persistent uniforms off.
+
+The G Cloud is on the signed `d3eb4472` APK. Its temporary profiling
+configuration was byte-checked before removal, and Cara reopened
+to its library with normal settings.
+
+[RG Slide cold and warm indexed matrix](https://github.com/dmikey/cara/blob/1dc411b230dc04ac97bc821466b71af1ad5a9f18/docs/rg-slide-mali-handoff/dark-moon-entry327.md#cold-archive-and-warm-replay-matrix)
