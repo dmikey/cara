@@ -778,6 +778,37 @@ static unsigned TevOperandCount(TevStageConfig::Operation operation, bool alpha)
     }
 }
 
+bool FragmentUsesLightingQuaternion(const Pica::Regs& regs) {
+    if (regs.lighting.disable) {
+        return false;
+    }
+    using Source = TevStageConfig::Source;
+    const auto uses_lighting = [](const auto& inputs, unsigned count) {
+        for (unsigned i = 0; i < count; ++i) {
+            if (inputs[i] == Source::PrimaryFragmentColor ||
+                inputs[i] == Source::SecondaryFragmentColor) {
+                return true;
+            }
+        }
+        return false;
+    };
+    for (const auto& stage : regs.texturing.GetTevStages()) {
+        if (IsPassThroughTevStage(stage)) {
+            continue;
+        }
+        const std::array<Source, 3> color{stage.color_source1, stage.color_source2,
+                                          stage.color_source3};
+        const std::array<Source, 3> alpha{stage.alpha_source1, stage.alpha_source2,
+                                          stage.alpha_source3};
+        if (uses_lighting(color, TevOperandCount(stage.color_op, false)) ||
+            (stage.color_op != TevStageConfig::Operation::Dot3_RGBA &&
+             uses_lighting(alpha, TevOperandCount(stage.alpha_op, true)))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// Writes the code to emulate the specified TEV stage
 static std::size_t WriteTevStage(std::string& out, const PicaFSConfig& config,
                                  FragmentUsage& usage, u32 index) {
@@ -2094,7 +2125,7 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
                                  bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs,
                                  bool ios_source_optimizations, bool native_quaternion_geometry,
                                  bool native_isolated_dispatch, bool native_suffix_sharing,
-                                 const PackedVertexLayout* known_packed_layout) {
+                                 const PackedVertexLayout* known_packed_layout, bool omit_triangle_quaternion) {
     std::string out;
     if (native_isolated_dispatch && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
     if (native_quaternion_geometry && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
@@ -2214,7 +2245,7 @@ layout (std140) uniform vs_config {
         // its control flow, while exposing dead work to the host GLSL compiler.
         std::string quaternion_program;
         const char* slice_env=std::getenv("CARA_GPU_QUATERNION_SLICE");
-        if (!native_quaternion_geometry && ios_source_optimizations && ios_indexed_inputs<3 && slice_env && std::string_view(slice_env)=="1") {
+        if (!native_quaternion_geometry && !omit_triangle_quaternion && ios_source_optimizations && ios_indexed_inputs<3 && slice_env && std::string_view(slice_env)=="1") {
             std::array<bool,16> quaternion_attributes{};
             for (auto slot : {VSOutputAttributes::QUATERNION_X,VSOutputAttributes::QUATERNION_Y,
                               VSOutputAttributes::QUATERNION_Z,VSOutputAttributes::QUATERNION_W}) {
@@ -2306,8 +2337,13 @@ layout (std140) uniform vs_config {
             out += "cara_quat_exec_shader();\n}\n";
         }
         out += "void main() {\n";
-        if (!native_quaternion_geometry) out += "vec4 first_quat=vec4(0.0);\n";
-        if (ios_indexed_inputs == 6) {
+        if (!native_quaternion_geometry && !omit_triangle_quaternion)
+            out += "vec4 first_quat=vec4(0.0);\n";
+        if (omit_triangle_quaternion) {
+            // The fragment program cannot read this varying. Other PICA outputs
+            // still come from the original vertex program and input layout.
+            out += "cara_run_vertex(gl_VertexID);\n";
+        } else if (ios_indexed_inputs == 6) {
             // gl_VertexID now names an ordered pair, never a triangle slot.
             // The original triangle-first source is supplied explicitly.
             out += "uvec2 pair_id=texelFetch(cara_vertex_indices,ivec2(gl_VertexID%128,gl_VertexID/128),0).rg;\n";
@@ -2315,11 +2351,14 @@ layout (std140) uniform vs_config {
             out += "cara_run_vertex(int(pair_id.x)); normquat=" + quaternion + ";\n";
             out += "if(pair_id.x!=pair_id.y && dot(first_quat,normquat)<0.0) normquat=-normquat;\n";
         } else {
-        if (ios_indexed_inputs<3 && !native_quaternion_geometry) out += "if (gl_VertexID % 3 != 0) { " +
-            std::string(quaternion_program.empty()?"cara_run_vertex":"cara_run_quaternion")+
-            "(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
-        out += "cara_run_vertex(gl_VertexID);\n"+varying("normquat")+" = " + quaternion + ";\n";
-        if (ios_indexed_inputs<3 && !native_quaternion_geometry) out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
+            if (ios_indexed_inputs < 3 && !native_quaternion_geometry) {
+                const char* reference = quaternion_program.empty() ? "cara_run_vertex" : "cara_run_quaternion";
+                out += std::string("if (gl_VertexID % 3 != 0) { ") + reference +
+                       "(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
+            }
+            out += "cara_run_vertex(gl_VertexID);\n" + varying("normquat") + " = " + quaternion + ";\n";
+            if (ios_indexed_inputs < 3 && !native_quaternion_geometry)
+                out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
         }
         out += "gl_Position = " + vector("vec4", {VSOutputAttributes::POSITION_X, VSOutputAttributes::POSITION_Y,
             VSOutputAttributes::POSITION_Z, VSOutputAttributes::POSITION_W}) + ";\n";

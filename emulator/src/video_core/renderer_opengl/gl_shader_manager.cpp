@@ -186,6 +186,10 @@ private:
 };
 
 class ShaderProgramManager::Impl {
+#ifdef CARA_IOS_GLES
+    struct IOSStagePair { u64 key = 0; OGLProgram* program = nullptr; };
+#endif
+
 public:
     void ConfigureNativeShaderDispatch() {
 #ifdef CARA_MAC_ATLAS_PIPELINE
@@ -322,7 +326,8 @@ public:
     }
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     unsigned ios_indexed_inputs, u16 selected_input_mask) {
+                                     unsigned ios_indexed_inputs, u16 selected_input_mask,
+                                     bool omit_triangle_quaternion) {
         bool result = false;
         const bool native_geometry = NativeQuaternionGeometry::Selected(native_geometry_enabled,ios_indexed_inputs) &&
             regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No;
@@ -341,6 +346,10 @@ public:
         key_hash ^= Common::ComputeHash64(&ios_indexed_inputs, sizeof(ios_indexed_inputs));
         // Output semantics are part of a fused ES vertex program, not a separate GS.
         key_hash ^= Common::ComputeHash64(&ios_output, sizeof(ios_output));
+        if (omit_triangle_quaternion) {
+            constexpr u32 option = 0x4e515531;
+            key_hash ^= Common::ComputeHash64(&option, sizeof(option));
+        }
         if(native_geometry) {const u32 option=NativeQuaternionGeometry::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
         if(native_dispatch) {const u32 option=0x4e494431;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
         if(native_suffix_sharing) {const u32 option=ShaderSuffixSharing::SourceOption;key_hash^=Common::ComputeHash64(&option,sizeof(option));}
@@ -350,7 +359,8 @@ public:
         if (iter_ref == shaders_ref.end()) {
             std::string vs_code = GenerateVertexShader(setup, key, separable
 #ifdef CARA_IOS_GLES
-                , &ios_output, ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch, native_suffix_sharing
+                , &ios_output, ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch,
+                  native_suffix_sharing, nullptr, omit_triangle_quaternion
 #endif
             );
             if (vs_code.empty()) {
@@ -378,7 +388,8 @@ public:
 #endif
                 bool defer = false;
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
-                defer = (ios_indexed_inputs == 3 || ios_indexed_inputs == 6) && AsyncIndexedEnabled();
+                defer = AsyncProgrammableEnabled() ||
+                        ((ios_indexed_inputs == 3 || ios_indexed_inputs == 6) && AsyncIndexedEnabled());
 #endif
                 current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER, defer);
 #ifdef CARA_IOS_GLES
@@ -555,7 +566,7 @@ public:
         return separable && current_shaders.vs ? current_shaders.vs->GetHandle() : 0;
     }
 
-    void ApplyTo(OpenGLState& state) {
+    void ApplyTo(OpenGLState& state, [[maybe_unused]] bool allow_software_vertices) {
         if (!current_shaders.vs || !current_shaders.fs) {
             state.draw.shader_program = 0;
             state.draw.program_pipeline = 0;
@@ -565,7 +576,7 @@ public:
         if(native_geometry_enabled) current_shaders.gs=native_geometry_selected?&native_geometry_shader:&trivial_geometry_shader;
 #ifdef CARA_IOS_GLES
         if (!separable && NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
-            ApplyIOSPipeline(state);
+            ApplyIOSPipeline(state, allow_software_vertices);
             return;
         }
 #endif
@@ -702,6 +713,9 @@ public:
 #else
         identity += "\nbackend=ios-gles";
 #endif
+        const char* prune = std::getenv("CARA_GLES_PRUNE_UNUSED_QUATERNION");
+        if (prune && std::strcmp(prune, "1") == 0)
+            identity += "\nprune-unused-quaternion=1";
         identity += native_geometry_enabled ? "\ngeometry=1" : "\ngeometry=0";
         identity += native_dispatch_enabled ? "\nisolated-dispatch=1" : "\nisolated-dispatch=0";
         identity += suffix_sharing_policy ? "\nsuffix-sharing-policy-v1=1" : "\nsuffix-sharing-policy-v1=0";
@@ -863,6 +877,38 @@ public:
             NativeQuaternionGeometry::TwoStageCache(true, native_geometry_enabled);
     }
 
+    bool AsyncProgrammableEnabled() const {
+        return Settings::values.gles_async_programmable_shaders &&
+               !Settings::values.skip_slow_draw && !separable &&
+               NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,
+                                                       native_geometry_enabled);
+    }
+
+    AndroidShaderWorker::Status TryBuildSharedProgram(const IOSStagePair& pair, bool reuse_stages) {
+        if (!android_shader_worker) {
+            const auto create_worker = [] { return std::make_unique<AndroidShaderWorker>(); };
+#ifdef CARA_GL_CONTEXT_DISPATCH
+            // Create the share group member on the thread that owns the core context.
+            if (auto* queue = CommandQueue::Queue()) {
+                CommandQueue::Flush();
+                android_shader_worker = queue->Call(create_worker);
+            } else
+#endif
+            {
+                android_shader_worker = create_worker();
+            }
+        }
+        const auto& vs = current_shaders.vs->GetSource();
+        const auto& fs = current_shaders.fs->GetSource();
+        auto result = android_shader_worker->Request(pair.key, vs, fs, reuse_stages);
+        if (result.status == AndroidShaderWorker::Status::Ready) {
+            *pair.program = std::move(result.program);
+            BindIOSProgram(*pair.program);
+            RememberIOSPipeline(pair.key, *pair.program, vs, fs);
+        }
+        return result.status;
+    }
+
     bool TryApplyAsyncIndexed(OpenGLState& state) {
         if (!AsyncIndexedEnabled()) {
             return true;
@@ -873,37 +919,16 @@ public:
             return IOSStagePair{key, &program_cache[key]};
         });
         auto& cached_program = *pair.program;
-        if (!cached_program.handle) {
-            if (!android_shader_worker) {
-                auto create_worker = [] { return std::make_unique<AndroidShaderWorker>(); };
-#ifdef CARA_GL_CONTEXT_DISPATCH
-                // The constructor creates its shared context from the current core context.
-                if (auto* queue = CommandQueue::Queue()) {
-                    CommandQueue::Flush();
-                    android_shader_worker = queue->Call(create_worker);
-                } else
-#endif
-                {
-                    android_shader_worker = create_worker();
-                }
-            }
-            auto ready = android_shader_worker->Request(pair.key, current_shaders.vs->GetSource(),
-                                                        current_shaders.fs->GetSource());
-            if (!ready.handle) {
-                return false;
-            }
-            cached_program = std::move(ready);
-            BindIOSProgram(cached_program);
-            RememberIOSPipeline(pair.key, cached_program, current_shaders.vs->GetSource(),
-                                current_shaders.fs->GetSource());
-        }
+        if (!cached_program.handle &&
+            TryBuildSharedProgram(pair, false) != AndroidShaderWorker::Status::Ready)
+            return false;
         state.draw.shader_program = cached_program.handle;
         state.draw.program_pipeline = 0;
         return true;
     }
 #endif
 
-    void ApplyIOSPipeline(OpenGLState& state) {
+    void ApplyIOSPipeline(OpenGLState& state, [[maybe_unused]] bool allow_software_vertices) {
         const auto& vs_source = current_shaders.vs->GetSource();
         const auto& fs_source = current_shaders.fs->GetSource();
         const auto& pair = ios_stage_pairs.Get(current_shaders.vs, current_shaders.fs, [&] {
@@ -913,6 +938,17 @@ public:
         });
         const auto key = pair.key;
         auto& p = *pair.program;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        if (!p.handle && !failed_ios_programs.count(key) && allow_software_vertices &&
+            !native_dispatch_selected && AsyncProgrammableEnabled() &&
+            TryBuildSharedProgram(pair, true) == AndroidShaderWorker::Status::Pending) {
+            // The caller retries the same PICA draw with CPU-transformed vertices.
+            // No draw has happened, and the fragment shader and targets stay identical.
+            state.draw.shader_program = 0;
+            state.draw.program_pipeline = 0;
+            return;
+        }
+#endif
         if (!p.handle && !failed_ios_programs.count(key)) {
             const auto vs = current_shaders.vs->GetHandle(), fs = current_shaders.fs->GetHandle();
             if (vs && fs) p.Create(false, {vs, fs});
@@ -1145,7 +1181,6 @@ private:
     std::unordered_map<u64, OGLShaderStage*> shaders_ref;
     const bool shader_census = ShaderCensus::Enabled();
 #ifdef CARA_IOS_GLES
-    struct IOSStagePair { u64 key = 0; OGLProgram* program = nullptr; };
     IOSPipelineCache::StagePairMemo<IOSStagePair> ios_stage_pairs;
     std::vector<IOSPipelineCache::Entry> ios_entries;
     std::vector<u64> ios_entry_keys;
@@ -1183,8 +1218,11 @@ ShaderProgramManager::ShaderProgramManager(bool separable)
 ShaderProgramManager::~ShaderProgramManager() = default;
 
 bool ShaderProgramManager::UseProgrammableVertexShader(const Pica::Regs& regs,
-                                                       Pica::Shader::ShaderSetup& setup, unsigned ios_indexed_inputs, u16 ios_input_mask) {
-    return impl->UseProgrammableVertexShader(regs, setup, ios_indexed_inputs, ios_input_mask);
+                                                       Pica::Shader::ShaderSetup& setup,
+                                                       unsigned ios_indexed_inputs, u16 ios_input_mask,
+                                                       bool omit_triangle_quaternion) {
+    return impl->UseProgrammableVertexShader(regs, setup, ios_indexed_inputs, ios_input_mask,
+                                             omit_triangle_quaternion);
 }
 
 void ShaderProgramManager::UseTrivialVertexShader() {
@@ -1233,8 +1271,8 @@ bool ShaderProgramManager::TryApplyAsyncIndexed(OpenGLState& state) {
 }
 #endif
 
-void ShaderProgramManager::ApplyTo(OpenGLState& state) {
-    impl->ApplyTo(state);
+void ShaderProgramManager::ApplyTo(OpenGLState& state, bool allow_software_vertices) {
+    impl->ApplyTo(state, allow_software_vertices);
 }
 
 GLuint ShaderProgramManager::GetSeparableVertexProgram() {

@@ -210,6 +210,7 @@ struct Values {
     s64 core_ticks_hack;
     bool core_downcount_hack;
     bool async_shader_compile;
+    bool gles_async_programmable_shaders = false;
     bool use_separable_shader;
     bool shadow_rendering;
     // Legacy renderer switches still referenced by MMJ's published renderer.
