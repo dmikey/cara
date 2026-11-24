@@ -2,6 +2,7 @@
 #pragma once
 
 #include <EGL/egl.h>
+#include <algorithm>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -17,7 +18,7 @@
 
 namespace OpenGL {
 
-// Optional indexed programs are built in a separate context in the same share
+// Program builds run in a separate context in the same share
 // group. Only the renderer installs programs and changes their uniforms.
 class AndroidShaderWorker {
 public:
@@ -64,21 +65,42 @@ public:
         }
     }
 
-    OGLProgram Request(u64 key, const std::string& vertex, const std::string& fragment) {
+    enum class Status { Unavailable, Pending, Ready };
+
+    struct Result {
+        Status status = Status::Unavailable;
+        OGLProgram program;
+    };
+
+    Result Request(u64 key, const std::string& vertex, const std::string& fragment) {
         std::lock_guard lock(mutex);
         if (!thread.joinable() || unavailable) {
             return {};
         }
         if (auto result = results.find(key); result != results.end()) {
-            return std::move(result->second);
+            if (result->second.status != Status::Ready)
+                return {result->second.status, {}};
+            auto ready = std::move(result->second);
+            results.erase(result);
+            return ready;
         }
         if (jobs.size() >= MaxQueued) {
             return {};
         }
-        results.try_emplace(key);
+        if (results.size() >= MaxTracked) {
+            const auto stale = std::find_if(results.begin(), results.end(), [](const auto& entry) {
+                return entry.second.status == Status::Unavailable;
+            });
+            if (stale != results.end()) {
+                results.erase(stale);
+            } else {
+                return {};
+            }
+        }
+        results.emplace(key, Result{Status::Pending, {}});
         jobs.push_back({key, vertex, fragment});
         wake.notify_one();
-        return {};
+        return {Status::Pending, {}};
     }
 
 private:
@@ -88,6 +110,7 @@ private:
         std::string fragment;
     };
     static constexpr std::size_t MaxQueued = 8;
+    static constexpr std::size_t MaxTracked = 64;
 
     void Run() {
         Common::SetCurrentThreadName("CaraShaderBuild");
@@ -139,7 +162,16 @@ private:
             }
             {
                 std::lock_guard lock(mutex);
-                results.at(job.key) = std::move(program);
+                const auto status = program.handle ? Status::Ready : Status::Unavailable;
+                if (results.size() == MaxTracked && status == Status::Ready) {
+                    const auto unclaimed = std::find_if(results.begin(), results.end(),
+                                                        [](const auto& entry) {
+                        return entry.second.status == Status::Ready;
+                    });
+                    if (unclaimed != results.end())
+                        results.erase(unclaimed);
+                }
+                results.at(job.key) = {status, std::move(program)};
             }
         }
         vertices.clear();
@@ -154,7 +186,7 @@ private:
     std::mutex mutex;
     std::condition_variable wake;
     std::deque<Job> jobs;
-    std::unordered_map<u64, OGLProgram> results;
+    std::unordered_map<u64, Result> results;
     bool stopping = false;
     bool unavailable = false;
     std::thread thread;

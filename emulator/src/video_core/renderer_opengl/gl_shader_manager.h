@@ -146,7 +146,7 @@ public:
     static bool VertexProvenanceEnabled() { return VertexProvenance::Enabled(); }
     void ObserveBoundVertexProgram(GLuint expected_program, unsigned input_mode);
 
-    void ApplyTo(OpenGLState& state);
+    void ApplyTo(OpenGLState& state, bool allow_software_vertices = false);
     GLuint GetSeparableVertexProgram();
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     // False means the caller must use the regular vertex program for this draw.
