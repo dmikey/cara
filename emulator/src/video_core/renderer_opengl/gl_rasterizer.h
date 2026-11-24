@@ -276,7 +276,7 @@ private:
 
     /// Syncs and uploads the lighting, fog and proctex LUTs
     void SyncAndUploadLUTs();
-    void SyncAndUploadLUTsLF();
+    void SyncAndUploadLUTsLF(bool uses_lighting = true, bool uses_fog = true);
 
     /// Upload the uniform blocks to the uniform buffer object
     void UploadUniforms(bool accelerate_draw);

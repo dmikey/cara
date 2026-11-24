@@ -3093,9 +3093,11 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         // Each stream still handles its own wrap and reuploads all live tables.
         if (!defer_unused_luts || regs.texturing.main_config.texture3_enable)
             SyncAndUploadLUTs();
-        if (!defer_unused_luts || !regs.lighting.disable ||
-            regs.texturing.fog_mode != Pica::TexturingRegs::FogMode::None) {
-            SyncAndUploadLUTsLF();
+        const bool uses_lighting = !defer_unused_luts || !regs.lighting.disable;
+        const bool uses_fog = !defer_unused_luts ||
+                              regs.texturing.fog_mode != Pica::TexturingRegs::FogMode::None;
+        if (uses_lighting || uses_fog) {
+            SyncAndUploadLUTsLF(uses_lighting, uses_fog);
         } else if (Common::FrameTiming::counters.enabled &&
                    (uniform_block_data.lighting_lut_dirty_any || uniform_block_data.fog_lut_dirty)) {
             ++Common::FrameTiming::counters.deferred_lighting_fog_lut_syncs;
@@ -4467,11 +4469,13 @@ void RasterizerOpenGL::SyncShadowTextureBias() {
     }
 }
 
-void RasterizerOpenGL::SyncAndUploadLUTsLF() {
+void RasterizerOpenGL::SyncAndUploadLUTsLF(bool uses_lighting, bool uses_fog) {
     constexpr std::size_t max_size =
         sizeof(GLvec2) * 256 * Pica::LightingRegs::NumLightingSampler + sizeof(GLvec2) * 128; // fog
 
-    if (!uniform_block_data.lighting_lut_dirty_any && !uniform_block_data.fog_lut_dirty) {
+    const bool lighting_dirty = uses_lighting && uniform_block_data.lighting_lut_dirty_any;
+    const bool fog_dirty = uses_fog && uniform_block_data.fog_lut_dirty;
+    if (!lighting_dirty && !fog_dirty) {
         return;
     }
 
@@ -4540,7 +4544,9 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
 #endif
 
     // Sync the lighting luts
-    if (uniform_block_data.lighting_lut_dirty_any || invalidate) {
+    // Wrap invalidates every old offset, including tables unused by this draw.
+    // Otherwise leave the unused family's pending dirty bits and offsets intact.
+    if (lighting_dirty || invalidate) {
         for (unsigned index = 0; index < uniform_block_data.lighting_lut_dirty.size(); index++) {
             if (uniform_block_data.lighting_lut_dirty[index] || invalidate) {
                 bool is_changed = false;
@@ -4579,7 +4585,7 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     const auto lighting_bytes = bytes_used;
 #endif
     // Sync the fog lut
-    if (uniform_block_data.fog_lut_dirty || invalidate) {
+    if (fog_dirty || invalidate) {
         bool is_changed = false;
         for (std::size_t i = 0; i < fog_lut_data.size(); ++i) {
             const auto& entry = Pica::g_state.fog.lut[i];
