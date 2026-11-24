@@ -232,6 +232,7 @@ void BootGame(const std::string& path) {
     select_probe("adreno_replace_vertex_images", "CARA_ADRENO_REPLACE_VERTEX_IMAGES");
     select_probe("trace_gles_gpu_timing", "CARA_TRACE_GLES_GPU_TIMING");
     select_probe("trace_gles_gpu_timestamps", "CARA_TRACE_GLES_GPU_TIMESTAMPS");
+    select_probe("trace_gles_gpu_commands", "CARA_TRACE_GLES_GPU_COMMANDS");
     select_probe("trace_gles_swap_timing", "CARA_TRACE_GLES_SWAP_TIMING");
     select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
     select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");
@@ -735,6 +736,19 @@ void BootGame(const std::string& path) {
                                     phases.lighting_lut_pbo_uploads, phases.lighting_lut_pbo_fallbacks);
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", draw_phases.c_str());
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", lut_phases.c_str());
+                                const auto lut_sources = fmt::format(
+                                    "lut_sources end={} lit_draws={} fog_draws={} lit_fog_draws={} "
+                                    "light_bytes={} fog_bytes={} light_uploads={} fog_uploads={} "
+                                    "mixed_uploads={} light_wall_ms={:.2f} fog_wall_ms={:.2f} "
+                                    "mixed_wall_ms={:.2f}",
+                                    frame, phases.lit_draws, phases.fog_draws, phases.lit_fog_draws,
+                                    phases.lighting_lut_bytes, phases.fog_lut_bytes,
+                                    phases.lut_upload_kinds[0], phases.lut_upload_kinds[1],
+                                    phases.lut_upload_kinds[2],
+                                    phases.lut_upload_wall_seconds[0] * 1000,
+                                    phases.lut_upload_wall_seconds[1] * 1000,
+                                    phases.lut_upload_wall_seconds[2] * 1000);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", lut_sources.c_str());
 
                                 constexpr std::array texture_phases = {
                                     "acquire", "selection", "validation", "reinterpretation",

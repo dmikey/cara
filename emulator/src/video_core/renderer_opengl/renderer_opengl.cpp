@@ -48,13 +48,18 @@
 namespace OpenGL {
 
 #ifdef __ANDROID__
+static thread_local GLESRefreshTimer* g_command_trace = nullptr;
+
 struct GLESRefreshTimer {
     using Clock = std::chrono::steady_clock;
 
     // A zero bit count selects the existing elapsed query.
-    explicit GLESRefreshTimer(unsigned timestamp_bits) : timestamp_bits(timestamp_bits) {}
+    GLESRefreshTimer(unsigned timestamp_bits, bool command_trace)
+        : timestamp_bits(timestamp_bits), command_trace(command_trace) {}
 
     ~GLESRefreshTimer() {
+        if (g_command_trace == this)
+            g_command_trace = nullptr;
         if (active && !timestamp_bits)
             glEndQueryEXT(GL_TIME_ELAPSED_EXT);
         for (const auto& sample : samples) {
@@ -62,11 +67,17 @@ struct GLESRefreshTimer {
                 glDeleteQueriesEXT(1, &sample.begin);
             if (sample.end)
                 glDeleteQueriesEXT(1, &sample.end);
+            if (sample.section_begin)
+                glDeleteQueriesEXT(1, &sample.section_begin);
+            if (sample.section_end)
+                glDeleteQueriesEXT(1, &sample.section_end);
         }
     }
 
     void FinishAndPoll() {
         if (active) {
+            if (g_command_trace == this)
+                g_command_trace = nullptr;
             if (timestamp_bits)
                 glQueryCounterEXT(active->end, GL_TIMESTAMP_EXT);
             else
@@ -106,6 +117,7 @@ struct GLESRefreshTimer {
                 return;
             sample.frame = frame;
             sample.disjoint = false;
+            sample.has_section = false;
             if (timestamp_bits) {
                 sample.submitted = Clock::now();
                 glQueryCounterEXT(sample.begin, GL_TIMESTAMP_EXT);
@@ -113,8 +125,38 @@ struct GLESRefreshTimer {
                 glBeginQueryEXT(GL_TIME_ELAPSED_EXT, sample.begin);
             }
             active = &sample;
+            if (command_trace) {
+                const auto sample_number = frame / 16;
+                section_kind = sample_number % 2 ? GLESCommandTraceScope::Kind::Draw
+                                                 : GLESCommandTraceScope::Kind::LUTUpload;
+                section_index = (sample_number / 2 * 17) %
+                                (section_kind == GLESCommandTraceScope::Kind::Draw ? 256 : 32);
+                sections_seen = 0;
+                g_command_trace = this;
+            }
             return;
         }
+    }
+
+    bool BeginSection(GLESCommandTraceScope::Kind kind, bool lighting, bool fog, std::size_t bytes) {
+        if (kind != section_kind || active->has_section || sections_seen++ != section_index)
+            return false;
+        if (!active->section_begin)
+            glGenQueriesEXT(1, &active->section_begin);
+        if (!active->section_end)
+            glGenQueriesEXT(1, &active->section_end);
+        if (!active->section_begin || !active->section_end)
+            return false;
+        active->lighting = lighting;
+        active->fog = fog;
+        active->bytes = bytes;
+        glQueryCounterEXT(active->section_begin, GL_TIMESTAMP_EXT);
+        return true;
+    }
+
+    void EndSection() {
+        glQueryCounterEXT(active->section_end, GL_TIMESTAMP_EXT);
+        active->has_section = true;
     }
 
 private:
@@ -125,6 +167,12 @@ private:
         Clock::time_point submitted{};
         bool pending = false;
         bool disjoint = false;
+        GLuint section_begin = 0;
+        GLuint section_end = 0;
+        bool has_section = false;
+        bool lighting = false;
+        bool fog = false;
+        std::size_t bytes = 0;
     };
 
     static bool Ready(GLuint query) {
@@ -139,14 +187,19 @@ private:
         return result;
     }
 
+    GLuint64 Difference(GLuint64 start, GLuint64 end) const {
+        const GLuint64 elapsed = end - start;
+        return timestamp_bits < 64 ? elapsed & ((GLuint64{1} << timestamp_bits) - 1) : elapsed;
+    }
+
     void Report(const Sample& sample) const {
         const GLuint64 begin = Read(sample.begin);
         GLuint64 elapsed = begin;
+        GLuint64 end = 0;
         GLuint64 upper_bound = static_cast<GLuint64>(std::numeric_limits<GLint64>::max());
         if (timestamp_bits) {
-            elapsed = Read(sample.end) - begin;
-            if (timestamp_bits < 64)
-                elapsed &= (GLuint64{1} << timestamp_bits) - 1;
+            end = Read(sample.end);
+            elapsed = Difference(begin, end);
             // Both GPU timestamps must fall within this host interval. Allow
             // for modest differences between the two clocks.
             upper_bound = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -163,12 +216,41 @@ private:
                             "guest_interval frame=%u ns=%llu method=%s",
                             static_cast<unsigned>(sample.frame),
                             static_cast<unsigned long long>(elapsed), method);
+        if (!sample.has_section)
+            return;
+        // Readiness of the frame's end marker implies readiness of earlier timestamps.
+        const auto start_delta = Difference(begin, Read(sample.section_begin));
+        const auto finish_delta = Difference(begin, Read(sample.section_end));
+        if (start_delta > finish_delta || finish_delta > elapsed)
+            return;
+        __android_log_print(
+            ANDROID_LOG_INFO, "CaraGPU",
+            "guest_section frame=%u kind=%s lighting=%d fog=%d bytes=%zu before_ns=%llu "
+            "section_ns=%llu after_ns=%llu",
+            static_cast<unsigned>(sample.frame), sample.bytes ? "lut_upload" : "draw",
+            sample.lighting, sample.fog, sample.bytes, static_cast<unsigned long long>(start_delta),
+            static_cast<unsigned long long>(finish_delta - start_delta),
+            static_cast<unsigned long long>(elapsed - finish_delta));
     }
 
     const unsigned timestamp_bits;
+    const bool command_trace;
+    GLESCommandTraceScope::Kind section_kind{};
+    u32 section_index = 0;
+    u32 sections_seen = 0;
     std::array<Sample, 4> samples{};
     Sample* active = nullptr;
 };
+
+GLESCommandTraceScope::GLESCommandTraceScope(Kind kind, bool lighting, bool fog, std::size_t bytes) {
+    if (g_command_trace && g_command_trace->BeginSection(kind, lighting, fog, bytes))
+        timer = g_command_trace;
+}
+
+GLESCommandTraceScope::~GLESCommandTraceScope() {
+    if (timer)
+        timer->EndSection();
+}
 #endif
 
 // If the size of this is too small, it ends up creating a soft cap on FPS as the renderer will have
@@ -513,7 +595,9 @@ void RendererOpenGL::SwapBuffers() {
         gpu_refresh_timer_checked = true;
         const char* enabled = std::getenv("CARA_TRACE_GLES_GPU_TIMING");
         const char* timestamp_flag = std::getenv("CARA_TRACE_GLES_GPU_TIMESTAMPS");
-        const bool timestamps = timestamp_flag && std::strcmp(timestamp_flag, "1") == 0;
+        const char* command_flag = std::getenv("CARA_TRACE_GLES_GPU_COMMANDS");
+        const bool commands = command_flag && std::strcmp(command_flag, "1") == 0;
+        const bool timestamps = commands || (timestamp_flag && std::strcmp(timestamp_flag, "1") == 0);
         const bool elapsed = enabled && std::strcmp(enabled, "1") == 0;
         if ((timestamps || elapsed) && GLES &&
             GLAD_GL_EXT_disjoint_timer_query && glGetQueryivEXT && glGenQueriesEXT &&
@@ -527,7 +611,7 @@ void RendererOpenGL::SwapBuffers() {
             glGetQueryivEXT(timestamps ? GL_TIMESTAMP_EXT : GL_TIME_ELAPSED_EXT,
                             GL_QUERY_COUNTER_BITS_EXT, &bits);
             if (bits > 0 && bits <= 64)
-                gpu_refresh_timer = std::make_unique<GLESRefreshTimer>(timestamps ? bits : 0);
+                gpu_refresh_timer = std::make_unique<GLESRefreshTimer>(timestamps ? bits : 0, commands);
         }
     }
     if (gpu_refresh_timer)

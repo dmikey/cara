@@ -22,6 +22,17 @@ namespace OpenGL {
 struct OGLTextureMailbox;
 #ifdef __ANDROID__
 struct GLESRefreshTimer;
+class GLESCommandTraceScope {
+public:
+    enum class Kind { Draw, LUTUpload };
+    GLESCommandTraceScope(Kind kind, bool lighting, bool fog, std::size_t bytes = 0);
+    ~GLESCommandTraceScope();
+    GLESCommandTraceScope(const GLESCommandTraceScope&) = delete;
+    GLESCommandTraceScope& operator=(const GLESCommandTraceScope&) = delete;
+
+private:
+    GLESRefreshTimer* timer = nullptr;
+};
 #endif
 
 /// Structure used for storing information about the textures for each 3DS screen

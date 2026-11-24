@@ -183,6 +183,12 @@ struct Counters {
     std::uint64_t cpu_surface_invalidations = 0;
     std::uint64_t shader_compile_calls = 0;
     std::uint64_t lit_draws = 0;
+    std::uint64_t fog_draws = 0;
+    std::uint64_t lit_fog_draws = 0;
+    std::uint64_t lighting_lut_bytes = 0;
+    std::uint64_t fog_lut_bytes = 0;
+    std::array<std::uint64_t, 3> lut_upload_kinds{};
+    std::array<double, 3> lut_upload_wall_seconds{};
     std::uint64_t active_light_sum = 0;
     std::uint64_t guest_ticks = 0;
     std::array<std::uint32_t, 4> last_guest_pc{};
