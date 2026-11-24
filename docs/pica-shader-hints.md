@@ -27,12 +27,14 @@ scan finds no entry points.
   sampler planning. On a matching first use, fragment compilation can
   overlap that build. The draw still resolves the ordinary pipeline key.
 - Android GLES Atlas queues exact separable vertex stages on a shared
-  EGL context when its vertex-stage archive misses. The draw can process
-  other state before accepting the result. If the worker fails, Cara
-  compiles from the same live source on the renderer context. The linked
+  EGL context when its vertex-stage archive misses. Eligible draws use
+  Cara's CPU vertex path until the stage is ready, then resume hardware
+  vertex processing. A draw that requires the stage can take its queued
+  job off the worker and compile immediately. The linked
   GLES path can start its existing async program build earlier when it
   already has a usable software-vertex fallback.
 
-The first draw can still wait for a new shader. Fragment state assembled
-by the guest and compile work deferred by the driver can both affect
-first use. Apple GLES continues to use the existing shader cache path.
+Fragment shaders and required vertex stages can still compile on the
+draw thread. The shader census records ROM fingerprints, generated source
+hashes, CPU fallback decisions, and long link calls separately from link
+status queries. Apple GLES continues to use the existing shader cache path.
