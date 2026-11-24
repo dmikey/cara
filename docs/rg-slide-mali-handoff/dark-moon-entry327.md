@@ -89,3 +89,115 @@ lab, E. Gadd and translucent ghosts at different animation ticks. This
 was a visual check. Exact same-refresh pixel, depth and gameplay
 validation remains open. The benchmark preview was uninstalled and
 the original player configuration checksum matched.
+
+## Cold archive and warm replay matrix
+
+The same physical RG Slide and `ec7c1df` debug APK ran four normal
+boots in order. Arrays and indexed each began with an independently
+empty Cara shader archive. The next arrays and indexed boots each
+restored the archive produced by their corresponding cold boot.
+Every boot used an empty preview save, the GLES atlas at 1×, Dynarmic
+JIT, threaded presentation, fixed CLK 100%, exact LUT residency, and
+disabled Adaptive Frame Skip. The stock driver cache was left in its
+existing state throughout. The cold comparison measures first use
+with empty Cara archives under that driver-cache history.
+
+The cold title window ending at refresh 601 had exactly 25,561 guest
+draws in each arm. Arrays recorded 30.870 s p99 and a 47.223 s worst
+refresh. Indexed recorded 30.293 s p99 and a 48.665 s worst refresh.
+Both worst points were refresh 515. Foreground compile and link
+scopes totaled 78.687 s for arrays and 79.223 s for indexed across
+those 120 refreshes. The title still exhibited a first-use pause on
+both paths.
+
+The heaviest lab-entry refresh fell in the window ending at 2161 in both
+cold boots. Arrays peaked at 39.791 s (refresh 2088) and indexed at
+40.781 s (2064). Foreground compile/link totaled 39.630 s and 40.578 s,
+respectively. That window had 33,104 vs 37,566 draws. It identifies the
+same transition in both boots with different draw streams. The next lab
+window still peaked at 29.748 s for arrays (2268) and 30.275 s for indexed
+(2243). Both were first-use link stalls despite the indexed path’s
+regular-draw fallback for optional program variants.
+
+After exact shaders were ready, a 42,927-draw Gadd window was available
+in each cold run. The indexed path sent 14,637 direct indexed draws
+and recorded zero indexed fallbacks. No shader worker compile/link scope
+intersected either sample.
+
+| Cold boot, qualified 42,927-draw Gadd window | Window end | p50 (ms) | p99 (ms) | Worst (ms) | Elapsed (s / 120) | Submit scope (ms / 120) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Arrays | 2401 | 31.97 | 55.95 | 179.98 | 4.074 | 521.14 |
+| Indexed | 2521 | 28.87 | 52.35 | 53.12 | 3.542 | 475.15 |
+
+The draw count controls workload size. The windows end at different
+refreshes, so the table cannot establish identical guest state or
+repeatability of the largest isolated refresh.
+
+The paired emulation-thread GPU-command category spent 22.70 ms per
+refresh for arrays and 20.78 ms for indexed. That counter measures CPU
+time charged inside the category, including GLES calls made there. The
+GLES submit scope in the table measures wall time.
+
+The warm arrays boot restored 120 of 120 binaries (30,224,497-byte
+archive). Indexed restored 128 of 128 (29,948,646 bytes). Both reported
+zero source links during restore. The exact 25,561-draw title window
+ending at refresh 601 recorded 130.84 ms p99 and 369.03 ms worst for
+arrays, and 131.19 ms p99 and 411.26 ms worst for indexed, both at
+refresh 515. Both recorded zero timed compile/link work in that window.
+The warm title captures had identical PNG SHA-256 digests. At a later
+transition beyond refresh 3241, arrays still needed 13 foreground links
+that totaled 27.88 s before capture ended. The warm archive can avoid
+sampled first-use bursts while still missing later shaders.
+
+The early warm lab window ending at 2281 completed 42,229 draws in
+both runs. Neither ran a shader compile or link. The LUT scope still
+took 672.96 ms across that window on arrays and 594.12 ms on indexed.
+
+| Warm replay, matched Gadd draws | Draws | Path | p50 (ms) | p99 (ms) | Worst (ms) | Elapsed (s / 120) |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| Refresh 2281, entry | 42,229 | Arrays | 36.79 | 45.25 | 88.30 | 4.319 |
+| Refresh 2281, entry | 42,229 | Indexed | 35.31 | 42.70 | 78.93 | 4.043 |
+| Refresh 2641, settled | 42,577 | Arrays | 32.73 | 53.38 | 56.89 | 4.004 |
+| Refresh 2641, settled | 42,577 | Indexed | 29.44 | 52.24 | 52.32 | 3.597 |
+| Refresh 2761, settled | 42,578 | Arrays | 32.60 | 55.03 | 55.33 | 4.004 |
+| Refresh 2761, settled | 42,578 | Indexed | 29.20 | 53.50 | 56.98 | 3.590 |
+
+The two settled indexed windows had 14,517 and 14,518 direct indexed
+draws with zero shader fallbacks or overlapping background compile/link.
+There were zero draws on the experimental lit-pair indexed route.
+Elapsed time improved about 10% in both pairs. The GPU-command CPU
+category fell from 19.99 to 19.85 ms per refresh at 2641 and from
+20.03 to 19.92 ms at 2761, so CPU savings measured there explain
+little of the elapsed improvement. These are refresh timings.
+The prior G57 hardware counter comparison measured GPU-side vertex and
+tiler savings separately.
+
+Across the first five qualified warm windows per arm, arrays recorded
+31.85–32.95 ms p50, 53.20–73.39 ms p99 and a 74.49 ms worst refresh.
+Indexed recorded 28.94–29.77 ms p50, 36.80–53.50 ms p99 and a 71.67 ms
+worst refresh. These ranges describe the individual windows. The five
+windows in each arm include different camera and animation states.
+The selection excludes windows with foreground linking, worker
+compile/link overlap, fallback draws, or over 100 ms in the LUT scope.
+
+A later indexed archive miss produced a 37.198 s refresh (2819), of
+which 37.107 s was timed shader work across the surrounding 120-refresh
+window. The p99 for that window was 52.12 ms. Arrays hit a later
+foreground link burst as well, after its last completed 120-refresh
+window. It lacked a corresponding worst-refresh measurement for that
+burst. Both arms can still encounter a late shader freeze with a warm
+archive. These measurements support retaining indexed draws as a
+steady-state candidate and pursuing program linking independently.
+
+All four lab captures showed translucent ghosts and the lit room.
+They were captured at different animation ticks. A same-refresh
+comparison of color, depth and subsequent guest reads remains open.
+The experiment changed no renderer defaults. The preview package was
+removed, the original player reopened, and its configuration SHA-256
+matched the pretest digest.
+
+The four raw captures and screenshots are in
+`/tmp/cara-gcloud.8yZRID/mali-matrix-*` on the profiling host. The arrays
+warm log recovered from the Android ring buffer is
+`mali-matrix-array-warm-recovered.log`.
+[Exact Android benchmark build](https://github.com/dmikey/cara/actions/runs/45458212650)
