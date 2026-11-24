@@ -128,6 +128,7 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_FIXED_GUEST_CLOCK = 16;
         public static final int SETTING_GUEST_CLOCK_PERCENT = 17;
         public static final int SETTING_SHOW_FPS = 18;
+        public static final int SETTING_LOSSLESS_OUTPUT_SCALE = 19;
 
         // pref
         public static final int SETTING_JOYSTICK_RELATIVE = 100;
@@ -437,9 +438,10 @@ public class RunningSettingDialog extends DialogFragment {
             mItem = item;
             mTextSettingName.setText(item.getName());
             boolean showResolutionHelp = item.getSetting() == SettingsItem.SETTING_SCALE_FACTOR;
-            mDescription.setVisibility(showResolutionHelp ? View.VISIBLE : View.GONE);
-            if (showResolutionHelp) {
-                mDescription.setText(R.string.setting_resolution_desc);
+            boolean showScaleHelp = item.getSetting() == SettingsItem.SETTING_LOSSLESS_OUTPUT_SCALE;
+            mDescription.setVisibility(showResolutionHelp || showScaleHelp ? View.VISIBLE : View.GONE);
+            if (showResolutionHelp || showScaleHelp) {
+                mDescription.setText(showScaleHelp ? R.string.setting_output_scale_desc : R.string.setting_resolution_desc);
             }
             mRadioGroup.setOnCheckedChangeListener(null);
             mRadioGroup.check(checkIds[index]);
@@ -471,6 +473,11 @@ public class RunningSettingDialog extends DialogFragment {
                 RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
                 radio3.setVisibility(View.VISIBLE);
                 radio3.setText("4×");
+            } else if (item.getSetting() == SettingsItem.SETTING_LOSSLESS_OUTPUT_SCALE) {
+                ((RadioButton) mRadioGroup.findViewById(R.id.radio0)).setText(R.string.setting_output_fit);
+                ((RadioButton) mRadioGroup.findViewById(R.id.radio1)).setText(R.string.setting_output_lossless_2x);
+                ((RadioButton) mRadioGroup.findViewById(R.id.radio2)).setText(R.string.setting_output_lossless_4x);
+                mRadioGroup.findViewById(R.id.radio3).setVisibility(View.GONE);
             } else if (item.getSetting() == SettingsItem.SETTING_FORCE_TEXTURE_FILTER) {
                 RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
                 radio0.setText(R.string.setting_filter_default);
@@ -666,6 +673,9 @@ public class RunningSettingDialog extends DialogFragment {
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SCALE_FACTOR,
                     R.string.internal_resolution, SettingsItem.TYPE_RADIO_GROUP,
                     mRunningSettings[SettingsItem.SETTING_SCALE_FACTOR]));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOSSLESS_OUTPUT_SCALE,
+                    R.string.setting_output_scale, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_LOSSLESS_OUTPUT_SCALE]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_FORCE_TEXTURE_FILTER,
                     R.string.setting_force_texture_filter,
                     SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_FORCE_TEXTURE_FILTER]));

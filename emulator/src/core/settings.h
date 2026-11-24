@@ -164,6 +164,7 @@ struct Values {
     bool use_hw_shader;
     bool use_shader_jit;
     u16 resolution_factor;
+    u8 lossless_output_scale = 0;
     bool vsync_enabled;
     bool use_frame_limit;
     u16 frame_limit;

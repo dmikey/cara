@@ -30,7 +30,7 @@ extern "C" int __llvm_profile_write_file(void);
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
 #import "ios/network_controller.h"
-#include "ios/display_scaling.h"
+#include "cara/display_scaling.h"
 #include "ios/device_sensors.h"
 #include "ios/session_overlay.h"
 #include "network/relay_client.h"

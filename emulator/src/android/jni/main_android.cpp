@@ -17,6 +17,7 @@
 #include <android/native_window_jni.h>
 
 #include "cara/adaptive_clock.h"
+#include "cara/display_scaling.h"
 #include "cara/p3d_completion.h"
 #include "cara/play_profile.h"
 #include "common/common_paths.h"
@@ -62,7 +63,7 @@ static std::atomic<bool> s_stop_running;
 static std::atomic<bool> s_is_running;
 static std::mutex s_running_mutex;
 static std::condition_variable s_running_cv;
-constexpr jsize RunningSettingsCount = 19;
+constexpr jsize RunningSettingsCount = 20;
 using RunningSettings = std::array<jint, RunningSettingsCount>;
 static std::optional<RunningSettings> s_pending_settings;
 
@@ -188,6 +189,10 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
     const bool show_fps = settings[i++] != 0;
     Config::Set(Config::SHOW_FPS, show_fps);
     OSD::SetShowFPS(show_fps);
+
+    const int output_scale_index = std::clamp(settings[i++], 0, 2);
+    Settings::values.lossless_output_scale = static_cast<u8>(output_scale_index * 2);
+    Config::Set(Config::LOSSLESS_OUTPUT_SCALE, Settings::values.lossless_output_scale);
     VideoCore::SettingUpdate();
 
 }
@@ -1131,6 +1136,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.use_frame_limit = play_policy.limit_speed;
     Settings::values.frame_limit = play_policy.maximum_speed;
     Settings::values.resolution_factor = Config::Get(Config::RESOLUTION_FACTOR);
+    Settings::values.lossless_output_scale = Config::Get(Config::LOSSLESS_OUTPUT_SCALE);
     Settings::values.factor_3d = Config::Get(Config::FACTOR_3D);
     Settings::values.custom_textures = Config::Get(Config::CUSTOM_TEXTURES);
     Settings::values.pp_shader_name = Config::Get(Config::POST_PROCESSING_SHADER);
@@ -1279,6 +1285,7 @@ JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(J
     settings[i++] = Config::Get(Config::FIXED_GUEST_CLOCK);
     settings[i++] = Config::Get(Config::GUEST_CLOCK_PERCENT);
     settings[i++] = Config::Get(Config::SHOW_FPS);
+    settings[i++] = Cara::LCDUpscaleFactor(Settings::values.lossless_output_scale) / 2;
 
     jintArray array = env->NewIntArray(i);
     if (array)

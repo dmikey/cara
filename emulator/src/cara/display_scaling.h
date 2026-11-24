@@ -21,7 +21,7 @@ constexpr int LCDUpscaleFactor(long preference) {
 }
 
 constexpr bool FinalScaleIsIntegral(int width, int height, int fit_width, int fit_height) {
-    return fit_width >= width && fit_height >= height && fit_width % width == 0 &&
+    return width > 0 && height > 0 && fit_width >= width && fit_height >= height && fit_width % width == 0 &&
            fit_height % height == 0 && fit_width / width == fit_height / height;
 }
 
