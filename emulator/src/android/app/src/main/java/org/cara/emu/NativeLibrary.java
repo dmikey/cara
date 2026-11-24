@@ -377,17 +377,6 @@ public final class NativeLibrary {
     public static native void PauseEmulation();
     public static native void StopEmulation();
 
-    public static native boolean requestSaveState(int request, int operation, int slot);
-
-    public static void onSaveStateResult(int request, int operation, int slot, String error,
-                                         long[] timestamps) {
-        EmulationActivity activity = EmulationActivity.get();
-        if (activity != null) {
-            activity.runOnUiThread(
-                    () -> activity.onSaveStateResult(request, operation, slot, error, timestamps));
-        }
-    }
-
     /**
      * running settings
      */

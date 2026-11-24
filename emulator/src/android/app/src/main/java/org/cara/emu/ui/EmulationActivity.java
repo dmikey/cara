@@ -74,7 +74,6 @@ public final class EmulationActivity extends AppCompatActivity {
     private String mGamePath;
     private boolean mMenuVisible;
     private EmulationFragment mEmulationFragment;
-    private SaveStateMenu mSaveStateMenu;
     private Map<Integer, Bitmap> mBitmaps;
 
     private int mSafeInsetLeft = 0;
@@ -157,18 +156,6 @@ public final class EmulationActivity extends AppCompatActivity {
         }
     }
 
-    void openSaveStates(boolean save) {
-        if (mSaveStateMenu == null)
-            mSaveStateMenu = new SaveStateMenu(this);
-        mSaveStateMenu.open(save);
-    }
-
-    public void onSaveStateResult(int request, int operation, int slot, String error,
-                                  long[] timestamps) {
-        if (mSaveStateMenu != null)
-            mSaveStateMenu.complete(request, operation, slot, error, timestamps);
-    }
-
     public void showRunningSetting() {
         mEmulationFragment.stopConfiguringLayout();
         mEmulationFragment.stopConfiguringControls();
@@ -184,13 +171,6 @@ public final class EmulationActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         hideSystemUI();
-    }
-
-    @Override
-    protected void onDestroy() {
-        if (mSaveStateMenu != null)
-            mSaveStateMenu.close();
-        super.onDestroy();
     }
 
     private void hideSystemUI() {

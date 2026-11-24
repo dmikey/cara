@@ -155,8 +155,6 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_EXIT_GAME = 208;
         public static final int SETTING_SHOW_ADVANCED = 209;
         public static final int SETTING_SECTION_HEADER = 210;
-        public static final int SETTING_SAVE_STATE = 211;
-        public static final int SETTING_LOAD_STATE = 212;
 
         public static final int SETTING_MULTIPLAYER_ROOM_TEXT = 400;
         public static final int SETTING_MULTIPLAYER_CREATE_ROOM = 401;
@@ -283,11 +281,6 @@ public class RunningSettingDialog extends DialogFragment {
                 break;
             case SettingsItem.SETTING_SHOW_ADVANCED:
                 mAdapter.showAdvancedSettings();
-                break;
-            case SettingsItem.SETTING_SAVE_STATE:
-            case SettingsItem.SETTING_LOAD_STATE:
-                dismiss();
-                activity.openSaveStates(mItem.getSetting() == SettingsItem.SETTING_SAVE_STATE);
                 break;
             case SettingsItem.SETTING_EDIT_BUTTONS:
                 activity.startConfiguringControls();
@@ -612,13 +605,6 @@ public class RunningSettingDialog extends DialogFragment {
             mSettings = new ArrayList<>();
             mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU,
                     R.string.preferences_settings, SettingsItem.TYPE_TEXT, MENU_SETTINGS));
-
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
-                    R.string.cara_state_title, SettingsItem.TYPE_HEADER, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_SAVE_STATE,
-                    R.string.cara_state_save, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_STATE,
-                    R.string.cara_state_load, SettingsItem.TYPE_TEXT, 0));
 
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
                     R.string.setting_header_renderer, SettingsItem.TYPE_HEADER, 0));

@@ -7,8 +7,6 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <exception>
-#include <limits>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -33,7 +31,6 @@
 #include "core/hle/service/nfc/nfc.h"
 #include "core/hle/service/ptm/ptm.h"
 #include "core/loader/smdh.h"
-#include "core/savestate.h"
 #include "core/settings.h"
 #ifdef CARA_GL_CONTEXT_DISPATCH
 #include "video_core/renderer_opengl/gl_command_queue.h"
@@ -65,34 +62,6 @@ static std::condition_variable s_running_cv;
 constexpr jsize RunningSettingsCount = 19;
 using RunningSettings = std::array<jint, RunningSettingsCount>;
 static std::optional<RunningSettings> s_pending_settings;
-
-enum class StateOperation : jint { List = 0, Save = 1, Load = 2 };
-struct StateRequest {
-    jint id;
-    StateOperation operation;
-    u32 slot;
-};
-// The settings lock also serializes requests against the lifetime of the game.
-static std::optional<StateRequest> s_state_request;
-static bool s_state_session = false;
-static std::mutex s_present_mutex;
-
-static void CompleteStateRequest(const StateRequest& request, const std::string& error,
-                                 const std::array<jlong, Core::SaveStateSlotCount>* slots = nullptr) {
-    JNIEnv* env = JniHelper::GetEnvForThread();
-    jlongArray times = nullptr;
-    if (slots) {
-        times = env->NewLongArray(Core::SaveStateSlotCount);
-        if (!times)
-            return;
-        env->SetLongArrayRegion(times, 0, Core::SaveStateSlotCount, slots->data());
-    }
-    JniHelper::CallStaticMethod<void>("org/cara/emu/NativeLibrary", "onSaveStateResult",
-                                    request.id, static_cast<jint>(request.operation), request.slot,
-                                    error, times);
-    if (times)
-        env->DeleteLocalRef(times);
-}
 
 static Cara::PlayMode ReadPlayMode() {
     return Config::Get(Config::ACCURACY_MODE) ? Cara::PlayMode::Accuracy : Cara::PlayMode::Performance;
@@ -401,10 +370,6 @@ void BootGame(const std::string& path) {
 
     s_update_hid = false;
     s_stop_running = false;
-    {
-        std::lock_guard lock{s_running_mutex};
-        s_state_session = true;
-    }
     s_is_running = true;
     system.perf_stats->SetBoundedFramePacing(true);
     Cara::AdaptiveClock adaptive_clock;
@@ -440,16 +405,8 @@ void BootGame(const std::string& path) {
         discard_next_sample = true;
         reset_trace();
     };
-    const auto rebind_after_load = [&] {
-        hid = system.ServiceManager().GetService<Service::HID::Module::Interface>("hid:USER")
-                  ->GetModule();
-        system.perf_stats->SetBoundedFramePacing(true);
-        apply_play_policy();
-        OSD::SetShowFPS(Config::Get(Config::SHOW_FPS));
-    };
     apply_play_policy();
     while (!s_stop_running) {
-        std::optional<StateRequest> state_request;
         {
             std::lock_guard lock{s_running_mutex};
             if (s_pending_settings) {
@@ -457,67 +414,7 @@ void BootGame(const std::string& path) {
                 s_pending_settings.reset();
                 apply_play_policy();
             }
-            state_request = s_state_request;
         }
-        if (s_stop_running)
-            break;
-        // Process states outside RunLoop, after all guest timing callbacks have returned.
-        if (state_request) {
-            std::array<jlong, Core::SaveStateSlotCount> slots{};
-            std::string error;
-            try {
-                switch (state_request->operation) {
-                case StateOperation::List:
-                    for (const auto& state : Core::ListSaveStates(system.GetTitleID())) {
-                        constexpr auto max_seconds = static_cast<u64>(
-                            std::numeric_limits<jlong>::max() / 1000);
-                        slots[state.slot - 1] =
-                            state.status == Core::SaveStateInfo::ValidationStatus::OK
-                                ? static_cast<jlong>(std::clamp(state.time, u64{1}, max_seconds))
-                                : -1;
-                    }
-                    break;
-                case StateOperation::Save:
-                    system.SaveState(state_request->slot);
-                    break;
-                case StateOperation::Load: {
-                    // State restore may destroy and recreate the renderer and HID service.
-                    // Protect presentation for both the restore and any rollback.
-                    std::lock_guard lock{s_present_mutex};
-                    hid.reset();
-                    try {
-                        system.LoadState(state_request->slot);
-                    } catch (...) {
-                        if (system.IsPoweredOn())
-                            rebind_after_load();
-                        throw;
-                    }
-                    rebind_after_load();
-                    break;
-                }
-                }
-            } catch (const std::exception& failure) {
-                error = failure.what();
-            }
-            if (state_request->operation == StateOperation::Save) {
-                // Disk and compression time are not samples of guest execution cost.
-                system.perf_stats->ResetFramePacing();
-                adaptive_clock.ResetSamples();
-                sampled_frame = VideoCore::GetCurrentFrame();
-                discard_next_sample = true;
-                reset_trace();
-            }
-            {
-                std::lock_guard lock{s_running_mutex};
-                s_state_request.reset();
-            }
-            CompleteStateRequest(*state_request, error,
-                                 state_request->operation == StateOperation::List ? &slots : nullptr);
-            if (!system.IsPoweredOn())
-                break;
-        }
-        if (s_stop_running)
-            break;
         if (s_is_running) {
             result = system.RunLoop();
             if (result == Core::System::ResultStatus::ShutdownRequested) {
@@ -776,9 +673,7 @@ void BootGame(const std::string& path) {
             Settings::values.audio_volume = 0;
 
             std::unique_lock lock{s_running_mutex};
-            s_running_cv.wait(lock, [] {
-                return s_is_running || s_stop_running || s_pending_settings || s_state_request;
-            });
+            s_running_cv.wait(lock, [] { return s_is_running || s_stop_running || s_pending_settings; });
             lock.unlock();
             system.perf_stats->ResetFramePacing();
             adaptive_clock.ResetSamples();
@@ -792,8 +687,6 @@ void BootGame(const std::string& path) {
 
     {
         std::lock_guard lock{s_running_mutex};
-        s_state_session = false;
-        s_state_request.reset();
         if (s_pending_settings) {
             ApplyRunningSettings(*s_pending_settings);
             s_pending_settings.reset();
@@ -801,9 +694,6 @@ void BootGame(const std::string& path) {
         Config::Save();
     }
 
-    // Finish any in-flight presentation before releasing the renderer.
-    s_is_running = false;
-    std::lock_guard present_lock{s_present_mutex};
     // Shutdown the core emulation
 #ifdef CARA_GL_CONTEXT_DISPATCH
     const bool had_worker = OpenGL::CommandQueue::Enabled();
@@ -822,6 +712,7 @@ void BootGame(const std::string& path) {
         s_render_window->DoneCurrent();
 #endif
     s_render_window.reset();
+    s_is_running = false;
     resetSearchResults();
 }
 
@@ -1021,8 +912,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_WindowChanged(JNIEnv* env
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_DoFrame(JNIEnv* env, jclass obj) {
-    std::unique_lock lock{s_present_mutex, std::try_to_lock};
-    if (!lock || !s_is_running || s_stop_running) {
+    if (!s_is_running || s_stop_running) {
         return;
     }
     s_render_window->TryPresenting();
@@ -1221,26 +1111,6 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_StopEmulation(JNIEnv* env
     s_stop_running = true;
     s_render_window->StopPresenting();
     s_running_cv.notify_all();
-}
-
-JNIEXPORT jboolean JNICALL Java_org_cara_emu_NativeLibrary_requestSaveState(
-    JNIEnv*, jclass, jint id, jint action, jint slot) {
-    const auto operation = static_cast<StateOperation>(action);
-    if (id <= 0 ||
-        (operation != StateOperation::List && operation != StateOperation::Save &&
-         operation != StateOperation::Load) ||
-        (operation != StateOperation::List &&
-         (slot < 1 || slot > static_cast<jint>(Core::SaveStateSlotCount)))) {
-        return JNI_FALSE;
-    }
-    {
-        std::lock_guard lock{s_running_mutex};
-        if (!s_state_session || s_stop_running || s_state_request)
-            return JNI_FALSE;
-        s_state_request = StateRequest{id, operation, static_cast<u32>(slot)};
-    }
-    s_running_cv.notify_all();
-    return JNI_TRUE;
 }
 
 JNIEXPORT jintArray JNICALL Java_org_cara_emu_NativeLibrary_getRunningSettings(JNIEnv* env,
