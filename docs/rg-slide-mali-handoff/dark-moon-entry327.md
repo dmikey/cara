@@ -201,3 +201,113 @@ The four raw captures and screenshots are in
 warm log recovered from the Android ring buffer is
 `mali-matrix-array-warm-recovered.log`.
 [Exact Android benchmark build](https://github.com/dmikey/cara/actions/runs/45458212650)
+
+## Cold lab program-link attribution
+
+The shader census correlates each driver link with the original vertex
+and fragment source hashes on the same GL thread. The window ending at
+refresh 2161 contains the first lab door transition in both linked-program
+controls. Link scopes cover `glLinkProgram` and the blocking
+`glGetProgramiv(GL_LINK_STATUS)` query. First-draw scopes cover CPU
+submission. They do not measure GPU completion.
+
+| Cold lab window ending at 2161 | Arrays | Indexed |
+| --- | ---: | ---: |
+| Worst refresh | 39.791 s | 40.781 s |
+| Foreground links | 21 | 21 |
+| Foreground link wall time | 38.202 s | 39.237 s |
+| Linked combinations with known lit fragments | 16 | 16 |
+| Foreground link wall time for those lit combinations | 32.828 s | 33.150 s |
+| Foreground stage compile wall time | 1.424 s | 1.338 s |
+| Longest timed foreground first-draw submission | 0.245 ms | 0.235 ms |
+
+The most expensive individual link in both runs paired vertex source
+`043c304f6262673f` with lit fragment `bd8666435f474b43`. It took 3.075 s
+with arrays and 3.091 s with indexed draws. Four shared vertex sources
+(`4d30a54875fec2a2`, `2808e2f12aa3a68f`, `043c304f6262673f`, and
+`a8e2ab8b7c723753`) account for 28.237 s of indexed link time. They
+already reuse GL shader objects. The cost repeats when Mali links each
+vertex and fragment pairing. Five indexed worker links ran in this
+window and used unlit variants. The worker left the dominant lit links
+on the emulation thread. In Performance Mode, the existing fallback
+requires a prelinked software-vertex program for that exact fragment.
+
+The next lab burst, ending at 2281, repeated the pattern. Sixteen
+foreground links took 29.546 s for arrays and 30.157 s for indexed.
+Indexed foreground stage compile work fell to 1.765 ms in that window.
+A larger binary archive can cover later repeat visits. A first visit
+requires reducing or deferring the linker work itself.
+
+### Separable GLES stage probe
+
+The next run used the same `ec7c1df` APK and settings as the indexed
+linked-program control, with GLES 3.2 separable stages and a GLES
+debug observer enabled on the preview. It began with an empty Cara
+archive and empty preview save on the stock driver. The driver-private
+cache was retained. The observer reported no GLES warnings or errors.
+
+| Cold checkpoint | Indexed linked p99 | Indexed linked worst | Separable p99 | Separable worst |
+| --- | ---: | ---: | ---: | ---: |
+| Smoky title, end 601 | 30,292.77 ms | 48,664.67 ms | 10,576.50 ms | 42,338.69 ms |
+| First lab entry, end 2161 | 155.77 ms | 40,780.70 ms | 94.23 ms | 8,346.56 ms |
+| Next lab window, end 2281 | 95.54 ms | 30,275.45 ms | 95.39 ms | 787.66 ms |
+| Later lab transition, end 2881 | 52.34 ms | 34,440.95 ms | 53.57 ms | 1,126.82 ms |
+| Settled lab, end 2521 | 52.35 ms | 53.12 ms | 53.15 ms | 53.85 ms |
+
+The title window had 25,561 guest draws in every arm. At lab entry
+the animations produced different draw counts. The settled window
+had 42,927 draws, 14,637 direct indexed draws and zero fallback
+draws in both arms. Its median was 28.87 ms with linked programs
+and 29.33 ms with separate stages. The GPU-command CPU category
+spent 20.78 and 20.87 ms per refresh respectively, while Dynarmic
+execution accounted for 5.36 and 5.68 ms. The observed cold link
+improvement did not carry over to a faster settled draw loop.
+
+The remaining first lab stall comes primarily from three standalone
+vertex links totaling 6.404 s. Fourteen separate fragment links
+totaled 0.746 s. Stage compile calls totaled another 1.051 s.
+At the smoky title the 20 standalone vertex links still took
+41.807 s. All 36 fragment links there totaled 3.019 s. Reducing
+the cost of the first vertex lowering/link is the remaining cold
+priority on this path.
+
+The second separable normal boot reused the installation and stock
+driver cache. It used an empty preview save again. Both separable
+runs kept the Cara archive directory empty. The title recorded
+9,615.69 ms p99 and a 41,800.73 ms worst refresh on the repeat.
+The first lab-transition refresh took 7,819.32 ms with a 46.64 ms
+window p99. That window ended at 2041 on this run. The next lab
+window ending at 2281 recorded 73.00 ms p99 and 530.38 ms worst.
+The driver reused too little stage compilation work to remove
+the large first-use waits on a repeat boot.
+
+Three of the four expensive vertex hashes from the linked control
+match sources in the earlier captured Dark Moon Cara archive.
+The sources are 75,804–75,833 bytes and emit the same opcode and
+first generated statement for all 500 captured guest instruction
+PCs. Their vertex program entry offsets are 198, 218 and 230.
+The sources also differ in generated dispatch and packed input
+setup. The common guest program is a candidate for sharing one
+compiled stage across proven compatible entry points. An exact
+implementation must validate the guest program and swizzle bytes,
+input/output interfaces, and entry-dependent per-draw state before
+sharing a compiled stage.
+
+A bounded separable-stage binary archive is an independent repeat
+boot improvement. It can reuse the existing driver identity,
+checksums and limits. Loading a GLES binary includes the program's
+separable state under the ES 3.2 specification. A driver can still
+reject a binary, so any implementation needs to retry the exact
+generated source. The existing extended linked archive has already
+restored 197 of 197 binaries on the Slide. That is evidence for warm
+coverage on that path. Separable archive restore and stable
+same-refresh color and depth have yet to be validated.
+[OpenGL ES 3.2 specification](https://registry.khronos.org/OpenGL/specs/es/3.2/es_spec_3.2.pdf) ·
+[Linked archive measurements](gles-validation.md#bounded-mali-binary-archive-experiment)
+
+Both separable runs reached the lit lab and showed translucent
+ghosts and lightning. The screenshots were captured at different
+animation ticks. The experiment changed no shipped defaults.
+The preview was removed and the original app configuration
+hash matched its pretest value. The raw captures are
+`/tmp/cara-gcloud.8yZRID/mali-link-separable-*.log`.
