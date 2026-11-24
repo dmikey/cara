@@ -398,14 +398,16 @@ jobs:
           - macOS: Developer ID-signed and notarized arm64 app with optional CPU JIT.
           - iPhone and iPad: unsigned arm64 GLES3 IPA for personal sideloading. Re-sign before installing. TestFlight remains a separate Apple distribution channel.
           - Android: ARM64 APK for direct installation and AAB for Play Console, both signed with the configured upload key. An APK signed by the upload key can differ from the key Play uses for installs.
-
           - Linux: x86-64 SDL/OpenGL FastInterp build for Ubuntu 24.04.
           - Windows: unsigned x86-64 SDL/OpenGL FastInterp ZIP.
 
           Verify downloads using SHA256SUMS.txt.
           EOF
+          # Reserve the tag atomically so GitHub cannot reuse one created during the build.
+          gh api --method POST "repos/$GH_REPO/git/refs" \
+            -f ref="refs/tags/$RC_TAG" -f sha="$EXPECTED_SHA" >/dev/null
           gh release create "$RC_TAG" dist/* SHA256SUMS.txt --draft --prerelease --latest=false \
-            --target "$EXPECTED_SHA" --title "$RC_TAG" --notes-file notes.md
+            --verify-tag --title "$RC_TAG" --notes-file notes.md
           gh release edit "$RC_TAG" --draft=false --latest=false
           url=$(gh release view "$RC_TAG" --json url,isDraft,isPrerelease \
             --jq 'select(.isDraft == false and .isPrerelease == true) | .url')
