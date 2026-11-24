@@ -728,7 +728,8 @@ public:
 
     bool CanDeferIOSStage(const std::string& source) const {
 #ifdef CARA_IOS_GLES
-        if (NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
+        if (!separable && NativeQuaternionGeometry::TwoStageCache(
+                              Settings::values.use_shader_cache, native_geometry_enabled)) {
             for (std::size_t i = 0; i < ios_entries.size(); ++i) {
                 const auto& e = ios_entries[i];
                 const auto p = program_cache.find(ios_entry_keys[i]);
