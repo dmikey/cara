@@ -13,6 +13,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <glad/glad.h>
 #include "cara/lodepng_image_interface.h"
@@ -187,6 +188,7 @@ void Configure() {
 }
 }
 int main(int argc, char** argv) {
+    SDL_SetMainReady();
     if (auto result = Cara::RunConsoleActivity(argc, argv)) return *result;
     try {
         bool self_test = false, fullscreen = false;
@@ -223,7 +225,9 @@ int main(int argc, char** argv) {
             else game = arg;
         }
         if (!self_test && game.empty()) throw std::runtime_error("Provide a game path or --self-test");
-        setenv("CARA_CPU_BACKEND", "fastinterp", 1);
+        if (SDL_setenv("CARA_CPU_BACKEND", "fastinterp", 1) != 0) {
+            throw std::runtime_error("Unable to select FastInterp");
+        }
         if (const char* path = std::getenv("CARA_USER_DIR")) {
             std::string user = path;
             if (user.empty()) throw std::runtime_error("CARA_USER_DIR must not be empty");
