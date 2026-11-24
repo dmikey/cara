@@ -637,3 +637,25 @@ in the sampled opening and map. The opening peak is worse, so the
 test does not qualify inline as the default. Table reuse stays
 opt-in pending wider validation and is unsuitable for this Adreno
 driver in the tested scenes.
+
+A second title run with exact reuse repeated 4.410–4.421 seconds and
+39.90–41.23 ms p99. The preceding control repeated 6.102–6.126 seconds
+with exactly the same 51,120 draws and 480 partial updates per window.
+
+The lab comparison booted both arms through empty preview slots to
+the first E. Gadd cinematic. Five warm windows in each arm had zero
+shader creation. Their median ranges overlapped. The exact 42,229-draw
+comparison produced 3.968 and 3.989 s control windows versus 3.995 s
+with reuse. Both paths issued zero LUT uploads in that exact
+comparison. Control p99 was 39.03–39.64 ms and the candidate p99 was
+42.31 ms. Across the five windows, the control worst was 56.26 ms
+and the candidate worst was 58.38 ms. The exact reuse win is confirmed
+for the title. Warm Gadd leaves its draw and submission workload as
+the optimization target.
+
+The first lab control seeded shader programs from a 47-entry archive.
+Its longest first-use refresh was 40.55 s. The second boot restored
+120 programs, so this does not compare cold lab-entry performance.
+Both lab screenshots show Gadd, room lighting, and translucent ghosts.
+Camera and animation ticks differ. The preview was removed and the
+player's configuration hash matched after the original app reopened.
