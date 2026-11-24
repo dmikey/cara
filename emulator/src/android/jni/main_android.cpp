@@ -220,6 +220,7 @@ void BootGame(const std::string& path) {
     select_probe("mailbox_async_publish", "CARA_MAILBOX_ASYNC_PUBLISH");
     select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
     select_probe("lighting_lut_generations", "CARA_LIGHTING_LUT_GENERATIONS");
+    select_probe("lighting_lut_residency", "CARA_LIGHTING_LUT_RESIDENCY");
     select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");
     select_probe("adreno_replace_vertex_images", "CARA_ADRENO_REPLACE_VERTEX_IMAGES");
     select_probe("trace_gles_gpu_timing", "CARA_TRACE_GLES_GPU_TIMING");

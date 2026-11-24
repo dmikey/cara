@@ -501,6 +501,8 @@ private:
     OGLTexture texture_null;
 #ifdef CARA_IOS_GLES
     std::vector<u8> lighting_lut_image;
+    struct LightingLUTResidency;
+    std::unique_ptr<LightingLUTResidency> lighting_lut_residency;
 #endif
 #ifdef CARA_ANDROID_GLES_ATLAS
     static constexpr size_t LightingTextureBatchSize = 32;

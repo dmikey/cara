@@ -226,6 +226,54 @@ static GLsizeiptr LightingLUTBufferSize(std::size_t fallback) {
     return fallback;
 }
 
+#ifdef CARA_IOS_GLES
+struct RasterizerOpenGL::LightingLUTResidency {
+    template <std::size_t Length>
+    class Versions {
+    public:
+        using Table = std::array<GLvec2, Length>;
+
+        std::optional<GLint> Find(const Table& table) const {
+            for (std::size_t i = 0; i < count; ++i) {
+                if (std::memcmp(entries[i].table.data(), table.data(), Length * sizeof(GLvec2)) == 0)
+                    return entries[i].offset;
+            }
+            return std::nullopt;
+        }
+
+        void Remember(const Table& table, GLint offset) {
+            entries[next] = {table, offset};
+            next = (next + 1) % entries.size();
+            count = std::min(count + 1, entries.size());
+        }
+
+        void Reset() {
+            next = 0;
+            count = 0;
+        }
+
+    private:
+        struct Entry {
+            Table table;
+            GLint offset;
+        };
+
+        std::array<Entry, 8> entries;
+        std::size_t next = 0;
+        std::size_t count = 0;
+    };
+
+    void Reset() {
+        for (auto& versions : lighting)
+            versions.Reset();
+        fog.Reset();
+    }
+
+    std::array<Versions<256>, Pica::LightingRegs::NumLightingSampler> lighting;
+    Versions<128> fog;
+};
+#endif
+
 RasterizerOpenGL::RasterizerOpenGL()
     : shader_census(ShaderCensus::Enabled()), is_mali_gpu(IsVendorMali()), shader_dirty(true),
       vertex_buffer(GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE),
@@ -4348,12 +4396,40 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         offset = 0;
     } else if (!UseNativeLUTBuffers()) {
         std::tie(buffer, offset, invalidate) = texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
+        static const bool reuse_resident_tables = [] {
+            const char* flag = std::getenv("CARA_LIGHTING_LUT_RESIDENCY");
+            return flag && std::strcmp(flag, "1") == 0;
+        }();
+        if (reuse_resident_tables) {
+            if (!lighting_lut_residency)
+                lighting_lut_residency = std::make_unique<LightingLUTResidency>();
+            // On wrap the existing upload path republishes every live table.
+            // Offsets from the prior ring generation are no longer reusable.
+            if (invalidate)
+                lighting_lut_residency->Reset();
+        }
     } else
 #endif
     {
         glBindBuffer(StreamBufferTarget(GL_TEXTURE_BUFFER), texture_lf_buffer.GetHandle());
         std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
     }
+
+    const auto stage_table = [&](const auto& table, std::size_t destination) {
+        const std::size_t size = table.size() * sizeof(GLvec2);
+        std::memcpy(buffer + destination, table.data(), size);
+        bytes_used += size;
+        return static_cast<GLint>((offset + destination) / sizeof(GLvec2));
+    };
+#ifdef CARA_IOS_GLES
+    const auto resident_offset = [&](auto& versions, const auto& table) {
+        if (const auto existing = versions.Find(table))
+            return *existing;
+        const auto uploaded = stage_table(table, bytes_used);
+        versions.Remember(table, uploaded);
+        return uploaded;
+    };
+#endif
 
     // Sync the lighting luts
     if (uniform_block_data.lighting_lut_dirty_any || invalidate) {
@@ -4372,13 +4448,18 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                 auto& lut_offset =
                     uniform_block_data.light_data.lighting_lut_offset[index / 4][index % 4];
                 if (is_changed || invalidate || lut_offset < 0) {
-                    const auto destination = UseLightingLUTSnapshots()
-                        ? index * sizeof(lighting_lut_data[index]) : bytes_used;
-                    std::memcpy(buffer + destination, lighting_lut_data[index].data(),
-                                lighting_lut_data[index].size() * sizeof(GLvec2));
-                    lut_offset = (offset + destination) / sizeof(GLvec2);
+#ifdef CARA_IOS_GLES
+                    if (lighting_lut_residency) {
+                        lut_offset = resident_offset(lighting_lut_residency->lighting[index],
+                                                     lighting_lut_data[index]);
+                    } else
+#endif
+                    {
+                        const auto destination = UseLightingLUTSnapshots()
+                            ? index * sizeof(lighting_lut_data[index]) : bytes_used;
+                        lut_offset = stage_table(lighting_lut_data[index], destination);
+                    }
                     uniform_block_data.light_dirty = true;
-                    bytes_used += lighting_lut_data[index].size() * sizeof(GLvec2);
                 }
                 uniform_block_data.lighting_lut_dirty[index] = false;
             }
@@ -4399,12 +4480,18 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
             }
         }
         if (is_changed || invalidate || uniform_block_data.data.fog_lut_offset < 0) {
-            const auto destination = UseLightingLUTSnapshots() ? sizeof(lighting_lut_data) : bytes_used;
-            std::memcpy(buffer + destination, fog_lut_data.data(),
-                        fog_lut_data.size() * sizeof(GLvec2));
-            uniform_block_data.data.fog_lut_offset = (offset + destination) / sizeof(GLvec2);
+#ifdef CARA_IOS_GLES
+            if (lighting_lut_residency) {
+                uniform_block_data.data.fog_lut_offset =
+                    resident_offset(lighting_lut_residency->fog, fog_lut_data);
+            } else
+#endif
+            {
+                const auto destination = UseLightingLUTSnapshots()
+                    ? sizeof(lighting_lut_data) : bytes_used;
+                uniform_block_data.data.fog_lut_offset = stage_table(fog_lut_data, destination);
+            }
             uniform_block_data.dirty = true;
-            bytes_used += fog_lut_data.size() * sizeof(GLvec2);
         }
         uniform_block_data.fog_lut_dirty = false;
     }
