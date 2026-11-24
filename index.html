@@ -217,6 +217,7 @@
       padding: 0.85rem 1.15rem;
     }
 
+    .build-list li[hidden] { display: none; }
     .build-list li + li { border-top: 1px solid var(--rule); }
 
     .build-platform { font-weight: 640; }
@@ -385,6 +386,20 @@
             <div class="build-availability">
               <span class="build-note" id="android-download-note">Older experimental ARM64 build, debug-signed.</span>
               <a id="candidate-android" href="https://github.com/dmikey/cara/releases/download/experimental-2026-11-13/Cara-Android-arm64-GLES-Dynarmic-experimental.apk">Download experimental APK</a>
+            </div>
+          </li>
+          <li id="candidate-linux-row" hidden>
+            <span class="build-platform">Linux</span>
+            <div class="build-availability">
+              <span class="build-note">x86-64 for Ubuntu 24.04. SDL and desktop OpenGL.</span>
+              <a id="candidate-linux">Download for Linux</a>
+            </div>
+          </li>
+          <li id="candidate-windows-row" hidden>
+            <span class="build-platform">Windows</span>
+            <div class="build-availability">
+              <span class="build-note">Unsigned x86-64 ZIP. Requires a desktop OpenGL driver.</span>
+              <a id="candidate-windows">Download for Windows</a>
             </div>
           </li>
         </ul>
