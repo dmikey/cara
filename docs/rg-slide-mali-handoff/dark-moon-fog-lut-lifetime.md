@@ -92,3 +92,67 @@ in guest CPU execution. Fog resource lifetime, fragment links and
 steady lit draw processing need separate measurements.
 
 [Android build used in all three arms](https://github.com/dmikey/cara/actions/runs/45507523389)
+
+## Independent fog texture and lit shader experiment
+
+The Android GLES Atlas renderer now keeps PICA fog in independent,
+versioned 128 × 1 RG32F textures. Each changed table uploads 1 KiB.
+Draws already in the queue keep their earlier table, while lighting
+continues to use its existing storage. GLSL still interpolates the
+same 128 pairs of PICA fog values. The production selector uses the
+GLES renderer string to enable this on Mali-G57 across games. The
+`separate_fog_lut` debug override allows controlled comparisons.
+
+The RG Slide ran Dark Moon from a normal boot with an empty Cara
+shader archive, the system driver's existing cache, and identical
+ROM-derived hints. Tests used Dynarmic, GLES Atlas, Performance Mode,
+native 1×, fixed CLK 100 and frame skip off. The first two candidates
+used explicit debug settings to isolate fog and the lit combiner.
+
+| Window | Original p99 / worst | Independent fog p99 / worst | Fog + lit combiner p99 / worst |
+| --- | ---: | ---: | ---: |
+| Smoky title, 25,561 draws | 2,286.93 / 2,295.33 ms | 2,125.54 / 2,270.25 ms | 1,879.18 / 2,531.70 ms |
+| Lab entry, through refresh 2521 | 175.03 / 1,145.93 ms | 198.48 / 1,122.37 ms | 249.80 / 1,105.73 ms |
+| Following lab window, through refresh 2641 | 61.32 / 796.12 ms | 82.10 / 814.54 ms | 139.71 / 142.50 ms |
+| Matched settled lab window, 41,880 draws | 32.44 / 33.06 ms | 32.43 / 32.76 ms | 40.59 / 62.77 ms |
+
+The lab entry windows begin at different points in the guest
+animation. In particular, the lit shader experiment's next
+foreground fragment burst occurred in the window ending at 2761
+and produced a 651.00 ms refresh. The settled comparison uses
+windows with the same draw count and no foreground shader builds.
+The median was 30.30 ms originally, 30.18 ms with independent fog,
+and 33.94 ms with the lit combiner.
+
+Across the two lab-entry windows, elapsed time attributed to fog
+uploads dropped from 633.90 to 9.49 ms. In the title, the fog-only
+build still recorded four lighting uploads totaling 71,680 bytes
+and zero PICA fog draws. Title-only shader stalls therefore have
+a separate cause.
+
+The optional lit combiner reduced foreground fragment links in the
+title window from 36 to 29 compared with the fog-only candidate.
+Time inside those links changed from 3,163.61 to 3,150.87 ms. The
+same windows also contained about 9.9 and 9.7 seconds, respectively,
+of summed vertex link time on the compiler worker. This can overlap
+foreground work, so the totals should not be added to frame time.
+The combiner stays off because the title's worst refresh and
+settled gameplay both regressed. The traces identify foreground
+driver link time and possible worker contention as separate
+targets for a follow-up, with overlap still to be measured.
+
+[Fog-only Android build](https://github.com/dmikey/cara/actions/runs/45511627135) ·
+[Lit combiner Android build](https://github.com/dmikey/cara/actions/runs/45512044038)
+
+A second title-only boot on the same fog-only APK omitted the hint
+file. The same 25,561-draw window recorded 1,912.50 ms p99 and
+42,179.27 ms worst, at refresh 515, compared with 2,125.54 ms p99
+and 2,270.25 ms worst with hints. The no-hint trace put several
+multi-second vertex links on the foreground thread at refresh 515.
+The hint file both prioritizes a matched ROM vertex fingerprint and
+enables bounded scheduling of unmatched live vertex sources in the
+separable program path. Removing it changes both behaviors. This
+control confirms that the 42-second stall is reproducible and that
+the fog lifetime change does not control that stall.
+
+[Arm guidance on updates to resources used by queued draws](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-6-efficiently-updating-dynamic-resources)
