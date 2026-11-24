@@ -18,7 +18,7 @@
 
     <ImageView
         android:id="@+id/banner"
-        android:src="@mipmap/ic_launcher_foreground"
+        android:src="@mipmap/ic_cara"
         android:layout_centerHorizontal="true"
         android:layout_below="@id/toolbar"
         android:layout_width="wrap_content"

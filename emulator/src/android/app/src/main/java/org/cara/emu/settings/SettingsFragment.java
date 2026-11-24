@@ -159,6 +159,22 @@ public final class SettingsFragment extends Fragment {
                 Settings.SECTION_INI_DEBUG, R.string.setting_force_texture_filter, 0,
                 R.array.textureFilterEntries, R.array.textureFilterValues, 0,
                 debugSection.getSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER)));
+        if (mGameID.isEmpty()) {
+            sl.add(new HeaderSetting(null, null, R.string.setting_header_controls, 0));
+            sl.add(new SubmenuSetting(null, null, R.string.cara_controller_mapping, 0, MenuTag.INPUT));
+        }
+
+        sl.add(new HeaderSetting(null, null, R.string.cara_header_appearance, 0));
+        if (mGameID.isEmpty()) {
+            sl.add(new SubmenuSetting(null, null, R.string.cara_app_icon, 0, MenuTag.APP_ICON));
+        }
+        Setting theme = mSettings.getSection(Settings.SECTION_INI_CORE)
+                .getSetting(SettingsFile.KEY_THEME_PACKAGE);
+        String[] stringValues = getThemeValues();
+        String[] stringEntries = getSettingEntries(stringValues);
+        sl.add(new StringSingleChoiceSetting(SettingsFile.KEY_THEME_PACKAGE, Settings.SECTION_INI_CORE,
+                R.string.setting_theme_package, 0, stringEntries, stringValues, "default", theme));
+
         // core
         sl.add(new HeaderSetting(null, null, R.string.setting_header_core, 0));
         SettingSection coreSection = mSettings.getSection(Settings.SECTION_INI_CORE);
@@ -166,7 +182,6 @@ public final class SettingsFragment extends Fragment {
         Setting systemRegion = coreSection.getSetting(SettingsFile.KEY_SYSTEM_REGION);
         Setting language = coreSection.getSetting(SettingsFile.KEY_SYSTEM_LANGUAGE);
         Setting font = coreSection.getSetting(SettingsFile.KEY_SHARED_FONT_TYPE);
-        Setting theme = coreSection.getSetting(SettingsFile.KEY_THEME_PACKAGE);
 
         if (mGameID.isEmpty()) {
             Setting useGameConfig = coreSection.getSetting(SettingsFile.KEY_USE_GAME_CONFIG);
@@ -187,13 +202,6 @@ public final class SettingsFragment extends Fragment {
                 R.string.setting_shared_font, 0,
                 R.array.sharedFontEntries, R.array.sharedFontValues, -1,
                 font));
-
-        // theme
-        String[] stringValues = getThemeValues();
-        String[] stringEntries = getSettingEntries(stringValues);
-        sl.add(new StringSingleChoiceSetting(
-                SettingsFile.KEY_THEME_PACKAGE, Settings.SECTION_INI_CORE,
-                R.string.setting_theme_package, 0, stringEntries, stringValues, "default", theme));
 
         // audio
         sl.add(new HeaderSetting(null, null, R.string.setting_header_audio, 0));
