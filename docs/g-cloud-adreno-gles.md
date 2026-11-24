@@ -958,3 +958,131 @@ installed on the G Cloud for the test. The Slide was profiled separately
 on its stock Mali driver. Its shader-stage comparison targeted a
 different workload and does not rank the two SoCs.
 [RG Slide shader-link comparison](https://github.com/dmikey/cara/blob/27203b89c94a906914d809195f4574a5806206c0/docs/rg-slide-mali-handoff/dark-moon-entry327.md#cold-lab-program-link-attribution)
+
+## Lighting and fog command attribution
+
+Use `[Debug] trace_gles_gpu_commands = True` with direct GLES and
+a supported timestamp query extension. On every 16th refresh the
+probe marks the guest command span. It also brackets one rotating
+draw-group or 2D lighting/fog upload from that refresh. Offset
+arithmetic handles the advertised query-counter width. Polls only
+read available frame queries and discard disjoint results and inner
+markers outside the full span. Display composition and EGL swap
+remain outside the measured marker interval.
+[Khronos timestamp semantics](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_disjoint_timer_query.txt)
+
+A draw-group tag records the guest lighting and fog enable state.
+The measured bracket includes any bindings and uploads performed
+by that draw helper. It does not isolate fragment shader execution.
+An upload tag records the actual staged bytes for each table family.
+A combined atlas upload remains a single command group. Fog data
+republished at atlas wrap counts as fog bytes even when no draw
+samples it. The per-window source counters record every draw and
+upload, independent of GPU marker sampling.
+
+The marker test under ASan/UBSan checked counter wrap, delayed
+availability, disjoint invalidation, reversed inner markers, and
+the original elapsed-query route. The independent deferral test
+checked that an unused dirty family survives until its first
+consumer and that atlas wrap republishes both families. The
+deferral path uses the existing opt-in
+`[Debug] atlas_defer_unused_luts = True`.
+
+### Mario castle map
+
+The signed `ca0c6fa0` APK ran a normal boot with JIT, GLES Atlas,
+Performance Mode, fixed CLK 100%, 1×, frame skip off, and inline
+presentation. All castle-map comparisons use 120-refresh stationary
+windows with 36,000 draws and zero foreground compile time. The
+no-GPU-query control used the same source counters as the traces.
+[Android timing build](https://github.com/dmikey/cara/actions/runs/45478091412)
+
+The nine control windows each counted 23,520 lit draws (196 per
+refresh) and zero fog draws. Each window issued 3,840 LUT uploads.
+Only three to four uploads also carried fog, totaling 3–4 KiB of
+fog versus about 14.9 MB of lighting data. Those mixed uploads came
+from republishing both table families at texture-atlas wrap.
+Lighting-only upload wall time was 6.37 ms per refresh. The mixed
+calls together accounted for about 0.02 ms per refresh, including
+their lighting data. The guest CPU execution category used about
+2.32 ms per refresh and the graphics category used 23.78 ms.
+
+| Inline castle-map probe | 120-refresh windows | Median elapsed | p99 range | Worst |
+| --- | ---: | ---: | ---: | ---: |
+| Client memory, no GPU queries | 9 | 3.630 s | 32.42–33.53 ms | 43.53 ms at 4680 |
+| Client memory, sampled command groups | 14 | 3.615 s | 32.24–33.70 ms | 35.04 ms at 4167 |
+| PBO, sampled command groups | 19 | 3.582 s | 31.29–32.67 ms | 35.70 ms at 5973 |
+| Independent LUT deferral, sampled command groups | 13 | 3.624 s | 32.22–34.17 ms | 76.39 ms at 4386 |
+
+The client-memory command trace measured a 29.69 ms median full
+GPU marker interval (105 samples). The median bracket was 18.2 µs
+for 37 lighting-only uploads, 3.3 µs for 38 lit draw groups, and
+3.0 µs for 11 unlit draw groups. No fog draw or fog-only upload
+occurred in a matched map window. The rotating draw markers reached
+7.06 ms median elapsed at draw slots 0–31, 14.55 ms at slots
+64–95, 21.56 ms at slots 128–159, and 28.48 ms at slots 192–223.
+Those are independent sampled positions and include any pacing and
+synchronization between commands.
+
+The PBO issued the same uploads and draws, with no fallbacks.
+Lighting-only upload wall time fell from 6.79 to 0.80 ms/refresh
+and PICA/GLES CPU from 23.17 to 20.54 ms. The median GPU interval
+was 29.65 ms (140 samples). Its lighting-upload bracket median
+was 0.4 µs (66 samples), with one 2.06 ms bracket. Two lit draw
+groups had 5.77 and 6.03 ms brackets even though the median of
+55 lit groups was 3.1 µs. EGL swap median was 5.44 ms with PBO
+and 0.62 ms with client memory. The full marker span and wall
+throughput barely moved. The local brackets cannot be added to
+give utilization or an isolated per-effect GPU cost.
+
+The independent-family deferral boot on `73ecc4a9` issued the
+same 3,840 uploads per map window. The observed GPU marker median
+was 29.72 ms. Fog was only republished at ring wrap already, and
+lighting updates still had consuming draws. This run establishes
+no throughput gain for the map.
+[Android deferral build](https://github.com/dmikey/cara/actions/runs/45478650347)
+
+### Guest command list boundaries
+
+The independent `trace_gles_gpu_lists` probe brackets up to six
+PICA command lists on each sampled refresh. Each bracket records
+draw requests and initial command bytes. The trace provides both
+GPU marker offsets and CPU wall offsets for issuing those markers.
+Their origins differ. Differences within either timeline are valid
+intervals. The gap between the two absolute clocks cannot be used
+as queue latency. Samples with incomplete or unordered markers
+are excluded from the partition.
+[Android list timing build](https://github.com/dmikey/cara/actions/runs/45480823052)
+
+The list build `a8ec190e` recorded 75 complete client-memory map
+samples. Every sample contained exactly three lists with 120, 120,
+and 60 draw requests. The first two lists took 14.76 and 13.20 ms
+between GPU markers at the median. The third took 0.003 ms. The
+median sum of list intervals was 28.00 ms, and the median sum of
+gaps around the lists was 1.91 ms. The full interval median was
+29.96 ms. CPU wall offsets show about 8.64, 13.14, and 3.83 ms,
+respectively, to issue the three lists. The CPU intervals can
+include driver waits, and the GPU list intervals can include
+gaps within a list.
+
+| List trace, inline | Windows | GPU frame median | Host marker issue median | p99 | Worst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Client memory | 10 | 29.96 ms | 29.01 ms | 32.51–34.49 ms | 88.03 ms at 4257 |
+| PBO | 11 | 29.06 ms | 23.19 ms | 31.29–31.91 ms | 32.66 ms at 4766 |
+
+The PBO partition used 78 complete samples, excluding two with
+incomplete inner markers. Its three list medians on the GPU timeline
+were 14.25, 12.96, and 0.003 ms. List intervals added to 27.22 ms
+at the median and surrounding gaps added to 1.90 ms. CPU issue
+time for the second list fell from 13.14 to 8.01 ms. The same
+32 uploads per refresh reached the same atlas. Reducing their
+host cost therefore freed substantial CPU issue time while
+taking only about 0.9 ms off the full measured GPU span. The
+sustained map rate was 56% with PBO and 55% with client memory.
+
+The Mali single-call shader experiment was profiled separately
+and removed from that branch tip after its settled-frame
+regression. An independent fixture verified unchanged separable
+vertex-stage binaries can be restored on the G57.
+[Mali shader and timing comparison](https://github.com/dmikey/cara/blob/321d3fd0155da8f505543c722b5bc280eed07c85/docs/rg-slide-mali-handoff/dark-moon-entry327.md#one-guest-vertex-call-site)
+[Mali stage binary fixture](https://github.com/dmikey/cara/blob/e0cd5d5df662f7289a2e53077e3a03a03a6ecfa5/docs/rg-slide-mali-handoff/dark-moon-entry327.md#unchanged-separable-vertex-binaries)
