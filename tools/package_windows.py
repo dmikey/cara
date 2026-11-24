@@ -47,7 +47,7 @@ def main():
             if path.is_file() and path.name.casefold().startswith(("license", "copying", "copyright")):
                 archive.write(path, f"{PACKAGE}/licenses/{path.relative_to(ROOT / 'emulator').as_posix()}")
         archive.writestr(f"{PACKAGE}/README.txt",
-                         "Run cara.exe --help for usage. A desktop OpenGL driver and the Microsoft "
+                         "Run cara.exe --help for usage. Desktop OpenGL 4.3 and the Microsoft "
                          "Visual C++ x64 runtime are required.\nCorresponding source: " + source_url + "\n")
     with output.open("rb") as file:
         receipt["asset_sha256"] = hashlib.file_digest(file, "sha256").hexdigest()

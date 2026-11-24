@@ -198,12 +198,12 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--help" || arg == "-h") {
-                std::cout << "Cara Linux OpenGL / FastInterp\n"
+                std::cout << "Cara Desktop OpenGL / FastInterp\n"
                              "Usage: cara [--fullscreen] [--play-mode performance|accuracy] [--frames N] GAME\n"
                              "       cara --self-test\n       cara --version\n";
                 return 0;
             } else if (arg == "--version") {
-                std::cout << "Cara " << Common::g_scm_rev << " (Linux OpenGL, no JIT)\n"; return 0;
+                std::cout << "Cara " << Common::g_scm_rev << " (Desktop OpenGL, no JIT)\n"; return 0;
             } else if (arg == "--self-test") self_test = true;
             else if (arg == "--fullscreen") fullscreen = true;
             else if (arg == "--play-mode" && i + 1 < argc) {
