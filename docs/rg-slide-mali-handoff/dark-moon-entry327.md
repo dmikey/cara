@@ -409,3 +409,52 @@ The original Cara was reopened after removing the preview and the
 original configuration SHA-256 matched. Raw timing and oracle logs
 are under `/tmp/cara-gcloud.8yZRID/mali-vertex-link-*`.
 [Android benchmark build](https://github.com/dmikey/cara/actions/runs/45478137471)
+
+### Unchanged separable vertex binaries
+
+A standalone GLES 3.2 test saved five stock Dark Moon vertex stages on
+the same RG Slide. Four have exact shader-source hashes from the smoky
+title trace. The fifth is from the same guest instruction family. All
+five were linked independently with binary retrieval enabled. The test
+kept the two-call shader and used the normal GLES 3.2 output locations.
+
+| Five vertex stages on the stock driver | Time |
+| --- | ---: |
+| Source compile and compile status | 2.587 s |
+| Standalone link and link status | 15.211 s |
+| Binary restore and program status in a separate process | 14.61 ms |
+| Repeated binary restore in another process | 15.01 ms |
+
+The five native binaries totaled 1,520,804 bytes. Each stayed below the
+existing 1 MiB binary entry cap. A fresh GL program with its initial
+nonseparable setting rejected all five binary loads. Explicitly setting
+`GL_PROGRAM_SEPARABLE` on the destination before calling
+`glProgramBinary` restored all five. Each reported successful link
+and separable status, bound to a program pipeline as a vertex stage,
+and retained its `vs_config` uniform block. The restore timing
+excludes file reads, pipeline setup, and the first draw.
+
+A controlled draw test then compared a source-linked separable vertex
+stage with a fresh destination restored from its binary. Both stage
+pairs passed GLES pipeline validation with an independently linked
+fragment stage. The opposing-quaternion test matched all 1,152 output
+words and produced 444 values that varied across vertices. This is a
+controlled GPU output check. The five captured Dark Moon binaries were
+validated through restore and binding, with full-game first draw,
+color and depth still unmeasured.
+
+Cara currently skips linked-pair archive loading when separable mode is
+active. A bounded vertex-stage archive can reuse the existing driver
+identity, checksum, atomic write and entry limits. Store it separately
+from linked pairs and key each entry by stage kind and exact generated
+source and dialect. On restore, set separability before binary upload,
+check the result, and bind uniforms and samplers as for ordinary source
+creation. Fall back to the unchanged source if a binary is rejected.
+Record first-draw time and compare pixels before enabling it.
+This can remove recorded vertex links on repeat boots. An empty
+archive still requires the initial links, and the baked entry and input
+differences above must be preserved on first encounters.
+[OpenGL ES 3.2 specification](https://registry.khronos.org/OpenGL/specs/es/3.2/es_spec_3.2.pdf)
+
+No app was installed for this test. The fixture logs are under
+`/tmp/cara-gcloud.8yZRID/mali-stage-binary-fixture`.
