@@ -659,3 +659,105 @@ Its longest first-use refresh was 40.55 s. The second boot restored
 Both lab screenshots show Gadd, room lighting, and translucent ghosts.
 Camera and animation ticks differ. The preview was removed and the
 player's configuration hash matched after the original app reopened.
+
+## One render thread for draw submission and swap
+
+Cara already has a bounded ordered GLES dispatch queue. The new Android
+route transfers the window EGL context to that queue's worker. The core
+records the game and composition commands, and each swap follows its
+composition commands on the same FIFO. The Android UI display callback
+continues to supply the Adaptive Frame Skip ticket. It never binds the
+window context in this mode. The renderer retains each native window
+until prior swaps retire, and keeps its context on a pbuffer while no
+window is available.
+
+The route is selected by this existing pair of debug options. The
+third setting caches the packed layout uniform location and values so
+the worker comparison does not repeat the same synchronous program
+query for every packed draw.
+
+```ini
+[Debug]
+ordered_gles_worker = True
+use_present_thread = False
+packed_layout_uniform_reuse = True
+```
+
+Compare direct inline and worker inline with the same packed layout
+setting. Stock production keeps the mailbox and its direct GLES path.
+Use the same APK, restored shader programs, fixed CLK 100%, 1×, and
+normal boots. Report total elapsed time over each 120-refresh window
+alongside p99 and worst, then trace the actual swap owner thread.
+[PPSSPP GL worker and present order](https://github.com/hrydgard/ppsspp/blob/master/Common/GPU/OpenGL/GLRenderManager.cpp#L364-L439)
+[Android release build](https://github.com/dmikey/cara/actions/runs/45464327707)
+
+Before testing the new swap owner, G Cloud preflights used the prior
+`ec7c1df` release with the existing ordered worker and split-context
+mailbox. In the three identical 12,240-draw, compile-free opening
+windows, caching the layout uniform eliminated 12,240 uniform-location
+RPCs per window. Other synchronous calls stayed at 360. Median time
+for 120 refreshes fell from 9.522 s to 2.716 s. P99 fell from
+174.66–184.67 ms to 25.29–27.06 ms and the worst fell from 205.82 ms
+to 27.37 ms. The uncached preflight stopped after the opening. The
+cached run continued through the map and into World 1-1.
+
+On the physical G Cloud, build `238b8f0` logged 6,308 successful
+swaps on the CaraGLES worker during the first normal Mario boot. The
+NativeEmulation thread was separate. Both modes restored 99 program
+binaries, and neither linked shaders in the draw-matched timed windows.
+The worker's castle-map windows executed about 2.08 million recorded
+GL calls per 120 guest refreshes despite zero synchronous GL queries.
+Its median worker thread CPU time in that scene was 17.62 ms per
+refresh, excluding the producer. The worker and producer can overlap.
+
+| Warm Mario scene | Swap route | Median elapsed for 120 refreshes | p99 | Worst |
+| --- | --- | ---: | ---: | ---: |
+| Lit opening, 12,240 draws | Direct inline, cached layout | 2.653 s | 23.83–24.45 ms | 32.71 ms |
+| Lit opening, 12,240 draws | Queued worker, cached layout | 2.660 s | 24.94–29.20 ms | 40.98 ms |
+| Castle map, 36,000 draws | Direct inline, cached layout | 3.620 s | 32.24–33.39 ms | 33.94 ms |
+| Castle map, 36,000 draws | Queued worker, cached layout | 3.620 s | 34.43–40.75 ms | 50.06 ms |
+| World 1-1 opening, similar draw counts | Direct inline, cached layout | 2.005 s | 20.09–22.48 ms | 30.21 ms |
+| World 1-1 opening, similar draw counts | Queued worker, cached layout | 2.004 s | 23.37–35.09 ms | 42.22 ms |
+
+The transition into the map had a 523.31 ms maximum refresh on the
+worker path and 126.19 ms on the direct inline path. The transition
+windows have different draw counts. No shader compile was measured
+in either peak window. Compare these transition observations separately
+from the exact-draw stationary windows. The tables report host frame time. Queue profiling also drains outstanding work
+at each 120-refresh boundary.
+
+A third normal boot on the same APK used the stock direct mailbox
+renderer, with the timing clock fixed at 100%. Its matched lit
+opening took 2.712 s per 120 refreshes, with p99 of 24.81–25.64 ms
+and a worst of 26.39 ms. The castle map took 3.708 s per window,
+with p99 of 34.68–35.30 ms and a worst of 36.17 ms.
+The single worker's 2% throughput margin versus this stock route
+also appears with direct inline presentation. The isolated inline
+comparison gives no sustained gain from moving GL commands to the
+worker and shows heavier frame-time tails.
+
+With raster-state reuse enabled on the same worker, the steady map
+recorded 780,120 commands per window, down from 2,075,280, and worker
+CPU time fell from 17.62 to 16.23 ms per refresh. Map throughput stayed
+at 3.619 s per window. P99 ranged from 32.78 to 34.75 ms with a
+65.69 ms worst. The lit opening still took 2.660 s. That arm had
+25.28–66.19 ms p99 with an 80.54 ms worst. A number of measured peaks
+fell immediately after a 120-refresh reporting boundary. The
+measurement drains the worker at those boundaries. The larger first
+worker arm's scene-transition hitch occurred within a window.
+
+The lifecycle check left World 1-1 for Android Home. Starting the
+library component opened a second activity rather than resuming the
+game. Android Back returned to the existing game. The same CaraGLES
+thread resumed successful swaps and the World 1-1 HUD read 60 FPS,
+100% speed and CLK 100%. Normal settings were restored afterward.
+The one-worker route stays opt-in.
+
+The parallel Slide experiment isolated direct-GLES indexed draws
+against arrays in the first E. Gadd lab cinematic. Its exact
+42,229-draw match improved from 30.5–30.7 to 34.2 guest refreshes/s.
+P99 went from 39.07–40.42 ms to 34.27 ms and the worst from
+63.72–78.34 ms to 51.94 ms. The longer captures had variable tails
+and the candidate boot reused more shaders. The Slide player
+installation and configuration were restored.
+[RG Slide direct GLES retest](https://github.com/dmikey/cara/blob/dmikey/mali-gadd-draw-followup/docs/rg-slide-mali-handoff/dark-moon-entry327.md#direct-gles-retest-with-exact-table-residency)

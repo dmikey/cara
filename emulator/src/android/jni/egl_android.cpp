@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <utility>
 
 #ifdef CARA_GL_CONTEXT_DISPATCH
