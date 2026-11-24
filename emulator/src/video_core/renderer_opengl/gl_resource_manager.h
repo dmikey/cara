@@ -142,7 +142,7 @@ public:
     GLuint handle = 0;
 
     /// binary program
-    void Create(GLenum format, const std::vector<GLbyte>& binary);
+    void Create(GLenum format, const std::vector<GLbyte>& binary, bool separable_program = false);
     void GetProgramBinary(GLenum& format, std::vector<GLbyte>& binary,
                           std::size_t maximum_bytes = 0) const;
 };

@@ -94,17 +94,26 @@ void OGLProgram::Create(const char* compute_shader) {
         Create(false, {shader.handle});
 }
 
-void OGLProgram::Create(GLenum format, const std::vector<GLbyte>& binary) {
+void OGLProgram::Create(GLenum format, const std::vector<GLbyte>& binary, bool separable_program) {
     handle = glCreateProgram();
     if (!handle)
         return;
     const bool census = ShaderCensus::Enabled();
     const auto start = census ? ShaderCensus::Clock::now() : ShaderCensus::Clock::time_point{};
+    // The Mali GLES driver validates separability before accepting the binary.
+    if (separable_program)
+        glProgramParameteri(handle, GL_PROGRAM_SEPARABLE, GL_TRUE);
     glProgramBinary(handle, format, binary.data(), binary.size());
 
     // Check the link status. If this fails, it means the binary was invalid.
     GLint link_status = GL_FALSE;
     glGetProgramiv(handle, GL_LINK_STATUS, &link_status);
+    if (separable_program && link_status == GL_TRUE) {
+        GLint separable = GL_FALSE;
+        glGetProgramiv(handle, GL_PROGRAM_SEPARABLE, &separable);
+        if (separable != GL_TRUE)
+            link_status = GL_FALSE;
+    }
     if (census)
         ShaderCensus::Record("binary program={} ok={} us={}", handle, link_status,
                              ShaderCensus::ElapsedUs(start));
@@ -133,10 +142,12 @@ void OGLProgram::GetProgramBinary(GLenum& format, std::vector<GLbyte>& binary,
     binary.resize(program_size);
     GLsizei data_size = 0;
     glGetProgramBinary(handle, program_size, &data_size, &format, binary.data());
-    if (glGetError() != GL_NO_ERROR || data_size == 0) {
+    if (glGetError() != GL_NO_ERROR || data_size <= 0 || data_size > program_size) {
         LOG_DEBUG(Render_OpenGL, "OGLProgram GetProgramBinary failed: opengl error!");
         format = 0;
         binary.clear();
+    } else {
+        binary.resize(data_size);
     }
 }
 

@@ -42,6 +42,22 @@ int main() {
     too_large[0].vertex.resize(MaxSource + 1, 'v');
     assert(Encode(identity, too_large).empty());
     assert(decoded.size() == 2); // Invalid files never partially replace accepted records.
+    const auto stage_archive = ArchiveKind::VertexStages;
+    const std::vector<Entry> vertices{{"vertex-source", {}, 1, {1, 2, 3}}};
+    const auto stage_bytes = Encode(identity, vertices, DefaultLimits, stage_archive);
+    assert(Decode(stage_bytes, identity, decoded, DefaultLimits, stage_archive));
+    assert(decoded.size() == 1 && decoded[0].vertex == vertices[0].vertex &&
+           decoded[0].binary == vertices[0].binary);
+    assert(!Decode(stage_bytes, identity, decoded));
+    assert(!Decode(bytes, identity, decoded, DefaultLimits, stage_archive));
+    assert(!Decode(stage_bytes, identity + "new-driver", decoded, DefaultLimits, stage_archive));
+    assert(Encode(identity, expected, DefaultLimits, stage_archive).empty());
+    assert(Encode(identity, {{"vertex-source", {}, 1, {}}}, DefaultLimits, stage_archive).empty());
+    assert(Encode(identity, {{"vertex-source", {}, 0, {1}}}, DefaultLimits, stage_archive).empty());
+    auto corrupt_stage = stage_bytes;
+    corrupt_stage[corrupt_stage.size() - 8] ^= 1;
+    assert(!Decode(corrupt_stage, identity, decoded, DefaultLimits, stage_archive));
+    assert(decoded.size() == 1 && decoded[0].binary == vertices[0].binary);
     assert(Key("a", "bc") != Key("ab", "c"));
     const auto vs_digest = Digest(expected[0].vertex.data(), expected[0].vertex.size());
     const auto fs_digest = Digest(expected[0].fragment.data(), expected[0].fragment.size());

@@ -26,6 +26,21 @@ struct Entry {
     std::uint32_t format = 0;
     std::vector<std::uint8_t> binary;
 };
+enum class ArchiveKind { LinkedPrograms, VertexStages };
+
+constexpr std::uint64_t ArchiveMagic(ArchiveKind kind) {
+    return kind == ArchiveKind::VertexStages ? 0x4341524156534F01ULL : 0x4341524150534F01ULL;
+}
+
+inline bool ValidEntry(const Entry& entry, ArchiveKind kind) {
+    if (entry.vertex.empty() || entry.vertex.size() > MaxSource ||
+        entry.vertex.find('\0') != std::string::npos || entry.binary.size() > MaxBinary)
+        return false;
+    if (kind == ArchiveKind::VertexStages)
+        return entry.fragment.empty() && entry.format != 0 && !entry.binary.empty();
+    return !entry.fragment.empty() && entry.fragment.size() <= MaxSource &&
+           entry.fragment.find('\0') == std::string::npos;
+}
 inline std::uint64_t Digest(const void* bytes, std::size_t size) {
     auto p = static_cast<const std::uint8_t*>(bytes);
     std::uint64_t h = 14695981039346656037ULL;
@@ -85,16 +100,16 @@ inline void Blob(std::vector<std::uint8_t>& out, const void* data, std::size_t s
 }
 inline std::vector<std::uint8_t> Encode(const std::string& identity,
                                       const std::vector<Entry>& entries,
-                                      Limits limits = DefaultLimits) {
+                                      Limits limits = DefaultLimits,
+                                      ArchiveKind kind = ArchiveKind::LinkedPrograms) {
     if (identity.size() > 4096 || entries.size() > limits.entries ||
         limits.bytes < 24 + identity.size()) return {};
     std::vector<std::uint8_t> out;
-    Put(out, 0x4341524150534F01ULL, 8); // CARA pipeline store, schema 1
+    Put(out, ArchiveMagic(kind), 8);
     Blob(out, identity.data(), identity.size());
     Put(out, entries.size(), 4);
     for (const auto& e : entries) {
-        if (e.vertex.empty() || e.fragment.empty() || e.vertex.size() > MaxSource ||
-            e.fragment.size() > MaxSource || e.binary.size() > MaxBinary) return {};
+        if (!ValidEntry(e, kind)) return {};
         Blob(out, e.vertex.data(), e.vertex.size());
         Blob(out, e.fragment.data(), e.fragment.size());
         Put(out, e.format, 4);
@@ -105,7 +120,8 @@ inline std::vector<std::uint8_t> Encode(const std::string& identity,
     return out;
 }
 inline bool Decode(const std::vector<std::uint8_t>& in, const std::string& identity,
-                   std::vector<Entry>& entries, Limits limits = DefaultLimits) {
+                   std::vector<Entry>& entries, Limits limits = DefaultLimits,
+                   ArchiveKind kind = ArchiveKind::LinkedPrograms) {
     if (in.size() < 28 || in.size() > limits.bytes) return false;
     std::size_t pos = 0;
     bool good = true;
@@ -123,7 +139,7 @@ inline bool Decode(const std::vector<std::uint8_t>& in, const std::string& ident
         out.assign(in.begin() + pos, in.begin() + pos + size);
         pos += size;
     };
-    if (number(8) != 0x4341524150534F01ULL) return false;
+    if (number(8) != ArchiveMagic(kind)) return false;
     std::string found;
     blob(4096, found);
     if (!good || found != identity) return false;
@@ -135,8 +151,7 @@ inline bool Decode(const std::vector<std::uint8_t>& in, const std::string& ident
         blob(MaxSource, e.vertex); blob(MaxSource, e.fragment);
         e.format = static_cast<std::uint32_t>(number(4));
         blob(MaxBinary, e.binary);
-        if (e.vertex.empty() || e.fragment.empty() || e.vertex.find('\0') != std::string::npos ||
-            e.fragment.find('\0') != std::string::npos) good = false;
+        if (!ValidEntry(e, kind)) good = false;
         decoded.push_back(std::move(e));
     }
     if (!good || pos != in.size() - 8) return false;
