@@ -1086,3 +1086,107 @@ regression. An independent fixture verified unchanged separable
 vertex-stage binaries can be restored on the G57.
 [Mali shader and timing comparison](https://github.com/dmikey/cara/blob/321d3fd0155da8f505543c722b5bc280eed07c85/docs/rg-slide-mali-handoff/dark-moon-entry327.md#one-guest-vertex-call-site)
 [Mali stage binary fixture](https://github.com/dmikey/cara/blob/e0cd5d5df662f7289a2e53077e3a03a03a6ecfa5/docs/rg-slide-mali-handoff/dark-moon-entry327.md#unchanged-separable-vertex-binaries)
+
+## The two 120-draw castle-map lists
+
+The fixed CLK 100% normal boot on `a8ec190e` captured 840
+steady refreshes, each with all 300 draw records. Neither heavy
+list had an identical adjacent draw or a neighbor differing
+only in GL storage names. Per 120-draw pass, shader selection
+changed 35 times, sampler state 71 times, vertex uniforms about
+114 times, and geometry payload 93 times. Both lists had the
+same counts, so the next comparison pairs corresponding draw
+positions across the lists rather than merging neighbors.
+
+The extended capture logs physical color and depth addresses,
+shader identity, staged vertex and index hashes, and integer and
+float vertex-uniform hashes for one refresh every 120. Display
+transfer records report the physical source, destination and
+dimensions. These sampled hashes are diagnostic input comparisons.
+They do not account for all GPU-visible texture contents or prove
+that one pass may be skipped.
+
+The Android debug probe `atlas_quaternion_slice` selects the
+existing GLES quaternion-only reference program. The reference
+evaluation omits writes to output attributes that do not carry
+quaternion components. The original vertex calculation still
+produces all outputs for the actual vertex. The separate
+`atlas_prune_unused_quaternion` probe removes the entire
+reference evaluation when the fragment path cannot consume
+it. Probe configurations use separate archives so a normal
+boot can keep its own cached programs.
+
+The signed `33adc8e4` normal boot captured eight complete
+sampled stationary refreshes. Comparing the first 120 draws
+against the next 120 gave 960 corresponding pairs. All 960
+matched shader handles, submitted vertex counts, staged
+vertex and index hashes, integer vertex uniforms and PICA
+color/depth registers. Float vertex uniforms matched only
+264 pairs, exactly 33 per refresh. Both large lists used PICA
+color address `0x180b8000` and depth address `0x1835c000`.
+GSP then transferred the upper-screen source to two different
+LCD destinations, `0x18034000` and `0x18120000`. The lower
+transfer had a separate source and dimensions.
+
+The matches identify repeated geometry. A copy in place of the
+second pass would also have to preserve its different vertex
+uniforms and prove color, depth, blending, and later guest reads.
+Azahar's configurable right-eye suppression is a different
+tradeoff, and its upstream notes document a game where that
+heuristic was disabled for flashing.
+[Azahar right-eye heuristic](https://github.com/azahar-emu/azahar/blob/master/src/video_core/right_eye_disabler.cpp)
+[Azahar compatibility fix](https://github.com/azahar-emu/azahar/commit/df1dd3316bd2c71083b2f99e5b22596267a363b8)
+[Android ARM64 benchmark build](https://github.com/dmikey/cara/actions/runs/45484021728)
+
+The combined quaternion run enables the reference slice and omits
+unused orientation work on unlit draws. The warm boot restored
+83 of 83 cached programs, and the resulting archive contained
+16 vertex sources with the quaternion-only helper. Timing uses
+only the stationary 36,000-draw map windows with zero foreground
+or overlapping background shader work.
+
+| JIT + GLES, inline, CLK 100% | Map windows | Median elapsed / 120 | GPU span median | Host p99 | Worst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Target census, original shaders | 8 | 3.623 s | 29.60 ms | 33.03–34.55 ms | 36.47 ms |
+| Warm control, original shaders | 10 | 3.612 s | 29.37 ms | 31.93–33.18 ms | 34.25 ms |
+| Quaternion, first boot after activation | 12 | 3.564 s | 29.35 ms | 31.99–33.18 ms | 84.82 ms |
+| Quaternion, warm boot | 8 | 3.574 s | 29.35 ms | 32.20–33.26 ms | 33.75 ms |
+| Quaternion and packed fetch reuse, first boot | 11 | 3.125 s | 25.21 ms | 26.88–28.84 ms | 29.23 ms |
+| Quaternion and packed fetch reuse, warm boot | 13 | 3.110 s | 25.11 ms | 26.79–28.93 ms | 30.56 ms |
+| Packed fetch reuse alone | 11 | 3.104 s | 25.07 ms | 26.71–28.54 ms | 29.21 ms |
+
+The target census row includes draw-by-draw diagnostics. The
+warm control and candidate arms use only the list trace and fit
+the same 120/120/60 draw signature. The early World 1-1 checkpoint
+ran at approximately 100% in the completed arms. The target
+census captured its full map window before host disk pressure
+stopped its later navigation screenshot.
+
+Packed fetch reuse loads one or two atlas texels per attribute
+and shares those words across that attribute's components. Aligned
+32-bit float inputs can select the words directly. It preserves
+PICA input formats, shader operands and vertex outputs. Enabling the existing fetch-reuse path in addition to the
+two quaternion settings saved substantially more than the quaternion
+pair alone on this device. The first 120-draw list fell from 14.42
+to 10.69 ms on the GPU marker timeline, and the second moved from
+12.95 to 12.88 ms. Lighting transfers used the same 3,840 calls and
+about 14.9 MB per window, while their host transfer scope fell to
+2.85 ms per refresh. This is consistent with less backpressure
+after a shader change. The timing probes cannot identify the
+driver's exact scheduling decision.
+
+The isolated packed-fetch boot disabled both quaternion options.
+Each 120-refresh timing window still contained 36,000 guest draws
+and 3,840 LUT uploads. Compared with the warm control, the GPU
+span fell from 29.37 to 25.07 ms and median host elapsed time fell
+from 3.612 to 3.104 s per window, about 16.4% higher throughput.
+The first large list fell from 14.46 to 9.75 ms. The second was
+13.85 ms versus 12.98 ms in the control. The game reached early
+World 1-1 at approximately 100% speed.
+
+Verify the improvement on other games before changing defaults.
+The current result is specific to the stock Adreno 618 driver and
+this scene. Screenshots verified the castle map and gameplay
+visually at different animation ticks. Exact pixel/depth parity
+for the entire game was outside this test.
+[Mali vertex-stage archive implementation and physical benchmarks](https://github.com/dmikey/cara/blob/fbf22fab5123883a89eee7c125d494a3685460b6/docs/rg-slide-mali-handoff/dark-moon-entry327.md#vertex-stage-archive-integration)
