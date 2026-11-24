@@ -1,6 +1,6 @@
 # Cara
 
-<img src="docs/artwork/cara-citrus-readme.png" alt="Cara citrus app icon" width="104" align="right">
+<img src="docs/artwork/cara-citrus-readme.png" alt="Cara app icon" width="104" align="right">
 
 **Fast, accurate, portable Nintendo 3DS emulation.**
 
@@ -71,6 +71,8 @@ Cara builds on [Citra](https://github.com/citra-emu),
 [warmenhoven’s FastInterp](https://github.com/azahar-emu/azahar/pull/2376).
 Save-state support builds on work by Hamish Milne and other Citra contributors.
 See the [research credits](docs/research-references.md) for additional references.
+
+Cara’s app icon was inspired by Human Trash from the RetroHandhelds.gg Discord.
 
 Cara is licensed under **GPL-2.0-or-later**. Upstream copyright notices and
 third-party licenses are preserved.
