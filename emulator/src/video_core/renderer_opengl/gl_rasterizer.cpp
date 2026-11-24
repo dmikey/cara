@@ -1664,9 +1664,23 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         counters.vertex_upload_reused_textures+=unsigned(reuse_input)+unsigned(reuse_index);
     }
     bool published_input_shadow = false;
+    bool replace_vertex_images = false;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static const bool replace_on_adreno = [] {
+        const char* enabled = std::getenv("CARA_ADRENO_REPLACE_VERTEX_IMAGES");
+        if (!enabled || std::strcmp(enabled, "1") != 0)
+            return false;
+        const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        return renderer && std::strstr(renderer, "Adreno") != nullptr;
+    }();
+    replace_vertex_images = replace_on_adreno;
+#endif
+    // The draw only samples the uploaded rows. On a miss, redefine the image
+    // so the driver can discard its old contents once earlier draws finish.
+    // Exact cache hits keep sampling the resident image.
     if (!reuse_input) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
-        if (orphan_upload) {
+        if (orphan_upload || replace_vertex_images) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
             glTexImage2D(GL_TEXTURE_2D, 0, input_internal, IOS_VERTEX_INPUT_WIDTH, upload_rows, 0,
@@ -1699,7 +1713,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             selected_upload->index_shadow.InvalidateIdentity();
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         glActiveTexture(GL_TEXTURE8);
-        if (orphan_upload) {
+        if (orphan_upload || replace_vertex_images) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
             glTexImage2D(GL_TEXTURE_2D, 0, index_internal, IOS_VERTEX_INPUT_WIDTH, index_rows, 0,
