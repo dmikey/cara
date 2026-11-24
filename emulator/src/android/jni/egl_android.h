@@ -49,17 +49,15 @@ private:
     void RefreshWindowLayout();
     bool BindCoreContext();
     bool UnbindCoreContext();
-    void PollInlineSurface();
     void DestroyWindowSurface();
     void DestroyContext();
 
-    ANativeWindow* new_window = nullptr;
     ANativeWindow* host_window = nullptr;
     // The EGL owner keeps the old window alive until its queued swaps have retired.
-    std::shared_ptr<ANativeWindow> inline_window;
+    std::shared_ptr<ANativeWindow> active_window;
     std::mutex pending_window_mutex;
-    std::optional<std::shared_ptr<ANativeWindow>> pending_inline_window;
-    std::atomic<bool> pending_inline_layout{false};
+    std::optional<std::shared_ptr<ANativeWindow>> pending_window;
+    std::atomic<bool> pending_layout{false};
 
     EGLint window_width = 1;
     EGLint window_height = 1;
@@ -80,7 +78,7 @@ private:
         Running,
         Stopped,
     };
-    PresentingState presenting_state{};
+    std::atomic<PresentingState> presenting_state{PresentingState::Initial};
     bool use_shared_context;
     bool adaptive_frame_skip = false;
     std::atomic<std::uint64_t> display_ticket{0};

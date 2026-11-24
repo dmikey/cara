@@ -111,7 +111,8 @@ bool EGLAndroid::Initialize(ANativeWindow* surface) {
     setenv("CARA_GPU_DEPTH_REINTERPRET", "1", 0);
     setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", "1", 0);
 #endif
-    host_window = surface;
+    active_window = RetainWindow(surface);
+    host_window = active_window.get();
     egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (!egl_display) {
         // Error: eglGetDisplay() failed
@@ -140,7 +141,6 @@ bool EGLAndroid::Initialize(ANativeWindow* surface) {
             std::make_unique<SharedContext_Android>(egl_display, egl_config, egl_context);
     } else {
         presenting_state = PresentingState::Stopped;
-        inline_window = RetainWindow(surface);
         inline_pbuffer = eglCreatePbufferSurface(egl_display, egl_config, egl_empty_attribs.data());
         if (inline_pbuffer == EGL_NO_SURFACE)
             return false;
@@ -154,22 +154,15 @@ bool EGLAndroid::Initialize(ANativeWindow* surface) {
 }
 
 void EGLAndroid::UpdateSurface(ANativeWindow* surface) {
-    if (!use_shared_context) {
-        auto window = RetainWindow(surface);
-        std::lock_guard lock(pending_window_mutex);
-        pending_inline_window = std::move(window);
-        return;
-    }
-    new_window = surface;
-    StopPresenting();
+    auto window = RetainWindow(surface);
+    if (use_shared_context)
+        StopPresenting();
+    std::lock_guard lock(pending_window_mutex);
+    pending_window = std::move(window);
 }
 
 void EGLAndroid::UpdateWindow() {
-    if (!use_shared_context) {
-        pending_inline_layout.store(true, std::memory_order_release);
-        return;
-    }
-    RefreshWindowLayout();
+    pending_layout.store(true, std::memory_order_release);
 }
 
 void EGLAndroid::RefreshWindowLayout() {
@@ -181,6 +174,7 @@ void EGLAndroid::RefreshWindowLayout() {
     safe_inset_top = static_cast<u32>(NativeLibrary::GetSafeInsetTop());
     safe_inset_right = static_cast<u32>(NativeLibrary::GetSafeInsetRight());
     safe_inset_bottom = static_cast<u32>(NativeLibrary::GetSafeInsetBottom());
+    scale_density = static_cast<float>(NativeLibrary::GetScaleDensity());
     UpdateLayout();
 }
 
@@ -192,7 +186,6 @@ void EGLAndroid::CreateWindowSurface() {
     CreateEGLWindowSurface();
     MakeCurrent();
     RefreshWindowLayout();
-    scale_density = static_cast<float>(NativeLibrary::GetScaleDensity());
 }
 
 void EGLAndroid::CreateEGLWindowSurface() {
@@ -350,24 +343,27 @@ void EGLAndroid::SwapBuffers() {
     SwapWithTiming(egl_display, egl_surface, "inline");
 }
 
-void EGLAndroid::PollInlineSurface() {
+void EGLAndroid::PollEvents() {
     std::optional<std::shared_ptr<ANativeWindow>> replacement;
     {
         std::lock_guard lock(pending_window_mutex);
-        replacement.swap(pending_inline_window);
+        replacement.swap(pending_window);
     }
-    const bool layout_dirty = pending_inline_layout.exchange(false, std::memory_order_acq_rel);
+    const bool layout_dirty = pending_layout.exchange(false, std::memory_order_acq_rel);
     if (replacement) {
-        // Keep inline_window alive until the worker has finished with its EGLSurface.
+        // Keep the old native window alive until its queued EGL swaps retire.
         const auto replace_surface = [this, window = replacement->get()] {
             DestroyWindowSurface();
             host_window = window;
             CreateEGLWindowSurface();
-            if (!BindCoreContext())
-                throw std::runtime_error("Could not rebind the Android render surface");
+            if (!use_shared_context && !BindCoreContext()) {
+                DestroyWindowSurface();
+                if (!BindCoreContext())
+                    throw std::runtime_error("Could not rebind the Android render surface");
+            }
         };
 #ifdef CARA_GL_CONTEXT_DISPATCH
-        if (submission) {
+        if (submission && !use_shared_context) {
             OpenGL::CommandQueue::Flush();
             submission->Call(replace_surface);
         } else
@@ -375,30 +371,15 @@ void EGLAndroid::PollInlineSurface() {
         {
             replace_surface();
         }
-        inline_window = std::move(*replacement);
+        active_window = std::move(*replacement);
         presentation_guard.Reset();
     }
     if (replacement || layout_dirty)
         RefreshWindowLayout();
-}
-
-void EGLAndroid::PollEvents() {
-    if (!use_shared_context) {
-        PollInlineSurface();
-        return;
-    }
-    if (!new_window) {
-        return;
-    }
-
-    host_window = new_window;
-    new_window = nullptr;
-    DestroyWindowSurface();
-    CreateWindowSurface();
-    VideoCore::Renderer()->ResetPresent();
-    presentation_guard.Reset();
-    if (use_shared_context) {
-        presenting_state = PresentingState::Initial;
+    if (replacement && use_shared_context) {
+        VideoCore::Renderer()->ResetPresent();
+        presenting_state = egl_surface == EGL_NO_SURFACE ? PresentingState::Stopped
+                                                        : PresentingState::Initial;
     }
 }
 
