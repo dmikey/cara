@@ -242,3 +242,51 @@ The EGL fixture from the same revision passed on Adreno 618 and Mali-G57
 for the existing upload-generation, depth/stencil, and packed-decoder
 checks. It reported 40-bit Adreno and 64-bit Mali GPU timestamp and
 elapsed-time counters in its test context.
+
+### Whole-image retest on Adreno and Mali
+
+The release APK `dd28a0a` used the same normal boot and shader cache for
+both Adreno arms. JIT + GLES Atlas, 1×, fixed CLK 100%, disabled adaptive
+frame skip and the threaded presentation mode were fixed. Both arms ran
+the same draws with no source compile/link in either measured window.
+
+| G Cloud smoky title | Command | PICA draws | p99 | Worst refresh | Vertex upload per refresh | Host window |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| End 721 | Partial image | 51,206 | 262.62 ms | 281.86 ms at 714 | 78.23 ms | 18.78 s |
+| End 721 | Whole image | 51,206 | 360.11 ms | 376.48 ms at 714 | 73.76 ms | 18.89 s |
+| End 841 | Partial image | 51,120 | 286.23 ms | 288.27 ms at 758 | 79.13 ms | 18.75 s |
+| End 841 | Whole image | 51,120 | 280.26 ms | 294.37 ms at 746 | 75.57 ms | 18.74 s |
+
+The same 841 sampled upload calls at 721 took 150.10 ms in the
+Adreno partial-image control and 7.72 ms in the Mali control.
+Whole-image definition reduced some Adreno upload time while the
+host window duration stayed close and the worst refresh rose.
+A CPU-vertex control had zero atlas-upload time, but the median of
+the matched 43,776-draw window at 481 rose from 154.63 to 259.88 ms.
+Guest output still requires the rendering work that an API change can
+move elsewhere. The experiments leave the default upload policy in place.
+
+The physical RG Slide ran the same source revision as a separate preview.
+Both warmed normal boots used fixed CLK 100%. Requesting the
+Adreno option kept Mali on the subimage path with the same per-window
+draw counts.
+
+| RG Slide title windows ending at 721 through 1081 | p99 range | Worst refresh | Steady host window |
+| --- | ---: | ---: | ---: |
+| Flag off | 57.88–59.16 ms | 64.32 ms at 658 | about 6.12 s |
+| Flag requested | 58.07–59.06 ms | 62.23 ms at 1068 | about 6.12 s |
+
+The preview and its ROM copy were removed after testing. The player
+config hash matched before and after.
+[Release build](https://github.com/dmikey/cara/actions/runs/45448880706)
+[Preview build](https://github.com/dmikey/cara/actions/runs/45449160385)
+
+### Early Mario and Zelda presentation controls
+
+On Adreno, inline presentation narrowed Mario's three warm welcome-page
+windows from 29.51–31.75 ms p99 and 33.49 ms worst to 21.37–24.46 ms p99
+and 26.94 ms worst. Zelda's compile-free Triforce window ending at 721
+went from 20.90 ms p99 and 21.79 ms worst to 19.40 ms p99 and 20.13 ms
+worst. Later Zelda transitions still compiled on the foreground path.
+These are opening checkpoints. The inline route also changes the stream
+buffer policy and should be measured in gameplay before choosing defaults.
