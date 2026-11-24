@@ -13,6 +13,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <glad/glad.h>
 #include "cara/lodepng_image_interface.h"
@@ -187,6 +188,7 @@ void Configure() {
 }
 }
 int main(int argc, char** argv) {
+    SDL_SetMainReady();
     if (auto result = Cara::RunConsoleActivity(argc, argv)) return *result;
     try {
         bool self_test = false, fullscreen = false;
@@ -196,12 +198,12 @@ int main(int argc, char** argv) {
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--help" || arg == "-h") {
-                std::cout << "Cara Linux OpenGL / FastInterp\n"
+                std::cout << "Cara Desktop OpenGL / FastInterp\n"
                              "Usage: cara [--fullscreen] [--play-mode performance|accuracy] [--frames N] GAME\n"
                              "       cara --self-test\n       cara --version\n";
                 return 0;
             } else if (arg == "--version") {
-                std::cout << "Cara " << Common::g_scm_rev << " (Linux OpenGL, no JIT)\n"; return 0;
+                std::cout << "Cara " << Common::g_scm_rev << " (Desktop OpenGL, no JIT)\n"; return 0;
             } else if (arg == "--self-test") self_test = true;
             else if (arg == "--fullscreen") fullscreen = true;
             else if (arg == "--play-mode" && i + 1 < argc) {
@@ -223,7 +225,14 @@ int main(int argc, char** argv) {
             else game = arg;
         }
         if (!self_test && game.empty()) throw std::runtime_error("Provide a game path or --self-test");
-        setenv("CARA_CPU_BACKEND", "fastinterp", 1);
+#ifdef _WIN32
+        const int backend_result = _putenv_s("CARA_CPU_BACKEND", "fastinterp");
+#else
+        const int backend_result = setenv("CARA_CPU_BACKEND", "fastinterp", 1);
+#endif
+        if (backend_result != 0) {
+            throw std::runtime_error("Unable to select FastInterp");
+        }
         if (const char* path = std::getenv("CARA_USER_DIR")) {
             std::string user = path;
             if (user.empty()) throw std::runtime_error("CARA_USER_DIR must not be empty");

@@ -18,6 +18,7 @@ import package_ipa
 import mac_bundle
 import package_mac_app
 import sign_nightly
+import verify_release_candidate
 
 
 class IPATests(unittest.TestCase):
@@ -223,6 +224,82 @@ class NightlySigningPolicyTests(unittest.TestCase):
         for first, second in [(1, 2), (99, 100), (9999, 10000)]:
             key = lambda run: tuple(map(int, sign_nightly.build_version(run).split('.')))
             self.assertLess(key(first), key(second))
+
+
+class ReleaseCandidateTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.revision = "a" * 40
+        self.certificate = "b" * 64
+        self.mac = "Cara-macOS-arm64-JIT-signed.zip"
+        self.ios = "Cara-iOS-arm64-GLES3-unsigned.ipa"
+        self.android = ("Cara-Android-arm64-signed.apk", "Cara-Android-arm64-signed.aab")
+        self.hashes = {}
+        for asset in (self.mac, self.ios, *self.android, *verify_release_candidate.DESKTOP.values()):
+            data = asset.encode()
+            (self.root / asset).write_bytes(data)
+            self.hashes[asset] = hashlib.sha256(data).hexdigest()
+        self.receipt(self.mac + ".json", source_revision=self.revision, signing="developer-id",
+                     notarized=True, self_contained=True, cpu_jit=True, shader_jit=False,
+                     build_version="2026.11.23", asset_sha256=self.hashes[self.mac])
+        self.receipt(self.ios + ".json", source_revision=self.revision, unsigned=True,
+                     requires_resigning=True, renderer="gles3", bundle_id="com.dmikey.cara",
+                     ipa_sha256=self.hashes[self.ios])
+        for platform, asset in verify_release_candidate.DESKTOP.items():
+            self.receipt(f"{platform}-build.json", source_revision=self.revision,
+                         platform=platform, architecture="x86_64", renderer="desktop-opengl",
+                         cpu_backend="fastinterp", cpu_jit=False, shader_jit=False,
+                         signing="unsigned", asset_sha256=self.hashes[asset])
+        self.receipt("android-signed.json", source_revision=self.revision, signing="android-upload-key",
+                     certificate_sha256=self.certificate, application_id="org.cara.emu",
+                     target_sdk=36, architecture="arm64-v8a", renderer="gles-atlas",
+                     cpu_jit=True, shader_jit=False, version_code=100,
+                     assets={asset: self.hashes[asset] for asset in self.android})
+
+    def receipt(self, name, **data):
+        (self.root / name).write_text(json.dumps(data))
+
+    def verify(self):
+        verify_release_candidate.verify(self.root, self.revision, self.certificate)
+
+    def test_complete_candidate_verifies(self):
+        self.verify()
+
+    def test_changed_binary_is_rejected(self):
+        (self.root / self.android[0]).write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "digest mismatch"):
+            self.verify()
+
+    def test_changed_desktop_archive_is_rejected(self):
+        (self.root / verify_release_candidate.DESKTOP["windows"]).write_bytes(b"stale")
+        with self.assertRaisesRegex(ValueError, "digest mismatch"):
+            self.verify()
+
+    def test_desktop_different_sources_are_rejected(self):
+        receipt = "linux-build.json"
+        data = json.loads((self.root / receipt).read_text())
+        self.receipt(receipt, **dict(data, source_revision="c" * 40))
+        with self.assertRaisesRegex(ValueError, "Source mismatch"):
+            self.verify()
+
+    def test_missing_asset_is_rejected(self):
+        (self.root / self.ios).unlink()
+        with self.assertRaisesRegex(ValueError, "candidate asset set"):
+            self.verify()
+
+    def test_different_ios_revision_is_rejected(self):
+        name = self.ios + ".json"
+        data = json.loads((self.root / name).read_text())
+        self.receipt(name, **dict(data, source_revision="c" * 40))
+        with self.assertRaisesRegex(ValueError, "Source mismatch"):
+            self.verify()
+
+    def test_incorrect_upload_certificate_is_rejected(self):
+        self.certificate = "c" * 64
+        with self.assertRaisesRegex(ValueError, "Unexpected Android upload signer"):
+            self.verify()
 
 
 if __name__ == '__main__':

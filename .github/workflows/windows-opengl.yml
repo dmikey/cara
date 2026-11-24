@@ -1,0 +1,77 @@
+name: Windows OpenGL
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-opengl.yml'
+      - 'emulator/**'
+      - 'tools/package_windows.py'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+jobs:
+  windows:
+    name: Windows x86_64 / OpenGL / FastInterp
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - name: Install pinned SDL2 MSVC libraries
+        shell: pwsh
+        run: |
+          $archive = "work/sdl2.zip"
+          New-Item -ItemType Directory work -Force | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-VC.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne "AF347939395A58B365846AAEA27391E69F9EC9D4DD650D6AC40802159B418A6E") {
+            throw "SDL2 archive SHA-256 mismatch"
+          }
+          Expand-Archive $archive work
+      - name: Install static PNG and zlib
+        shell: pwsh
+        run: vcpkg install libpng:x64-windows-static-md --x-install-root="$pwd/work/vcpkg-installed"
+      - name: Configure and build the OpenGL frontend
+        shell: pwsh
+        run: |
+          $sdl = (Resolve-Path "work/SDL2-2.32.10").Path
+          cmake -S emulator -B work/build-windows -G "Visual Studio 17 2022" -A x64 -T ClangCL `
+            "-DBOOST_ROOT=$pwd/emulator/externals/boost" -DBoost_NO_SYSTEM_PATHS=ON `
+            -DENABLE_SDL2=ON -DCARA_USE_BUNDLED_SDL2=OFF "-DSDL2_PATH=$sdl" `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            "-DVCPKG_INSTALLED_DIR=$pwd/work/vcpkg-installed" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            "-DSDL2_DLL_DIR=$sdl/lib/x64" -DCARA_WINDOWS_SDL_HOST=ON `
+            -DENABLE_QT=OFF -DCARA_ENABLE_JIT=OFF -DCARA_SOFTWARE_PRESENTATION=OFF `
+            -DENABLE_WEB_SERVICE=OFF -DENABLE_CUBEB=OFF `
+            -DENABLE_FFMPEG_AUDIO_DECODER=OFF -DENABLE_FFMPEG_VIDEO_DUMPER=OFF
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build work/build-windows --config Release --target cara --parallel 3
+      - name: Check and package the Windows binary
+        shell: pwsh
+        run: |
+          $binary = Get-Item work/build-windows/bin/Release/cara.exe
+          $sdl = Get-Item work/SDL2-2.32.10/lib/x64/SDL2.dll
+          Copy-Item $sdl.FullName $binary.DirectoryName
+          & $binary.FullName --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $binary.FullName --help
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ((Get-AuthenticodeSignature $binary.FullName).Status -ne "NotSigned") {
+            throw "Expected an unsigned Cara EXE"
+          }
+          python tools/package_windows.py --exe $binary.FullName --sdl $sdl.FullName --zlib-license work/vcpkg-installed/x64-windows-static-md/share/zlib/copyright --png-license work/vcpkg-installed/x64-windows-static-md/share/libpng/copyright --output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Cara-Windows-x86_64-OpenGL
+          path: dist/*
+          if-no-files-found: error

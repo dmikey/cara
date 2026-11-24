@@ -81,9 +81,11 @@ def main():
     with tarfile.open(archive, 'w:gz') as tar:
         tar.add(stage, arcname=stage.name)
     shutil.rmtree(stage)
+    with archive.open('rb') as stream:
+        report['asset_sha256'] = hashlib.file_digest(stream, 'sha256').hexdigest()
     (out / 'linux-build.json').write_text(json.dumps(report, indent=2) + '\n')
     (out / 'SHA256SUMS.txt').write_text(
-        hashlib.sha256(archive.read_bytes()).hexdigest() + '  ' + archive.name + '\n')
+        report['asset_sha256'] + '  ' + archive.name + '\n')
     print(archive)
 
 

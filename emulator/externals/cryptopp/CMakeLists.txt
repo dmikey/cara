@@ -24,6 +24,11 @@ option(CRYPTOPP_DISABLE_SSSE3 "Disable SSSE3" OFF)
 option(CRYPTOPP_DISABLE_AESNI "Disable AES-NI" OFF)
 option(CRYPTOPP_DISABLE_CXXFLAGS_OPTIMIZATIONS "Disable CXXFLAGS optimizations" OFF)
 
+# This bundled revision uses MASM and compiler-specific intrinsics on MSVC.
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(CRYPTOPP_DISABLE_ASM ON)
+endif()
+
 #============================================================================
 # Internal compiler options
 #============================================================================
@@ -55,9 +60,6 @@ if(IS_BIG_ENDIAN)
     add_definitions(-DIS_BIG_ENDIAN)
 endif()
 
-if(CRYPTOPP_DISABLE_ASM)
-    add_definitions(-DCRYPTOPP_DISABLE_ASM)
-endif()
 if(CRYPTOPP_DISABLE_SSSE3)
     add_definitions(-DCRYPTOPP_DISABLE_SSSE3)
 endif()
@@ -238,6 +240,9 @@ endif()
 #============================================================================
 add_library(cryptopp STATIC ${cryptopp_SOURCES})
 target_include_directories(cryptopp INTERFACE .)
+if(CRYPTOPP_DISABLE_ASM)
+    target_compile_definitions(cryptopp PUBLIC CRYPTOPP_DISABLE_ASM)
+endif()
 
 #============================================================================
 # Third-party libraries

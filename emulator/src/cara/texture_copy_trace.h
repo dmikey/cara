@@ -3,6 +3,9 @@
 // Default-off, owner-thread-only diagnostics. No allocation or I/O in GPU hooks.
 #include <array>
 #include <atomic>
+#ifdef _WIN32
+#include <chrono>
+#endif
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -31,13 +34,22 @@ struct Surface { bool valid{}; std::uint64_t address{}, size{}; std::uint32_t wi
 struct Time { std::uint64_t wall{}, cpu{}, calls{}, clock_failures{}; };
 struct Clocks { std::uint64_t wall{}, cpu{}; bool wall_valid{}, cpu_valid{}; };
 inline Clocks ReadClocks() {
-    Clocks out; timespec value{};
+    Clocks out;
+#ifdef _WIN32
+    out.wall = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    out.wall_valid = true;
+#else
+    timespec value{};
     if (clock_gettime(CLOCK_MONOTONIC, &value) == 0) {
         out.wall_valid = true; out.wall = std::uint64_t(value.tv_sec)*1000000000ULL+value.tv_nsec;
     }
+#endif
 #ifdef CLOCK_THREAD_CPUTIME_ID
-    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0) {
-        out.cpu_valid = true; out.cpu = std::uint64_t(value.tv_sec)*1000000000ULL+value.tv_nsec;
+    timespec cpu_value{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_value) == 0) {
+        out.cpu_valid = true;
+        out.cpu = std::uint64_t(cpu_value.tv_sec)*1000000000ULL+cpu_value.tv_nsec;
     }
 #endif
     return out;

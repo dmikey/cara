@@ -265,8 +265,8 @@ const lword LWORD_MAX = W64LIT(0xffffffffffffffff);
 
 // Clang pretends to be VC++, too.
 //   See http://github.com/weidai11/cryptopp/issues/147
-#if defined(_MSC_VER) && defined(__clang__)
-# error: "Unsupported configuration"
+#if defined(_MSC_VER) && defined(__clang__) && !defined(CRYPTOPP_DISABLE_ASM)
+# error "clang-cl must use the portable Crypto++ implementation"
 #endif
 
 #ifdef __GNUC__
@@ -1105,7 +1105,7 @@ NAMESPACE_END
 // C++17 uncaught_exceptions: MS at VS2015 (19.00); GCC at 6.0; Clang at 3.5; Intel 18.0.
 // Clang and __EXCEPTIONS see http://releases.llvm.org/3.6.0/tools/clang/docs/ReleaseNotes.html
 #if defined(__clang__)
-# if __EXCEPTIONS && __has_feature(cxx_exceptions)
+# if (defined(__EXCEPTIONS) || defined(_CPPUNWIND)) && __has_feature(cxx_exceptions)
 #  define CRYPTOPP_CXX17_EXCEPTIONS 1
 # endif
 #elif (CRYPTOPP_MSC_VERSION >= 1900) || (__INTEL_COMPILER >= 1800) || (CRYPTOPP_GCC_VERSION >= 60000)
