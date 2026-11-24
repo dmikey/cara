@@ -412,3 +412,41 @@ including time in userspace driver calls. An EGL/GL timing scope can
 include CPU execution, driver synchronization and already queued GPU
 work. The CPU placement and clock observations give no indication of
 an efficiency-core scheduling issue in these samples.
+
+### Adreno separable-stage check
+
+The Adreno-only opt-in reused the existing GLES 3.2 stage pipeline. The
+release built in CI and ran from a normal boot into Mario's opening
+cutscene. The no-Cara-stage-cache cold startup had a 6,803.98 ms
+worst refresh. Two standalone vertex programs took 2,252.64 and
+2,480.83 ms to link. The driver cache was left in its existing state.
+
+A compile-free cutscene window of 12,240 draws measured 48.47 ms p50,
+52.09 ms p99, and 52.41 ms worst with stage pipelines. Linked-GLES
+windows of the same draw count in that cutscene measured
+22.24–22.55 ms p50 and 25.29–25.84 ms p99, with a 26.45 ms maximum.
+The scenes were aligned by cutscene and workload, rather than
+pixel-exact replay. In the stage window, the accumulated LUT time
+was 20.29 ms per refresh compared with 7.29–7.80 ms on the linked
+route. This is a driver-path timing, and can include waiting behind
+earlier work. Stage pipelines stay off on Adreno. The comparison did
+not proceed past the cutscene because the warm regression was already
+large. [Adreno stage and swap-only build](https://github.com/dmikey/cara/actions/runs/45454216365)
+
+The linked World 1-1 entry capture saw nine fragment keys and nine
+distinct GLSL sources, three of them lit. Source-string deduplication
+alone cannot remove the expensive link in that capture. The separate
+Zelda opening sample saw 48 keys and 32 distinct sources, making
+cross-key reuse more relevant there. These counts cover the logged
+scenes and omit earlier cache hits.
+
+For the G Cloud smoky title, a final normal boot on the same release
+enabled only the EGL swap probe. No guest GPU interval queries ran.
+The window ending at 721 took 18.674 s for 120 guest refreshes
+and 51,206 draws, with 241.00 ms p99 and 299.08 ms worst at 629.
+The window ending at 841 took 18.732 s and 51,120 draws, with
+244.90 ms p99 and 253.18 ms worst at 760. Neither window compiled
+shaders. Mailbox swap medians were 237.31 and 307.64 ms, close to
+the earlier query-enabled capture. This confirms long presentation
+waits even without timer queries. It does not identify a GPU clock
+or isolate the cost of a PICA draw on Adreno.
