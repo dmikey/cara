@@ -39,6 +39,7 @@ public final class SettingsFile {
     public static final String KEY_SHADERS_ACCURATE_MUL = "accurate_mul_type";
     public static final String KEY_FORCE_TEXTURE_FILTER = "force_texture_filter";
     public static final String KEY_RESOLUTION_FACTOR = "resolution_factor";
+    public static final String KEY_LOSSLESS_OUTPUT_SCALE = "lossless_output_scale";
     public static final String KEY_ACCURACY_MODE = "accuracy_mode";
     public static final String KEY_ADAPTIVE_FRAME_SKIP = "adaptive_frame_skip";
     public static final String KEY_FIXED_GUEST_CLOCK = "fixed_guest_clock";

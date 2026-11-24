@@ -33,6 +33,7 @@ const ConfigInfo<bool> USE_SHADER_JIT{{"Renderer", "use_shader_jit"}, false};
 const ConfigInfo<Settings::AccurateMul> SHADERS_ACCURATE_MUL{{"Renderer", "accurate_mul_type"},
                                                              Settings::AccurateMul::OFF};
 const ConfigInfo<u16> RESOLUTION_FACTOR{{"Renderer", "resolution_factor"}, 1};
+const ConfigInfo<u8> LOSSLESS_OUTPUT_SCALE{{"Renderer", "lossless_output_scale"}, 0};
 const ConfigInfo<bool> USE_FRAME_LIMIT{{"Renderer", "use_frame_limit"}, true};
 const ConfigInfo<u16> FRAME_LIMIT{{"Renderer", "frame_limit"}, 100};
 const ConfigInfo<u8> FACTOR_3D{{"Renderer", "factor_3d"}, 0};

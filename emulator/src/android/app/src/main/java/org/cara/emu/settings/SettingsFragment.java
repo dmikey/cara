@@ -153,6 +153,10 @@ public final class SettingsFragment extends Fragment {
                                        Settings.SECTION_INI_RENDERER, R.string.internal_resolution,
                                        R.string.setting_resolution_desc, R.array.internalResolutionEntries,
                                        R.array.internalResolutionValues, 1, resolution));
+        sl.add(new SingleChoiceSetting(SettingsFile.KEY_LOSSLESS_OUTPUT_SCALE, Settings.SECTION_INI_RENDERER,
+                R.string.setting_output_scale, R.string.setting_output_scale_desc,
+                R.array.outputScaleEntries, R.array.outputScaleValues, 0,
+                rendererSection.getSetting(SettingsFile.KEY_LOSSLESS_OUTPUT_SCALE)));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_SHOW_FPS, Settings.SECTION_INI_RENDERER,
                                    R.string.show_fps, 0, true, showFPS));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER,

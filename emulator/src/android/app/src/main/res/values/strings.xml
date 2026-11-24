@@ -173,6 +173,11 @@
     <string name="show_fps">Show FPS</string>
     <string name="layout_option">Screen Layout</string>
     <string name="internal_resolution">Native resolution</string>
+    <string name="setting_output_scale">Display scaling</string>
+    <string name="setting_output_scale_desc">Scales the finished screens and keeps their layout.</string>
+    <string name="setting_output_fit">Native (Fit)</string>
+    <string name="setting_output_lossless_2x">Lossless 2×</string>
+    <string name="setting_output_lossless_4x">Lossless 4×</string>
     <string name="setting_hw_shader">Enable Hardware Shader</string>
     <string name="setting_hw_shader_desc">Turn it on to improve performance, but some 2D games have display issues.</string>
     <string name="setting_shaders_accurate_mul">Accurate Multiplication</string>
