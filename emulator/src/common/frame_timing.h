@@ -165,6 +165,8 @@ struct Counters {
     double lut_texture_restore_seconds = 0;
     std::uint64_t lut_texture_uploads = 0;
     std::uint64_t lut_texture_bytes = 0;
+    std::uint64_t lighting_lut_pbo_uploads = 0;
+    std::uint64_t lighting_lut_pbo_fallbacks = 0;
     double state_apply_seconds = 0;
     double draw_submit_seconds = 0;
     double surface_remap_seconds = 0;

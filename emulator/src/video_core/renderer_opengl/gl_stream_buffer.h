@@ -38,7 +38,8 @@ public:
     // CPU-owned source for GLES 2D LUT uploads. These methods reserve the same
     // logical ring offsets without mapping GL storage; the returned pointer may
     // therefore be supplied as client texture data with PIXEL_UNPACK_BUFFER=0.
-    std::tuple<u8*, GLintptr, bool> MapStaging(GLsizeiptr size, GLintptr alignment);
+    std::tuple<u8*, GLintptr, bool> MapStaging(GLsizeiptr size, GLintptr alignment,
+                                               u8* mapped_source = nullptr);
     void FinishStaging(GLsizeiptr size);
 #endif
 

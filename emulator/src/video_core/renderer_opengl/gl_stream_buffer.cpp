@@ -176,19 +176,22 @@ void OGLStreamBuffer::Unmap(GLsizeiptr size) {
 
 #ifdef CARA_IOS_GLES
 std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::MapStaging(GLsizeiptr size,
-                                                         GLintptr alignment) {
+                                                         GLintptr alignment, u8* mapped_source) {
     if (size <= 0 || size > buffer_size || alignment <= 0 || staging_reserved != 0) {
         throw std::invalid_argument("Invalid LUT staging reservation");
     }
     // Allocate before changing the ring so allocation failure leaves it intact.
-    staging.resize(static_cast<std::size_t>(size));
+    if (!mapped_source) {
+        staging.resize(static_cast<std::size_t>(size));
+        mapped_source = staging.data();
+    }
     const auto aligned = Common::AlignUp<std::size_t>(buffer_pos, alignment);
     const bool invalidate = aligned > static_cast<std::size_t>(buffer_size - size);
     buffer_pos = invalidate ? 0 : static_cast<GLintptr>(aligned);
     staging_reserved = size;
     // Unlike the legacy GPU map hack, a 2D texture ring must always refresh all
     // resident tables on wrap: the following upload overwrites their texels.
-    return std::make_tuple(staging.data(), buffer_pos, invalidate);
+    return std::make_tuple(mapped_source, buffer_pos, invalidate);
 }
 
 void OGLStreamBuffer::FinishStaging(GLsizeiptr size) {

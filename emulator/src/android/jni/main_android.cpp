@@ -227,6 +227,7 @@ void BootGame(const std::string& path) {
     select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
     select_probe("lighting_lut_generations", "CARA_LIGHTING_LUT_GENERATIONS");
     select_probe("lighting_lut_residency", "CARA_LIGHTING_LUT_RESIDENCY");
+    select_probe("lighting_lut_pbo", "CARA_LIGHTING_LUT_PBO");
     select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");
     select_probe("adreno_replace_vertex_images", "CARA_ADRENO_REPLACE_VERTEX_IMAGES");
     select_probe("trace_gles_gpu_timing", "CARA_TRACE_GLES_GPU_TIMING");
@@ -723,13 +724,15 @@ void BootGame(const std::string& path) {
                                 const auto lut_phases = fmt::format(
                                     "lut_phases end={} lighting_fog_ms={:.2f} procedural_ms={:.2f} "
                                     "texture_setup_ms={:.2f} texture_transfer_ms={:.2f} "
-                                    "texture_restore_ms={:.2f} uploads={} bytes={}",
+                                    "texture_restore_ms={:.2f} uploads={} bytes={} pbo_uploads={} "
+                                    "pbo_fallbacks={}",
                                     frame, phases.lighting_fog_lut_seconds * 1000,
                                     phases.procedural_lut_seconds * 1000,
                                     phases.lut_texture_setup_seconds * 1000,
                                     phases.lut_texture_transfer_seconds * 1000,
                                     phases.lut_texture_restore_seconds * 1000,
-                                    phases.lut_texture_uploads, phases.lut_texture_bytes);
+                                    phases.lut_texture_uploads, phases.lut_texture_bytes,
+                                    phases.lighting_lut_pbo_uploads, phases.lighting_lut_pbo_fallbacks);
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", draw_phases.c_str());
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", lut_phases.c_str());
 

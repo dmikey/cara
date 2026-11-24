@@ -503,6 +503,10 @@ private:
     std::vector<u8> lighting_lut_image;
     struct LightingLUTResidency;
     std::unique_ptr<LightingLUTResidency> lighting_lut_residency;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    struct LightingLUTUnpackStream;
+    std::unique_ptr<LightingLUTUnpackStream> lighting_lut_unpack_stream;
+#endif
 #endif
 #ifdef CARA_ANDROID_GLES_ATLAS
     static constexpr size_t LightingTextureBatchSize = 32;
