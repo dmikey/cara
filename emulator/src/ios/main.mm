@@ -30,7 +30,7 @@ extern "C" int __llvm_profile_write_file(void);
 #import "ios/save_sync.h"
 #import "ios/shell_controllers.h"
 #import "ios/network_controller.h"
-#include "ios/display_scaling.h"
+#include "cara/display_scaling.h"
 #include "ios/device_sensors.h"
 #include "ios/session_overlay.h"
 #include "network/relay_client.h"
@@ -2364,6 +2364,8 @@ static std::filesystem::path PedometerHistoryPath() {
 #ifdef CARA_PRIVATE_IOS_METAL_LCD
     emuWindow->native_metal_only = CaraMetalRendererRequested();
     if (emuWindow->native_metal_only) {
+        if (!Common::ApplyAppleMetalDefaults(true))
+            LOG_WARNING(Frontend, "Could not initialize every Apple Metal tuning option");
         if (!metalLcdSurface)
             metalLcdSurface = [[CaraNativeMetalLcdView alloc] initWithFrame:self.view.bounds];
         [self.view insertSubview:metalLcdSurface belowSubview:gpuSurface];

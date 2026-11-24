@@ -411,6 +411,7 @@ private:
     bool is_mali_gpu;
 
     bool shader_dirty;
+    bool fragment_uses_lighting_quaternion = true;
 
     struct {
         UniformData data;

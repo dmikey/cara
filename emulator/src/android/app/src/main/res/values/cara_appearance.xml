@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cara_header_appearance">Appearance</string>
+    <string name="cara_app_icon">App Icon</string>
+    <string name="cara_icon_citrus">Citrus (Default)</string>
+    <string name="cara_icon_silver">Silver</string>
+    <string name="cara_icon_amber">Amber</string>
+    <string name="cara_icon_lime">Lime</string>
+    <string name="cara_icon_onyx">Onyx</string>
+    <string name="cara_icon_error">Cara could not change the launcher icon.</string>
+    <string name="cara_controller_mapping">Controller Mapping</string>
+    <string name="cara_edit_screen_layout">Edit Screen Layout</string>
+    <string name="cara_edit_touch_controls">Edit Touch Controls</string>
+    <string name="cara_game_tools">Game Tools</string>
+</resources>

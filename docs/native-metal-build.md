@@ -911,3 +911,54 @@ admits the shared fragment after three distinct eligible misses of one
 texture layout within a refresh. `CARA_GLES_RUNTIME_TEV=1` tests the shared
 combiner with GLES. Both experiments produced smaller gains than the
 vertex fallback and remain explicit launch overrides.
+
+### M4 private launch policy and render-pass grouping
+
+The private iPad launcher applies the same Apple Metal tuning policy as
+the Mac runner when the native Metal renderer is selected. Before this
+fix, the private iPad override could select Metal without applying the
+policy. Explicit environment values still take precedence. The public
+iPad launcher continues to use GLES.
+
+One M4 replay per setting used the same private arm64 package (1123.902,
+source b09240c9b430), fresh guest profiles, FastInterp at 100% guest CPU,
+1× resolution, sound, the original GPU vertex path, and 3,000 refreshes
+from a normal Dark Moon boot. Metal ran without an EAGL context. The
+grouped run used the shared defaults. The second run overrode only
+`CARA_METAL_GROUPED_PASS=0`. Exact LUT reuse was off in both.
+
+| Measurement | Grouped | Ungrouped |
+| --- | ---: | ---: |
+| Whole replay render passes opened | 38,708 | 1,521,894 |
+| Whole replay published draws | 1,521,894 | 1,521,894 |
+| Whole replay native transfers | 109,272 | 109,272 |
+| Whole replay texture-copy commands | 28,785 | 28,785 |
+| Whole replay native LCD presents | 3,000 | 2,993 |
+| Warm 2401–2800 mean elapsed ms/refresh | 16.858 | 36.593 |
+| Warm 2401–2800 p50 elapsed ms | 16.699 | 36.613 |
+| Warm 2401–2800 p99 elapsed ms | 22.162 | 37.684 |
+| Warm 2401–2800 maximum elapsed ms | 91.989 | 115.521 |
+| Warm 2401–2800 upload-arena wait calls | 0 | 1,274 |
+| Warm 2401–2760 emulation-thread CPU ms/refresh | 14.476 | 17.846 |
+| Warm 2401–2760 process CPU ms/refresh | 17.280 | 24.993 |
+
+Both runs matched guest ticks per core, PICA lists and draws, raw index
+draws and vertices, and exact top and bottom pixels at refreshes 2400
+and 3000. They each submitted 400 LCD presents within the warm
+measurement window. The ungrouped run submitted seven fewer LCD
+presents in the first 120 refreshes despite presentation skip being off.
+Retain that startup difference in the comparison. The recorder reported
+38,708 logical draw groups in both runs. The encoder-start counter
+measures the actual pass reduction. The application reported no pause
+time and nominal thermal state in either run.
+
+The warm window had zero vertex library, fragment library, or render
+pipeline builds. Cold compilation remains a separate problem. In the
+grouped run, refresh 531 took 13.164 s. Its trace recorded 7.797 s in
+vertex library creation, 1.684 s in fragment library creation, and
+4.100 s in pipeline creation. Those host spans can overlap. Driver
+cache warmth was uncontrolled and the ungrouped control ran second, so
+the cold timing cannot establish the effect of grouping on compilation
+or first play. A missing shutdown LUT receipt prevented measuring LUT
+reuse on this iPad build. The restored private launch policy does not
+enable that separate option.

@@ -676,14 +676,33 @@ void RasterizerOpenGL::SetupVertexArray(u8* array_ptr, GLintptr buffer_offset,
     }
 }
 
+#ifdef CARA_IOS_GLES
+static bool PruneUnusedQuaternionEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_GLES_PRUNE_UNUSED_QUATERNION");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+#endif
+
 bool RasterizerOpenGL::SetupVertexShader() {
     MICROPROFILE_SCOPE(OpenGL_VS);
-    return shader_program_manager->UseProgrammableVertexShader(Pica::g_state.regs,
-                                                               Pica::g_state.vs
+    const auto& regs = Pica::g_state.regs;
 #ifdef CARA_IOS_GLES
-                                                               , ios_lit_pair_vertex_reuse ? 6u : ios_feedback_vertex_reuse ? 5u : ios_direct_vertex_reuse ? 3u : ios_indexed_vertex_inputs, ios_vertex_input_mask
+    const unsigned input_mode = ios_lit_pair_vertex_reuse ? 6 : ios_feedback_vertex_reuse ? 5 :
+                                ios_direct_vertex_reuse ? 3 : ios_indexed_vertex_inputs;
+    const bool prune_unused_quaternion = GLES && PruneUnusedQuaternionEnabled();
+    if (prune_unused_quaternion && shader_dirty) {
+        fragment_uses_lighting_quaternion = FragmentUsesLightingQuaternion(regs);
+    }
+    const bool omit_triangle_quaternion = prune_unused_quaternion && input_mode < 3 &&
+                                          !fragment_uses_lighting_quaternion;
+    return shader_program_manager->UseProgrammableVertexShader(
+        regs, Pica::g_state.vs, input_mode, ios_vertex_input_mask, omit_triangle_quaternion);
+#else
+    return shader_program_manager->UseProgrammableVertexShader(regs, Pica::g_state.vs);
 #endif
-    );
 }
 
 bool RasterizerOpenGL::SetupGeometryShader() {
@@ -1417,7 +1436,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     {
         Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
                                                    Common::FrameTiming::RenderBookkeepingProfileEnabled());
-        shader_program_manager->ApplyTo(state);
+        shader_program_manager->ApplyTo(state, !Pica::g_state.regs.framebuffer.IsShadowRendering());
     }
     if (!state.draw.shader_program && !state.draw.program_pipeline) return false;
     state.Apply();
@@ -3336,9 +3355,15 @@ void RasterizerOpenGL::NotifyPicaRegisterChanged(u32 id) {
         SyncCombinerColor();
         break;
 
-    // Fragment lighting switches
-    /*case PICA_REG_INDEX(lighting.disable):
-    case PICA_REG_INDEX(lighting.max_light_index):
+    // Fragment lighting can change independently of the texture combiners.
+#ifdef CARA_IOS_GLES
+    case PICA_REG_INDEX(lighting.disable):
+        if (GLES && PruneUnusedQuaternionEnabled()) {
+            shader_dirty = true;
+        }
+        break;
+#endif
+    /*case PICA_REG_INDEX(lighting.max_light_index):
     case PICA_REG_INDEX(lighting.config0):
     case PICA_REG_INDEX(lighting.config1):
     case PICA_REG_INDEX(lighting.abs_lut_input):
@@ -3862,6 +3887,12 @@ void RasterizerOpenGL::SamplerInfo::SyncWithConfig(const TextureConfig& config) 
 }
 
 void RasterizerOpenGL::SetShader() {
+#ifdef CARA_IOS_GLES
+    // A software draw can consume shader_dirty before the next accelerated draw.
+    if (GLES && PruneUnusedQuaternionEnabled()) {
+        fragment_uses_lighting_quaternion = FragmentUsesLightingQuaternion(Pica::g_state.regs);
+    }
+#endif
     Common::FrameTiming::Scope shader_setup(Common::FrameTiming::Phase::DrawShaderSetup,
                                            Common::FrameTiming::RenderBookkeepingProfileEnabled());
 #ifdef CARA_IOS_GLES

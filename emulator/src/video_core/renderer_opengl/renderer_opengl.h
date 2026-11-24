@@ -65,6 +65,9 @@ private:
                                      const GPU::Regs::FramebufferConfig& framebuffer);
     void RenderScreenshot();
     void DrawScreens(const Layout::FramebufferLayout& layout, bool integer_output = false);
+    GLuint ScreenSampler(bool nearest);
+    void DrawLCDTextures(const Layout::FramebufferLayout& layout, bool nearest);
+    bool DrawLosslessLCDs(const Layout::FramebufferLayout& layout, u32 requested_scale);
     void RenderToMailbox(const Layout::FramebufferLayout& layout);
 
     // Loads framebuffer from emulated memory into the display information structure
@@ -83,6 +86,10 @@ private:
     OGLProgram shader;
     OGLSampler filter_sampler;
     OGLSampler nearest_output_sampler;
+    OGLFramebuffer lossless_framebuffer;
+    OGLRenderbuffer lossless_color;
+    u32 lossless_storage_scale = 0;
+    bool lossless_storage_complete = false;
 
     OGLProgram bg_shader;
     OGLTexture bg_texture;

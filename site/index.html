@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Cara is a new Fast, Accurate, Portable Emulation core for the Nintendo 3DS.">
+  <meta name="description" content="Cara is a new, open-source Nintendo 3DS emulator and portable core for iPhone, iPad, Mac, and Android.">
   <link rel="icon" type="image/png" href="assets/cara-citrus.png">
   <title>Cara | Nintendo 3DS emulator</title>
   <style>
@@ -233,15 +233,41 @@
     .build-note { color: var(--muted); }
     .build-availability a { font-weight: 640; }
 
-    .details {
-      display: grid;
-      grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
-      gap: 2rem clamp(2rem, 5vw, 4.5rem);
+    .project {
       padding-block: clamp(2rem, 4.7vw, 3.55rem);
+      scroll-margin-top: 1.25rem;
     }
 
-    .details section { scroll-margin-top: 1.25rem; }
-    .details p { max-width: 48ch; }
+    .project > p { max-width: 66ch; }
+
+    .project-lead {
+      color: var(--muted);
+      font-size: 1.125rem;
+    }
+
+    .project-features {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.4rem clamp(1.25rem, 3vw, 2.75rem);
+      margin-block: 1.6rem;
+      padding-block: 1.4rem;
+      border-block: 1px solid var(--rule);
+    }
+
+    .project-features h3 {
+      margin: 0;
+      font-size: 1.0625rem;
+      line-height: 1.35;
+    }
+
+    .project-features p { margin-top: 0.45rem; }
+
+    .preservation {
+      border-top: 1px solid var(--rule);
+      padding-block: 1.5rem 2rem;
+    }
+
+    .preservation p { max-width: 66ch; }
 
     .project-links {
       margin-top: 1.05rem;
@@ -273,7 +299,7 @@
     @media (max-width: 50rem) {
       .page { width: calc(100% - 3rem); }
 
-      .hero, .details {
+      .hero {
         grid-template-columns: minmax(0, 1fr);
         gap: 1.85rem;
       }
@@ -286,6 +312,10 @@
       }
 
       .hero-mark { width: min(100%, 16rem); }
+    }
+
+    @media (max-width: 42rem) {
+      .project-features { grid-template-columns: minmax(0, 1fr); }
     }
 
     @media (max-width: 29rem) {
@@ -315,7 +345,7 @@
       <section class="hero" aria-labelledby="intro">
         <div class="hero-copy">
           <h1 id="intro">Nintendo&nbsp;3DS emulator</h1>
-          <p class="intro">Cara is a new Fast, Accurate, Portable Emulation core for the Nintendo 3DS.</p>
+          <p class="intro">Cara is a new, open-source Nintendo 3DS emulator and portable core for iPhone, iPad, Mac, and Android.</p>
           <ul class="actions">
             <li><a class="release-link" href="#get-cara">Downloads</a></li>
             <li><a class="source-link" href="https://github.com/dmikey/cara">View source</a></li>
@@ -360,25 +390,40 @@
         </ul>
       </section>
 
-      <div class="details">
-        <section aria-labelledby="preservation-heading">
-          <h2 id="preservation-heading">Software preservation</h2>
-          <p>Cara exists to preserve the legacy of Nintendo games and help players revisit the experience as faithfully as possible. Cara includes no Nintendo code or game assets. We do not support piracy.</p>
-        </section>
-        <section id="project" aria-labelledby="project-heading">
-          <h2 id="project-heading">Project history</h2>
-          <p>Cara builds on Citra and Citra MMJ and uses Azahar’s FastInterp. The emulator and app source are available under GPL-2.0-or-later.</p>
-          <ul class="project-links">
-            <li><a href="https://github.com/dmikey/cara/blob/main/docs/build.md">Build instructions</a></li>
-            <li><a href="https://github.com/dmikey/cara/blob/main/docs/technology.md">Technical documentation</a></li>
-            <li><a href="https://github.com/dmikey/cara/issues">Report an issue</a></li>
-            <li><a href="https://github.com/dmikey/cara/blob/main/NOTICE">Credits</a></li>
-            <li><a href="https://github.com/dmikey/cara/blob/main/LICENSE">License</a></li>
-          </ul>
-          <p class="hardware-note">Cara is developed on Apple hardware and builds for Android. On Android, compatibility varies by device, including across Mali and Adreno GPUs. <a href="https://github.com/dmikey/cara/blob/main/docs/rg-slide-rendering.md">Hardware notes</a></p>
-          <p class="credit">Made with Codex and heavily engineered by AI.<br>Human Guided Discovery.</p>
-        </section>
-      </div>
+      <section class="project" id="project" aria-labelledby="project-heading">
+        <h2 id="project-heading">What we built</h2>
+        <p class="project-lead">Cara started as a portable Nintendo 3DS core that other apps could use. Today, the same core powers a standalone emulator with its own graphics pipeline and controls.</p>
+        <div class="project-features">
+          <div>
+            <h3>Play on iPhone and iPad without JIT</h3>
+            <p>FastInterp runs 3DS game code using precompiled instructions in the app. You can launch a game without a separate JIT setup.</p>
+          </div>
+          <div>
+            <h3>More rendering stays on the GPU</h3>
+            <p>Cara processes 3DS vertices on the GPU and reuses textures and shaders so the emulator can spend less time moving and rebuilding graphics data.</p>
+          </div>
+          <div>
+            <h3>Make the controls your own</h3>
+            <p>On iPhone and iPad, play with touch or a controller, pick a skin, and use save states to pick up where you left off.</p>
+          </div>
+        </div>
+        <p>Cara builds on Citra and Citra MMJ and adapts Azahar’s FastInterp. The core and app are open source under GPL-2.0-or-later.</p>
+        <ul class="project-links">
+          <li><a href="https://github.com/dmikey/cara/blob/main/docs/technology.md">How Cara works</a></li>
+          <li><a href="https://github.com/dmikey/cara/blob/main/docs/performance.md">Performance results</a></li>
+          <li><a href="https://github.com/dmikey/cara/blob/main/docs/build.md">Build instructions</a></li>
+          <li><a href="https://github.com/dmikey/cara/issues">Report an issue</a></li>
+          <li><a href="https://github.com/dmikey/cara/blob/main/NOTICE">Credits</a></li>
+          <li><a href="https://github.com/dmikey/cara/blob/main/LICENSE">License</a></li>
+        </ul>
+        <p class="hardware-note">Android compatibility varies by device. <a href="https://github.com/dmikey/cara/blob/main/docs/rg-slide-rendering.md">Android hardware notes</a></p>
+        <p class="credit">Made with Codex and heavily engineered by AI.<br>Human Guided Discovery.</p>
+      </section>
+
+      <section class="preservation" aria-labelledby="preservation-heading">
+        <h2 id="preservation-heading">Software preservation</h2>
+        <p>Cara exists to preserve the legacy of Nintendo games and help players revisit the experience as faithfully as possible. Cara includes no Nintendo code or game assets. We do not support piracy.</p>
+      </section>
     </main>
 
     <footer>

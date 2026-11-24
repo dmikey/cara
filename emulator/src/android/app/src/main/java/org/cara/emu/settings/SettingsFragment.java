@@ -153,28 +153,43 @@ public final class SettingsFragment extends Fragment {
                                        Settings.SECTION_INI_RENDERER, R.string.internal_resolution,
                                        R.string.setting_resolution_desc, R.array.internalResolutionEntries,
                                        R.array.internalResolutionValues, 1, resolution));
+        sl.add(new SingleChoiceSetting(SettingsFile.KEY_LOSSLESS_OUTPUT_SCALE, Settings.SECTION_INI_RENDERER,
+                R.string.setting_output_scale, R.string.setting_output_scale_desc,
+                R.array.outputScaleEntries, R.array.outputScaleValues, 0,
+                rendererSection.getSetting(SettingsFile.KEY_LOSSLESS_OUTPUT_SCALE)));
         sl.add(new CheckBoxSetting(SettingsFile.KEY_SHOW_FPS, Settings.SECTION_INI_RENDERER,
                                    R.string.show_fps, 0, true, showFPS));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER,
                 Settings.SECTION_INI_DEBUG, R.string.setting_force_texture_filter, 0,
                 R.array.textureFilterEntries, R.array.textureFilterValues, 0,
                 debugSection.getSetting(SettingsFile.KEY_FORCE_TEXTURE_FILTER)));
+        if (mGameID.isEmpty()) {
+            sl.add(new HeaderSetting(null, null, R.string.setting_header_controls, 0));
+            sl.add(new SubmenuSetting(null, null, R.string.cara_controller_mapping, 0, MenuTag.INPUT));
+        }
+
+        sl.add(new HeaderSetting(null, null, R.string.cara_header_appearance, 0));
+        if (mGameID.isEmpty()) {
+            sl.add(new SubmenuSetting(null, null, R.string.cara_app_icon, 0, MenuTag.APP_ICON));
+        }
+        Setting theme = mSettings.getSection(Settings.SECTION_INI_CORE)
+                .getSetting(SettingsFile.KEY_THEME_PACKAGE);
+        String[] stringValues = getThemeValues();
+        String[] stringEntries = getSettingEntries(stringValues);
+        sl.add(new StringSingleChoiceSetting(SettingsFile.KEY_THEME_PACKAGE, Settings.SECTION_INI_CORE,
+                R.string.setting_theme_package, 0, stringEntries, stringValues, "default", theme));
+
         // core
         sl.add(new HeaderSetting(null, null, R.string.setting_header_core, 0));
         SettingSection coreSection = mSettings.getSection(Settings.SECTION_INI_CORE);
-        Setting isNew3DS = coreSection.getSetting(SettingsFile.KEY_IS_NEW_3DS);
         Setting systemRegion = coreSection.getSetting(SettingsFile.KEY_SYSTEM_REGION);
         Setting language = coreSection.getSetting(SettingsFile.KEY_SYSTEM_LANGUAGE);
-        Setting font = coreSection.getSetting(SettingsFile.KEY_SHARED_FONT_TYPE);
-        Setting theme = coreSection.getSetting(SettingsFile.KEY_THEME_PACKAGE);
 
         if (mGameID.isEmpty()) {
             Setting useGameConfig = coreSection.getSetting(SettingsFile.KEY_USE_GAME_CONFIG);
             sl.add(new CheckBoxSetting(SettingsFile.KEY_USE_GAME_CONFIG, Settings.SECTION_INI_CORE,
                     R.string.setting_use_game_config, R.string.setting_use_game_config_desc, false, useGameConfig));
         }
-        sl.add(new CheckBoxSetting(SettingsFile.KEY_IS_NEW_3DS, Settings.SECTION_INI_CORE,
-                R.string.setting_is_new_3ds, R.string.setting_is_new_3ds_desc, false, isNew3DS));
         sl.add(new SingleChoiceSetting(SettingsFile.KEY_SYSTEM_REGION, Settings.SECTION_INI_CORE,
                 R.string.setting_region_value, 0,
                 R.array.systemRegionEntries, R.array.systemRegionValues, -1,
@@ -183,17 +198,6 @@ public final class SettingsFragment extends Fragment {
                 R.string.setting_system_language, 0,
                 R.array.languageNames, R.array.languageValues, 1,
                 language));
-        sl.add(new SingleChoiceSetting(SettingsFile.KEY_SHARED_FONT_TYPE, Settings.SECTION_INI_CORE,
-                R.string.setting_shared_font, 0,
-                R.array.sharedFontEntries, R.array.sharedFontValues, -1,
-                font));
-
-        // theme
-        String[] stringValues = getThemeValues();
-        String[] stringEntries = getSettingEntries(stringValues);
-        sl.add(new StringSingleChoiceSetting(
-                SettingsFile.KEY_THEME_PACKAGE, Settings.SECTION_INI_CORE,
-                R.string.setting_theme_package, 0, stringEntries, stringValues, "default", theme));
 
         // audio
         sl.add(new HeaderSetting(null, null, R.string.setting_header_audio, 0));
@@ -237,17 +241,10 @@ public final class SettingsFragment extends Fragment {
         ArrayList<SettingsItem> tuning = new ArrayList<>();
         SettingSection playSection = mSettings.getSection(Settings.SECTION_INI_PLAY);
         SettingSection rendererSection = mSettings.getSection(Settings.SECTION_INI_RENDERER);
-        SettingSection debugSection = mSettings.getSection(Settings.SECTION_INI_DEBUG);
-        Setting hwShader = rendererSection.getSetting(SettingsFile.KEY_USE_HW_SHADER);
-        Setting accurateMul = rendererSection.getSetting(SettingsFile.KEY_SHADERS_ACCURATE_MUL);
-        Setting useFenceSync = rendererSection.getSetting(SettingsFile.KEY_USE_FENCE_SYNC);
         Setting shader = rendererSection.getSetting(SettingsFile.KEY_POST_PROCESSING_SHADER);
         Setting frameLimit = rendererSection.getSetting(SettingsFile.KEY_FRAME_LIMIT);
         Setting customTex = rendererSection.getSetting(SettingsFile.KEY_CUSTOM_TEXTURES);
         Setting factor3d = rendererSection.getSetting(SettingsFile.KEY_FACTOR_3D);
-        Setting shaderType = debugSection.getSetting(SettingsFile.KEY_SHADER_TYPE);
-        Setting presentThread = debugSection.getSetting(SettingsFile.KEY_USE_PRESENT_THREAD);
-        Setting cpuLimit = debugSection.getSetting(SettingsFile.KEY_CPU_USAGE_LIMIT);
 
         tuning.add(new HeaderSetting(null, null, R.string.setting_header_emulation, 0));
         tuning.add(new CheckBoxSetting(SettingsFile.KEY_ADAPTIVE_FRAME_SKIP, Settings.SECTION_INI_PLAY,
@@ -275,17 +272,6 @@ public final class SettingsFragment extends Fragment {
                 R.string.setting_factor_3d, 0, 10, "",
                 0, factor3d));
 
-        tuning.add(new CheckBoxSetting(SettingsFile.KEY_USE_PRESENT_THREAD, Settings.SECTION_INI_DEBUG,
-                R.string.setting_use_present_thread, R.string.setting_use_present_thread_desc, true, presentThread));
-        tuning.add(new CheckBoxSetting(SettingsFile.KEY_USE_HW_SHADER, Settings.SECTION_INI_RENDERER,
-                                   R.string.setting_hw_shader, R.string.setting_hw_shader_desc, true, hwShader));
-        tuning.add(new SingleChoiceSetting(SettingsFile.KEY_SHADERS_ACCURATE_MUL,
-                Settings.SECTION_INI_RENDERER, R.string.setting_shaders_accurate_mul,
-                R.string.setting_shaders_accurate_mul_desc, R.array.accurateMulEntries,
-                R.array.accurateMulValues, 0, accurateMul));
-        tuning.add(new SingleChoiceSetting(SettingsFile.KEY_SHADER_TYPE, Settings.SECTION_INI_DEBUG,
-                R.string.setting_shader_type, 0, R.array.shaderEntries,
-                R.array.shaderValues, 1, shaderType));
         // post process shaders
         String[] stringValues = getShaderValues();
         String[] stringEntries = getSettingEntries(stringValues);
@@ -296,10 +282,6 @@ public final class SettingsFragment extends Fragment {
         // custom textures
         tuning.add(new CheckBoxSetting(SettingsFile.KEY_CUSTOM_TEXTURES, Settings.SECTION_INI_RENDERER,
                                    R.string.setting_custom_textures, R.string.setting_custom_textures_description, false, customTex));
-        tuning.add(new CheckBoxSetting(SettingsFile.KEY_CPU_USAGE_LIMIT, Settings.SECTION_INI_DEBUG,
-                R.string.cpu_usage_limit, R.string.cpu_usage_limit_description, false, cpuLimit));
-        tuning.add(new CheckBoxSetting(SettingsFile.KEY_USE_FENCE_SYNC, Settings.SECTION_INI_RENDERER,
-                R.string.setting_use_fence_sync, R.string.setting_use_fence_sync_description, false, useFenceSync));
         return tuning;
     }
 

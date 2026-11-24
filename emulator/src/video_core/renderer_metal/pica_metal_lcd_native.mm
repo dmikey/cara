@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_metal/pica_metal_lcd_native.h"
 #include "cara/adaptive_play.h"
-#include "ios/display_scaling.h"
+#include "cara/display_scaling.h"
 
 #include "core/hw/gpu.h"
 #include "core/hw/hw.h"

@@ -31,6 +31,17 @@
         <item>4</item>
     </integer-array>
 
+    <string-array name="outputScaleEntries">
+        <item>@string/setting_output_fit</item>
+        <item>@string/setting_output_lossless_2x</item>
+        <item>@string/setting_output_lossless_4x</item>
+    </string-array>
+    <integer-array name="outputScaleValues" translatable="false">
+        <item>0</item>
+        <item>2</item>
+        <item>4</item>
+    </integer-array>
+
     <string-array name="textureFilterEntries">
         <item>@string/setting_filter_default</item>
         <item>@string/setting_filter_nearest</item>

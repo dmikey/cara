@@ -124,7 +124,8 @@ public:
     ~ShaderProgramManager();
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
-                                     unsigned ios_indexed_inputs = false, u16 ios_input_mask = 0xffff);
+                                     unsigned ios_indexed_inputs = false, u16 ios_input_mask = 0xffff,
+                                     bool omit_triangle_quaternion = false);
 
     void UseTrivialVertexShader();
 
@@ -145,7 +146,7 @@ public:
     static bool VertexProvenanceEnabled() { return VertexProvenance::Enabled(); }
     void ObserveBoundVertexProgram(GLuint expected_program, unsigned input_mode);
 
-    void ApplyTo(OpenGLState& state);
+    void ApplyTo(OpenGLState& state, bool allow_software_vertices = false);
     GLuint GetSeparableVertexProgram();
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     // False means the caller must use the regular vertex program for this draw.

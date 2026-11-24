@@ -160,8 +160,6 @@
 
     <string name="setting_use_game_config">Enable Per-Game Settings</string>
     <string name="setting_use_game_config_desc">Game independent settings will be saved in directory: cara-emu/load/configs/.</string>
-    <string name="setting_is_new_3ds">New 3DS Mode</string>
-    <string name="setting_is_new_3ds_desc">The New 3DS has different memory and processor, and some games can only start on the New 3DS.</string>
     <string name="setting_use_virtual_sd">Use Virtual SD</string>
     <string name="setting_enable_cpu_jit">Dynarmic JIT</string>
     <string name="setting_enable_cpu_jit_desc">Turn off to use FastInterp. Reopen the game after changing this setting.</string>
@@ -173,6 +171,11 @@
     <string name="show_fps">Show FPS</string>
     <string name="layout_option">Screen Layout</string>
     <string name="internal_resolution">Native resolution</string>
+    <string name="setting_output_scale">Display scaling</string>
+    <string name="setting_output_scale_desc">Scales the finished screens and keeps their layout.</string>
+    <string name="setting_output_fit">Native (Fit)</string>
+    <string name="setting_output_lossless_2x">Lossless 2×</string>
+    <string name="setting_output_lossless_4x">Lossless 4×</string>
     <string name="setting_hw_shader">Enable Hardware Shader</string>
     <string name="setting_hw_shader_desc">Turn it on to improve performance, but some 2D games have display issues.</string>
     <string name="setting_shaders_accurate_mul">Accurate Multiplication</string>
@@ -185,7 +188,7 @@
     <string name="frame_limit_enable">Enable Speed Limit</string>
     <string name="frame_limit_enable_description">When enabled, emulation speed will be limited to a specified percentage of normal speed.</string>
     <string name="setting_accuracy_mode">Accuracy mode</string>
-    <string name="setting_accuracy_mode_desc">Locks game speed and guest CPU clock at 100%. Turn off for Performance mode. GPU timing follows your choice when you reopen the game.</string>
+    <string name="setting_accuracy_mode_desc">Performance Mode is the default and builds GLES shaders in the background. Accuracy Mode fixes speed and the guest clock at 100%. Reopen the game to apply its GPU timing policy.</string>
     <string name="setting_limit_speed">Limit game speed</string>
     <string name="frame_limit_slider">Maximum speed</string>
     <string name="frame_limit_slider_description">With the default of 100% emulation will be limited to normal speed. Values higher or lower will increase or decrease the speed limit.</string>

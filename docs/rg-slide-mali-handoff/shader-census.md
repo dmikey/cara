@@ -130,3 +130,230 @@ probe was stopped after the shader failures, with the original app and
 profile restored. See `separable-driver-errors.txt` for the original probe
 and [the later GLES 3.2 stage measurements](gles-validation.md#first-mali-stage-measurements)
 for the corrected implementation.
+
+## Bravely Second on the RG Slide
+
+The November 24 comparison used JIT, 1×, and CLK 100% on the stock Mali-G57
+driver. Through Radiant Blast and Black Bane, the installed Cara and MMJ
+emulation threads made 52 and 53 GLES program links respectively. Cara
+spent 4.30 s in links on the first profiled app-cache-cold boot, compared
+with 22.71 ms on MMJ. The app archives began empty and the driver-private
+cache was preserved. Several of the most expensive Cara links reused a
+single 45,922-byte packed-input vertex shader. The GL shader object was
+already shared, but Mali repeated substantial work for each link.
+
+Commit `3c32d1a` adds an Android diagnostic that emits one guest vertex
+program call site while preserving the reference and actual evaluations.
+Replaying the twelve associated programs in a native EGL pbuffer on the
+Slide cut total link time from 6.19 to 4.60 s. With the same preview APK,
+independent empty app archives, and the same prologue save, total link
+time fell from 6.89 to 4.96 s and the slowest link from 651 to 511 ms.
+
+| Presentation intervals, p99 / worst | Cold control | Cold probe | Warm probe |
+| --- | ---: | ---: | ---: |
+| Boot and prologue | 33.35 / 3,270.25 ms | 33.27 / 2,313.26 ms | 25.12 / 166.68 ms |
+| Radiant Blast | 41.66 / 458.21 ms | 41.65 / 383.32 ms | 25.15 / 41.63 ms |
+| Black Bane | 49.95 / 474.94 ms | 25.08 / 366.44 ms | 25.08 / 25.12 ms |
+
+The warm probe restored 45 linked binaries and showed 30 FPS / 100% SPD
+at Black Bane. The cold stalls remain and the probe stays off by default.
+A separable-program control reduced repeated links but still rebuilt a
+roughly one-second vertex stage on restart. Exact on-device replay also
+cut link time from 1.94 to 1.28 s by omitting quaternion reference work for
+five fragment sources that never read it. That needs an in-game check
+before adoption. [Android preview CI](https://github.com/dmikey/cara/actions/runs/45410338317)
+
+The Slide's stock Vulkan driver reports 1.3.225, pipeline creation cache
+control, creation feedback, dynamic rendering, and synchronization2.
+Graphics pipeline libraries were absent. MaliSX2 supports the G57 via
+Arm's kbase interface as an optional Vulkan comparison in a compatible
+frontend. Mesa's upstream Panfrost GLES and PanVK have separate support
+matrices. Cara's measured path here uses the stock GLES driver.
+[MaliSX2 source](https://github.com/bmdhacks/malisx2) ·
+[Mesa Panfrost support](https://docs.mesa3d.org/drivers/panfrost.html)
+
+### Native attributes and the actual MMJ shader
+
+A second GLES trace of the installed MMJ captured native-attribute GLSL,
+one guest vertex evaluation, a quaternion passed through directly, and
+more than 197,000 ranged indexed draws. The published renderer includes
+a fixed geometry stage, which the installed trace did not create. Moving
+the captured MMJ programs into an independent EGL context cost 1.21 s
+for ten links. Its earlier 23 ms in-app total included a substantially
+different driver-cache context.
+
+The existing Cara GLES 3.2 preview reduced the worst cold Bravely present
+from 3,270 to 833 ms. It reached 30 FPS and 100% speed at Black Bane on
+repeat, with 25.04 ms p99 and 25.09 ms worst during that spell. This
+renderer also changes surface and submission paths. Dark Moon already
+shows warm costs relative to Atlas.
+
+Twelve exact Cara program pairs took 6.28 s to link in a device replay
+with packed input and repeated vertex evaluation. A compact geometry
+stage preserved the reference quaternion rule and cut this to 3.66 s.
+Native attribute inputs with that same stage cut it to 1.59 s. A test
+triangle with an opposing quaternion matched all pixels from a
+pre-corrected reference. In-game throughput of the combined route is
+still open.
+
+Commit `b7cdf84` skips unused reference evaluations on an optional Mali
+Atlas route. The stored archive showed 28 pruned entries and every paired
+fragment left the quaternion unused. All 45 binaries restored on a
+repeat boot. At warm Black Bane the game showed 30 FPS and 100% speed,
+with 25.10 ms p99 and 25.12 ms worst presentation. Running the patch
+first with a fresh preview reproduced a 3.25 s cold stall. The earlier
+1.25 s result was sensitive to run order. The diagnostic remains off
+by default. [Android CI](https://github.com/dmikey/cara/actions/runs/45414714508)
+### Regular Atlas programs and background linking
+
+At refresh 706 after Continue in Bravely Second, the GLES driver spent
+3,044 ms linking six programs during a 3,234 ms emulated refresh. Four
+links reused the same translated vertex stage and needed the triangle’s
+reference quaternion. The first draw after each link took 64–121 µs to
+submit. In a replay of those six programs on the Slide, native attributes
+plus the compact quaternion geometry stage reduced total link time from
+2.89–2.92 s to 0.70–0.71 s. That replay isolated linker cost. The geometry
+stage and vertex feed require separate in-game validation.
+
+The shared EGL worker experiment builds the same vertex and fragment
+pair as the synchronous path. A pending program can defer the accelerated
+draw only where the regular PICA software vertex path is available.
+That path runs the guest vertex program and submits the result through the
+existing fragment stage. Surface ownership is updated after an actual
+draw, with the normal depth, stencil, and blending behavior. Shadow
+draws use their existing synchronous route. If a worker context cannot be
+created or the worker declines a build, the regular path can link inline.
+Completed programs enter the same cache as synchronous builds.
+
+The benchmark APK selected the worker with an internal debug key.
+The Android Atlas renderer now selects it automatically in Performance
+Mode, including when the mode changes in-game. Accuracy Mode links new
+regular programs synchronously. The worker reuses compiled stages in
+Performance Mode, as in the benchmark. Android provides the EGL context.
+Program eligibility depends on the shader pipeline and whether the
+software vertex route can draw safely. The separate quaternion-elision
+probe uses the same GLES fragment dependency check across Atlas hosts.
+
+The same Atlas preview APK at `2bcc5b8` booted Bravely Second from the
+title screen on the stock Slide at JIT, 1×, and CLK 100%. The first
+cold run used the worker and its existing stage cache. The synchronous
+control ran after a fresh preview install. Both started with empty Cara
+archives, shared the same player-data snapshot, and reached Radiant
+Blast and Black Bane. The independent metrics keep host presentation
+intervals separate from emulated system refresh times.
+
+| Cold metric | Synchronous | Worker |
+| --- | ---: | ---: |
+| Whole-run present p99 / worst | 33.29 / 3,361.62 ms | 33.30 / 282.92 ms |
+| Radiant Blast present p99 / worst | 16.82 / 465.97 ms | 33.28 / 33.31 ms |
+| Black Bane present p99 / worst | 33.30 / 482.52 ms | 33.29 / 49.95 ms |
+| Worst emulated refresh | 3,350.00 ms | 285.68 ms |
+| Longest emulation-thread link | 686.87 ms | 44.60 ms |
+
+The worst synchronous refresh was 674, after Continue, with 3,281.19 ms
+of emulation-thread shader work in the enclosing window. In the same
+transition, the worker run’s largest refresh was 226.90 ms. The
+worker run’s worst refresh overall was 305, during save selection.
+That window still attributed 244.34 ms to emulation-thread shader work.
+Across the full run, the worker linked 29 programs in 7.66 s while the
+emulation thread linked 51 in 0.76 s. The time moved off the rendering
+critical path. The CPU vertex fallback still needs its own first-use
+links, and the total compile workload rose. [Preview build](https://github.com/dmikey/cara/actions/runs/45420125664)
+
+A second worker run, after clearing the preview app’s data, measured
+33.34 ms present p99 and 308.24 ms worst. The same save-selection
+refresh remained the worst. One 45,922-byte packed vertex stage
+accounted for 12 links and 6.34 s in the synchronous run. The repeated
+worker run put those links on the worker. Much of the remaining cold
+stall is the first use of the fallback’s vertex and fragment pairs.
+There were no failed GL links in either run.
+
+| Warm present p99 / worst | Synchronous | Worker |
+| --- | ---: | ---: |
+| Whole run | 33.23 / 166.73 ms | 25.16 / 166.57 ms |
+| Radiant Blast | 25.12 / 49.95 ms | 25.20 / 49.95 ms |
+| Black Bane | 25.07 / 25.09 ms | 25.06 / 25.07 ms |
+
+Warm Black Bane ran at 30 FPS and 100% emulation speed in both
+runs. The synchronous and worker archives restored 45 and 67 binary
+entries, respectively, with no source links during restore. The largest
+warm refresh fell in save selection and recorded no compile time in
+either run. The captured spell frames show the geometry and effects in
+both modes. The animations were captured at different instants, so
+pixel equivalence remains unverified. The preview package was removed
+after the test and the Slide kept production Cara `07a145eb`.
+
+The EGL share group publishes completed programs to the rendering
+context. Framebuffers and draw state stay with the render context. The
+ordered GLES fixture now links in a sibling context and binds the
+program through the production submission queue. The reference color
+pixels and depth-rejected draw matched on the Slide. This fixture
+covers program publication. The game checks separately exercise CPU
+vertex fallback. [OpenGL ES 3.2, chapter 5](https://registry.khronos.org/OpenGL/specs/es/3.2/es_spec_3.2.pdf) · [Fixture build](https://github.com/dmikey/cara/actions/runs/45423701785)
+
+A narrower experiment used the worker only for packed-input vertex
+programs. It linked 64 programs across both threads, compared with 80
+under the broader worker policy. The packed-only cold run had 33.32 ms
+present p99 and a 349.47 ms worst gap. Its synchronous shader work in
+the save-selection window rose to 314.44 ms, up from 244.34 ms in the
+original worker run and 266.26 ms in the repeat. The branch restored
+the broader policy because it produced the shorter worst gaps.
+[Packed-only preview](https://github.com/dmikey/cara/actions/runs/45423329437)
+
+The archive contains 15 distinct fragment sources from the
+save-selection burst, including three lit sources and three unlit
+sources that sample all three ordinary texture units. The differences
+include combiner math, lighting inputs, and texture sampling. Source
+deduplication alone cannot collapse those exact programs.
+
+The broader worker was retested after removing the Mali-only
+single-dispatch probe. This build matched the branch’s final renderer
+source. Cold present p99 was 33.34 ms and the worst gap was 308.19 ms.
+The worst emulated refresh was 305.08 ms in save selection, with
+257.23 ms of foreground shader work in its window. Warm present p99
+was 25.13 ms, with a 166.55 ms startup maximum. Warm Black Bane
+returned 30 FPS at 100% speed and measured 25.10 ms p99 and 25.12 ms
+worst. All 67 saved binaries restored. [Retest build](https://github.com/dmikey/cara/actions/runs/45422534508)
+
+
+To reproduce the timing comparison, start from the same Bravely Second
+prologue save on the RG Slide and boot via the title screen. Use JIT and
+Atlas GLES at 1×, fix the guest clock at 100%, and turn adaptive frame
+skip off. Use an empty app pipeline archive for each cold run and retain
+the same archive for its warm run. Record renderer refresh timing and the
+GL shader census with thread IDs. Compare present intervals from the
+same game layer. Follow Continue, the first dialogue, Radiant Blast and
+Black Bane. The app cache procedure does not control driver-private
+cache state.
+
+The original post-Continue trace attributed 3,043.79 ms to six
+`glLinkProgram` and status intervals. Four of those pairs shared the
+same packed vertex source and consumed its quaternion in the fragment
+stage. The shader generators completed in tens of microseconds and
+first draws took 64–121 µs to submit. These observations distinguish
+driver linking from shader generation and draw submission.
+
+The build that made the worker automatic was retested from normal
+boots on the Slide. The Performance Mode config had no saved mode
+override. Accuracy was set explicitly and started with an empty app
+archive. Both runs used JIT, Atlas GLES, 1× and CLK 100%.
+
+| App configuration | Present p99 | Worst present | Link counts (emulation / worker) |
+| --- | ---: | ---: | ---: |
+| Default Performance, cold | 33.31 ms | 291.73 ms | 51 / 29 |
+| Default Performance, warm | 25.13 ms | 174.89 ms | 7 / 6 |
+| Explicit Accuracy, cold | 33.28 ms | 3,261.71 ms | 52 / 0 |
+
+In the cold Performance run, the emulation thread spent 745.18 ms
+linking. The worker spent 7,553.95 ms linking and hosted the largest
+individual link at 768.86 ms. The largest game-thread stall was the
+294.06 ms save-selection refresh. In the cold Accuracy run, the
+post-Continue refresh was 3,262.25 ms and its 120-refresh window
+recorded 3,201.53 ms of foreground shader work. These are complete
+mode comparisons. The earlier same-policy experiment isolates the
+effect of moving compilation to the worker.
+
+The warm Performance run restored all 67 archived binaries. Black
+Bane ran at 30 FPS and 100% speed, with 25.08 ms present p99 and
+25.09 ms worst during the spell. Both Android APK variants built, and
+the ordered production Android release compiled. [APK builds](https://github.com/dmikey/cara/actions/runs/45432617982) · [Production build](https://github.com/dmikey/cara/actions/runs/45432623342)

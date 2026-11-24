@@ -24,7 +24,6 @@ import org.cara.emu.utils.CaraDirectory;
 public final class SettingsFile {
     // Core
     public static final String KEY_USE_CPU_JIT = "use_cpu_jit";
-    public static final String KEY_IS_NEW_3DS = "is_new_3ds";
     public static final String KEY_USE_GAME_CONFIG = "use_game_config";
     public static final String KEY_SYSTEM_REGION = "region_value";
     public static final String KEY_SYSTEM_LANGUAGE = "language";
@@ -39,6 +38,7 @@ public final class SettingsFile {
     public static final String KEY_SHADERS_ACCURATE_MUL = "accurate_mul_type";
     public static final String KEY_FORCE_TEXTURE_FILTER = "force_texture_filter";
     public static final String KEY_RESOLUTION_FACTOR = "resolution_factor";
+    public static final String KEY_LOSSLESS_OUTPUT_SCALE = "lossless_output_scale";
     public static final String KEY_ACCURACY_MODE = "accuracy_mode";
     public static final String KEY_ADAPTIVE_FRAME_SKIP = "adaptive_frame_skip";
     public static final String KEY_FIXED_GUEST_CLOCK = "fixed_guest_clock";

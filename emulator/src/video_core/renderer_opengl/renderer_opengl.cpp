@@ -19,6 +19,7 @@
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
+#include "cara/display_scaling.h"
 #include "common/frame_timing.h"
 #include "common/bit_field.h"
 #include "common/logging/log.h"
@@ -930,16 +931,110 @@ void RendererOpenGL::ConfigureFramebufferTexture(TextureInfo& texture,
 /**
  * Draws the emulated screens to the emulator window.
  */
-void RendererOpenGL::DrawScreens(const Layout::FramebufferLayout& layout, bool integer_output) {
-    integer_output = integer_output && layout.top_screen.GetWidth() >= Core::kScreenTopWidth;
-    if (integer_output && !nearest_output_sampler.handle) {
+GLuint RendererOpenGL::ScreenSampler(bool nearest) {
+    if (nearest && !nearest_output_sampler.handle) {
         nearest_output_sampler.Create();
         glSamplerParameteri(nearest_output_sampler.handle, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glSamplerParameteri(nearest_output_sampler.handle, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glSamplerParameteri(nearest_output_sampler.handle, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(nearest_output_sampler.handle, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
-    OpenGLState::BindSampler(0, integer_output ? nearest_output_sampler.handle : filter_sampler.handle);
+    return nearest ? nearest_output_sampler.handle : filter_sampler.handle;
+}
+
+void RendererOpenGL::DrawScreens(const Layout::FramebufferLayout& layout, bool integer_output) {
+    integer_output = integer_output && layout.top_screen.GetWidth() >= Core::kScreenTopWidth;
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    if (bg_texture.handle) {
+        OpenGLState::BindSampler(0, ScreenSampler(integer_output));
+        // background image
+        GLuint handle = OpenGLState::BindShaderProgram(bg_shader.handle);
+        OpenGLState::BindTexture2D(0, bg_texture.handle);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        OpenGLState::BindShaderProgram(handle);
+    }
+
+    const auto requested_scale = Cara::LCDUpscaleFactor(Settings::values.lossless_output_scale);
+    if (!GLES || requested_scale == 1 || !DrawLosslessLCDs(layout, requested_scale)) {
+        DrawLCDTextures(layout, integer_output);
+    }
+    OSD::DrawMessage(render_window, layout);
+}
+
+bool RendererOpenGL::DrawLosslessLCDs(const Layout::FramebufferLayout& layout, u32 requested_scale) {
+    const u32 source_scale = VideoCore::GetResolutionScaleFactor();
+    const auto integral = [](const auto& screen, u32 native_width, u32 scale) {
+        return Cara::FinalScaleIsIntegral(native_width * scale, Core::kScreenTopHeight * scale,
+                                          screen.GetWidth(), screen.GetHeight());
+    };
+    const bool top_integral = integral(layout.top_screen, Core::kScreenTopWidth, source_scale);
+    const bool bottom_integral = integral(layout.bottom_screen, Core::kScreenBottomWidth, source_scale);
+    if ((!layout.top_screen_enabled || top_integral) && (!layout.bottom_screen_enabled || bottom_integral)) {
+        DrawLCDTextures(layout, true);
+        return true;
+    }
+
+    // Expand the finished LCDs before fitting them into their unchanged display
+    // and touch rectangles, as in the iOS presentation path.
+    const u32 scale = std::max(source_scale, requested_scale);
+    if (scale > 4) {
+        return false;
+    }
+    const u32 width = Core::kScreenTopWidth * scale;
+    const u32 height = (Core::kScreenTopHeight + Core::kScreenBottomHeight) * scale;
+    const auto source = Layout::DefaultFrameLayout(width, height, false);
+
+    if (lossless_storage_scale == scale && !lossless_storage_complete) {
+        return false;
+    }
+
+    const auto output_state = OpenGLState::GetCurState();
+    lossless_framebuffer.Create();
+    lossless_color.Create();
+    OpenGLState::BindDrawFramebuffer(lossless_framebuffer.handle);
+    if (lossless_storage_scale != scale) {
+        OpenGLState::BindRenderbuffer(lossless_color.handle);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
+                                  lossless_color.handle);
+        lossless_storage_scale = scale;
+        lossless_storage_complete =
+            glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        if (!lossless_storage_complete) {
+            output_state.Apply();
+            return false;
+        }
+    }
+
+    auto stage_state = OpenGLState::GetCurState();
+    stage_state.viewport = {0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height)};
+    stage_state.scissor.enabled = false;
+    stage_state.Apply();
+    DrawLCDTextures(source, true);
+    output_state.Apply();
+
+    const auto previous_read = OpenGLState::BindReadFramebuffer(lossless_framebuffer.handle);
+    const auto blit = [&](const auto& from, const auto& to, u32 native_width) {
+        if (to.GetWidth() == 0 || to.GetHeight() == 0) {
+            return;
+        }
+        const GLenum filter = integral(to, native_width, scale) ? GL_NEAREST : GL_LINEAR;
+        glBlitFramebuffer(from.left, height - from.bottom, from.right, height - from.top,
+                          to.left, layout.height - to.bottom, to.right, layout.height - to.top,
+                          GL_COLOR_BUFFER_BIT, filter);
+    };
+    if (layout.top_screen_enabled) {
+        blit(source.top_screen, layout.top_screen, Core::kScreenTopWidth);
+    }
+    if (layout.bottom_screen_enabled) {
+        blit(source.bottom_screen, layout.bottom_screen, Core::kScreenBottomWidth);
+    }
+    OpenGLState::BindReadFramebuffer(previous_read);
+    return true;
+}
+
+void RendererOpenGL::DrawLCDTextures(const Layout::FramebufferLayout& layout, bool nearest) {
+    OpenGLState::BindSampler(0, ScreenSampler(nearest));
 
     // Set projection matrix
     std::array<GLfloat, 3 * 2> ortho_matrix = MakeOrthographicMatrix(layout.width, layout.height);
@@ -976,15 +1071,6 @@ void RendererOpenGL::DrawScreens(const Layout::FramebufferLayout& layout, bool i
     // prefer `glBufferData` than `glBufferSubData` on mobile device
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STREAM_DRAW);
 
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    if (bg_texture.handle) {
-        // background image
-        GLuint handle = OpenGLState::BindShaderProgram(bg_shader.handle);
-        OpenGLState::BindTexture2D(0, bg_texture.handle);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        OpenGLState::BindShaderProgram(handle);
-    }
-
     // Draws texture to the emulator window,
     // rotating the texture to correct for the 3DS's LCD rotation.
 
@@ -1009,9 +1095,6 @@ void RendererOpenGL::DrawScreens(const Layout::FramebufferLayout& layout, bool i
         glUniform4f(uniform_resolution, res_width, res_height, src_width, src_height);
         glDrawArrays(GL_TRIANGLE_STRIP, 4, 4);
     }
-
-    // draw on screen display
-    OSD::DrawMessage(render_window, layout);
 }
 
 static void APIENTRY ObserveGLESDebugMessage(GLenum source, GLenum type, GLuint id,

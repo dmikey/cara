@@ -518,6 +518,7 @@ int main(int argc, char** argv) {
             const unsigned interval = interval_env ? ParseUnsigned(interval_env) : 0;
             const auto inputs = ReadInputs(output, limit);
             if (!Common::ApplyAppleMetalDefaults() ||
+                setenv("CARA_METAL_REUSE_EXACT_LUT_IMAGES", "1", 0) != 0 ||
                 setenv("CARA_METAL_QUEUE_PENDING_DEPTH_EXPORT", "1", 0) != 0 ||
                 setenv("CARA_METAL_REUSE_UNIFORM_UPLOADS", "1", 0) != 0)
                 throw std::runtime_error("Could not initialize the Apple Metal policy");

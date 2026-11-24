@@ -317,6 +317,10 @@ private:
         return "[I";
     }
 
+    static std::string JniSignature(jlongArray) {
+        return "[J";
+    }
+
     template <typename T>
     static std::string JniSignature(T x) {
         // This template should never be instantiated

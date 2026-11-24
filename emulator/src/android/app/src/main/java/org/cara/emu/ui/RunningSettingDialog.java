@@ -117,17 +117,9 @@ public class RunningSettingDialog extends DialogFragment {
 
     public class SettingsItem {
         // setting type
-        public static final int SETTING_CORE_TICKS_HACK = 0;
-        public static final int SETTING_SKIP_SLOW_DRAW = 1;
-        public static final int SETTING_SKIP_CPU_WRITE = 2;
-        public static final int SETTING_SKIP_TEXTURE_COPY = 3;
         public static final int SETTING_FORCE_TEXTURE_FILTER = 4;
-        public static final int SETTING_HW_GS_MODE = 5;
-        public static final int SETTING_SHADOW_RENDERING = 6;
-        public static final int SETTING_ASYNC_SHADER_COMPILE = 7;
         public static final int SETTING_SCALE_FACTOR = 8;
         public static final int SETTING_SCREEN_LAYOUT = 9;
-        public static final int SETTING_ACCURATE_MUL = 10;
         public static final int SETTING_CUSTOM_LAYOUT = 11;
         public static final int SETTING_FRAME_LIMIT = 12;
         public static final int SETTING_ACCURACY_MODE = 13;
@@ -136,6 +128,7 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_FIXED_GUEST_CLOCK = 16;
         public static final int SETTING_GUEST_CLOCK_PERCENT = 17;
         public static final int SETTING_SHOW_FPS = 18;
+        public static final int SETTING_LOSSLESS_OUTPUT_SCALE = 19;
 
         // pref
         public static final int SETTING_JOYSTICK_RELATIVE = 100;
@@ -155,6 +148,8 @@ public class RunningSettingDialog extends DialogFragment {
         public static final int SETTING_EXIT_GAME = 208;
         public static final int SETTING_SHOW_ADVANCED = 209;
         public static final int SETTING_SECTION_HEADER = 210;
+        public static final int SETTING_SAVE_STATE = 211;
+        public static final int SETTING_LOAD_STATE = 212;
 
         public static final int SETTING_MULTIPLAYER_ROOM_TEXT = 400;
         public static final int SETTING_MULTIPLAYER_CREATE_ROOM = 401;
@@ -282,6 +277,11 @@ public class RunningSettingDialog extends DialogFragment {
             case SettingsItem.SETTING_SHOW_ADVANCED:
                 mAdapter.showAdvancedSettings();
                 break;
+            case SettingsItem.SETTING_SAVE_STATE:
+            case SettingsItem.SETTING_LOAD_STATE:
+                dismiss();
+                activity.openSaveStates(mItem.getSetting() == SettingsItem.SETTING_SAVE_STATE);
+                break;
             case SettingsItem.SETTING_EDIT_BUTTONS:
                 activity.startConfiguringControls();
                 dismiss();
@@ -367,6 +367,7 @@ public class RunningSettingDialog extends DialogFragment {
         extends SettingViewHolder implements CompoundButton.OnCheckedChangeListener {
         SettingsItem mItem;
         private TextView mTextSettingName;
+        private TextView mDescription;
         private CompoundButton mCheckbox;
 
         public CheckBoxSettingViewHolder(View itemView) {
@@ -376,6 +377,7 @@ public class RunningSettingDialog extends DialogFragment {
         @Override
         protected void findViews(View root) {
             mTextSettingName = root.findViewById(R.id.text_setting_name);
+            mDescription = root.findViewById(R.id.text_setting_description);
             mCheckbox = root.findViewById(R.id.checkbox);
             mCheckbox.setOnCheckedChangeListener(this);
         }
@@ -384,6 +386,11 @@ public class RunningSettingDialog extends DialogFragment {
         public void bind(SettingsItem item) {
             mItem = item;
             mTextSettingName.setText(item.getName());
+            boolean showModeHelp = item.getSetting() == SettingsItem.SETTING_ACCURACY_MODE;
+            mDescription.setVisibility(showModeHelp ? View.VISIBLE : View.GONE);
+            if (showModeHelp) {
+                mDescription.setText(R.string.setting_accuracy_mode_desc);
+            }
             mCheckbox.setOnCheckedChangeListener(null);
             mCheckbox.setChecked(mItem.getValue() > 0);
             mCheckbox.setOnCheckedChangeListener(this);
@@ -431,9 +438,10 @@ public class RunningSettingDialog extends DialogFragment {
             mItem = item;
             mTextSettingName.setText(item.getName());
             boolean showResolutionHelp = item.getSetting() == SettingsItem.SETTING_SCALE_FACTOR;
-            mDescription.setVisibility(showResolutionHelp ? View.VISIBLE : View.GONE);
-            if (showResolutionHelp) {
-                mDescription.setText(R.string.setting_resolution_desc);
+            boolean showScaleHelp = item.getSetting() == SettingsItem.SETTING_LOSSLESS_OUTPUT_SCALE;
+            mDescription.setVisibility(showResolutionHelp || showScaleHelp ? View.VISIBLE : View.GONE);
+            if (showResolutionHelp || showScaleHelp) {
+                mDescription.setText(showScaleHelp ? R.string.setting_output_scale_desc : R.string.setting_resolution_desc);
             }
             mRadioGroup.setOnCheckedChangeListener(null);
             mRadioGroup.check(checkIds[index]);
@@ -465,18 +473,11 @@ public class RunningSettingDialog extends DialogFragment {
                 RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
                 radio3.setVisibility(View.VISIBLE);
                 radio3.setText("4×");
-            } else if (item.getSetting() == SettingsItem.SETTING_ACCURATE_MUL) {
-                RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
-                radio0.setText(R.string.accurate_mul_off);
-
-                RadioButton radio1 = mRadioGroup.findViewById(R.id.radio1);
-                radio1.setText(R.string.accurate_mul_fast);
-
-                RadioButton radio2 = mRadioGroup.findViewById(R.id.radio2);
-                radio2.setText(R.string.accurate_mul_accurate);
-
-                RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
-                radio3.setVisibility(View.GONE);
+            } else if (item.getSetting() == SettingsItem.SETTING_LOSSLESS_OUTPUT_SCALE) {
+                ((RadioButton) mRadioGroup.findViewById(R.id.radio0)).setText(R.string.setting_output_fit);
+                ((RadioButton) mRadioGroup.findViewById(R.id.radio1)).setText(R.string.setting_output_lossless_2x);
+                ((RadioButton) mRadioGroup.findViewById(R.id.radio2)).setText(R.string.setting_output_lossless_4x);
+                mRadioGroup.findViewById(R.id.radio3).setVisibility(View.GONE);
             } else if (item.getSetting() == SettingsItem.SETTING_FORCE_TEXTURE_FILTER) {
                 RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
                 radio0.setText(R.string.setting_filter_default);
@@ -486,18 +487,6 @@ public class RunningSettingDialog extends DialogFragment {
 
                 RadioButton radio2 = mRadioGroup.findViewById(R.id.radio2);
                 radio2.setText(R.string.setting_filter_bilinear);
-
-                RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
-                radio3.setVisibility(View.GONE);
-            } else if (item.getSetting() == SettingsItem.SETTING_HW_GS_MODE) {
-                RadioButton radio0 = mRadioGroup.findViewById(R.id.radio0);
-                radio0.setText(R.string.auto);
-
-                RadioButton radio1 = mRadioGroup.findViewById(R.id.radio1);
-                radio1.setText(R.string.enable);
-
-                RadioButton radio2 = mRadioGroup.findViewById(R.id.radio2);
-                radio2.setText(R.string.off);
 
                 RadioButton radio3 = mRadioGroup.findViewById(R.id.radio3);
                 radio3.setVisibility(View.GONE);
@@ -603,15 +592,40 @@ public class RunningSettingDialog extends DialogFragment {
 
         public void loadMainMenu() {
             mSettings = new ArrayList<>();
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU, R.string.preferences_settings, SettingsItem.TYPE_TEXT, MENU_SETTINGS));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_EDIT_BUTTONS, R.string.emulation_edit_layout, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_RESET_CAMERA, R.string.menu_emulation_camera, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_ROTATE_SCREEN, R.string.emulation_screen_rotation, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_CHEAT_CODE, R.string.menu_cheat_code, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_MEMORY_VIEWER, R.string.emulation_memory_search, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU, R.string.multiplayer, SettingsItem.TYPE_TEXT, MENU_MULTIPLAYER));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_EDIT_SCREEN, R.string.emulation_screen_layout, SettingsItem.TYPE_TEXT, 0));
-            mSettings.add(new SettingsItem(SettingsItem.SETTING_EXIT_GAME, R.string.emulation_stop_running, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU,
+                    R.string.preferences_settings, SettingsItem.TYPE_TEXT, MENU_SETTINGS));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.cara_state_title, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SAVE_STATE,
+                    R.string.cara_state_save, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_STATE,
+                    R.string.cara_state_load, SettingsItem.TYPE_TEXT, 0));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.setting_header_renderer, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_EDIT_SCREEN,
+                    R.string.cara_edit_screen_layout, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_ROTATE_SCREEN,
+                    R.string.emulation_screen_rotation, SettingsItem.TYPE_TEXT, 0));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.setting_header_controls, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_EDIT_BUTTONS,
+                    R.string.cara_edit_touch_controls, SettingsItem.TYPE_TEXT, 0));
+
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_SECTION_HEADER,
+                    R.string.cara_game_tools, SettingsItem.TYPE_HEADER, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOAD_SUBMENU,
+                    R.string.multiplayer, SettingsItem.TYPE_TEXT, MENU_MULTIPLAYER));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_CHEAT_CODE,
+                    R.string.menu_cheat_code, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_RESET_CAMERA,
+                    R.string.menu_emulation_camera, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_MEMORY_VIEWER,
+                    R.string.emulation_memory_search, SettingsItem.TYPE_TEXT, 0));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_EXIT_GAME,
+                    R.string.emulation_stop_running, SettingsItem.TYPE_TEXT, 0));
             notifyDataSetChanged();
         }
 
@@ -659,6 +673,9 @@ public class RunningSettingDialog extends DialogFragment {
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SCALE_FACTOR,
                     R.string.internal_resolution, SettingsItem.TYPE_RADIO_GROUP,
                     mRunningSettings[SettingsItem.SETTING_SCALE_FACTOR]));
+            mSettings.add(new SettingsItem(SettingsItem.SETTING_LOSSLESS_OUTPUT_SCALE,
+                    R.string.setting_output_scale, SettingsItem.TYPE_RADIO_GROUP,
+                    mRunningSettings[SettingsItem.SETTING_LOSSLESS_OUTPUT_SCALE]));
             mSettings.add(new SettingsItem(SettingsItem.SETTING_FORCE_TEXTURE_FILTER,
                     R.string.setting_force_texture_filter,
                     SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_FORCE_TEXTURE_FILTER]));
@@ -699,27 +716,6 @@ public class RunningSettingDialog extends DialogFragment {
             mSettings.add(new SettingsItem(SettingsItem.SETTING_SHOW_ADVANCED,
                     R.string.setting_header_advanced, SettingsItem.TYPE_TEXT, 0));
             mAdvancedSettings = new ArrayList<>();
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_CORE_TICKS_HACK,
-                    R.string.setting_core_ticks_hack,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_CORE_TICKS_HACK]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_SLOW_DRAW,
-                    R.string.setting_skip_slow_draw,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_SLOW_DRAW]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_CPU_WRITE,
-                    R.string.setting_skip_cpu_write,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_CPU_WRITE]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SKIP_TEXTURE_COPY,
-                    R.string.setting_skip_texture_copy,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SKIP_TEXTURE_COPY]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_HW_GS_MODE,
-                    R.string.setting_hw_gs_mode,
-                    SettingsItem.TYPE_RADIO_GROUP, mRunningSettings[SettingsItem.SETTING_HW_GS_MODE]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_SHADOW_RENDERING,
-                    R.string.setting_shadow_rendering,
-                    SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_SHADOW_RENDERING]));
-            mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ACCURATE_MUL,
-                    R.string.running_accurate_mul, SettingsItem.TYPE_RADIO_GROUP,
-                    mRunningSettings[SettingsItem.SETTING_ACCURATE_MUL]));
             mAdvancedSettings.add(new SettingsItem(SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP,
                     R.string.setting_adaptive_frame_skip,
                     SettingsItem.TYPE_CHECKBOX, mRunningSettings[SettingsItem.SETTING_ADAPTIVE_FRAME_SKIP]));

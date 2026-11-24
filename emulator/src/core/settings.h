@@ -164,6 +164,7 @@ struct Values {
     bool use_hw_shader;
     bool use_shader_jit;
     u16 resolution_factor;
+    u8 lossless_output_scale = 0;
     bool vsync_enabled;
     bool use_frame_limit;
     u16 frame_limit;
@@ -210,6 +211,7 @@ struct Values {
     s64 core_ticks_hack;
     bool core_downcount_hack;
     bool async_shader_compile;
+    bool gles_async_programmable_shaders = false;
     bool use_separable_shader;
     bool shadow_rendering;
     // Legacy renderer switches still referenced by MMJ's published renderer.
