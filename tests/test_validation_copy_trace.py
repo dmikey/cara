@@ -44,6 +44,7 @@ class ValidationCopyCollectorTests(unittest.TestCase):
 #include "common/alignment.h"
 #include "common/math_util.h"
 #include "common/file_util.h"
+#include "common/frame_timing.h"
 #include "core/settings.h"
 #include "cara/quad_input_capture_trace.h"
 #include "video_core/renderer_opengl/gl_surface_invalidation_context.h"
