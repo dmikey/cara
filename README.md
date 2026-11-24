@@ -1,279 +1,79 @@
 # Cara
 
-[![Build](https://github.com/dmikey/cara/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/dmikey/cara/actions/workflows/build.yml?query=branch%3Amain)
-[![License: GPL v2 or later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
-
 <img src="docs/artwork/cara-citrus-readme.png" alt="Cara citrus app icon" width="104" align="right">
 
-**Apple-first Nintendo 3DS emulator core and emulator shell.**
+**Fast, accurate, portable Nintendo 3DS emulation.**
 
-Cara is a Nintendo 3DS emulator designed around Apple hardware, with a portable
-core and frontends for macOS, iOS, Android, and Linux. On iPhone and iPad,
-FastInterp runs games without CPU JIT. Reuse in Delta is a development goal.
+Cara is an open-source emulator core and app built on Citra MMJ’s mobile
+foundation. We tune Cara for Apple hardware first and develop it for macOS,
+iPhone, iPad, Android, and Linux. FastInterp lets iPhone and iPad run games
+without JIT, while Cara’s graphics work focuses on smooth play and accurate
+game behavior.
 
-Cara aims to improve speed while preserving emulation correctness and
-stability. Guest behavior guides timing and compatibility decisions, and
-measurements on real hardware guide host-side choices. We prioritize engine
-fixes and check their effects on gameplay, rendering, and saves.
+[Download Cara](https://dmikey.github.io/cara/#get-cara) ·
+[GitHub releases](https://github.com/dmikey/cara/releases) ·
+[Documentation](#documentation) ·
+[Report an issue](https://github.com/dmikey/cara/issues)
 
-## Made for iPad
+## Features
 
-- **A library built for the big screen.** Browse your collection, favorites,
-  and recently played games from an iPad sidebar. Add games through Files.
-- **Play your way.** Use touch controls, customize a Delta-compatible skin, or
-  connect a supported game controller. In **Settings → Controls**, choose Carbon Duo,
-  Meadow, Rose Ink, Silverline, Tideweave, Grin Garden, or Orbit Arcade
-  separately for portrait and landscape.
-- **Pick up where you left off.** Make per-game save states and sync in-game
-  saves through a selected iCloud Drive folder.
-- **Per-game play settings.** Choose Accuracy for a fixed 100% guest CPU clock
-  and game speed, or Performance for adaptive tuning.
-
-**3DS activity** in Library & storage lets games receive Play Coins from
-recorded steps and exchange eligible StreetPass messages through Files or
-an opt-in nearby Cara library. [Setup and compatibility](docs/3ds-system-activity.md)
-
-### What Performance Mode does on iPad
-
-- **Adaptive guest CPU.** Cara adjusts the emulated 3DS CPU clock under load
-  to help keep gameplay near the speed limit. Turn on **Use fixed guest clock**
-  if you want to set the clock yourself.
-- **Adaptive Frame Skip.** Cara can combine display updates when it falls
-  behind, while still running every 3DS draw and transfer.
-- **Less waiting for shaders.** **Options → Display → Async Shaders** is on by
-  default in Performance Mode. Compatible draws can use a general shader while
-  Metal builds a specialized pipeline. Eligible vertex draws can keep going
-  through CPU interpretation. Metal and GLES also reuse fragment shaders when
-  only unused combiner-buffer writes differ. First visits can still hitch.
-
-Cara models GPU busy flags and completion interrupts in 3DS guest time so
-games receive those signals at the expected points.
-
-**Measured on an M4 iPad Pro.** In the same normal-boot *Luigi’s Mansion:
-Dark Moon* Gadd’s lab replay, Metal and GLES both held **100% emulation
-speed**. Metal cut the 99th-percentile time between refreshes from
-**20.51 ms to 17.15 ms**, about **16% shorter**. At the mansion gate, Async
-Shaders cut one first-visit stall from **611 ms to 46 ms** in the Metal
-replay. The first refresh and other cold stalls remained. See the
-[Gadd’s lab comparison](docs/native-metal-build.md#adaptive-metal-submissions)
-and [mansion gate frame times](docs/native-metal-build.md#mansion-gate-with-performance-mode-defaults).
-
-## Play compressed cartridge ROMs
-
-Open a standard ZIP containing one `.3ds` cartridge image from the macOS
-game picker or Cara’s Files picker on iPad. Cara reads the original archive in
-place. Stored entries are read directly. For Deflate, Cara builds an
-in-memory seek index at first open and decompresses data on demand. See the
-[ZIP cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
-
-Cara opens a 7z archive containing one regular `.3ds` or `.cci` file. For
-supported LZMA2 streams it indexes dictionary restart points and decodes
-requested regions into bounded memory. iPhone and iPad keep the small offset
-index in the app cache for future launches. Widely spaced restart points
-can delay the first scene or later reads. Other supported compression methods
-use temporary storage for the uncompressed cartridge while the game is open.
-Password-protected and multi-cartridge archives are unsupported.
-
-On a physical iPhone 17e, FastInterp and GLES booted the same 4 GiB *Pokémon
-Ultra Moon* cartridge from both archives. Times below are from the emulator
-log clock to the guest loading its language-selection module. Each trial ran
-for 360 guest refreshes with fresh guest data. The repeat started a new app
-process. The OS file cache was uncontrolled.
-
-| Archive | File size | First launch | Repeat launch |
-| --- | ---: | ---: | ---: |
-| LZMA2 7z | 1.65 GiB | 18.41 s | 17.87 s |
-| DEFLATE ZIP (level 3) | 2.74 GiB | 9.29 s | 7.80 s |
-
-The previous full-extraction 7z path took 63.43 s to the same milestone.
-The new 7z reader persisted a 296-byte seek index for this archive. The ZIP
-reader rebuilt its in-memory index in 7.94 s and 6.50 s respectively.
-
-Cara also opens Azahar v1 cartridge images with the `.z3ds` or `.zcci` extension.
-The shared ROM reader uses
-the embedded Zstandard seek table to read individual frames on demand. Both
-Apple game pickers and the iOS library accept the original compressed file.
-[Azahar format specification](https://github.com/azahar-emu/azahar/pull/1208).
-
-Open a decrypted base-game `.cia` directly in either Apple frontend. Cara reads
-the executable and RomFS from the package and uses the same game ID for saves
-as the cartridge. Open a matching update CIA while the game is stopped to
-install it for subsequent launches. Updates and DLC stay out of the playable
-library. System and DLC package installation is unsupported.
-
-On Apple Silicon macOS, the cartridge loader booted *Kirby: Planet Robobot*
-from Z3DS and executed authored ARM code from a 7z cartridge. The CIA launch
-test boots authored ARM code, installs a multi-block update, launches its
-replacement code, checks a failed update preserves the previous version and
-compares the existing save bytes. Run it against the native atlas host with
-`python3 tests/apple_cia_launch_test.py path/to/cara`.
-
-**Test status.** Cara played a Deflate ZIP of *Luigi’s Mansion: Dark Moon*
-on macOS and on a physical M4 iPad. On the iPad, selecting the original ZIP
-through **Add games → Open game from Files…** booted directly to the title
-screen. The loader indexed the archive in 1.37 seconds. A before-and-after
-check of the app’s storage found no extracted cartridge file. A separate
-3,600-refresh FastInterp Metal replay reached Gadd’s lab from a normal boot
-with both formats. Lab p99 was 19.60 ms for raw and 19.99 ms for ZIP, and
-all three sampled frames matched. A 900-refresh mansion gate replay from
-ZIP averaged 59.70 refreshes/s on the M4 iPad.
+- **A library you can make your own.** On iPhone and iPad, import games from
+  Files, organize favorites, and choose game artwork.
+- **Touch or controller play.** Customize touch skins on iPhone and iPad, or
+  use a supported controller. Controller and keyboard options vary by platform.
+- **Save your place.** Resume from per-game save states. On iPhone and iPad,
+  choose an iCloud Drive folder to sync your in-game saves and compatible
+  save states. Keep regular in-game saves when updating Cara.
+- **Play straight from supported archives.** The Apple apps open compatible
+  single-game ZIP and 7z archives and Azahar’s `.z3ds` and `.zcci` cartridge
+  images. See the [compressed cartridge guide](docs/native-mac-dev.md#zip-cartridge-images).
+- **Choose how each game plays.** Accuracy uses the original 3DS CPU clock and
+  normal game speed. Performance can adjust the emulated CPU clock and combine
+  screen updates when the host falls behind, while the game’s rendering still runs.
+- **Play together.** Online Rooms on iPhone and iPad lets players with matching
+  copies of a game connect and use supported in-game local wireless multiplayer.
 
 ## Platforms
 
-| Platform | Current frontend |
-|---|---|
-| **macOS** | Native desktop app and SDL development host. |
-| **iOS** | Native touch-first app for iPhone and iPad, without CPU JIT. |
-| **Android** | Native Android frontend with OpenGL ES rendering and ARM64 Dynarmic JIT. See the [RG Slide rendering notes](docs/rg-slide-rendering.md). |
-| **Linux** | SDL command-line frontend with desktop OpenGL. |
-
-**Platform stability and feature parity are still in progress.** Game
-compatibility, performance, controls, settings and save workflows vary across
-platforms. Features described for one frontend may not yet be available in the
-others. Our goal is a smooth, consistent experience across all four.
-
-On macOS, open **Cara → Settings** from the launcher or while a game is running.
-**Accuracy** locks the guest clock and game speed limit at 100%.
-**Performance** can adapt the guest clock under load, or you can set a fixed
-guest clock and a separate game speed limit. Adaptive Frame Skip coalesces
-host display updates while preserving guest rendering. Under **Display**,
-**Lossless 2×** and **Lossless 4×** center the screens at whole pixel multiples.
-Play and display settings apply when you save. CPU engine changes apply when
-you next open a game. The native Metal runner reads the saved Performance Mode
-and Async Shaders preferences.
-
-On iPhone and iPad, OpenGL ES is the default. The standard Mac launcher uses
-the hardware OpenGL atlas renderer. In **Display**, turn on **2× Native Resolution** to render
-geometry at twice its native width and height. Reopen the game to apply.
-**Lossless 2×** and **Lossless 4×** also work with OpenGL ES on iPhone and iPad.
-They change how the final image is scaled inside the skin.
-For Metal, enable **Experimental Renderer** under **Advanced** on mobile or use the separate
-experimental Mac runner. Metal also offers **Texture filtering**.
-At 2×, supported 3D draws rasterize at twice the width and height. The renderer
-keeps compatible frames at that resolution through display and resolves to the
-3DS resolution when the guest needs to read pixels. Supported layouts include
-RGB565 screen crops used in Monster Hunter Stories. Some games use display
-transfer layouts that currently present at native resolution.
-
-**Game default** honors the game's texture sampling. **Nearest neighbor** keeps
-texels sharp and **Bilinear** blends adjacent texels on 3D surfaces. These
-controls are independent of the lossless output sizing above.
-
-Cara opts into Apple Game Mode by default on supported devices. It activates
-automatically in full-screen play unless you turn it off. The **Game Mode**
-entry in Cara's settings on iPhone and iPad, or the **Cara** menu on Mac,
-shows where to change it in Apple's Game Overlay or Game menu.
-
-## Graphics
-
-The iOS developer build defaults to OpenGL ES and FastInterp. The Apple Silicon
-Mac developer build defaults to the OpenGL atlas renderer and Dynarmic JIT.
-
-| Backend | Role in Cara |
+| Platform | What to expect |
 | --- | --- |
-| **Metal** | The native graphics direction for Apple devices. A development renderer is being tested on Apple hardware. |
-| **OpenGL ES** | The established hardware-accelerated path on iOS and Android and a reference for renderer compatibility. |
-| **Vulkan** | Planned for broader cross-platform support. |
+| **iPhone and iPad** | Touch-first app with FastInterp and OpenGL ES. iPhone support starts with iPhone 13 and iPhone SE (3rd generation). |
+| **Mac** | Native app for Apple Silicon, starting with the M1. Uses OpenGL with FastInterp and optional Dynarmic JIT in JIT-enabled builds. |
+| **Android** | Experimental ARM64 builds with OpenGL ES and Dynarmic JIT. Our handheld tuning includes the Unisoc T820-based RG Slide. |
+| **Linux** | x86-64 developer build with FastInterp and desktop OpenGL. |
 
-Cara moves vertex processing and packed input decoding onto the GPU, keeps
-eligible surface conversions and presentation GPU-resident, and reuses prepared
-indices, uploads, and shader stages. Metal development builds also explore
-grouping compatible draws, reusing decoded textures and GPU fills, and loading
-translated shader caches off the draw thread. Surface ownership tracking
-preserves guest-visible data when rendering, copies, and CPU reads intersect.
+Game compatibility, performance, and available features vary by platform.
+Native Metal is in development for Apple devices through separate experimental
+builds. Reusing Cara’s core in Delta is a development goal.
 
-## From Android performance work to a shared core
+## Documentation
 
-**Citra MMJ**, weihuoya’s performance-focused Android fork, gave Cara a mobile
-rendering foundation to build on. We carry that work forward in three key areas:
+[Build Cara](docs/build.md) ·
+[Save states](docs/save-states.md) ·
+[Mac settings](docs/mac-settings.md) ·
+[3DS system activity](docs/3ds-system-activity.md) ·
+[Build status](https://github.com/dmikey/cara/actions/workflows/build.yml)
 
-- **Mobile GPU rendering.** MMJ’s OpenGL ES rendering path is the starting point
-  for Cara’s Apple-focused graphics engine. Cara adds custom GPU vertex processing,
-  packed-data decoding, and native screen presentation.
-- **Shader generation and reuse.** MMJ generates and reuses GPU shaders and programs
-  to avoid repeated compilation. Cara adapts that shader foundation for Apple GPUs
-  and extends it with its own rendering enhancements.
-- **Graphics data reuse.** MMJ’s texture and render-target caching provides the
-  foundation for reusing graphics resources. Cara takes that focus further with
-  prepared-input reuse, bounded graphics caches, and fewer CPU/GPU transfers.
+[Architecture](docs/technology.md) ·
+[FastInterp](docs/fastinterp.md) ·
+[Metal development](docs/native-metal-build.md) ·
+[Android tuning](docs/rg-slide-rendering.md) ·
+[Performance and testing](docs/validation.md)
 
-**Azahar FastInterp** supplies the interpreter foundation. Cara extends it with
-static arithmetic fast paths, faster instruction-timing lookup, and an eight-way
-decoded-block cache on iOS. Cara also fixes decode-record reuse and execution
-budgets across chained blocks. In FastInterp mode, guest CPU instructions remain
-interpreted without runtime CPU code generation. Optional JIT support depends on
-the platform and build.
+When reporting a problem, include your device, OS version, Cara build,
+game title and region, and the steps to reproduce it.
 
-Cara combines these execution changes with its graphics pipeline, bounded
-memory and upload caches, a reusable core, and platform frontends.
+## Credits and license
 
-## FastInterp and handheld roadmap
-
-FastInterp decodes guest instructions into reusable blocks and dispatches them
-to precompiled handlers. Block chaining, predecoded operands, and fast paths
-for mapped RAM and ARM condition flags reduce interpreter work. Cara integrates
-these changes with guest timing, save states, and memory-coherence checks for
-GPU-visible memory.
-
-FastInterp already handles guest ARM and Thumb instructions. The Rockchip
-handheld roadmap builds on that support by expanding Thumb correctness tests
-and tuning decoding, dispatch, and memory access for low-power ARM Linux
-devices. Rockchip devices are a development target.
-
-See the [architecture](docs/technology.md), [FastInterp notes](docs/fastinterp.md),
-and [performance and validation results](docs/performance.md) for implementation
-details and benchmark methodology.
-
-## Open source, built in the open
-
-Cara is licensed under **GPL-2.0-or-later**. Emulator and dependency source is
-bundled in the repository, with build tools and validation guides included.
-
-[Build Cara](docs/build.md) · [Performance](docs/performance.md) ·
-[Architecture](docs/technology.md) · [Save states](docs/save-states.md) ·
-[Validation](docs/validation.md)
-
-## Build and contribute
-
-A Linux x86_64 OpenGL developer build is available through the
-[Linux OpenGL workflow](https://github.com/dmikey/cara/actions/workflows/linux-opengl.yml).
-It uses a command-line SDL frontend and FastInterp without JIT. See the
-[Linux build and runtime requirements](docs/build.md#linux-opengl).
-
-The [native Metal build guide](docs/native-metal-build.md) covers opt-in
-development builds for Apple Silicon Macs and physical iOS devices.
-
-Start with the [build guide](docs/build.md). Reports should include the Cara
-revision, device, operating system and version, game region, settings and steps to reproduce.
-For performance work, include comparable runs and correctness checks.
-See [validation](docs/validation.md) and
-[existing issues](https://github.com/dmikey/cara/issues).
-
-Game ROMs, Nintendo firmware and keys are not included. Cara is not affiliated
-with Nintendo.
-
-## Credits
-
-Cara builds on the work of the [Citra Emulator Project](https://github.com/citra-emu),
+Cara builds on [Citra](https://github.com/citra-emu),
 [weihuoya’s Citra MMJ](https://github.com/weihuoya/citra), and
 [Azahar](https://github.com/azahar-emu/azahar), including
 [warmenhoven’s FastInterp](https://github.com/azahar-emu/azahar/pull/2376).
-Save-state support builds on original Citra work by Hamish Milne and other contributors.
+Save-state support builds on work by Hamish Milne and other Citra contributors.
+See the [research credits](docs/research-references.md) for additional references.
 
-Development inspection uses [Capstone](https://www.capstone-engine.org/) by Nguyen Anh
-Quynh and contributors. Research also draws on fearkov’s
-[3dsrecomp](https://github.com/fearkov/3dsrecomp) and
-[Zakuro](https://github.com/fearkov/zakuro). See
-[inspection tool credits](docs/inspection-tool-attributions.md) for usage and revisions.
+Cara is licensed under **GPL-2.0-or-later**. Upstream copyright notices and
+third-party licenses are preserved.
+[License](LICENSE) · [Notices](NOTICE) · [Source provenance](emulator/VENDORED_SOURCE.json)
 
-Our research also learns from [Dolphin](https://github.com/dolphin-emu/dolphin),
-[PPSSPP](https://github.com/hrydgard/ppsspp),
-[Panda3DS](https://github.com/wheremyfoodat/Panda3DS),
-[Mikage](https://github.com/mikage-emu/mikage-dev), and
-[V8’s interpreter work](https://github.com/v8/v8), alongside DMP, 3dbrew,
-GBATEK and community hardware tests. The
-[research reference guide](docs/research-references.md) credits their contributions
-and links the source reviews separately from Cara’s inherited code.
-
-Upstream copyright notices and third-party licenses are preserved. See
-[NOTICE](NOTICE), [LICENSE](LICENSE), and [source provenance](emulator/VENDORED_SOURCE.json).
+Cara is an independent preservation project. Use game dumps from your own cartridges.
