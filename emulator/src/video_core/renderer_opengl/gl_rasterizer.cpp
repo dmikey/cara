@@ -47,6 +47,7 @@
 #include "video_core/regs_rasterizer.h"
 #include "video_core/regs_texturing.h"
 #include "video_core/renderer_opengl/gl_command_queue.h"
+#include "video_core/renderer_opengl/gl_driver_transactions.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_scissor_damage.h"
@@ -226,6 +227,129 @@ static GLsizeiptr LightingLUTBufferSize(std::size_t fallback) {
     return fallback;
 }
 
+#ifdef CARA_IOS_GLES
+struct RasterizerOpenGL::LightingLUTResidency {
+    template <std::size_t Length>
+    class Versions {
+    public:
+        using Table = std::array<GLvec2, Length>;
+
+        std::optional<GLint> Find(const Table& table) const {
+            for (std::size_t i = 0; i < count; ++i) {
+                if (std::memcmp(entries[i].table.data(), table.data(), Length * sizeof(GLvec2)) == 0)
+                    return entries[i].offset;
+            }
+            return std::nullopt;
+        }
+
+        void Remember(const Table& table, GLint offset) {
+            entries[next] = {table, offset};
+            next = (next + 1) % entries.size();
+            count = std::min(count + 1, entries.size());
+        }
+
+        void Reset() {
+            next = 0;
+            count = 0;
+        }
+
+    private:
+        struct Entry {
+            Table table;
+            GLint offset;
+        };
+
+        std::array<Entry, 8> entries;
+        std::size_t next = 0;
+        std::size_t count = 0;
+    };
+
+    void Reset() {
+        for (auto& versions : lighting)
+            versions.Reset();
+        fog.Reset();
+    }
+
+    std::array<Versions<256>, Pica::LightingRegs::NumLightingSampler> lighting;
+    Versions<128> fog;
+};
+#endif
+
+#ifdef CARA_ANDROID_GLES_ATLAS
+struct RasterizerOpenGL::LightingLUTUnpackStream {
+    struct Reservation {
+        u8* data = nullptr;
+        std::size_t offset = 0;
+    };
+
+    LightingLUTUnpackStream() {
+        constexpr auto flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT |
+                               GL_MAP_COHERENT_BIT_EXT;
+        constexpr auto capacity = PageSize * PageCount;
+        GLint previous = 0;
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &previous);
+        buffer.Create();
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer.handle);
+        glBufferStorageEXT(GL_PIXEL_UNPACK_BUFFER, capacity, nullptr, flags);
+        if (glGetError() == GL_NO_ERROR) {
+            data = static_cast<u8*>(glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, capacity, flags));
+        }
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, previous);
+        LOG_INFO(Render_OpenGL, "GLES lighting/fog pixel unpack stream: {}", data != nullptr);
+    }
+
+    ~LightingLUTUnpackStream() {
+        for (auto fence : fences) {
+            if (fence)
+                glDeleteSync(fence);
+        }
+    }
+
+    Reservation Reserve(std::size_t size) {
+        if (!data || size > PageSize)
+            return {};
+        if (cursor + size > PageSize) {
+            // All transfers reading the departing page precede this fence.
+            if (!fences[page]) {
+                fences[page] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+                if (!fences[page]) {
+                    data = nullptr;
+                    return {};
+                }
+            }
+            const auto next = (page + 1) % PageCount;
+            auto& previous = fences[next];
+            if (previous) {
+                // Keep drawing through the client-memory path if a page is busy.
+                const GLenum status = glClientWaitSync(previous, 0, 0);
+                if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
+                    return {};
+                glDeleteSync(previous);
+                previous = nullptr;
+            }
+            page = next;
+            cursor = 0;
+        }
+        const auto offset = page * PageSize + cursor;
+        return {data + offset, offset};
+    }
+
+    void Commit(std::size_t bytes) {
+        cursor += bytes;
+    }
+
+    OGLBuffer buffer;
+
+private:
+    static constexpr std::size_t PageSize = 256 * 1024;
+    static constexpr std::size_t PageCount = 4;
+    std::array<GLsync, PageCount> fences{};
+    u8* data = nullptr;
+    std::size_t page = 0;
+    std::size_t cursor = 0;
+};
+#endif
+
 RasterizerOpenGL::RasterizerOpenGL()
     : shader_census(ShaderCensus::Enabled()), is_mali_gpu(IsVendorMali()), shader_dirty(true),
       vertex_buffer(GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE),
@@ -234,6 +358,14 @@ RasterizerOpenGL::RasterizerOpenGL()
       texture_buffer(GL_TEXTURE_BUFFER, (is_mali_gpu || UseNativeLUTBuffers()) ? 11264 : TEXTURE_BUFFER_SIZE),
       texture_lf_buffer(GL_TEXTURE_BUFFER, LightingLUTBufferSize(is_mali_gpu ? 525312 : TEXTURE_BUFFER_SIZE)) {
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+    const char* lut_pbo = std::getenv("CARA_LIGHTING_LUT_PBO");
+    if (lut_pbo && std::strcmp(lut_pbo, "1") == 0 && !UseNativeLUTBuffers() &&
+        !UseLightingLUTSnapshots() && !CommandQueue::Enabled() &&
+        !DriverTransactions::Pending() && GLAD_GL_EXT_buffer_storage && glBufferStorageEXT) {
+        lighting_lut_unpack_stream = std::make_unique<LightingLUTUnpackStream>();
+    }
+#endif
     SetPicaWriteHooksActive(SoftwareBatching::Active());
     DrawCostProfile::Reset();
     IndexPayloadReuse::ResetStats();
@@ -393,12 +525,19 @@ RasterizerOpenGL::RasterizerOpenGL()
         LOG_INFO(Render_OpenGL, "GLSL ES Atlas uses linked vertex/fragment programs by default");
     use_separable_shader = false;
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
-    const char* separable_probe = std::getenv("CARA_MALI_SEPARABLE_PROGRAMS");
-    use_separable_shader = separable_probe && std::strcmp(separable_probe, "1") == 0 &&
-        is_mali_gpu && GLES && GLAD_GL_ES_VERSION_3_2 && glGenProgramPipelines &&
-        glBindProgramPipeline && glUseProgramStages && glProgramUniform4iv;
+    const char* mali_probe = std::getenv("CARA_MALI_SEPARABLE_PROGRAMS");
+    const char* adreno_probe = std::getenv("CARA_ADRENO_SEPARABLE_PROGRAMS");
+    bool requested = is_mali_gpu && mali_probe && std::strcmp(mali_probe, "1") == 0;
+    if (!requested && adreno_probe && std::strcmp(adreno_probe, "1") == 0) {
+        const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        requested = renderer && std::strstr(renderer, "Adreno");
+    }
+    use_separable_shader = requested && GLES && GLAD_GL_ES_VERSION_3_2 &&
+        glGenProgramPipelines && glBindProgramPipeline && glUseProgramStages && glProgramUniform4iv;
     if (use_separable_shader)
-        LOG_INFO(Render_OpenGL, "Mali GLSL ES 3.20 separable program probe enabled");
+        LOG_INFO(Render_OpenGL, "GLSL ES 3.20 separable program probe enabled");
+    else if (requested)
+        LOG_WARNING(Render_OpenGL, "GLSL ES 3.20 separable program probe unavailable");
 #endif
 #endif
     shader_program_manager = std::make_unique<ShaderProgramManager>(use_separable_shader);
@@ -1664,9 +1803,23 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         counters.vertex_upload_reused_textures+=unsigned(reuse_input)+unsigned(reuse_index);
     }
     bool published_input_shadow = false;
+    bool replace_vertex_images = false;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    static const bool replace_on_adreno = [] {
+        const char* enabled = std::getenv("CARA_ADRENO_REPLACE_VERTEX_IMAGES");
+        if (!enabled || std::strcmp(enabled, "1") != 0)
+            return false;
+        const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        return renderer && std::strstr(renderer, "Adreno") != nullptr;
+    }();
+    replace_vertex_images = replace_on_adreno;
+#endif
+    // The draw only samples the uploaded rows. On a miss, redefine the image
+    // so the driver can discard its old contents once earlier draws finish.
+    // Exact cache hits keep sampling the resident image.
     if (!reuse_input) {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
-        if (orphan_upload) {
+        if (orphan_upload || replace_vertex_images) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
             glTexImage2D(GL_TEXTURE_2D, 0, input_internal, IOS_VERTEX_INPUT_WIDTH, upload_rows, 0,
@@ -1699,7 +1852,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             selected_upload->index_shadow.InvalidateIdentity();
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
         glActiveTexture(GL_TEXTURE8);
-        if (orphan_upload) {
+        if (orphan_upload || replace_vertex_images) {
             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
             if (Common::FrameTiming::counters.enabled) ++Common::FrameTiming::counters.vertex_gl_image_calls;
             glTexImage2D(GL_TEXTURE_2D, 0, index_internal, IOS_VERTEX_INPUT_WIDTH, index_rows, 0,
@@ -1802,6 +1955,10 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         sample.interrupts = counters.pica_batch_irqs;
         sample.lut_uploads = counters.lut_texture_uploads;
         sample.attachments = DrawBatchTrace::attachments;
+        const auto& framebuffer = Pica::g_state.regs.framebuffer.framebuffer;
+        sample.color_address = framebuffer.GetColorBufferPhysicalAddress();
+        sample.depth_address = framebuffer.GetDepthBufferPhysicalAddress();
+        sample.lit = !Pica::g_state.regs.lighting.disable;
         sample.shader = state.draw.shader_program;
         sample.pipeline = state.draw.program_pipeline;
         sample.route = ios_lit_pair_vertex_reuse ? 6 : ios_feedback_vertex_reuse ? 5 :
@@ -2941,9 +3098,11 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         // Each stream still handles its own wrap and reuploads all live tables.
         if (!defer_unused_luts || regs.texturing.main_config.texture3_enable)
             SyncAndUploadLUTs();
-        if (!defer_unused_luts || !regs.lighting.disable ||
-            regs.texturing.fog_mode != Pica::TexturingRegs::FogMode::None) {
-            SyncAndUploadLUTsLF();
+        const bool uses_lighting = !defer_unused_luts || !regs.lighting.disable;
+        const bool uses_fog = !defer_unused_luts ||
+                              regs.texturing.fog_mode != Pica::TexturingRegs::FogMode::None;
+        if (uses_lighting || uses_fog) {
+            SyncAndUploadLUTsLF(uses_lighting, uses_fog);
         } else if (Common::FrameTiming::counters.enabled &&
                    (uniform_block_data.lighting_lut_dirty_any || uniform_block_data.fog_lut_dirty)) {
             ++Common::FrameTiming::counters.deferred_lighting_fog_lut_syncs;
@@ -2980,6 +3139,16 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
     }
 
     // Draw the vertex batch
+#ifdef __ANDROID__
+    const bool lighting = !regs.lighting.disable;
+    const bool fog = regs.texturing.fog_mode == Pica::TexturingRegs::FogMode::Fog;
+    if (Common::FrameTiming::counters.enabled) {
+        Common::FrameTiming::counters.fog_draws += fog;
+        Common::FrameTiming::counters.lit_fog_draws += fog && lighting;
+    }
+    std::optional<GLESCommandTraceScope> draw_trace{std::in_place, GLESCommandTraceScope::Kind::Draw,
+                                                   lighting, fog};
+#endif
     bool succeeded = true;
     if (accelerate) {
         succeeded = AccelerateDrawBatchInternal(is_indexed);
@@ -3016,6 +3185,9 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
             }
         }
     }
+#ifdef __ANDROID__
+    draw_trace.reset();
+#endif
 
 #ifdef CARA_IOS_GLES
     if(native_borrow_restart) {
@@ -3573,6 +3745,15 @@ bool RasterizerOpenGL::AccelerateDisplayTransfer(const GPU::Regs::DisplayTransfe
 #endif
 
     FlushSoftwareBatch(SoftwareBatching::Reason::Transfer);
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    if (DrawBatchTrace::Enabled() && VideoCore::GetCurrentFrame() % 120 == 0) {
+        __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                            "batch_transfer frame=%u src=%08x dst=%08x width=%u height=%u",
+                            VideoCore::GetCurrentFrame(), config.GetPhysicalInputAddress(),
+                            config.GetPhysicalOutputAddress(), config.output_width.Value(),
+                            config.output_height.Value());
+    }
+#endif
     SurfaceParams src_params;
     src_params.addr = config.GetPhysicalInputAddress();
     src_params.width = config.output_width;
@@ -4302,11 +4483,13 @@ void RasterizerOpenGL::SyncShadowTextureBias() {
     }
 }
 
-void RasterizerOpenGL::SyncAndUploadLUTsLF() {
+void RasterizerOpenGL::SyncAndUploadLUTsLF(bool uses_lighting, bool uses_fog) {
     constexpr std::size_t max_size =
         sizeof(GLvec2) * 256 * Pica::LightingRegs::NumLightingSampler + sizeof(GLvec2) * 128; // fog
 
-    if (!uniform_block_data.lighting_lut_dirty_any && !uniform_block_data.fog_lut_dirty) {
+    const bool lighting_dirty = uses_lighting && uniform_block_data.lighting_lut_dirty_any;
+    const bool fog_dirty = uses_fog && uniform_block_data.fog_lut_dirty;
+    if (!lighting_dirty && !fog_dirty) {
         return;
     }
 
@@ -4316,6 +4499,9 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
     GLintptr offset;
     bool invalidate;
     std::size_t bytes_used = 0;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    LightingLUTUnpackStream::Reservation unpack;
+#endif
 #ifdef CARA_IOS_GLES
     if (UseLightingLUTSnapshots()) {
         constexpr std::size_t row_bytes = LUTTextureWidth * sizeof(GLvec2);
@@ -4326,7 +4512,28 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         buffer = lighting_lut_image.data();
         offset = 0;
     } else if (!UseNativeLUTBuffers()) {
-        std::tie(buffer, offset, invalidate) = texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
+#ifdef CARA_ANDROID_GLES_ATLAS
+        if (lighting_lut_unpack_stream && !CommandQueue::Enabled() &&
+            !DriverTransactions::Pending())
+            unpack = lighting_lut_unpack_stream->Reserve(max_size);
+        std::tie(buffer, offset, invalidate) =
+            texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4), unpack.data);
+#else
+        std::tie(buffer, offset, invalidate) =
+            texture_lf_buffer.MapStaging(max_size, sizeof(GLvec4));
+#endif
+        static const bool reuse_resident_tables = [] {
+            const char* flag = std::getenv("CARA_LIGHTING_LUT_RESIDENCY");
+            return flag && std::strcmp(flag, "1") == 0;
+        }();
+        if (reuse_resident_tables) {
+            if (!lighting_lut_residency)
+                lighting_lut_residency = std::make_unique<LightingLUTResidency>();
+            // On wrap the existing upload path republishes every live table.
+            // Offsets from the prior ring generation are no longer reusable.
+            if (invalidate)
+                lighting_lut_residency->Reset();
+        }
     } else
 #endif
     {
@@ -4334,8 +4541,26 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         std::tie(buffer, offset, invalidate) = texture_lf_buffer.Map(max_size, sizeof(GLvec4));
     }
 
+    const auto stage_table = [&](const auto& table, std::size_t destination) {
+        const std::size_t size = table.size() * sizeof(GLvec2);
+        std::memcpy(buffer + destination, table.data(), size);
+        bytes_used += size;
+        return static_cast<GLint>((offset + destination) / sizeof(GLvec2));
+    };
+#ifdef CARA_IOS_GLES
+    const auto resident_offset = [&](auto& versions, const auto& table) {
+        if (const auto existing = versions.Find(table))
+            return *existing;
+        const auto uploaded = stage_table(table, bytes_used);
+        versions.Remember(table, uploaded);
+        return uploaded;
+    };
+#endif
+
     // Sync the lighting luts
-    if (uniform_block_data.lighting_lut_dirty_any || invalidate) {
+    // Wrap invalidates every old offset, including tables unused by this draw.
+    // Otherwise leave the unused family's pending dirty bits and offsets intact.
+    if (lighting_dirty || invalidate) {
         for (unsigned index = 0; index < uniform_block_data.lighting_lut_dirty.size(); index++) {
             if (uniform_block_data.lighting_lut_dirty[index] || invalidate) {
                 bool is_changed = false;
@@ -4351,13 +4576,18 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
                 auto& lut_offset =
                     uniform_block_data.light_data.lighting_lut_offset[index / 4][index % 4];
                 if (is_changed || invalidate || lut_offset < 0) {
-                    const auto destination = UseLightingLUTSnapshots()
-                        ? index * sizeof(lighting_lut_data[index]) : bytes_used;
-                    std::memcpy(buffer + destination, lighting_lut_data[index].data(),
-                                lighting_lut_data[index].size() * sizeof(GLvec2));
-                    lut_offset = (offset + destination) / sizeof(GLvec2);
+#ifdef CARA_IOS_GLES
+                    if (lighting_lut_residency) {
+                        lut_offset = resident_offset(lighting_lut_residency->lighting[index],
+                                                     lighting_lut_data[index]);
+                    } else
+#endif
+                    {
+                        const auto destination = UseLightingLUTSnapshots()
+                            ? index * sizeof(lighting_lut_data[index]) : bytes_used;
+                        lut_offset = stage_table(lighting_lut_data[index], destination);
+                    }
                     uniform_block_data.light_dirty = true;
-                    bytes_used += lighting_lut_data[index].size() * sizeof(GLvec2);
                 }
                 uniform_block_data.lighting_lut_dirty[index] = false;
             }
@@ -4365,8 +4595,11 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
         uniform_block_data.lighting_lut_dirty_any = false;
     }
 
+#if defined(__ANDROID__) && defined(CARA_IOS_GLES)
+    const auto lighting_bytes = bytes_used;
+#endif
     // Sync the fog lut
-    if (uniform_block_data.fog_lut_dirty || invalidate) {
+    if (fog_dirty || invalidate) {
         bool is_changed = false;
         for (std::size_t i = 0; i < fog_lut_data.size(); ++i) {
             const auto& entry = Pica::g_state.fog.lut[i];
@@ -4378,12 +4611,18 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
             }
         }
         if (is_changed || invalidate || uniform_block_data.data.fog_lut_offset < 0) {
-            const auto destination = UseLightingLUTSnapshots() ? sizeof(lighting_lut_data) : bytes_used;
-            std::memcpy(buffer + destination, fog_lut_data.data(),
-                        fog_lut_data.size() * sizeof(GLvec2));
-            uniform_block_data.data.fog_lut_offset = (offset + destination) / sizeof(GLvec2);
+#ifdef CARA_IOS_GLES
+            if (lighting_lut_residency) {
+                uniform_block_data.data.fog_lut_offset =
+                    resident_offset(lighting_lut_residency->fog, fog_lut_data);
+            } else
+#endif
+            {
+                const auto destination = UseLightingLUTSnapshots()
+                    ? sizeof(lighting_lut_data) : bytes_used;
+                uniform_block_data.data.fog_lut_offset = stage_table(fog_lut_data, destination);
+            }
             uniform_block_data.dirty = true;
-            bytes_used += fog_lut_data.size() * sizeof(GLvec2);
         }
         uniform_block_data.fog_lut_dirty = false;
     }
@@ -4438,8 +4677,48 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
 #endif
         }
     } else if (!UseNativeLUTBuffers()) {
-        UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
-                     offset, buffer, bytes_used);
+#ifdef __ANDROID__
+        const auto fog_bytes = bytes_used - lighting_bytes;
+        const bool trace_upload = bytes_used && Common::FrameTiming::counters.enabled &&
+                                  Common::FrameTiming::RenderBookkeepingProfileEnabled();
+        const auto start = trace_upload ? std::chrono::steady_clock::now()
+                                        : std::chrono::steady_clock::time_point{};
+        std::optional<GLESCommandTraceScope> upload_trace;
+        if (bytes_used)
+            upload_trace.emplace(GLESCommandTraceScope::Kind::LUTUpload, lighting_bytes != 0,
+                                 fog_bytes != 0, bytes_used);
+#endif
+#ifdef CARA_ANDROID_GLES_ATLAS
+        if (unpack.data) {
+            UploadLightingLUTFromBuffer(texture_buffer_lut_lf.handle,
+                                        TextureUnits::TextureBufferLUT_LF.id, offset,
+                                        lighting_lut_unpack_stream->buffer.handle, unpack.offset,
+                                        bytes_used);
+            lighting_lut_unpack_stream->Commit(bytes_used);
+            if (bytes_used && Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.lighting_lut_pbo_uploads;
+        } else
+#endif
+        {
+            UploadIOSLUT(texture_buffer_lut_lf.handle, TextureUnits::TextureBufferLUT_LF.id, GL_RG,
+                         offset, buffer, bytes_used);
+#ifdef CARA_ANDROID_GLES_ATLAS
+            if (bytes_used && lighting_lut_unpack_stream && Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.lighting_lut_pbo_fallbacks;
+#endif
+        }
+#ifdef __ANDROID__
+        upload_trace.reset();
+        if (trace_upload) {
+            auto& counters = Common::FrameTiming::counters;
+            const auto kind = lighting_bytes && fog_bytes ? 2 : fog_bytes ? 1 : 0;
+            ++counters.lut_upload_kinds[kind];
+            counters.lighting_lut_bytes += lighting_bytes;
+            counters.fog_lut_bytes += fog_bytes;
+            counters.lut_upload_wall_seconds[kind] +=
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        }
+#endif
         texture_lf_buffer.FinishStaging(bytes_used);
     } else
 #endif

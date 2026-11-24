@@ -6,11 +6,13 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
-#include <string_view>
+#include <limits>
 #include <memory>
+#include <string_view>
 #include <glad/glad.h>
 #ifdef CARA_GL_CONTEXT_DISPATCH
 #include "video_core/renderer_opengl/gl_command_queue.h"
@@ -44,6 +46,310 @@
 #include "video_core/video_core.h"
 
 namespace OpenGL {
+
+#ifdef __ANDROID__
+static thread_local GLESRefreshTimer* g_command_trace = nullptr;
+
+struct GLESRefreshTimer {
+    using Clock = std::chrono::steady_clock;
+
+    // A zero bit count selects the existing elapsed query.
+    GLESRefreshTimer(unsigned timestamp_bits, bool command_trace, bool list_trace = false)
+        : timestamp_bits(timestamp_bits), command_trace(command_trace), list_trace(list_trace) {}
+
+    ~GLESRefreshTimer() {
+        if (g_command_trace == this)
+            g_command_trace = nullptr;
+        if (active && !timestamp_bits)
+            glEndQueryEXT(GL_TIME_ELAPSED_EXT);
+        for (const auto& sample : samples) {
+            if (sample.begin)
+                glDeleteQueriesEXT(1, &sample.begin);
+            if (sample.end)
+                glDeleteQueriesEXT(1, &sample.end);
+            if (sample.section_begin)
+                glDeleteQueriesEXT(1, &sample.section_begin);
+            if (sample.section_end)
+                glDeleteQueriesEXT(1, &sample.section_end);
+            for (const auto& list : sample.lists) {
+                if (list.begin)
+                    glDeleteQueriesEXT(1, &list.begin);
+                if (list.end)
+                    glDeleteQueriesEXT(1, &list.end);
+            }
+        }
+    }
+
+    void FinishAndPoll() {
+        if (active) {
+            if (g_command_trace == this)
+                g_command_trace = nullptr;
+            if (timestamp_bits) {
+                if (list_trace)
+                    active->host_end = SinceSubmission();
+                glQueryCounterEXT(active->end, GL_TIMESTAMP_EXT);
+            } else {
+                glEndQueryEXT(GL_TIME_ELAPSED_EXT);
+            }
+            active->pending = true;
+            active = nullptr;
+        }
+        if (std::none_of(samples.begin(), samples.end(), [](const Sample& sample) {
+                return sample.pending;
+            }))
+            return;
+        GLint disjoint = GL_FALSE;
+        glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint);
+        for (auto& sample : samples) {
+            if (!sample.pending)
+                continue;
+            sample.disjoint |= disjoint != GL_FALSE;
+            if (!Ready(sample.begin) || (timestamp_bits && !Ready(sample.end)))
+                continue;
+            if (!sample.disjoint)
+                Report(sample);
+            sample.pending = false;
+        }
+    }
+
+    void Begin(u32 frame) {
+        if (frame % 16 != 0)
+            return;
+        for (auto& sample : samples) {
+            if (sample.pending)
+                continue;
+            if (!sample.begin)
+                glGenQueriesEXT(1, &sample.begin);
+            if (timestamp_bits && !sample.end)
+                glGenQueriesEXT(1, &sample.end);
+            if (!sample.begin || (timestamp_bits && !sample.end))
+                return;
+            sample.frame = frame;
+            sample.disjoint = false;
+            sample.has_section = false;
+            sample.list_count = 0;
+            sample.lists_seen = 0;
+            if (timestamp_bits) {
+                sample.submitted = Clock::now();
+                glQueryCounterEXT(sample.begin, GL_TIMESTAMP_EXT);
+            } else {
+                glBeginQueryEXT(GL_TIME_ELAPSED_EXT, sample.begin);
+            }
+            active = &sample;
+            if (command_trace) {
+                const auto sample_number = frame / 16;
+                section_kind = sample_number % 2 ? GLESCommandTraceScope::Kind::Draw
+                                                 : GLESCommandTraceScope::Kind::LUTUpload;
+                section_index = (sample_number / 2 * 17) %
+                                (section_kind == GLESCommandTraceScope::Kind::Draw ? 256 : 32);
+                sections_seen = 0;
+            }
+            if (command_trace || list_trace)
+                g_command_trace = this;
+            return;
+        }
+    }
+
+    bool BeginSection(GLESCommandTraceScope::Kind kind, bool lighting, bool fog, std::size_t bytes) {
+        if (!command_trace || kind != section_kind || active->has_section ||
+            sections_seen++ != section_index)
+            return false;
+        if (!active->section_begin)
+            glGenQueriesEXT(1, &active->section_begin);
+        if (!active->section_end)
+            glGenQueriesEXT(1, &active->section_end);
+        if (!active->section_begin || !active->section_end)
+            return false;
+        active->lighting = lighting;
+        active->fog = fog;
+        active->bytes = bytes;
+        glQueryCounterEXT(active->section_begin, GL_TIMESTAMP_EXT);
+        return true;
+    }
+
+    void EndSection() {
+        glQueryCounterEXT(active->section_end, GL_TIMESTAMP_EXT);
+        active->has_section = true;
+    }
+
+    bool BeginList(u32 bytes) {
+        if (!list_trace)
+            return false;
+        ++active->lists_seen;
+        if (list_active || active->list_count == active->lists.size())
+            return false;
+        auto& list = active->lists[active->list_count];
+        if (!list.begin)
+            glGenQueriesEXT(1, &list.begin);
+        if (!list.end)
+            glGenQueriesEXT(1, &list.end);
+        if (!list.begin || !list.end)
+            return false;
+        list.bytes = bytes;
+        list.draws = Common::FrameTiming::counters.pica_draw_requests;
+        list.host_begin = SinceSubmission();
+        glQueryCounterEXT(list.begin, GL_TIMESTAMP_EXT);
+        list_active = true;
+        return true;
+    }
+
+    void EndList() {
+        auto& list = active->lists[active->list_count++];
+        list.host_end = SinceSubmission();
+        glQueryCounterEXT(list.end, GL_TIMESTAMP_EXT);
+        list.draws = Common::FrameTiming::counters.pica_draw_requests - list.draws;
+        list_active = false;
+    }
+
+private:
+    struct List {
+        GLuint begin = 0;
+        GLuint end = 0;
+        u32 bytes = 0;
+        u64 draws = 0;
+        u64 host_begin = 0;
+        u64 host_end = 0;
+    };
+
+    struct Sample {
+        GLuint begin = 0;
+        GLuint end = 0;
+        u32 frame = 0;
+        Clock::time_point submitted{};
+        bool pending = false;
+        bool disjoint = false;
+        GLuint section_begin = 0;
+        GLuint section_end = 0;
+        bool has_section = false;
+        bool lighting = false;
+        bool fog = false;
+        std::size_t bytes = 0;
+        std::array<List, 6> lists{};
+        std::size_t list_count = 0;
+        std::size_t lists_seen = 0;
+        u64 host_end = 0;
+    };
+
+    static bool Ready(GLuint query) {
+        GLuint available = GL_FALSE;
+        glGetQueryObjectuivEXT(query, GL_QUERY_RESULT_AVAILABLE_EXT, &available);
+        return available == GL_TRUE;
+    }
+
+    static GLuint64 Read(GLuint query) {
+        GLuint64 result = 0;
+        glGetQueryObjectui64vEXT(query, GL_QUERY_RESULT_EXT, &result);
+        return result;
+    }
+
+    u64 SinceSubmission() const {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   Clock::now() - active->submitted)
+            .count();
+    }
+
+    GLuint64 Difference(GLuint64 start, GLuint64 end) const {
+        const GLuint64 elapsed = end - start;
+        return timestamp_bits < 64 ? elapsed & ((GLuint64{1} << timestamp_bits) - 1) : elapsed;
+    }
+
+    void Report(const Sample& sample) const {
+        const GLuint64 begin = Read(sample.begin);
+        GLuint64 elapsed = begin;
+        GLuint64 end = 0;
+        GLuint64 upper_bound = static_cast<GLuint64>(std::numeric_limits<GLint64>::max());
+        if (timestamp_bits) {
+            end = Read(sample.end);
+            elapsed = Difference(begin, end);
+            // Both GPU timestamps must fall within this host interval. Allow
+            // for modest differences between the two clocks.
+            upper_bound = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - sample.submitted + std::chrono::milliseconds(1)).count();
+        }
+        const char* method = timestamp_bits ? "timestamp" : "elapsed";
+        if (elapsed > upper_bound) {
+            __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
+                                "guest_interval_invalid frame=%u method=%s",
+                                static_cast<unsigned>(sample.frame), method);
+            return;
+        }
+        __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
+                            "guest_interval frame=%u ns=%llu method=%s",
+                            static_cast<unsigned>(sample.frame),
+                            static_cast<unsigned long long>(elapsed), method);
+        if (list_trace && sample.list_count) {
+            __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
+                                "guest_lists frame=%u lists=%zu captured=%zu host_ns=%llu",
+                                static_cast<unsigned>(sample.frame), sample.lists_seen,
+                                sample.list_count, static_cast<unsigned long long>(sample.host_end));
+            u64 previous_end = 0;
+            for (std::size_t index = 0; index < sample.list_count; ++index) {
+                const auto& list = sample.lists[index];
+                const auto list_begin = Difference(begin, Read(list.begin));
+                const auto list_end = Difference(begin, Read(list.end));
+                if (list_begin < previous_end || list_end < list_begin || list_end > elapsed)
+                    break;
+                previous_end = list_end;
+                __android_log_print(
+                    ANDROID_LOG_INFO, "CaraGPU",
+                    "guest_list frame=%u list=%zu bytes=%u draws=%llu gpu_begin_ns=%llu "
+                    "gpu_end_ns=%llu host_begin_ns=%llu host_end_ns=%llu",
+                    static_cast<unsigned>(sample.frame), index, static_cast<unsigned>(list.bytes),
+                    static_cast<unsigned long long>(list.draws),
+                    static_cast<unsigned long long>(list_begin),
+                    static_cast<unsigned long long>(list_end),
+                    static_cast<unsigned long long>(list.host_begin),
+                    static_cast<unsigned long long>(list.host_end));
+            }
+        }
+        if (!sample.has_section)
+            return;
+        // Readiness of the frame's end marker implies readiness of earlier timestamps.
+        const auto start_delta = Difference(begin, Read(sample.section_begin));
+        const auto finish_delta = Difference(begin, Read(sample.section_end));
+        if (start_delta > finish_delta || finish_delta > elapsed)
+            return;
+        __android_log_print(
+            ANDROID_LOG_INFO, "CaraGPU",
+            "guest_section frame=%u kind=%s lighting=%d fog=%d bytes=%zu before_ns=%llu "
+            "section_ns=%llu after_ns=%llu",
+            static_cast<unsigned>(sample.frame), sample.bytes ? "lut_upload" : "draw",
+            sample.lighting, sample.fog, sample.bytes, static_cast<unsigned long long>(start_delta),
+            static_cast<unsigned long long>(finish_delta - start_delta),
+            static_cast<unsigned long long>(elapsed - finish_delta));
+    }
+
+    const unsigned timestamp_bits;
+    const bool command_trace;
+    const bool list_trace;
+    bool list_active = false;
+    GLESCommandTraceScope::Kind section_kind{};
+    u32 section_index = 0;
+    u32 sections_seen = 0;
+    std::array<Sample, 4> samples{};
+    Sample* active = nullptr;
+};
+
+GLESCommandTraceScope::GLESCommandTraceScope(Kind kind, bool lighting, bool fog, std::size_t bytes) {
+    if (g_command_trace && g_command_trace->BeginSection(kind, lighting, fog, bytes))
+        timer = g_command_trace;
+}
+
+GLESCommandTraceScope::~GLESCommandTraceScope() {
+    if (timer)
+        timer->EndSection();
+}
+
+GLESCommandListTraceScope::GLESCommandListTraceScope(u32 bytes) {
+    if (g_command_trace && g_command_trace->BeginList(bytes))
+        timer = g_command_trace;
+}
+
+GLESCommandListTraceScope::~GLESCommandListTraceScope() {
+    if (timer)
+        timer->EndList();
+}
+#endif
 
 // If the size of this is too small, it ends up creating a soft cap on FPS as the renderer will have
 // to wait on available presentation frames. There doesn't seem to be much of a downside to a larger
@@ -382,6 +688,36 @@ RendererOpenGL::~RendererOpenGL() {
 
 /// Swap buffers (render frame)
 void RendererOpenGL::SwapBuffers() {
+#ifdef __ANDROID__
+    if (!gpu_refresh_timer_checked) {
+        gpu_refresh_timer_checked = true;
+        const char* enabled = std::getenv("CARA_TRACE_GLES_GPU_TIMING");
+        const char* timestamp_flag = std::getenv("CARA_TRACE_GLES_GPU_TIMESTAMPS");
+        const char* command_flag = std::getenv("CARA_TRACE_GLES_GPU_COMMANDS");
+        const char* list_flag = std::getenv("CARA_TRACE_GLES_GPU_LISTS");
+        const bool commands = command_flag && std::strcmp(command_flag, "1") == 0;
+        const bool lists = list_flag && std::strcmp(list_flag, "1") == 0;
+        const bool timestamps = commands || lists ||
+                                (timestamp_flag && std::strcmp(timestamp_flag, "1") == 0);
+        const bool elapsed = enabled && std::strcmp(enabled, "1") == 0;
+        if ((timestamps || elapsed) && GLES &&
+            GLAD_GL_EXT_disjoint_timer_query && glGetQueryivEXT && glGenQueriesEXT &&
+            glDeleteQueriesEXT && glGetQueryObjectuivEXT && glGetQueryObjectui64vEXT &&
+            (timestamps ? bool(glQueryCounterEXT) : glBeginQueryEXT && glEndQueryEXT)
+#ifdef CARA_GL_CONTEXT_DISPATCH
+            && !CommandQueue::Enabled()
+#endif
+        ) {
+            GLint bits = 0;
+            glGetQueryivEXT(timestamps ? GL_TIMESTAMP_EXT : GL_TIME_ELAPSED_EXT,
+                            GL_QUERY_COUNTER_BITS_EXT, &bits);
+            if (bits > 0 && bits <= 64)
+                gpu_refresh_timer = std::make_unique<GLESRefreshTimer>(timestamps ? bits : 0, commands, lists);
+        }
+    }
+    if (gpu_refresh_timer)
+        gpu_refresh_timer->FinishAndPoll();
+#endif
     if (!VideoCore::g_screenshot_complete_callback && !render_window.ShouldPresentFrame()) {
         VideoCore::FrameUpdate();
         return;
@@ -437,6 +773,11 @@ void RendererOpenGL::SwapBuffers() {
     }
     prev_state.Apply();
 
+#ifdef __ANDROID__
+    // Time the next guest GPU interval. Composition and swap are outside the query.
+    if (gpu_refresh_timer)
+        gpu_refresh_timer->Begin(VideoCore::GetCurrentFrame() + 1);
+#endif
     VideoCore::FrameUpdate();
 }
 

@@ -3,6 +3,12 @@
 #include <android/native_window_jni.h>
 #include <glad/glad.h>
 #include <array>
+#include <android/log.h>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+#include <utility>
 
 #ifdef CARA_GL_CONTEXT_DISPATCH
 #include "common/thread.h"
@@ -13,7 +19,7 @@
 #include "video_core/video_core.h"
 
 static constexpr std::array<EGLint, 15> egl_attribs{EGL_SURFACE_TYPE,
-                                                    EGL_WINDOW_BIT,
+                                                    EGL_WINDOW_BIT | EGL_PBUFFER_BIT,
                                                     EGL_RENDERABLE_TYPE,
                                                     EGL_OPENGL_ES3_BIT_KHR,
                                                     EGL_BLUE_SIZE,
@@ -29,6 +35,28 @@ static constexpr std::array<EGLint, 15> egl_attribs{EGL_SURFACE_TYPE,
                                                     EGL_NONE};
 static constexpr std::array<EGLint, 5> egl_empty_attribs{EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
 static constexpr std::array<EGLint, 4> egl_context_attribs{EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+
+static void SwapWithTiming(EGLDisplay display, EGLSurface surface, const char* route) {
+    static const bool enabled = [] {
+        for (const char* flag : {"CARA_TRACE_GLES_GPU_TIMING", "CARA_TRACE_GLES_SWAP_TIMING"}) {
+            const char* value = std::getenv(flag);
+            if (value && std::strcmp(value, "1") == 0)
+                return true;
+        }
+        return false;
+    }();
+    if (!enabled) {
+        eglSwapBuffers(display, surface);
+        return;
+    }
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const EGLBoolean result = eglSwapBuffers(display, surface);
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count();
+    __android_log_print(ANDROID_LOG_INFO, "CaraGPU", "swap route=%s us=%lld ok=%d", route,
+                        static_cast<long long>(elapsed), static_cast<int>(result));
+}
 
 class SharedContext_Android {
 public:
@@ -65,6 +93,13 @@ private:
     EGLContext egl_context;
 };
 
+static std::shared_ptr<ANativeWindow> RetainWindow(ANativeWindow* window) {
+    if (!window)
+        return {};
+    ANativeWindow_acquire(window);
+    return {window, ANativeWindow_release};
+}
+
 EGLAndroid::EGLAndroid(bool use_shared_context) : use_shared_context(use_shared_context) {}
 
 bool EGLAndroid::Initialize(ANativeWindow* surface) {
@@ -77,7 +112,8 @@ bool EGLAndroid::Initialize(ANativeWindow* surface) {
     setenv("CARA_GPU_DEPTH_REINTERPRET", "1", 0);
     setenv("CARA_VERTEX_UPLOAD_ORDER_REUSE", "1", 0);
 #endif
-    host_window = surface;
+    active_window = RetainWindow(surface);
+    host_window = active_window.get();
     egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (!egl_display) {
         // Error: eglGetDisplay() failed
@@ -106,25 +142,40 @@ bool EGLAndroid::Initialize(ANativeWindow* surface) {
             std::make_unique<SharedContext_Android>(egl_display, egl_config, egl_context);
     } else {
         presenting_state = PresentingState::Stopped;
+        inline_pbuffer = eglCreatePbufferSurface(egl_display, egl_config, egl_empty_attribs.data());
+        if (inline_pbuffer == EGL_NO_SURFACE)
+            return false;
     }
 
     CreateWindowSurface();
+    if (!BindCoreContext())
+        return false;
 
     return gladLoadGLES2Loader((GLADloadproc)eglGetProcAddress);
 }
 
 void EGLAndroid::UpdateSurface(ANativeWindow* surface) {
-    new_window = surface;
-    StopPresenting();
+    auto window = RetainWindow(surface);
+    std::lock_guard lock(pending_window_mutex);
+    if (use_shared_context)
+        StopPresenting();
+    pending_window = std::move(window);
 }
 
 void EGLAndroid::UpdateWindow() {
+    pending_layout.store(true, std::memory_order_release);
+}
+
+void EGLAndroid::RefreshWindowLayout() {
+    if (!host_window)
+        return;
     window_width = ANativeWindow_getWidth(host_window);
     window_height = ANativeWindow_getHeight(host_window);
     safe_inset_left = static_cast<u32>(NativeLibrary::GetSafeInsetLeft());
     safe_inset_top = static_cast<u32>(NativeLibrary::GetSafeInsetTop());
     safe_inset_right = static_cast<u32>(NativeLibrary::GetSafeInsetRight());
     safe_inset_bottom = static_cast<u32>(NativeLibrary::GetSafeInsetBottom());
+    scale_density = static_cast<float>(NativeLibrary::GetScaleDensity());
     UpdateLayout();
 }
 
@@ -133,26 +184,20 @@ void EGLAndroid::UpdateLayout() {
 }
 
 void EGLAndroid::CreateWindowSurface() {
-    if (!host_window) {
+    CreateEGLWindowSurface();
+    MakeCurrent();
+    RefreshWindowLayout();
+}
+
+void EGLAndroid::CreateEGLWindowSurface() {
+    if (!host_window)
         return;
-    }
     EGLint format;
     eglGetConfigAttrib(egl_display, egl_config, EGL_NATIVE_VISUAL_ID, &format);
     ANativeWindow_setBuffersGeometry(host_window, 0, 0, format);
     egl_surface = eglCreateWindowSurface(egl_display, egl_config, host_window, nullptr);
-    eglQuerySurface(egl_display, egl_surface, EGL_WIDTH, &window_width);
-    eglQuerySurface(egl_display, egl_surface, EGL_HEIGHT, &window_height);
-    eglSurfaceAttrib(egl_display, egl_surface, EGL_SWAP_BEHAVIOR, EGL_BUFFER_DESTROYED);
-
-    // screen
-    safe_inset_left = static_cast<u32>(NativeLibrary::GetSafeInsetLeft());
-    safe_inset_top = static_cast<u32>(NativeLibrary::GetSafeInsetTop());
-    safe_inset_right = static_cast<u32>(NativeLibrary::GetSafeInsetRight());
-    safe_inset_bottom = static_cast<u32>(NativeLibrary::GetSafeInsetBottom());
-    scale_density = static_cast<float>(NativeLibrary::GetScaleDensity());
-
-    MakeCurrent();
-    UpdateLayout();
+    if (egl_surface != EGL_NO_SURFACE)
+        eglSurfaceAttrib(egl_display, egl_surface, EGL_SWAP_BEHAVIOR, EGL_BUFFER_DESTROYED);
 }
 
 void EGLAndroid::DestroyWindowSurface() {
@@ -187,22 +232,22 @@ void EGLAndroid::DestroyContext() {
 
 #ifdef CARA_GL_CONTEXT_DISPATCH
 bool EGLAndroid::StartSubmissionWorker() {
-    if (!core_context || !core_context->DoneCurrent())
+    if (!UnbindCoreContext())
         return false;
     try {
         submission = std::make_unique<Common::HostRenderQueue>(128, 8 * 1024 * 1024,
             [this] {
                 Common::SetCurrentThreadName("CaraGLES");
-                if (!core_context->MakeCurrent())
-                    throw std::runtime_error("EGL pbuffer ownership transfer failed");
-            }, [this] { core_context->DoneCurrent(); });
+                if (!BindCoreContext())
+                    throw std::runtime_error("EGL render context ownership transfer failed");
+            }, [this] { UnbindCoreContext(); });
         OpenGL::CommandQueue::Install(*submission);
         return true;
     } catch (const std::exception& error) {
         LOG_ERROR(Frontend, "Submission worker startup failed: {}", error.what());
         if (submission)
             StopSubmissionWorker();
-        else if (!core_context->MakeCurrent())
+        else if (!BindCoreContext())
             LOG_ERROR(Frontend, "Core EGL context unavailable after failed worker startup");
         return false;
     }
@@ -229,7 +274,7 @@ bool EGLAndroid::StopSubmissionWorker() noexcept {
         clean = false;
     }
     submission.reset();
-    if (!core_context->MakeCurrent())
+    if (!BindCoreContext())
         clean = false;
     if (!clean)
         LOG_ERROR(Frontend, "GLES worker stopped after queue or EGL context loss");
@@ -243,6 +288,11 @@ EGLAndroid::~EGLAndroid() {
 #endif
     core_context.reset();
     DestroyWindowSurface();
+    if (inline_pbuffer != EGL_NO_SURFACE) {
+        if (eglGetCurrentSurface(EGL_DRAW) == inline_pbuffer)
+            UnbindCoreContext();
+        eglDestroySurface(egl_display, inline_pbuffer);
+    }
     DestroyContext();
 }
 
@@ -258,9 +308,15 @@ void EGLAndroid::SetAdaptiveFrameSkip(bool enabled) {
 
 void EGLAndroid::TryPresenting() {
     display_ticket.fetch_add(1, std::memory_order_relaxed);
+    if (!use_shared_context)
+        return;
+    std::unique_lock lock(pending_window_mutex, std::try_to_lock);
+    if (!lock || pending_window)
+        return;
     if (presenting_state != PresentingState::Running) {
         if (presenting_state == PresentingState::Initial) {
-            eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
+            if (!eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context))
+                return;
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             presenting_state = PresentingState::Running;
         } else {
@@ -268,7 +324,7 @@ void EGLAndroid::TryPresenting() {
         }
     }
     if (VideoCore::Renderer()->TryPresent()) {
-        eglSwapBuffers(egl_display, egl_surface);
+        SwapWithTiming(egl_display, egl_surface, "mailbox");
     }
 }
 
@@ -280,41 +336,85 @@ void EGLAndroid::StopPresenting() {
 }
 
 void EGLAndroid::SwapBuffers() {
-    eglSwapBuffers(egl_display, egl_surface);
+    if (egl_surface == EGL_NO_SURFACE)
+        return;
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    if (submission && !use_shared_context) {
+        // Submit after the composed framebuffer draws and before any later GL work.
+        OpenGL::CommandQueue::SubmitHost([display = egl_display, surface = egl_surface] {
+            SwapWithTiming(display, surface, "render-worker");
+        });
+        return;
+    }
+#endif
+    SwapWithTiming(egl_display, egl_surface, "inline");
 }
 
 void EGLAndroid::PollEvents() {
-    if (!new_window) {
-        return;
+    std::optional<std::shared_ptr<ANativeWindow>> replacement;
+    {
+        std::lock_guard lock(pending_window_mutex);
+        replacement.swap(pending_window);
     }
+    const bool layout_dirty = pending_layout.exchange(false, std::memory_order_acq_rel);
+    if (replacement) {
+        // Keep the old native window alive until its queued EGL swaps retire.
+        const auto replace_surface = [this, window = replacement->get()] {
+            DestroyWindowSurface();
+            host_window = window;
+            CreateEGLWindowSurface();
+            if (!use_shared_context && !BindCoreContext()) {
+                DestroyWindowSurface();
+                if (!BindCoreContext())
+                    throw std::runtime_error("Could not rebind the Android render surface");
+            }
+        };
+#ifdef CARA_GL_CONTEXT_DISPATCH
+        if (submission && !use_shared_context) {
+            OpenGL::CommandQueue::Flush();
+            submission->Call(replace_surface);
+        } else
+#endif
+        {
+            replace_surface();
+        }
+        active_window = std::move(*replacement);
+        presentation_guard.Reset();
+    }
+    if (replacement || layout_dirty)
+        RefreshWindowLayout();
+    if (replacement && use_shared_context) {
+        VideoCore::Renderer()->ResetPresent();
+        presenting_state = egl_surface == EGL_NO_SURFACE ? PresentingState::Stopped
+                                                        : PresentingState::Initial;
+    }
+}
 
-    host_window = new_window;
-    new_window = nullptr;
-    DestroyWindowSurface();
-    CreateWindowSurface();
-    VideoCore::Renderer()->ResetPresent();
-    presentation_guard.Reset();
-    if (use_shared_context) {
-        presenting_state = PresentingState::Initial;
-    }
+bool EGLAndroid::BindCoreContext() {
+    if (use_shared_context)
+        return core_context && core_context->MakeCurrent();
+    const EGLSurface surface = egl_surface != EGL_NO_SURFACE ? egl_surface : inline_pbuffer;
+    return eglMakeCurrent(egl_display, surface, surface, egl_context);
+}
+
+bool EGLAndroid::UnbindCoreContext() {
+    if (use_shared_context)
+        return core_context && core_context->DoneCurrent();
+    return eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 }
 
 void EGLAndroid::MakeCurrent() {
 #ifdef CARA_GL_CONTEXT_DISPATCH
-    // Window-surface recreation on the producer must not steal the worker pbuffer.
-    if (submission) return;
+    if (submission)
+        return;
 #endif
-    if (use_shared_context) {
-        core_context->MakeCurrent();
-    } else {
-        eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
-    }
+    BindCoreContext();
 }
 
 void EGLAndroid::DoneCurrent() {
-    if (use_shared_context) {
-        core_context->DoneCurrent();
-    } else {
-        eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-    }
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    if (submission)
+        return;
+#endif
+    UnbindCoreContext();
 }

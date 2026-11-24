@@ -276,7 +276,7 @@ private:
 
     /// Syncs and uploads the lighting, fog and proctex LUTs
     void SyncAndUploadLUTs();
-    void SyncAndUploadLUTsLF();
+    void SyncAndUploadLUTsLF(bool uses_lighting = true, bool uses_fog = true);
 
     /// Upload the uniform blocks to the uniform buffer object
     void UploadUniforms(bool accelerate_draw);
@@ -501,6 +501,12 @@ private:
     OGLTexture texture_null;
 #ifdef CARA_IOS_GLES
     std::vector<u8> lighting_lut_image;
+    struct LightingLUTResidency;
+    std::unique_ptr<LightingLUTResidency> lighting_lut_residency;
+#ifdef CARA_ANDROID_GLES_ATLAS
+    struct LightingLUTUnpackStream;
+    std::unique_ptr<LightingLUTUnpackStream> lighting_lut_unpack_stream;
+#endif
 #endif
 #ifdef CARA_ANDROID_GLES_ATLAS
     static constexpr size_t LightingTextureBatchSize = 32;

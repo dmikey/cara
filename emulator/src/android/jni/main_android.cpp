@@ -200,11 +200,17 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
 void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
-    s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
-    if (!s_render_window->Initialize(s_surface)) {
+    bool window_ready;
+    {
+        std::lock_guard lock{s_present_mutex};
+        s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
+        window_ready = s_render_window->Initialize(s_surface);
+        if (!window_ready)
+            s_render_window.reset();
+    }
+    if (!window_ready) {
         LOG_ERROR(Frontend, "Could not initialize Android OpenGL ES");
         NativeLibrary::ShowMessageDialog(0, "Could not initialize OpenGL ES on this device.");
-        s_render_window.reset();
         return;
     }
 
@@ -220,7 +226,15 @@ void BootGame(const std::string& path) {
     select_probe("mailbox_async_publish", "CARA_MAILBOX_ASYNC_PUBLISH");
     select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
     select_probe("lighting_lut_generations", "CARA_LIGHTING_LUT_GENERATIONS");
+    select_probe("lighting_lut_residency", "CARA_LIGHTING_LUT_RESIDENCY");
+    select_probe("lighting_lut_pbo", "CARA_LIGHTING_LUT_PBO");
     select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");
+    select_probe("adreno_replace_vertex_images", "CARA_ADRENO_REPLACE_VERTEX_IMAGES");
+    select_probe("trace_gles_gpu_timing", "CARA_TRACE_GLES_GPU_TIMING");
+    select_probe("trace_gles_gpu_timestamps", "CARA_TRACE_GLES_GPU_TIMESTAMPS");
+    select_probe("trace_gles_gpu_commands", "CARA_TRACE_GLES_GPU_COMMANDS");
+    select_probe("trace_gles_gpu_lists", "CARA_TRACE_GLES_GPU_LISTS");
+    select_probe("trace_gles_swap_timing", "CARA_TRACE_GLES_SWAP_TIMING");
     select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
     select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");
     select_probe("checked_remap_packet", "CARA_CHECKED_REMAP_PACKET");
@@ -230,7 +244,9 @@ void BootGame(const std::string& path) {
     select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
     select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
+    select_probe("adreno_separable_programs", "CARA_ADRENO_SEPARABLE_PROGRAMS");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
+    select_probe("atlas_quaternion_slice", "CARA_GPU_QUATERNION_SLICE");
     Settings::values.gles_async_programmable_shaders = ReadPlayMode() == Cara::PlayMode::Performance;
     select_probe("atlas_extended_program_cache", "CARA_MALI_EXTENDED_PROGRAM_CACHE");
     const Config::ConfigInfo<bool> render_phase_trace{{"Debug", "trace_render_phases"}, false};
@@ -346,9 +362,12 @@ void BootGame(const std::string& path) {
             __android_log_print(ANDROID_LOG_WARN, "CaraPerf", "ordered_gles disabled while debug callback is active");
         } else {
             const bool active = s_render_window->StartSubmissionWorker();
-            __android_log_print(ANDROID_LOG_INFO, "CaraPerf", "ordered_gles active=%d", active);
+            __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                "ordered_gles active=%d swap_owner=%s", active,
+                                Settings::values.use_present_thread ? "mailbox" : "render-worker");
             if (!active && !s_render_window->HasCoreContext()) {
                 NativeLibrary::ShowMessageDialog(0, "The OpenGL ES context was lost during startup.");
+                std::lock_guard lock{s_present_mutex};
                 s_render_window.reset();
                 return;
             }
@@ -398,6 +417,7 @@ void BootGame(const std::string& path) {
                                              "Error while loading ROM! An unknown error occured.");
             break;
         }
+        std::lock_guard lock{s_present_mutex};
         s_render_window.reset();
         return;
     }
@@ -707,15 +727,30 @@ void BootGame(const std::string& path) {
                                 const auto lut_phases = fmt::format(
                                     "lut_phases end={} lighting_fog_ms={:.2f} procedural_ms={:.2f} "
                                     "texture_setup_ms={:.2f} texture_transfer_ms={:.2f} "
-                                    "texture_restore_ms={:.2f} uploads={} bytes={}",
+                                    "texture_restore_ms={:.2f} uploads={} bytes={} pbo_uploads={} "
+                                    "pbo_fallbacks={}",
                                     frame, phases.lighting_fog_lut_seconds * 1000,
                                     phases.procedural_lut_seconds * 1000,
                                     phases.lut_texture_setup_seconds * 1000,
                                     phases.lut_texture_transfer_seconds * 1000,
                                     phases.lut_texture_restore_seconds * 1000,
-                                    phases.lut_texture_uploads, phases.lut_texture_bytes);
+                                    phases.lut_texture_uploads, phases.lut_texture_bytes,
+                                    phases.lighting_lut_pbo_uploads, phases.lighting_lut_pbo_fallbacks);
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", draw_phases.c_str());
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", lut_phases.c_str());
+                                const auto lut_sources = fmt::format(
+                                    "lut_sources end={} lit_draws={} fog_draws={} lit_fog_draws={} "
+                                    "light_bytes={} fog_bytes={} light_uploads={} fog_uploads={} "
+                                    "mixed_uploads={} light_wall_ms={:.2f} fog_wall_ms={:.2f} "
+                                    "mixed_wall_ms={:.2f}",
+                                    frame, phases.lit_draws, phases.fog_draws, phases.lit_fog_draws,
+                                    phases.lighting_lut_bytes, phases.fog_lut_bytes,
+                                    phases.lut_upload_kinds[0], phases.lut_upload_kinds[1],
+                                    phases.lut_upload_kinds[2],
+                                    phases.lut_upload_wall_seconds[0] * 1000,
+                                    phases.lut_upload_wall_seconds[1] * 1000,
+                                    phases.lut_upload_wall_seconds[2] * 1000);
+                                __android_log_write(ANDROID_LOG_INFO, "CaraPerf", lut_sources.c_str());
 
                                 constexpr std::array texture_phases = {
                                     "acquire", "selection", "validation", "reinterpretation",
@@ -1008,15 +1043,21 @@ JNIEXPORT jboolean JNICALL Java_org_cara_emu_NativeLibrary_IsRunning(JNIEnv* env
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceChanged(JNIEnv* env, jclass obj,
                                                                        jobject surf) {
-    s_surface = ANativeWindow_fromSurface(env, surf);
-    if (s_render_window) {
-        s_render_window->UpdateSurface(s_surface);
+    {
+        std::lock_guard lock{s_present_mutex};
+        if (s_surface)
+            ANativeWindow_release(s_surface);
+        s_surface = ANativeWindow_fromSurface(env, surf);
+        if (s_render_window)
+            s_render_window->UpdateSurface(s_surface);
     }
     UpdateDisplayRotation();
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* env, jclass obj) {
-    ANativeWindow_release(s_surface);
+    std::lock_guard lock{s_present_mutex};
+    if (s_surface)
+        ANativeWindow_release(s_surface);
     s_surface = nullptr;
     if (s_render_window) {
         s_render_window->UpdateSurface(s_surface);
@@ -1024,6 +1065,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* 
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_WindowChanged(JNIEnv* env, jclass obj) {
+    std::lock_guard lock{s_present_mutex};
     if (s_render_window) {
         UpdateDisplayRotation();
         s_render_window->UpdateWindow();

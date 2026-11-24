@@ -30,6 +30,10 @@ inline GLenum StreamBufferTarget(GLenum target) {
 inline constexpr unsigned LUTTextureWidth = 1024;
 void ReplaceLightingLUTImage(GLuint texture, unsigned unit, const u8* data, std::size_t bytes);
 void AllocateIOSLUT(GLenum internal_format, std::size_t bytes);
+#ifdef CARA_ANDROID_GLES_ATLAS
+void UploadLightingLUTFromBuffer(GLuint texture, unsigned unit, std::size_t offset,
+                                 GLuint buffer, std::size_t source_offset, std::size_t bytes);
+#endif
 // Source must be ordinary CPU-owned memory, never a mapped GL buffer pointer.
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes);

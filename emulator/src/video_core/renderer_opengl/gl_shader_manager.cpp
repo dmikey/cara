@@ -716,6 +716,11 @@ public:
         const char* prune = std::getenv("CARA_GLES_PRUNE_UNUSED_QUATERNION");
         if (prune && std::strcmp(prune, "1") == 0)
             identity += "\nprune-unused-quaternion=1";
+#ifdef CARA_ANDROID_GLES_ATLAS
+        const char* slice = std::getenv("CARA_GPU_QUATERNION_SLICE");
+        if (slice && std::strcmp(slice, "1") == 0)
+            identity += "\nquaternion-slice=1";
+#endif
         identity += native_geometry_enabled ? "\ngeometry=1" : "\ngeometry=0";
         identity += native_dispatch_enabled ? "\nisolated-dispatch=1" : "\nisolated-dispatch=0";
         identity += suffix_sharing_policy ? "\nsuffix-sharing-policy-v1=1" : "\nsuffix-sharing-policy-v1=0";
@@ -751,6 +756,12 @@ public:
         ios_identity = IOSIdentity();
         std::string suffix = UseNativeLUTBuffers() ? ".native-lut" : "";
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        const char* slice = std::getenv("CARA_GPU_QUATERNION_SLICE");
+        const char* prune = std::getenv("CARA_GLES_PRUNE_UNUSED_QUATERNION");
+        if (slice && std::strcmp(slice, "1") == 0)
+            suffix += ".quaternion-slice";
+        if (prune && std::strcmp(prune, "1") == 0)
+            suffix += ".prune-unused-quaternion";
         const char* expanded = std::getenv("CARA_MALI_EXTENDED_PROGRAM_CACHE");
         const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
         if (expanded && std::strcmp(expanded, "1") == 0 && renderer &&
@@ -884,6 +895,13 @@ public:
                                                        native_geometry_enabled);
     }
 
+    bool HasReadySoftwareVertexProgram() const {
+        const auto key = IOSPipelineCache::KeyFromDigests(trivial_vertex_shader.GetSourceDigest(),
+                                                          current_shaders.fs->GetSourceDigest());
+        const auto program = program_cache.find(key);
+        return program != program_cache.end() && program->second.handle != 0;
+    }
+
     AndroidShaderWorker::Status TryBuildSharedProgram(const IOSStagePair& pair, bool reuse_stages) {
         if (!android_shader_worker) {
             const auto create_worker = [] { return std::make_unique<AndroidShaderWorker>(); };
@@ -941,9 +959,11 @@ public:
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
         if (!p.handle && !failed_ios_programs.count(key) && allow_software_vertices &&
             !native_dispatch_selected && AsyncProgrammableEnabled() &&
+            HasReadySoftwareVertexProgram() &&
             TryBuildSharedProgram(pair, true) == AndroidShaderWorker::Status::Pending) {
             // The caller retries the same PICA draw with CPU-transformed vertices.
-            // No draw has happened, and the fragment shader and targets stay identical.
+            // The fallback is already linked, so the foreground context can draw
+            // without compiling a second program alongside the worker.
             state.draw.shader_program = 0;
             state.draw.program_pipeline = 0;
             return;

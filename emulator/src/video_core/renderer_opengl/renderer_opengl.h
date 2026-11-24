@@ -20,6 +20,31 @@ struct FramebufferLayout;
 namespace OpenGL {
 
 struct OGLTextureMailbox;
+#ifdef __ANDROID__
+struct GLESRefreshTimer;
+class GLESCommandTraceScope {
+public:
+    enum class Kind { Draw, LUTUpload };
+    GLESCommandTraceScope(Kind kind, bool lighting, bool fog, std::size_t bytes = 0);
+    ~GLESCommandTraceScope();
+    GLESCommandTraceScope(const GLESCommandTraceScope&) = delete;
+    GLESCommandTraceScope& operator=(const GLESCommandTraceScope&) = delete;
+
+private:
+    GLESRefreshTimer* timer = nullptr;
+};
+
+class GLESCommandListTraceScope {
+public:
+    explicit GLESCommandListTraceScope(u32 bytes);
+    ~GLESCommandListTraceScope();
+    GLESCommandListTraceScope(const GLESCommandListTraceScope&) = delete;
+    GLESCommandListTraceScope& operator=(const GLESCommandListTraceScope&) = delete;
+
+private:
+    GLESRefreshTimer* timer = nullptr;
+};
+#endif
 
 /// Structure used for storing information about the textures for each 3DS screen
 struct TextureInfo {
@@ -79,6 +104,10 @@ private:
     OpenGLState state;
 
     std::unique_ptr<OGLTextureMailbox> mailbox;
+#ifdef __ANDROID__
+    std::unique_ptr<GLESRefreshTimer> gpu_refresh_timer;
+    bool gpu_refresh_timer_checked = false;
+#endif
 
     // OpenGL object IDs
     OGLVertexArray vertex_array;

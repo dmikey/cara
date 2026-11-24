@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "common/common_types.h"
+#include "common/hash.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_state.h"
 
@@ -33,6 +34,8 @@ struct State {
     u32 frame, shader, pipeline, mode, route, count;
     u64 list, interrupts, lut_uploads;
     std::array<u32, 2> attachments;
+    u32 color_address, depth_address;
+    bool lit;
     std::array<u32, 3> storage;
     OpenGLState gl;
     std::array<Pica::TexturingRegs::TextureConfig, 3> textures{};
@@ -102,6 +105,21 @@ inline void Record(const State& s, const void* vertices, size_t vb, const void* 
     if (s.feedback || prev.feedback) bits |= Feedback;
     for (int shift = 12; shift >= 0; shift -= 4)
         masks.push_back("0123456789abcdef"[(bits >> shift) & 15]);
+    // The sampled hashes are for comparison only. They never authorize reuse.
+    if (s.frame % 120 == 0) {
+        const auto hash = [](const void* data, std::size_t bytes) {
+            return bytes ? static_cast<unsigned long long>(
+                               Common::ComputeHash64(data, static_cast<u32>(bytes))) : 0ull;
+        };
+        __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+            "batch_draw frame=%u draw=%u list=%llu color=%08x depth=%08x lit=%d "
+            "shader=%u vertices=%u vertex=%016llx index=%016llx element=%016llx "
+            "vs_i=%016llx vs_f=%016llx",
+            s.frame, offset + unsigned(masks.size() / 4) - 1, static_cast<unsigned long long>(s.list),
+            s.color_address, s.depth_address, s.lit, s.shader, s.count, hash(vertices, vb),
+            hash(indices, ib), hash(elements, eb), hash(s.vs.uniforms.i.data(), sizeof(s.vs.uniforms.i)),
+            hash(s.vs.uniforms.f.data(), sizeof(s.vs.uniforms.f)));
+    }
     // Inspect a bounded sample of individual command packets for identical-input
     // neighbors. Never use command addresses or these observations to skip work.
     const auto& commands = Pica::g_state.cmd_list;
