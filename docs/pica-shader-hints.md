@@ -38,3 +38,39 @@ Fragment shaders and required vertex stages can still compile on the
 draw thread. The shader census records ROM fingerprints, generated source
 hashes, CPU fallback decisions, and long link calls separately from link
 status queries. Apple GLES continues to use the existing shader cache path.
+
+### RG Slide cold-boot validation
+
+Dark Moon was booted through the title and Gadd's lab on the RG Slide
+with Dynarmic, GLES Atlas separable stages, native resolution, fixed CLK
+100%, and adaptive frame skip off. Each run started with an empty Cara
+archive. The device's driver-private cache was retained.
+
+| 120-refresh window | Original hints p99 / worst | CPU fallback and queue fix p99 / worst |
+| --- | ---: | ---: |
+| Smoky title | 8,159.32 / 42,388.20 ms | 2,286.93 / 2,295.33 ms |
+| Lab entry | 94.83 / 8,286.81 ms | 175.03 / 1,145.93 ms |
+
+The intermediate CPU fallback run exposed a 20.24-second queue wait
+on a shadow draw. The hardware path was preparing a vertex stage before
+the renderer reached its existing unsupported-shadow check. Early
+rejection removes that work. A required stage that is still queued can
+also be taken by the renderer, so it cannot wait behind unrelated jobs.
+
+In the final run, the title p99 was refresh 515, with 1,732.89 ms in
+foreground compilation. The whole title window recorded 36 foreground
+fragment links totaling 3.26 seconds. The next title window's p99 was
+82.74 ms with zero foreground compilation and 80 CPU vertex draws.
+
+The lab-entry p99 was refresh 2491 with 701 draw requests, 72 CPU vertex
+draws, 162.02 ms of emulation-thread graphics CPU time and zero foreground
+compilation. The worst refresh, 2432, had 982.06 ms in foreground
+compilation. Lab window draw counts differ with the transition's
+alignment to the measurement boundary. Three settled lab windows had
+zero foreground compile work, 32.44–66.34 ms p99, and 72.65 ms worst.
+
+The single ROM fingerprint matched two generated vertex sources at
+guest entry 0 during the title and opening. Lab-entry stages at guest
+entries 315, 327 and 344 were discovered from live state.
+
+[Instrumented Android build](https://github.com/dmikey/cara/actions/runs/45507523389)
