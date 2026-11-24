@@ -234,7 +234,6 @@ void BootGame(const std::string& path) {
     select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
     select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
-    select_probe("atlas_single_vertex_call", "CARA_GLES_SINGLE_VERTEX_CALL");
     select_probe("adreno_separable_programs", "CARA_ADRENO_SEPARABLE_PROGRAMS");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
     Settings::values.gles_async_programmable_shaders = ReadPlayMode() == Cara::PlayMode::Performance;
