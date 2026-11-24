@@ -130,3 +130,44 @@ probe was stopped after the shader failures, with the original app and
 profile restored. See `separable-driver-errors.txt` for the original probe
 and [the later GLES 3.2 stage measurements](gles-validation.md#first-mali-stage-measurements)
 for the corrected implementation.
+
+## Bravely Second on the RG Slide
+
+The November 24 comparison used JIT, 1×, and CLK 100% on the stock Mali-G57
+driver. Through Radiant Blast and Black Bane, the installed Cara and MMJ
+emulation threads made 52 and 53 GLES program links respectively. Cara
+spent 4.30 s in links on the first profiled app-cache-cold boot, compared
+with 22.71 ms on MMJ. The app archives began empty and the driver-private
+cache was preserved. Several of the most expensive Cara links reused a
+single 45,922-byte packed-input vertex shader. The GL shader object was
+already shared, but Mali repeated substantial work for each link.
+
+Commit `3c32d1a` adds an Android diagnostic that emits one guest vertex
+program call site while preserving the reference and actual evaluations.
+Replaying the twelve associated programs in a native EGL pbuffer on the
+Slide cut total link time from 6.19 to 4.60 s. With the same preview APK,
+independent empty app archives, and the same prologue save, total link
+time fell from 6.89 to 4.96 s and the slowest link from 651 to 511 ms.
+
+| Presentation intervals, p99 / worst | Cold control | Cold probe | Warm probe |
+| --- | ---: | ---: | ---: |
+| Boot and prologue | 33.35 / 3,270.25 ms | 33.27 / 2,313.26 ms | 25.12 / 166.68 ms |
+| Radiant Blast | 41.66 / 458.21 ms | 41.65 / 383.32 ms | 25.15 / 41.63 ms |
+| Black Bane | 49.95 / 474.94 ms | 25.08 / 366.44 ms | 25.08 / 25.12 ms |
+
+The warm probe restored 45 linked binaries and showed 30 FPS / 100% SPD
+at Black Bane. The cold stalls remain and the probe stays off by default.
+A separable-program control reduced repeated links but still rebuilt a
+roughly one-second vertex stage on restart. Exact on-device replay also
+cut link time from 1.94 to 1.28 s by omitting quaternion reference work for
+five fragment sources that never read it. That needs an in-game check
+before adoption. [Android preview CI](https://github.com/dmikey/cara/actions/runs/45410338317)
+
+The Slide's stock Vulkan driver reports 1.3.225, pipeline creation cache
+control, creation feedback, dynamic rendering, and synchronization2.
+Graphics pipeline libraries were absent. MaliSX2 supports the G57 via
+Arm's kbase interface as an optional Vulkan comparison in a compatible
+frontend. Mesa's upstream Panfrost GLES and PanVK have separate support
+matrices. Cara's measured path here uses the stock GLES driver.
+[MaliSX2 source](https://github.com/bmdhacks/malisx2) ·
+[Mesa Panfrost support](https://docs.mesa3d.org/drivers/panfrost.html)
