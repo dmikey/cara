@@ -38,8 +38,8 @@ void OpenGLState::ResetBindingsForStateLoad() {
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
     // In addition to the guest units and LUTs (0–6), the GLES vertex atlas
-    // binds inputs, indices and feedback on private units 7–9.
-    for (GLuint unit = 0; unit <= 9; ++unit) {
+    // binds inputs, indices, feedback and separate fog on private units 7–10.
+    for (GLuint unit = 0; unit <= TextureUnits::FogLUT.id; ++unit) {
         glActiveTexture(GL_TEXTURE0 + unit);
         glBindTexture(GL_TEXTURE_2D, 0);
         glBindSampler(unit, 0);
@@ -303,6 +303,10 @@ void OpenGLState::Apply() const {
         cur_state.texture_buffer_lut_rgba.texture_buffer) {
         glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
         glBindTexture(LUTTextureTarget(), texture_buffer_lut_rgba.texture_buffer);
+    }
+    if (fog_lut_texture != cur_state.fog_lut_texture) {
+        glActiveTexture(TextureUnits::FogLUT.Enum());
+        glBindTexture(GL_TEXTURE_2D, fog_lut_texture);
     }
 
     // Shadow Images
@@ -582,6 +586,11 @@ void OpenGLState::ForgetDeletedPicaTexture(GLuint handle) {
 #endif
 
 void OpenGLState::ResetTexture(GLuint handle) {
+    if (cur_state.fog_lut_texture == handle) {
+        cur_state.fog_lut_texture = 0;
+        glActiveTexture(TextureUnits::FogLUT.Enum());
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
     for (unsigned i = 0; i < ARRAY_SIZE(cur_state.texture_units); ++i) {
         if (cur_state.texture_units[i].texture_2d == handle) {
             cur_state.texture_units[i].texture_2d = 0;

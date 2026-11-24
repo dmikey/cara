@@ -4492,12 +4492,78 @@ void RasterizerOpenGL::SyncShadowTextureBias() {
     }
 }
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+GLuint RasterizerOpenGL::LUTTextureGenerations::Next() {
+    if (next == batch.size()) {
+        // Only previously submitted generations are retired here. The driver
+        // keeps their storage until pending draws finish.
+        std::array<GLuint, 32> names{};
+        for (size_t index = 0; index < names.size(); ++index)
+            names[index] = std::exchange(batch[index].handle, 0);
+        if (names.back())
+            glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
+        names.fill(0);
+        glGenTextures(static_cast<GLsizei>(names.size()), names.data());
+        if (std::any_of(names.begin(), names.end(), [](GLuint name) { return name == 0; })) {
+            glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
+            return current.handle;
+        }
+        for (size_t index = 0; index < names.size(); ++index)
+            batch[index].handle = names[index];
+        next = 0;
+    }
+    std::swap(current, batch[next++]);
+    return current.handle;
+}
+
+void RasterizerOpenGL::SyncFogLUTTexture() {
+    if (Pica::g_state.regs.texturing.fog_mode != Pica::TexturingRegs::FogMode::Fog ||
+        (!uniform_block_data.fog_lut_dirty && fog_texture_generations.current.handle))
+        return;
+    bool changed = !fog_texture_generations.current.handle;
+    for (size_t index = 0; index < fog_lut_data.size(); ++index) {
+        const auto& entry = Pica::g_state.fog.lut[index];
+        const GLvec2 value{entry.ToFloat(), entry.DiffToFloat()};
+        changed |= value != fog_lut_data[index];
+        fog_lut_data[index] = value;
+    }
+    if (changed) {
+        namespace Timing = Common::FrameTiming;
+        Timing::Scope timing(Timing::Phase::LightingFogLUT, Timing::RenderBookkeepingProfileEnabled());
+        const GLuint texture = fog_texture_generations.Next();
+        if (!texture)
+            throw std::runtime_error("Unable to allocate GLES fog lookup texture");
+        constexpr size_t bytes = sizeof(fog_lut_data);
+        static_assert(bytes == 1024);
+        auto& counters = Timing::counters;
+        const bool trace = counters.enabled && Timing::RenderBookkeepingProfileEnabled();
+        const auto start = trace ? std::chrono::steady_clock::now()
+                                 : std::chrono::steady_clock::time_point{};
+        UploadFogLUTImage(texture, TextureUnits::FogLUT.id,
+                         reinterpret_cast<const u8*>(fog_lut_data.data()));
+        state.fog_lut_texture = texture;
+        if (trace) {
+            ++counters.lut_upload_kinds[1];
+            counters.fog_lut_bytes += bytes;
+            counters.lut_upload_wall_seconds[1] +=
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        }
+    }
+    uniform_block_data.fog_lut_dirty = false;
+}
+#endif
+
 void RasterizerOpenGL::SyncAndUploadLUTsLF(bool uses_lighting, bool uses_fog) {
     constexpr std::size_t max_size =
         sizeof(GLvec2) * 256 * Pica::LightingRegs::NumLightingSampler + sizeof(GLvec2) * 128; // fog
 
     const bool lighting_dirty = uses_lighting && uniform_block_data.lighting_lut_dirty_any;
-    const bool fog_dirty = uses_fog && uniform_block_data.fog_lut_dirty;
+    const bool separate_fog = UseSeparateFogLUT();
+#ifdef CARA_ANDROID_GLES_ATLAS
+    if (separate_fog && uses_fog)
+        SyncFogLUTTexture();
+#endif
+    const bool fog_dirty = !separate_fog && uses_fog && uniform_block_data.fog_lut_dirty;
     if (!lighting_dirty && !fog_dirty) {
         return;
     }
@@ -4608,7 +4674,7 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF(bool uses_lighting, bool uses_fog) {
     const auto lighting_bytes = bytes_used;
 #endif
     // Sync the fog lut
-    if (fog_dirty || invalidate) {
+    if (!separate_fog && (fog_dirty || invalidate)) {
         bool is_changed = false;
         for (std::size_t i = 0; i < fog_lut_data.size(); ++i) {
             const auto& entry = Pica::g_state.fog.lut[i];
@@ -4645,34 +4711,9 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF(bool uses_lighting, bool uses_fog) {
                 const char* value = std::getenv("CARA_LIGHTING_LUT_GENERATIONS");
                 return value && std::strcmp(value, "1") == 0;
             }();
-            if (distinct_lighting_images) {
-                if (next_lighting_texture == LightingTextureBatchSize) {
-                    // These names belong to earlier, already submitted draws. GLES
-                    // retains their storage for pending work after deletion.
-                    std::array<GLuint, LightingTextureBatchSize> names{};
-                    for (size_t i = 0; i < names.size(); ++i) {
-                        names[i] = std::exchange(lighting_texture_batch[i].handle, 0);
-                    }
-                    if (names.back() != 0) {
-                        glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
-                    }
-                    names.fill(0);
-                    glGenTextures(static_cast<GLsizei>(names.size()), names.data());
-                    if (std::any_of(names.begin(), names.end(), [](GLuint name) { return name == 0; })) {
-                        glDeleteTextures(static_cast<GLsizei>(names.size()), names.data());
-                    } else {
-                        for (size_t i = 0; i < names.size(); ++i) {
-                            lighting_texture_batch[i].handle = names[i];
-                        }
-                        next_lighting_texture = 0;
-                    }
-                }
-                if (next_lighting_texture < LightingTextureBatchSize) {
-                    std::swap(lighting_texture_generation,
-                              lighting_texture_batch[next_lighting_texture++]);
-                    texture = lighting_texture_generation.handle;
-                }
-            }
+            if (distinct_lighting_images)
+                if (const auto generation = lighting_texture_generations.Next())
+                    texture = generation;
 #endif
             ReplaceLightingLUTImage(texture, TextureUnits::TextureBufferLUT_LF.id,
                                     lighting_lut_image.data(), lighting_lut_image.size());

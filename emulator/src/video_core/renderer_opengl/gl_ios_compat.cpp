@@ -5,6 +5,7 @@
 #endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_opengl/gl_ios_compat.h"
+#include "video_core/renderer_opengl/gl_vars.h"
 #ifdef CARA_IOS_GLES
 #include <algorithm>
 #include <cstdlib>
@@ -18,6 +19,13 @@ bool UseLightingLUTSnapshots() {
         return requested && requested[0] == '1' && !requested[1] && !UseNativeLUTBuffers();
     }();
     return enabled;
+}
+bool UseSeparateFogLUT() {
+    static const bool enabled = [] {
+        const char* requested = std::getenv("CARA_GLES_SEPARATE_FOG_LUT");
+        return requested && requested[0] == '1' && !requested[1];
+    }();
+    return enabled && GLES;
 }
 bool UseNativeLUTBuffers() {
     static const bool enabled = [] {
@@ -43,7 +51,9 @@ void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 }
-template <bool ReplaceImage>
+enum class LUTUpload { Update, LightingImage, FogImage };
+
+template <LUTUpload Mode>
 static void UploadLUTData(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                           const u8* data, std::size_t bytes, GLuint source_buffer = 0,
                           std::size_t source_offset = 0) {
@@ -77,14 +87,15 @@ static void UploadLUTData(GLuint texture, unsigned unit, GLenum format, std::siz
     }
     {
         Timing::Scope scope(Timing::Phase::LUTTextureTransfer, trace);
-        if constexpr (ReplaceImage) {
-            const std::size_t row_bytes = LUTTextureWidth * stride;
+        if constexpr (Mode != LUTUpload::Update) {
+            constexpr unsigned width = Mode == LUTUpload::FogImage ? 128 : LUTTextureWidth;
+            const std::size_t row_bytes = width * stride;
             if (offset != 0 || format != GL_RG || bytes % row_bytes != 0)
                 throw std::invalid_argument("Incomplete lighting table image");
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, LUTTextureWidth,
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, width,
                          static_cast<GLsizei>(bytes / row_bytes), 0, GL_RG, GL_FLOAT, data);
         } else {
             std::size_t first = offset / stride, count = bytes / stride;
@@ -117,7 +128,7 @@ static void UploadLUTData(GLuint texture, unsigned unit, GLenum format, std::siz
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpack_buffer));
     }
 }
-template <bool ReplaceImage>
+template <LUTUpload Mode>
 static void UploadLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes) {
 #ifdef CARA_GL_CONTEXT_DISPATCH
@@ -126,30 +137,34 @@ static void UploadLUT(GLuint texture, unsigned unit, GLenum format, std::size_t 
         // execute on the same owner as the preceding and following draws.
         if (Common::FrameTiming::counters.enabled)
             Common::FrameTiming::counters.lut_texture_bytes += bytes;
-        CommandQueue::QueueLUT(&UploadLUT<ReplaceImage>, texture, unit, format, offset, data, bytes);
+        CommandQueue::QueueLUT(&UploadLUT<Mode>, texture, unit, format, offset, data, bytes);
         return;
     }
 #endif
     if (const auto* bridge=DriverTransactions::Pending()) {
-        bridge->lut(&UploadLUT<ReplaceImage>,texture,unit,format,offset,data,bytes);return;
+        bridge->lut(&UploadLUT<Mode>,texture,unit,format,offset,data,bytes);return;
     }
-    UploadLUTData<ReplaceImage>(texture, unit, format, offset, data, bytes);
+    UploadLUTData<Mode>(texture, unit, format, offset, data, bytes);
 }
 
 #ifdef CARA_ANDROID_GLES_ATLAS
 void UploadLightingLUTFromBuffer(GLuint texture, unsigned unit, std::size_t offset,
                                  GLuint buffer, std::size_t source_offset, std::size_t bytes) {
-    UploadLUTData<false>(texture, unit, GL_RG, offset, nullptr, bytes, buffer, source_offset);
+    UploadLUTData<LUTUpload::Update>(texture, unit, GL_RG, offset, nullptr, bytes, buffer, source_offset);
+}
+
+void UploadFogLUTImage(GLuint texture, unsigned unit, const u8* data) {
+    UploadLUT<LUTUpload::FogImage>(texture, unit, GL_RG, 0, data, 128 * 2 * sizeof(float));
 }
 #endif
 
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes) {
-    UploadLUT<false>(texture, unit, format, offset, data, bytes);
+    UploadLUT<LUTUpload::Update>(texture, unit, format, offset, data, bytes);
 }
 
 void ReplaceLightingLUTImage(GLuint texture, unsigned unit, const u8* data, std::size_t bytes) {
-    UploadLUT<true>(texture, unit, GL_RG, 0, data, bytes);
+    UploadLUT<LUTUpload::LightingImage>(texture, unit, GL_RG, 0, data, bytes);
 }
 
 }

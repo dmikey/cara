@@ -141,6 +141,7 @@ struct PicaFragmentShaderTarget {
     bool metal_general_fragment = false;
     unsigned metal_runtime_tev_units = 0; // Mask of bound ordinary 2D units (1 or 3).
     bool elide_dead_combiner_buffer = false;
+    bool separate_fog_lut = false;
 };
 
 /**

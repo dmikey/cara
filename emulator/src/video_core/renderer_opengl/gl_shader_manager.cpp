@@ -99,6 +99,8 @@ static void SetShaderSamplerBindings(GLuint shader) {
     SetShaderSamplerBinding(shader, "texture_buffer_lut_lf", TextureUnits::TextureBufferLUT_LF);
     SetShaderSamplerBinding(shader, "texture_buffer_lut_rg", TextureUnits::TextureBufferLUT_RG);
     SetShaderSamplerBinding(shader, "texture_buffer_lut_rgba", TextureUnits::TextureBufferLUT_RGBA);
+    if (UseSeparateFogLUT())
+        SetShaderSamplerBinding(shader, "cara_fog_lut", TextureUnits::FogLUT);
 
     SetShaderImageBinding(shader, "shadow_buffer", ImageUnits::ShadowBuffer);
     SetShaderImageBinding(shader, "shadow_texture_px", ImageUnits::ShadowTexturePX);
@@ -864,6 +866,10 @@ public:
         ios_identity = IOSIdentity();
         const bool vertex_archive = ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages;
         std::string suffix = UseNativeLUTBuffers() ? ".native-lut" : "";
+        if (UseSeparateFogLUT() && !vertex_archive) {
+            ios_identity += "\nseparate-fog-lut=1";
+            suffix += ".separate-fog";
+        }
         if (vertex_archive) {
             ios_identity += "\nprogram-role=separable-es320-vertex-v1";
             suffix += ".separable-vertex";

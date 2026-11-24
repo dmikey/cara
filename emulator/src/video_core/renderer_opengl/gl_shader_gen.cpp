@@ -1,4 +1,5 @@
 #include "video_core/renderer_opengl/metal_runtime_tev_glsl.h"
+#include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "gl_native_quaternion_geometry.h"
 #include "gl_shader_suffix_sharing.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
@@ -1613,7 +1614,8 @@ std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_sh
     return GenerateFragmentShader(config, separable_shader,
                                   {.gles = GLES,
                                    .allow_shadow = AllowShadow,
-                                   .elide_dead_combiner_buffer = GLES});
+                                   .elide_dead_combiner_buffer = GLES,
+                                   .separate_fog_lut = UseSeparateFogLUT()});
 }
 
 std::string GenerateFragmentShader(const PicaFSConfig& config, bool separable_shader,
@@ -1683,6 +1685,8 @@ uniform samplerBuffer texture_buffer_lut_lf;
 uniform samplerBuffer texture_buffer_lut_rg;
 uniform samplerBuffer texture_buffer_lut_rgba;
 )";
+    if (target.separate_fog_lut && state.fog_mode == TexturingRegs::FogMode::Fog)
+        out += "uniform highp sampler2D cara_fog_lut;\n";
 
     if (shadow_rendering) {
         out += R"(
@@ -1954,10 +1958,14 @@ if (cara_tex0_crop.y != 0) {
 
         // Generate clamped fog factor from LUT for given fog index
         out += "float fog_i = clamp(floor(fog_index), 0.0, 127.0);\n"
-               "float fog_f = fog_index - fog_i;\n"
-               "vec2 fog_lut_entry = texelFetch(texture_buffer_lut_lf, int(fog_i) + "
-               "fog_lut_offset).rg;\n"
-               "float fog_factor = fog_lut_entry.r + fog_lut_entry.g * fog_f;\n"
+               "float fog_f = fog_index - fog_i;\n";
+        if (target.separate_fog_lut) {
+            out += "vec2 fog_lut_entry = texelFetch(cara_fog_lut, ivec2(int(fog_i), 0), 0).rg;\n";
+        } else {
+            out += "vec2 fog_lut_entry = texelFetch(texture_buffer_lut_lf, int(fog_i) + "
+                   "fog_lut_offset).rg;\n";
+        }
+        out += "float fog_factor = fog_lut_entry.r + fog_lut_entry.g * fog_f;\n"
                "fog_factor = clamp(fog_factor, 0.0, 1.0);\n";
 
         // Blend the fog

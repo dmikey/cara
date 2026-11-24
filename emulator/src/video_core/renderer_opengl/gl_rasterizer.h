@@ -509,10 +509,15 @@ private:
 #endif
 #endif
 #ifdef CARA_ANDROID_GLES_ATLAS
-    static constexpr size_t LightingTextureBatchSize = 32;
-    std::array<OGLTexture, LightingTextureBatchSize> lighting_texture_batch;
-    size_t next_lighting_texture = LightingTextureBatchSize;
-    OGLTexture lighting_texture_generation;
+    struct LUTTextureGenerations {
+        GLuint Next();
+        std::array<OGLTexture, 32> batch;
+        size_t next = batch.size();
+        OGLTexture current;
+    };
+    LUTTextureGenerations lighting_texture_generations;
+    LUTTextureGenerations fog_texture_generations;
+    void SyncFogLUTTexture();
 #endif
     OGLTexture texture_buffer_lut_lf;
     OGLTexture texture_buffer_lut_rg;
