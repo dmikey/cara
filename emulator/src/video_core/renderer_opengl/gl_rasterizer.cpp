@@ -47,6 +47,7 @@
 #include "video_core/regs_rasterizer.h"
 #include "video_core/regs_texturing.h"
 #include "video_core/renderer_opengl/gl_command_queue.h"
+#include "video_core/renderer_opengl/gl_driver_transactions.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/renderer_opengl/gl_scissor_damage.h"
