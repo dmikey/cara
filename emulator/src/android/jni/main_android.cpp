@@ -200,11 +200,17 @@ static void ApplyRunningSettings(const RunningSettings& settings) {
 void BootGame(const std::string& path) {
     NativeLibrary::UpdateProgress("BootGame", 0, 1);
 
-    s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
-    if (!s_render_window->Initialize(s_surface)) {
+    bool window_ready;
+    {
+        std::lock_guard lock{s_present_mutex};
+        s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
+        window_ready = s_render_window->Initialize(s_surface);
+        if (!window_ready)
+            s_render_window.reset();
+    }
+    if (!window_ready) {
         LOG_ERROR(Frontend, "Could not initialize Android OpenGL ES");
         NativeLibrary::ShowMessageDialog(0, "Could not initialize OpenGL ES on this device.");
-        s_render_window.reset();
         return;
     }
 
@@ -351,9 +357,12 @@ void BootGame(const std::string& path) {
             __android_log_print(ANDROID_LOG_WARN, "CaraPerf", "ordered_gles disabled while debug callback is active");
         } else {
             const bool active = s_render_window->StartSubmissionWorker();
-            __android_log_print(ANDROID_LOG_INFO, "CaraPerf", "ordered_gles active=%d", active);
+            __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                                "ordered_gles active=%d swap_owner=%s", active,
+                                Settings::values.use_present_thread ? "mailbox" : "render-worker");
             if (!active && !s_render_window->HasCoreContext()) {
                 NativeLibrary::ShowMessageDialog(0, "The OpenGL ES context was lost during startup.");
+                std::lock_guard lock{s_present_mutex};
                 s_render_window.reset();
                 return;
             }
@@ -403,6 +412,7 @@ void BootGame(const std::string& path) {
                                              "Error while loading ROM! An unknown error occured.");
             break;
         }
+        std::lock_guard lock{s_present_mutex};
         s_render_window.reset();
         return;
     }
@@ -1013,15 +1023,21 @@ JNIEXPORT jboolean JNICALL Java_org_cara_emu_NativeLibrary_IsRunning(JNIEnv* env
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceChanged(JNIEnv* env, jclass obj,
                                                                        jobject surf) {
-    s_surface = ANativeWindow_fromSurface(env, surf);
-    if (s_render_window) {
-        s_render_window->UpdateSurface(s_surface);
+    {
+        std::lock_guard lock{s_present_mutex};
+        if (s_surface)
+            ANativeWindow_release(s_surface);
+        s_surface = ANativeWindow_fromSurface(env, surf);
+        if (s_render_window)
+            s_render_window->UpdateSurface(s_surface);
     }
     UpdateDisplayRotation();
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* env, jclass obj) {
-    ANativeWindow_release(s_surface);
+    std::lock_guard lock{s_present_mutex};
+    if (s_surface)
+        ANativeWindow_release(s_surface);
     s_surface = nullptr;
     if (s_render_window) {
         s_render_window->UpdateSurface(s_surface);
@@ -1029,6 +1045,7 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* 
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_WindowChanged(JNIEnv* env, jclass obj) {
+    std::lock_guard lock{s_present_mutex};
     if (s_render_window) {
         UpdateDisplayRotation();
         s_render_window->UpdateWindow();

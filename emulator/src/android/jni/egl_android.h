@@ -1,6 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <vector>
 
 #include <EGL/egl.h>
@@ -42,17 +45,28 @@ public:
 
 private:
     void CreateWindowSurface();
+    void CreateEGLWindowSurface();
+    void RefreshWindowLayout();
+    bool BindCoreContext();
+    bool UnbindCoreContext();
+    void PollInlineSurface();
     void DestroyWindowSurface();
     void DestroyContext();
 
     ANativeWindow* new_window = nullptr;
     ANativeWindow* host_window = nullptr;
+    // The EGL owner keeps the old window alive until its queued swaps have retired.
+    std::shared_ptr<ANativeWindow> inline_window;
+    std::mutex pending_window_mutex;
+    std::optional<std::shared_ptr<ANativeWindow>> pending_inline_window;
+    std::atomic<bool> pending_inline_layout{false};
 
     EGLint window_width = 1;
     EGLint window_height = 1;
 
     EGLConfig egl_config = nullptr;
     EGLSurface egl_surface = EGL_NO_SURFACE;
+    EGLSurface inline_pbuffer = EGL_NO_SURFACE;
     EGLContext egl_context = EGL_NO_CONTEXT;
     EGLDisplay egl_display = EGL_NO_DISPLAY;
 
