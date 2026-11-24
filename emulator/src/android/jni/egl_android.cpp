@@ -3,6 +3,10 @@
 #include <android/native_window_jni.h>
 #include <glad/glad.h>
 #include <array>
+#include <android/log.h>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
 
 #ifdef CARA_GL_CONTEXT_DISPATCH
 #include "common/thread.h"
@@ -29,6 +33,24 @@ static constexpr std::array<EGLint, 15> egl_attribs{EGL_SURFACE_TYPE,
                                                     EGL_NONE};
 static constexpr std::array<EGLint, 5> egl_empty_attribs{EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
 static constexpr std::array<EGLint, 4> egl_context_attribs{EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+
+static void SwapWithTiming(EGLDisplay display, EGLSurface surface, const char* route) {
+    static const bool enabled = [] {
+        const char* value = std::getenv("CARA_TRACE_GLES_GPU_TIMING");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (!enabled) {
+        eglSwapBuffers(display, surface);
+        return;
+    }
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    const EGLBoolean result = eglSwapBuffers(display, surface);
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count();
+    __android_log_print(ANDROID_LOG_INFO, "CaraGPU", "swap route=%s us=%lld ok=%d", route,
+                        static_cast<long long>(elapsed), static_cast<int>(result));
+}
 
 class SharedContext_Android {
 public:
@@ -268,7 +290,7 @@ void EGLAndroid::TryPresenting() {
         }
     }
     if (VideoCore::Renderer()->TryPresent()) {
-        eglSwapBuffers(egl_display, egl_surface);
+        SwapWithTiming(egl_display, egl_surface, "mailbox");
     }
 }
 
@@ -280,7 +302,7 @@ void EGLAndroid::StopPresenting() {
 }
 
 void EGLAndroid::SwapBuffers() {
-    eglSwapBuffers(egl_display, egl_surface);
+    SwapWithTiming(egl_display, egl_surface, "inline");
 }
 
 void EGLAndroid::PollEvents() {

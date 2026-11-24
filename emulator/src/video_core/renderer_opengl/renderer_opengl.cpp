@@ -45,6 +45,74 @@
 
 namespace OpenGL {
 
+#ifdef __ANDROID__
+struct GLESRefreshTimer {
+    struct Sample {
+        GLuint name = 0;
+        u32 frame = 0;
+        bool pending = false;
+        bool disjoint = false;
+    };
+
+    ~GLESRefreshTimer() {
+        if (active)
+            glEndQueryEXT(GL_TIME_ELAPSED_EXT);
+        for (const auto& sample : samples) {
+            if (sample.name)
+                glDeleteQueriesEXT(1, &sample.name);
+        }
+    }
+
+    void FinishAndPoll() {
+        if (active) {
+            glEndQueryEXT(GL_TIME_ELAPSED_EXT);
+            active->pending = true;
+            active = nullptr;
+        }
+        GLint disjoint = GL_FALSE;
+        glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint);
+        for (auto& sample : samples) {
+            if (!sample.pending)
+                continue;
+            sample.disjoint |= disjoint == GL_TRUE;
+            GLuint ready = GL_FALSE;
+            glGetQueryObjectuivEXT(sample.name, GL_QUERY_RESULT_AVAILABLE_EXT, &ready);
+            if (!ready)
+                continue;
+            if (!sample.disjoint) {
+                GLuint64 elapsed = 0;
+                glGetQueryObjectui64vEXT(sample.name, GL_QUERY_RESULT_EXT, &elapsed);
+                __android_log_print(ANDROID_LOG_INFO, "CaraGPU", "guest_interval frame=%u ns=%llu",
+                                    static_cast<unsigned>(sample.frame),
+                                    static_cast<unsigned long long>(elapsed));
+            }
+            sample.pending = false;
+        }
+    }
+
+    void Begin(u32 frame) {
+        if (frame % 16 != 0)
+            return;
+        for (auto& sample : samples) {
+            if (sample.pending)
+                continue;
+            if (!sample.name)
+                glGenQueriesEXT(1, &sample.name);
+            if (!sample.name)
+                return;
+            sample.frame = frame;
+            sample.disjoint = false;
+            glBeginQueryEXT(GL_TIME_ELAPSED_EXT, sample.name);
+            active = &sample;
+            return;
+        }
+    }
+
+    std::array<Sample, 4> samples{};
+    Sample* active = nullptr;
+};
+#endif
+
 // If the size of this is too small, it ends up creating a soft cap on FPS as the renderer will have
 // to wait on available presentation frames. There doesn't seem to be much of a downside to a larger
 // number but 9 swap textures at 60FPS presentation allows for 800% speed so thats probably fine
@@ -382,6 +450,27 @@ RendererOpenGL::~RendererOpenGL() {
 
 /// Swap buffers (render frame)
 void RendererOpenGL::SwapBuffers() {
+#ifdef __ANDROID__
+    if (!gpu_refresh_timer_checked) {
+        gpu_refresh_timer_checked = true;
+        const char* enabled = std::getenv("CARA_TRACE_GLES_GPU_TIMING");
+        if (enabled && std::strcmp(enabled, "1") == 0 && GLES &&
+            GLAD_GL_EXT_disjoint_timer_query && glGetQueryivEXT && glGenQueriesEXT &&
+            glDeleteQueriesEXT && glBeginQueryEXT && glEndQueryEXT && glGetQueryObjectuivEXT &&
+            glGetQueryObjectui64vEXT
+#ifdef CARA_GL_CONTEXT_DISPATCH
+            && !CommandQueue::Enabled()
+#endif
+        ) {
+            GLint bits = 0;
+            glGetQueryivEXT(GL_TIME_ELAPSED_EXT, GL_QUERY_COUNTER_BITS_EXT, &bits);
+            if (bits > 0)
+                gpu_refresh_timer = std::make_unique<GLESRefreshTimer>();
+        }
+    }
+    if (gpu_refresh_timer)
+        gpu_refresh_timer->FinishAndPoll();
+#endif
     if (!VideoCore::g_screenshot_complete_callback && !render_window.ShouldPresentFrame()) {
         VideoCore::FrameUpdate();
         return;
@@ -437,6 +526,11 @@ void RendererOpenGL::SwapBuffers() {
     }
     prev_state.Apply();
 
+#ifdef __ANDROID__
+    // Time the next guest GPU interval. Composition and swap are outside the query.
+    if (gpu_refresh_timer)
+        gpu_refresh_timer->Begin(VideoCore::GetCurrentFrame() + 1);
+#endif
     VideoCore::FrameUpdate();
 }
 
