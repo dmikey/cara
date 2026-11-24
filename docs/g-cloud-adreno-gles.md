@@ -450,3 +450,190 @@ shaders. Mailbox swap medians were 237.31 and 307.64 ms, close to
 the earlier query-enabled capture. This confirms long presentation
 waits even without timer queries. It does not identify a GPU clock
 or isolate the cost of a PICA draw on Adreno.
+
+## Stock Vulkan capabilities on the two Android handhelds
+
+Physical device enumeration through `adb shell cmd gpu vkjson`
+reported the following driver capabilities.
+
+| Handheld | Stock Vulkan device | Device API | Pipeline creation feedback and cache control | Timeline semaphores and synchronization2 |
+| --- | --- | --- | --- | --- |
+| Logitech G Cloud | Adreno 618, Qualcomm 2021-11-30 driver | 1.1.128 | Advertised | No corresponding extensions advertised |
+| RG Slide | Mali-G57, Arm r40p0 | 1.3.225 | Advertised | Advertised |
+
+Both expose a graphics queue family with valid timestamp bits. The
+G Cloud advertises 48 bits and the Slide advertises 64 bits. Capability
+enumeration does not establish timestamp accuracy or game performance.
+A shared renderer baseline can use Vulkan 1.1 render passes, binary
+semaphores and fences. Optional synchronization and pipeline features
+should be queried on the device before use.
+
+The G Cloud Mario map spends 23.7 ms per guest refresh in PICA graphics
+and driver work, including about 6.4 ms in lighting and fog transfers.
+Vulkan could move submission off that critical path, upload changed
+ranges to explicitly owned storage, and reduce stalls when prior draws
+still use those tables. This number includes PICA translation and
+driver waits, so it cannot estimate the Vulkan speedup on its own.
+The RG Slide's approximately 45 ms sampled GPU command intervals
+give another test target. Keeping attachments tile-local and avoiding
+barriers that force earlier work to drain are plausible improvements.
+An equivalent PICA workload and pixel comparison are required to
+distinguish a lower renderer cost from different guest work.
+[Arm Vulkan mobile guidance](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/vulkan-mobile-best-practices-and-management)
+[Khronos threaded recording sample](https://docs.vulkan.org/samples/latest/samples/performance/multithreading_render_passes/README.html)
+
+Vulkan still needs pipelines for new guest shader and fixed-function
+state combinations. Azahar's Android defaults and Vulkan shader cache
+are useful prior art. Compare shader creation, frame time p99, worst
+refresh and sustained speed on the same scenes, with fresh and seeded
+caches separated. Cara Android currently ships GLES.
+[Azahar Android defaults](https://github.com/azahar-emu/azahar/blob/master/src/common/settings.h)
+[Azahar Vulkan shader cache](https://github.com/azahar-emu/azahar/discussions/1942)
+
+## Mario default pacing versus fixed guest clock
+
+The same installed GLES build ran the opening and World 1-1 from two
+normal boots with seeded shader programs. One used stock Performance
+Mode pacing with Adaptive Frame Skip available. The fixed-clock arm
+locked CLK at 100% and disabled Adaptive Frame Skip. Each timing range
+covers complete 120-refresh windows selected by the same draw count.
+
+| Warm scene | Arm | Emulated CLK | p50 | p99 | Worst | Median host window |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Lit opening, 12,240 draws | Fixed | 100% | 21.98–22.48 ms | 25.05–30.35 ms | 32.30 ms at 2936 | 2.707 s |
+| Lit opening, 12,240 draws | Stock pacing | 50% | 21.98–22.38 ms | 25.50–28.24 ms | 30.50 ms at 3111 | 2.692 s |
+| Stationary map, 36,000 draws | Fixed | 100% | 30.75–30.92 ms | 34.25–36.96 ms | 40.20 ms at 3932 | 3.712 s |
+| Stationary map, 36,000 draws | Stock pacing | 50% | 30.74–30.97 ms | 33.92–35.30 ms | 36.60 ms at 4332 | 3.707 s |
+
+The observed stock pacing did little to sustained throughput in the
+graphics-heavy scenes. It returned the guest clock to 100% in the first
+part of World 1-1, where the HUD reported 60 FPS and 100% speed.
+Build the timing comparison around both the lit cutscene and the map.
+At a 60 Hz guest refresh target, 80% throughput corresponds to about
+20.8 ms per refresh, leaving about 4.2 ms to recover on the critical path.
+
+The opt-in draw framebuffer cache reused 23,520 FBO acquisitions in
+each steady 36,000-draw window without constructing additional FBOs
+in those windows. The eight measured map windows still took 3.732 s
+at the median, with p50 of 30.96–31.15 ms, p99 of 34.59–36.19 ms,
+and a worst refresh of 44.35 ms. The three matched lit opening
+windows had 22.39–22.71 ms p50 and took 2.739 s at the median.
+Framebuffer reuse stays a diagnostic on this path.
+
+## Emulator prior art for the Adreno critical path
+
+- **PPSSPP GLES** records ordered render steps on the emulation side and
+  executes them on a GL owner thread. The owner also performs the swap.
+  It bounds frame slots, records the presentation point, and uses an
+  explicit synchronous flush for CPU-visible framebuffer reads. This
+  suggests testing a single GL owner for both draw submission and
+  presentation in Cara. The existing inline mode is a diagnostic control
+  for the split-context handoff. It runs on the emulation thread, so it
+  cannot establish how much a batched render worker would overlap.
+  [PPSSPP GLES render manager](https://github.com/hrydgard/ppsspp/blob/master/Common/GPU/OpenGL/GLRenderManager.cpp#L264-L278)
+  [PPSSPP swap ownership](https://github.com/hrydgard/ppsspp/blob/master/Common/GPU/OpenGL/GLRenderManager.cpp#L364-L439)
+- **Dolphin** uses a generic shader for a draw while the specialized
+  shader builds, then switches to the specialized path. This addresses
+  first-use stalls. On old mobile GPUs, measure the fallback's cost as
+  well as the compiler time it removes. Cara's World 1-1 link took
+  1.81 s, while the shader's first submitted draw took under 0.1 ms.
+  A narrow fallback that preserves the fragment result would address
+  that link. It needs measured coverage of the vertex/fragment pair
+  and a correct fallback for the draw; a cache only helps after that
+  first encounter. [Dolphin performance guide](https://dolphin-emu.org/docs/guides/performance-guide/#shader-compilation)
+- **AetherSX2's PCSX2 lineage and the open mobile ARMSX2 work** give
+  distinct precedents. The public PCSX2 Vulkan renderer owns frame
+  resources together, uses a separate initialization command buffer
+  for transfers, and tracks retirement with submission fences. ARMSX2's
+  GS replay tool can measure CPU preparation on a deviceless backend
+  with a selected device capability profile and can vary upload ring
+  behavior for an A/B. Its Adreno 650 profile and newer Mali profiles
+  illustrate the probe design. They provide no performance result for
+  the G Cloud's stock Adreno 618 or the Slide's G57. AetherSX2's
+  official FAQ and archive did not provide readable implementation
+  details during this review. [PCSX2 Vulkan implementation](https://github.com/PCSX2/pcsx2/blob/master/pcsx2/GS/Renderers/Vulkan/GSDeviceVK.cpp)
+  [ARMSX2 renderer replay controls](https://github.com/ARMSX2/ARMSX2/blob/master/pcsx2-gsrunner/Main.cpp#L1184-L1213)
+- **Adreno attachments.** Mesa describes both GMEM tiling and direct
+  system-memory rendering on Adreno. The G Cloud's compositor GLES
+  context advertises Qualcomm's tiled-rendering extension. The
+  extension can make attachment loads and stores explicit for a
+  proven region, and starting a region can itself resolve earlier
+  work. Reusing an FBO handle left Mario's frame time near 31 ms,
+  so a tiling experiment needs to count actual attachment traffic
+  and identify guest reads, feedback and transfers at each boundary.
+  [Mesa Adreno hardware notes](https://docs.mesa3d.org/drivers/freedreno.html#hardware-architecture)
+  [Qualcomm tiled-rendering specification](https://registry.khronos.org/OpenGL/extensions/QCOM/QCOM_tiled_rendering.txt)
+
+## Exact table residency on GLES Atlas
+
+Build `ec7c1df` keeps eight byte-verified versions of each lighting
+table and the fog table in the existing 2D upload ring. A draw with
+identical table data can reuse the resident offset. Ring wrap clears
+all historical offsets and republishes every current table. The probe
+uses the existing GPU texture and shader addressing. Native texture
+buffers and whole-image replacement continue through their own paths.
+The host check under ASan/UBSan covered A→B→A, per-table separation,
+eviction, zero offset, and clearing history before reusing wrapped
+storage. [Android release build](https://github.com/dmikey/cara/actions/runs/45457501555)
+
+The G Cloud ran normal boots on the same signed APK, JIT, native 1×,
+fixed CLK 100%, Adaptive Frame Skip off, stock Adreno driver, and the
+same 99 restored shader binaries. The table compares stationary
+windows by PICA draw count and excludes shader creation.
+
+| Mario scene | Mailbox mode | Draws per window | Table uploads per refresh | Median host window | p99 range | Worst |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Lit opening | Partial uploads | 12,240 | 38 | 2.713 s | 25.16–27.71 ms | 29.83 ms at 2851 |
+| Lit opening | Exact table reuse | 12,240 | 0 | 4.844 s | 108.97–111.82 ms | 112.01 ms at 2780 |
+| Castle map | Partial uploads | 36,000 | 32 | 3.732 s | 35.08–35.71 ms | 40.98 ms at 4431 |
+| Castle map | Exact table reuse | 36,000 | 0 | 4.137 s | 48.19–79.68 ms | 80.44 ms at 3708 |
+
+In the opening windows, graphics scope time fell from 14.73 to
+11.23 ms per refresh and LUT scope time fell from 7.80 to 0.25 ms.
+The emulation thread then waited about 22–23 ms per refresh on the
+mailbox's presentation fence. The separate EGL context finished
+60 swaps per window, with median swap durations of 76.7–78.8 ms.
+Overall guest speed regressed. A lower frame median in the residency
+arm hid this behavior because long stalls were concentrated in a
+subset of refreshes.
+
+On the RG Slide, the same source revision ran in its isolated preview.
+Both steady title boots restored 47/47 program binaries and had zero
+shader creation in the timing windows. The four windows below each
+issued exactly 51,120 draws.
+
+| Dark Moon smoky title | Median range | p99 range | Worst | 120-refresh window |
+| --- | ---: | ---: | ---: | ---: |
+| Partial uploads | 50.84–53.31 ms | 58.11–58.90 ms | 62.53 ms | 6.139–6.178 s |
+| Exact table reuse | 36.03–36.52 ms | 39.76–40.35 ms | 42.15 ms | 4.345–4.366 s |
+
+The measured throughput rose from about 19.5 to 27.6 guest refreshes
+per second. Table upload calls fell from 480 to zero per window.
+A repeat partial-update boot reproduced 6.09–6.13 seconds across
+eight matched windows. The available captures preserve the title,
+smoke and controls visually across animated frames. Those captures
+have no matched-refresh pixel oracle.
+[RG Slide preview build](https://github.com/dmikey/cara/actions/runs/45458212650)
+
+The inline swap comparison used the same APK and shader archive. The
+inline path has zero mailbox recycling waits. It also uses a different
+uniform/vertex stream-buffer policy, so it changes more than swap
+ownership.
+
+| Mario scene | Inline mode | Median host window | p99 range | Worst |
+| --- | --- | ---: | ---: | ---: |
+| Lit opening, 12,240 draws | Partial uploads | 2.640 s | 23.55–24.73 ms | 36.53 ms at 2973 |
+| Lit opening, 12,240 draws | Exact table reuse | 4.951 s | 53.90–59.53 ms | 67.43 ms at 2913 |
+| Castle map, 36,000 draws | Partial uploads | 3.615 s | 32.22–33.19 ms | 33.67 ms at 3824 |
+| Castle map, 36,000 draws | Exact table reuse | 4.071 s | 35.94–38.69 ms | 43.74 ms at 3917 |
+
+Inline reduced the worst exact-reuse tail compared with the same
+probe under the mailbox. It still took substantially longer than
+partial uploads in the same inline path. The remaining cost is in
+the rendering/submission path and EGL swap together. Adreno's invalid
+elapsed-query results prevent attributing it to GPU execution alone.
+With partial uploads, inline gives about 3% higher guest throughput
+in the sampled opening and map. The opening peak is worse, so the
+test does not qualify inline as the default. Table reuse stays
+opt-in pending wider validation and is unsuitable for this Adreno
+driver in the tested scenes.
