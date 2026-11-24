@@ -445,6 +445,8 @@ void BootGame(const std::string& path) {
                   ->GetModule();
         system.perf_stats->SetBoundedFramePacing(true);
         apply_play_policy();
+        // The restored guest timestamp is the origin of the new sampling epoch.
+        system.GetAndResetPerfStats();
         OSD::SetShowFPS(Config::Get(Config::SHOW_FPS));
     };
     apply_play_policy();
