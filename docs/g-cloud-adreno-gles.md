@@ -290,3 +290,125 @@ went from 20.90 ms p99 and 21.79 ms worst to 19.40 ms p99 and 20.13 ms
 worst. Later Zelda transitions still compiled on the foreground path.
 These are opening checkpoints. The inline route also changes the stream
 buffer policy and should be measured in gameplay before choosing defaults.
+
+A normal Mario boot then continued through the map into World 1-1 with
+threaded presentation. The map outside the castle showed 32 FPS and
+53–54% speed at CLK 100%. During level entry, a newly encountered lit
+fragment compiled in 7.79 ms, linked in 1,808.04 ms, and submitted its
+first draw in 0.086 ms. The 120-refresh window ending at 11401 measured
+232.79 ms p99 and a worst refresh of 2,084.32 ms at 11375. Compile and
+link contributed 2,019.16 ms across that window.
+
+At the start of gameplay, the ten compile-free windows ending from
+11641 through 12721 showed 60 FPS and 100% speed on the HUD. Their
+p99 was 24.17–27.12 ms, their maximum was 27.18 ms, and each window
+took about 2.01 s. These timings cover the first section of the level.
+The foreground link trace and the steady gameplay timings identify
+separate problems. Android's current shared shader worker relies on a
+ready, matching software-vertex program for this fallback, so the
+Performance Mode default still permits synchronous links.
+
+### Swap and GPU interval tracing
+
+The opt-in GPU trace queries one in sixteen guest rendering intervals
+with asynchronous result collection. Display composition and EGL swap
+are outside the query. An elapsed interval can include GPU idle time
+between commands. Swap wall times are measured separately.
+[Khronos elapsed timer query specification](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_disjoint_timer_query.txt)
+
+On the physical RG Slide, the compile-free title windows ending
+841–1441 took 6.29–6.31 s each. Guest GPU interval medians were
+44.94–45.94 ms (45 samples), while the mailbox swap medians stayed at
+0.59–0.70 ms. Host p99 was 62.62–63.54 ms, with a worst refresh of
+64.99 ms at 993. This instrumented run used a fresh installation and
+includes query overhead. The independent warm controls above establish
+the uninstrumented frame times. The fresh first encounter took another
+84.91 s in the preceding 120-refresh window, including 79.22 s in
+foreground shader work.
+
+On the Adreno 618, the same GLES timer returned wrapped negative values
+across the smoky title even though early boot values were plausible.
+Discard those intervals. The follow-up diagnostic rejects wrapped
+results, polls only when a result is pending, and gives swap timing
+its own opt-in that issues zero GPU queries. In the instrumented
+mailbox run, only 60–62 swaps completed per 120 guest refreshes in the
+matched title windows. The swap median was 240.30–308.40 ms, even
+as guest refreshes advanced about every 156 ms. Those waits are on
+the Android presentation thread. An EGL swap duration includes driver
+and compositor backpressure.
+
+| G Cloud smoky title | Emulated refreshes | p99 | Worst refresh | Host window | EGL swap median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Mailbox, end 721 | 120 | 234.02 ms | 259.69 ms at 680 | 18.721 s | 240.30 ms |
+| Inline, end 721 | 120 | 165.80 ms | 168.58 ms at 711 | 18.863 s | 96.03 ms |
+| Mailbox, end 841 | 120 | 193.23 ms | 224.58 ms at 725 | 18.622 s | 308.40 ms |
+| Inline, end 841 | 120 | 166.50 ms | 167.06 ms at 735 | 18.983 s | 94.28 ms |
+
+Both arms ran the same render workload and had zero measured warm source
+compilation. Inline submitted one EGL swap per guest refresh and moved substantial
+backpressure into the synchronous swap. The emulator's p99 improved
+while overall progress stayed near 6.4 guest refreshes per second. The
+runs establish where the waits surface. Valid Adreno GPU intervals
+are still needed to distinguish GPU work from driver and compositor
+latency. [Release trace build](https://github.com/dmikey/cara/actions/runs/45452025482)
+[RG Slide trace build](https://github.com/dmikey/cara/actions/runs/45452032191)
+
+### Mario warm normal-boot retest
+
+After the first World 1-1 run, Cara restored all 98 saved programs as
+driver binaries and did zero source links during restore. The second
+normal boot entered World 1-1 at fixed CLK 100%. It performed no GL
+source compile or link around level entry. The entry still had a
+260.65 ms worst refresh at 7775, with 38.95 ms p99 in that window.
+The next transition into gameplay had 94.54 ms p99 and a 226.87 ms
+worst refresh at 7959. These windows include changing guest workloads
+and do not align exactly with the initial 2.08 s hitch window.
+
+The castle map and the first section of World 1-1 differed even with
+warm shader programs. The values below are host emulation-thread
+profiler wall time inside each scope divided by 120 guest refreshes.
+The graphics scope can include driver waits. Its nested phases overlap.
+
+| Scope | Castle map end 7441–7561 | World 1-1 end 8161–8521 |
+| --- | ---: | ---: |
+| Guest Dynarmic execution | 2.46–2.55 ms | 2.88–2.94 ms |
+| PICA GPU commands and rendering | 23.65–23.75 ms | 8.74–8.93 ms |
+| Draw path within graphics | 21.25–21.26 ms | — |
+| Lighting/fog texture transfer inside graphics | 6.36–6.44 ms | <0.01 ms per refresh |
+| Frame time p99 | 34.81–35.73 ms | 24.24–25.66 ms |
+| Worst refresh | 36.38 ms at 7455 | 27.98 ms at 8316 |
+| PICA draws per guest refresh | about 300 | 89–91 |
+
+Each steady map window issued 32 LUT texture updates per refresh and
+copied roughly 0.96 MB of guest vertex data while clearing or
+initializing another 1.92 MB of staging data per refresh. The LUT
+upload is one large measured contributor, while earlier Adreno
+whole-image and native-buffer retests moved the wait or made the
+scene slower. The frame time target for a 20% relative throughput
+increase from a 31 ms median is about 25.8 ms.
+
+On a second warm normal boot, the existing packed scratch-buffer
+experiment reduced clear and initialization writes from about 1.92 MB
+to 0.25 MB per refresh at exactly 36,000 PICA draw requests per window.
+Vertex preparation dropped from 1.06 to about 0.90 ms per refresh.
+Four stationary map windows still had 30.53–30.92 ms medians,
+34.30–35.36 ms p99, and a 35.39 ms maximum. That removes work but
+does not reach the throughput target.
+
+The Apple-style raster-state and vertex-uniform reuse pair also ran
+on Adreno. Five compile-free 36,000-draw map windows measured
+30.67–31.05 ms at p50 and 34.19–36.19 ms at p99, with a 37.51 ms
+maximum. The ranges overlap the control.
+
+Linux scheduler counters from that run identify where the SoC ran
+the emulation thread. During a 12 s steady map sample, the thread
+was scheduled for 87.2% of wall time and runnable but waiting for
+0.8%. All 51 last-CPU samples placed it on performance cores 6–7.
+The sampled performance-cluster frequency was 2.323 GHz at the
+median. In the first part of World 1-1, it ran for 78.8% of wall
+time, waited runnable for 0.9%, and sampled the same cores and
+median cluster frequency. These counters are scheduler observations,
+including time in userspace driver calls. An EGL/GL timing scope can
+include CPU execution, driver synchronization and already queued GPU
+work. The CPU placement and clock observations give no indication of
+an efficiency-core scheduling issue in these samples.
