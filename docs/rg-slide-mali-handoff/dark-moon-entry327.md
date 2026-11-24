@@ -315,3 +315,97 @@ animation ticks. The experiment changed no shipped defaults.
 The preview was removed and the original app configuration
 hash matched its pretest value. The raw captures are
 `/tmp/cara-gcloud.8yZRID/mali-link-separable-*.log`.
+
+### One guest vertex call site
+
+The generated expanded-triangle path calls the same translated PICA
+vertex program once for the triangle's reference corner and once for
+the actual corner. Corner zero uses only the actual call. Mali can
+spend more time compiling and linking two call sites for the same
+large program. The opt-in `atlas_single_vertex_call` probe for the
+GLES 3.2 separable path emits one call site in a loop. The first
+iteration reads the reference only when needed, and the second exits
+after evaluating the actual corner. Both use the original shader
+inputs, clear the same temporary state, preserve the reference
+quaternion correction, and have the same sequence of evaluations.
+The probe leaves direct indexed specializations, pair inputs and
+the existing quaternion-slice path on their existing generators.
+
+The first EGL pbuffer replay used five archived Dark Moon vertex
+sources. Four exact hashes entered the measured cold title window.
+A fifth related source used the same 500-instruction-PC family.
+Both arms had explicit ES 3.2 output locations. The fixture linked
+each vertex shader as a standalone stage and requested a binary
+retrieval hint, matching the Cara path. Every pair linked
+successfully on the stock RG Slide driver. The test alternated the
+arms and then ran them in reverse order in a fresh process. The
+driver's private blob cache could not be disabled from this fixture.
+
+| Five standalone vertex links | Two call sites | One call site |
+| --- | ---: | ---: |
+| First ordering | 15.248 s | 9.686 s |
+| Reverse ordering | 15.169 s | 9.569 s |
+
+The same generated wrapper ran in a controlled GPU output check
+with varied positions, texcoords, colors, and opposing
+quaternions. Both variants produced 1,152 matching 32-bit words
+with 444 outputs varying across vertices. A deliberately broken
+control omitted quaternion correction and produced 64 mismatching
+words. This proves the tested wrapper behavior. The attempt to
+run an instrumented full PICA program with synthetic uniform inputs
+returned a GLES out-of-memory error on the baseline, so this
+fixture provides no full-game pixel or depth result.
+
+#### Same-APK normal boots
+
+APK `faf0cb0` passed the Atlas and GLES32 Android builds.
+The RG Slide ran its same Atlas preview with the single site first
+and the standard two sites second. Both arms had independent empty
+Cara archives and preview saves, the original driver cache, JIT,
+fixed CLK 100%, 1×, and the separable GLES path. Indexed draws and
+LUT residency were enabled for both arms. Adaptive Frame Skip was off.
+The only setting changed between these boots was the single-site probe.
+
+| Matched scene and draw count | Two call sites p50 / p99 / worst | One call site p50 / p99 / worst |
+| --- | ---: | ---: |
+| Cold smoky title, end 601, 25,561 draws | 34.63 / 8,752.34 / 41,033.97 ms | 41.56 / 10,554.56 / 32,064.29 ms |
+| Settled smoky title, end 721, 45,932 draws | 36.58 / 41.83 / 52.27 ms | 44.56 / 58.83 / 59.40 ms |
+
+At the cold title the worst refresh was 515 for both arms. The
+timed shader scope across its 120-refresh window fell from 49.253 s
+to 42.225 s. The single site shortened the worst refresh by 8.97 s
+and increased the p99. With no shader work in the matched settled
+title window, the single site increased the median by 7.98 ms.
+The emulation-thread GPU-command CPU category was 26.04 vs 25.98 ms
+per refresh, while the submit wall scope increased from 5.43 to
+7.64 ms per refresh. No GPU hardware counters were taken on these
+boots, so that difference cannot be assigned exclusively to
+vertex-shader execution.
+
+At the lab door, the first shader-dominated refresh took 7,478.22 ms
+with two sites and 8,239.95 ms with one site. The surrounding p99 was
+48.88 and 53.39 ms. It occurred in different 120-refresh windows
+because the input and scene timing shifted between launches. In a
+settled window ending at 2401, the arms processed 42,228 and 42,229
+draws with zero timed compile work. The control recorded 30.16 ms
+p50, 56.91 ms p99 and 73.26 ms worst. The single-site run recorded
+38.20 ms p50, 49.60 ms p99 and 80.85 ms worst. The GPU-command CPU
+category was 21.44 vs 21.81 ms per refresh there.
+
+A later lab window ending at 3121 had 46,584 draws in both arms,
+zero indexed fallbacks and zero timed shader work. The control
+recorded 32.88 ms p50, 38.96 ms p99 and 40.90 ms worst. The single
+site recorded 43.86 ms p50, 49.13 ms p99 and 54.10 ms worst.
+Graphics CPU time was 23.07 vs 23.25 ms per refresh, and GLES
+submit wall time rose from 5.25 to 9.29 ms per refresh. The
+sampled drawing subroutes varied slightly within the equal total
+draw count. Screenshots showed the lab lighting and translucency
+at different animation ticks.
+
+The slower settled behavior outweighed the cold title improvement.
+The switch was removed from the branch tip. Commit `faf0cb0` and
+its exact Android artifact retain the experiment for reproduction.
+The original Cara was reopened after removing the preview and the
+original configuration SHA-256 matched. Raw timing and oracle logs
+are under `/tmp/cara-gcloud.8yZRID/mali-vertex-link-*`.
+[Android benchmark build](https://github.com/dmikey/cara/actions/runs/45478137471)
