@@ -17,6 +17,10 @@ foreach(option MBEDTLS NETTLE OPENSSL MD LIBB2 LZ4 LZO LZMA ZSTD LIBXML2 BSDXML 
         WIN32_XMLLITE PCREPOSIX PCRE2POSIX LIBGCC CNG TAR CPIO CAT UNZIP XATTR ACL TEST INSTALL WERROR)
     set(ENABLE_${option} OFF)
 endforeach()
+if(WIN32)
+    # Cara uses archive reading only. The Windows CRT has no POSIX regex API.
+    set(POSIX_REGEX_LIB "NONE" CACHE STRING "POSIX regex library for libarchive")
+endif()
 FetchContent_Declare(cara_archive URL "${CMAKE_CURRENT_SOURCE_DIR}/libarchive-3.8.11.tar.gz"
     URL_HASH SHA256=6e9560b2e0659ff688c5efb7717a68bb06b28ef65a69addcd6c424eaf9c319b1)
 FetchContent_MakeAvailable(cara_archive)
