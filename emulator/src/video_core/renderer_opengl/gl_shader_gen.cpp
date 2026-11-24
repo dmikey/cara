@@ -2286,6 +2286,10 @@ layout (std140) uniform vs_config {
                 }
             }
         }
+        const char* single_call = std::getenv("CARA_GLES_SINGLE_VERTEX_CALL");
+        const bool share_vertex_call_site = single_call && std::string_view(single_call) == "1" &&
+                                           GLES && separable_shader && !native_quaternion_geometry &&
+                                           ios_indexed_inputs < 3 && quaternion_program.empty();
         out += GetVertexInterfaceDeclaration(true, separable_shader && GLES,
                                              native_quaternion_geometry ? "vs_" : "", GLES);
         if (ios_indexed_inputs==4)
@@ -2350,6 +2354,16 @@ layout (std140) uniform vs_config {
             out += "if(pair_id.x!=pair_id.y) { cara_run_vertex(int(pair_id.y)); first_quat=" + quaternion + "; }\n";
             out += "cara_run_vertex(int(pair_id.x)); normquat=" + quaternion + ";\n";
             out += "if(pair_id.x!=pair_id.y && dot(first_quat,normquat)<0.0) normquat=-normquat;\n";
+        } else if (share_vertex_call_site) {
+            // Preserve reference-then-actual evaluation. Slot zero exits on the first pass;
+            // other slots capture the reference quaternion and exit on the second pass.
+            out += R"(int triangle_slot = gl_VertexID % 3;
+for (int vertex_id = gl_VertexID - triangle_slot; ; vertex_id = gl_VertexID) {
+    cara_run_vertex(vertex_id);
+    if (vertex_id == gl_VertexID) break;
+    first_quat = )" + quaternion + ";\n}\n";
+            out += varying("normquat") + " = " + quaternion + ";\n";
+            out += "if (triangle_slot != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
         } else {
             if (ios_indexed_inputs < 3 && !native_quaternion_geometry) {
                 const char* reference = quaternion_program.empty() ? "cara_run_vertex" : "cara_run_quaternion";
