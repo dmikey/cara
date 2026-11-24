@@ -44,24 +44,13 @@ void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
 }
 template <bool ReplaceImage>
-static void UploadLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
-                  const u8* data, std::size_t bytes) {
-#ifdef CARA_GL_CONTEXT_DISPATCH
-    if (CommandQueue::Enabled() && !DriverTransactions::Executing()) {
-        // Capture once. All seven unpack/binding queries, uploads and restoration
-        // execute on the same owner as the preceding and following draws.
-        if (Common::FrameTiming::counters.enabled)
-            Common::FrameTiming::counters.lut_texture_bytes += bytes;
-        CommandQueue::QueueLUT(&UploadLUT<ReplaceImage>, texture, unit, format, offset, data, bytes);
-        return;
-    }
-#endif
-    if (const auto* bridge=DriverTransactions::Pending()) {
-        bridge->lut(&UploadLUT<ReplaceImage>,texture,unit,format,offset,data,bytes);return;
-    }
+static void UploadLUTData(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
+                          const u8* data, std::size_t bytes, GLuint source_buffer = 0,
+                          std::size_t source_offset = 0) {
     if (!bytes) return;
     const unsigned stride = format == GL_RG ? 8 : 16;
-    if ((format != GL_RG && format != GL_RGBA) || !data || offset % stride || bytes % stride) {
+    if ((format != GL_RG && format != GL_RGBA) || (!source_buffer && !data) ||
+        offset % stride || bytes % stride || source_offset % stride) {
         throw std::invalid_argument("Invalid CPU LUT upload span");
     }
     namespace Timing = Common::FrameTiming;
@@ -84,8 +73,7 @@ static void UploadLUT(GLuint texture, unsigned unit, GLenum format, std::size_t 
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
         glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-        // data is ordinary owned CPU memory, never a GL mapping or a buffer offset.
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, source_buffer);
     }
     {
         Timing::Scope scope(Timing::Phase::LUTTextureTransfer, trace);
@@ -105,9 +93,16 @@ static void UploadLUT(GLuint texture, unsigned unit, GLenum format, std::size_t 
                 const unsigned rows = x == 0 ? static_cast<unsigned>(count / LUTTextureWidth) : 0;
                 const unsigned width = rows ? LUTTextureWidth : std::min<std::size_t>(count, LUTTextureWidth - x);
                 const unsigned height = rows ? rows : 1;
-                glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, format, GL_FLOAT, data);
+                const void* source = source_buffer ? reinterpret_cast<const void*>(source_offset)
+                                                   : data;
+                glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, format, GL_FLOAT, source);
                 const unsigned used = width * height;
-                first += used; count -= used; data += used * stride;
+                first += used;
+                count -= used;
+                if (source_buffer)
+                    source_offset += used * stride;
+                else
+                    data += used * stride;
             }
         }
     }
@@ -122,6 +117,32 @@ static void UploadLUT(GLuint texture, unsigned unit, GLenum format, std::size_t 
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpack_buffer));
     }
 }
+template <bool ReplaceImage>
+static void UploadLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
+                  const u8* data, std::size_t bytes) {
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    if (CommandQueue::Enabled() && !DriverTransactions::Executing()) {
+        // Capture once. All seven unpack/binding queries, uploads and restoration
+        // execute on the same owner as the preceding and following draws.
+        if (Common::FrameTiming::counters.enabled)
+            Common::FrameTiming::counters.lut_texture_bytes += bytes;
+        CommandQueue::QueueLUT(&UploadLUT<ReplaceImage>, texture, unit, format, offset, data, bytes);
+        return;
+    }
+#endif
+    if (const auto* bridge=DriverTransactions::Pending()) {
+        bridge->lut(&UploadLUT<ReplaceImage>,texture,unit,format,offset,data,bytes);return;
+    }
+    UploadLUTData<ReplaceImage>(texture, unit, format, offset, data, bytes);
+}
+
+#ifdef CARA_ANDROID_GLES_ATLAS
+void UploadLightingLUTFromBuffer(GLuint texture, unsigned unit, std::size_t offset,
+                                 GLuint buffer, std::size_t source_offset, std::size_t bytes) {
+    UploadLUTData<false>(texture, unit, GL_RG, offset, nullptr, bytes, buffer, source_offset);
+}
+#endif
+
 void UploadIOSLUT(GLuint texture, unsigned unit, GLenum format, std::size_t offset,
                   const u8* data, std::size_t bytes) {
     UploadLUT<false>(texture, unit, format, offset, data, bytes);

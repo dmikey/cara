@@ -47,6 +47,9 @@
 #include "video_core/regs_pipeline.h"
 #include "video_core/regs_texturing.h"
 #include "video_core/renderer_base.h"
+#ifdef __ANDROID__
+#include "video_core/renderer_opengl/renderer_opengl.h"
+#endif
 #ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #endif
@@ -1169,6 +1172,9 @@ u64 TakeExperimentalP3DNanoseconds() {
 }
 
 void ProcessCommandList(PAddr list, u32 size) {
+#ifdef __ANDROID__
+    const OpenGL::GLESCommandListTraceScope gles_list(size);
+#endif
 #ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
     Cara::NativeMetalCost::PicaListScope shader_lead_time;
 #endif

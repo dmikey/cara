@@ -659,3 +659,534 @@ Its longest first-use refresh was 40.55 s. The second boot restored
 Both lab screenshots show Gadd, room lighting, and translucent ghosts.
 Camera and animation ticks differ. The preview was removed and the
 player's configuration hash matched after the original app reopened.
+
+## One render thread for draw submission and swap
+
+Cara already has a bounded ordered GLES dispatch queue. The new Android
+route transfers the window EGL context to that queue's worker. The core
+records the game and composition commands, and each swap follows its
+composition commands on the same FIFO. The Android UI display callback
+continues to supply the Adaptive Frame Skip ticket. It never binds the
+window context in this mode. The renderer retains each native window
+until prior swaps retire, and keeps its context on a pbuffer while no
+window is available.
+
+The route is selected by this existing pair of debug options. The
+third setting caches the packed layout uniform location and values so
+the worker comparison does not repeat the same synchronous program
+query for every packed draw.
+
+```ini
+[Debug]
+ordered_gles_worker = True
+use_present_thread = False
+packed_layout_uniform_reuse = True
+```
+
+Compare direct inline and worker inline with the same packed layout
+setting. Stock production keeps the mailbox and its direct GLES path.
+Use the same APK, restored shader programs, fixed CLK 100%, 1×, and
+normal boots. Report total elapsed time over each 120-refresh window
+alongside p99 and worst, then trace the actual swap owner thread.
+[PPSSPP GL worker and present order](https://github.com/hrydgard/ppsspp/blob/master/Common/GPU/OpenGL/GLRenderManager.cpp#L364-L439)
+[Android release build](https://github.com/dmikey/cara/actions/runs/45464327707)
+
+Before testing the new swap owner, G Cloud preflights used the prior
+`ec7c1df` release with the existing ordered worker and split-context
+mailbox. In the three identical 12,240-draw, compile-free opening
+windows, caching the layout uniform eliminated 12,240 uniform-location
+RPCs per window. Other synchronous calls stayed at 360. Median time
+for 120 refreshes fell from 9.522 s to 2.716 s. P99 fell from
+174.66–184.67 ms to 25.29–27.06 ms and the worst fell from 205.82 ms
+to 27.37 ms. The uncached preflight stopped after the opening. The
+cached run continued through the map and into World 1-1.
+
+On the physical G Cloud, build `238b8f0` logged 6,308 successful
+swaps on the CaraGLES worker during the first normal Mario boot. The
+NativeEmulation thread was separate. Both modes restored 99 program
+binaries, and neither linked shaders in the draw-matched timed windows.
+The worker's castle-map windows executed about 2.08 million recorded
+GL calls per 120 guest refreshes despite zero synchronous GL queries.
+Its median worker thread CPU time in that scene was 17.62 ms per
+refresh, excluding the producer. The worker and producer can overlap.
+
+| Warm Mario scene | Swap route | Median elapsed for 120 refreshes | p99 | Worst |
+| --- | --- | ---: | ---: | ---: |
+| Lit opening, 12,240 draws | Direct inline, cached layout | 2.653 s | 23.83–24.45 ms | 32.71 ms |
+| Lit opening, 12,240 draws | Queued worker, cached layout | 2.660 s | 24.94–29.20 ms | 40.98 ms |
+| Castle map, 36,000 draws | Direct inline, cached layout | 3.620 s | 32.24–33.39 ms | 33.94 ms |
+| Castle map, 36,000 draws | Queued worker, cached layout | 3.620 s | 34.43–40.75 ms | 50.06 ms |
+| World 1-1 opening, similar draw counts | Direct inline, cached layout | 2.005 s | 20.09–22.48 ms | 30.21 ms |
+| World 1-1 opening, similar draw counts | Queued worker, cached layout | 2.004 s | 23.37–35.09 ms | 42.22 ms |
+
+The transition into the map had a 523.31 ms maximum refresh on the
+worker path and 126.19 ms on the direct inline path. The transition
+windows have different draw counts. No shader compile was measured
+in either peak window. Compare these transition observations separately
+from the exact-draw stationary windows. The tables report host frame time. Queue profiling also drains outstanding work
+at each 120-refresh boundary.
+
+A third normal boot on the same APK used the stock direct mailbox
+renderer, with the timing clock fixed at 100%. Its matched lit
+opening took 2.712 s per 120 refreshes, with p99 of 24.81–25.64 ms
+and a worst of 26.39 ms. The castle map took 3.708 s per window,
+with p99 of 34.68–35.30 ms and a worst of 36.17 ms.
+The single worker's 2% throughput margin versus this stock route
+also appears with direct inline presentation. The isolated inline
+comparison gives no sustained gain from moving GL commands to the
+worker and shows heavier frame-time tails.
+
+With raster-state reuse enabled on the same worker, the steady map
+recorded 780,120 commands per window, down from 2,075,280, and worker
+CPU time fell from 17.62 to 16.23 ms per refresh. Map throughput stayed
+at 3.619 s per window. P99 ranged from 32.78 to 34.75 ms with a
+65.69 ms worst. The lit opening still took 2.660 s. That arm had
+25.28–66.19 ms p99 with an 80.54 ms worst. A number of measured peaks
+fell immediately after a 120-refresh reporting boundary. The
+measurement drains the worker at those boundaries. The larger first
+worker arm's scene-transition hitch occurred within a window.
+
+The lifecycle check left World 1-1 for Android Home. Starting the
+library component opened a second activity rather than resuming the
+game. Android Back returned to the existing game. The same CaraGLES
+thread resumed successful swaps and the World 1-1 HUD read 60 FPS,
+100% speed and CLK 100%. Normal settings were restored afterward.
+The one-worker route stays opt-in.
+
+The parallel Slide experiment isolated direct-GLES indexed draws
+against arrays in the first E. Gadd lab cinematic. Its exact
+42,229-draw match improved from 30.5–30.7 to 34.2 guest refreshes/s.
+P99 went from 39.07–40.42 ms to 34.27 ms and the worst from
+63.72–78.34 ms to 51.94 ms. The longer captures had variable tails
+and the candidate boot reused more shaders. The Slide player
+installation and configuration were restored.
+[RG Slide direct GLES retest](https://github.com/dmikey/cara/blob/dmikey/mali-gadd-draw-followup/docs/rg-slide-mali-handoff/dark-moon-entry327.md#direct-gles-retest-with-exact-table-residency)
+
+## Indexed draws on stock Adreno 618
+
+The signed `238b8f0a` build ran on the G Cloud from the title screen
+through New Game, the stationary castle map, and World 1-1. Both paths
+used JIT, GLES Atlas, Performance Mode, 1×, fixed CLK 100%, direct draw
+submission with mailbox presentation, and Adaptive Frame Skip off.
+Each eligible timing window contains 120 guest refreshes. The
+stationary map has exactly 36,000 PICA draws per window and the lit
+opening has 12,240. The following ready windows have zero foreground
+shader creation, zero selected draws waiting for their indexed program,
+and no logged background shader compile or link overlapping the window.
+The first arrays boot and warm indexed repeat both restored 128 of 128
+shader binaries. The first indexed boot restored 99 of 99.
+
+| Scene and route | Windows | Median host time per window | p99 range | Worst refresh |
+| --- | ---: | ---: | ---: | ---: |
+| Lit opening, arrays | 4 | 2.712 s | 25.21–26.09 ms | 33.63 ms at 2816 |
+| Lit opening, indexed repeat | 3 | 2.204 s | 20.53–21.75 ms | 29.75 ms at 2655 |
+| Castle map, arrays | 8 | 3.720 s | 34.52–35.65 ms | 37.45 ms at 4547 |
+| Castle map, indexed repeat | 13 | 4.039 s | 37.33–38.71 ms | 42.53 ms at 5027 |
+| Castle map, first indexed use during background builds | 4 | 4.498 s | 41.25–245.35 ms | 391.75 ms at 3807 |
+| World 1-1 opening, arrays | 7 | 2.006 s | 23.84–27.11 ms | 29.86 ms at 5336 |
+| World 1-1 opening, indexed repeat | 7 | 2.006 s | 24.51–27.54 ms | 48.92 ms at 5645 |
+
+The ready map went from 54% to 50% of the paced World 1-1 baseline.
+The opening went from 74% to 91%. The first indexed boot also improved
+the opening, to 2.262 s per window, 21.32–22.80 ms p99, and a 23.84 ms
+worst refresh. At the map, all 19,440 selected indexed draws executed
+with their ready programs on the second indexed boot. Confirmed
+early World 1-1 gameplay reached full speed on both routes. The
+World 1-1 windows use similar draw counts and are separate from the
+exact-count map and cutscene comparisons.
+
+On the map, the indexed draws were lit
+draws. The unlit index route had no eligible draws there. In the
+opening 7,200 lit and 3,360 unlit draws used the indexed routes.
+
+The warmed map used 23.19 ms of emulation-thread CPU time per
+refresh for PICA and GLES with arrays and 24.93 ms indexed, versus
+2.48 and 2.55 ms to run the guest CPU. In the arrays arm the
+lighting/fog transfer API accounted for
+6.97 ms per refresh inside the graphics scope. The map changes 32
+tables on average and transfers about 124 KB per refresh in both
+arms. Draw submission took 4.14 ms, uniform work 2.15 ms, GL state
+application 1.68 ms, and vertex upload 1.20 ms. The corresponding
+indexed timings were 7.95 ms for table transfers, 4.54 ms for draw
+submission, 2.21 ms for uniforms, 1.76 ms for GL state, and 1.23 ms
+for uploads. These API timings are host wall scopes and some are
+nested. An API call
+can include waits on previously submitted GPU work, so its duration
+does not measure the isolated execution cost of that operation.
+In a separate 11.98 s sample on the indexed map, the emulation
+thread was on CPU 86.7% of the time and runnable but unscheduled
+for 0.9%. It ran on cores 6 and 7 with a median big-core policy
+frequency of 2.323 GHz.
+
+Leave indexed draws opt-in on Adreno. The opening and map respond
+differently to the same setting, and the earlier exact LUT-residency
+test on this driver removed transfers at the cost of longer
+presentation waits.
+
+### Paired GPU timestamps
+
+On `d3eb4472`, the paired timestamp probe samples every 16 guest
+refreshes. It polls existing query pairs for availability and rejects
+disjoint data and intervals longer than the corresponding host
+submission-to-result window. A host fixture exercised asynchronous
+availability, 40-bit wrap, a reversed timestamp, disjoint handling,
+and the original elapsed query route under ASan and UBSan.
+[Khronos timestamp query semantics](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_disjoint_timer_query.txt)
+[Android release build](https://github.com/dmikey/cara/actions/runs/45468629340)
+
+The arrays map repeated at 3.714 s per 120 refreshes with this probe,
+versus 3.720 s without GPU queries. Five matching windows gave
+34.08–35.86 ms host p99 and a 36.97 ms worst. The GPU timestamp
+interval had a 30.13 ms median (37 samples, 28.68–31.79 ms). The
+same boot measured 22.12 ms in the lit opening (23 samples) and
+9.02 ms in early World 1-1 (52 samples). The span includes any idle
+time between the timestamp markers. It does not report GPU busy
+time or the duration of individual shader invocations. The stock
+device gave no KGSL ftrace packets through Perfetto with GPU
+frequency, busy, and batch tracepoints requested.
+
+| Timestamp retest | Route | 120-refresh median wall time | Host p99 | Worst host refresh | Median GPU marker span |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Lit opening | Arrays | 2.709 s | 25.16–25.60 ms | 27.61 ms | 22.12 ms (23 samples) |
+| Lit opening | Indexed | 2.201 s | 20.27–23.62 ms | 25.39 ms | 17.98 ms (23 samples) |
+| Stationary map | Arrays | 3.714 s | 34.08–35.86 ms | 36.97 ms | 30.13 ms (37 samples) |
+| Stationary map | Indexed | 4.012 s | 37.83–39.68 ms | 39.76 ms | 32.99 ms (60 samples) |
+
+The paired probes reproduced the map regression and the opening
+improvement. The indexed capture reached the castle map and collected
+eight timing windows. Host disk exhaustion stopped that capture as the
+harness moved to World 1-1. The earlier no-timestamp indexed repeat
+already captured the World 1-1 comparison.
+
+The same build tested the existing persistent coherent uniform stream
+on a normal arrays boot. The map performed 36,000 persistent writes
+and zero uniform-page waits per matched window. Uniform wall time
+fell from 2.06 to 1.09 ms per refresh, and PICA/GLES thread CPU fell
+from 23.68 to 22.24 ms per refresh. Map throughput stayed near 54%.
+The eight matched windows took a median 3.699 s per 120 refreshes
+with 34.70–35.79 ms p99 and a 36.28 ms worst. The GPU marker median
+was 30.54 ms across 60 samples. The normal boot reached 100% in
+early World 1-1 with the probe enabled. The existing default keeps
+persistent uniforms off.
+
+The G Cloud is on the signed `d3eb4472` APK. Its temporary profiling
+configuration was byte-checked before removal, and Cara reopened
+to its library with normal settings.
+
+[RG Slide cold and warm indexed matrix](https://github.com/dmikey/cara/blob/1dc411b230dc04ac97bc821466b71af1ad5a9f18/docs/rg-slide-mali-handoff/dark-moon-entry327.md#cold-archive-and-warm-replay-matrix)
+
+## Pixel-unpack stream for lighting and fog
+
+The direct Android GLES path can stage changed PICA lighting and fog
+tables in a persistent coherent pixel unpack buffer. Each table is
+written into mapped GL storage, and the atlas updates consume buffer
+offsets. The shader and texture layout are shared with the original
+client-memory path. The GL driver still orders each upload against
+draws that read or write the texture. The probe can remove a
+client-memory transfer without removing a texture dependency.
+[Khronos buffer storage extension](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_buffer_storage.txt)
+
+The source uses four 256 KiB pages. A fence follows the preceding
+uploads before a page is retired. The next page is only reused after
+a zero-timeout fence poll reports completion. Busy pages and failed
+mapping use the ordinary client-memory upload. The option requires
+buffer storage support and a direct GLES context. Native texture
+buffers, whole-image snapshots, and the queued context keep their
+existing upload paths. The probe is selected by
+`[Debug] lighting_lut_pbo = True`, with no settings UI entry.
+
+The host ASan/UBSan fixture covered wraparound, a busy page and
+its recovery, mapping and fence failure, transfer split across atlas
+rows, buffer offset zero, the client-memory fallback, and restoration
+of GL bindings and pixel-store state.
+
+### G Cloud normal-boot results
+
+The signed `6bf45c19` Android build ran JIT, GLES Atlas and Performance
+Mode on the stock Adreno 618 driver, with 1× resolution, fixed guest
+CLK 100%, and Adaptive Frame Skip disabled. Normal boots went through
+the title and New Game to the castle map. The table uses 120-refresh
+windows with exactly 36,000 PICA draws and no foreground or overlapping
+background shader compilation. All arms use paired GPU timestamps and
+separate EGL swap timing.
+[Android ARM64 CI build](https://github.com/dmikey/cara/actions/runs/45472287880)
+
+| Castle map path | Windows | Elapsed / 120 | p99 | Worst |
+| --- | ---: | ---: | ---: | ---: |
+| Mailbox, client memory | 11 | 3.683 s | 33.46–39.81 ms | 40.46 ms at 3711 |
+| Mailbox, pixel unpack buffer | 9 | 3.844 s | 74.23–83.10 ms | 84.04 ms at 4284 |
+| Mailbox, client memory repeat | 9 | 3.722 s | 33.59–35.89 ms | 37.41 ms at 4885 |
+| Inline, client memory | 8 | 3.629 s | 32.47–34.80 ms | 35.12 ms at 4525 |
+| Inline, pixel unpack buffer | 8 | 3.575 s | 31.67–32.34 ms | 47.87 ms at 4552 |
+| Inline, exact table residency | 6 | 4.081 s | 36.25–36.85 ms | 36.91 ms at 4343 |
+
+The PBO supplied all 3,840 lighting/fog uploads per map window, with
+zero client fallbacks and the same upload bytes as the control.
+The transfer call fell from 5.38 to 0.61 ms per refresh. The complete
+lighting and fog scope fell from 5.77 to 1.08 ms. Emulation-thread
+graphics CPU fell from 24.42 to 23.35 ms per refresh. The GPU marker
+span stayed near 30 ms. Mailbox swap median rose from 0.81 to 6.55 ms
+and swap p99 rose from 1.66 to 32.41 ms. The map images
+were checked visually at different animation ticks. The captures
+showed the same lighting and visible map elements. Both routes
+reached early World 1-1 at about 100% speed.
+
+Inline presentation repeated both upload paths on the render context.
+PBO reduced transfer scope from 6.74 to 0.60 ms per refresh and
+emulation-thread graphics CPU from 23.32 to 20.42 ms. The median
+GPU marker span was 29.88 ms with client memory and 29.56 ms with
+PBO. Inline swap time was longer with PBO (0.63 to 5.48 ms median,
+0.82 to 8.92 ms p99), but the frame-time p99 improved. Host throughput
+increased about 1.5% and reached 56% of full speed. The single slowest
+refresh was worse with PBO. The lit opening improved modestly in
+elapsed time, from 2.646 to 2.594 s per 120 refreshes, with overlapping
+p99 ranges. Early World 1-1 still ran about 100%.
+
+A separate inline boot used the existing byte-exact table residency
+probe without PBO. It eliminated all lighting/fog uploads in the
+stable map while wall time rose to 4.081 s per window (49% speed).
+The median GPU marker span grew from 29.88 to 33.51 ms. The lit
+opening also eliminated uploads, yet slowed from 2.646 to 4.934 s
+per window. Removing client upload calls alone does not establish a
+win on this driver. GPU marker spans can contain waits or idle gaps,
+and none of these experiments isolate GPU busy time.
+
+The fastest tested map variant combines PBO and inline presentation,
+with a marginal throughput improvement and one worse maximum.
+Production keeps the PBO probe opt-in. The release APK was built and
+installed on the G Cloud for the test. The Slide was profiled separately
+on its stock Mali driver. Its shader-stage comparison targeted a
+different workload and does not rank the two SoCs.
+[RG Slide shader-link comparison](https://github.com/dmikey/cara/blob/27203b89c94a906914d809195f4574a5806206c0/docs/rg-slide-mali-handoff/dark-moon-entry327.md#cold-lab-program-link-attribution)
+
+## Lighting and fog command attribution
+
+Use `[Debug] trace_gles_gpu_commands = True` with direct GLES and
+a supported timestamp query extension. On every 16th refresh the
+probe marks the guest command span. It also brackets one rotating
+draw-group or 2D lighting/fog upload from that refresh. Offset
+arithmetic handles the advertised query-counter width. Polls only
+read available frame queries and discard disjoint results and inner
+markers outside the full span. Display composition and EGL swap
+remain outside the measured marker interval.
+[Khronos timestamp semantics](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_disjoint_timer_query.txt)
+
+A draw-group tag records the guest lighting and fog enable state.
+The measured bracket includes any bindings and uploads performed
+by that draw helper. It does not isolate fragment shader execution.
+An upload tag records the actual staged bytes for each table family.
+A combined atlas upload remains a single command group. Fog data
+republished at atlas wrap counts as fog bytes even when no draw
+samples it. The per-window source counters record every draw and
+upload, independent of GPU marker sampling.
+
+The marker test under ASan/UBSan checked counter wrap, delayed
+availability, disjoint invalidation, reversed inner markers, and
+the original elapsed-query route. The independent deferral test
+checked that an unused dirty family survives until its first
+consumer and that atlas wrap republishes both families. The
+deferral path uses the existing opt-in
+`[Debug] atlas_defer_unused_luts = True`.
+
+### Mario castle map
+
+The signed `ca0c6fa0` APK ran a normal boot with JIT, GLES Atlas,
+Performance Mode, fixed CLK 100%, 1×, frame skip off, and inline
+presentation. All castle-map comparisons use 120-refresh stationary
+windows with 36,000 draws and zero foreground compile time. The
+no-GPU-query control used the same source counters as the traces.
+[Android timing build](https://github.com/dmikey/cara/actions/runs/45478091412)
+
+The nine control windows each counted 23,520 lit draws (196 per
+refresh) and zero fog draws. Each window issued 3,840 LUT uploads.
+Only three to four uploads also carried fog, totaling 3–4 KiB of
+fog versus about 14.9 MB of lighting data. Those mixed uploads came
+from republishing both table families at texture-atlas wrap.
+Lighting-only upload wall time was 6.37 ms per refresh. The mixed
+calls together accounted for about 0.02 ms per refresh, including
+their lighting data. The guest CPU execution category used about
+2.32 ms per refresh and the graphics category used 23.78 ms.
+
+| Inline castle-map probe | 120-refresh windows | Median elapsed | p99 range | Worst |
+| --- | ---: | ---: | ---: | ---: |
+| Client memory, no GPU queries | 9 | 3.630 s | 32.42–33.53 ms | 43.53 ms at 4680 |
+| Client memory, sampled command groups | 14 | 3.615 s | 32.24–33.70 ms | 35.04 ms at 4167 |
+| PBO, sampled command groups | 19 | 3.582 s | 31.29–32.67 ms | 35.70 ms at 5973 |
+| Independent LUT deferral, sampled command groups | 13 | 3.624 s | 32.22–34.17 ms | 76.39 ms at 4386 |
+
+The client-memory command trace measured a 29.69 ms median full
+GPU marker interval (105 samples). The median bracket was 18.2 µs
+for 37 lighting-only uploads, 3.3 µs for 38 lit draw groups, and
+3.0 µs for 11 unlit draw groups. No fog draw or fog-only upload
+occurred in a matched map window. The rotating draw markers reached
+7.06 ms median elapsed at draw slots 0–31, 14.55 ms at slots
+64–95, 21.56 ms at slots 128–159, and 28.48 ms at slots 192–223.
+Those are independent sampled positions and include any pacing and
+synchronization between commands.
+
+The PBO issued the same uploads and draws, with no fallbacks.
+Lighting-only upload wall time fell from 6.79 to 0.80 ms/refresh
+and PICA/GLES CPU from 23.17 to 20.54 ms. The median GPU interval
+was 29.65 ms (140 samples). Its lighting-upload bracket median
+was 0.4 µs (66 samples), with one 2.06 ms bracket. Two lit draw
+groups had 5.77 and 6.03 ms brackets even though the median of
+55 lit groups was 3.1 µs. EGL swap median was 5.44 ms with PBO
+and 0.62 ms with client memory. The full marker span and wall
+throughput barely moved. The local brackets cannot be added to
+give utilization or an isolated per-effect GPU cost.
+
+The independent-family deferral boot on `73ecc4a9` issued the
+same 3,840 uploads per map window. The observed GPU marker median
+was 29.72 ms. Fog was only republished at ring wrap already, and
+lighting updates still had consuming draws. This run establishes
+no throughput gain for the map.
+[Android deferral build](https://github.com/dmikey/cara/actions/runs/45478650347)
+
+### Guest command list boundaries
+
+The independent `trace_gles_gpu_lists` probe brackets up to six
+PICA command lists on each sampled refresh. Each bracket records
+draw requests and initial command bytes. The trace provides both
+GPU marker offsets and CPU wall offsets for issuing those markers.
+Their origins differ. Differences within either timeline are valid
+intervals. The gap between the two absolute clocks cannot be used
+as queue latency. Samples with incomplete or unordered markers
+are excluded from the partition.
+[Android list timing build](https://github.com/dmikey/cara/actions/runs/45480823052)
+
+The list build `a8ec190e` recorded 75 complete client-memory map
+samples. Every sample contained exactly three lists with 120, 120,
+and 60 draw requests. The first two lists took 14.76 and 13.20 ms
+between GPU markers at the median. The third took 0.003 ms. The
+median sum of list intervals was 28.00 ms, and the median sum of
+gaps around the lists was 1.91 ms. The full interval median was
+29.96 ms. CPU wall offsets show about 8.64, 13.14, and 3.83 ms,
+respectively, to issue the three lists. The CPU intervals can
+include driver waits, and the GPU list intervals can include
+gaps within a list.
+
+| List trace, inline | Windows | GPU frame median | Host marker issue median | p99 | Worst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Client memory | 10 | 29.96 ms | 29.01 ms | 32.51–34.49 ms | 88.03 ms at 4257 |
+| PBO | 11 | 29.06 ms | 23.19 ms | 31.29–31.91 ms | 32.66 ms at 4766 |
+
+The PBO partition used 78 complete samples, excluding two with
+incomplete inner markers. Its three list medians on the GPU timeline
+were 14.25, 12.96, and 0.003 ms. List intervals added to 27.22 ms
+at the median and surrounding gaps added to 1.90 ms. CPU issue
+time for the second list fell from 13.14 to 8.01 ms. The same
+32 uploads per refresh reached the same atlas. Reducing their
+host cost therefore freed substantial CPU issue time while
+taking only about 0.9 ms off the full measured GPU span. The
+sustained map rate was 56% with PBO and 55% with client memory.
+
+The Mali single-call shader experiment was profiled separately
+and removed from that branch tip after its settled-frame
+regression. An independent fixture verified unchanged separable
+vertex-stage binaries can be restored on the G57.
+[Mali shader and timing comparison](https://github.com/dmikey/cara/blob/321d3fd0155da8f505543c722b5bc280eed07c85/docs/rg-slide-mali-handoff/dark-moon-entry327.md#one-guest-vertex-call-site)
+[Mali stage binary fixture](https://github.com/dmikey/cara/blob/e0cd5d5df662f7289a2e53077e3a03a03a6ecfa5/docs/rg-slide-mali-handoff/dark-moon-entry327.md#unchanged-separable-vertex-binaries)
+
+## The two 120-draw castle-map lists
+
+The fixed CLK 100% normal boot on `a8ec190e` captured 840
+steady refreshes, each with all 300 draw records. Neither heavy
+list had an identical adjacent draw or a neighbor differing
+only in GL storage names. Per 120-draw pass, shader selection
+changed 35 times, sampler state 71 times, vertex uniforms about
+114 times, and geometry payload 93 times. Both lists had the
+same counts, so the next comparison pairs corresponding draw
+positions across the lists rather than merging neighbors.
+
+The extended capture logs physical color and depth addresses,
+shader identity, staged vertex and index hashes, and integer and
+float vertex-uniform hashes for one refresh every 120. Display
+transfer records report the physical source, destination and
+dimensions. These sampled hashes are diagnostic input comparisons.
+They do not account for all GPU-visible texture contents or prove
+that one pass may be skipped.
+
+The Android debug probe `atlas_quaternion_slice` selects the
+existing GLES quaternion-only reference program. The reference
+evaluation omits writes to output attributes that do not carry
+quaternion components. The original vertex calculation still
+produces all outputs for the actual vertex. The separate
+`atlas_prune_unused_quaternion` probe removes the entire
+reference evaluation when the fragment path cannot consume
+it. Probe configurations use separate archives so a normal
+boot can keep its own cached programs.
+
+The signed `33adc8e4` normal boot captured eight complete
+sampled stationary refreshes. Comparing the first 120 draws
+against the next 120 gave 960 corresponding pairs. All 960
+matched shader handles, submitted vertex counts, staged
+vertex and index hashes, integer vertex uniforms and PICA
+color/depth registers. Float vertex uniforms matched only
+264 pairs, exactly 33 per refresh. Both large lists used PICA
+color address `0x180b8000` and depth address `0x1835c000`.
+GSP then transferred the upper-screen source to two different
+LCD destinations, `0x18034000` and `0x18120000`. The lower
+transfer had a separate source and dimensions.
+
+The matches identify repeated geometry. A copy in place of the
+second pass would also have to preserve its different vertex
+uniforms and prove color, depth, blending, and later guest reads.
+Azahar's configurable right-eye suppression is a different
+tradeoff, and its upstream notes document a game where that
+heuristic was disabled for flashing.
+[Azahar right-eye heuristic](https://github.com/azahar-emu/azahar/blob/master/src/video_core/right_eye_disabler.cpp)
+[Azahar compatibility fix](https://github.com/azahar-emu/azahar/commit/df1dd3316bd2c71083b2f99e5b22596267a363b8)
+[Android ARM64 benchmark build](https://github.com/dmikey/cara/actions/runs/45484021728)
+
+The combined quaternion run enables the reference slice and omits
+unused orientation work on unlit draws. The warm boot restored
+83 of 83 cached programs, and the resulting archive contained
+16 vertex sources with the quaternion-only helper. Timing uses
+only the stationary 36,000-draw map windows with zero foreground
+or overlapping background shader work.
+
+| JIT + GLES, inline, CLK 100% | Map windows | Median elapsed / 120 | GPU span median | Host p99 | Worst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Target census, original shaders | 8 | 3.623 s | 29.60 ms | 33.03–34.55 ms | 36.47 ms |
+| Warm control, original shaders | 10 | 3.612 s | 29.37 ms | 31.93–33.18 ms | 34.25 ms |
+| Quaternion, first boot after activation | 12 | 3.564 s | 29.35 ms | 31.99–33.18 ms | 84.82 ms |
+| Quaternion, warm boot | 8 | 3.574 s | 29.35 ms | 32.20–33.26 ms | 33.75 ms |
+| Quaternion and packed fetch reuse, first boot | 11 | 3.125 s | 25.21 ms | 26.88–28.84 ms | 29.23 ms |
+| Quaternion and packed fetch reuse, warm boot | 13 | 3.110 s | 25.11 ms | 26.79–28.93 ms | 30.56 ms |
+| Packed fetch reuse alone | 11 | 3.104 s | 25.07 ms | 26.71–28.54 ms | 29.21 ms |
+
+The target census row includes draw-by-draw diagnostics. The
+warm control and candidate arms use only the list trace and fit
+the same 120/120/60 draw signature. The early World 1-1 checkpoint
+ran at approximately 100% in the completed arms. The target
+census captured its full map window before host disk pressure
+stopped its later navigation screenshot.
+
+Packed fetch reuse loads one or two atlas texels per attribute
+and shares those words across that attribute's components. Aligned
+32-bit float inputs can select the words directly. It preserves
+PICA input formats, shader operands and vertex outputs. Enabling the existing fetch-reuse path in addition to the
+two quaternion settings saved substantially more than the quaternion
+pair alone on this device. The first 120-draw list fell from 14.42
+to 10.69 ms on the GPU marker timeline, and the second moved from
+12.95 to 12.88 ms. Lighting transfers used the same 3,840 calls and
+about 14.9 MB per window, while their host transfer scope fell to
+2.85 ms per refresh. This is consistent with less backpressure
+after a shader change. The timing probes cannot identify the
+driver's exact scheduling decision.
+
+The isolated packed-fetch boot disabled both quaternion options.
+Each 120-refresh timing window still contained 36,000 guest draws
+and 3,840 LUT uploads. Compared with the warm control, the GPU
+span fell from 29.37 to 25.07 ms and median host elapsed time fell
+from 3.612 to 3.104 s per window, about 16.4% higher throughput.
+The first large list fell from 14.46 to 9.75 ms. The second was
+13.85 ms versus 12.98 ms in the control. The game reached early
+World 1-1 at approximately 100% speed.
+
+Verify the improvement on other games before changing defaults.
+The current result is specific to the stock Adreno 618 driver and
+this scene. Screenshots verified the castle map and gameplay
+visually at different animation ticks. Exact pixel/depth parity
+for the entire game was outside this test.
+[Mali vertex-stage archive implementation and physical benchmarks](https://github.com/dmikey/cara/blob/fbf22fab5123883a89eee7c125d494a3685460b6/docs/rg-slide-mali-handoff/dark-moon-entry327.md#vertex-stage-archive-integration)
