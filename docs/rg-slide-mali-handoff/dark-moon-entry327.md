@@ -458,3 +458,73 @@ differences above must be preserved on first encounters.
 
 No app was installed for this test. The fixture logs are under
 `/tmp/cara-gcloud.8yZRID/mali-stage-binary-fixture`.
+
+### Vertex-stage archive integration
+
+The existing Mali Android GLES 3.2 separable-program switch
+(`[Debug] atlas_separable_programs = True`) uses a distinct vertex-only
+archive when Shader Cache is enabled. Its default limits are 128
+records and 32 MiB, with at most 1 MiB per binary. Vertex matching is
+by exact generated source. The archive also checks the shader-build
+signature, GLES dialect and program role, driver and OS identity,
+advertised binary formats, and checksum. The ordinary linked-program
+archive uses its original record format and a separate path.
+
+Cara restores a recorded vertex stage only when the renderer first
+requests its source. It marks the destination program separable before
+loading, checks link and separable status, and binds uniforms and
+samplers the same way as a newly compiled program. A missing or
+rejected stage compiles from the same source on the existing code path.
+A rejection removes that entry from the next checkpoint. The shader
+generator, draw flow, and default renderer settings are unaffected.
+The existing broad cache identity rebuilds older disposable linked
+archives when the renderer build signature changes.
+
+The codec tests cover independent archive identities, checked bounds,
+corruption, and transactional decode. The previously measured physical
+binary tests cover driver restore and the controlled output check.
+
+#### RG Slide normal-boot verification
+
+Both Android APKs passed for `7076681`. The same Atlas preview ran
+through the Dark Moon opening twice with JIT + GLES, 1×, fixed CLK
+100%, exact LUT residency and direct indexed draws. Each boot began
+with an empty preview save. The stock driver-private cache was left
+in place. The first boot had an empty Cara archive. The second used
+only the archive created by the first.
+
+| Checkpoint | Empty archive p99 / worst | Vertex archive p99 / worst |
+| --- | ---: | ---: |
+| Smoky title, end 601, 25,561 draws | 10,690.51 / 42,589.67 ms | 134.04 / 470.02 ms |
+| Lab door transition, end 2161 | 89.51 / 8,346.22 ms | 46.18 / 129.39 ms |
+| Settled lab, 42,229 draws | 34.84 / 53.50 ms | 33.97 / 52.45 ms |
+
+The title's worst refresh was 515 in both runs. Its measured shader
+scope fell from 52,870.42 to 32.73 ms. The emulator session reached
+the end of that window in 68.57 s from cold and 14.09 s from warm.
+The warm boot restored all 27 recorded vertex stages from a
+7,660,258-byte file, with 78.694 ms summed across the binary upload
+and status scopes. It left the remaining fragment stages on their
+normal path. The later transition at refresh 3335 still took 1.313 s
+with 1.319 s in shader work across the enclosing window. The trace
+recorded fragment build calls there.
+
+The first lab door transition was matched by scene and vertex source
+hashes. The windows had different draw counts. Its shader scope fell
+from 8,198.87 to 10.54 ms. The settled lab windows matched total draw
+count at different refreshes, both with zero shader build work.
+Their medians were 29.67 and 29.55 ms. The cold screenshot showed the
+lit lab, and the warm route continued into the later King Boo
+cinematic. Exact same-refresh color and depth remain unverified
+in gameplay.
+
+The fallback test replaced the first record's binary format with an
+unsupported value in the preview archive and refreshed its checksum.
+Cara rejected the entry, compiled the same vertex source
+(`f56fc6e0886e0a40`), and reached refresh 121. Its next checkpoint
+wrote 27 entries again. The preview app was removed, the original
+Cara reopened, and its config checksum matched before and after.
+
+Raw captures are stored in
+`/Volumes/Files/Cara-RG-Slide-vertex-cache.3qnJ7D`.
+[Exact Android APK build](https://github.com/dmikey/cara/actions/runs/45484229735)
