@@ -149,6 +149,7 @@ public:
     void ApplyTo(OpenGLState& state, bool allow_software_vertices = false);
     GLuint GetSeparableVertexProgram();
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    void PrepareHintedProgram(const Pica::Shader::ShaderSetup& setup, unsigned entry);
     // False means the caller must use the regular vertex program for this draw.
     bool TryApplyAsyncIndexed(OpenGLState& state);
 #endif

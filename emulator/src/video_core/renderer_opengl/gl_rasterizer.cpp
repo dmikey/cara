@@ -3086,6 +3086,11 @@ bool RasterizerOpenGL::Draw(bool accelerate, bool is_indexed) {
         native_borrow_disabled_for_draw=true;shader_dirty=true;++native_borrow_stats.baseline_restarts;continue;
     }
 #endif
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    if (accelerate && !regs.framebuffer.IsShadowRendering()) {
+        shader_program_manager->PrepareHintedProgram(Pica::g_state.vs, u32(regs.vs.main_offset));
+    }
+#endif
     // Sync the LUTs within the texture buffer
     {
         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::LUTUpload);

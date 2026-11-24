@@ -19,6 +19,7 @@
 #include "pica_metal_tev_admission.h"
 #include "pica_metal_runtime_shader.h"
 #include "pica_metal_source_pool.h"
+#include "video_core/pica_shader_hints.h"
 
 namespace Cara {
 
@@ -119,6 +120,7 @@ public:
     explicit PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual = {},
                                 MetalTextureFilter filter = MetalTextureFilter::Game);
     bool BeginWarmup();
+    void QueueHintedVertex(const PicaPipelineInputs&, const Pica::Shader::ShaderSetup&, unsigned entry);
     bool ObserveTevPipelineMiss(const PicaPipelineInputs&, bool dual, bool detect_burst);
     bool FinishWarmup();
     PicaMetalPipelines(const PicaMetalPipelines&) = delete;
@@ -196,6 +198,13 @@ private:
     // Reuse successful Metal stage functions across PSO state variants.
     using StageCache = std::unordered_map<std::string_view, id<MTLFunction>>;
     StageCache vertex_functions, fragment_functions;
+    Pica::ShaderHints::Catalog shader_hints;
+    struct HintedVertex {
+        std::string_view source;
+        std::future<id<MTLFunction>> function;
+    };
+    std::optional<HintedVertex> hinted_vertex;
+    void FinishHintedVertex();
     std::vector<Entry> entries;
     // Storage remains stable for the stage cache's string_view keys.
     mutable std::deque<RuntimeEntry> runtime_pairs;

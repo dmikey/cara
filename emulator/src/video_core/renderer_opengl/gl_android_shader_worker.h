@@ -103,6 +103,20 @@ public:
         return {Status::Pending, {}};
     }
 
+    OGLProgram WaitForVertexStage(u64 key) {
+        std::unique_lock lock(mutex);
+        completed.wait(lock, [&] {
+            const auto result = results.find(key);
+            return unavailable || result == results.end() || result->second.status != Status::Pending;
+        });
+        const auto result = results.find(key);
+        if (result == results.end())
+            return {};
+        auto program = std::move(result->second.program);
+        results.erase(result);
+        return program;
+    }
+
 private:
     struct Job {
         u64 key;
@@ -119,6 +133,7 @@ private:
             std::lock_guard lock(mutex);
             unavailable = true;
             jobs.clear();
+            completed.notify_all();
             return;
         }
         const char* reuse = std::getenv("CARA_ANDROID_SHADER_STAGE_REUSE");
@@ -148,7 +163,12 @@ private:
                 jobs.pop_front();
             }
             OGLProgram program;
-            if (job.reuse_stages || force_stage_reuse) {
+            if (job.fragment.empty()) {
+                OGLShader shader;
+                shader.Create(job.vertex.c_str(), GL_VERTEX_SHADER, true);
+                if (shader.handle)
+                    program.Create(true, {shader.handle});
+            } else if (job.reuse_stages || force_stage_reuse) {
                 const auto vertex = get_stage(vertices, job.vertex, GL_VERTEX_SHADER);
                 const auto fragment = get_stage(fragments, job.fragment, GL_FRAGMENT_SHADER);
                 if (vertex && fragment)
@@ -174,6 +194,7 @@ private:
                 }
                 results.at(job.key) = {status, std::move(program)};
             }
+            completed.notify_all();
         }
         vertices.clear();
         fragments.clear();
@@ -186,6 +207,7 @@ private:
     EGLContext context = EGL_NO_CONTEXT;
     std::mutex mutex;
     std::condition_variable wake;
+    std::condition_variable completed;
     std::deque<Job> jobs;
     std::unordered_map<u64, Result> results;
     bool stopping = false;

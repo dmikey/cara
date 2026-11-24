@@ -34,12 +34,15 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "core/cache_file.h"
+#include "core/core.h"
 #include "core/settings.h"
+#include "video_core/pica_shader_hints.h"
 #include "video_core/renderer_opengl/gl_fragment_lighting_ablation.h"
 #include "video_core/renderer_opengl/gl_shader_census.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
 #include "video_core/renderer_opengl/gl_ios_compat.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
+#include "video_core/video_core.h"
 
 namespace OpenGL {
 
@@ -166,9 +169,35 @@ public:
     }
 
     const OGLProgram& SeparableProgram() const { return program; }
+
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    void DeferHintedVertex(std::string_view code, u64 code_hash) {
+        source = code;
+        source_digest = IOSPipelineCache::Digest(source.data(), source.size());
+        hash = code_hash;
+        hinted_vertex_pending = true;
+    }
+
+    bool HintedVertexPending() const { return hinted_vertex_pending; }
+
+    void ResolveHintedVertex(OGLProgram ready) {
+        hinted_vertex_pending = false;
+        if (ready.handle) {
+            program = std::move(ready);
+            BindSeparableProgram(GL_VERTEX_SHADER);
+        } else {
+            // Compile the same live source on the owner context if the shared
+            // context could not compile or publish it.
+            const auto code = source;
+            Create(code, GL_VERTEX_SHADER, hash);
+        }
+    }
+#endif
 #endif
 
-    bool IsValid() const { return deferred_type || (separable ? program.handle : shader.handle); }
+    bool IsValid() const {
+        return deferred_type || hinted_vertex_pending || (separable ? program.handle : shader.handle);
+    }
     // Diagnostics must never compile a deferred stage merely to inspect it.
     GLuint DiagnosticShaderHandle() const { return separable || deferred_type ? 0 : shader.handle; }
     const std::string& GetSource() const { return source; }
@@ -199,6 +228,7 @@ private:
     std::string source;
     u64 source_digest = 0;
     GLenum deferred_type = 0;
+    bool hinted_vertex_pending = false;
     OGLShader shader;
     OGLProgram program;
     bool separable;
@@ -334,7 +364,7 @@ public:
     }
 
     OGLShaderStage* GetShaderStageRef(const std::string& shader_code, GLenum shader_type,
-                                       bool defer = false) {
+                                      bool defer = false, [[maybe_unused]] bool hint = false) {
         const u64 code_hash = Common::ComputeHash64(shader_code.data(), shader_code.size());
         auto [iter, new_shader] = shaders.emplace(code_hash, separable);
         OGLShaderStage& cached_shader = iter->second;
@@ -342,7 +372,7 @@ public:
 #ifdef CARA_IOS_GLES
             if (shader_type == GL_VERTEX_SHADER &&
                 ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages && !ios_formats.empty()) {
-                CreateIOSVertexStage(cached_shader, shader_code, code_hash);
+                CreateIOSVertexStage(cached_shader, shader_code, code_hash, hint);
             } else
 #endif
             {
@@ -427,11 +457,17 @@ public:
                 }
 #endif
                 bool defer = false;
+                bool hint = false;
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
                 defer = AsyncProgrammableEnabled() ||
                         ((ios_indexed_inputs == 3 || ios_indexed_inputs == 6) && AsyncIndexedEnabled());
+                if (separable && ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages &&
+                    LoadShaderHints()) {
+                    const bool rom_match = shader_hints.Match(setup, u32(regs.vs.main_offset));
+                    hint = shader_hints.Admit(VideoCore::GetCurrentFrame(), rom_match);
+                }
 #endif
-                current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER, defer);
+                current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER, defer, hint);
 #ifdef CARA_IOS_GLES
                 if (!current_shaders.vs) {
                     auto baseline = GenerateVertexShader(setup, key, separable,
@@ -618,6 +654,14 @@ public:
         if (!separable && NativeQuaternionGeometry::TwoStageCache(Settings::values.use_shader_cache,native_geometry_enabled)) {
             ApplyIOSPipeline(state, allow_software_vertices);
             return;
+        }
+#endif
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        auto& vertex = *current_shaders.vs;
+        if (vertex.HintedVertexPending()) {
+            vertex.ResolveHintedVertex(hint_vertex_worker->WaitForVertexStage(vertex.GetHash()));
+            if (vertex.IsValid())
+                RememberIOSPipeline(vertex.GetHash(), vertex.SeparableProgram(), vertex.GetSource(), {});
         }
 #endif
         GLuint vs = current_shaders.vs->GetHandle();
@@ -918,7 +962,8 @@ public:
     static std::size_t IOSArchiveEntryBytes(const IOSPipelineCache::Entry& entry) {
         return entry.vertex.size() + entry.fragment.size() + entry.binary.size() + 16;
     }
-    void CreateIOSVertexStage(OGLShaderStage& stage, const std::string& shader_code, u64 code_hash) {
+    void CreateIOSVertexStage(OGLShaderStage& stage, const std::string& shader_code, u64 code_hash,
+                              [[maybe_unused]] bool hint) {
         const auto entry = std::find_if(ios_entries.begin(), ios_entries.end(), [&](const auto& e) {
             return e.vertex == shader_code;
         });
@@ -938,6 +983,17 @@ public:
             ios_last_miss = std::chrono::steady_clock::now();
         }
 
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        if (hint) {
+            auto build = GetShaderWorker(hint_vertex_worker).Request(code_hash, shader_code, {}, false);
+            if (build.status == AndroidShaderWorker::Status::Pending) {
+                stage.DeferHintedVertex(shader_code, code_hash);
+                if (hint_vertex_requests++ < 16)
+                    LOG_INFO(Render_OpenGL, "PICA GLES vertex warm source={:016x}", code_hash);
+                return;
+            }
+        }
+#endif
         stage.Create(shader_code, GL_VERTEX_SHADER, code_hash);
         if (stage.IsValid())
             RememberIOSPipeline(code_hash, stage.SeparableProgram(), shader_code, {});
@@ -999,29 +1055,55 @@ public:
         return program != program_cache.end() && program->second.handle != 0;
     }
 
-    AndroidShaderWorker::Status TryBuildSharedProgram(const IOSStagePair& pair, bool reuse_stages) {
-        if (!android_shader_worker) {
+    AndroidShaderWorker& GetShaderWorker(std::unique_ptr<AndroidShaderWorker>& worker) {
+        if (!worker) {
             const auto create_worker = [] { return std::make_unique<AndroidShaderWorker>(); };
 #ifdef CARA_GL_CONTEXT_DISPATCH
             // Create the share group member on the thread that owns the core context.
             if (auto* queue = CommandQueue::Queue()) {
                 CommandQueue::Flush();
-                android_shader_worker = queue->Call(create_worker);
+                worker = queue->Call(create_worker);
             } else
 #endif
             {
-                android_shader_worker = create_worker();
+                worker = create_worker();
             }
         }
+        return *worker;
+    }
+
+    bool LoadShaderHints() {
+        if (!shader_hints.Loaded())
+            shader_hints.Load(Core::System::GetInstance().GetTitleID());
+        return shader_hints.Enabled();
+    }
+
+    AndroidShaderWorker::Status TryBuildSharedProgram(const IOSStagePair& pair, bool reuse_stages) {
         const auto& vs = current_shaders.vs->GetSource();
         const auto& fs = current_shaders.fs->GetSource();
-        auto result = android_shader_worker->Request(pair.key, vs, fs, reuse_stages);
+        auto result = GetShaderWorker(android_shader_worker).Request(pair.key, vs, fs, reuse_stages);
         if (result.status == AndroidShaderWorker::Status::Ready) {
             *pair.program = std::move(result.program);
             BindIOSProgram(*pair.program);
             RememberIOSPipeline(pair.key, *pair.program, vs, fs);
         }
         return result.status;
+    }
+
+    void PrepareHintedProgram(const Pica::Shader::ShaderSetup& setup, unsigned entry) {
+        if (!LoadShaderHints() || !AsyncProgrammableEnabled() || native_dispatch_selected ||
+            !current_shaders.vs || !current_shaders.fs || !HasReadySoftwareVertexProgram())
+            return;
+        const auto& pair = ios_stage_pairs.Get(current_shaders.vs, current_shaders.fs, [&] {
+            const auto key = IOSPipelineCache::KeyFromDigests(current_shaders.vs->GetSourceDigest(),
+                                                            current_shaders.fs->GetSourceDigest());
+            return IOSStagePair{key, &program_cache[key]};
+        });
+        if (pair.program->handle || failed_ios_programs.count(pair.key))
+            return;
+        const bool rom_match = shader_hints.Match(setup, entry);
+        if (shader_hints.Admit(VideoCore::GetCurrentFrame(), rom_match))
+            TryBuildSharedProgram(pair, true);
     }
 
     bool TryApplyAsyncIndexed(OpenGLState& state) {
@@ -1316,6 +1398,9 @@ private:
     std::unordered_set<u64> failed_ios_programs;
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     std::unique_ptr<AndroidShaderWorker> android_shader_worker;
+    std::unique_ptr<AndroidShaderWorker> hint_vertex_worker;
+    Pica::ShaderHints::Catalog shader_hints;
+    unsigned hint_vertex_requests = 0;
 #endif
 #endif
 #ifdef CARA_MAC_ATLAS_PIPELINE
@@ -1383,6 +1468,11 @@ void ShaderProgramManager::ObserveBoundVertexProgram(GLuint expected_program, un
 }
 
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+void ShaderProgramManager::PrepareHintedProgram(const Pica::Shader::ShaderSetup& setup,
+                                                unsigned entry) {
+    impl->PrepareHintedProgram(setup, entry);
+}
+
 bool ShaderProgramManager::TryApplyAsyncIndexed(OpenGLState& state) {
     return impl->TryApplyAsyncIndexed(state);
 }
