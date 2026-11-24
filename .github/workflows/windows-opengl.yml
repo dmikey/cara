@@ -1,8 +1,6 @@
 name: Windows OpenGL
 
 on:
-  push:
-    branches: [dmikey/cross-platform-rc]
   pull_request:
     paths:
       - '.github/workflows/windows-opengl.yml'
