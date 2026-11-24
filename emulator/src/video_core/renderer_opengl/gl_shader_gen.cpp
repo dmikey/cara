@@ -1800,6 +1800,8 @@ vec4 shadowTextureCube(vec2 uv, float w) {
     if (config.state.proctex.enable)
         AppendProcTexSampler(out, config);
 
+    if (target.lit_runtime_tev)
+        out += "#define CARA_LIT_RUNTIME_TEV 1\n";
     if (target.metal_runtime_tev_units)
         out += MetalRuntimeTevHelpers;
 
@@ -1865,10 +1867,16 @@ if (cara_tex0_crop.y != 0) {
     if (target.metal_runtime_tev_units) {
         usage.texcolor[0] = true;
         usage.texcolor[1] = (target.metal_runtime_tev_units & 2) != 0;
+        usage.texcolor[2] = (target.metal_runtime_tev_units & 4) != 0;
+        usage.fragment_color = target.lit_runtime_tev;
         declares_combiner_buffer = false;
-        tev_stages = usage.texcolor[1]
-            ? "last_tex_env_out = caraRunTev(rounded_primary_color, texcolor0, texcolor1);\n"
-            : "last_tex_env_out = caraRunTev(rounded_primary_color, texcolor0, vec4(0));\n";
+        tev_stages = fmt::format("last_tex_env_out = caraRunTev(rounded_primary_color, texcolor0, {}",
+                                 usage.texcolor[1] ? "texcolor1" : "vec4(0)");
+        if (target.lit_runtime_tev) {
+            tev_stages += fmt::format(", primary_fragment_color, secondary_fragment_color, {}",
+                                      usage.texcolor[2] ? "texcolor2" : "vec4(0)");
+        }
+        tev_stages += ");\n";
     } else if (target.elide_dead_combiner_buffer) {
         std::string tev_without_updates;
         bool reads_combiner_buffer = false;

@@ -432,6 +432,8 @@ private:
 
 #ifdef CARA_IOS_GLES
     std::optional<ShaderProgramManager::RuntimeTevWords> runtime_tev_words;
+    std::optional<ShaderProgramManager::RuntimeTevWords> lit_runtime_tev_words;
+    bool lit_runtime_tev_dirty = false;
 #endif
     std::unique_ptr<ShaderProgramManager> shader_program_manager;
 

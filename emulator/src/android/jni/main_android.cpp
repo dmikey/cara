@@ -277,6 +277,7 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> retain_pica_textures{{"Debug", "atlas_retain_pica_textures"}, false};
     setenv("CARA_GLES_RETAIN_PICA_TEXTURES", Config::Get(retain_pica_textures) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> runtime_tev{{"Debug", "atlas_runtime_tev"}, false};
+    const Config::ConfigInfo<bool> lit_runtime_tev{{"Debug", "atlas_lit_runtime_tev"}, false};
     const Config::ConfigInfo<bool> reuse_vs_uniforms{{"Debug", "atlas_reuse_vs_uniforms"}, false};
     const Config::ConfigInfo<bool> reuse_raster_state{{"Debug", "atlas_reuse_raster_state"}, false};
     const Config::ConfigInfo<bool> defer_unused_luts{{"Debug", "atlas_defer_unused_luts"}, false};
@@ -304,6 +305,7 @@ void BootGame(const std::string& path) {
            Config::Get(indexed_draws) && Config::Get(native_elements) ? "1" : "0", 1);
     setenv("CARA_GPU_RETAIN_INPUT_BINDINGS", Config::Get(retain_bindings) ? "1" : "0", 1);
     setenv("CARA_GLES_RUNTIME_TEV", Config::Get(runtime_tev) ? "1" : "0", 1);
+    setenv("CARA_GLES_LIT_RUNTIME_TEV", Config::Get(lit_runtime_tev) ? "1" : "0", 1);
     setenv("CARA_VS_UNIFORM_REUSE", Config::Get(reuse_vs_uniforms) ? "1" : "0", 1);
     setenv("CARA_GL_STATE_REUSE", Config::Get(reuse_raster_state) ? "1" : "0", 1);
     setenv("CARA_GLES_DEFER_UNUSED_LUTS", Config::Get(defer_unused_luts) ? "1" : "0", 1);

@@ -16,7 +16,7 @@
 
 namespace OpenGL {
 
-enum class UniformBindings : GLuint { Common, Light, VS, GS };
+enum class UniformBindings : GLuint { Common, Light, VS, GS, LitTev };
 
 struct LightSrc {
     alignas(16) GLvec3 specular_0;
@@ -138,7 +138,7 @@ public:
 
 #ifdef CARA_IOS_GLES
     using RuntimeTevWords = std::array<GLivec4, 6>;
-    bool TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words);
+    bool TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words, bool lit);
     u16 GetIOSVertexInputReadMask(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup);
     GLuint GetIOSVertexFeedbackProgram(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
                                        u16 ios_input_mask = 0xffff);

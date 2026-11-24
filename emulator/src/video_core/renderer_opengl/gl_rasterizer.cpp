@@ -1983,7 +1983,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
         sample.light = uniform_block_data.light_data;
         sample.vs = previous_vs_uniforms;
         sample.feedback = DrawBatchTrace::feedback_draw || ios_feedback_vertex_reuse ||
-                          state.draw.program_pipeline || bool(runtime_tev_words);
+                          state.draw.program_pipeline || runtime_tev_words || lit_runtime_tev_words;
         DrawBatchTrace::Record(sample, input_data, input_bytes, input_indices.data(),
                                input_indices.size()*sizeof(u16), element_indices.data(), element_bytes);
     };
@@ -1991,7 +1991,8 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
 #ifdef CARA_ANDROID_GLES_ATLAS
     auto* instance_pair = Cara::RepeatInstances::pending;
     const bool instance = instance_pair && instance_pair->allowed && !ios_feedback_vertex_reuse &&
-                          !state.draw.program_pipeline && !native_borrow_lease && !runtime_tev_words;
+                          !state.draw.program_pipeline && !native_borrow_lease && !runtime_tev_words &&
+                          !lit_runtime_tev_words;
 #endif
     if (ShaderProgramManager::VertexProvenanceEnabled())
         shader_program_manager->ObserveBoundVertexProgram(state.draw.shader_program,
@@ -4090,20 +4091,34 @@ void RasterizerOpenGL::SetShader() {
         const char* value = std::getenv("CARA_GLES_RUNTIME_TEV");
         return value && std::strcmp(value, "1") == 0;
     }();
-    if (probe_runtime_tev) {
+    const bool probe_lit_runtime_tev = UseLitRuntimeTev();
+    if (probe_runtime_tev || probe_lit_runtime_tev) {
+        const bool lit = !Pica::g_state.regs.lighting.disable;
         ShaderProgramManager::RuntimeTevWords next{};
-        if (!native_borrow_fragment_selected && shader_program_manager->TryRuntimeTev(Pica::g_state.regs, next)) {
-            if (Common::FrameTiming::counters.enabled)
-                ++Common::FrameTiming::counters.runtime_tev_selections;
+        const bool selected = (lit ? probe_lit_runtime_tev : probe_runtime_tev) &&
+            !native_borrow_fragment_selected &&
+            shader_program_manager->TryRuntimeTev(Pica::g_state.regs, next, lit);
+        if (selected && lit) {
+            if (lit_runtime_tev_words != next) {
+                lit_runtime_tev_words = next;
+                lit_runtime_tev_dirty = true;
+            }
+        } else {
+            lit_runtime_tev_words.reset();
+        }
+        if (selected && !lit) {
             if (runtime_tev_words != next) {
                 runtime_tev_words = next;
                 uniform_block_data.light_dirty = true;
             }
-            return;
-        }
-        if (runtime_tev_words) {
+        } else if (runtime_tev_words) {
             runtime_tev_words.reset();
             uniform_block_data.light_dirty = true;
+        }
+        if (selected) {
+            if (Common::FrameTiming::counters.enabled)
+                ++Common::FrameTiming::counters.runtime_tev_selections;
+            return;
         }
     }
     if(!shader_program_manager->UseFragmentShader(Pica::g_state.regs,native_borrow_fragment_selected))
@@ -5110,6 +5125,14 @@ void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
     }
     const bool sync_fs = uniform_block_data.dirty;
     const bool sync_light = uniform_block_data.light_dirty;
+#ifdef CARA_IOS_GLES
+    const bool sync_lit_tev = lit_runtime_tev_words && lit_runtime_tev_dirty;
+    const size_t lit_tev_size = lit_runtime_tev_words
+        ? Common::AlignUp(sizeof(*lit_runtime_tev_words), static_cast<size_t>(uniform_buffer_alignment))
+        : 0;
+#else
+    constexpr size_t lit_tev_size = 0;
+#endif
 
     std::size_t uniform_size = 0;
     if (sync_vs) {
@@ -5121,6 +5144,10 @@ void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
     if (sync_light) {
         uniform_size += uniform_size_aligned_light;
     }
+#ifdef CARA_IOS_GLES
+    if (sync_lit_tev)
+        uniform_size += lit_tev_size;
+#endif
     if (uniform_size == 0) {
         return;
     }
@@ -5134,7 +5161,8 @@ void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
     // A wrap invalidates the entire buffer, so even clean fragment/light
     // blocks must be copied again. Reserve their space before Map can wrap;
     // Unmap advances by only the bytes actually written.
-    const std::size_t reservation=uniform_size_aligned_vs+uniform_size_aligned_fs+uniform_size_aligned_light;
+    const std::size_t reservation =
+        uniform_size_aligned_vs + uniform_size_aligned_fs + uniform_size_aligned_light + lit_tev_size;
     std::tie(uniforms, offset, invalidate) =
         uniform_buffer.Map(reservation, uniform_buffer_alignment);
 
@@ -5173,6 +5201,16 @@ void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
         used_bytes += uniform_size_aligned_light;
     }
 
+#ifdef CARA_IOS_GLES
+    if (lit_runtime_tev_words && (sync_lit_tev || invalidate)) {
+        constexpr size_t bytes = sizeof(ShaderProgramManager::RuntimeTevWords);
+        std::memcpy(uniforms + used_bytes, lit_runtime_tev_words->data(), bytes);
+        glBindBufferRange(GL_UNIFORM_BUFFER, static_cast<GLuint>(UniformBindings::LitTev),
+                          uniform_buffer.GetHandle(), offset + used_bytes, bytes);
+        lit_runtime_tev_dirty = false;
+        used_bytes += lit_tev_size;
+    }
+#endif
     uniform_buffer.Unmap(used_bytes);
 }
 

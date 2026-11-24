@@ -36,6 +36,14 @@ bool UseNativeLUTBuffers() {
     return enabled;
 }
 #endif
+bool UseLitRuntimeTev() {
+    static const bool enabled = [] {
+        const char* requested = std::getenv("CARA_GLES_LIT_RUNTIME_TEV");
+        return requested && requested[0] == '1' && !requested[1];
+    }();
+    return enabled && GLES;
+}
+
 void AllocateIOSLUT(GLenum internal_format, std::size_t bytes) {
     const GLenum format = internal_format == GL_RG32F ? GL_RG : GL_RGBA;
     const unsigned stride = format == GL_RG ? 8 : 16;

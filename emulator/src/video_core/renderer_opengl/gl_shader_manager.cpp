@@ -64,6 +64,10 @@ static void SetShaderUniformBlockBindings(GLuint shader) {
     SetShaderUniformBlockBinding(shader, "shader_light_data", UniformBindings::Light,
                                  sizeof(UniformLightData));
     SetShaderUniformBlockBinding(shader, "vs_config", UniformBindings::VS, sizeof(VSUniformData));
+#ifdef CARA_IOS_GLES
+    SetShaderUniformBlockBinding(shader, "cara_tev_control", UniformBindings::LitTev,
+                                 sizeof(ShaderProgramManager::RuntimeTevWords));
+#endif
 }
 
 static void SetShaderSamplerBinding(GLuint shader, const char* name,
@@ -542,14 +546,15 @@ public:
 #ifdef CARA_IOS_GLES
     std::unordered_map<u64, OGLShaderStage*> runtime_tev_stages;
 
-    bool TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words) {
+    bool TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words, bool lit) {
         if (!GLES || !regs.texturing.main_config.texture0_enable)
             return false;
         auto config = PicaFSConfig::BuildFromRegs(regs);
         auto& f = config.state;
-        if (f.lighting.enable || f.proctex.enable || f.shadow_rendering ||
+        if (f.lighting.enable != lit || f.proctex.enable || f.shadow_rendering ||
             f.texture0_type != Pica::TexturingRegs::TextureConfig::Texture2D ||
-            f.fog_mode != Pica::TexturingRegs::FogMode::None ||
+            (f.fog_mode != Pica::TexturingRegs::FogMode::None &&
+             (!lit || f.fog_mode != Pica::TexturingRegs::FogMode::Fog)) ||
             f.alpha_test_func == Pica::FramebufferRegs::CompareFunc::Never ||
             !config.SupportsRuntimeTev())
             return false;
@@ -560,22 +565,28 @@ public:
             for (unsigned shift : {0u, 4u, 8u, 16u, 20u, 24u}) {
                 const auto source = (unsigned(words[i][0]) >> shift) & 15u;
                 using Source = Pica::TexturingRegs::TevStageConfig::Source;
-                if (source == unsigned(Source::Texture2) || source == unsigned(Source::Texture3))
+                if (source == unsigned(Source::Texture3))
                     return false;
+                if (source == unsigned(Source::Texture2)) {
+                    if (!lit || !regs.texturing.main_config.texture2_enable)
+                        return false;
+                    units |= 4;
+                }
                 if (source == unsigned(Source::Texture1)) {
                     if (!regs.texturing.main_config.texture1_enable)
                         return false;
-                    units = 3;
+                    units |= 2;
                 }
             }
         }
         f.tev_stages = {};
         f.combiner_buffer_input = 0;
-        const u64 hash = Common::ComputeHash64(&config, sizeof(config)) ^ units;
+        const u64 hash = Common::ComputeHash64(&config, sizeof(config)) ^ (units | (lit ? 8u : 0u));
         auto& stage = runtime_tev_stages[hash];
         if (!stage) {
             auto source = GenerateFragmentShader(config, separable,
-                {.gles = true, .allow_shadow = AllowShadow, .metal_runtime_tev_units = units});
+                {.gles = true, .allow_shadow = AllowShadow, .metal_runtime_tev_units = units,
+                 .separate_fog_lut = UseSeparateFogLUT(), .lit_runtime_tev = lit});
             stage = GetShaderStageRef(source, GL_FRAGMENT_SHADER);
             if (!stage)
                 return false;
@@ -869,6 +880,10 @@ public:
         if (UseSeparateFogLUT() && !vertex_archive) {
             ios_identity += "\nseparate-fog-lut=1";
             suffix += ".separate-fog";
+        }
+        if (UseLitRuntimeTev() && !vertex_archive) {
+            ios_identity += "\nlit-runtime-tev=1";
+            suffix += ".lit-tev";
         }
         if (vertex_archive) {
             ios_identity += "\nprogram-role=separable-es320-vertex-v1";
@@ -1511,8 +1526,8 @@ bool ShaderProgramManager::UseFragmentShader(const Pica::Regs& regs,
 }
 
 #ifdef CARA_IOS_GLES
-bool ShaderProgramManager::TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words) {
-    return impl->TryRuntimeTev(regs, words);
+bool ShaderProgramManager::TryRuntimeTev(const Pica::Regs& regs, RuntimeTevWords& words, bool lit) {
+    return impl->TryRuntimeTev(regs, words, lit);
 }
 u16 ShaderProgramManager::GetIOSVertexInputReadMask(const Pica::Regs& regs,
                                                    Pica::Shader::ShaderSetup& setup) {

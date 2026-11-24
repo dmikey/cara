@@ -3,13 +3,30 @@
 
 namespace OpenGL {
 
-// Used only by the opt-in Metal fallback for unlit, ordinary 2D materials.
+// Shared by the opt-in runtime combiner for ordinary 2D materials.
 // Texture lookup and all fragment operations outside the TEV remain specialized.
 inline constexpr char MetalRuntimeTevHelpers[] = R"(
+#ifdef CARA_LIT_RUNTIME_TEV
+layout(std140) uniform cara_tev_control {
+    ivec4 cara_tev_words[NUM_TEV_STAGES];
+};
+#define CARA_TEV_EXTRA_PARAMETERS , vec4 primaryLit, vec4 secondaryLit, vec4 tex2Value
+#define CARA_TEV_EXTRA_ARGUMENTS , primaryLit, secondaryLit, tex2Value
+#define CARA_TEV_WORD(i) cara_tev_words[i]
+#else
+#define CARA_TEV_EXTRA_PARAMETERS
+#define CARA_TEV_EXTRA_ARGUMENTS
+#define CARA_TEV_WORD(i) lighting_lut_offset[i]
+#endif
 vec4 caraTevSource(uint source, vec4 primary, vec4 tex0Value, vec4 tex1Value,
-                   vec4 bufferValue, vec4 constantValue, vec4 previous) {
+                   vec4 bufferValue, vec4 constantValue, vec4 previous CARA_TEV_EXTRA_PARAMETERS) {
     switch (source & 15u) {
     case 0u: return primary;
+#ifdef CARA_LIT_RUNTIME_TEV
+    case 1u: return primaryLit;
+    case 2u: return secondaryLit;
+    case 5u: return tex2Value;
+#endif
     case 3u: return tex0Value;
     case 4u: return tex1Value;
     case 13u: return bufferValue;
@@ -49,21 +66,21 @@ vec3 caraTevCombine(uint op, vec3 a, vec3 b, vec3 c) {
     }
     return byteround(clamp(result, vec3(0), vec3(1)));
 }
-vec4 caraRunTev(vec4 primary, vec4 tex0Value, vec4 tex1Value) {
+vec4 caraRunTev(vec4 primary, vec4 tex0Value, vec4 tex1Value CARA_TEV_EXTRA_PARAMETERS) {
     vec4 previous = vec4(0);
     vec4 bufferValue = vec4(0);
     vec4 nextBuffer = tev_combiner_buffer_color;
     for (int i = 0; i < NUM_TEV_STAGES; ++i) {
-        uvec4 w = uvec4(lighting_lut_offset[i]);
+        uvec4 w = uvec4(CARA_TEV_WORD(i));
         if ((w.w & 256u) == 0u) {
             vec3 colors[3];
             vec3 alphas;
             for (uint j = 0u; j < 3u; ++j) {
                 uint shift = 4u * j;
                 colors[j] = caraTevColor(caraTevSource(w.x >> shift, primary, tex0Value,
-                    tex1Value, bufferValue, const_color[i], previous), w.y >> shift);
+                    tex1Value, bufferValue, const_color[i], previous CARA_TEV_EXTRA_ARGUMENTS), w.y >> shift);
                 alphas[j] = caraTevAlpha(caraTevSource(w.x >> (16u + shift), primary, tex0Value,
-                    tex1Value, bufferValue, const_color[i], previous), w.y >> (12u + shift));
+                    tex1Value, bufferValue, const_color[i], previous CARA_TEV_EXTRA_ARGUMENTS), w.y >> (12u + shift));
             }
             vec3 rgb = caraTevCombine(w.z, colors[0], colors[1], colors[2]);
             float a = caraTevCombine(w.z >> 16u, alphas.xxx, alphas.yyy, alphas.zzz).x;

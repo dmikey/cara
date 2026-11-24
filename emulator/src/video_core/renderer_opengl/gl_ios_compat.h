@@ -29,6 +29,7 @@ inline GLenum StreamBufferTarget(GLenum target) {
     return target;
 }
 #ifdef CARA_IOS_GLES
+bool UseLitRuntimeTev();
 inline constexpr unsigned LUTTextureWidth = 1024;
 void ReplaceLightingLUTImage(GLuint texture, unsigned unit, const u8* data, std::size_t bytes);
 void AllocateIOSLUT(GLenum internal_format, std::size_t bytes);
