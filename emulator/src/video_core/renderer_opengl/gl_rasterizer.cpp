@@ -308,6 +308,7 @@ struct RasterizerOpenGL::LightingLUTUnpackStream {
         if (!data || size > PageSize)
             return {};
         if (cursor + size > PageSize) {
+            // All transfers reading the departing page precede this fence.
             if (!fences[page]) {
                 fences[page] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
                 if (!fences[page]) {
@@ -318,6 +319,7 @@ struct RasterizerOpenGL::LightingLUTUnpackStream {
             const auto next = (page + 1) % PageCount;
             auto& previous = fences[next];
             if (previous) {
+                // Keep drawing through the client-memory path if a page is busy.
                 const GLenum status = glClientWaitSync(previous, 0, 0);
                 if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
                     return {};

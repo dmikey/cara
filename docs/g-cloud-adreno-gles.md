@@ -874,3 +874,87 @@ configuration was byte-checked before removal, and Cara reopened
 to its library with normal settings.
 
 [RG Slide cold and warm indexed matrix](https://github.com/dmikey/cara/blob/1dc411b230dc04ac97bc821466b71af1ad5a9f18/docs/rg-slide-mali-handoff/dark-moon-entry327.md#cold-archive-and-warm-replay-matrix)
+
+## Pixel-unpack stream for lighting and fog
+
+The direct Android GLES path can stage changed PICA lighting and fog
+tables in a persistent coherent pixel unpack buffer. Each table is
+written into mapped GL storage, and the atlas updates consume buffer
+offsets. The shader and texture layout are shared with the original
+client-memory path. The GL driver still orders each upload against
+draws that read or write the texture. The probe can remove a
+client-memory transfer without removing a texture dependency.
+[Khronos buffer storage extension](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_buffer_storage.txt)
+
+The source uses four 256 KiB pages. A fence follows the preceding
+uploads before a page is retired. The next page is only reused after
+a zero-timeout fence poll reports completion. Busy pages and failed
+mapping use the ordinary client-memory upload. The option requires
+buffer storage support and a direct GLES context. Native texture
+buffers, whole-image snapshots, and the queued context keep their
+existing upload paths. The probe is selected by
+`[Debug] lighting_lut_pbo = True`, with no settings UI entry.
+
+The host ASan/UBSan fixture covered wraparound, a busy page and
+its recovery, mapping and fence failure, transfer split across atlas
+rows, buffer offset zero, the client-memory fallback, and restoration
+of GL bindings and pixel-store state.
+
+### G Cloud normal-boot results
+
+The signed `6bf45c19` Android build ran JIT, GLES Atlas and Performance
+Mode on the stock Adreno 618 driver, with 1× resolution, fixed guest
+CLK 100%, and Adaptive Frame Skip disabled. Normal boots went through
+the title and New Game to the castle map. The table uses 120-refresh
+windows with exactly 36,000 PICA draws and no foreground or overlapping
+background shader compilation. All arms use paired GPU timestamps and
+separate EGL swap timing.
+[Android ARM64 CI build](https://github.com/dmikey/cara/actions/runs/45472287880)
+
+| Castle map path | Windows | Elapsed / 120 | p99 | Worst |
+| --- | ---: | ---: | ---: | ---: |
+| Mailbox, client memory | 11 | 3.683 s | 33.46–39.81 ms | 40.46 ms at 3711 |
+| Mailbox, pixel unpack buffer | 9 | 3.844 s | 74.23–83.10 ms | 84.04 ms at 4284 |
+| Mailbox, client memory repeat | 9 | 3.722 s | 33.59–35.89 ms | 37.41 ms at 4885 |
+| Inline, client memory | 8 | 3.629 s | 32.47–34.80 ms | 35.12 ms at 4525 |
+| Inline, pixel unpack buffer | 8 | 3.575 s | 31.67–32.34 ms | 47.87 ms at 4552 |
+| Inline, exact table residency | 6 | 4.081 s | 36.25–36.85 ms | 36.91 ms at 4343 |
+
+The PBO supplied all 3,840 lighting/fog uploads per map window, with
+zero client fallbacks and the same upload bytes as the control.
+The transfer call fell from 5.38 to 0.61 ms per refresh. The complete
+lighting and fog scope fell from 5.77 to 1.08 ms. Emulation-thread
+graphics CPU fell from 24.42 to 23.35 ms per refresh. The GPU marker
+span stayed near 30 ms. Mailbox swap median rose from 0.81 to 6.55 ms
+and swap p99 rose from 1.66 to 32.41 ms. The map images
+were checked visually at different animation ticks. The captures
+showed the same lighting and visible map elements. Both routes
+reached early World 1-1 at about 100% speed.
+
+Inline presentation repeated both upload paths on the render context.
+PBO reduced transfer scope from 6.74 to 0.60 ms per refresh and
+emulation-thread graphics CPU from 23.32 to 20.42 ms. The median
+GPU marker span was 29.88 ms with client memory and 29.56 ms with
+PBO. Inline swap time was longer with PBO (0.63 to 5.48 ms median,
+0.82 to 8.92 ms p99), but the frame-time p99 improved. Host throughput
+increased about 1.5% and reached 56% of full speed. The single slowest
+refresh was worse with PBO. The lit opening improved modestly in
+elapsed time, from 2.646 to 2.594 s per 120 refreshes, with overlapping
+p99 ranges. Early World 1-1 still ran about 100%.
+
+A separate inline boot used the existing byte-exact table residency
+probe without PBO. It eliminated all lighting/fog uploads in the
+stable map while wall time rose to 4.081 s per window (49% speed).
+The median GPU marker span grew from 29.88 to 33.51 ms. The lit
+opening also eliminated uploads, yet slowed from 2.646 to 4.934 s
+per window. Removing client upload calls alone does not establish a
+win on this driver. GPU marker spans can contain waits or idle gaps,
+and none of these experiments isolate GPU busy time.
+
+The fastest tested map variant combines PBO and inline presentation,
+with a marginal throughput improvement and one worse maximum.
+Production keeps the PBO probe opt-in. The release APK was built and
+installed on the G Cloud for the test. The Slide was profiled separately
+on its stock Mali driver. Its shader-stage comparison targeted a
+different workload and does not rank the two SoCs.
+[RG Slide shader-link comparison](https://github.com/dmikey/cara/blob/27203b89c94a906914d809195f4574a5806206c0/docs/rg-slide-mali-handoff/dark-moon-entry327.md#cold-lab-program-link-attribution)
