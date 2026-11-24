@@ -337,6 +337,13 @@ public:
         native_dispatch_selected=native_dispatch;
         const bool native_suffix_sharing = suffix_sharing_policy && native_dispatch && !native_geometry &&
             !GLES && !separable && ios_indexed_inputs < 3;
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        // Packed inputs add a decoder to the guest program. Small decoded
+        // shaders can link inline without warming a second program for fallback.
+        constexpr unsigned PackedAtlasInputs = 2;
+        async_packed_vertex_selected =
+            ios_indexed_inputs == PackedAtlasInputs && AsyncProgrammableEnabled();
+#endif
         const PicaVSConfig key(regs, setup);
         u64 key_hash = Common::ComputeHash64(&key, sizeof(key));
 #ifdef CARA_IOS_GLES
@@ -388,7 +395,7 @@ public:
 #endif
                 bool defer = false;
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
-                defer = AsyncProgrammableEnabled() ||
+                defer = async_packed_vertex_selected ||
                         ((ios_indexed_inputs == 3 || ios_indexed_inputs == 6) && AsyncIndexedEnabled());
 #endif
                 current_shaders.vs = GetShaderStageRef(vs_code, GL_VERTEX_SHADER, defer);
@@ -553,6 +560,9 @@ public:
     }
 
     void UseTrivialVertexShader() {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        async_packed_vertex_selected = false;
+#endif
         native_geometry_selected=false;
         native_dispatch_selected=false;
         current_shaders.vs = &trivial_vertex_shader;
@@ -943,7 +953,7 @@ public:
         auto& p = *pair.program;
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
         if (!p.handle && !failed_ios_programs.count(key) && allow_software_vertices &&
-            !native_dispatch_selected && AsyncProgrammableEnabled() &&
+            async_packed_vertex_selected && AsyncProgrammableEnabled() &&
             TryBuildSharedProgram(pair) == AndroidShaderWorker::Status::Pending) {
             // The caller retries the same PICA draw with CPU-transformed vertices.
             // No draw has happened, and the fragment shader and targets stay identical.
@@ -1201,6 +1211,7 @@ private:
     std::unordered_set<u64> failed_ios_vertex_shaders;
     std::unordered_set<u64> failed_ios_programs;
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    bool async_packed_vertex_selected = false;
     std::unique_ptr<AndroidShaderWorker> android_shader_worker;
 #endif
 #endif
