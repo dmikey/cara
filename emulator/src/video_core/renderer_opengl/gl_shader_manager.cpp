@@ -884,6 +884,13 @@ public:
                                                        native_geometry_enabled);
     }
 
+    bool HasReadySoftwareVertexProgram() const {
+        const auto key = IOSPipelineCache::KeyFromDigests(trivial_vertex_shader.GetSourceDigest(),
+                                                          current_shaders.fs->GetSourceDigest());
+        const auto program = program_cache.find(key);
+        return program != program_cache.end() && program->second.handle != 0;
+    }
+
     AndroidShaderWorker::Status TryBuildSharedProgram(const IOSStagePair& pair, bool reuse_stages) {
         if (!android_shader_worker) {
             const auto create_worker = [] { return std::make_unique<AndroidShaderWorker>(); };
@@ -941,9 +948,11 @@ public:
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
         if (!p.handle && !failed_ios_programs.count(key) && allow_software_vertices &&
             !native_dispatch_selected && AsyncProgrammableEnabled() &&
+            HasReadySoftwareVertexProgram() &&
             TryBuildSharedProgram(pair, true) == AndroidShaderWorker::Status::Pending) {
             // The caller retries the same PICA draw with CPU-transformed vertices.
-            // No draw has happened, and the fragment shader and targets stay identical.
+            // The fallback is already linked, so the foreground context can draw
+            // without compiling a second program alongside the worker.
             state.draw.shader_program = 0;
             state.draw.program_pipeline = 0;
             return;
