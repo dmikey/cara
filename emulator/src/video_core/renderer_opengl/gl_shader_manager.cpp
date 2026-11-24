@@ -183,6 +183,9 @@ public:
     bool HintedVertexRomMatch() const { return hinted_vertex_rom_match; }
     bool HintedVertexQueued() const { return hinted_vertex_queued; }
     void MarkHintedVertexQueued() { hinted_vertex_queued = true; }
+    bool FirstHintedVertexFallback() {
+        return !std::exchange(hinted_vertex_fallback_reported, true);
+    }
 
     void ResolveHintedVertex(OGLProgram ready) {
         hinted_vertex_pending = false;
@@ -235,6 +238,7 @@ private:
     bool hinted_vertex_pending = false;
     bool hinted_vertex_rom_match = false;
     bool hinted_vertex_queued = false;
+    bool hinted_vertex_fallback_reported = false;
     OGLShader shader;
     OGLProgram program;
     bool separable;
@@ -1091,9 +1095,16 @@ public:
 
     bool ResolveHintedVertex(OGLShaderStage& stage, bool allow_software) {
         const u32 frame = VideoCore::GetCurrentFrame();
+        const auto fallback = [&](const char* reason) {
+            if (shader_census && stage.FirstHintedVertexFallback())
+                ShaderCensus::Record(
+                    "vertex_hint_fallback refresh={} source={:016x} rom_match={} reason={}",
+                    frame + 1, stage.GetHash(), int(stage.HintedVertexRomMatch()), reason);
+            return false;
+        };
         if (!stage.HintedVertexQueued() && allow_software &&
             !shader_hints.Admit(frame, stage.HintedVertexRomMatch()))
-            return false;
+            return fallback("refresh_budget");
 
         auto& worker = GetShaderWorker(hint_vertex_worker);
         const auto start = ShaderCensus::Clock::now();
@@ -1107,7 +1118,7 @@ public:
                                      int(allow_software));
         }
         if (allow_software && (build.status == Status::Pending || build.status == Status::Busy))
-            return false;
+            return fallback(build.status == Status::Pending ? "pending" : "queue_full");
 
         if (build.status == Status::Pending)
             build.program = worker.WaitForVertexStage(stage.GetHash());
