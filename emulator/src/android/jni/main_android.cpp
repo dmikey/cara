@@ -224,7 +224,6 @@ void BootGame(const std::string& path) {
     select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
     select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
-    select_probe("atlas_single_vertex_dispatch", "CARA_MALI_SINGLE_VERTEX_DISPATCH");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
     select_probe("atlas_async_programmable_shaders", "CARA_GLES_ASYNC_PROGRAMMABLE_SHADERS");
     select_probe("atlas_extended_program_cache", "CARA_MALI_EXTENDED_PROGRAM_CACHE");
