@@ -171,3 +171,36 @@ frontend. Mesa's upstream Panfrost GLES and PanVK have separate support
 matrices. Cara's measured path here uses the stock GLES driver.
 [MaliSX2 source](https://github.com/bmdhacks/malisx2) ·
 [Mesa Panfrost support](https://docs.mesa3d.org/drivers/panfrost.html)
+
+### Native attributes and the actual MMJ shader
+
+A second GLES trace of the installed MMJ captured native-attribute GLSL,
+one guest vertex evaluation, a quaternion passed through directly, and
+more than 197,000 ranged indexed draws. The published renderer includes
+a fixed geometry stage, which the installed trace did not create. Moving
+the captured MMJ programs into an independent EGL context cost 1.21 s
+for ten links. Its earlier 23 ms in-app total included a substantially
+different driver-cache context.
+
+The existing Cara GLES 3.2 preview reduced the worst cold Bravely present
+from 3,270 to 833 ms. It reached 30 FPS and 100% speed at Black Bane on
+repeat, with 25.04 ms p99 and 25.09 ms worst during that spell. This
+renderer also changes surface and submission paths. Dark Moon already
+shows warm costs relative to Atlas.
+
+Twelve exact Cara program pairs took 6.28 s to link in a device replay
+with packed input and repeated vertex evaluation. A compact geometry
+stage preserved the reference quaternion rule and cut this to 3.66 s.
+Native attribute inputs with that same stage cut it to 1.59 s. A test
+triangle with an opposing quaternion matched all pixels from a
+pre-corrected reference. In-game throughput of the combined route is
+still open.
+
+Commit `b7cdf84` skips unused reference evaluations on an optional Mali
+Atlas route. The stored archive showed 28 pruned entries and every paired
+fragment left the quaternion unused. All 45 binaries restored on a
+repeat boot. At warm Black Bane the game showed 30 FPS and 100% speed,
+with 25.10 ms p99 and 25.12 ms worst presentation. Running the patch
+first with a fresh preview reproduced a 3.25 s cold stall. The earlier
+1.25 s result was sensitive to run order. The diagnostic remains off
+by default. [Android CI](https://github.com/dmikey/cara/actions/runs/45414714508)
