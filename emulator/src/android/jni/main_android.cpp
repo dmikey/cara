@@ -230,6 +230,7 @@ void BootGame(const std::string& path) {
     select_probe("shared_vertex_upload", "CARA_SHARED_VERTEX_UPLOAD");
     select_probe("adreno_replace_vertex_images", "CARA_ADRENO_REPLACE_VERTEX_IMAGES");
     select_probe("trace_gles_gpu_timing", "CARA_TRACE_GLES_GPU_TIMING");
+    select_probe("trace_gles_gpu_timestamps", "CARA_TRACE_GLES_GPU_TIMESTAMPS");
     select_probe("trace_gles_swap_timing", "CARA_TRACE_GLES_SWAP_TIMING");
     select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
     select_probe("remap_texel_pair", "CARA_REMAP_TEXEL_PAIR");

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -48,25 +49,28 @@ namespace OpenGL {
 
 #ifdef __ANDROID__
 struct GLESRefreshTimer {
-    struct Sample {
-        GLuint name = 0;
-        u32 frame = 0;
-        bool pending = false;
-        bool disjoint = false;
-    };
+    using Clock = std::chrono::steady_clock;
+
+    // A zero bit count selects the existing elapsed query.
+    explicit GLESRefreshTimer(unsigned timestamp_bits) : timestamp_bits(timestamp_bits) {}
 
     ~GLESRefreshTimer() {
-        if (active)
+        if (active && !timestamp_bits)
             glEndQueryEXT(GL_TIME_ELAPSED_EXT);
         for (const auto& sample : samples) {
-            if (sample.name)
-                glDeleteQueriesEXT(1, &sample.name);
+            if (sample.begin)
+                glDeleteQueriesEXT(1, &sample.begin);
+            if (sample.end)
+                glDeleteQueriesEXT(1, &sample.end);
         }
     }
 
     void FinishAndPoll() {
         if (active) {
-            glEndQueryEXT(GL_TIME_ELAPSED_EXT);
+            if (timestamp_bits)
+                glQueryCounterEXT(active->end, GL_TIMESTAMP_EXT);
+            else
+                glEndQueryEXT(GL_TIME_ELAPSED_EXT);
             active->pending = true;
             active = nullptr;
         }
@@ -79,26 +83,11 @@ struct GLESRefreshTimer {
         for (auto& sample : samples) {
             if (!sample.pending)
                 continue;
-            sample.disjoint |= disjoint == GL_TRUE;
-            GLuint ready = GL_FALSE;
-            glGetQueryObjectuivEXT(sample.name, GL_QUERY_RESULT_AVAILABLE_EXT, &ready);
-            if (!ready)
+            sample.disjoint |= disjoint != GL_FALSE;
+            if (!Ready(sample.begin) || (timestamp_bits && !Ready(sample.end)))
                 continue;
-            if (!sample.disjoint) {
-                GLuint64 elapsed = 0;
-                glGetQueryObjectui64vEXT(sample.name, GL_QUERY_RESULT_EXT, &elapsed);
-                // Some drivers return a wrapped negative interval with the disjoint flag clear.
-                if (elapsed <= static_cast<GLuint64>(std::numeric_limits<GLint64>::max())) {
-                    __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
-                                        "guest_interval frame=%u ns=%llu",
-                                        static_cast<unsigned>(sample.frame),
-                                        static_cast<unsigned long long>(elapsed));
-                } else {
-                    __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
-                                        "guest_interval_invalid frame=%u",
-                                        static_cast<unsigned>(sample.frame));
-                }
-            }
+            if (!sample.disjoint)
+                Report(sample);
             sample.pending = false;
         }
     }
@@ -109,18 +98,74 @@ struct GLESRefreshTimer {
         for (auto& sample : samples) {
             if (sample.pending)
                 continue;
-            if (!sample.name)
-                glGenQueriesEXT(1, &sample.name);
-            if (!sample.name)
+            if (!sample.begin)
+                glGenQueriesEXT(1, &sample.begin);
+            if (timestamp_bits && !sample.end)
+                glGenQueriesEXT(1, &sample.end);
+            if (!sample.begin || (timestamp_bits && !sample.end))
                 return;
             sample.frame = frame;
             sample.disjoint = false;
-            glBeginQueryEXT(GL_TIME_ELAPSED_EXT, sample.name);
+            if (timestamp_bits) {
+                sample.submitted = Clock::now();
+                glQueryCounterEXT(sample.begin, GL_TIMESTAMP_EXT);
+            } else {
+                glBeginQueryEXT(GL_TIME_ELAPSED_EXT, sample.begin);
+            }
             active = &sample;
             return;
         }
     }
 
+private:
+    struct Sample {
+        GLuint begin = 0;
+        GLuint end = 0;
+        u32 frame = 0;
+        Clock::time_point submitted{};
+        bool pending = false;
+        bool disjoint = false;
+    };
+
+    static bool Ready(GLuint query) {
+        GLuint available = GL_FALSE;
+        glGetQueryObjectuivEXT(query, GL_QUERY_RESULT_AVAILABLE_EXT, &available);
+        return available == GL_TRUE;
+    }
+
+    static GLuint64 Read(GLuint query) {
+        GLuint64 result = 0;
+        glGetQueryObjectui64vEXT(query, GL_QUERY_RESULT_EXT, &result);
+        return result;
+    }
+
+    void Report(const Sample& sample) const {
+        const GLuint64 begin = Read(sample.begin);
+        GLuint64 elapsed = begin;
+        GLuint64 upper_bound = static_cast<GLuint64>(std::numeric_limits<GLint64>::max());
+        if (timestamp_bits) {
+            elapsed = Read(sample.end) - begin;
+            if (timestamp_bits < 64)
+                elapsed &= (GLuint64{1} << timestamp_bits) - 1;
+            // Both GPU timestamps must fall within this host interval. Allow
+            // for modest differences between the two clocks.
+            upper_bound = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - sample.submitted + std::chrono::milliseconds(1)).count();
+        }
+        const char* method = timestamp_bits ? "timestamp" : "elapsed";
+        if (elapsed > upper_bound) {
+            __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
+                                "guest_interval_invalid frame=%u method=%s",
+                                static_cast<unsigned>(sample.frame), method);
+            return;
+        }
+        __android_log_print(ANDROID_LOG_INFO, "CaraGPU",
+                            "guest_interval frame=%u ns=%llu method=%s",
+                            static_cast<unsigned>(sample.frame),
+                            static_cast<unsigned long long>(elapsed), method);
+    }
+
+    const unsigned timestamp_bits;
     std::array<Sample, 4> samples{};
     Sample* active = nullptr;
 };
@@ -467,18 +512,22 @@ void RendererOpenGL::SwapBuffers() {
     if (!gpu_refresh_timer_checked) {
         gpu_refresh_timer_checked = true;
         const char* enabled = std::getenv("CARA_TRACE_GLES_GPU_TIMING");
-        if (enabled && std::strcmp(enabled, "1") == 0 && GLES &&
+        const char* timestamp_flag = std::getenv("CARA_TRACE_GLES_GPU_TIMESTAMPS");
+        const bool timestamps = timestamp_flag && std::strcmp(timestamp_flag, "1") == 0;
+        const bool elapsed = enabled && std::strcmp(enabled, "1") == 0;
+        if ((timestamps || elapsed) && GLES &&
             GLAD_GL_EXT_disjoint_timer_query && glGetQueryivEXT && glGenQueriesEXT &&
-            glDeleteQueriesEXT && glBeginQueryEXT && glEndQueryEXT && glGetQueryObjectuivEXT &&
-            glGetQueryObjectui64vEXT
+            glDeleteQueriesEXT && glGetQueryObjectuivEXT && glGetQueryObjectui64vEXT &&
+            (timestamps ? bool(glQueryCounterEXT) : glBeginQueryEXT && glEndQueryEXT)
 #ifdef CARA_GL_CONTEXT_DISPATCH
             && !CommandQueue::Enabled()
 #endif
         ) {
             GLint bits = 0;
-            glGetQueryivEXT(GL_TIME_ELAPSED_EXT, GL_QUERY_COUNTER_BITS_EXT, &bits);
-            if (bits > 0)
-                gpu_refresh_timer = std::make_unique<GLESRefreshTimer>();
+            glGetQueryivEXT(timestamps ? GL_TIMESTAMP_EXT : GL_TIME_ELAPSED_EXT,
+                            GL_QUERY_COUNTER_BITS_EXT, &bits);
+            if (bits > 0 && bits <= 64)
+                gpu_refresh_timer = std::make_unique<GLESRefreshTimer>(timestamps ? bits : 0);
         }
     }
     if (gpu_refresh_timer)
