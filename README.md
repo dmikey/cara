@@ -46,6 +46,34 @@ Game compatibility, performance, and available features vary by platform.
 Native Metal is in development for Apple devices through separate experimental
 builds. Reusing Cara’s core in Delta is a development goal.
 
+## Launch Cara from Daijishō on Android
+
+1. Open Cara and use **Add Folder to Library** to give it access to your
+   game folder. Switch back to Daijishō with Cara still open in the background.
+2. In Daijishō, go to **Settings → Library → Add a player** and name it
+   **3ds - Cara**. Set **Player am start arguments** to:
+
+   ```text
+   -n org.cara.emu/org.cara.emu.ui.EmulationActivity
+   -a android.intent.action.VIEW
+   -d {file.uri}
+   -e GamePath {file.uri}
+   --grant-read-uri-permission
+   ```
+
+3. Set **Player accepted filename regex** to
+   `(?i)^.*\.(3ds|cci|cxi|3dsx)$`. Leave **Kill package processes before am
+   start** off and save.
+4. Edit the **Nintendo 3DS** platform, select **3ds - Cara** as its
+   **Default Player**, then add and sync your game folder if needed.
+
+For a debug APK, change only the package before the slash to
+`org.cara.emu.debug`. For **Cara Mali Preview**, use `org.cara.emu.malipreview`.
+If a game file cannot be read, reopen Cara and check that the same game
+opens from its library before trying Daijishō again.
+
+[Daijishō player setup](https://github.com/TapiocaFox/Daijishou/wiki/How-to-Use-Daijish%C5%8D#players)
+
 ## Documentation
 
 [Build Cara](docs/build.md) ·
