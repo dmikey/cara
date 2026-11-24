@@ -3,6 +3,7 @@
 
 #include <charconv>
 #include <fstream>
+#include <optional>
 #include <string_view>
 #include <unordered_set>
 
@@ -53,10 +54,10 @@ public:
         return enabled;
     }
 
-    bool Match(const Shader::ShaderSetup& setup, unsigned entry) const {
+    static std::optional<u64> Fingerprint(const Shader::ShaderSetup& setup, unsigned entry) {
         constexpr unsigned WordCount = 8;
         if (entry > setup.program_code.size() - WordCount)
-            return false;
+            return std::nullopt;
         u64 hash = 0xcbf29ce484222325;
         for (unsigned index = 0; index < WordCount; ++index) {
             const u32 word = setup.program_code[entry + index];
@@ -65,7 +66,12 @@ public:
                 hash *= 0x100000001b3;
             }
         }
-        return fingerprints.contains(hash);
+        return hash;
+    }
+
+    bool Match(const Shader::ShaderSetup& setup, unsigned entry) const {
+        const auto hash = Fingerprint(setup, entry);
+        return hash && fingerprints.contains(*hash);
     }
 
     bool Admit(u32 refresh, bool rom_match) {

@@ -65,7 +65,7 @@ public:
         }
     }
 
-    enum class Status { Unavailable, Pending, Ready };
+    enum class Status { Unavailable, Busy, Pending, Ready };
 
     struct Result {
         Status status = Status::Unavailable;
@@ -85,7 +85,7 @@ public:
             return ready;
         }
         if (jobs.size() >= MaxQueued) {
-            return {};
+            return {Status::Busy, {}};
         }
         if (results.size() >= MaxTracked) {
             const auto stale = std::find_if(results.begin(), results.end(), [](const auto& entry) {
@@ -94,7 +94,7 @@ public:
             if (stale != results.end()) {
                 results.erase(stale);
             } else {
-                return {};
+                return {Status::Busy, {}};
             }
         }
         results.emplace(key, Result{Status::Pending, {}});
