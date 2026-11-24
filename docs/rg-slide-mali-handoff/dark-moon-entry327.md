@@ -286,8 +286,12 @@ match sources in the earlier captured Dark Moon Cara archive.
 The sources are 75,804–75,833 bytes and emit the same opcode and
 first generated statement for all 500 captured guest instruction
 PCs. Their vertex program entry offsets are 198, 218 and 230.
-The sources also differ in generated dispatch and packed input
-setup. The common guest program is a candidate for sharing one
+Each generated `exec_shader` calls its literal `sub_<entry>_4096`
+and initializes `jmp_to` to that entry. The decompiler also cuts
+different dispatch blocks at the entry. The PC 198 variant loads
+packed input register 5 where the PC 218 variant zeroes it.
+Changing only a uniform would select neither the missing branch
+labels nor that input. The common guest program is a candidate for sharing one
 compiled stage across proven compatible entry points. An exact
 implementation must validate the guest program and swizzle bytes,
 input/output interfaces, and entry-dependent per-draw state before
