@@ -155,9 +155,9 @@ bool EGLAndroid::Initialize(ANativeWindow* surface) {
 
 void EGLAndroid::UpdateSurface(ANativeWindow* surface) {
     auto window = RetainWindow(surface);
+    std::lock_guard lock(pending_window_mutex);
     if (use_shared_context)
         StopPresenting();
-    std::lock_guard lock(pending_window_mutex);
     pending_window = std::move(window);
 }
 
@@ -307,9 +307,15 @@ void EGLAndroid::SetAdaptiveFrameSkip(bool enabled) {
 
 void EGLAndroid::TryPresenting() {
     display_ticket.fetch_add(1, std::memory_order_relaxed);
+    if (!use_shared_context)
+        return;
+    std::unique_lock lock(pending_window_mutex, std::try_to_lock);
+    if (!lock || pending_window)
+        return;
     if (presenting_state != PresentingState::Running) {
         if (presenting_state == PresentingState::Initial) {
-            eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context);
+            if (!eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context))
+                return;
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             presenting_state = PresentingState::Running;
         } else {
