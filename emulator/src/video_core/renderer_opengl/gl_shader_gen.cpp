@@ -2315,11 +2315,28 @@ layout (std140) uniform vs_config {
             out += "cara_run_vertex(int(pair_id.x)); normquat=" + quaternion + ";\n";
             out += "if(pair_id.x!=pair_id.y && dot(first_quat,normquat)<0.0) normquat=-normquat;\n";
         } else {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        const char* single_dispatch = std::getenv("CARA_MALI_SINGLE_VERTEX_DISPATCH");
+        if (single_dispatch && std::string_view(single_dispatch) == "1" && GLES &&
+            ios_indexed_inputs < 3 && !native_quaternion_geometry && quaternion_program.empty()) {
+            // Keep one call site for the guest program so the driver can inline it once.
+            // For later triangle slots, capture the reference before computing the actual output.
+            out += R"(int triangle_slot = gl_VertexID % 3;
+for (int vertex_id = gl_VertexID - triangle_slot; ; vertex_id = gl_VertexID) {
+    cara_run_vertex(vertex_id);
+    if (vertex_id == gl_VertexID) break;
+    first_quat = )" + quaternion + ";\n}\n";
+            out += varying("normquat") + " = " + quaternion + ";\n";
+            out += "if (triangle_slot != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
+        } else
+#endif
+        {
         if (ios_indexed_inputs<3 && !native_quaternion_geometry) out += "if (gl_VertexID % 3 != 0) { " +
             std::string(quaternion_program.empty()?"cara_run_vertex":"cara_run_quaternion")+
             "(gl_VertexID - gl_VertexID % 3); first_quat = " + quaternion + "; }\n";
         out += "cara_run_vertex(gl_VertexID);\n"+varying("normquat")+" = " + quaternion + ";\n";
         if (ios_indexed_inputs<3 && !native_quaternion_geometry) out += "if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
+        }
         }
         out += "gl_Position = " + vector("vec4", {VSOutputAttributes::POSITION_X, VSOutputAttributes::POSITION_Y,
             VSOutputAttributes::POSITION_Z, VSOutputAttributes::POSITION_W}) + ";\n";
