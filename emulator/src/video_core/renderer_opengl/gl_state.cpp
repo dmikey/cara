@@ -20,6 +20,46 @@ void OpenGLState::InvalidateRasterState() {
     raster_state_valid = false;
 }
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+void OpenGLState::ResetBindingsForStateLoad() {
+    // The replacement renderer uses the same EGL context. A deleted GL name may
+    // immediately be reused while cur_state still caches that old numeric value.
+    glUseProgram(0);
+    if (glBindProgramPipeline) glBindProgramPipeline(0);
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    GLint binding_count = 0;
+    glGetIntegerv(GL_MAX_UNIFORM_BUFFER_BINDINGS, &binding_count);
+    for (GLint binding = 0; binding < binding_count; ++binding)
+        glBindBufferBase(GL_UNIFORM_BUFFER, static_cast<GLuint>(binding), 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+    // In addition to the guest units and LUTs (0–6), the GLES vertex atlas
+    // binds inputs, indices and feedback on private units 7–9.
+    for (GLuint unit = 0; unit <= 9; ++unit) {
+        glActiveTexture(GL_TEXTURE0 + unit);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindSampler(unit, 0);
+        if (unit == static_cast<GLuint>(TextureUnits::TextureCube.id))
+            glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+        if (LUTTextureTarget() != GL_TEXTURE_2D &&
+            unit >= static_cast<GLuint>(TextureUnits::TextureBufferLUT_LF.id) &&
+            unit <= static_cast<GLuint>(TextureUnits::TextureBufferLUT_RGBA.id))
+            glBindTexture(LUTTextureTarget(), 0);
+    }
+    if (AllowShadow) {
+        for (GLuint unit = ImageUnits::ShadowBuffer; unit <= ImageUnits::ShadowTextureNZ; ++unit)
+            glBindImageTexture(unit, 0, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32UI);
+    }
+    InvalidateRasterState();
+    OpenGLState{}.Apply();
+    glActiveTexture(GL_TEXTURE0);
+}
+#endif
+
 static bool ReuseRasterState() {
     static const bool enabled = [] {
         const char* value = std::getenv("CARA_GL_STATE_REUSE");

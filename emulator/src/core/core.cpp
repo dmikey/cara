@@ -614,7 +614,7 @@ void System::SetCpuUsageLimit(bool enabled) {
 void System::Shutdown(bool is_deserializing) {
     // Shutdown emulation session
     if (!is_deserializing) GDBStub::Shutdown();
-    VideoCore::Shutdown();
+    VideoCore::Shutdown(is_deserializing);
     HW::Shutdown();
     telemetry_session.reset();
     if (!is_deserializing) perf_stats.reset();

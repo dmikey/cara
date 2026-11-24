@@ -67,6 +67,6 @@ void FrameUpdate();
 void SettingUpdate();
 
 /// Shutdown the video core
-void Shutdown();
+void Shutdown(bool restoring_state = false);
 
 } // namespace VideoCore

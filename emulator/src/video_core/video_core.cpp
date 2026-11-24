@@ -170,7 +170,11 @@ void SetBackgroundImage(u32* pixels, u32 width, u32 height) {
 }
 
 /// Shutdown the video core
-void Shutdown() {
+void Shutdown([[maybe_unused]] bool restoring_state) {
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    const bool reset_gles = restoring_state &&
+                            dynamic_cast<OpenGL::RendererOpenGL*>(g_renderer.get()) != nullptr;
+#endif
     if (g_rasterizer) g_rasterizer->FlushDeferredDraws();
 #ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
     if (!native_renderer_factory)
@@ -179,6 +183,9 @@ void Shutdown() {
     Pica::Shutdown();
     g_rasterizer.reset();
     g_renderer.reset();
+#if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+    if (reset_gles) OpenGL::OpenGLState::ResetBindingsForStateLoad();
+#endif
 #ifdef CARA_EXPERIMENTAL_METAL_DRAW_BRIDGE
     if (!native_renderer_factory)
 #endif
