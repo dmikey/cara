@@ -210,3 +210,35 @@ Clock policy and cache history can affect the elapsed difference.
 The worst cold refresh remains severe. The warm title numbers are similar
 to the earlier fixed-clock control. Testing the same source change on
 Mali needs a matched normal boot on the RG Slide. [Trial build](https://github.com/dmikey/cara/actions/runs/45445245497)
+
+## Vertex atlas update investigation
+
+The normal-boot control on the G Cloud used JIT + GLES Atlas at native
+resolution and fixed CLK 100%, with adaptive frame skip disabled. On
+the window ending at 721, 51,206 draws took 156.92 ms at p50, 210.81 ms
+at p99, and 225.73 ms at the maximum. Vertex upload averaged 89.84 ms
+per refresh. The 841 sampled vertex subimage calls took 172.92 ms of
+thread CPU in 176.00 ms wall time. The scope includes driver processing
+and possible active waits. It cannot distinguish allocation, copying,
+and spinning inside the driver.
+
+The existing indexed route took 54.45 ms per refresh in uploads in
+the same window, but presentation waits rose from 2.61 to 26.44 ms
+per refresh. P99 reached 255.04 ms and the worst refresh reached
+302.64 ms. With indexed draws and inline presentation, upload time fell
+to 4.54 ms per refresh and p99 and worst were 161.31 and 161.85 ms.
+The 120-refresh window still took 18.45 s, compared with 18.74 s in the
+initial control. The inline path changes where the driver can throttle
+the CPU, so the upload counter alone overstates the improvement.
+
+The Adreno-only experiment `dd28a0a` uses a whole-image definition for
+changed vertex and index textures. Exact cache hits still use the
+resident image. It retains the existing texture pool and the draw
+order, and uses GL's ordered storage lifetime. This lets the driver
+discard the old image once in-flight draws release it. The diagnostic
+requires an explicit flag and an Adreno renderer. [Arm dynamic resource update guidance](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-6-efficiently-updating-dynamic-resources)
+
+The EGL fixture from the same revision passed on Adreno 618 and Mali-G57
+for the existing upload-generation, depth/stencil, and packed-decoder
+checks. It reported 40-bit Adreno and 64-bit Mali GPU timestamp and
+elapsed-time counters in its test context.
