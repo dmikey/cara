@@ -1115,7 +1115,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     pica.tertiary_unit = (*units)[2];
 
     if (stage_in.empty()) {
-        pipelines.QueueHintedVertex(pica, state.vs, u32(r.vs.main_offset));
+        pipelines.QueueHintedVertex(pica, state.vs, u32(r.vs.main_offset), vs.revision, fs.revision);
     }
     NativeMetalCost::Scope sampler_plan(NativeMetalCost::SamplerPlanHost);
     const auto textures = r.texturing.GetTextures();

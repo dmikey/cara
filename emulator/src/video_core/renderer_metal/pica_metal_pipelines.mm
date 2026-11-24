@@ -1085,7 +1085,8 @@ void PicaMetalPipelines::FinishHintedVertex() {
 
 void PicaMetalPipelines::QueueHintedVertex(const PicaPipelineInputs& p,
                                           const Pica::Shader::ShaderSetup& setup,
-                                          unsigned entry) {
+                                          unsigned entry, u64 vertex_revision,
+                                          u64 fragment_revision) {
     if (!shader_hints.Loaded())
         shader_hints.Load(Core::System::GetInstance().GetTitleID());
     if (!shader_hints.Enabled() || warming || warmup_mode == WarmupReplay ||
@@ -1096,12 +1097,21 @@ void PicaMetalPipelines::QueueHintedVertex(const PicaPipelineInputs& p,
         FinishHintedVertex();
     if (hinted_vertex || specializer)
         return;
-    const auto index = FindRuntime(p.vertex, p.fragment, p.vertex_mode);
-    if (!index)
+    const std::array pair{vertex_revision, fragment_revision, u64(p.vertex_mode)};
+    auto& attempted = hinted_pairs[(vertex_revision * 31 + fragment_revision) % hinted_pairs.size()];
+    if (attempted == pair)
         return;
+    const auto index = FindRuntime(p.vertex, p.fragment, p.vertex_mode);
+    if (!index) {
+        attempted = pair;
+        return;
+    }
     const auto source = runtime_pairs[*index].msl_vertex;
-    if (vertex_functions.contains(source) ||
-        !shader_hints.Admit(VideoCore::GetCurrentFrame(), shader_hints.Match(setup, entry)))
+    if (vertex_functions.contains(source)) {
+        attempted = pair;
+        return;
+    }
+    if (!shader_hints.Admit(VideoCore::GetCurrentFrame(), shader_hints.Match(setup, entry)))
         return;
     try {
         auto work = std::async(std::launch::async, [device = device, source] {
@@ -1110,6 +1120,7 @@ void PicaMetalPipelines::QueueHintedVertex(const PicaPipelineInputs& p,
             }
         });
         hinted_vertex.emplace(HintedVertex{source, std::move(work)});
+        attempted = pair;
     } catch (const std::system_error& error) {
         LOG_WARNING(Render_OpenGL, "PICA Metal vertex warm could not start: {}", error.what());
     }

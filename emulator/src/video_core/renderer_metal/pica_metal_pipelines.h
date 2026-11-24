@@ -120,7 +120,8 @@ public:
     explicit PicaMetalPipelines(id<MTLDevice> device_, std::vector<PicaMetalDualAsset> dual = {},
                                 MetalTextureFilter filter = MetalTextureFilter::Game);
     bool BeginWarmup();
-    void QueueHintedVertex(const PicaPipelineInputs&, const Pica::Shader::ShaderSetup&, unsigned entry);
+    void QueueHintedVertex(const PicaPipelineInputs&, const Pica::Shader::ShaderSetup&,
+                           unsigned entry, u64 vertex_revision, u64 fragment_revision);
     bool ObserveTevPipelineMiss(const PicaPipelineInputs&, bool dual, bool detect_burst);
     bool FinishWarmup();
     PicaMetalPipelines(const PicaMetalPipelines&) = delete;
@@ -199,6 +200,7 @@ private:
     using StageCache = std::unordered_map<std::string_view, id<MTLFunction>>;
     StageCache vertex_functions, fragment_functions;
     Pica::ShaderHints::Catalog shader_hints;
+    std::array<std::array<u64, 3>, 128> hinted_pairs{};
     struct HintedVertex {
         std::string_view source;
         std::future<id<MTLFunction>> function;
