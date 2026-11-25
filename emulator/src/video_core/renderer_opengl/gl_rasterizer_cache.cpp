@@ -703,6 +703,22 @@ void RasterizerCacheOpenGL::CopySurface(const Surface& src_surface, const Surfac
     UNREACHABLE();
 }
 
+static bool NativeLinearColorReportEnabled() {
+    static const bool enabled=[]{
+        const auto* a=std::getenv("CARA_NATIVE_LINEAR_COLOR_ORDER_REPORT");
+        const auto* b=std::getenv("CARA_NATIVE_DIAGNOSTICS");
+        return a&&b&&std::strcmp(a,"1")==0&&std::strcmp(b,"1")==0;
+    }();
+    return enabled;
+}
+static thread_local std::array<u64,6> native_linear_color{};
+static void CountNativeLinearColor(SurfaceParams::PixelFormat format,u32 bytes,bool flush) {
+    if(GLES||!NativeLinearColorReportEnabled())return;
+    if(format!=SurfaceParams::PixelFormat::RGBA8&&format!=SurfaceParams::PixelFormat::RGB8)return;
+    const std::size_t index=(flush?2:0)+(format==SurfaceParams::PixelFormat::RGB8?1:0);
+    ++native_linear_color[index];native_linear_color[flush?5:4]+=bytes;
+}
+
 void CachedSurface::LoadGLBuffer(PAddr load_start, PAddr load_end) {
     Common::FrameTiming::TextureAcquisitionScope timing(
         Common::FrameTiming::TextureAcquisitionPhase::Load);
@@ -727,6 +743,7 @@ void CachedSurface::LoadGLBuffer(PAddr load_start, PAddr load_end) {
     const u32 start_offset = load_start - addr;
 
     if (!is_tiled) {
+        CountNativeLinearColor(pixel_format,load_end-load_start,false);
         ASSERT(type == SurfaceType::Color || type == SurfaceType::Depth || type == SurfaceType::DepthStencil);
         if (pixel_format == PixelFormat::D24 || pixel_format == PixelFormat::D24S8) {
             const u32 guest_bpp = GetFormatBpp() / 8;
@@ -820,6 +837,7 @@ void CachedSurface::FlushGLBuffer(PAddr flush_start, PAddr flush_end) {
         if (backup_bytes)
             std::memcpy(&dst_buffer[coarse_start_offset], &backup_data[0], backup_bytes);
     } else if (!is_tiled) {
+        CountNativeLinearColor(pixel_format,flush_end-flush_start,true);
         ASSERT(type == SurfaceType::Color || type == SurfaceType::Depth || type == SurfaceType::DepthStencil);
         if (pixel_format == PixelFormat::D24 || pixel_format == PixelFormat::D24S8) {
             const u32 guest_bpp = GetFormatBpp() / 8;
@@ -4277,6 +4295,121 @@ void RasterizerCacheOpenGL::UpdatePagesCachedCount(PAddr addr, u32 size, int del
 
     if (delta < 0)
         cached_pages.add({pages_interval, delta});
+}
+
+// Diagnostic: actual desktop driver tuple + production cached linear surface methods.
+// This does not start guest execution. The selected scratch is rejected if already owned.
+bool RasterizerCacheOpenGL::RunLinearColorOrderSelfTest(std::string& error) {
+    if (GLES) { error="desktop GL required"; return false; }
+    constexpr u32 reserve=4096;
+    constexpr PAddr scratch=Memory::VRAM_PADDR_END-reserve;
+    constexpr PAddr address=scratch+64;
+    const SurfaceInterval interval(scratch,scratch+reserve);
+    const auto occupied=surface_cache.equal_range(interval);
+    const auto dirty=dirty_regions.equal_range(interval);
+    if (occupied.first!=occupied.second || dirty.first!=dirty.second) {
+        error="linear color oracle requires unused scratch";return false;
+    }
+    auto* memory=VideoCore::Memory()->GetPhysicalPointer(scratch);
+    if (!memory || glGetError()!=GL_NO_ERROR) {error="scratch or existing GL error";return false;}
+    const std::vector<u8> backup(memory,memory+reserve);
+    const auto saved_state=OpenGLState::GetCurState();
+    constexpr std::array<GLenum,8> stores{GL_PACK_ALIGNMENT,GL_UNPACK_ALIGNMENT,
+        GL_PACK_ROW_LENGTH,GL_UNPACK_ROW_LENGTH,GL_PACK_SKIP_ROWS,GL_PACK_SKIP_PIXELS,
+        GL_UNPACK_SKIP_ROWS,GL_UNPACK_SKIP_PIXELS};
+    std::array<GLint,stores.size()> values{};
+    for (std::size_t i=0;i<stores.size();++i) glGetIntegerv(stores[i], &values[i]);
+    GLint pack=0,unpack=0;
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING,&pack);
+    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING,&unpack);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER,0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+    for (std::size_t i=0;i<stores.size();++i) glPixelStorei(stores[i], i<2?4:0);
+    SCOPE_EXIT({
+        std::copy(backup.begin(),backup.end(),memory);
+        OpenGLState::InvalidateRasterState();saved_state.Apply();
+        for(std::size_t i=0;i<stores.size();++i)glPixelStorei(stores[i],values[i]);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER,pack);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER,unpack);
+    });
+    auto fail=[&](const char* label, SurfaceParams::PixelFormat format){
+        error+=std::string(label)+" format="+std::to_string(static_cast<unsigned>(format))+"; ";
+    };
+    using Format=SurfaceParams::PixelFormat;
+    for (auto format : {Format::RGBA8,Format::RGB8,Format::RGB565}) {
+        SurfaceParams params;
+        params.addr=address;params.width=params.stride=params.height=4;
+        params.is_tiled=false;params.res_scale=1;params.pixel_format=format;params.UpdateParams();
+        auto surface=CreateSurface(params);
+        if(!surface){fail("surface creation",format);continue;}
+        SCOPE_EXIT({OpenGLState::ResetTexture(surface->texture.handle);});
+        const u32 bpp=params.GetFormatBpp()/8;
+        const Common::Vec4<u8> initial=format==Format::RGB565
+            ? Common::Vec4<u8>{66,40,49,255} : Common::Vec4<u8>{17,102,201,73};
+        const Common::Vec4<u8> authored=format==Format::RGB565
+            ? Common::Vec4<u8>{49,40,66,255} : Common::Vec4<u8>{197,21,33,117};
+        const auto encode=[format](const Common::Vec4<u8>& c,u8* dest){
+            if(format==Format::RGBA8)Color::EncodeRGBA8(c,dest);
+            else if(format==Format::RGB8)Color::EncodeRGB8(c,dest);
+            else Color::EncodeRGB565(c,dest);
+        };
+        for(u32 i=0;i<16;++i)encode(initial,memory+64+i*bpp);
+        surface->LoadGLBuffer(params.addr,params.end);
+        surface->UploadGLTexture(surface->GetRect());
+        OGLFramebuffer framebuffer;framebuffer.Create();
+        SCOPE_EXIT({OpenGLState::ResetFramebuffer(framebuffer.handle);});
+        OpenGLState::BindReadFramebuffer(framebuffer.handle);
+        glFramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                               surface->texture.handle,0);
+        if(glCheckFramebufferStatus(GL_READ_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE){
+            fail("canonical framebuffer incomplete",format);continue;
+        }
+        std::array<u8,64> rgba{};
+        glPixelStorei(GL_PACK_ROW_LENGTH,0);
+        glReadPixels(0,0,4,4,GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());
+        const std::array<u8,4> desired{initial.r(),initial.g(),initial.b(),
+                                      format==Format::RGBA8?initial.a():u8{255}};
+        for(u32 pixel=0;pixel<16;++pixel)if(!std::equal(desired.begin(),desired.end(),rgba.data()+pixel*4)){
+            fail("canonical upload",format);break;
+        }
+        if(glGetError()!=GL_NO_ERROR)fail("driver upload/readback error",format);
+        for(u32 pixel=0;pixel<16;++pixel){
+            rgba[pixel*4]=authored.r();rgba[pixel*4+1]=authored.g();
+            rgba[pixel*4+2]=authored.b();rgba[pixel*4+3]=authored.a();
+        }
+        OpenGLState::BindTexture2D(0,surface->texture.handle);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH,0);
+        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,4,4,GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());
+        surface->DownloadGLTexture(surface->GetRect());
+        std::array<u8,4> expected_pixel{};
+        encode(authored,expected_pixel.data());
+        const std::array<std::pair<u32,u32>,5> ranges{{{0,params.size},{1,params.size-1},
+                                                     {0,1},{2,7},{params.size-1,params.size}}};
+        for(const auto& [first,last]:ranges){
+            std::fill_n(memory,reserve,u8{0xD9});
+            surface->FlushGLBuffer(params.addr+first,params.addr+last);
+            bool match=true;
+            for(u32 i=0;i<reserve;++i){
+                const auto wanted=(i>=64+first&&i<64+last)?expected_pixel[(i-64)%bpp]:u8{0xD9};
+                if(memory[i]!=wanted){match=false;break;}
+            }
+            if(!match){fail("GPU-authored partial flush",format);break;}
+        }
+        if(glGetError()!=GL_NO_ERROR)fail("driver authored writeback error",format);
+    }
+    return error.empty();
+}
+
+void ReportNativeLinearColorOrder(const std::string& directory) {
+    if (!NativeLinearColorReportEnabled()) return;
+    std::ofstream out(directory+"native-linear-color-order.json");
+    out << "{\"rgba8_loads\":" << native_linear_color[0]
+        << ",\"rgb8_loads\":" << native_linear_color[1]
+        << ",\"rgba8_flushes\":" << native_linear_color[2]
+        << ",\"rgb8_flushes\":" << native_linear_color[3]
+        << ",\"load_bytes\":" << native_linear_color[4]
+        << ",\"flush_bytes\":" << native_linear_color[5] << "}\n";
+    if(!out)throw std::runtime_error("Could not retain linear color counters");
 }
 
 } // namespace OpenGL

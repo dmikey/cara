@@ -69,6 +69,7 @@
 #include "video_core/renderer_opengl/gl_vars.h"
 #include "video_core/video_core.h"
 // Optional audit wraps existing driver queries; it never adds a query in the loop.
+namespace OpenGL { void ReportNativeLinearColorOrder(const std::string&); }
 static PFNGLGETERRORPROC native_original_get_error=nullptr;
 static std::atomic<GLenum> native_first_gl_error{GL_NO_ERROR};
 static GLenum NativeAuditedGetError() {
@@ -460,6 +461,20 @@ static int RunNativeMain(int argc, char** argv) {
             finish_query_census();close_core();
             return fixture.passed&&report&&!shutdown_failed?0:4;
         }
+        if (diagnostics && Cara::NativeReplay::Flag("CARA_NATIVE_LINEAR_COLOR_ORDER_TEST")) {
+            auto* rasterizer=dynamic_cast<OpenGL::RasterizerOpenGL*>(VideoCore::Rasterizer());
+            std::string why;
+            bool pass=rasterizer&&rasterizer->RunLinearColorOrderSelfTest(why);
+            if(native_gl_audit && (native_first_gl_error.load()!=GL_NO_ERROR || !NativeAuditHookConnected())) {
+                pass=false;why+="; GL audit failed";
+            }
+            std::ofstream out(directory+"native-linear-color-order-oracle.json");
+            out<<"{\"passed\":"<<(pass?"true":"false")
+                <<",\"guest_instructions_executed\":false,\"error\":"<<NativeOracleJSONQuote(why)<<"}\n";
+            out.flush();
+            finish_query_census();close_core();
+            return pass&&out&&!shutdown_failed?0:4;
+        }
         for (const auto* oracle : {"CARA_SW_BATCH_VISIBILITY_TEST", "CARA_LUT_EFFECTIVE_CHANGE_TEST", "CARA_NATIVE_REQUIRED_COPY_TEST"}) {
             const auto* flag=std::getenv(oracle);
             if (!flag || std::string(flag)!="1") continue;
@@ -740,6 +755,7 @@ static int RunNativeMain(int argc, char** argv) {
         }
         matched_input.Finish();
         replay_ledger.Write(directory);
+        OpenGL::ReportNativeLinearColorOrder(directory);
         // Explicit test boundary, after the measured run and before GL teardown.
         // Normal play performs no additional queries. Nonzero errors fail closed.
         if (diagnostics && std::getenv("CARA_NATIVE_END_GL_ERROR_CHECK") &&

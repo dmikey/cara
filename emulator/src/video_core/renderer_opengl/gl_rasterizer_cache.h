@@ -228,6 +228,7 @@ public:
 
     // ROM-free GPU/cache oracle; invoke before guest execution on an unused scratch page.
     bool RunSmallWriteSelfTest(std::string& error);
+    bool RunLinearColorOrderSelfTest(std::string& error);
     bool RunNativeRGBA8RemapSelfTest(std::string& error);
     bool RunNativeShaderCopySelfTest(std::string& error); // compatibility alias
     bool RunNativeRequiredCopySelfTest(std::string& error);
