@@ -619,8 +619,10 @@ void BootGame(const std::string& path) {
                             const auto guest_clock = adaptive_clock.Enabled()
                                                          ? adaptive_clock.Percent()
                                                          : ReadPlayPolicy().guest_clock;
+                            // Nearest-rank p95 is the 114th sample in a 120-refresh window.
+                            constexpr std::size_t p95_index = 113;
                             const auto message = fmt::format(
-                                "window end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} worst_frame={} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f}",
+                                "window end={} clock={} p50_ms={:.2f} p99_ms={:.2f} worst_ms={:.2f} worst_frame={} draws={} upload_ms={:.2f} submit_ms={:.2f} download_ms={:.2f} compile_ms={:.2f} lut_ms={:.2f} waits_ms={:.2f} p95_ms={:.2f}",
                                 frame, guest_clock,
                                 (frame_times[59].elapsed + frame_times[60].elapsed) / 2,
                                 frame_times[118].elapsed,
@@ -628,7 +630,7 @@ void BootGame(const std::string& path) {
                                 phases.vertex_upload_seconds * 1000, phases.draw_submit_seconds * 1000,
                                 phases.surface_download_seconds * 1000,
                                 phases.shader_compile_seconds * 1000, phases.draw_lut_upload_seconds * 1000,
-                                phases.gpu_wait_seconds * 1000);
+                                phases.gpu_wait_seconds * 1000, frame_times[p95_index].elapsed);
 #ifdef CARA_GL_CONTEXT_DISPATCH
                             if (OpenGL::CommandQueue::Enabled()) {
                                 using namespace OpenGL::CommandQueue;
@@ -731,7 +733,7 @@ void BootGame(const std::string& path) {
                                 phases.texture_lookup_hits, phases.texture_lookup_verify_mismatches,
                                 phases.surface_subrect_candidates, phases.surface_subrect_early_rejects);
                             if (trace_render_phases) {
-                                for (std::size_t rank = 114; rank < frame_times.size(); ++rank) {
+                                for (std::size_t rank = p95_index; rank < frame_times.size(); ++rank) {
                                     const auto& sample = frame_times[rank];
                                     const auto& b = sample.before;
                                     const auto& a = sample.after;
