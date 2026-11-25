@@ -133,6 +133,9 @@ endif()
 
 # This layout witness requires no renderer or window context.
 if ((CARA_SOFTWARE_PRESENTATION OR CARA_MAC_SDL_DEV_HOST) AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-android-atlas-uniform-policy-self-test ../../tests/android_atlas_uniform_policy_test.cpp)
+    target_include_directories(cara-android-atlas-uniform-policy-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME cara-android-atlas-uniform-policy COMMAND cara-android-atlas-uniform-policy-self-test)
     add_executable(cara-ios-pipeline-cache-self-test ../../tests/ios_pipeline_cache_test.cpp)
     target_compile_options(cara-ios-pipeline-cache-self-test PRIVATE -UNDEBUG)
     add_executable(cara-fastinterp-decoded-record-self-test ../../tests/fastinterp_decoded_record_test.cpp)
