@@ -58,6 +58,18 @@ int main() {
     corrupt_stage[corrupt_stage.size() - 8] ^= 1;
     assert(!Decode(corrupt_stage, identity, decoded, DefaultLimits, stage_archive));
     assert(decoded.size() == 1 && decoded[0].binary == vertices[0].binary);
+    const auto separable_archive = ArchiveKind::SeparableStages;
+    const std::vector<Entry> stages{vertices[0], {{}, "fragment-source", 1, {4, 5}}};
+    const auto separable_bytes = Encode(identity, stages, DefaultLimits, separable_archive);
+    assert(Decode(separable_bytes, identity, decoded, DefaultLimits, separable_archive));
+    assert(decoded.size() == 2 && decoded[0].vertex == "vertex-source" &&
+           decoded[1].vertex.empty() && decoded[1].fragment == "fragment-source" &&
+           decoded[1].binary == stages[1].binary);
+    assert(!Decode(stage_bytes, identity, decoded, DefaultLimits, separable_archive));
+    assert(!Decode(separable_bytes, identity, decoded, DefaultLimits, stage_archive));
+    assert(Encode(identity, expected, DefaultLimits, separable_archive).empty());
+    assert(Encode(identity, {{{}, {}, 1, {4}}}, DefaultLimits, separable_archive).empty());
+    assert(Encode(identity, {{{}, "fragment-source", 1, {}}}, DefaultLimits, separable_archive).empty());
     assert(Key("a", "bc") != Key("ab", "c"));
     const auto vs_digest = Digest(expected[0].vertex.data(), expected[0].vertex.size());
     const auto fs_digest = Digest(expected[0].fragment.data(), expected[0].fragment.size());

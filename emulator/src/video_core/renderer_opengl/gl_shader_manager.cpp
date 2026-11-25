@@ -158,15 +158,15 @@ public:
     }
 
 #ifdef CARA_IOS_GLES
-    bool RestoreVertexStage(const IOSPipelineCache::Entry& entry, u64 source_hash) {
+    bool RestoreSeparableStage(const IOSPipelineCache::Entry& entry, GLenum type, u64 source_hash) {
         const std::vector<GLbyte> binary(entry.binary.begin(), entry.binary.end());
         program.Create(entry.format, binary, true);
         if (!program.handle)
             return false;
-        source = entry.vertex;
+        source = type == GL_VERTEX_SHADER ? entry.vertex : entry.fragment;
         source_digest = IOSPipelineCache::Digest(source.data(), source.size());
         hash = source_hash;
-        BindSeparableProgram(GL_VERTEX_SHADER);
+        BindSeparableProgram(type);
         return true;
     }
 
@@ -319,7 +319,7 @@ public:
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
             const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
             if (Settings::values.use_shader_cache && renderer && std::strstr(renderer, "Mali")) {
-                ios_archive_kind = IOSPipelineCache::ArchiveKind::VertexStages;
+                ios_archive_kind = IOSPipelineCache::ArchiveKind::SeparableStages;
                 LoadIOSPipelines();
             }
 #endif
@@ -378,7 +378,7 @@ public:
 #endif
         }
 #ifdef CARA_IOS_GLES
-        if (ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages)
+        if (ios_archive_kind == IOSPipelineCache::ArchiveKind::SeparableStages)
             SaveIOSPipelines();
 #endif
     }
@@ -391,9 +391,10 @@ public:
         OGLShaderStage& cached_shader = iter->second;
         if (new_shader) {
 #ifdef CARA_IOS_GLES
-            if (shader_type == GL_VERTEX_SHADER &&
-                ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages && !ios_formats.empty()) {
-                CreateIOSVertexStage(cached_shader, shader_code, code_hash, hint);
+            if ((shader_type == GL_VERTEX_SHADER || shader_type == GL_FRAGMENT_SHADER) &&
+                ios_archive_kind == IOSPipelineCache::ArchiveKind::SeparableStages &&
+                !ios_formats.empty()) {
+                CreateIOSSeparableStage(cached_shader, shader_code, shader_type, code_hash, hint);
             } else
 #endif
             {
@@ -482,7 +483,7 @@ public:
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
                 defer = AsyncProgrammableEnabled() ||
                         ((ios_indexed_inputs == 3 || ios_indexed_inputs == 6) && AsyncIndexedEnabled());
-                if (separable && ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages &&
+                if (separable && ios_archive_kind == IOSPipelineCache::ArchiveKind::SeparableStages &&
                     LoadShaderHints()) {
                     hint = shader_hints.Match(setup, u32(regs.vs.main_offset));
                 }
@@ -880,49 +881,71 @@ public:
     }
     void LoadIOSPipelines() {
         ios_identity = IOSIdentity();
-        const bool vertex_archive = ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages;
+        const bool stage_archive =
+            ios_archive_kind == IOSPipelineCache::ArchiveKind::SeparableStages;
+        const bool separate_fog = UseSeparateFogLUT();
         std::string suffix = UseNativeLUTBuffers() ? ".native-lut" : "";
-        if (UseSeparateFogLUT() && !vertex_archive) {
+        const std::string legacy_stage_identity = ios_identity + "\nprogram-role=separable-es320-vertex-v1";
+        std::string legacy_stage_suffix = suffix + ".separable-vertex";
+        if (stage_archive) {
+            ios_identity += "\nprogram-role=separable-es320-stages-v1";
+            suffix += ".separable-stages";
+        }
+        if (separate_fog) {
             ios_identity += "\nseparate-fog-lut=1";
             suffix += ".separate-fog";
-        }
-        if (vertex_archive) {
-            ios_identity += "\nprogram-role=separable-es320-vertex-v1";
-            suffix += ".separable-vertex";
         }
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
         const char* slice = std::getenv("CARA_GPU_QUATERNION_SLICE");
         const char* prune = std::getenv("CARA_GLES_PRUNE_UNUSED_QUATERNION");
-        if (slice && std::strcmp(slice, "1") == 0)
+        if (slice && std::strcmp(slice, "1") == 0) {
             suffix += ".quaternion-slice";
-        if (prune && std::strcmp(prune, "1") == 0)
+            legacy_stage_suffix += ".quaternion-slice";
+        }
+        if (prune && std::strcmp(prune, "1") == 0) {
             suffix += ".prune-unused-quaternion";
+            legacy_stage_suffix += ".prune-unused-quaternion";
+        }
         const char* expanded = std::getenv("CARA_MALI_EXTENDED_PROGRAM_CACHE");
         const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
         if (expanded && std::strcmp(expanded, "1") == 0 && renderer &&
             std::strstr(renderer, "Mali")) {
             ios_cache_limits = IOSPipelineCache::ExtendedMaliLimits;
             suffix += ".mali-extended";
+            legacy_stage_suffix += ".mali-extended";
         }
 #endif
         ios_cache_path = GetCacheFile() + suffix + ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
-        std::ifstream file(ios_cache_path, std::ios::binary | std::ios::ate);
-        if (!file) return;
-        const auto size = file.tellg();
-        if (size < 0 || size > static_cast<std::streamoff>(ios_cache_limits.bytes)) return;
-        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-        file.seekg(0);
-        if (!file.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) ||
-            !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries, ios_cache_limits,
-                                      ios_archive_kind)) return;
-        if (vertex_archive) {
+        std::size_t archive_bytes = 0;
+        const auto load = [&](const std::string& path, const std::string& identity,
+                              IOSPipelineCache::ArchiveKind kind) {
+            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            if (!file)
+                return false;
+            const auto size = file.tellg();
+            if (size < 0 || size > static_cast<std::streamoff>(ios_cache_limits.bytes))
+                return false;
+            std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+            file.seekg(0);
+            if (!file.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) ||
+                !IOSPipelineCache::Decode(bytes, identity, ios_entries, ios_cache_limits, kind))
+                return false;
+            archive_bytes = bytes.size();
+            return true;
+        };
+        if (!load(ios_cache_path, ios_identity, ios_archive_kind) &&
+            (!stage_archive ||
+             !load(GetCacheFile() + legacy_stage_suffix + ".cara-pso1", legacy_stage_identity,
+                   IOSPipelineCache::ArchiveKind::VertexStages)))
+            return;
+        if (stage_archive) {
             for (const auto& entry : ios_entries)
                 ios_bytes += IOSArchiveEntryBytes(entry);
             if (shader_census)
-                ShaderCensus::Record("vertex_stage_archive entries={} bytes={}", ios_entries.size(),
-                                     bytes.size());
+                ShaderCensus::Record("separable_stage_archive entries={} bytes={}", ios_entries.size(),
+                                     archive_bytes);
             return;
         }
         const auto start = std::chrono::steady_clock::now();
@@ -959,7 +982,7 @@ public:
         }
         if (shader_census)
             ShaderCensus::Record("cache_restore entries={} binary_hits={} source_links={} bytes={}",
-                                 ios_entries.size(), binary_hits, source_links, bytes.size());
+                                 ios_entries.size(), binary_hits, source_links, archive_bytes);
         LOG_INFO(Render_OpenGL, "Cara iOS prewarm: {} binary hits, {} source links, {} us; {} formats",
                  binary_hits, source_links,
                  std::chrono::duration_cast<std::chrono::microseconds>(
@@ -991,8 +1014,8 @@ public:
         if (!FileUtil::Rename(temporary, ios_cache_path)) { fail("rename"); return; }
         ios_dirty = false;
         ios_checkpoint_retry.Succeeded();
-        if (shader_census && ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages)
-            ShaderCensus::Record("vertex_stage_checkpoint entries={} bytes={}", ios_entries.size(),
+        if (shader_census && ios_archive_kind == IOSPipelineCache::ArchiveKind::SeparableStages)
+            ShaderCensus::Record("separable_stage_checkpoint entries={} bytes={}", ios_entries.size(),
                                  bytes.size());
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline checkpoint: {} pipelines, {} bytes",
                  ios_entries.size(), bytes.size());
@@ -1004,19 +1027,20 @@ public:
     static std::size_t IOSArchiveEntryBytes(const IOSPipelineCache::Entry& entry) {
         return entry.vertex.size() + entry.fragment.size() + entry.binary.size() + 16;
     }
-    void CreateIOSVertexStage(OGLShaderStage& stage, const std::string& shader_code, u64 code_hash,
-                              [[maybe_unused]] std::optional<bool> hint) {
+    void CreateIOSSeparableStage(OGLShaderStage& stage, const std::string& shader_code, GLenum type,
+                                 u64 code_hash, [[maybe_unused]] std::optional<bool> hint) {
+        const bool vertex = type == GL_VERTEX_SHADER;
         const auto entry = std::find_if(ios_entries.begin(), ios_entries.end(), [&](const auto& e) {
-            return e.vertex == shader_code;
+            return (vertex ? e.vertex : e.fragment) == shader_code;
         });
         if (entry != ios_entries.end()) {
             const auto format = static_cast<GLint>(entry->format);
             const bool restored = std::find(ios_formats.begin(), ios_formats.end(), format) !=
                                       ios_formats.end() &&
-                                  stage.RestoreVertexStage(*entry, code_hash);
+                                  stage.RestoreSeparableStage(*entry, type, code_hash);
             if (shader_census)
-                ShaderCensus::Record("vertex_stage_binary source={:016x} restored={}", code_hash,
-                                     int(restored));
+                ShaderCensus::Record("separable_stage_binary stage={} source={:016x} restored={}",
+                                     vertex ? "vertex" : "fragment", code_hash, int(restored));
             if (restored)
                 return;
             ios_bytes -= IOSArchiveEntryBytes(*entry);
@@ -1026,14 +1050,18 @@ public:
         }
 
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
-        if (hint) {
+        if (vertex && hint) {
             stage.DeferHintedVertex(shader_code, code_hash, *hint);
             return;
         }
 #endif
-        stage.Create(shader_code, GL_VERTEX_SHADER, code_hash);
-        if (stage.IsValid())
-            RememberIOSPipeline(code_hash, stage.SeparableProgram(), shader_code, {});
+        stage.Create(shader_code, type, code_hash);
+        if (stage.IsValid()) {
+            if (vertex)
+                RememberIOSPipeline(code_hash, stage.SeparableProgram(), shader_code, {});
+            else
+                RememberIOSPipeline(code_hash, stage.SeparableProgram(), {}, shader_code);
+        }
     }
 
     void RememberIOSPipeline(u64 key, const OGLProgram& program, const std::string& vs_source,
@@ -1055,7 +1083,7 @@ public:
                 entry.binary.assign(binary.begin(), binary.end());
             }
         }
-        if (ios_archive_kind == IOSPipelineCache::ArchiveKind::VertexStages && entry.binary.empty())
+        if (ios_archive_kind == IOSPipelineCache::ArchiveKind::SeparableStages && entry.binary.empty())
             return;
         const auto cost = IOSArchiveEntryBytes(entry);
         if (cost > ios_cache_limits.bytes || ios_bytes > ios_cache_limits.bytes - cost)

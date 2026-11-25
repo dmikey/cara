@@ -26,20 +26,28 @@ struct Entry {
     std::uint32_t format = 0;
     std::vector<std::uint8_t> binary;
 };
-enum class ArchiveKind { LinkedPrograms, VertexStages };
+enum class ArchiveKind { LinkedPrograms, VertexStages, SeparableStages };
 
 constexpr std::uint64_t ArchiveMagic(ArchiveKind kind) {
+    if (kind == ArchiveKind::SeparableStages)
+        return 0x4341524153534F01ULL;
     return kind == ArchiveKind::VertexStages ? 0x4341524156534F01ULL : 0x4341524150534F01ULL;
 }
 
 inline bool ValidEntry(const Entry& entry, ArchiveKind kind) {
-    if (entry.vertex.empty() || entry.vertex.size() > MaxSource ||
-        entry.vertex.find('\0') != std::string::npos || entry.binary.size() > MaxBinary)
+    const auto valid_source = [](const std::string& source) {
+        return source.size() <= MaxSource && source.find('\0') == std::string::npos;
+    };
+    if (!valid_source(entry.vertex) || !valid_source(entry.fragment) ||
+        entry.binary.size() > MaxBinary)
         return false;
     if (kind == ArchiveKind::VertexStages)
-        return entry.fragment.empty() && entry.format != 0 && !entry.binary.empty();
-    return !entry.fragment.empty() && entry.fragment.size() <= MaxSource &&
-           entry.fragment.find('\0') == std::string::npos;
+        return !entry.vertex.empty() && entry.fragment.empty() && entry.format != 0 &&
+               !entry.binary.empty();
+    if (kind == ArchiveKind::SeparableStages)
+        return entry.vertex.empty() != entry.fragment.empty() && entry.format != 0 &&
+               !entry.binary.empty();
+    return !entry.vertex.empty() && !entry.fragment.empty();
 }
 inline std::uint64_t Digest(const void* bytes, std::size_t size) {
     auto p = static_cast<const std::uint8_t*>(bytes);
