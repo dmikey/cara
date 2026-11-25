@@ -1,6 +1,6 @@
 # G Cloud unused-quaternion experiment — 25 November 2026
 
-Private opt-in experiment, not an enabled production policy. The exact target is Logitech GR0006, Qualcomm Adreno (TM) 618, OpenGL ES 3.2 V@0502.0 (GIT@46d1463393, I43876eb25d, 1638292465), GLSL ES 3.20, monolithic GLES. Every other target retains the existing defaults, including all validated RG Slide/Mali UBO, state, layout and packed-fetch policies.
+This report records the initial private opt-in experiment. The later [shared Android policy and Slide verification](rg-slide-unused-quaternion-result-20261125.md) describes the narrow automatic defaults. The exact target is Logitech GR0006, Qualcomm Adreno (TM) 618, OpenGL ES 3.2 V@0502.0 (GIT@46d1463393, I43876eb25d, 1638292465), GLSL ES 3.20, monolithic GLES. Every other target retains the existing defaults, including all validated RG Slide/Mali UBO, state, layout and packed-fetch policies.
 
 ## What changed
 
@@ -38,4 +38,4 @@ One OFF → ON → OFF sequence, with a fresh empty Cara cache for each arm and 
 
 The later OFF also matched every canonical LCD byte, tick and retained workload vector. Eight changed stages took about 8.37 seconds less compiler time in ON than either OFF. The twelve affected links took at least 5.13 seconds less. Refresh 515 was 10.694 seconds below the faster OFF, versus 3.521 seconds between OFF controls. These are limited descriptive results from one order, not statistical certainty. Some unchanged work also became faster; whole-run changes must not all be assigned to the specialization.
 
-This preserves output while reducing one reproduced cold-Cara-cache shader cost. It does **not** make first play smooth: consuming fragments still require the original quaternion work, and their thirty-five links alone occupied about 70.7 seconds in ON. No quiet gameplay or warm timing verdict was made. The implementation remains private, default off and exact-driver gated; it has not been promoted to a general Adreno or Mali policy.
+This preserves output while reducing one reproduced cold-Cara-cache shader cost. It does **not** make first play smooth: consuming fragments still require the original quaternion work, and their thirty-five links alone occupied about 70.7 seconds in ON. No quiet gameplay or warm timing verdict was made. At the end of this initial comparison it remained private and default off. The later shared policy enables only the measured exact device/driver tuples in Performance Mode; it is not a general Adreno or Mali policy.
