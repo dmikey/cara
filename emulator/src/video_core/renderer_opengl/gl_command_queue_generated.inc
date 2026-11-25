@@ -1,6 +1,7 @@
 // Generated; do not hand-edit. Run generate_gl_command_queue.py.
 static PFNGLACTIVETEXTUREPROC raw_glActiveTexture=nullptr;
 static PFNGLATTACHSHADERPROC raw_glAttachShader=nullptr;
+static PFNGLBEGINQUERYEXTPROC raw_glBeginQueryEXT=nullptr;
 static PFNGLBEGINTRANSFORMFEEDBACKPROC raw_glBeginTransformFeedback=nullptr;
 static PFNGLBINDBUFFERPROC raw_glBindBuffer=nullptr;
 static PFNGLBINDBUFFERBASEPROC raw_glBindBufferBase=nullptr;
@@ -42,6 +43,7 @@ static PFNGLDELETEBUFFERSPROC raw_glDeleteBuffers=nullptr;
 static PFNGLDELETEFRAMEBUFFERSPROC raw_glDeleteFramebuffers=nullptr;
 static PFNGLDELETEPROGRAMPROC raw_glDeleteProgram=nullptr;
 static PFNGLDELETEPROGRAMPIPELINESPROC raw_glDeleteProgramPipelines=nullptr;
+static PFNGLDELETEQUERIESEXTPROC raw_glDeleteQueriesEXT=nullptr;
 static PFNGLDELETERENDERBUFFERSPROC raw_glDeleteRenderbuffers=nullptr;
 static PFNGLDELETESAMPLERSPROC raw_glDeleteSamplers=nullptr;
 static PFNGLDELETESHADERPROC raw_glDeleteShader=nullptr;
@@ -60,6 +62,7 @@ static PFNGLDRAWELEMENTSINSTANCEDPROC raw_glDrawElementsInstanced=nullptr;
 static PFNGLDRAWRANGEELEMENTSBASEVERTEXPROC raw_glDrawRangeElementsBaseVertex=nullptr;
 static PFNGLENABLEPROC raw_glEnable=nullptr;
 static PFNGLENABLEVERTEXATTRIBARRAYPROC raw_glEnableVertexAttribArray=nullptr;
+static PFNGLENDQUERYEXTPROC raw_glEndQueryEXT=nullptr;
 static PFNGLENDTRANSFORMFEEDBACKPROC raw_glEndTransformFeedback=nullptr;
 static PFNGLFENCESYNCPROC raw_glFenceSync=nullptr;
 static PFNGLFINISHPROC raw_glFinish=nullptr;
@@ -72,6 +75,7 @@ static PFNGLFRONTFACEPROC raw_glFrontFace=nullptr;
 static PFNGLGENBUFFERSPROC raw_glGenBuffers=nullptr;
 static PFNGLGENFRAMEBUFFERSPROC raw_glGenFramebuffers=nullptr;
 static PFNGLGENPROGRAMPIPELINESPROC raw_glGenProgramPipelines=nullptr;
+static PFNGLGENQUERIESEXTPROC raw_glGenQueriesEXT=nullptr;
 static PFNGLGENRENDERBUFFERSPROC raw_glGenRenderbuffers=nullptr;
 static PFNGLGENSAMPLERSPROC raw_glGenSamplers=nullptr;
 static PFNGLGENTEXTURESPROC raw_glGenTextures=nullptr;
@@ -92,6 +96,9 @@ static PFNGLGETPOINTERVKHRPROC raw_glGetPointervKHR=nullptr;
 static PFNGLGETPROGRAMBINARYPROC raw_glGetProgramBinary=nullptr;
 static PFNGLGETPROGRAMINFOLOGPROC raw_glGetProgramInfoLog=nullptr;
 static PFNGLGETPROGRAMIVPROC raw_glGetProgramiv=nullptr;
+static PFNGLGETQUERYOBJECTUI64VEXTPROC raw_glGetQueryObjectui64vEXT=nullptr;
+static PFNGLGETQUERYOBJECTUIVEXTPROC raw_glGetQueryObjectuivEXT=nullptr;
+static PFNGLGETQUERYIVEXTPROC raw_glGetQueryivEXT=nullptr;
 static PFNGLGETSHADERINFOLOGPROC raw_glGetShaderInfoLog=nullptr;
 static PFNGLGETSHADERSOURCEPROC raw_glGetShaderSource=nullptr;
 static PFNGLGETSHADERIVPROC raw_glGetShaderiv=nullptr;
@@ -110,6 +117,7 @@ static PFNGLPIXELSTOREIPROC raw_glPixelStorei=nullptr;
 static PFNGLPROGRAMBINARYPROC raw_glProgramBinary=nullptr;
 static PFNGLPROGRAMPARAMETERIPROC raw_glProgramParameteri=nullptr;
 static PFNGLPROGRAMUNIFORM4IVPROC raw_glProgramUniform4iv=nullptr;
+static PFNGLQUERYCOUNTEREXTPROC raw_glQueryCounterEXT=nullptr;
 static PFNGLREADBUFFERPROC raw_glReadBuffer=nullptr;
 static PFNGLREADPIXELSPROC raw_glReadPixels=nullptr;
 static PFNGLRENDERBUFFERSTORAGEPROC raw_glRenderbufferStorage=nullptr;
@@ -158,6 +166,11 @@ static void APIENTRY Wrap_glAttachShader(GLuint program, GLuint shader) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glAttachShader(program, shader);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
     auto fn=raw_glAttachShader;RecordApi(RpcApi::api_glAttachShader, [=]{fn(program, shader);});
+}
+static void APIENTRY Wrap_glBeginQueryEXT(GLenum target, GLuint id) {
+    if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glBeginQueryEXT(target, id);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
+    Producer();
+    auto fn=raw_glBeginQueryEXT;RecordApi(RpcApi::api_glBeginQueryEXT, [=]{fn(target, id);});
 }
 static void APIENTRY Wrap_glBeginTransformFeedback(GLenum primitiveMode) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glBeginTransformFeedback(primitiveMode);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
@@ -400,6 +413,16 @@ static void APIENTRY Wrap_glDeleteProgramPipelines(GLsizei n, const GLuint *pipe
 
     OwnedCopyScope payload_scope;auto owned_value=std::vector<GLuint>(pipelines,pipelines+n);bytes=owned_value.capacity()*sizeof(GLuint);RecordApi(RpcApi::api_glDeleteProgramPipelines, [=,owned_value=std::move(owned_value)]{fn(n,owned_value.data());},bytes);
 }
+static void APIENTRY Wrap_glDeleteQueriesEXT(GLsizei n, const GLuint *ids) {
+    if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glDeleteQueriesEXT(n, ids);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
+    Producer();
+    auto fn=raw_glDeleteQueriesEXT;std::size_t bytes=0;
+    if(n<0 || !ids || !Small(std::size_t(n),sizeof(GLuint),bytes)){SyncApi(RpcApi::api_glDeleteQueriesEXT, [=]{fn(n, ids);},true);if(n>0 && ids){
+
+}return;}
+
+    OwnedCopyScope payload_scope;auto owned_value=std::vector<GLuint>(ids,ids+n);bytes=owned_value.capacity()*sizeof(GLuint);RecordApi(RpcApi::api_glDeleteQueriesEXT, [=,owned_value=std::move(owned_value)]{fn(n,owned_value.data());},bytes);
+}
 static void APIENTRY Wrap_glDeleteRenderbuffers(GLsizei n, const GLuint *renderbuffers) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glDeleteRenderbuffers(n, renderbuffers);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
@@ -534,6 +557,11 @@ static void APIENTRY Wrap_glEnableVertexAttribArray(GLuint index) {
     if(index<GLuint(max_attributes))vaos[current_vao].attributes[index].enabled=true;
     auto fn=raw_glEnableVertexAttribArray;RecordApi(RpcApi::api_glEnableVertexAttribArray, [=]{fn(index);});
 }
+static void APIENTRY Wrap_glEndQueryEXT(GLenum target) {
+    if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glEndQueryEXT(target);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
+    Producer();
+    auto fn=raw_glEndQueryEXT;RecordApi(RpcApi::api_glEndQueryEXT, [=]{fn(target);});
+}
 static void APIENTRY Wrap_glEndTransformFeedback(void) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glEndTransformFeedback();}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
@@ -595,6 +623,11 @@ static void APIENTRY Wrap_glGenProgramPipelines(GLsizei n, GLuint *pipelines) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glGenProgramPipelines(n, pipelines);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
     auto fn=raw_glGenProgramPipelines;return SyncApi(RpcApi::api_glGenProgramPipelines, [=]{return fn(n, pipelines);},true);
+}
+static void APIENTRY Wrap_glGenQueriesEXT(GLsizei n, GLuint *ids) {
+    if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glGenQueriesEXT(n, ids);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
+    Producer();
+    auto fn=raw_glGenQueriesEXT;return SyncApi(RpcApi::api_glGenQueriesEXT, [=]{return fn(n, ids);},true);
 }
 static void APIENTRY Wrap_glGenRenderbuffers(GLsizei n, GLuint *renderbuffers) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glGenRenderbuffers(n, renderbuffers);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
@@ -710,6 +743,21 @@ static void APIENTRY Wrap_glGetProgramiv(GLuint program, GLenum pname, GLint *pa
       else {p->second.linked=false;p->second.uniforms.clear();p->second.attributes.clear();p->second.blocks.clear();}
     }
 }
+static void APIENTRY Wrap_glGetQueryObjectui64vEXT(GLuint id, GLenum pname, GLuint64 *params) {
+    if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glGetQueryObjectui64vEXT(id, pname, params);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
+    Producer();
+    auto fn=raw_glGetQueryObjectui64vEXT;return SyncApi(RpcApi::api_glGetQueryObjectui64vEXT, [=]{return fn(id, pname, params);},true);
+}
+static void APIENTRY Wrap_glGetQueryObjectuivEXT(GLuint id, GLenum pname, GLuint *params) {
+    if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glGetQueryObjectuivEXT(id, pname, params);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
+    Producer();
+    auto fn=raw_glGetQueryObjectuivEXT;return SyncApi(RpcApi::api_glGetQueryObjectuivEXT, [=]{return fn(id, pname, params);},true);
+}
+static void APIENTRY Wrap_glGetQueryivEXT(GLenum target, GLenum pname, GLint *params) {
+    if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glGetQueryivEXT(target, pname, params);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
+    Producer();
+    auto fn=raw_glGetQueryivEXT;return SyncApi(RpcApi::api_glGetQueryivEXT, [=]{return fn(target, pname, params);},true);
+}
 static void APIENTRY Wrap_glGetShaderInfoLog(GLuint shader, GLsizei bufSize, GLsizei *length, GLchar *infoLog) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glGetShaderInfoLog(shader, bufSize, length, infoLog);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
@@ -819,6 +867,11 @@ static void APIENTRY Wrap_glProgramUniform4iv(GLuint program, GLint location, GL
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glProgramUniform4iv(program, location, count, value);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
     Producer();
     auto fn=raw_glProgramUniform4iv;return SyncApi(RpcApi::api_glProgramUniform4iv, [=]{return fn(program, location, count, value);},true);
+}
+static void APIENTRY Wrap_glQueryCounterEXT(GLuint id, GLenum target) {
+    if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glQueryCounterEXT(id, target);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
+    Producer();
+    auto fn=raw_glQueryCounterEXT;RecordApi(RpcApi::api_glQueryCounterEXT, [=]{fn(id, target);});
 }
 static void APIENTRY Wrap_glReadBuffer(GLenum src) {
     if(Owner().IsWorkerThread()){if(DriverTransactions::Executing()){++stats.transaction_inline_calls;return raw_glReadBuffer(src);}++stats.worker_rejected_calls;throw std::logic_error("GL recorder requires producer outside transaction");}
@@ -1078,6 +1131,7 @@ static void CaptureAndInstall(){
 #ifdef CARA_GL_CONTEXT_DISPATCH
     raw_glActiveTexture=glad_glActiveTexture;producer_dispatch.entry_glActiveTexture=raw_glActiveTexture?&Wrap_glActiveTexture:nullptr;
     raw_glAttachShader=glad_glAttachShader;producer_dispatch.entry_glAttachShader=raw_glAttachShader?&Wrap_glAttachShader:nullptr;
+    raw_glBeginQueryEXT=glad_glBeginQueryEXT;producer_dispatch.entry_glBeginQueryEXT=raw_glBeginQueryEXT?&Wrap_glBeginQueryEXT:nullptr;
     raw_glBeginTransformFeedback=glad_glBeginTransformFeedback;producer_dispatch.entry_glBeginTransformFeedback=raw_glBeginTransformFeedback?&Wrap_glBeginTransformFeedback:nullptr;
     raw_glBindBuffer=glad_glBindBuffer;producer_dispatch.entry_glBindBuffer=raw_glBindBuffer?&Wrap_glBindBuffer:nullptr;
     raw_glBindBufferBase=glad_glBindBufferBase;producer_dispatch.entry_glBindBufferBase=raw_glBindBufferBase?&Wrap_glBindBufferBase:nullptr;
@@ -1119,6 +1173,7 @@ static void CaptureAndInstall(){
     raw_glDeleteFramebuffers=glad_glDeleteFramebuffers;producer_dispatch.entry_glDeleteFramebuffers=raw_glDeleteFramebuffers?&Wrap_glDeleteFramebuffers:nullptr;
     raw_glDeleteProgram=glad_glDeleteProgram;producer_dispatch.entry_glDeleteProgram=raw_glDeleteProgram?&Wrap_glDeleteProgram:nullptr;
     raw_glDeleteProgramPipelines=glad_glDeleteProgramPipelines;producer_dispatch.entry_glDeleteProgramPipelines=raw_glDeleteProgramPipelines?&Wrap_glDeleteProgramPipelines:nullptr;
+    raw_glDeleteQueriesEXT=glad_glDeleteQueriesEXT;producer_dispatch.entry_glDeleteQueriesEXT=raw_glDeleteQueriesEXT?&Wrap_glDeleteQueriesEXT:nullptr;
     raw_glDeleteRenderbuffers=glad_glDeleteRenderbuffers;producer_dispatch.entry_glDeleteRenderbuffers=raw_glDeleteRenderbuffers?&Wrap_glDeleteRenderbuffers:nullptr;
     raw_glDeleteSamplers=glad_glDeleteSamplers;producer_dispatch.entry_glDeleteSamplers=raw_glDeleteSamplers?&Wrap_glDeleteSamplers:nullptr;
     raw_glDeleteShader=glad_glDeleteShader;producer_dispatch.entry_glDeleteShader=raw_glDeleteShader?&Wrap_glDeleteShader:nullptr;
@@ -1137,6 +1192,7 @@ static void CaptureAndInstall(){
     raw_glDrawRangeElementsBaseVertex=glad_glDrawRangeElementsBaseVertex;producer_dispatch.entry_glDrawRangeElementsBaseVertex=raw_glDrawRangeElementsBaseVertex?&Wrap_glDrawRangeElementsBaseVertex:nullptr;
     raw_glEnable=glad_glEnable;producer_dispatch.entry_glEnable=raw_glEnable?&Wrap_glEnable:nullptr;
     raw_glEnableVertexAttribArray=glad_glEnableVertexAttribArray;producer_dispatch.entry_glEnableVertexAttribArray=raw_glEnableVertexAttribArray?&Wrap_glEnableVertexAttribArray:nullptr;
+    raw_glEndQueryEXT=glad_glEndQueryEXT;producer_dispatch.entry_glEndQueryEXT=raw_glEndQueryEXT?&Wrap_glEndQueryEXT:nullptr;
     raw_glEndTransformFeedback=glad_glEndTransformFeedback;producer_dispatch.entry_glEndTransformFeedback=raw_glEndTransformFeedback?&Wrap_glEndTransformFeedback:nullptr;
     raw_glFenceSync=glad_glFenceSync;producer_dispatch.entry_glFenceSync=raw_glFenceSync?&Wrap_glFenceSync:nullptr;
     raw_glFinish=glad_glFinish;producer_dispatch.entry_glFinish=raw_glFinish?&Wrap_glFinish:nullptr;
@@ -1149,6 +1205,7 @@ static void CaptureAndInstall(){
     raw_glGenBuffers=glad_glGenBuffers;producer_dispatch.entry_glGenBuffers=raw_glGenBuffers?&Wrap_glGenBuffers:nullptr;
     raw_glGenFramebuffers=glad_glGenFramebuffers;producer_dispatch.entry_glGenFramebuffers=raw_glGenFramebuffers?&Wrap_glGenFramebuffers:nullptr;
     raw_glGenProgramPipelines=glad_glGenProgramPipelines;producer_dispatch.entry_glGenProgramPipelines=raw_glGenProgramPipelines?&Wrap_glGenProgramPipelines:nullptr;
+    raw_glGenQueriesEXT=glad_glGenQueriesEXT;producer_dispatch.entry_glGenQueriesEXT=raw_glGenQueriesEXT?&Wrap_glGenQueriesEXT:nullptr;
     raw_glGenRenderbuffers=glad_glGenRenderbuffers;producer_dispatch.entry_glGenRenderbuffers=raw_glGenRenderbuffers?&Wrap_glGenRenderbuffers:nullptr;
     raw_glGenSamplers=glad_glGenSamplers;producer_dispatch.entry_glGenSamplers=raw_glGenSamplers?&Wrap_glGenSamplers:nullptr;
     raw_glGenTextures=glad_glGenTextures;producer_dispatch.entry_glGenTextures=raw_glGenTextures?&Wrap_glGenTextures:nullptr;
@@ -1169,6 +1226,9 @@ static void CaptureAndInstall(){
     raw_glGetProgramBinary=glad_glGetProgramBinary;producer_dispatch.entry_glGetProgramBinary=raw_glGetProgramBinary?&Wrap_glGetProgramBinary:nullptr;
     raw_glGetProgramInfoLog=glad_glGetProgramInfoLog;producer_dispatch.entry_glGetProgramInfoLog=raw_glGetProgramInfoLog?&Wrap_glGetProgramInfoLog:nullptr;
     raw_glGetProgramiv=glad_glGetProgramiv;producer_dispatch.entry_glGetProgramiv=raw_glGetProgramiv?&Wrap_glGetProgramiv:nullptr;
+    raw_glGetQueryObjectui64vEXT=glad_glGetQueryObjectui64vEXT;producer_dispatch.entry_glGetQueryObjectui64vEXT=raw_glGetQueryObjectui64vEXT?&Wrap_glGetQueryObjectui64vEXT:nullptr;
+    raw_glGetQueryObjectuivEXT=glad_glGetQueryObjectuivEXT;producer_dispatch.entry_glGetQueryObjectuivEXT=raw_glGetQueryObjectuivEXT?&Wrap_glGetQueryObjectuivEXT:nullptr;
+    raw_glGetQueryivEXT=glad_glGetQueryivEXT;producer_dispatch.entry_glGetQueryivEXT=raw_glGetQueryivEXT?&Wrap_glGetQueryivEXT:nullptr;
     raw_glGetShaderInfoLog=glad_glGetShaderInfoLog;producer_dispatch.entry_glGetShaderInfoLog=raw_glGetShaderInfoLog?&Wrap_glGetShaderInfoLog:nullptr;
     raw_glGetShaderSource=glad_glGetShaderSource;producer_dispatch.entry_glGetShaderSource=raw_glGetShaderSource?&Wrap_glGetShaderSource:nullptr;
     raw_glGetShaderiv=glad_glGetShaderiv;producer_dispatch.entry_glGetShaderiv=raw_glGetShaderiv?&Wrap_glGetShaderiv:nullptr;
@@ -1187,6 +1247,7 @@ static void CaptureAndInstall(){
     raw_glProgramBinary=glad_glProgramBinary;producer_dispatch.entry_glProgramBinary=raw_glProgramBinary?&Wrap_glProgramBinary:nullptr;
     raw_glProgramParameteri=glad_glProgramParameteri;producer_dispatch.entry_glProgramParameteri=raw_glProgramParameteri?&Wrap_glProgramParameteri:nullptr;
     raw_glProgramUniform4iv=glad_glProgramUniform4iv;producer_dispatch.entry_glProgramUniform4iv=raw_glProgramUniform4iv?&Wrap_glProgramUniform4iv:nullptr;
+    raw_glQueryCounterEXT=glad_glQueryCounterEXT;producer_dispatch.entry_glQueryCounterEXT=raw_glQueryCounterEXT?&Wrap_glQueryCounterEXT:nullptr;
     raw_glReadBuffer=glad_glReadBuffer;producer_dispatch.entry_glReadBuffer=raw_glReadBuffer?&Wrap_glReadBuffer:nullptr;
     raw_glReadPixels=glad_glReadPixels;producer_dispatch.entry_glReadPixels=raw_glReadPixels?&Wrap_glReadPixels:nullptr;
     raw_glRenderbufferStorage=glad_glRenderbufferStorage;producer_dispatch.entry_glRenderbufferStorage=raw_glRenderbufferStorage?&Wrap_glRenderbufferStorage:nullptr;
@@ -1230,6 +1291,7 @@ static void CaptureAndInstall(){
 #else
     raw_glActiveTexture=glad_glActiveTexture;if(raw_glActiveTexture)glad_glActiveTexture=&Wrap_glActiveTexture;
     raw_glAttachShader=glad_glAttachShader;if(raw_glAttachShader)glad_glAttachShader=&Wrap_glAttachShader;
+    raw_glBeginQueryEXT=glad_glBeginQueryEXT;if(raw_glBeginQueryEXT)glad_glBeginQueryEXT=&Wrap_glBeginQueryEXT;
     raw_glBeginTransformFeedback=glad_glBeginTransformFeedback;if(raw_glBeginTransformFeedback)glad_glBeginTransformFeedback=&Wrap_glBeginTransformFeedback;
     raw_glBindBuffer=glad_glBindBuffer;if(raw_glBindBuffer)glad_glBindBuffer=&Wrap_glBindBuffer;
     raw_glBindBufferBase=glad_glBindBufferBase;if(raw_glBindBufferBase)glad_glBindBufferBase=&Wrap_glBindBufferBase;
@@ -1271,6 +1333,7 @@ static void CaptureAndInstall(){
     raw_glDeleteFramebuffers=glad_glDeleteFramebuffers;if(raw_glDeleteFramebuffers)glad_glDeleteFramebuffers=&Wrap_glDeleteFramebuffers;
     raw_glDeleteProgram=glad_glDeleteProgram;if(raw_glDeleteProgram)glad_glDeleteProgram=&Wrap_glDeleteProgram;
     raw_glDeleteProgramPipelines=glad_glDeleteProgramPipelines;if(raw_glDeleteProgramPipelines)glad_glDeleteProgramPipelines=&Wrap_glDeleteProgramPipelines;
+    raw_glDeleteQueriesEXT=glad_glDeleteQueriesEXT;if(raw_glDeleteQueriesEXT)glad_glDeleteQueriesEXT=&Wrap_glDeleteQueriesEXT;
     raw_glDeleteRenderbuffers=glad_glDeleteRenderbuffers;if(raw_glDeleteRenderbuffers)glad_glDeleteRenderbuffers=&Wrap_glDeleteRenderbuffers;
     raw_glDeleteSamplers=glad_glDeleteSamplers;if(raw_glDeleteSamplers)glad_glDeleteSamplers=&Wrap_glDeleteSamplers;
     raw_glDeleteShader=glad_glDeleteShader;if(raw_glDeleteShader)glad_glDeleteShader=&Wrap_glDeleteShader;
@@ -1289,6 +1352,7 @@ static void CaptureAndInstall(){
     raw_glDrawRangeElementsBaseVertex=glad_glDrawRangeElementsBaseVertex;if(raw_glDrawRangeElementsBaseVertex)glad_glDrawRangeElementsBaseVertex=&Wrap_glDrawRangeElementsBaseVertex;
     raw_glEnable=glad_glEnable;if(raw_glEnable)glad_glEnable=&Wrap_glEnable;
     raw_glEnableVertexAttribArray=glad_glEnableVertexAttribArray;if(raw_glEnableVertexAttribArray)glad_glEnableVertexAttribArray=&Wrap_glEnableVertexAttribArray;
+    raw_glEndQueryEXT=glad_glEndQueryEXT;if(raw_glEndQueryEXT)glad_glEndQueryEXT=&Wrap_glEndQueryEXT;
     raw_glEndTransformFeedback=glad_glEndTransformFeedback;if(raw_glEndTransformFeedback)glad_glEndTransformFeedback=&Wrap_glEndTransformFeedback;
     raw_glFenceSync=glad_glFenceSync;if(raw_glFenceSync)glad_glFenceSync=&Wrap_glFenceSync;
     raw_glFinish=glad_glFinish;if(raw_glFinish)glad_glFinish=&Wrap_glFinish;
@@ -1301,6 +1365,7 @@ static void CaptureAndInstall(){
     raw_glGenBuffers=glad_glGenBuffers;if(raw_glGenBuffers)glad_glGenBuffers=&Wrap_glGenBuffers;
     raw_glGenFramebuffers=glad_glGenFramebuffers;if(raw_glGenFramebuffers)glad_glGenFramebuffers=&Wrap_glGenFramebuffers;
     raw_glGenProgramPipelines=glad_glGenProgramPipelines;if(raw_glGenProgramPipelines)glad_glGenProgramPipelines=&Wrap_glGenProgramPipelines;
+    raw_glGenQueriesEXT=glad_glGenQueriesEXT;if(raw_glGenQueriesEXT)glad_glGenQueriesEXT=&Wrap_glGenQueriesEXT;
     raw_glGenRenderbuffers=glad_glGenRenderbuffers;if(raw_glGenRenderbuffers)glad_glGenRenderbuffers=&Wrap_glGenRenderbuffers;
     raw_glGenSamplers=glad_glGenSamplers;if(raw_glGenSamplers)glad_glGenSamplers=&Wrap_glGenSamplers;
     raw_glGenTextures=glad_glGenTextures;if(raw_glGenTextures)glad_glGenTextures=&Wrap_glGenTextures;
@@ -1321,6 +1386,9 @@ static void CaptureAndInstall(){
     raw_glGetProgramBinary=glad_glGetProgramBinary;if(raw_glGetProgramBinary)glad_glGetProgramBinary=&Wrap_glGetProgramBinary;
     raw_glGetProgramInfoLog=glad_glGetProgramInfoLog;if(raw_glGetProgramInfoLog)glad_glGetProgramInfoLog=&Wrap_glGetProgramInfoLog;
     raw_glGetProgramiv=glad_glGetProgramiv;if(raw_glGetProgramiv)glad_glGetProgramiv=&Wrap_glGetProgramiv;
+    raw_glGetQueryObjectui64vEXT=glad_glGetQueryObjectui64vEXT;if(raw_glGetQueryObjectui64vEXT)glad_glGetQueryObjectui64vEXT=&Wrap_glGetQueryObjectui64vEXT;
+    raw_glGetQueryObjectuivEXT=glad_glGetQueryObjectuivEXT;if(raw_glGetQueryObjectuivEXT)glad_glGetQueryObjectuivEXT=&Wrap_glGetQueryObjectuivEXT;
+    raw_glGetQueryivEXT=glad_glGetQueryivEXT;if(raw_glGetQueryivEXT)glad_glGetQueryivEXT=&Wrap_glGetQueryivEXT;
     raw_glGetShaderInfoLog=glad_glGetShaderInfoLog;if(raw_glGetShaderInfoLog)glad_glGetShaderInfoLog=&Wrap_glGetShaderInfoLog;
     raw_glGetShaderSource=glad_glGetShaderSource;if(raw_glGetShaderSource)glad_glGetShaderSource=&Wrap_glGetShaderSource;
     raw_glGetShaderiv=glad_glGetShaderiv;if(raw_glGetShaderiv)glad_glGetShaderiv=&Wrap_glGetShaderiv;
@@ -1339,6 +1407,7 @@ static void CaptureAndInstall(){
     raw_glProgramBinary=glad_glProgramBinary;if(raw_glProgramBinary)glad_glProgramBinary=&Wrap_glProgramBinary;
     raw_glProgramParameteri=glad_glProgramParameteri;if(raw_glProgramParameteri)glad_glProgramParameteri=&Wrap_glProgramParameteri;
     raw_glProgramUniform4iv=glad_glProgramUniform4iv;if(raw_glProgramUniform4iv)glad_glProgramUniform4iv=&Wrap_glProgramUniform4iv;
+    raw_glQueryCounterEXT=glad_glQueryCounterEXT;if(raw_glQueryCounterEXT)glad_glQueryCounterEXT=&Wrap_glQueryCounterEXT;
     raw_glReadBuffer=glad_glReadBuffer;if(raw_glReadBuffer)glad_glReadBuffer=&Wrap_glReadBuffer;
     raw_glReadPixels=glad_glReadPixels;if(raw_glReadPixels)glad_glReadPixels=&Wrap_glReadPixels;
     raw_glRenderbufferStorage=glad_glRenderbufferStorage;if(raw_glRenderbufferStorage)glad_glRenderbufferStorage=&Wrap_glRenderbufferStorage;
@@ -1386,6 +1455,7 @@ static void RestoreEntrypoints(){
 #else
     if(raw_glActiveTexture)glad_glActiveTexture=raw_glActiveTexture;
     if(raw_glAttachShader)glad_glAttachShader=raw_glAttachShader;
+    if(raw_glBeginQueryEXT)glad_glBeginQueryEXT=raw_glBeginQueryEXT;
     if(raw_glBeginTransformFeedback)glad_glBeginTransformFeedback=raw_glBeginTransformFeedback;
     if(raw_glBindBuffer)glad_glBindBuffer=raw_glBindBuffer;
     if(raw_glBindBufferBase)glad_glBindBufferBase=raw_glBindBufferBase;
@@ -1427,6 +1497,7 @@ static void RestoreEntrypoints(){
     if(raw_glDeleteFramebuffers)glad_glDeleteFramebuffers=raw_glDeleteFramebuffers;
     if(raw_glDeleteProgram)glad_glDeleteProgram=raw_glDeleteProgram;
     if(raw_glDeleteProgramPipelines)glad_glDeleteProgramPipelines=raw_glDeleteProgramPipelines;
+    if(raw_glDeleteQueriesEXT)glad_glDeleteQueriesEXT=raw_glDeleteQueriesEXT;
     if(raw_glDeleteRenderbuffers)glad_glDeleteRenderbuffers=raw_glDeleteRenderbuffers;
     if(raw_glDeleteSamplers)glad_glDeleteSamplers=raw_glDeleteSamplers;
     if(raw_glDeleteShader)glad_glDeleteShader=raw_glDeleteShader;
@@ -1445,6 +1516,7 @@ static void RestoreEntrypoints(){
     if(raw_glDrawRangeElementsBaseVertex)glad_glDrawRangeElementsBaseVertex=raw_glDrawRangeElementsBaseVertex;
     if(raw_glEnable)glad_glEnable=raw_glEnable;
     if(raw_glEnableVertexAttribArray)glad_glEnableVertexAttribArray=raw_glEnableVertexAttribArray;
+    if(raw_glEndQueryEXT)glad_glEndQueryEXT=raw_glEndQueryEXT;
     if(raw_glEndTransformFeedback)glad_glEndTransformFeedback=raw_glEndTransformFeedback;
     if(raw_glFenceSync)glad_glFenceSync=raw_glFenceSync;
     if(raw_glFinish)glad_glFinish=raw_glFinish;
@@ -1457,6 +1529,7 @@ static void RestoreEntrypoints(){
     if(raw_glGenBuffers)glad_glGenBuffers=raw_glGenBuffers;
     if(raw_glGenFramebuffers)glad_glGenFramebuffers=raw_glGenFramebuffers;
     if(raw_glGenProgramPipelines)glad_glGenProgramPipelines=raw_glGenProgramPipelines;
+    if(raw_glGenQueriesEXT)glad_glGenQueriesEXT=raw_glGenQueriesEXT;
     if(raw_glGenRenderbuffers)glad_glGenRenderbuffers=raw_glGenRenderbuffers;
     if(raw_glGenSamplers)glad_glGenSamplers=raw_glGenSamplers;
     if(raw_glGenTextures)glad_glGenTextures=raw_glGenTextures;
@@ -1477,6 +1550,9 @@ static void RestoreEntrypoints(){
     if(raw_glGetProgramBinary)glad_glGetProgramBinary=raw_glGetProgramBinary;
     if(raw_glGetProgramInfoLog)glad_glGetProgramInfoLog=raw_glGetProgramInfoLog;
     if(raw_glGetProgramiv)glad_glGetProgramiv=raw_glGetProgramiv;
+    if(raw_glGetQueryObjectui64vEXT)glad_glGetQueryObjectui64vEXT=raw_glGetQueryObjectui64vEXT;
+    if(raw_glGetQueryObjectuivEXT)glad_glGetQueryObjectuivEXT=raw_glGetQueryObjectuivEXT;
+    if(raw_glGetQueryivEXT)glad_glGetQueryivEXT=raw_glGetQueryivEXT;
     if(raw_glGetShaderInfoLog)glad_glGetShaderInfoLog=raw_glGetShaderInfoLog;
     if(raw_glGetShaderSource)glad_glGetShaderSource=raw_glGetShaderSource;
     if(raw_glGetShaderiv)glad_glGetShaderiv=raw_glGetShaderiv;
@@ -1495,6 +1571,7 @@ static void RestoreEntrypoints(){
     if(raw_glProgramBinary)glad_glProgramBinary=raw_glProgramBinary;
     if(raw_glProgramParameteri)glad_glProgramParameteri=raw_glProgramParameteri;
     if(raw_glProgramUniform4iv)glad_glProgramUniform4iv=raw_glProgramUniform4iv;
+    if(raw_glQueryCounterEXT)glad_glQueryCounterEXT=raw_glQueryCounterEXT;
     if(raw_glReadBuffer)glad_glReadBuffer=raw_glReadBuffer;
     if(raw_glReadPixels)glad_glReadPixels=raw_glReadPixels;
     if(raw_glRenderbufferStorage)glad_glRenderbufferStorage=raw_glRenderbufferStorage;

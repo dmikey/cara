@@ -783,6 +783,9 @@ void RendererOpenGL::SwapBuffers() {
 
 void RendererOpenGL::RenderScreenshot() {
     if (VideoCore::g_screenshot_complete_callback) {
+        // DrawScreens leaves the HUD shader, vertex array, and blend state
+        // applied. The next composition still needs the LCD draw state.
+        const auto presentation_state = OpenGLState::GetCurState();
         // Draw this frame to the screenshot framebuffer
         OGLFramebuffer screenshot_framebuffer;
         screenshot_framebuffer.Create();
@@ -792,7 +795,7 @@ void RendererOpenGL::RenderScreenshot() {
         const auto& layout = render_window.GetFramebufferLayout();
         GLuint renderbuffer;
         glGenRenderbuffers(1, &renderbuffer);
-        glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+        const GLuint previous_renderbuffer = OpenGLState::BindRenderbuffer(renderbuffer);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, layout.width, layout.height);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
                                   renderbuffer);
@@ -804,7 +807,9 @@ void RendererOpenGL::RenderScreenshot() {
         FlipPixels(pixels.data(), layout.width, layout.height);
 
         screenshot_framebuffer.Release();
+        OpenGLState::BindRenderbuffer(previous_renderbuffer);
         glDeleteRenderbuffers(1, &renderbuffer);
+        presentation_state.Apply();
         VideoCore::g_screenshot_complete_callback(layout.width, layout.height, pixels);
         VideoCore::g_screenshot_complete_callback = nullptr;
     }
