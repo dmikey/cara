@@ -759,15 +759,16 @@ void CachedSurface::LoadGLBuffer(PAddr load_start, PAddr load_end) {
             }
             return;
         }
-        // TODO(liushuyu): check if the byteswap here is 100% correct, cannot fully test this
-        if (pixel_format == PixelFormat::RGBA8) {
+        // The desktop packed RGBA8 and BGR upload tuples accept guest byte order.
+        // Only the GLES byte tuples need canonical RGBA/RGB staging.
+        if (GLES && pixel_format == PixelFormat::RGBA8) {
             for (std::size_t i = start_offset; i < load_end - addr; i += 4) {
                 gl_buffer[i] = texture_src_data[i + 3];
                 gl_buffer[i + 1] = texture_src_data[i + 2];
                 gl_buffer[i + 2] = texture_src_data[i + 1];
                 gl_buffer[i + 3] = texture_src_data[i];
             }
-        } else if (pixel_format == PixelFormat::RGB8) {
+        } else if (GLES && pixel_format == PixelFormat::RGB8) {
             for (std::size_t i = start_offset; i < load_end - addr; i += 3) {
                 gl_buffer[i] = texture_src_data[i + 2];
                 gl_buffer[i + 1] = texture_src_data[i + 1];
@@ -846,7 +847,8 @@ void CachedSurface::FlushGLBuffer(PAddr flush_start, PAddr flush_end) {
                 const u32 source_component=pixel_format==PixelFormat::D24S8 ? (component+1)%4 : component+1;
                 dst_buffer[i]=gl_buffer[size_t(pixel)*4+source_component];
             }
-        } else if (pixel_format == PixelFormat::RGBA8 || pixel_format == PixelFormat::RGB8) {
+        } else if (GLES &&
+                   (pixel_format == PixelFormat::RGBA8 || pixel_format == PixelFormat::RGB8)) {
             // Dirty ownership can split inside a pixel after a CPU byte write.
             // Do not overwrite the neighboring CPU-owned bytes when flushing it.
             if (pixel_format == PixelFormat::RGBA8)
