@@ -51,3 +51,33 @@ A separate normal boot with distinct textures enabled tagged the queued work dur
 Entry 327 accounts for 86% of the unlit indexed-draw overlap. The producer's active-texture query waited behind it for 3.100 ms per refresh. This reproduces the earlier entry-327 finding with the LUT lifetime change enabled. The blit wait is weighted toward guest display transfers, so optimizing feedback texture copies would attack a different path. The display-transfer implementation may scale or flip, so an image copy is only equivalent when dimensions, orientation and formats allow it. [Matched backlog summary](dark-moon-fog-lut-gadd-backlog.txt) · [Earlier tagged trace](gadd-worker-synchronization.md)
 
 The diagnostic boot is excluded from the timing table. Both test sessions restored the original signed Cara APK, and the app configuration and shader archive checksums matched before and after testing.
+
+## Black LCDs during screenshot capture
+
+On the RG Slide, Dark Moon booted normally into Gadd's lab with Dynarmic,
+GLES Atlas, threaded presentation, separable shader hints, CLK 100 and
+native resolution. Both arms captured the same 65 alternating guest
+refreshes. Slow-draw skipping and adaptive frame skip were off.
+
+| Android compositor sample | Unpatched `ead939b4` | Fixed `da1fe022` |
+| --- | ---: | ---: |
+| Video samples in eight seconds after lab entry | 613 | 636 |
+| Black samples inside the top LCD | 50 | 0 |
+| LCD fill register samples with a requested fill | 0 of 482 | 0 of 482 |
+| GL errors reported after threaded presentation | 0 of 241 | 0 of 241 |
+
+The screenshot path draws the LCDs and then the HUD into a temporary
+framebuffer. The HUD leaves its program, blend state and vertex bindings
+active. The next LCD composition reuses that state, which explains why
+the HUD is visible over black game screens. Restoring the saved state
+and previous renderbuffer binding before the screenshot callback fixes
+that composition. Controls with captures disabled showed zero black frames
+with either mailbox fence policy. The mailbox fence experiment is outside
+this change.
+
+The A/B covers an eight-second lab interval and a specific, repeatable
+trigger. It verifies displayed color in the sense that black frames
+disappeared. It does not exercise or read the emulated depth attachment.
+
+[Unpatched Android build](https://github.com/dmikey/cara/actions/runs/45526121553) ·
+[Fixed Android build](https://github.com/dmikey/cara/actions/runs/45527665654)
