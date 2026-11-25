@@ -467,6 +467,104 @@ Pixels Draw(GLuint program = 0) {
     return pixels;
 }
 
+// Raw PICA arithmetic subset for the first reusable GPU interpreter fixture.
+// A game path must validate the complete program before admitting it.
+void CheckPicaVertexInterpreter() {
+    constexpr GLuint add = 0x00, mul = 0x08, mov = 0x13, end = 0x22;
+    const auto instruction = [](GLuint op, GLuint dest, GLuint src1, GLuint src2,
+                                GLuint swizzle) {
+        return (op << 26) | (dest << 21) | (src1 << 12) | (src2 << 7) | swizzle;
+    };
+    constexpr GLuint xyzw = 0x1b;
+    const auto descriptor = [](GLuint mask, GLuint first, GLuint second) {
+        return mask | (first << 5) | (second << 14);
+    };
+    // o0 = i0 + i1, o1 = c0 * i2, then replace only o1.w using c0.w.
+    const std::array<GLuint, 4> code{instruction(add, 0, 0, 1, 0),
+                                    instruction(mul, 1, 32, 2, 0),
+                                    instruction(mov, 1, 32, 0, 1),
+                                    end << 26};
+    const std::array<GLuint, 4> swizzles{descriptor(15, xyzw, xyzw),
+                                        descriptor(1, xyzw, xyzw), 0, 0};
+    const GLuint vs = Compile(GL_VERTEX_SHADER, R"(#version 300 es
+precision highp float;
+precision highp int;
+
+const vec2 corners[3] = vec2[3](vec2(-1,-1),vec2(3,-1),vec2(-1,3));
+uniform highp uvec4 pica_code;
+uniform highp uvec4 pica_swizzles;
+uniform float z;
+uniform vec4 color;
+out highp vec4 vertex_color;
+
+vec4 fetch_source(uint reg, vec4 inputs[3], vec4 temps[16]) {
+    if (reg < 3u) return inputs[reg];
+    if (reg >= 16u && reg < 32u) return temps[reg - 16u];
+    if (reg == 32u) return color;
+    return vec4(0.0);
+}
+
+vec4 swizzle_source(vec4 value, uint selectors, bool negated) {
+    vec4 result;
+    for (int lane = 0; lane < 4; ++lane)
+        result[lane] = value[(selectors >> uint(6 - 2 * lane)) & 3u];
+    return negated ? -result : result;
+}
+
+void main() {
+    vec4 inputs[3] = vec4[3](vec4(corners[gl_VertexID], 0.0, 1.0),
+                             vec4(0.0, 0.0, z, 0.0), vec4(1.0, 1.0, 1.0, 0.0));
+    vec4 temps[16];
+    for (int i = 0; i < 16; ++i) temps[i] = vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 outputs[2] = vec4[2](vec4(0.0, 0.0, 0.0, 1.0), vec4(0.0, 0.0, 0.0, 1.0));
+    for (int pc = 0; pc < 4; ++pc) {
+        uint word = pica_code[pc];
+        uint op = word >> 26u;
+        if (op == 0x22u) break;
+        uint sw = pica_swizzles[word & 127u];
+        vec4 a = swizzle_source(fetch_source((word >> 12u) & 127u, inputs, temps),
+                                (sw >> 5u) & 255u, (sw & 16u) != 0u);
+        vec4 b = swizzle_source(fetch_source((word >> 7u) & 31u, inputs, temps),
+                                (sw >> 14u) & 255u, (sw & 8192u) != 0u);
+        vec4 result = a;
+        if (op == 0u) result = a + b;
+        if (op == 8u) {
+            // Match the zero-product rule for the fixture's multiply.
+            result = mix(a * b, vec4(0.0), equal(a, vec4(0.0)));
+            result = mix(result, vec4(0.0), equal(b, vec4(0.0)));
+        }
+        uint dst = (word >> 21u) & 31u;
+        for (int lane = 0; lane < 4; ++lane) {
+            if ((sw & (8u >> uint(lane))) == 0u) continue;
+            if (dst < 2u) outputs[dst][lane] = result[lane];
+            if (dst >= 16u) temps[dst - 16u][lane] = result[lane];
+        }
+    }
+    gl_Position = outputs[0];
+    vertex_color = outputs[1];
+})");
+    const GLuint fs = Compile(GL_FRAGMENT_SHADER, R"(#version 300 es
+precision highp float;
+in highp vec4 vertex_color;
+out vec4 ink;
+void main() { ink = vertex_color; })");
+    const GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    GLint linked = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    Check(linked == GL_TRUE, "PICA vertex interpreter fixture link");
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glUseProgram(program);
+    glUniform4uiv(glGetUniformLocation(program, "pica_code"), 1, code.data());
+    glUniform4uiv(glGetUniformLocation(program, "pica_swizzles"), 1, swizzles.data());
+    const auto expected = Draw();
+    Check(Draw(program) == expected, "PICA vertex interpreter changed color or depth rejection");
+    std::puts("PICA vertex interpreter: raw MOV/ADD/MUL/END, color and depth rejection matched");
+}
+
 // Compare one instance pair against the full ordinary reference, including the
 // vertex ID supplied by an EBO and side effects in the depth/stencil attachment.
 void CheckInstancedDraws() {
@@ -724,6 +822,7 @@ void Run(EGLDisplay display, EGLConfig config) {
     CheckInstancedDraws();
     CheckRemapPixels();
     CheckPackedFloatDecoder();
+    CheckPicaVertexInterpreter();
     rendering.Release();
 }
 } // namespace
