@@ -13,6 +13,9 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.WindowManager;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import org.cara.emu.NativeLibrary;
 import org.cara.emu.settings.Settings;
 import org.cara.emu.settings.SettingsFile;
@@ -25,6 +28,7 @@ final class ExternalDisplayController implements DisplayManager.DisplayListener 
     private ScreenPresentation presentation;
     private boolean started;
     private int mode;
+    private final Set<Integer> rejected = new HashSet<>();
 
     ExternalDisplayController(Activity activity) {
         this.activity = activity;
@@ -64,13 +68,15 @@ final class ExternalDisplayController implements DisplayManager.DisplayListener 
     }
 
     private void update() {
-        if (!started || mode == 0 || activity.isFinishing()) {
+        if (!started || mode == 0 || activity.isFinishing() || activity.isDestroyed()) {
             dismiss();
             return;
         }
         Display selected = null;
         for (Display display : displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION)) {
-            if (display.isValid() && display.getDisplayId() != activity.getWindowManager()
+            if (display.isValid() && display.getState() != Display.STATE_OFF
+                    && (display.getFlags() & Display.FLAG_PRIVATE) == 0
+                    && !rejected.contains(display.getDisplayId()) && display.getDisplayId() != activity.getWindowManager()
                     .getDefaultDisplay().getDisplayId()) {
                 if (presentation != null && presentation.getDisplay().getDisplayId()
                         == display.getDisplayId()) {
@@ -93,12 +99,19 @@ final class ExternalDisplayController implements DisplayManager.DisplayListener 
             }
         });
         try { next.show(); }
-        catch (WindowManager.InvalidDisplayException e) { dismiss(); }
+        catch (WindowManager.InvalidDisplayException e) {
+            rejected.add(selected.getDisplayId());
+            dismiss();
+            // Try another supported output once; rejected IDs cannot loop.
+            update();
+        } catch (WindowManager.BadTokenException e) {
+            dismiss();
+        }
     }
 
     @Override public void onDisplayAdded(int id) { update(); }
-    @Override public void onDisplayRemoved(int id) { update(); }
-    @Override public void onDisplayChanged(int id) { update(); }
+    @Override public void onDisplayRemoved(int id) { rejected.remove(id); update(); }
+    @Override public void onDisplayChanged(int id) { rejected.remove(id); update(); }
 
     private final class ScreenPresentation extends Presentation implements SurfaceHolder.Callback {
         private int touchPointer = -1;
@@ -107,13 +120,15 @@ final class ExternalDisplayController implements DisplayManager.DisplayListener 
         @Override protected void onCreate(Bundle state) {
             super.onCreate(state);
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
             SurfaceView view = new SurfaceView(getContext());
             view.getHolder().addCallback(this);
             view.setOnTouchListener((v, event) -> {
                 if (mode != 2 || presentation != this) return false;
                 int action = event.getActionMasked();
                 if (action == MotionEvent.ACTION_DOWN) {
+                    v.requestUnbufferedDispatch(event);
                     touchPointer = event.getPointerId(0);
                 } else if (action == MotionEvent.ACTION_CANCEL) {
                     NativeLibrary.ExternalTouchEvent(0, 0, 3);
