@@ -885,8 +885,6 @@ public:
             ios_archive_kind == IOSPipelineCache::ArchiveKind::SeparableStages;
         const bool separate_fog = UseSeparateFogLUT();
         std::string suffix = UseNativeLUTBuffers() ? ".native-lut" : "";
-        const std::string legacy_stage_identity = ios_identity + "\nprogram-role=separable-es320-vertex-v1";
-        std::string legacy_stage_suffix = suffix + ".separable-vertex";
         if (stage_archive) {
             ios_identity += "\nprogram-role=separable-es320-stages-v1";
             suffix += ".separable-stages";
@@ -898,54 +896,36 @@ public:
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
         const char* slice = std::getenv("CARA_GPU_QUATERNION_SLICE");
         const char* prune = std::getenv("CARA_GLES_PRUNE_UNUSED_QUATERNION");
-        if (slice && std::strcmp(slice, "1") == 0) {
+        if (slice && std::strcmp(slice, "1") == 0)
             suffix += ".quaternion-slice";
-            legacy_stage_suffix += ".quaternion-slice";
-        }
-        if (prune && std::strcmp(prune, "1") == 0) {
+        if (prune && std::strcmp(prune, "1") == 0)
             suffix += ".prune-unused-quaternion";
-            legacy_stage_suffix += ".prune-unused-quaternion";
-        }
         const char* expanded = std::getenv("CARA_MALI_EXTENDED_PROGRAM_CACHE");
         const auto* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
         if (expanded && std::strcmp(expanded, "1") == 0 && renderer &&
             std::strstr(renderer, "Mali")) {
             ios_cache_limits = IOSPipelineCache::ExtendedMaliLimits;
             suffix += ".mali-extended";
-            legacy_stage_suffix += ".mali-extended";
         }
 #endif
         ios_cache_path = GetCacheFile() + suffix + ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
-        std::size_t archive_bytes = 0;
-        const auto load = [&](const std::string& path, const std::string& identity,
-                              IOSPipelineCache::ArchiveKind kind) {
-            std::ifstream file(path, std::ios::binary | std::ios::ate);
-            if (!file)
-                return false;
-            const auto size = file.tellg();
-            if (size < 0 || size > static_cast<std::streamoff>(ios_cache_limits.bytes))
-                return false;
-            std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-            file.seekg(0);
-            if (!file.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) ||
-                !IOSPipelineCache::Decode(bytes, identity, ios_entries, ios_cache_limits, kind))
-                return false;
-            archive_bytes = bytes.size();
-            return true;
-        };
-        if (!load(ios_cache_path, ios_identity, ios_archive_kind) &&
-            (!stage_archive ||
-             !load(GetCacheFile() + legacy_stage_suffix + ".cara-pso1", legacy_stage_identity,
-                   IOSPipelineCache::ArchiveKind::VertexStages)))
-            return;
+        std::ifstream file(ios_cache_path, std::ios::binary | std::ios::ate);
+        if (!file) return;
+        const auto size = file.tellg();
+        if (size < 0 || size > static_cast<std::streamoff>(ios_cache_limits.bytes)) return;
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+        file.seekg(0);
+        if (!file.read(reinterpret_cast<char*>(bytes.data()), bytes.size()) ||
+            !IOSPipelineCache::Decode(bytes, ios_identity, ios_entries, ios_cache_limits,
+                                      ios_archive_kind)) return;
         if (stage_archive) {
             for (const auto& entry : ios_entries)
                 ios_bytes += IOSArchiveEntryBytes(entry);
             if (shader_census)
                 ShaderCensus::Record("separable_stage_archive entries={} bytes={}", ios_entries.size(),
-                                     archive_bytes);
+                                     bytes.size());
             return;
         }
         const auto start = std::chrono::steady_clock::now();
@@ -982,7 +962,7 @@ public:
         }
         if (shader_census)
             ShaderCensus::Record("cache_restore entries={} binary_hits={} source_links={} bytes={}",
-                                 ios_entries.size(), binary_hits, source_links, archive_bytes);
+                                 ios_entries.size(), binary_hits, source_links, bytes.size());
         LOG_INFO(Render_OpenGL, "Cara iOS prewarm: {} binary hits, {} source links, {} us; {} formats",
                  binary_hits, source_links,
                  std::chrono::duration_cast<std::chrono::microseconds>(
