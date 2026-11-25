@@ -44,6 +44,7 @@ class ValidationCopyCollectorTests(unittest.TestCase):
 #include "common/alignment.h"
 #include "common/math_util.h"
 #include "common/file_util.h"
+#include "common/frame_timing.h"
 #include "core/settings.h"
 #include "cara/quad_input_capture_trace.h"
 #include "video_core/renderer_opengl/gl_surface_invalidation_context.h"
@@ -240,6 +241,17 @@ int main(int argc, char** argv) {
  VideoCore::frame=1200;
  assert(cache.GetTextureCopyHandle(image)==101 && image->feedback_calls==baseline_calls+3);
  assert(cache.validation_copy_trace->feedback_totals.timing.calls==1);
+ // The real timing wrapper now references shared FrameTiming; test both its
+ // default disabled path above and enabled feedback accounting independently
+ // of the validation-copy collector's window.
+ auto& timing=Common::FrameTiming::counters;
+ assert(timing.texture_feedback_copies==0 && timing.texture_feedback_copy_bytes==0);
+ setenv("CARA_RENDER_BOOKKEEPING_PROFILE","1",1);
+ timing.enabled=true;
+ assert(cache.GetTextureCopyHandle(image)==101 && image->feedback_calls==baseline_calls+4);
+ assert(timing.texture_feedback_copies==1 && timing.texture_feedback_copy_bytes==256);
+ assert(cache.validation_copy_trace->feedback_totals.timing.calls==1);
+ timing.enabled=false;
  return 0;
 }
 '''
