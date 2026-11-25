@@ -365,6 +365,9 @@ struct OGLFrame {
     u32 height;             /// Height of the frame
     bool color_reloaded;    /// Texture attachment was recreated (ie: resized)
     OGLRenderbuffer color;  /// Buffer shared between the render/present FBO
+#ifdef __ANDROID__
+    OGLTexture color_texture; /// Optional shared GLES texture backing.
+#endif
     OGLFramebuffer render;  /// FBO created on the render thread
     OGLFramebuffer present; /// FBO created on the present thread
     GLsync render_fence;    /// Fence created on the render thread
@@ -372,6 +375,17 @@ struct OGLFrame {
 #ifdef __ANDROID__
     u32 guest_refresh;
 #endif
+
+    void AttachColor(GLenum target) const {
+#ifdef __ANDROID__
+        if (color_texture.handle) {
+            glFramebufferTexture2D(target, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                   color_texture.handle, 0);
+            return;
+        }
+#endif
+        glFramebufferRenderbuffer(target, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color.handle);
+    }
 };
 
 struct OGLTextureMailbox {
@@ -418,22 +432,36 @@ struct OGLTextureMailbox {
     /// called in core thread
     /// Recreate the frame if the size of the window has changed
     void ReloadRenderFrame(OGLFrame* frame, u32 width, u32 height) {
-        // Recreate the color texture attachment
-        frame->color.Release();
-        frame->color.Create();
-        GLuint prev_render_buffer = OpenGLState::BindRenderbuffer(frame->color.handle);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+        // Storage is allocated by the render context and shared with the presenter.
+#ifdef __ANDROID__
+        static const bool texture_backing = [] {
+            const char* value = std::getenv("CARA_MAILBOX_TEXTURE_COLOR");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+        if (GLES && texture_backing) {
+            frame->color_texture.Release();
+            frame->color_texture.Create();
+            const GLuint old = OpenGLState::BindTexture2D(0, frame->color_texture.handle);
+            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
+            OpenGLState::BindTexture2D(0, old);
+        } else
+#endif
+        {
+            frame->color.Release();
+            frame->color.Create();
+            const GLuint old = OpenGLState::BindRenderbuffer(frame->color.handle);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+            OpenGLState::BindRenderbuffer(old);
+        }
         // Recreate the FBO for the render target
         frame->render.Release();
         frame->render.Create();
         OpenGLState::BindReadFramebuffer(frame->render.handle);
         OpenGLState::BindDrawFramebuffer(frame->render.handle);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
-                                  frame->color.handle);
+        frame->AttachColor(GL_FRAMEBUFFER);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
             LOG_CRITICAL(Render_OpenGL, "Failed to recreate render FBO!");
         }
-        OpenGLState::BindRenderbuffer(prev_render_buffer);
         frame->width = width;
         frame->height = height;
         frame->color_reloaded = true;
@@ -508,8 +536,7 @@ struct OGLTextureMailbox {
         GLint previous_draw_fbo{};
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previous_draw_fbo);
         glBindFramebuffer(GL_FRAMEBUFFER, frame->present.handle);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
-                                  frame->color.handle);
+        frame->AttachColor(GL_FRAMEBUFFER);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
             LOG_CRITICAL(Render_OpenGL, "Failed to recreate present FBO!");
         }
@@ -1008,7 +1035,9 @@ bool RendererOpenGL::TryPresent() {
     if (trace_lcd)
         __android_log_print(ANDROID_LOG_INFO, "CaraLCD",
                             "present refresh=%u color=%u fbo=%u error=%04x",
-                            frame->guest_refresh, frame->color.handle, frame->present.handle,
+                            frame->guest_refresh,
+                            frame->color_texture.handle ? frame->color_texture.handle : frame->color.handle,
+                            frame->present.handle,
                             glGetError());
 #endif
     /* insert fence for the main thread to block on */

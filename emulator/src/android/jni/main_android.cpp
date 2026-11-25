@@ -226,6 +226,7 @@ void BootGame(const std::string& path) {
     select_probe("mailbox_async_publish", "CARA_MAILBOX_ASYNC_PUBLISH");
     select_probe("mailbox_wait_before_attach", "CARA_MAILBOX_WAIT_BEFORE_ATTACH");
     select_probe("mailbox_trace_lcd", "CARA_MAILBOX_TRACE_LCD");
+    select_probe("mailbox_texture_color", "CARA_MAILBOX_TEXTURE_COLOR");
     select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
     select_probe("lighting_lut_generations", "CARA_LIGHTING_LUT_GENERATIONS");
     const auto fog_override = Config::GetLayer().Get<bool>({"Debug", "separate_fog_lut"});
