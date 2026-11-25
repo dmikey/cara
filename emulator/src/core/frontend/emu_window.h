@@ -45,6 +45,12 @@ public:
     /// Swap buffers to display the next frame
     virtual void SwapBuffers() = 0;
     virtual unsigned GetDefaultFramebuffer() const { return 0; }
+    // Optional frontend-owned dual-display presentation. The source is a completed
+    // canonical combined GPU framebuffer; no guest command or refresh is added.
+    virtual int ExternalDisplayMode() const { return 0; }
+    virtual void DisableExternalDisplay() {}
+    virtual bool IsPresentationContextCurrent() const { return true; }
+    virtual bool PresentDualFrame(unsigned framebuffer,unsigned width,unsigned height) { return false; }
 
     /// Receives upright RGBA8 LCD pixels from the software presentation backend.
     /// Called on the emulation thread; consumers must copy before returning.
@@ -110,6 +116,8 @@ public:
 
 protected:
     EmuWindow();
+    // Direct normalized guest LCD input for a frontend-owned secondary surface.
+    void TouchNormalized(float x,float y);
     virtual ~EmuWindow();
 
     /**

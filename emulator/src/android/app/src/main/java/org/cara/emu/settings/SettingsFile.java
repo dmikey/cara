@@ -31,6 +31,7 @@ public final class SettingsFile {
     public static final String KEY_USE_PRESENT_THREAD = "use_present_thread";
     public static final String KEY_CPU_USAGE_LIMIT = "cpu_usage_limit";
     // Renderer
+    public static final String KEY_EXTERNAL_DISPLAY = "external_display";
     public static final String KEY_USE_GLES = "use_gles";
     public static final String KEY_SHOW_FPS = "show_fps";
     public static final String KEY_USE_HW_SHADER = "use_hw_shader";

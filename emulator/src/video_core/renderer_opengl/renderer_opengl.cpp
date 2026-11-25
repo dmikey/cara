@@ -360,6 +360,7 @@ struct OGLFrame {
     u32 width;              /// Width of the frame (to detect resize)
     u32 height;             /// Height of the frame
     bool color_reloaded;    /// Texture attachment was recreated (ie: resized)
+    bool dual_atlas = false; /// Canonical combined LCD atlas, not a physical window layout
     OGLRenderbuffer color;  /// Buffer shared between the render/present FBO
     OGLFramebuffer render;  /// FBO created on the render thread
     OGLFramebuffer present; /// FBO created on the present thread
@@ -764,6 +765,32 @@ void RendererOpenGL::SwapBuffers() {
 
     RenderScreenshot();
 
+#ifdef __ANDROID__
+    const bool dual=render_window.ExternalDisplayMode()!=0;
+    if (dual) {
+        // Capture completed GPU LCD textures once at the internal render scale.
+        // Presentation may then crop either LCD without rerunning guest draws.
+        const u32 scale=std::max<u32>(1,VideoCore::GetResolutionScaleFactor());
+        const auto canonical=Layout::DefaultFrameLayout(Core::kScreenTopWidth*scale,
+            (Core::kScreenTopHeight+Core::kScreenBottomHeight)*scale,false);
+        auto atlas_state=OpenGLState::GetCurState();
+        atlas_state.viewport={0,0,static_cast<GLsizei>(canonical.width),static_cast<GLsizei>(canonical.height)};
+        atlas_state.Apply();
+        if (Settings::values.use_present_thread) {
+            RenderToMailbox(canonical, true);
+        } else if (DrawDualAtlas(canonical)) {
+            render_window.PresentDualFrame(dual_framebuffer.handle,canonical.width,canonical.height);
+        } else {
+            render_window.DisableExternalDisplay();
+            auto fallback_state=OpenGLState::GetCurState();
+            fallback_state.viewport={0,0,static_cast<GLsizei>(layout.width),static_cast<GLsizei>(layout.height)};
+            fallback_state.Apply();
+            OpenGLState::BindDrawFramebuffer(render_window.GetDefaultFramebuffer());
+            DrawScreens(layout,render_window.GetIntegerOutputScale()!=0);
+            render_window.SwapBuffers();
+        }
+    } else
+#endif
     if (Settings::values.use_present_thread) {
         RenderToMailbox(layout);
     } else {
@@ -780,6 +807,30 @@ void RendererOpenGL::SwapBuffers() {
 #endif
     VideoCore::FrameUpdate();
 }
+
+#ifdef __ANDROID__
+bool RendererOpenGL::DrawDualAtlas(const Layout::FramebufferLayout& canonical) {
+    if (!dual_framebuffer.handle || dual_width!=canonical.width || dual_height!=canonical.height) {
+        dual_framebuffer.Release();dual_color.Release();
+        dual_framebuffer.Create();dual_color.Create();
+        const auto prior=OpenGLState::BindRenderbuffer(dual_color.handle);
+        glRenderbufferStorage(GL_RENDERBUFFER,GL_RGBA8,canonical.width,canonical.height);
+        OpenGLState::BindDrawFramebuffer(dual_framebuffer.handle);
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_RENDERBUFFER,dual_color.handle);
+        const auto status=glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+        OpenGLState::BindRenderbuffer(prior);
+        if(status!=GL_FRAMEBUFFER_COMPLETE) {
+            LOG_ERROR(Render_OpenGL,"External LCD atlas framebuffer incomplete: {}",status);
+            dual_framebuffer.Release();dual_color.Release();dual_width=dual_height=0;
+            return false;
+        }
+        dual_width=canonical.width;dual_height=canonical.height;
+    }
+    OpenGLState::BindDrawFramebuffer(dual_framebuffer.handle);
+    DrawScreens(canonical,true);
+    return true;
+}
+#endif
 
 void RendererOpenGL::RenderScreenshot() {
     if (VideoCore::g_screenshot_complete_callback) {
@@ -811,7 +862,7 @@ void RendererOpenGL::RenderScreenshot() {
 }
 
 /// run in core thread
-void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
+void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout, bool dual_atlas) {
 #if defined(__ANDROID__) && defined(CARA_GL_CONTEXT_DISPATCH)
     CommandQueue::Backlog::Scope scope(CommandQueue::Backlog::Source::Display);
 #endif
@@ -863,8 +914,9 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
     }
     OpenGLState::BindDrawFramebuffer(frame->render.handle);
 
-    // draw frame
-    DrawScreens(layout);
+    // The mailbox slot owns its source layout until both presentation blits retire.
+    frame->dual_atlas=dual_atlas;
+    DrawScreens(layout, dual_atlas);
 
     // delete the draw fence if the frame wasn't presented
     if (frame->render_fence) {
@@ -902,15 +954,24 @@ bool RendererOpenGL::TryPresent() {
         return false;
     }
     const auto& layout = render_window.GetFramebufferLayout();
+#ifdef __ANDROID__
+    // A pre-attach combined frame can have an arbitrary old user layout.
+    // Wait for a newly composed canonical atlas before splitting it.
+    if(render_window.ExternalDisplayMode()!=0 && !frame->dual_atlas)
+        return false;
+#endif
 
     // Clearing before a full overwrite of a fbo can signal to drivers that they can avoid a
     // readback since we won't be doing any blending
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#ifdef __ANDROID__
+    if(!frame->dual_atlas)
+#endif
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
     // Recreate the presentation FBO if the color attachment was changed
     if (frame->color_reloaded) {
         LOG_DEBUG(Render_OpenGL, "Reloading present frame");
-        mailbox->ReloadPresentFrame(frame, layout.width, layout.height);
+        mailbox->ReloadPresentFrame(frame, frame->height, frame->width);
     }
     glWaitSync(frame->render_fence, 0, GL_TIMEOUT_IGNORED);
     // INTEL workaround.
@@ -919,6 +980,18 @@ bool RendererOpenGL::TryPresent() {
     // glDeleteSync(frame.render_sync);
     // frame.render_sync = 0;
 
+#ifdef __ANDROID__
+    if (frame->dual_atlas) {
+        // Both crops use this retained completed mailbox attachment. Insert
+        // its normal reuse fence only after both source reads have been issued.
+        const bool handled=render_window.PresentDualFrame(frame->present.handle,frame->width,frame->height);
+        if(!render_window.IsPresentationContextCurrent())
+            return false; // Lost context: do not submit GL calls to no owner.
+        frame->present_fence=glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);
+        glFlush();
+        return !handled; // Native dual packet already swapped the handheld.
+    }
+#endif
     glBindFramebuffer(GL_READ_FRAMEBUFFER, frame->present.handle);
     glBlitFramebuffer(0, 0, frame->width, frame->height, 0, 0, layout.width, layout.height,
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);

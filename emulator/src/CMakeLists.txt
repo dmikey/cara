@@ -133,6 +133,9 @@ endif()
 
 # This layout witness requires no renderer or window context.
 if ((CARA_SOFTWARE_PRESENTATION OR CARA_MAC_SDL_DEV_HOST) AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_executable(cara-android-dual-display-plan-self-test ../../tests/android_dual_display_plan_test.cpp)
+    target_include_directories(cara-android-dual-display-plan-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME cara-android-dual-display-plan COMMAND cara-android-dual-display-plan-self-test)
     add_executable(cara-android-atlas-uniform-policy-self-test ../../tests/android_atlas_uniform_policy_test.cpp)
     target_include_directories(cara-android-atlas-uniform-policy-self-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME cara-android-atlas-uniform-policy COMMAND cara-android-atlas-uniform-policy-self-test)

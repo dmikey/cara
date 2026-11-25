@@ -50,6 +50,7 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
     private static final int TASK_PROGRESS_BAIDUOCR1 = 1;
     private static final int TASK_PROGRESS_TRANSLATE = 2;
 
+    private ExternalDisplayController externalDisplay;
     private String mPath;
     private Surface mSurface;
     private EmulationState mState;
@@ -230,6 +231,8 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
 
     @Override
     public void doFrame(long frameTimeNanos) {
+        if (externalDisplay == null) externalDisplay = new ExternalDisplayController(requireActivity());
+        externalDisplay.start();
         Choreographer.getInstance().postFrameCallback(this);
         NativeLibrary.DoFrame();
     }
@@ -270,6 +273,7 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
 
     @Override
     public void onPause() {
+        if (externalDisplay != null) externalDisplay.stop();
         if (mState == EmulationState.RUNNING) {
             mState = EmulationState.PAUSED;
             // Release the surface before pausing, since emulation has to be running for that.

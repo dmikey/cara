@@ -74,7 +74,8 @@ std::tuple<unsigned, unsigned> EmuWindow::ClipToTouchScreen(unsigned new_x, unsi
 }
 
 void EmuWindow::TouchPressed(unsigned framebuffer_x, unsigned framebuffer_y) {
-    if (!IsWithinTouchscreen(framebuffer_layout, framebuffer_x, framebuffer_y))
+    if (!framebuffer_layout.bottom_screen_enabled ||
+        !IsWithinTouchscreen(framebuffer_layout, framebuffer_x, framebuffer_y))
         return;
     std::lock_guard guard(touch_state->mutex);
     touch_state->touch_x =
@@ -86,6 +87,14 @@ void EmuWindow::TouchPressed(unsigned framebuffer_x, unsigned framebuffer_y) {
     touch_state->touch_pressed = true;
 }
 
+void EmuWindow::TouchNormalized(float x,float y) {
+    if(!std::isfinite(x)||!std::isfinite(y)||x<0||x>=1||y<0||y>=1)return;
+    std::lock_guard guard(touch_state->mutex);
+    touch_state->touch_x=x;
+    touch_state->touch_y=y;
+    touch_state->touch_pressed=true;
+}
+
 void EmuWindow::TouchReleased() {
     std::lock_guard guard{touch_state->mutex};
     touch_state->touch_pressed = false;
@@ -94,13 +103,18 @@ void EmuWindow::TouchReleased() {
 }
 
 void EmuWindow::TouchMoved(unsigned framebuffer_x, unsigned framebuffer_y) {
-    if (!touch_state->touch_pressed)
+    if (!framebuffer_layout.bottom_screen_enabled)
         return;
-
+    std::lock_guard guard(touch_state->mutex);
+    if (!touch_state->touch_pressed || !framebuffer_layout.bottom_screen.GetWidth() ||
+        !framebuffer_layout.bottom_screen.GetHeight())
+        return;
     if (!IsWithinTouchscreen(framebuffer_layout, framebuffer_x, framebuffer_y))
         std::tie(framebuffer_x, framebuffer_y) = ClipToTouchScreen(framebuffer_x, framebuffer_y);
-
-    TouchPressed(framebuffer_x, framebuffer_y);
+    touch_state->touch_x = float(framebuffer_x - framebuffer_layout.bottom_screen.left) /
+                           framebuffer_layout.bottom_screen.GetWidth();
+    touch_state->touch_y = float(framebuffer_y - framebuffer_layout.bottom_screen.top) /
+                           framebuffer_layout.bottom_screen.GetHeight();
 }
 
 void EmuWindow::UpdateFramebufferLayout(u32 width, u32 height) {

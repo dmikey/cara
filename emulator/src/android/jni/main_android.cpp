@@ -61,6 +61,9 @@
 #include "saf_handler.h"
 
 static ANativeWindow* s_surface = nullptr;
+// Java retains the external surface independently of game lifetime.
+static ANativeWindow* s_external_surface=nullptr;
+static int s_external_mode=0;
 
 static std::atomic<bool> s_update_hid;
 static std::atomic<bool> s_stop_running;
@@ -244,6 +247,8 @@ void BootGame(const std::string& path) {
         std::lock_guard lock{s_present_mutex};
         s_render_window = std::make_unique<EGLAndroid>(Settings::values.use_present_thread);
         window_ready = s_render_window->Initialize(s_surface);
+        if(window_ready && s_external_surface && s_external_mode)
+            s_render_window->UpdateExternalDisplay(s_external_surface,s_external_mode);
         if (!window_ready)
             s_render_window.reset();
     }
@@ -1160,6 +1165,21 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceChanged(JNIEnv* en
     UpdateDisplayRotation();
 }
 
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SetExternalDisplay(JNIEnv* env,jclass,
+                                                                         jobject surf,jint mode) {
+    std::lock_guard lock{s_present_mutex};
+    ANativeWindow* replacement=(surf&&(mode==1||mode==2))?ANativeWindow_fromSurface(env,surf):nullptr;
+    if(s_external_surface)ANativeWindow_release(s_external_surface);
+    s_external_surface=replacement;s_external_mode=replacement?mode:0;
+    if(s_render_window)s_render_window->UpdateExternalDisplay(s_external_surface,s_external_mode);
+}
+
+JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_ExternalTouchEvent(JNIEnv*,jclass,
+                                                                         jfloat x,jfloat y,jint action) {
+    std::lock_guard lock{s_present_mutex};
+    if(s_render_window)s_render_window->ExternalTouch(x,y,action);
+}
+
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_SurfaceDestroyed(JNIEnv* env, jclass obj) {
     std::lock_guard lock{s_present_mutex};
     if (s_surface)
@@ -1214,19 +1234,8 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_InputEvent(JNIEnv* env, j
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_TouchEvent(JNIEnv* env, jclass obj,
                                                                    jint action, jint x, jint y) {
-    const int TOUCH_PRESSED = 1;
-    const int TOUCH_MOVED = 2;
-    const int TOUCH_RELEASED = 4;
-
-    if (s_render_window) {
-        if (action & TOUCH_PRESSED) {
-            s_render_window->TouchPressed(x, y);
-        } else if (action & TOUCH_MOVED) {
-            s_render_window->TouchMoved(x, y);
-        } else if (action & TOUCH_RELEASED) {
-            s_render_window->TouchReleased();
-        }
-    }
+    std::lock_guard lock{s_present_mutex};
+    if(s_render_window)s_render_window->PrimaryTouch(x,y,action);
 }
 
 JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_KeyboardEvent(JNIEnv* env, jclass obj,

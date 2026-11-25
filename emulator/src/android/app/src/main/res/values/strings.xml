@@ -321,4 +321,6 @@
     <string name="setting_fixed_guest_clock">Fixed guest CPU clock</string>
     <string name="setting_fixed_guest_clock_desc">Choose a fixed CPU clock in Performance Mode. Accuracy Mode uses the original clock.</string>
     <string name="setting_guest_clock_percent">Guest CPU clock</string>
+    <string name="external_display_title">External display</string>
+    <string name="external_display_description">Put one 3DS screen on a connected display. The handheld keeps the other screen and controls. Disconnect to return both screens to the handheld.</string>
 </resources>

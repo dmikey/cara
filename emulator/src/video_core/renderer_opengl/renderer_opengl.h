@@ -93,7 +93,7 @@ private:
     GLuint ScreenSampler(bool nearest);
     void DrawLCDTextures(const Layout::FramebufferLayout& layout, bool nearest);
     bool DrawLosslessLCDs(const Layout::FramebufferLayout& layout, u32 requested_scale);
-    void RenderToMailbox(const Layout::FramebufferLayout& layout);
+    void RenderToMailbox(const Layout::FramebufferLayout& layout, bool dual_atlas=false);
 
     // Loads framebuffer from emulated memory into the display information structure
     void LoadFBToScreenInfo(const GPU::Regs::FramebufferConfig& framebuffer,
@@ -119,6 +119,12 @@ private:
     OGLRenderbuffer lossless_color;
     u32 lossless_storage_scale = 0;
     bool lossless_storage_complete = false;
+#ifdef __ANDROID__
+    OGLFramebuffer dual_framebuffer;
+    OGLRenderbuffer dual_color;
+    u32 dual_width=0,dual_height=0;
+    bool DrawDualAtlas(const Layout::FramebufferLayout& canonical);
+#endif
 
     OGLProgram bg_shader;
     OGLTexture bg_texture;
