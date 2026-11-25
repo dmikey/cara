@@ -1,0 +1,98 @@
+name: Submit Cara TestFlight build 4 for beta review
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cara-build-4-beta-review
+  cancel-in-progress: false
+jobs:
+  review:
+    if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    environment: nightly-signing
+    timeout-minutes: 18
+    steps:
+      - name: Verify processed build and submit only build 4 to existing public beta
+        env:
+          ASC_KEY: ${{ secrets.CARA_ASC_UPLOAD_KEY_BASE64 }}
+          ASC_ID: ${{ secrets.CARA_ASC_UPLOAD_KEY_ID }}
+          ASC_ISSUER: ${{ secrets.CARA_ASC_UPLOAD_ISSUER_ID }}
+        run: |
+          node <<'JS'
+          const {createPrivateKey,sign}=require('node:crypto');
+          const {appendFileSync}=require('node:fs');
+          const key=createPrivateKey(Buffer.from(process.env.ASC_KEY,'base64'));
+          for(const k of ['ASC_KEY'])delete process.env[k];
+          const APP='6838367217',BUILD='4',VERSION='0.1.0';
+          const note='Bug fixes and performance improvements, clearer encrypted-ROM compatibility messages, and refinements to the iPhone and iPad experience.';
+          const b64=x=>Buffer.from(JSON.stringify(x)).toString('base64url');
+          const token=()=>{const now=Math.floor(Date.now()/1000);
+            const p=b64({alg:'ES256',kid:process.env.ASC_ID,typ:'JWT'})+'.'+b64({iss:process.env.ASC_ISSUER,iat:now,exp:now+300,aud:'appstoreconnect-v1'});
+            return p+'.'+sign('sha256',Buffer.from(p),{key,dsaEncoding:'ieee-p1363'}).toString('base64url');};
+          const need=(x,m)=>{if(!x)throw new Error(m);};
+          const journal=x=>{console.log(x);if(process.env.GITHUB_STEP_SUMMARY)appendFileSync(process.env.GITHUB_STEP_SUMMARY,x+'\n');};
+          async function api(method,path,expected,body,allowMissing=false){
+            const res=await fetch('https://api.appstoreconnect.apple.com'+path,{
+              method,headers:{Authorization:'Bearer '+token(),'Content-Type':'application/json'},
+              body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(30000)
+            });
+            if(allowMissing&&res.status===404)return null;
+            if(!expected.includes(res.status)){
+              const data=await res.json().catch(()=>({}));
+              journal(JSON.stringify({stage:path.split('?')[0],status:res.status,errors:data.errors?.map(({code,title})=>({code,title}))}));
+              throw new Error('Apple rejected a reviewed build operation; inspect the existing state before retrying.');
+            }
+            return res.status===204?{}:await res.json();
+          }
+          const get=path=>api('GET',path,[200]);
+          async function main(){
+            const app=await get('/v1/apps/'+APP);
+            need(app.data.attributes.bundleId==='com.dmikey.cara','Unexpected app identity');
+            const query=new URLSearchParams({'filter[app]':APP,'filter[version]':BUILD,limit:'10'});
+            let build;
+            const end=Date.now()+14*60*1000;
+            while(Date.now()<end){
+              const rows=await get('/v1/builds?'+query);
+              need(!rows.links?.next&&rows.data.length<=1,'Unexpected duplicate or unbounded build list');
+              build=rows.data[0];
+              if(build && build.attributes.processingState==='VALID')break;
+              if(build && ['FAILED','INVALID'].includes(build.attributes.processingState))throw new Error('Apple processing failed');
+              journal('Awaiting Apple processing of Cara 0.1.0 (4).');
+              await new Promise(r=>setTimeout(r,20000));
+            }
+            need(build?.attributes.processingState==='VALID'&&!build.attributes.expired,'Build 4 is not valid and processed');
+            const id=build.id;
+            const version=await get('/v1/builds/'+id+'/preReleaseVersion');
+            need(version.data.attributes.version===VERSION&&version.data.attributes.platform==='IOS','Wrong prerelease version/platform');
+            journal('Apple build 4 processed and VALID.');
+            if(build.attributes.usesNonExemptEncryption===null||build.attributes.usesNonExemptEncryption===undefined){
+              journal('STOP: Apple requires the build-specific export compliance answer before review; no legal classification was changed.');
+              process.exitCode=2;return;
+            }
+            const groups=await get('/v1/apps/'+APP+'/betaGroups?limit=50');
+            const external=groups.data.filter(g=>g.attributes.name==='Cara Public Beta'&&g.attributes.isInternalGroup===false&&g.attributes.publicLinkEnabled===true);
+            need(external.length===1,'Expected exactly one existing enabled Cara Public Beta group');
+            const group=external[0].id;
+            const locs=await get('/v1/builds/'+id+'/betaBuildLocalizations');
+            if(!locs.data.some(l=>l.attributes.locale==='en-US')){
+              await api('POST','/v1/betaBuildLocalizations',[201],{data:{type:'betaBuildLocalizations',attributes:{locale:'en-US',whatsNew:note},relationships:{build:{data:{type:'builds',id}}}}});
+              journal('Added build 4 release notes.');
+            }
+            const members=await get('/v1/builds/'+id+'/betaGroups');
+            if(!members.data.some(g=>g.id===group)){
+              await api('POST','/v1/builds/'+id+'/relationships/betaGroups',[204],{data:[{type:'betaGroups',id:group}]});
+              journal('Associated build 4 with the existing Cara Public Beta group.');
+            }
+            let review=await api('GET','/v1/builds/'+id+'/betaAppReviewSubmission',[200],undefined,true);
+            if(!review?.data){
+              review=await api('POST','/v1/betaAppReviewSubmissions',[201],{data:{type:'betaAppReviewSubmissions',relationships:{build:{data:{type:'builds',id}}}}});
+            }
+            need(review.data?.type==='betaAppReviewSubmissions','Missing beta review receipt');
+            const checked=await get('/v1/betaAppReviewSubmissions/'+review.data.id);
+            journal('Cara build 4 beta review state: '+checked.data.attributes.betaReviewState);
+            const detail=await get('/v1/builds/'+id+'/buildBetaDetail');
+            journal('External beta state: '+detail.data.attributes.externalBuildState);
+          }
+          main().catch(e=>{console.error(e.message);process.exitCode=1;});
+          JS
