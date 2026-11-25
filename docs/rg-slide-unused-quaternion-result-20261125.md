@@ -33,3 +33,9 @@ The private app now reads **Cara Performance Test**, uses the same painted artwo
 ## Retained evidence
 
 [Machine-readable result](rg-slide-unused-quaternion-result-20261125.json). Local logs, raw canonical captures, source/component/build/provisioning receipts, icon picker image and preserved preflight failures are under `outputs/cara-android-shared-uq-20261125/`. This comparison does not establish warm lab performance, all-title coverage, a cold driver cache or universal compatibility.
+
+## Final default witness
+
+The final policy/cache build `c45b90f6689268441b74a7fa080a827ac18b0781` compiled successfully and its installed APK `6d4f503dc35026b8776a21025017b266becb449d0f3f7b7469f022b2aa46fc3f` produced the [actual default startup receipts](android-unused-quaternion-default-witness-20261125.json) with the new shader preference and all four Mali reuse overrides absent. The resolved shader policy was target1/enabled1 for rgslide-malig57; UBO/layout/state/packed-fetch were all1, UBO automatic1/configured0. API census, GL debug, LCD captures and timing profilers were off. The harness incorrectly waited for a verbose session line suppressed in this mode; that failure is retained, and the required actual startup lines were analyzed without repeating the replay. The owned private process was closed and the existing player APK remained exact.
+
+A subsequent logging-only cleanup gates the new candidate diagnostic messages and TEV snapshot serialization behind the existing census option. Full consumer eligibility and source-delta checks still execute normally. It is compiled and installed without another full comparison; it does not change shader source, selection, defaults or cache policy.

@@ -561,7 +561,7 @@ RasterizerOpenGL::RasterizerOpenGL()
         "android_unused_quaternion target=%d enabled=%d device=%s",
         int(unused_quaternion_policy.target), int(unused_quaternion_policy.enabled),
         UnusedQuaternion::CacheTarget(unused_quaternion_policy).data());
-    ShaderCensus::Record("unused_quaternion_policy target={} enabled={} source_revision=1 device={}",
+    if (ShaderCensus::Enabled()) ShaderCensus::Record("unused_quaternion_policy target={} enabled={} source_revision=1 device={}",
         int(unused_quaternion_policy.target), int(unused_quaternion_policy.enabled),
         UnusedQuaternion::CacheTarget(unused_quaternion_policy));
 #endif

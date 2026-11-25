@@ -451,7 +451,7 @@ public:
                     ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch,
                     native_suffix_sharing, nullptr, false);
                 const bool proof = UnusedQuaternion::VertexDelta(original, vs_code);
-                ShaderCensus::Record("unused_quaternion_vertex refresh={} original={:016x} selected={:016x} proof={}",
+                if (shader_census) ShaderCensus::Record("unused_quaternion_vertex refresh={} original={:016x} selected={:016x} proof={}",
                     VideoCore::GetCurrentFrame()+1, Common::ComputeHash64(original.data(),original.size()),
                     Common::ComputeHash64(vs_code.data(),vs_code.size()), int(proof));
                 if (!proof) return UseProgrammableVertexShader(regs, setup, ios_indexed_inputs,
@@ -610,15 +610,17 @@ public:
         const bool no_read = UnusedQuaternion::NoRead(source);
         if (unused_quaternion_consumers.size() < 128) unused_quaternion_consumers.emplace(hash, std::make_pair(key, no_read));
         else return false;
-        std::string snapshot;
-        for (const auto& stage : regs.texturing.GetTevStages()) {
-            const auto* bytes = reinterpret_cast<const unsigned char*>(&stage);
-            for (std::size_t i=0; i<sizeof(stage); ++i)
-                fmt::format_to(std::back_inserter(snapshot), "{:02x}", bytes[i]);
+        if (shader_census) {
+            std::string snapshot;
+            for (const auto& stage : regs.texturing.GetTevStages()) {
+                const auto* bytes = reinterpret_cast<const unsigned char*>(&stage);
+                for (std::size_t i=0; i<sizeof(stage); ++i)
+                    fmt::format_to(std::back_inserter(snapshot), "{:02x}", bytes[i]);
+            }
+            ShaderCensus::Record("unused_quaternion_consumer refresh={} key={:016x} source={:016x} lighting_disable={} no_read={} tev_snapshot={}",
+                VideoCore::GetCurrentFrame()+1, hash, Common::ComputeHash64(source.data(),source.size()),
+                int(regs.lighting.disable != 0), int(no_read), snapshot);
         }
-        ShaderCensus::Record("unused_quaternion_consumer refresh={} key={:016x} source={:016x} lighting_disable={} no_read={} tev_snapshot={}",
-            VideoCore::GetCurrentFrame()+1, hash, Common::ComputeHash64(source.data(),source.size()),
-            int(regs.lighting.disable != 0), int(no_read), snapshot);
         return no_read;
     }
 
