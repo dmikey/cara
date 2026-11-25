@@ -747,7 +747,8 @@ void BootGame(const std::string& path) {
                                     "staging end={} repeat_candidates={} repeat_issued={} guest_index_compare_span_bytes={} "
                                     "guest_vertex_copy_bytes={} constants_bytes={} resize_zero_bytes={} "
                                     "clear_bytes={} leased_bytes={} shared_upload_bytes={} feedback_copies={} feedback_bytes={} "
-                                    "feedback_ms={:.2f}",
+                                    "feedback_ms={:.2f} vertex_input_draws={} configured_inputs={} selected_inputs={} "
+                                    "pruned_input_draws={}",
                                     frame, phases.repeat_candidates, phases.repeat_issued, phases.vertex_index_compare_span_bytes,
                                     phases.packed_vertices_guest_copy_bytes,
                                     phases.packed_vertices_constant_copy_bytes,
@@ -755,7 +756,9 @@ void BootGame(const std::string& path) {
                                     phases.packed_vertices_clear_bytes,
                                     phases.packed_vertices_leased_bytes, phases.vertex_shared_upload_bytes, phases.texture_feedback_copies,
                                     phases.texture_feedback_copy_bytes,
-                                    phases.texture_feedback_copy_seconds * 1000);
+                                    phases.texture_feedback_copy_seconds * 1000,
+                                    phases.vertex_input_stage_draws, phases.vertex_configured_input_registers,
+                                    phases.vertex_selected_input_registers, phases.vertex_pruned_input_draws);
                                 __android_log_write(ANDROID_LOG_INFO, "CaraPerf", staging.c_str());
                                 const auto draw_phases = fmt::format(
                                     "draw_phases end={} framebuffer_ms={:.2f} textures_ms={:.2f} "
