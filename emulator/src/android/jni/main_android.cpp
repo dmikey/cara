@@ -15,6 +15,10 @@
 
 #include <android/log.h>
 #include <android/native_window_jni.h>
+#ifdef CARA_ANDROID_GLES_ATLAS
+#include <sys/system_properties.h>
+#include "atlas_uniform_policy.h"
+#endif
 
 #include "cara/adaptive_clock.h"
 #include "cara/display_scaling.h"
@@ -98,6 +102,29 @@ static void CompleteStateRequest(const StateRequest& request, const std::string&
 static Cara::PlayMode ReadPlayMode() {
     return Config::Get(Config::ACCURACY_MODE) ? Cara::PlayMode::Accuracy : Cara::PlayMode::Performance;
 }
+
+#ifdef CARA_ANDROID_GLES_ATLAS
+static bool DefaultAtlasPersistentUniforms() {
+    const auto property = [](const char* key) {
+        char value[PROP_VALUE_MAX]{};
+        __system_property_get(key, value);
+        return std::string(value);
+    };
+    const auto gl_string = [](GLenum key) -> std::string_view {
+        const auto* value = glGetString(key);
+        return value ? std::string_view(reinterpret_cast<const char*>(value)) : std::string_view{};
+    };
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT)
+        return false;
+    const Config::ConfigInfo<bool> ordered_worker{{"Debug", "ordered_gles_worker"}, false};
+    return Cara::AndroidAtlas::DefaultPersistentUniforms(
+        ReadPlayMode() == Cara::PlayMode::Performance, Config::Get(ordered_worker),
+        property("ro.product.model"), property("ro.product.name"), property("ro.product.device"),
+        gl_string(GL_VENDOR), gl_string(GL_RENDERER),
+        GLAD_GL_EXT_buffer_storage && glBufferStorageEXT && glMapBufferRange && glFenceSync &&
+            glClientWaitSync && glDeleteSync);
+}
+#endif
 
 static Cara::PlayPolicy ReadPlayPolicy() {
     return Cara::MakePlayPolicy(ReadPlayMode(), Config::Get(Config::FRAME_LIMIT),
@@ -279,7 +306,13 @@ void BootGame(const std::string& path) {
     const Config::ConfigInfo<bool> reuse_vs_uniforms{{"Debug", "atlas_reuse_vs_uniforms"}, false};
     const Config::ConfigInfo<bool> reuse_raster_state{{"Debug", "atlas_reuse_raster_state"}, false};
     const Config::ConfigInfo<bool> defer_unused_luts{{"Debug", "atlas_defer_unused_luts"}, false};
-    const Config::ConfigInfo<bool> persistent_uniforms{{"Debug", "atlas_persistent_uniforms"}, false};
+    const Config::ConfigLocation persistent_uniforms_key{"Debug", "atlas_persistent_uniforms"};
+    // An explicit false remains an opt-out on the tested device. The existing
+    // renderer independently gates allocation, mapping and fenced page reuse.
+    const bool persistent_uniforms_present = Config::GetLayer().Exists(persistent_uniforms_key);
+    const bool persistent_uniforms_auto = !persistent_uniforms_present && DefaultAtlasPersistentUniforms();
+    const bool persistent_uniforms = Cara::AndroidAtlas::ResolvePersistentUniformsPreference(
+        Config::GetLayer().Get<bool>(persistent_uniforms_key), persistent_uniforms_present, persistent_uniforms_auto);
     const Config::ConfigInfo<bool> draw_fbos{{"Debug", "atlas_draw_framebuffer_cache"}, false};
     const Config::ConfigInfo<bool> lit_lists{{"Debug", "atlas_lit_indexed_lists"}, false};
     const Config::ConfigInfo<bool> async_stage_reuse{{"Debug", "atlas_async_stage_reuse"}, false};
@@ -306,7 +339,9 @@ void BootGame(const std::string& path) {
     setenv("CARA_VS_UNIFORM_REUSE", Config::Get(reuse_vs_uniforms) ? "1" : "0", 1);
     setenv("CARA_GL_STATE_REUSE", Config::Get(reuse_raster_state) ? "1" : "0", 1);
     setenv("CARA_GLES_DEFER_UNUSED_LUTS", Config::Get(defer_unused_luts) ? "1" : "0", 1);
-    setenv("CARA_GLES_PERSISTENT_UNIFORMS", Config::Get(persistent_uniforms) ? "1" : "0", 1);
+    setenv("CARA_GLES_PERSISTENT_UNIFORMS", persistent_uniforms ? "1" : "0", 1);
+    LOG_INFO(Frontend, "Android Atlas persistent uniform buffers requested={} automatic={}",
+             persistent_uniforms, persistent_uniforms_auto);
     setenv("CARA_GLES_DRAW_FRAMEBUFFER_CACHE", Config::Get(draw_fbos) ? "1" : "0", 1);
     setenv("CARA_GPU_LIT_LISTS", Config::Get(lit_lists) ? "1" : "0", 1);
     setenv("CARA_ANDROID_SHADER_STAGE_REUSE", Config::Get(async_stage_reuse) ? "1" : "0", 1);
