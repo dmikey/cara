@@ -16,7 +16,7 @@ inline constexpr std::string_view GCloudDriver =
 inline constexpr std::string_view SlideDriver =
     "OpenGL ES 3.2 v1.r40p0-01eac0.b0251c048237dcd59e6be15fba11a31a";
 constexpr bool ResolveRequest(bool performance, bool preference) { return performance && preference; }
-constexpr bool RequestedByDefault(std::string_view model) { return model == "GR0006"; }
+constexpr bool RequestedByDefault(std::string_view model) { return model == "GR0006" || model == "RG Slide"; }
 constexpr Policy Resolve(bool requested, bool monolithic, std::string_view model,
                          std::string_view product, std::string_view vendor,
                          std::string_view renderer, std::string_view version,
@@ -31,6 +31,19 @@ constexpr Policy Resolve(bool requested, bool monolithic, std::string_view model
 constexpr std::string_view CacheTarget(const Policy& policy) {
     return policy.device == Device::GCloud ? "gcloud-adreno618" :
            policy.device == Device::RGSlide ? "rgslide-malig57" : "unsupported";
+}
+constexpr std::string_view CacheIdentity(const Policy& policy) {
+    if (!policy.target) return {};
+    if (policy.device == Device::GCloud)
+        return policy.enabled ? "\nadreno618-unused-quaternion-v1=1" :
+                                "\nadreno618-unused-quaternion-v1=0";
+    return policy.enabled ? "\nandroid-unused-quaternion-v1:rgslide-malig57=1" : "";
+}
+constexpr std::string_view CacheSuffix(const Policy& policy) {
+    if (!policy.target) return {};
+    if (policy.device == Device::GCloud)
+        return policy.enabled ? ".adreno618-uq-v1-on" : ".adreno618-uq-v1-off";
+    return policy.enabled ? ".android-uq-v1-rgslide-malig57-on" : "";
 }
 inline bool NoRead(std::string_view source) {
     // Closed generator form: one exact varying declaration, no other mention,

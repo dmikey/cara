@@ -11,7 +11,7 @@ int main() {
     constexpr auto rg = Resolve(true, true, "RG Slide", "ums9620_2h10_native", "ARM", "Mali-G57", SlideDriver, language);
     static_assert(gc.target && gc.enabled && gc.device == Device::GCloud);
     static_assert(rg.target && rg.enabled && rg.device == Device::RGSlide);
-    static_assert(RequestedByDefault("GR0006") && !RequestedByDefault("RG Slide") && !RequestedByDefault("Other"));
+    static_assert(RequestedByDefault("GR0006") && RequestedByDefault("RG Slide") && !RequestedByDefault("Other"));
     static_assert(!Resolve(false,true,"GR0006","GR0006","Qualcomm","Adreno (TM) 618",GCloudDriver,language).enabled);
     static_assert(!Resolve(false,true,"RG Slide","ums9620_2h10_native","ARM","Mali-G57",SlideDriver,language).enabled);
     static_assert(!Resolve(true,false,"GR0006","GR0006","Qualcomm","Adreno (TM) 618",GCloudDriver,language).target);
@@ -20,6 +20,14 @@ int main() {
     static_assert(!Resolve(true,true,"RG Slide","ums9620_2h10_native","ARM","Mali-G52",SlideDriver,language).target);
     static_assert(!Resolve(true,true,"RG Slide","ums9620_2h10_native","ARM","Mali-G57",SlideDriver,"unknown").target);
     static_assert(CacheTarget(gc) != CacheTarget(rg));
+    constexpr auto rg_off=Resolve(false,true,"RG Slide","ums9620_2h10_native","ARM","Mali-G57",SlideDriver,language);
+    constexpr auto gc_off=Resolve(false,true,"GR0006","GR0006","Qualcomm","Adreno (TM) 618",GCloudDriver,language);
+    static_assert(CacheIdentity(rg_off).empty() && CacheSuffix(rg_off).empty());
+    static_assert(!CacheIdentity(rg).empty() && !CacheSuffix(rg).empty());
+    static_assert(CacheIdentity(gc)=="\nadreno618-unused-quaternion-v1=1");
+    static_assert(CacheIdentity(gc_off)=="\nadreno618-unused-quaternion-v1=0");
+    static_assert(CacheSuffix(gc)==".adreno618-uq-v1-on" && CacheSuffix(gc_off)==".adreno618-uq-v1-off");
+    static_assert(CacheIdentity({}).empty() && CacheSuffix({}).empty());
     assert(NoRead("in vec4 normquat;\nvoid main() {}"));
     assert(!NoRead("in vec4 normquat;\nvoid main() { frag=normquat; }"));
     assert(!NoRead("#define X(a,b) a ## b\nin vec4 normquat;"));

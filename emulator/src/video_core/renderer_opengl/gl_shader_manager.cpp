@@ -847,9 +847,7 @@ public:
         // Explicit key/UBO schema identity, independent of a possibly empty prototype SCM string.
         std::string identity = std::string(CARA_SHADER_CACHE_SIGNATURE) +
                                "\nnative-nearest-borrow-tex0-key1-common-ubo2";
-        if (unused_quaternion_policy.target)
-            identity += fmt::format("\nandroid-unused-quaternion-v1:{}={}",
-                UnusedQuaternion::CacheTarget(unused_quaternion_policy), int(unused_quaternion_policy.enabled));
+        identity += UnusedQuaternion::CacheIdentity(unused_quaternion_policy);
         // Reject a different generator route before compiling any saved source.
         identity += "\ntwo-stage-store-v2";
 #ifdef CARA_MAC_ATLAS_PIPELINE
@@ -924,9 +922,7 @@ public:
             suffix += ".mali-extended";
         }
 #endif
-        if (unused_quaternion_policy.target)
-            suffix += fmt::format(".android-uq-v1-{}-{}", UnusedQuaternion::CacheTarget(unused_quaternion_policy),
-                                  unused_quaternion_policy.enabled ? "on" : "off");
+        suffix += UnusedQuaternion::CacheSuffix(unused_quaternion_policy);
         ios_cache_path = GetCacheFile() + suffix + ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
