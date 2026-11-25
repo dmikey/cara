@@ -369,6 +369,9 @@ struct OGLFrame {
     OGLFramebuffer present; /// FBO created on the present thread
     GLsync render_fence;    /// Fence created on the render thread
     GLsync present_fence;   /// Fence created on the presentation thread
+#ifdef __ANDROID__
+    u32 guest_refresh;
+#endif
 };
 
 struct OGLTextureMailbox {
@@ -735,6 +738,13 @@ void RendererOpenGL::SwapBuffers() {
     state.viewport.height = layout.height;
     state.Apply();
 
+#ifdef __ANDROID__
+    static const bool trace_lcd = [] {
+        const char* flag = std::getenv("CARA_MAILBOX_TRACE_LCD");
+        return flag && std::strcmp(flag, "1") == 0;
+    }();
+    const u32 refresh = VideoCore::GetCurrentFrame() + 1;
+#endif
     for (int i : {0, 2}) {
         int fb_id = i == 2 ? 1 : 0;
         const auto& framebuffer = GPU::g_regs.framebuffer_config[fb_id];
@@ -745,6 +755,15 @@ void RendererOpenGL::SwapBuffers() {
         lcd_color_addr = HW::VADDR_LCD + 4 * lcd_color_addr;
         LCD::Regs::ColorFill color_fill = {0};
         LCD::Read(color_fill.raw, lcd_color_addr);
+#ifdef __ANDROID__
+        if (trace_lcd) {
+            __android_log_print(ANDROID_LOG_INFO, "CaraLCD",
+                                "source refresh=%u screen=%d active=%u left1=%x left2=%x fill=%08x",
+                                refresh, fb_id, u32(framebuffer.active_fb),
+                                u32(framebuffer.address_left1), u32(framebuffer.address_left2),
+                                color_fill.raw);
+        }
+#endif
 
         if (color_fill.is_enabled) {
             LoadColorToActiveGLTexture(color_fill.color_r, color_fill.color_g, color_fill.color_b,
@@ -903,8 +922,11 @@ void RendererOpenGL::RenderToMailbox(const Layout::FramebufferLayout& layout) {
     }
     OpenGLState::BindDrawFramebuffer(frame->render.handle);
 
-    // draw frame
+    // Draw this slot before sharing it with the presentation context.
     DrawScreens(layout);
+#ifdef __ANDROID__
+    frame->guest_refresh = VideoCore::GetCurrentFrame() + 1;
+#endif
 
     // delete the draw fence if the frame wasn't presented
     if (frame->render_fence) {
@@ -947,12 +969,31 @@ bool RendererOpenGL::TryPresent() {
     // readback since we won't be doing any blending
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
+#ifdef __ANDROID__
+    static const bool wait_before_attach = [] {
+        const char* flag = std::getenv("CARA_MAILBOX_WAIT_BEFORE_ATTACH");
+        return flag && std::strcmp(flag, "1") == 0;
+    }();
+    static const bool trace_lcd = [] {
+        const char* flag = std::getenv("CARA_MAILBOX_TRACE_LCD");
+        return flag && std::strcmp(flag, "1") == 0;
+    }();
+    if (wait_before_attach) {
+        // A Mali control waits for the shared renderbuffer before attaching it.
+        const GLenum result = glClientWaitSync(frame->render_fence, 0, GL_TIMEOUT_IGNORED);
+        if (result != GL_ALREADY_SIGNALED && result != GL_CONDITION_SATISFIED)
+            return false;
+    }
+#endif
     // Recreate the presentation FBO if the color attachment was changed
     if (frame->color_reloaded) {
         LOG_DEBUG(Render_OpenGL, "Reloading present frame");
         mailbox->ReloadPresentFrame(frame, layout.width, layout.height);
     }
-    glWaitSync(frame->render_fence, 0, GL_TIMEOUT_IGNORED);
+#ifdef __ANDROID__
+    if (!wait_before_attach)
+#endif
+        glWaitSync(frame->render_fence, 0, GL_TIMEOUT_IGNORED);
     // INTEL workaround.
     // Normally we could just delete the draw fence here, but due to driver bugs, we can just delete
     // it on the emulation thread without too much penalty
@@ -963,6 +1004,13 @@ bool RendererOpenGL::TryPresent() {
     glBlitFramebuffer(0, 0, frame->width, frame->height, 0, 0, layout.width, layout.height,
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
+#ifdef __ANDROID__
+    if (trace_lcd)
+        __android_log_print(ANDROID_LOG_INFO, "CaraLCD",
+                            "present refresh=%u color=%u fbo=%u error=%04x",
+                            frame->guest_refresh, frame->color.handle, frame->present.handle,
+                            glGetError());
+#endif
     /* insert fence for the main thread to block on */
     frame->present_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     glFlush();

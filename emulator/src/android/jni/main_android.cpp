@@ -224,6 +224,8 @@ void BootGame(const std::string& path) {
     select_probe("packed_staging_reuse", "CARA_PACKED_STAGING_REUSE");
     select_probe("mailbox_fence_packet", "CARA_MAILBOX_FENCE_PACKET");
     select_probe("mailbox_async_publish", "CARA_MAILBOX_ASYNC_PUBLISH");
+    select_probe("mailbox_wait_before_attach", "CARA_MAILBOX_WAIT_BEFORE_ATTACH");
+    select_probe("mailbox_trace_lcd", "CARA_MAILBOX_TRACE_LCD");
     select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
     select_probe("lighting_lut_generations", "CARA_LIGHTING_LUT_GENERATIONS");
     const auto fog_override = Config::GetLayer().Get<bool>({"Debug", "separate_fog_lut"});
@@ -1283,7 +1285,9 @@ JNIEXPORT void JNICALL Java_org_cara_emu_NativeLibrary_Run(JNIEnv* env, jclass o
     Settings::values.y2r_event_delay = false;
     Settings::values.force_texture_filter = Config::Get(Config::FORCE_TEXTURE_FILTER);
     Settings::values.async_shader_compile = Config::Get(Config::ASYNC_SHADER_COMPILE);
-    Settings::values.stream_buffer_hack = !Settings::values.use_present_thread;
+    Settings::values.stream_buffer_hack =
+        Config::GetLayer().Get<bool>({"Debug", "stream_buffer_hack_override"})
+            .value_or(!Settings::values.use_present_thread);
     Settings::values.use_fence_sync = Config::Get(Config::USE_FENCE_SYNC);
 
     // profile
