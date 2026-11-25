@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <exception>
+#include <stdexcept>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -290,6 +291,22 @@ void BootGame(const std::string& path) {
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
     select_probe("adreno_separable_programs", "CARA_ADRENO_SEPARABLE_PROGRAMS");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
+#ifdef CARA_ANDROID_GLES_ATLAS
+    const Config::ConfigInfo<bool> adreno_uq{{"Debug", "adreno618_unused_quaternion_v1"}, false};
+    setenv("CARA_ADRENO618_UQ_V1", Config::Get(adreno_uq) && ReadPlayMode() == Cara::PlayMode::Performance ? "1" : "0", 1);
+    const Config::ConfigInfo<std::string> diagnostic_lcd_frames{{"Debug", "diagnostic_lcd_frames"}, ""};
+    const auto lcd_frames = Config::Get(diagnostic_lcd_frames);
+    const auto lcd_directory = FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "proof-captures";
+    if (!lcd_frames.empty() && !FileUtil::CreateFullPath(lcd_directory + "/"))
+        throw std::runtime_error("Unable to create explicit diagnostic LCD capture directory");
+    setenv("CARA_DIAGNOSTIC_LCD_FRAMES", lcd_frames.c_str(), 1);
+    setenv("CARA_DIAGNOSTIC_LCD_DIRECTORY", lcd_frames.empty() ? "" : lcd_directory.c_str(), 1);
+
+    char adreno_model[PROP_VALUE_MAX]{};
+    __system_property_get("ro.product.model", adreno_model);
+    setenv("CARA_ADRENO_UQ_DEVICE_MODEL", adreno_model, 1);
+#endif
+
     select_probe("atlas_quaternion_slice", "CARA_GPU_QUATERNION_SLICE");
     Settings::values.gles_async_programmable_shaders = ReadPlayMode() == Cara::PlayMode::Performance;
     select_probe("atlas_extended_program_cache", "CARA_MALI_EXTENDED_PROGRAM_CACHE");

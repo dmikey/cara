@@ -413,6 +413,8 @@ private:
 
     bool shader_dirty;
     bool fragment_uses_lighting_quaternion = true;
+    AdrenoUnusedQuaternion::Policy adreno_quaternion_policy{};
+    bool adreno_fragment_no_read = false;
 
     struct {
         UniformData data;

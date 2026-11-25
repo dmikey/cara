@@ -11,6 +11,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
 #include <memory>
 #include <string_view>
 #include <glad/glad.h>
@@ -763,6 +766,9 @@ void RendererOpenGL::SwapBuffers() {
         }
     }
 
+#ifdef __ANDROID__
+    CaptureDiagnosticLCDs();
+#endif
     RenderScreenshot();
 
 #ifdef __ANDROID__
@@ -829,6 +835,97 @@ bool RendererOpenGL::DrawDualAtlas(const Layout::FramebufferLayout& canonical) {
     OpenGLState::BindDrawFramebuffer(dual_framebuffer.handle);
     DrawScreens(canonical,true);
     return true;
+}
+#endif
+
+#ifdef __ANDROID__
+void RendererOpenGL::CaptureDiagnosticLCDs() {
+    if (!diagnostic_lcd_configured) {
+        diagnostic_lcd_configured = true;
+        const char* frames = std::getenv("CARA_DIAGNOSTIC_LCD_FRAMES");
+        const char* directory = std::getenv("CARA_DIAGNOSTIC_LCD_DIRECTORY");
+        if (!frames || !*frames) return;
+        if (!directory || !*directory)
+            throw std::runtime_error("LCD proof capture requires an output directory");
+        diagnostic_lcd_directory = directory;
+        std::istringstream input(frames);
+        std::string token;
+        while (std::getline(input, token, ',')) {
+            if (token.empty() || token.find_first_not_of("0123456789") != std::string::npos)
+                throw std::runtime_error("Invalid LCD proof capture frame");
+            const auto value = std::stoull(token);
+            if (!value || diagnostic_lcd_frames.size() >= 16)
+                throw std::runtime_error("LCD proof capture frame limit");
+            diagnostic_lcd_frames.push_back(value);
+        }
+    }
+    const u64 frame = VideoCore::GetCurrentFrame() + 1;
+    auto requested = std::find(diagnostic_lcd_frames.begin(), diagnostic_lcd_frames.end(), frame);
+    if (requested == diagnostic_lcd_frames.end()) return;
+    diagnostic_lcd_frames.erase(requested);
+    const auto ticks = Core::System::GetInstance().CoreTiming().GetTicks();
+    const auto previous = OpenGLState::GetCurState();
+    const auto layout = Layout::DefaultFrameLayout(400, 480, false);
+    OGLFramebuffer framebuffer;
+    OGLRenderbuffer color;
+    framebuffer.Create();
+    color.Create();
+    auto capture = previous;
+    capture.draw.read_framebuffer = framebuffer.handle;
+    capture.draw.draw_framebuffer = framebuffer.handle;
+    capture.renderbuffer = color.handle;
+    capture.viewport = {0, 0, 400, 480};
+    capture.scissor.enabled = false;
+    capture.blend.enabled = false;
+    capture.depth.test_enabled = false;
+    capture.stencil.test_enabled = false;
+    capture.cull.enabled = false;
+    capture.color_mask = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    capture.Apply();
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 400, 480);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color.handle);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        throw std::runtime_error("LCD proof framebuffer incomplete");
+    const GLfloat black[4]{0, 0, 0, 1};
+    glClearBufferfv(GL_COLOR, 0, black);
+    // Exclude host HUD, background art and clocks from guest LCD parity.
+    DrawLCDTextures(layout, true);
+    GLint buffer=0, alignment=0, row=0, skip_rows=0, skip_pixels=0;
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &buffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &row);
+    glGetIntegerv(GL_PACK_SKIP_ROWS, &skip_rows);
+    glGetIntegerv(GL_PACK_SKIP_PIXELS, &skip_pixels);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+    std::vector<u32> pixels(400 * 480);
+    glReadPixels(0, 0, 400, 480, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(buffer));
+    glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+    glPixelStorei(GL_PACK_ROW_LENGTH, row);
+    glPixelStorei(GL_PACK_SKIP_ROWS, skip_rows);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, skip_pixels);
+    previous.Apply();
+    if (glGetError() != GL_NO_ERROR)
+        throw std::runtime_error("LCD proof capture GL error");
+    FlipPixels(pixels.data(), 400, 480);
+    const std::string base = diagnostic_lcd_directory + "/frame-" + std::to_string(frame);
+    std::ofstream raw(base + ".rgba", std::ios::binary | std::ios::trunc);
+    raw.write(reinterpret_cast<const char*>(pixels.data()), pixels.size() * sizeof(u32));
+    raw.close();
+    if (!raw) throw std::runtime_error("LCD proof image write failed");
+    std::ofstream metadata(base + ".json", std::ios::trunc);
+    metadata << "{\"frame\":" << frame << ",\"guest_ticks\":" << ticks
+             << ",\"width\":400,\"height\":480,\"bytes\":768000,"
+                "\"format\":\"RGBA8-top-down\","
+                "\"top\":[0,0,400,240],\"bottom\":[40,240,360,480]}\n";
+    metadata.close();
+    if (!metadata) throw std::runtime_error("LCD proof metadata write failed");
+    __android_log_print(ANDROID_LOG_INFO, "CaraLCDProof", "frame=%llu ticks=%lld bytes=768000",
+                        static_cast<unsigned long long>(frame), static_cast<long long>(ticks));
 }
 #endif
 
