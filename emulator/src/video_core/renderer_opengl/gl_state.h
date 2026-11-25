@@ -163,6 +163,7 @@ public:
     /// Call after context replacement or manual mutations of tracked raster state.
     /// Resource bindings remain governed by Bind*/Reset* and are not invalidated.
     static void InvalidateRasterState();
+    static void ResetReusePolicy();
 #ifdef CARA_ANDROID_GLES_ATLAS
     static void ResetBindingsForStateLoad();
 #endif

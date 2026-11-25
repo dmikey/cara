@@ -300,8 +300,6 @@ void BootGame(const std::string& path) {
 #ifdef CARA_ANDROID_GLES_ATLAS
     const Config::ConfigInfo<bool> native_luts{{"Debug", "native_lut_buffers"}, false};
     setenv("CARA_ANDROID_NATIVE_LUTS", Config::Get(native_luts) ? "1" : "0", 1);
-    const Config::ConfigInfo<bool> packed_fetch_reuse{{"Debug", "gpu_packed_fetch_reuse"}, false};
-    setenv("CARA_GPU_PACKED_FETCH_REUSE", Config::Get(packed_fetch_reuse) ? "1" : "0", 1);
     // EGL sets the shipping geometry reuse defaults. Separate debug overrides
     // let a matched trace isolate each shared atlas path.
     const Config::ConfigInfo<bool> resident_uploads{{"Debug", "resident_vertex_uploads"}, true};
@@ -316,19 +314,36 @@ void BootGame(const std::string& path) {
     setenv("CARA_GLES_RETAIN_PICA_TEXTURES", Config::Get(retain_pica_textures) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> runtime_tev{{"Debug", "atlas_runtime_tev"}, false};
     const Config::ConfigInfo<bool> reuse_vs_uniforms{{"Debug", "atlas_reuse_vs_uniforms"}, false};
-    const Config::ConfigInfo<bool> reuse_raster_state{{"Debug", "atlas_reuse_raster_state"}, false};
     const Config::ConfigInfo<bool> defer_unused_luts{{"Debug", "atlas_defer_unused_luts"}, false};
     const Config::ConfigLocation persistent_uniforms_key{"Debug", "atlas_persistent_uniforms"};
     // An explicit false remains an opt-out on the tested device. The existing
     // renderer independently gates allocation, mapping and fenced page reuse.
     const bool persistent_uniforms_present = Config::GetLayer().Exists(persistent_uniforms_key);
-    const bool persistent_uniforms_auto = !persistent_uniforms_present && DefaultAtlasPersistentUniforms();
+    const bool validated_hardware = DefaultAtlasPersistentUniforms();
+    const bool persistent_uniforms_auto = !persistent_uniforms_present && validated_hardware;
     const bool persistent_uniforms = Cara::AndroidAtlas::ResolvePersistentUniformsPreference(
         Config::GetLayer().Get<bool>(persistent_uniforms_key), persistent_uniforms_present, persistent_uniforms_auto);
+    // Only the measured direct RG Slide path opts in automatically. Keep each
+    // explicit override; downstream automatic defaults require the tested
+    // predecessor policy, rather than extending results to an untested mixture.
+    const Config::ConfigLocation layout_key{"Debug", "packed_layout_uniform_reuse"};
+    const Config::ConfigLocation state_key{"Debug", "atlas_reuse_raster_state"};
+    const Config::ConfigLocation fetch_key{"Debug", "gpu_packed_fetch_reuse"};
+    const auto reuse = Cara::AndroidAtlas::ResolveValidatedReuse(
+        validated_hardware, persistent_uniforms,
+        Config::GetLayer().Get<bool>(layout_key), Config::GetLayer().Exists(layout_key),
+        Config::GetLayer().Get<bool>(state_key), Config::GetLayer().Exists(state_key),
+        Config::GetLayer().Get<bool>(fetch_key), Config::GetLayer().Exists(fetch_key));
+    const bool reuse_layout = reuse.layout;
+    const bool reuse_raster_state = reuse.state;
+    const bool packed_fetch_reuse = reuse.packed_fetch;
+    setenv("CARA_GPU_PACKED_FETCH_REUSE", packed_fetch_reuse ? "1" : "0", 1);
+    __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+        "atlas_validated_reuse hardware=%d ubo=%d layout=%d state=%d packed_fetch=%d",
+        validated_hardware, persistent_uniforms, reuse_layout, reuse_raster_state, packed_fetch_reuse);
     const Config::ConfigInfo<bool> draw_fbos{{"Debug", "atlas_draw_framebuffer_cache"}, false};
     const Config::ConfigInfo<bool> lit_lists{{"Debug", "atlas_lit_indexed_lists"}, false};
     const Config::ConfigInfo<bool> async_stage_reuse{{"Debug", "atlas_async_stage_reuse"}, false};
-    const Config::ConfigInfo<bool> reuse_layout{{"Debug", "packed_layout_uniform_reuse"}, false};
     const Config::ConfigInfo<bool> backlog_trace{{"Debug", "trace_ordered_gles_backlog"}, false};
     setenv("CARA_TRACE_GLES_BACKLOG", Config::Get(backlog_trace) ? "1" : "0", 1);
     const Config::ConfigInfo<bool> batch_trace{{"Debug", "trace_draw_batches"}, false};
@@ -349,7 +364,7 @@ void BootGame(const std::string& path) {
     setenv("CARA_GPU_RETAIN_INPUT_BINDINGS", Config::Get(retain_bindings) ? "1" : "0", 1);
     setenv("CARA_GLES_RUNTIME_TEV", Config::Get(runtime_tev) ? "1" : "0", 1);
     setenv("CARA_VS_UNIFORM_REUSE", Config::Get(reuse_vs_uniforms) ? "1" : "0", 1);
-    setenv("CARA_GL_STATE_REUSE", Config::Get(reuse_raster_state) ? "1" : "0", 1);
+    setenv("CARA_GL_STATE_REUSE", reuse_raster_state ? "1" : "0", 1);
     setenv("CARA_GLES_DEFER_UNUSED_LUTS", Config::Get(defer_unused_luts) ? "1" : "0", 1);
     setenv("CARA_GLES_PERSISTENT_UNIFORMS", persistent_uniforms ? "1" : "0", 1);
     __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
@@ -360,9 +375,9 @@ void BootGame(const std::string& path) {
     setenv("CARA_ANDROID_SHADER_STAGE_REUSE", Config::Get(async_stage_reuse) ? "1" : "0", 1);
     setenv("CARA_ANDROID_ASYNC_INDEXED_SHADERS",
            Config::Get(indexed_draws) && Config::Get(async_indexed) ? "1" : "0", 1);
-    setenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE", Config::Get(reuse_layout) ? "1" : "0", 1);
+    setenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE", reuse_layout ? "1" : "0", 1);
     LOG_INFO(Frontend, "Android GLES atlas active, packed fetch reuse={}",
-             Config::Get(packed_fetch_reuse));
+             packed_fetch_reuse);
 #endif
     LOG_INFO(Frontend, "Android CPU engine: {}",
              Settings::values.use_cpu_jit ? "Dynarmic" : "FastInterp");
