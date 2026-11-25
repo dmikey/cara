@@ -505,11 +505,11 @@ void EGLAndroid::ApplyExternalRequest() {
         EGLint format=0;
         if(!eglGetConfigAttrib(egl_display,egl_config,EGL_NATIVE_VISUAL_ID,&format) ||
            ANativeWindow_setBuffersGeometry(request->window.get(),0,0,format)!=0){
-            LOG_ERROR(Frontend,"Could not configure external display window");return;
+            __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Could not configure external display window");return;
         }
         external_surface=eglCreateWindowSurface(egl_display,egl_config,request->window.get(),nullptr);
         if(external_surface==EGL_NO_SURFACE){
-            LOG_ERROR(Frontend,"Could not create external EGL surface: {}",eglGetError());return;
+            __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Could not create external EGL surface: 0x%x",eglGetError());return;
         }
         external_window=request->window;
         eglSurfaceAttrib(egl_display,external_surface,EGL_SWAP_BEHAVIOR,EGL_BUFFER_DESTROYED);
@@ -522,11 +522,11 @@ void EGLAndroid::ApplyExternalRequest() {
     if(context!=egl_context || !eglQuerySurface(egl_display,external_surface,EGL_WIDTH,&width) ||
        !eglQuerySurface(egl_display,external_surface,EGL_HEIGHT,&height) || width<=0 || height<=0 ||
        !eglMakeCurrent(egl_display,external_surface,external_surface,egl_context)){
-        LOG_ERROR(Frontend,"External display not ready; preserving combined handheld layout");
+        __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","External display not ready; preserving combined handheld layout");
         DestroyExternalSurface();return;
     }
     if(!eglMakeCurrent(egl_display,previous_draw,previous_read,context)){
-        LOG_ERROR(Frontend,"Could not restore primary EGL surface following attach");
+        __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Could not restore primary EGL surface following attach");
         DestroyExternalSurface();
         if(!RecoverPresentationContext() && !use_shared_context)
             throw std::runtime_error("Could not restore EGL owner after external display attach");
@@ -606,14 +606,14 @@ bool EGLAndroid::PresentAtlasOnOwner(unsigned framebuffer,unsigned width,unsigne
     if(!framebuffer || !width || !height || eglGetCurrentContext()!=egl_context)return false;
     const auto previous_draw=eglGetCurrentSurface(EGL_DRAW),previous_read=eglGetCurrentSurface(EGL_READ);
     static const DualAtlasGL gl;
-    if(!gl.Valid()){LOG_ERROR(Frontend,"Missing external display GL entrypoints");DestroyExternalSurface();return false;}
+    if(!gl.Valid()){__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Missing external display GL entrypoints");DestroyExternalSurface();return false;}
     GLint read=0,draw=0;GLboolean mask[4]{};
     gl.get_int(GL_READ_FRAMEBUFFER_BINDING,&read);gl.get_int(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
     gl.get_bool(GL_COLOR_WRITEMASK,mask);
     const bool scissor=gl.is_enabled(GL_SCISSOR_TEST)==GL_TRUE;
     const auto old_error=gl.error();
     if(old_error!=GL_NO_ERROR)
-        LOG_ERROR(Frontend,"Preexisting GL error before dual presentation: {}",old_error);
+        __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Preexisting GL error before dual presentation: 0x%x",old_error);
     const auto source=Layout::DefaultFrameLayout(width,height,false);
     auto blit=[&](const Common::Rectangle<u32>& from,const Common::Rectangle<u32>& to,unsigned dst_h){
         if(!from.GetWidth()||!from.GetHeight()||!to.GetWidth()||!to.GetHeight())return;
@@ -634,7 +634,7 @@ bool EGLAndroid::PresentAtlasOnOwner(unsigned framebuffer,unsigned width,unsigne
         if(layout.top_screen_enabled)blit(source.top_screen,layout.top_screen,layout.height);
         if(layout.bottom_screen_enabled)blit(source.bottom_screen,layout.bottom_screen,layout.height);
         const GLenum error=gl.error();
-        if(error!=GL_NO_ERROR){LOG_ERROR(Frontend,"Dual presentation GL error {} route={}",error,route);return false;}
+        if(error!=GL_NO_ERROR){__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Dual presentation GL error 0x%x route=%s",error,route);return false;}
         return SwapWithTiming(egl_display,surface,route)==EGL_TRUE;
     };
     const bool main_ok=output(egl_surface,primary,"dual-handheld");
@@ -647,7 +647,7 @@ bool EGLAndroid::PresentAtlasOnOwner(unsigned framebuffer,unsigned width,unsigne
     const bool restored=eglGetCurrentSurface(EGL_DRAW)==previous_draw&&eglGetCurrentSurface(EGL_READ)==previous_read
         ? true:eglMakeCurrent(egl_display,previous_draw,previous_read,egl_context)==EGL_TRUE;
     if(!restored){
-        LOG_ERROR(Frontend,"Dual presentation could not restore original EGL surface");
+        __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Dual presentation could not restore original EGL surface");
         DestroyExternalSurface();
         if(!RecoverPresentationContext()){
             if(!use_shared_context)throw std::runtime_error("Dual presentation lost EGL owner");
@@ -659,8 +659,8 @@ bool EGLAndroid::PresentAtlasOnOwner(unsigned framebuffer,unsigned width,unsigne
     gl.mask(mask[0],mask[1],mask[2],mask[3]);
     if(scissor)gl.enable(GL_SCISSOR_TEST);else gl.disable(GL_SCISSOR_TEST);
     const auto restore_error=gl.error();
-    if(restore_error!=GL_NO_ERROR)LOG_ERROR(Frontend,"Dual presentation GL state restore error {}",restore_error);
-    if(!external_ok){LOG_ERROR(Frontend,"External display lost; preserving handheld layout");DestroyExternalSurface();}
+    if(restore_error!=GL_NO_ERROR)__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Dual presentation GL state restore error 0x%x",restore_error);
+    if(!external_ok){__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","External display lost; preserving handheld layout");DestroyExternalSurface();}
     return main_ok&&external_ok&&restored&&restore_error==GL_NO_ERROR&&old_error==GL_NO_ERROR;
 }
 
@@ -674,7 +674,7 @@ bool EGLAndroid::RecoverPresentationContext() {
         inline_pbuffer=eglCreatePbufferSurface(egl_display,egl_config,egl_empty_attribs.data());
     const bool recovered=inline_pbuffer!=EGL_NO_SURFACE &&
         eglMakeCurrent(egl_display,inline_pbuffer,inline_pbuffer,egl_context)==EGL_TRUE;
-    if(!recovered)LOG_ERROR(Frontend,"External display recovery could not rebind presentation context");
+    if(!recovered)__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","External display recovery could not rebind presentation context");
     return recovered;
 }
 

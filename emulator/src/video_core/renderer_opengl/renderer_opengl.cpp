@@ -820,7 +820,7 @@ bool RendererOpenGL::DrawDualAtlas(const Layout::FramebufferLayout& canonical) {
         const auto status=glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
         OpenGLState::BindRenderbuffer(prior);
         if(status!=GL_FRAMEBUFFER_COMPLETE) {
-            LOG_ERROR(Render_OpenGL,"External LCD atlas framebuffer incomplete: {}",status);
+            __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","External LCD atlas framebuffer incomplete: 0x%x",status);
             dual_framebuffer.Release();dual_color.Release();dual_width=dual_height=0;
             return false;
         }
