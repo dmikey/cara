@@ -314,3 +314,57 @@ path on the G57 before admitting an opcode or input route. Retain
 the existing exact path for unsupported state. Separate opaque,
 translucent and depth-dependent cases so title parity alone cannot
 qualify the implementation.
+
+## Black-frame flicker controls and PICA interpreter fixture
+
+The RG Slide's Android compositor recording reproduced an alternation
+between the lab image and completely black LCDs while the FPS overlay
+remained visible. The temporary GPU stage and queue experiments were
+off. Turning the independent fog table off did not remove the
+alternation. Omitting the ROM hints in separable GLES disabled the
+hinted vertex worker, logged zero software vertex draws at lab entry,
+and still reproduced the black frames.
+
+The same signed APK (`3586abfa`) retained async vertex hints and
+rendered with inline presentation. In a 15-second lab segment the
+compositor had zero isolated large image changes that reverted on
+the next sample, compared with 26 with the mailbox and independent fog
+active. Representative mailbox frames visibly alternate between the
+same Gadd shot and black. Inline presentation also changes the
+stream-buffer policy on Android, so this test narrows the failing
+configuration without isolating the underlying bug. It does not
+show that worker activity alone is sufficient to cause flicker.
+
+The capture boots used JIT, separable GLES Atlas, fixed CLK 100,
+1×, disabled slow-draw skipping and adaptive frame skip, fresh Cara
+archives, and the existing driver cache. Reported timing includes
+diagnostic readbacks and screen recording, and lab timing shifts
+between boots. An async-hints-off control reproduced a 42.07-second
+cold title refresh and an 8.29-second lab-entry refresh.
+
+| Capture window | Mailbox p95 / p99 / worst (ms) | Inline p95 / p99 / worst (ms) |
+| --- | ---: | ---: |
+| Smoky title, 25,561 draws | 196.57 / 2,364.45 / 2,487.16 | 191.65 / 2,282.89 / 2,361.92 |
+| Lab entry through 2521 | 159.15 / 206.15 / 1,131.92 | 156.80 / 303.55 / 1,199.59 |
+| Settled lab through 2881 | 47.70 / 56.89 / 81.18 | 39.08 / 41.76 / 65.82 |
+
+The fog-on/off readbacks matched all five sampled title images once
+the FPS overlay was excluded. Seven lab-entry frames matched after
+aligning a six-refresh offset in the scene. The later samples had
+different animation timing. These captures do not validate Gadd's
+native depth attachment.
+
+The standalone GLES interpreter fixture passed on the physical
+Mali-G57 with raw PICA MOV, ADD, MUL and END instructions, operand
+swizzles, and a masked alpha write. Its colors and depth rejection
+matched the existing reference shader. It has a fixed fixture layout
+and linear instruction stream. Guest control flow, complete register
+coverage, shaders from Dark Moon, and game integration remain open.
+The fixture executable passed CI and ran separately from Cara.
+[Interpreter fixture build](https://github.com/dmikey/cara/actions/runs/45524039196)
+
+The Slide was returned to signed build `62bf2a8a`. The game profiles
+were restored before setting the device's `use_present_thread` to
+`False`. The previous settings directory was saved on the device,
+and the other settings files matched during staging. The workaround
+does not change shader policy or enable either experiment.
