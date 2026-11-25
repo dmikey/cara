@@ -4,6 +4,7 @@ namespace CaraGL {
 struct Dispatch {
     PFNGLACTIVETEXTUREPROC entry_glActiveTexture;
     PFNGLATTACHSHADERPROC entry_glAttachShader;
+    PFNGLBEGINQUERYEXTPROC entry_glBeginQueryEXT;
     PFNGLBEGINTRANSFORMFEEDBACKPROC entry_glBeginTransformFeedback;
     PFNGLBINDBUFFERPROC entry_glBindBuffer;
     PFNGLBINDBUFFERBASEPROC entry_glBindBufferBase;
@@ -45,6 +46,7 @@ struct Dispatch {
     PFNGLDELETEFRAMEBUFFERSPROC entry_glDeleteFramebuffers;
     PFNGLDELETEPROGRAMPROC entry_glDeleteProgram;
     PFNGLDELETEPROGRAMPIPELINESPROC entry_glDeleteProgramPipelines;
+    PFNGLDELETEQUERIESEXTPROC entry_glDeleteQueriesEXT;
     PFNGLDELETERENDERBUFFERSPROC entry_glDeleteRenderbuffers;
     PFNGLDELETESAMPLERSPROC entry_glDeleteSamplers;
     PFNGLDELETESHADERPROC entry_glDeleteShader;
@@ -63,6 +65,7 @@ struct Dispatch {
     PFNGLDRAWRANGEELEMENTSBASEVERTEXPROC entry_glDrawRangeElementsBaseVertex;
     PFNGLENABLEPROC entry_glEnable;
     PFNGLENABLEVERTEXATTRIBARRAYPROC entry_glEnableVertexAttribArray;
+    PFNGLENDQUERYEXTPROC entry_glEndQueryEXT;
     PFNGLENDTRANSFORMFEEDBACKPROC entry_glEndTransformFeedback;
     PFNGLFENCESYNCPROC entry_glFenceSync;
     PFNGLFINISHPROC entry_glFinish;
@@ -75,6 +78,7 @@ struct Dispatch {
     PFNGLGENBUFFERSPROC entry_glGenBuffers;
     PFNGLGENFRAMEBUFFERSPROC entry_glGenFramebuffers;
     PFNGLGENPROGRAMPIPELINESPROC entry_glGenProgramPipelines;
+    PFNGLGENQUERIESEXTPROC entry_glGenQueriesEXT;
     PFNGLGENRENDERBUFFERSPROC entry_glGenRenderbuffers;
     PFNGLGENSAMPLERSPROC entry_glGenSamplers;
     PFNGLGENTEXTURESPROC entry_glGenTextures;
@@ -95,6 +99,9 @@ struct Dispatch {
     PFNGLGETPROGRAMBINARYPROC entry_glGetProgramBinary;
     PFNGLGETPROGRAMINFOLOGPROC entry_glGetProgramInfoLog;
     PFNGLGETPROGRAMIVPROC entry_glGetProgramiv;
+    PFNGLGETQUERYOBJECTUI64VEXTPROC entry_glGetQueryObjectui64vEXT;
+    PFNGLGETQUERYOBJECTUIVEXTPROC entry_glGetQueryObjectuivEXT;
+    PFNGLGETQUERYIVEXTPROC entry_glGetQueryivEXT;
     PFNGLGETSHADERINFOLOGPROC entry_glGetShaderInfoLog;
     PFNGLGETSHADERSOURCEPROC entry_glGetShaderSource;
     PFNGLGETSHADERIVPROC entry_glGetShaderiv;
@@ -113,6 +120,7 @@ struct Dispatch {
     PFNGLPROGRAMBINARYPROC entry_glProgramBinary;
     PFNGLPROGRAMPARAMETERIPROC entry_glProgramParameteri;
     PFNGLPROGRAMUNIFORM4IVPROC entry_glProgramUniform4iv;
+    PFNGLQUERYCOUNTEREXTPROC entry_glQueryCounterEXT;
     PFNGLREADBUFFERPROC entry_glReadBuffer;
     PFNGLREADPIXELSPROC entry_glReadPixels;
     PFNGLRENDERBUFFERSTORAGEPROC entry_glRenderbufferStorage;
@@ -159,6 +167,8 @@ inline thread_local const Dispatch* overrides = nullptr;
 #define glActiveTexture static_cast<PFNGLACTIVETEXTUREPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glActiveTexture : glad_glActiveTexture)
 #undef glAttachShader
 #define glAttachShader static_cast<PFNGLATTACHSHADERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glAttachShader : glad_glAttachShader)
+#undef glBeginQueryEXT
+#define glBeginQueryEXT static_cast<PFNGLBEGINQUERYEXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBeginQueryEXT : glad_glBeginQueryEXT)
 #undef glBeginTransformFeedback
 #define glBeginTransformFeedback static_cast<PFNGLBEGINTRANSFORMFEEDBACKPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glBeginTransformFeedback : glad_glBeginTransformFeedback)
 #undef glBindBuffer
@@ -241,6 +251,8 @@ inline thread_local const Dispatch* overrides = nullptr;
 #define glDeleteProgram static_cast<PFNGLDELETEPROGRAMPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteProgram : glad_glDeleteProgram)
 #undef glDeleteProgramPipelines
 #define glDeleteProgramPipelines static_cast<PFNGLDELETEPROGRAMPIPELINESPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteProgramPipelines : glad_glDeleteProgramPipelines)
+#undef glDeleteQueriesEXT
+#define glDeleteQueriesEXT static_cast<PFNGLDELETEQUERIESEXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteQueriesEXT : glad_glDeleteQueriesEXT)
 #undef glDeleteRenderbuffers
 #define glDeleteRenderbuffers static_cast<PFNGLDELETERENDERBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glDeleteRenderbuffers : glad_glDeleteRenderbuffers)
 #undef glDeleteSamplers
@@ -277,6 +289,8 @@ inline thread_local const Dispatch* overrides = nullptr;
 #define glEnable static_cast<PFNGLENABLEPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glEnable : glad_glEnable)
 #undef glEnableVertexAttribArray
 #define glEnableVertexAttribArray static_cast<PFNGLENABLEVERTEXATTRIBARRAYPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glEnableVertexAttribArray : glad_glEnableVertexAttribArray)
+#undef glEndQueryEXT
+#define glEndQueryEXT static_cast<PFNGLENDQUERYEXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glEndQueryEXT : glad_glEndQueryEXT)
 #undef glEndTransformFeedback
 #define glEndTransformFeedback static_cast<PFNGLENDTRANSFORMFEEDBACKPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glEndTransformFeedback : glad_glEndTransformFeedback)
 #undef glFenceSync
@@ -301,6 +315,8 @@ inline thread_local const Dispatch* overrides = nullptr;
 #define glGenFramebuffers static_cast<PFNGLGENFRAMEBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenFramebuffers : glad_glGenFramebuffers)
 #undef glGenProgramPipelines
 #define glGenProgramPipelines static_cast<PFNGLGENPROGRAMPIPELINESPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenProgramPipelines : glad_glGenProgramPipelines)
+#undef glGenQueriesEXT
+#define glGenQueriesEXT static_cast<PFNGLGENQUERIESEXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenQueriesEXT : glad_glGenQueriesEXT)
 #undef glGenRenderbuffers
 #define glGenRenderbuffers static_cast<PFNGLGENRENDERBUFFERSPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGenRenderbuffers : glad_glGenRenderbuffers)
 #undef glGenSamplers
@@ -341,6 +357,12 @@ inline thread_local const Dispatch* overrides = nullptr;
 #define glGetProgramInfoLog static_cast<PFNGLGETPROGRAMINFOLOGPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetProgramInfoLog : glad_glGetProgramInfoLog)
 #undef glGetProgramiv
 #define glGetProgramiv static_cast<PFNGLGETPROGRAMIVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetProgramiv : glad_glGetProgramiv)
+#undef glGetQueryObjectui64vEXT
+#define glGetQueryObjectui64vEXT static_cast<PFNGLGETQUERYOBJECTUI64VEXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetQueryObjectui64vEXT : glad_glGetQueryObjectui64vEXT)
+#undef glGetQueryObjectuivEXT
+#define glGetQueryObjectuivEXT static_cast<PFNGLGETQUERYOBJECTUIVEXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetQueryObjectuivEXT : glad_glGetQueryObjectuivEXT)
+#undef glGetQueryivEXT
+#define glGetQueryivEXT static_cast<PFNGLGETQUERYIVEXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetQueryivEXT : glad_glGetQueryivEXT)
 #undef glGetShaderInfoLog
 #define glGetShaderInfoLog static_cast<PFNGLGETSHADERINFOLOGPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glGetShaderInfoLog : glad_glGetShaderInfoLog)
 #undef glGetShaderSource
@@ -377,6 +399,8 @@ inline thread_local const Dispatch* overrides = nullptr;
 #define glProgramParameteri static_cast<PFNGLPROGRAMPARAMETERIPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glProgramParameteri : glad_glProgramParameteri)
 #undef glProgramUniform4iv
 #define glProgramUniform4iv static_cast<PFNGLPROGRAMUNIFORM4IVPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glProgramUniform4iv : glad_glProgramUniform4iv)
+#undef glQueryCounterEXT
+#define glQueryCounterEXT static_cast<PFNGLQUERYCOUNTEREXTPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glQueryCounterEXT : glad_glQueryCounterEXT)
 #undef glReadBuffer
 #define glReadBuffer static_cast<PFNGLREADBUFFERPROC>(CaraGL::overrides ? CaraGL::overrides->entry_glReadBuffer : glad_glReadBuffer)
 #undef glReadPixels
