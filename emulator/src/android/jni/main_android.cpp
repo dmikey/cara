@@ -222,6 +222,7 @@ void BootGame(const std::string& path) {
     select_probe("pica_shader_stream_batch", "CARA_PICA_SHADER_STREAM_BATCH");
     select_probe("lut_effective_change", "CARA_LUT_EFFECTIVE_CHANGE");
     select_probe("packed_staging_reuse", "CARA_PACKED_STAGING_REUSE");
+    select_probe("used_input_attributes", "CARA_GPU_USED_INPUTS");
     select_probe("mailbox_fence_packet", "CARA_MAILBOX_FENCE_PACKET");
     select_probe("mailbox_async_publish", "CARA_MAILBOX_ASYNC_PUBLISH");
     select_probe("lighting_lut_snapshots", "CARA_LIGHTING_LUT_SNAPSHOTS");
