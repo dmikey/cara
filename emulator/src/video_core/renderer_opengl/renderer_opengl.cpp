@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "video_core/renderer_opengl/gl_backlog_profile.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2014 Citra Emulator Project
@@ -41,6 +42,7 @@
 #include "video_core/renderer_opengl/gl_lcd_upload.h"
 #include "video_core/renderer_opengl/gl_state.h"
 #include "video_core/renderer_opengl/gl_vars.h"
+#include "common/image_rows.h"
 #include "video_core/renderer_opengl/on_screen_display.h"
 #include "video_core/renderer_opengl/renderer_opengl.h"
 #include "video_core/video_core.h"
@@ -801,7 +803,8 @@ void RendererOpenGL::RenderScreenshot() {
 
         std::vector<u32> pixels(layout.width * layout.height);
         glReadPixels(0, 0, layout.width, layout.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-        FlipPixels(pixels.data(), layout.width, layout.height);
+        if (!Common::ImageRows::FlipCanonicalRGBA(pixels, layout.width, layout.height))
+            throw std::runtime_error("Invalid canonical screenshot image dimensions");
 
         screenshot_framebuffer.Release();
         glDeleteRenderbuffers(1, &renderbuffer);
