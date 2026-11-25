@@ -1,0 +1,21 @@
+{
+  "status": "PASS_ACTUAL_DEFAULT_STARTUP",
+  "private_pid_after": "",
+  "perf_harden_unchanged": true,
+  "scope": "retained actual quiet startup policy lines; no repeat replay",
+  "harness_failure_preserved": "DEFAULT-WITNESS-HARNESS-FAILURE.json",
+  "harness_issue": "unnecessary verbose session-line requirement is absent with profiling disabled; actual required policy receipts were present at initial startup",
+  "actual_shader_default_active": true,
+  "actual_all_mali_reuse_automatic": true,
+  "new_shader_and_reuse_overrides_absent": true,
+  "compile_API_census_and_GL_debug_and_LCD_captures_off": true,
+  "candidate_only_log_calls_not_full_census": true,
+  "default_policy_lines": [
+    "252958.426 30762 30823 I CaraPerf: atlas_validated_reuse hardware=1 ubo=1 layout=1 state=1 packed_fetch=1",
+    "252958.426 30762 30823 I CaraPerf: atlas_persistent_uniforms requested=1 automatic=1 configured=0",
+    "252958.675 30762 30823 I CaraPerf: android_unused_quaternion target=1 enabled=1 device=rgslide-malig57"
+  ],
+  "source": "c45b90f6689268441b74a7fa080a827ac18b0781",
+  "apk_sha256": "6d4f503dc35026b8776a21025017b266becb449d0f3f7b7469f022b2aa46fc3f",
+  "profile_sha256": "b824cb85af2c739358d19add4eef40eafeb4e918dc5e2cc777f35c8175c7dace"
+}

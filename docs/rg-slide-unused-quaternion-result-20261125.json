@@ -1,0 +1,248 @@
+{
+  "status": "CORRECTNESS_PASS",
+  "scope": "ONE actual RG Slide normal-boot OFF/ON/OFF diagnostic; source-census IDs with independent live full-source delta proofs, no raw shader archive emitted. Driver cache preserved/unknown. Not quiet or warm gameplay timing.",
+  "order": [
+    "C0",
+    "C1",
+    "O2"
+  ],
+  "apk_sha256": "770c8e5571a4c16a36606fe58b0445e88cf44a7b5ded50083fc7a931b514cf92",
+  "source_groups": {
+    "C0": {
+      "unchanged": {
+        "vertex_count": 9,
+        "vertex_ms": 4296.177,
+        "link_count": 35,
+        "link_ms": 63684.027
+      },
+      "changed": {
+        "vertex_count": 8,
+        "vertex_ms": 3959.077,
+        "link_count": 12,
+        "link_ms": 11090.066
+      }
+    },
+    "C1": {
+      "unchanged": {
+        "vertex_count": 9,
+        "vertex_ms": 4250.894,
+        "link_count": 35,
+        "link_ms": 62073.521
+      },
+      "changed": {
+        "vertex_count": 8,
+        "vertex_ms": 1978.238,
+        "link_count": 12,
+        "link_ms": 9591.849
+      }
+    },
+    "O2": {
+      "unchanged": {
+        "vertex_count": 9,
+        "vertex_ms": 4287.039,
+        "link_count": 35,
+        "link_ms": 62405.702
+      },
+      "changed": {
+        "vertex_count": 8,
+        "vertex_ms": 3929.917,
+        "link_count": 12,
+        "link_ms": 11018.894
+      }
+    }
+  },
+  "frame515_ms": {
+    "C0": 49871.66,
+    "C1": 45948.09,
+    "O2": 48788.48
+  },
+  "off_drift_ms": 1083.1800000000003,
+  "on_margin_below_both_off_ms": 2840.3900000000067,
+  "margin_exceeds_observed_off_drift": true,
+  "lcd_ticks_work_all_exact": true,
+  "draws": 371353,
+  "gl_errors": 0,
+  "cpu_vertex_draws": 0,
+  "source_specializations": 8,
+  "ubo_layout_state_packedfetch_all_on": true,
+  "source_pairs_census": [
+    [
+      "c2c050b57152b410",
+      "3c10704e5e93b785"
+    ],
+    [
+      "c7f8043fa745ca2a",
+      "bb74ca2c64530d05"
+    ],
+    [
+      "0af4f177c55de6b8",
+      "6b31a1903645a2ea"
+    ],
+    [
+      "a77b935d67434182",
+      "934c348d544ff37b"
+    ],
+    [
+      "8d6dc3981d9a1509",
+      "40f8f31ce7357920"
+    ],
+    [
+      "d1d85004fdc5196a",
+      "b1acdbdbd8b3102f"
+    ],
+    [
+      "c137e1459fbd9b41",
+      "2c8fbcf27453e701"
+    ],
+    [
+      "2c2ee80463ded534",
+      "4ed2c7c8791b67e2"
+    ]
+  ],
+  "canonical_lcd_proofs": [
+    {
+      "frame": 481,
+      "metadata": {
+        "frame": 481,
+        "guest_ticks": 2149363411,
+        "width": 400,
+        "height": 480,
+        "bytes": 768000,
+        "format": "RGBA8-top-down",
+        "top": [
+          0,
+          0,
+          400,
+          240
+        ],
+        "bottom": [
+          40,
+          240,
+          360,
+          480
+        ]
+      },
+      "sha256": "2617075bb077c80a8a12804d4f209750b7ee7a361294fa579268f164534d2af3"
+    },
+    {
+      "frame": 515,
+      "metadata": {
+        "frame": 515,
+        "guest_ticks": 2301293465,
+        "width": 400,
+        "height": 480,
+        "bytes": 768000,
+        "format": "RGBA8-top-down",
+        "top": [
+          0,
+          0,
+          400,
+          240
+        ],
+        "bottom": [
+          40,
+          240,
+          360,
+          480
+        ]
+      },
+      "sha256": "81cff6c3d30da01da7f9436270c792ea172978854c0824e850604f27c15a3296"
+    },
+    {
+      "frame": 523,
+      "metadata": {
+        "frame": 523,
+        "guest_ticks": 2337041713,
+        "width": 400,
+        "height": 480,
+        "bytes": 768000,
+        "format": "RGBA8-top-down",
+        "top": [
+          0,
+          0,
+          400,
+          240
+        ],
+        "bottom": [
+          40,
+          240,
+          360,
+          480
+        ]
+      },
+      "sha256": "9ac784e4578bf9c7a1f930dfde7eded2a01e0b60a1c5f5730aae84936d88010c"
+    },
+    {
+      "frame": 601,
+      "metadata": {
+        "frame": 601,
+        "guest_ticks": 2685587131,
+        "width": 400,
+        "height": 480,
+        "bytes": 768000,
+        "format": "RGBA8-top-down",
+        "top": [
+          0,
+          0,
+          400,
+          240
+        ],
+        "bottom": [
+          40,
+          240,
+          360,
+          480
+        ]
+      },
+      "sha256": "2818783a82bd6df9d22a1c1797e60c9ed778ce2657020c8f941ea88bef867d3c"
+    },
+    {
+      "frame": 721,
+      "metadata": {
+        "frame": 721,
+        "guest_ticks": 3221810851,
+        "width": 400,
+        "height": 480,
+        "bytes": 768000,
+        "format": "RGBA8-top-down",
+        "top": [
+          0,
+          0,
+          400,
+          240
+        ],
+        "bottom": [
+          40,
+          240,
+          360,
+          480
+        ]
+      },
+      "sha256": "22b1d6c943ce7d5f2f8bd98d1610feafb822d29ac73d4af4f6fa2ddbf49aeedb"
+    },
+    {
+      "frame": 1201,
+      "metadata": {
+        "frame": 1201,
+        "guest_ticks": 5366705731,
+        "width": 400,
+        "height": 480,
+        "bytes": 768000,
+        "format": "RGBA8-top-down",
+        "top": [
+          0,
+          0,
+          400,
+          240
+        ],
+        "bottom": [
+          40,
+          240,
+          360,
+          480
+        ]
+      },
+      "sha256": "072e737a0dc968588e1c1c9994e9df241276d0f7ba364457d5638e17ee85a0bf"
+    }
+  ]
+}

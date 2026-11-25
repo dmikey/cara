@@ -6,6 +6,7 @@
 #pragma once
 
 #include <memory>
+#include "video_core/renderer_opengl/gl_shader_unused_quaternion.h"
 #include <glad/glad.h>
 #include "video_core/regs_lighting.h"
 #include "video_core/renderer_opengl/gl_resource_manager.h"
@@ -120,7 +121,7 @@ static_assert(sizeof(VSUniformData) < 0x4000,
 /// A class that manage different shader stages and configures them with given config data.
 class ShaderProgramManager {
 public:
-    ShaderProgramManager(bool separable);
+    ShaderProgramManager(bool separable, UnusedQuaternion::Policy unused_quaternion_policy = {});
     ~ShaderProgramManager();
 
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
@@ -135,6 +136,7 @@ public:
 
     // False leaves the selected fragment stage untouched; caller must restore baseline resources.
     bool UseFragmentShader(const Pica::Regs& regs, bool native_nearest_borrow_tex0 = false);
+    bool CanOmitUnusedQuaternion(const Pica::Regs& regs);
 
 #ifdef CARA_IOS_GLES
     using RuntimeTevWords = std::array<GLivec4, 6>;

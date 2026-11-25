@@ -1190,3 +1190,9 @@ this scene. Screenshots verified the castle map and gameplay
 visually at different animation ticks. Exact pixel/depth parity
 for the entire game was outside this test.
 [Mali vertex-stage archive implementation and physical benchmarks](https://github.com/dmikey/cara/blob/fbf22fab5123883a89eee7c125d494a3685460b6/docs/rg-slide-mali-handoff/dark-moon-entry327.md#vertex-stage-archive-integration)
+
+## Current-main shader burst attribution (2026-11-25)
+
+A private same-tree census at main `f92bf4e0` confirmed that refresh515 is a burst of16 distinct vertex variants on NativeEmulation. In the120-refresh window ending601,16 vertex compiles took37.291s,36 fragment compiles1.113s and46 distinct-pair links84.528s. No same-stage source or exact-pair duplication was observed. Those programs' first draws totaled11.888ms. No shader worker existed during the capture: the ready software-program prerequisite left cold first use on the synchronous path. Link records do not carry individual refresh IDs, so these whole-window counts must not all be assigned to515.
+
+This is diagnostic attribution, not a quiet gain or proof of a driver lock. The actual source archive and16 hot source SHA-256 values are bound; vertex-generation timing remains unmeasured. Main/player data was restored with exact inventory checks; setup/cleanup mistakes and corrective actions are preserved rather than described as a clean run. [Full source-backed findings, limits and failure record](g-cloud-dark-moon-shader-burst-20261125.md).

@@ -9,6 +9,9 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+#include <android/log.h>
+#endif
 #include <algorithm>
 #include <bitset>
 #include <chrono>
@@ -544,7 +547,25 @@ RasterizerOpenGL::RasterizerOpenGL()
         LOG_WARNING(Render_OpenGL, "GLSL ES 3.20 separable program probe unavailable");
 #endif
 #endif
-    shader_program_manager = std::make_unique<ShaderProgramManager>(use_separable_shader);
+#ifdef CARA_ANDROID_GLES_ATLAS
+    const auto text = [](const char* value) { return value ? std::string_view(value) : std::string_view{}; };
+    const auto gltext = [&](GLenum key) { return text(reinterpret_cast<const char*>(glGetString(key))); };
+    const auto is_on = [](const char* key) { const char* v=std::getenv(key); return v && std::strcmp(v,"1")==0; };
+    unused_quaternion_policy = UnusedQuaternion::Resolve(is_on("CARA_ANDROID_UNUSED_QUATERNION_V1"),
+        GLES && !use_separable_shader, text(std::getenv("CARA_UNUSED_QUATERNION_DEVICE_MODEL")),
+        text(std::getenv("CARA_UNUSED_QUATERNION_DEVICE_PRODUCT")),
+        gltext(GL_VENDOR), gltext(GL_RENDERER), gltext(GL_VERSION), gltext(GL_SHADING_LANGUAGE_VERSION));
+    if (is_on("CARA_GLES_RUNTIME_TEV") || is_on("CARA_GPU_QUATERNION_SLICE") ||
+        is_on("CARA_GLES_PRUNE_UNUSED_QUATERNION")) unused_quaternion_policy.enabled = false;
+    __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+        "android_unused_quaternion target=%d enabled=%d device=%s",
+        int(unused_quaternion_policy.target), int(unused_quaternion_policy.enabled),
+        UnusedQuaternion::CacheTarget(unused_quaternion_policy).data());
+    if (ShaderCensus::Enabled()) ShaderCensus::Record("unused_quaternion_policy target={} enabled={} source_revision=1 device={}",
+        int(unused_quaternion_policy.target), int(unused_quaternion_policy.enabled),
+        UnusedQuaternion::CacheTarget(unused_quaternion_policy));
+#endif
+    shader_program_manager = std::make_unique<ShaderProgramManager>(use_separable_shader, unused_quaternion_policy);
 
     OpenGLState::InvalidateRasterState();
     // init opengl state
@@ -839,8 +860,11 @@ bool RasterizerOpenGL::SetupVertexShader() {
     if (prune_unused_quaternion && shader_dirty) {
         fragment_uses_lighting_quaternion = FragmentUsesLightingQuaternion(regs);
     }
-    const bool omit_triangle_quaternion = prune_unused_quaternion && input_mode < 3 &&
-                                          !fragment_uses_lighting_quaternion;
+    if (unused_quaternion_policy.enabled && shader_dirty)
+        unused_quaternion_fragment_no_read = shader_program_manager->CanOmitUnusedQuaternion(regs);
+    const bool omit_triangle_quaternion = input_mode < 3 &&
+        ((prune_unused_quaternion && !fragment_uses_lighting_quaternion) ||
+         (unused_quaternion_policy.enabled && input_mode == 2 && unused_quaternion_fragment_no_read));
     return shader_program_manager->UseProgrammableVertexShader(
         regs, Pica::g_state.vs, input_mode, ios_vertex_input_mask, omit_triangle_quaternion);
 #else
@@ -3542,7 +3566,7 @@ void RasterizerOpenGL::NotifyPicaRegisterChanged(u32 id) {
     // Fragment lighting can change independently of the texture combiners.
 #ifdef CARA_IOS_GLES
     case PICA_REG_INDEX(lighting.disable):
-        if (GLES && PruneUnusedQuaternionEnabled()) {
+        if (GLES && (PruneUnusedQuaternionEnabled() || unused_quaternion_policy.enabled)) {
             shader_dirty = true;
         }
         break;
@@ -4109,6 +4133,8 @@ void RasterizerOpenGL::SetShader() {
             uniform_block_data.light_dirty = true;
         }
     }
+    if (unused_quaternion_policy.enabled)
+        unused_quaternion_fragment_no_read = shader_program_manager->CanOmitUnusedQuaternion(Pica::g_state.regs);
     if(!shader_program_manager->UseFragmentShader(Pica::g_state.regs,native_borrow_fragment_selected))
         native_borrow_restart=true;
 #else

@@ -3,6 +3,8 @@
 // Refer to the license.txt file included.
 
 #pragma once
+#include <string>
+#include <vector>
 
 #include <array>
 #include <glad/glad.h>
@@ -89,6 +91,12 @@ private:
     void ConfigureFramebufferTexture(TextureInfo& texture,
                                      const GPU::Regs::FramebufferConfig& framebuffer);
     void RenderScreenshot();
+#ifdef __ANDROID__
+    void CaptureDiagnosticLCDs();
+    bool diagnostic_lcd_configured = false;
+    std::vector<u64> diagnostic_lcd_frames;
+    std::string diagnostic_lcd_directory;
+#endif
     void DrawScreens(const Layout::FramebufferLayout& layout, bool integer_output = false);
     GLuint ScreenSampler(bool nearest);
     void DrawLCDTextures(const Layout::FramebufferLayout& layout, bool nearest);

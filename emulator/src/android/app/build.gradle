@@ -16,7 +16,7 @@ android {
 
     defaultConfig {
         applicationId "org.cara.emu"
-        manifestPlaceholders = [caraAppLabel: caraPreview ? "Cara Mali Preview" : "Cara"]
+        manifestPlaceholders = [caraAppLabel: caraPreview ? "Cara Performance Test" : "Cara"]
         buildConfigField "boolean", "CPU_JIT_AVAILABLE", caraCpuJit.toString()
         minSdkVersion 24
         targetSdkVersion 33

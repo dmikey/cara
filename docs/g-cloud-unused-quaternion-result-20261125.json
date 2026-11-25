@@ -1,0 +1,118 @@
+{
+  "scope": "ONE OFF/ON/OFF diagnostic cold-Cara-cache comparison. Driver cache preserved/unknown; debug/census/LCD captures equal. No quiet gameplay, warm or universal claim.",
+  "order": [
+    "C0",
+    "C1",
+    "O2"
+  ],
+  "source_groups": {
+    "C0": {
+      "unchanged": {
+        "vertex_count": 9,
+        "vertex_ms": 20543.39,
+        "link_count": 35,
+        "link_ms": 74992.802
+      },
+      "changed": {
+        "vertex_count": 8,
+        "vertex_ms": 18261.844,
+        "link_count": 12,
+        "link_ms": 11275.56
+      }
+    },
+    "C1": {
+      "unchanged": {
+        "vertex_count": 9,
+        "vertex_ms": 19935.21,
+        "link_count": 35,
+        "link_ms": 70678.115
+      },
+      "changed": {
+        "vertex_count": 8,
+        "vertex_ms": 9896.22,
+        "link_count": 12,
+        "link_ms": 5096.187
+      }
+    },
+    "O2": {
+      "unchanged": {
+        "vertex_count": 9,
+        "vertex_ms": 20425.205,
+        "link_count": 35,
+        "link_ms": 72865.745
+      },
+      "changed": {
+        "vertex_count": 8,
+        "vertex_ms": 18265.439,
+        "link_count": 12,
+        "link_ms": 10230.093
+      }
+    }
+  },
+  "frame515_ms": {
+    "C0": 85076.01,
+    "C1": 70860.86,
+    "O2": 81554.71
+  },
+  "off_drift_ms": 3521.2999999999884,
+  "on_margin_below_both_off_ms": 10693.850000000006,
+  "margin_exceeds_observed_off_drift": true,
+  "o2_lcd_ticks_exact": true,
+  "o2_work_exact": true,
+  "not_statistical_certainty": true,
+  "canonical_lcd_proofs": [
+    {
+      "frame": 481,
+      "guest_ticks": 2149363411,
+      "sha256": "125d8fe0341ee903a4c50f0a78d9471ad752d8fa721f2da51e2cb3a5494c0a9f",
+      "off_on_exact": true
+    },
+    {
+      "frame": 515,
+      "guest_ticks": 2301293465,
+      "sha256": "14efb28d99b5e844d2c9006fb7e1a7aa3812aa6baa2cec91806e5fc86c40d895",
+      "off_on_exact": true
+    },
+    {
+      "frame": 523,
+      "guest_ticks": 2337041713,
+      "sha256": "f3367e930200589a1215eda5a4e3212363e3e97e8901703e9f79971d87ddd8f6",
+      "off_on_exact": true
+    },
+    {
+      "frame": 601,
+      "guest_ticks": 2685587131,
+      "sha256": "daaff59e4b1c8d183d6649fbf494bd854cc0b3ed72a19ab1668069a0f5eb547b",
+      "off_on_exact": true
+    },
+    {
+      "frame": 721,
+      "guest_ticks": 3221810851,
+      "sha256": "ef68a4bf9307e702ddc6feefd2a0d5bdb24cf8fe55e9ca39694cfd55009644cc",
+      "off_on_exact": true
+    },
+    {
+      "frame": 1201,
+      "guest_ticks": 5366705731,
+      "sha256": "6ce32a849d273f3f53fe53636f9696dbd3bcbf06413112f0d31af042969bb28f",
+      "off_on_exact": true
+    }
+  ],
+  "full_work_draws": 371353,
+  "apk_sha256": "46b59a944d7bc041cce93fee7c3de3eeb5eb3c4780c166494c0c48e432af8140",
+  "component": {
+    "status": "PASS",
+    "scope": "strict C++17 host oracle/policy tests over16 retained actual VS originals + independently derived expected source edits, not PICA-register shader-generator replay",
+    "positive_actual_sources": 16,
+    "negative_mutations": 128,
+    "hardware_and_fragment_guard_tests": true,
+    "compiler_flags": "-std=c++17 -O1 -Wall -Wextra -Werror",
+    "helper_sha256": "a542110bca424432ac9452a49fb89d5480b2b89b70d16078ebf7588a00f6ac87",
+    "files": {
+      "component/test.cpp": "73bf392a7bcd9bd60528476a3cf69dde6a10299e8ba5c5fa02dc0f49f6ba68d1",
+      "component/pairs.txt": "2c5aa37bced8c663e402a32775aa376dd8cc0afcc23b7456fa942ee61af8f166"
+    },
+    "first_rejected_attempt_preserved": "component/ATTEMPT1-FAILURE.json",
+    "runtime_generator_proof": "each newly selected candidate VS independently compared to baseline generated from same live PICA setup before compile; still needs actual engine/runtime activation"
+  }
+}
