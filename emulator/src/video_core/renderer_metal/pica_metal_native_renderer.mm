@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_metal/pica_metal_native_renderer.h"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
+#include "cara/native_mac/native_lcd_materialize.h"
 
 #include <algorithm>
 #include <cstring>
@@ -413,6 +414,7 @@ public:
             if (result.capture.buffer) {
                 retained = result;
                 retained_layout = target->layout;
+                Cara::NativeLCDMaterialize::AtCapture(VideoCore::GetCurrentFrame()+1);
             }
         }
         presented(submitted);

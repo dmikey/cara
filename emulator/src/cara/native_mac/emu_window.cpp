@@ -1,5 +1,6 @@
 #include "cara/native_mac/native_command_policy.h"
 #include "cara/native_mac/diagnostic_clock.h"
+#include "cara/native_mac/native_lcd_materialize.h"
 // Modified for Cara on 2026-11-12; see NOTICE for attribution.
 // Copyright 2016 Citra Emulator Project
 // Licensed under GPLv2 or any later version
@@ -646,6 +647,7 @@ void EmuWindow_SDL2::NativeFrameDiagnostics() {
         raw.close();
         LodePNGImageInterface image;
         const bool png = image.EncodePNG(stem + ".png", rgba, width, height);
+        Cara::NativeLCDMaterialize::AtCapture(target);
 
         std::ostringstream lcd;
         lcd << "[";
