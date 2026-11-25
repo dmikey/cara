@@ -15,6 +15,22 @@ static NSString* ArtworkCategory(BOOL hero) { return hero?@"Named_Snaps":@"Named
 static NSURL* ArtworkCatalogURL(NSString* category) {
     return [NSURL URLWithString:[NSString stringWithFormat:@"https://thumbnails.libretro.com/Nintendo%%20-%%20Nintendo%%203DS/%@/",category]];
 }
+static NSString* const ArtworkRepository = @"libretro-thumbnails/Nintendo_-_Nintendo_3DS";
+static NSURL* ArtworkRepositoryIndexURL() {
+    return [NSURL URLWithString:[NSString stringWithFormat:
+        @"https://api.github.com/repos/%@/git/trees/master?recursive=1", ArtworkRepository]];
+}
+static NSURL* ArtworkRepositoryImageURL(NSString* category, NSString* name) {
+    NSURL* base = [NSURL URLWithString:[NSString stringWithFormat:
+        @"https://raw.githubusercontent.com/%@/master/", ArtworkRepository]];
+    return [[base URLByAppendingPathComponent:category isDirectory:YES] URLByAppendingPathComponent:name];
+}
+static BOOL ArtworkHostAllowed(NSURL* url) {
+    if (![url.scheme isEqualToString:@"https"]) return NO;
+    return [url.host isEqualToString:@"thumbnails.libretro.com"] ||
+           [url.host isEqualToString:@"api.github.com"] ||
+           [url.host isEqualToString:@"raw.githubusercontent.com"];
+}
 static BOOL ArtworkCatalogNameIsValid(NSString* name) {
     return [name isKindOfClass:NSString.class] && name.length && [name.lastPathComponent isEqual:name] &&
         [name.pathExtension.lowercaseString isEqual:@"png"] && ![name containsString:@".."] &&
@@ -48,6 +64,7 @@ static UIImage* ArtworkHero(UIImage* image) {
     NSMutableDictionary* indexes;
     NSMutableDictionary* indexAttempts;
     NSMutableSet* attemptedGames;
+    NSDictionary<NSString*, NSArray<NSString*>*>* repositoryIndex;
 }
 - (instancetype)initWithRoot:(NSURL*)url {
     if((self=[super init])) { root=url; indexes=[NSMutableDictionary new]; indexAttempts=[NSMutableDictionary new]; attemptedGames=[NSMutableSet new]; [NSFileManager.defaultManager createDirectoryAtURL:root withIntermediateDirectories:YES attributes:nil error:nil]; }
@@ -90,20 +107,42 @@ static UIImage* ArtworkHero(UIImage* image) {
 }
 - (NSData*)download:(NSURL*)url {
     NSAssert(!NSThread.isMainThread,@"Artwork networking must stay off the main thread");
-    if(![url.host isEqual:@"thumbnails.libretro.com"] || ![url.scheme isEqual:@"https"]) return nil;
+    if (!ArtworkHostAllowed(url)) return nil;
     dispatch_semaphore_t done=dispatch_semaphore_create(0); __block NSData* result=nil;
     NSURLSessionConfiguration* config=NSURLSessionConfiguration.ephemeralSessionConfiguration; config.timeoutIntervalForRequest=8; config.timeoutIntervalForResource=12;
     NSURLSession* session=[NSURLSession sessionWithConfiguration:config];
     NSURLSessionDownloadTask* task=[session downloadTaskWithURL:url completionHandler:^(NSURL* file,NSURLResponse* response,NSError* error) {
         NSNumber* size=nil; [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
-        if(!error && [response.URL.host isEqual:@"thumbnails.libretro.com"] &&
-            [response.URL.scheme isEqual:@"https"] && [(NSHTTPURLResponse*)response statusCode]==200 &&
+        if(!error && ArtworkHostAllowed(response.URL) &&
+            [(NSHTTPURLResponse*)response statusCode]==200 &&
             size.unsignedLongLongValue<=CaraArtworkMaxBytes)
             result=[NSData dataWithContentsOfURL:file options:NSDataReadingMappedIfSafe error:nil];
         dispatch_semaphore_signal(done);
     }];
     [task resume]; BOOL timedOut=dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,13*NSEC_PER_SEC))!=0;
     if(timedOut) [task cancel]; [session finishTasksAndInvalidate]; return timedOut?nil:result;
+}
+- (NSArray<NSString*>*)repositoryNames:(NSString*)kind {
+    if (!repositoryIndex) {
+        NSData* bytes = [self download:ArtworkRepositoryIndexURL()];
+        if (!bytes.length) return nil;
+        id document = [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil];
+        if (![document isKindOfClass:NSDictionary.class] ||
+            ![document[@"tree"] isKindOfClass:NSArray.class] ||
+            ![document[@"truncated"] isEqual:@NO]) return nil;
+        NSMutableArray<NSString*>* covers = [NSMutableArray new];
+        NSMutableArray<NSString*>* snapshots = [NSMutableArray new];
+        for (id entry in document[@"tree"]) {
+            if (![entry isKindOfClass:NSDictionary.class] || ![entry[@"type"] isEqual:@"blob"] ||
+                ![entry[@"path"] isKindOfClass:NSString.class]) continue;
+            NSArray<NSString*>* components = [entry[@"path"] componentsSeparatedByString:@"/"];
+            if (components.count != 2 || !ArtworkCatalogNameIsValid(components[1])) continue;
+            if ([components[0] isEqual:ArtworkCategory(NO)]) [covers addObject:components[1]];
+            if ([components[0] isEqual:ArtworkCategory(YES)]) [snapshots addObject:components[1]];
+        }
+        repositoryIndex = @{ArtworkCategory(NO): covers, ArtworkCategory(YES): snapshots};
+    }
+    return repositoryIndex[kind];
 }
 - (NSArray*)index:(NSString*)kind {
     if(indexes[kind]) return indexes[kind];
@@ -114,14 +153,18 @@ static UIImage* ArtworkHero(UIImage* image) {
     if(indexAttempts[kind]) return names?:@[]; indexAttempts[kind]=@YES;
     NSURL* url=ArtworkCatalogURL(kind);
     NSString* html=[[NSString alloc] initWithData:[self download:url] encoding:NSUTF8StringEncoding];
+    NSMutableArray* parsed=[NSMutableArray new];
     if(html.length) {
         NSRegularExpression* regex=[NSRegularExpression regularExpressionWithPattern:@"href=\"([^\"]+\\.png)\"" options:NSRegularExpressionCaseInsensitive error:nil];
-        NSMutableArray* parsed=[NSMutableArray new];
         for(NSTextCheckingResult* match in [regex matchesInString:html options:0 range:NSMakeRange(0,html.length)]) {
             NSString* name=[[html substringWithRange:[match rangeAtIndex:1]] stringByRemovingPercentEncoding];
             if(ArtworkCatalogNameIsValid(name)) [parsed addObject:name];
         }
-        if(parsed.count) { names=parsed; [@{@"date":NSDate.date,@"names":names} writeToURL:path atomically:YES]; }
+    }
+    NSArray* available = parsed.count ? parsed : [self repositoryNames:kind];
+    if (available.count) {
+        names = available;
+        [@{@"date":NSDate.date,@"names":names} writeToURL:path atomically:YES];
     }
     indexes[kind]=names?:@[]; return indexes[kind];
 }
@@ -143,6 +186,10 @@ static UIImage* ArtworkHero(UIImage* image) {
     if (!ArtworkCatalogNameIsValid(name) || ![[self index:category] containsObject:name]) return nil;
     NSData* bytes=[self download:[ArtworkCatalogURL(category) URLByAppendingPathComponent:name]];
     UIImage* image=ArtworkImage(bytes,hero?1920:1024);
+    if (!image) {
+        bytes = [self download:ArtworkRepositoryImageURL(category, name)];
+        image = ArtworkImage(bytes, hero ? 1920 : 1024);
+    }
     return hero?ArtworkHero(image):image;
 }
 // Downloaded images are disposable; user overrides are never evicted.
