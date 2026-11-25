@@ -9,6 +9,9 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#ifdef CARA_ANDROID_GLES_ATLAS
+#include <android/log.h>
+#endif
 #include <algorithm>
 #include <bitset>
 #include <chrono>
@@ -554,6 +557,10 @@ RasterizerOpenGL::RasterizerOpenGL()
         gltext(GL_VENDOR), gltext(GL_RENDERER), gltext(GL_VERSION), gltext(GL_SHADING_LANGUAGE_VERSION));
     if (is_on("CARA_GLES_RUNTIME_TEV") || is_on("CARA_GPU_QUATERNION_SLICE") ||
         is_on("CARA_GLES_PRUNE_UNUSED_QUATERNION")) unused_quaternion_policy.enabled = false;
+    __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+        "android_unused_quaternion target=%d enabled=%d device=%s",
+        int(unused_quaternion_policy.target), int(unused_quaternion_policy.enabled),
+        UnusedQuaternion::CacheTarget(unused_quaternion_policy).data());
     ShaderCensus::Record("unused_quaternion_policy target={} enabled={} source_revision=1 device={}",
         int(unused_quaternion_policy.target), int(unused_quaternion_policy.enabled),
         UnusedQuaternion::CacheTarget(unused_quaternion_policy));
