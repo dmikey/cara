@@ -70,16 +70,18 @@ public:
     struct Result {
         Status status = Status::Unavailable;
         OGLProgram program;
+        OGLProgram fallback;
     };
 
-    Result Request(u64 key, const std::string& vertex, const std::string& fragment, bool reuse_stages) {
+    Result Request(u64 key, const std::string& vertex, const std::string& fragment, bool reuse_stages,
+                   std::string fallback_source = {}) {
         std::lock_guard lock(mutex);
         if (!thread.joinable() || unavailable) {
             return {};
         }
         if (auto result = results.find(key); result != results.end()) {
             if (result->second.status != Status::Ready)
-                return {result->second.status, {}};
+                return {result->second.status, {}, std::move(result->second.fallback)};
             auto ready = std::move(result->second);
             results.erase(result);
             return ready;
@@ -98,7 +100,7 @@ public:
             }
         }
         results.emplace(key, Result{Status::Pending, {}});
-        jobs.push_back({key, vertex, fragment, reuse_stages});
+        jobs.push_back({key, vertex, fragment, reuse_stages, std::move(fallback_source)});
         wake.notify_one();
         return {Status::Pending, {}};
     }
@@ -133,6 +135,7 @@ private:
         std::string vertex;
         std::string fragment;
         bool reuse_stages;
+        std::string fallback_source;
     };
     static constexpr std::size_t MaxQueued = 8;
     static constexpr std::size_t MaxTracked = 64;
@@ -159,6 +162,14 @@ private:
             shader.Create(source.c_str(), type);
             return shader.handle;
         };
+        const auto build_vertex = [](const std::string& source) {
+            OGLShader shader;
+            OGLProgram program;
+            shader.Create(source.c_str(), GL_VERTEX_SHADER, true);
+            if (shader.handle)
+                program.Create(true, {shader.handle});
+            return program;
+        };
         while (true) {
             Job job;
             {
@@ -174,10 +185,15 @@ private:
             }
             OGLProgram program;
             if (job.fragment.empty()) {
-                OGLShader shader;
-                shader.Create(job.vertex.c_str(), GL_VERTEX_SHADER, true);
-                if (shader.handle)
-                    program.Create(true, {shader.handle});
+                if (!job.fallback_source.empty()) {
+                    auto fallback = build_vertex(job.fallback_source);
+                    if (fallback.handle) {
+                        glFinish();
+                        std::lock_guard lock(mutex);
+                        results.at(job.key).fallback = std::move(fallback);
+                    }
+                }
+                program = build_vertex(job.vertex);
             } else if (job.reuse_stages || force_stage_reuse) {
                 const auto vertex = get_stage(vertices, job.vertex, GL_VERTEX_SHADER);
                 const auto fragment = get_stage(fragments, job.fragment, GL_FRAGMENT_SHADER);

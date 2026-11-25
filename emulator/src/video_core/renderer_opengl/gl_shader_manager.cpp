@@ -189,7 +189,15 @@ public:
         return !std::exchange(hinted_vertex_fallback_reported, true);
     }
 
+    void UseTemporaryVertex(OGLProgram ready) {
+        program = std::move(ready);
+        BindSeparableProgram(GL_VERTEX_SHADER);
+    }
+
+    bool HasTemporaryVertex() const { return hinted_vertex_pending && program.handle != 0; }
+
     void ResolveHintedVertex(OGLProgram ready) {
+        program.Release();
         hinted_vertex_pending = false;
         if (ready.handle) {
             program = std::move(ready);
@@ -513,9 +521,17 @@ public:
             result = current_shaders.vs->IsValid();
         }
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
+        const auto make_temporary = [&] {
+            if (ios_indexed_inputs >= 3 || omit_triangle_quaternion ||
+                native_geometry || native_dispatch)
+                return std::string{};
+            return GenerateVertexShader(setup, key, separable, &ios_output, ios_input_mask,
+                                        ios_indexed_inputs, true, false, false, false, nullptr,
+                                        false, true);
+        };
         if (result && current_shaders.vs->HintedVertexPending() &&
             !ResolveHintedVertex(*current_shaders.vs, !regs.framebuffer.IsShadowRendering() &&
-                                                        !Settings::values.skip_slow_draw)) {
+                                 !Settings::values.skip_slow_draw, make_temporary)) {
             if (current_shaders.vs->HintedVertexPending())
                 return false; // Execute the same draw with Cara's existing CPU vertex path.
             result = false;
@@ -1099,7 +1115,13 @@ public:
         return shader_hints.Enabled();
     }
 
-    bool ResolveHintedVertex(OGLShaderStage& stage, bool allow_software) {
+    template <typename MakeTemporary>
+    bool ResolveHintedVertex(OGLShaderStage& stage, bool allow_software,
+                             const MakeTemporary& make_temporary) {
+        static const bool exact_fallback = [] {
+            const char* flag = std::getenv("CARA_ANDROID_EXACT_VERTEX_FALLBACK");
+            return flag && std::strcmp(flag, "1") == 0;
+        }();
         const u32 frame = VideoCore::GetCurrentFrame();
         const auto fallback = [&](const char* reason) {
             if (shader_census && stage.FirstHintedVertexFallback())
@@ -1115,7 +1137,27 @@ public:
         const auto start = ShaderCensus::Clock::now();
         OGLProgram ready;
         if (allow_software) {
-            auto build = GetShaderWorker(hint_vertex_worker).Request(stage.GetHash(), stage.GetSource(), {}, false);
+            std::string temporary;
+            if (exact_fallback && !stage.HintedVertexQueued() && stage.GetSource().size() >= 32768 &&
+                (!last_temporary_vertex_frame || frame - *last_temporary_vertex_frame >= 120)) {
+                temporary = make_temporary();
+                if (!temporary.empty() && temporary != stage.GetSource()) {
+                    last_temporary_vertex_frame = frame;
+                    if (shader_census)
+                        ShaderCensus::Record("vertex_gpu_fallback_queue refresh={} source={:016x}",
+                                             frame + 1, stage.GetHash());
+                } else {
+                    temporary.clear();
+                }
+            }
+            auto build = GetShaderWorker(hint_vertex_worker).Request(stage.GetHash(), stage.GetSource(),
+                                                                    {}, false, std::move(temporary));
+            if (build.fallback.handle) {
+                stage.UseTemporaryVertex(std::move(build.fallback));
+                if (shader_census)
+                    ShaderCensus::Record("vertex_gpu_fallback_use refresh={} source={:016x}",
+                                         frame + 1, stage.GetHash());
+            }
             using Status = AndroidShaderWorker::Status;
             if (build.status == Status::Pending && !stage.HintedVertexQueued()) {
                 stage.MarkHintedVertexQueued();
@@ -1124,7 +1166,8 @@ public:
                                          frame + 1, stage.GetHash(), int(stage.HintedVertexRomMatch()));
             }
             if (build.status == Status::Pending || build.status == Status::Busy)
-                return fallback(build.status == Status::Pending ? "pending" : "queue_full");
+                return stage.HasTemporaryVertex() ||
+                       fallback(build.status == Status::Pending ? "pending" : "queue_full");
             ready = std::move(build.program);
         } else if (stage.HintedVertexQueued()) {
             ready = hint_vertex_worker->TakeRequiredVertexStage(stage.GetHash());
@@ -1462,6 +1505,7 @@ private:
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
     std::unique_ptr<AndroidShaderWorker> android_shader_worker;
     std::unique_ptr<AndroidShaderWorker> hint_vertex_worker;
+    std::optional<u32> last_temporary_vertex_frame;
     Pica::ShaderHints::Catalog shader_hints;
 #endif
 #endif

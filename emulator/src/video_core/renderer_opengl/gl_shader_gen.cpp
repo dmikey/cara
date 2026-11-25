@@ -2133,7 +2133,8 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
                                  bool separable_shader, const PicaFixedGSConfig* ios_output, u16 ios_input_mask, unsigned ios_indexed_inputs,
                                  bool ios_source_optimizations, bool native_quaternion_geometry,
                                  bool native_isolated_dispatch, bool native_suffix_sharing,
-                                 const PackedVertexLayout* known_packed_layout, bool omit_triangle_quaternion) {
+                                 const PackedVertexLayout* known_packed_layout, bool omit_triangle_quaternion,
+                                 bool single_vertex_call) {
     std::string out;
     if (native_isolated_dispatch && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
     if (native_quaternion_geometry && (!ios_output || separable_shader || ios_indexed_inputs>=3)) return {};
@@ -2358,6 +2359,17 @@ layout (std140) uniform vs_config {
             out += "if(pair_id.x!=pair_id.y) { cara_run_vertex(int(pair_id.y)); first_quat=" + quaternion + "; }\n";
             out += "cara_run_vertex(int(pair_id.x)); normquat=" + quaternion + ";\n";
             out += "if(pair_id.x!=pair_id.y && dot(first_quat,normquat)<0.0) normquat=-normquat;\n";
+        } else if (single_vertex_call && GLES && separable_shader && ios_indexed_inputs < 3 &&
+                   !native_quaternion_geometry && quaternion_program.empty()) {
+            // Evaluate the same vertex program in the same order, including the
+            // triangle-first quaternion. Only the GLSL call site is shared.
+            out += R"(int triangle_slot = gl_VertexID % 3;
+for (int vertex_id = gl_VertexID - triangle_slot; ; vertex_id = gl_VertexID) {
+    cara_run_vertex(vertex_id);
+    if (vertex_id == gl_VertexID) break;
+    first_quat = )" + quaternion + ";\n}\n";
+            out += varying("normquat") + " = " + quaternion + ";\n";
+            out += "if (triangle_slot != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n";
         } else {
             if (ios_indexed_inputs < 3 && !native_quaternion_geometry) {
                 const char* reference = quaternion_program.empty() ? "cara_run_vertex" : "cara_run_quaternion";

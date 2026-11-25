@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <charconv>
 #include <cstddef>
+#include <fstream>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -23,6 +25,7 @@
 #endif
 #include "cara/display_scaling.h"
 #include "common/frame_timing.h"
+#include "common/file_util.h"
 #include "common/bit_field.h"
 #include "common/logging/log.h"
 #include "core/3ds.h"
@@ -783,7 +786,31 @@ void RendererOpenGL::SwapBuffers() {
 }
 
 void RendererOpenGL::RenderScreenshot() {
-    if (VideoCore::g_screenshot_complete_callback) {
+#ifdef __ANDROID__
+    const auto guest_refresh = VideoCore::GetCurrentFrame() + 1;
+    const auto capture = [guest_refresh] {
+        const char* requested = std::getenv("CARA_VERTEX_PIXEL_TRACE_FRAMES");
+        if (!requested)
+            return false;
+        std::string_view frames{requested};
+        while (!frames.empty()) {
+            const auto comma = frames.find(',');
+            const auto token = frames.substr(0, comma);
+            u32 value = 0;
+            const auto result = std::from_chars(token.data(), token.data() + token.size(), value);
+            if (result.ec == std::errc{} && result.ptr == token.data() + token.size() &&
+                value == guest_refresh)
+                return true;
+            if (comma == std::string_view::npos)
+                break;
+            frames.remove_prefix(comma + 1);
+        }
+        return false;
+    }();
+#else
+    constexpr bool capture = false;
+#endif
+    if (VideoCore::g_screenshot_complete_callback || capture) {
         // Draw this frame to the screenshot framebuffer
         OGLFramebuffer screenshot_framebuffer;
         screenshot_framebuffer.Create();
@@ -806,8 +833,20 @@ void RendererOpenGL::RenderScreenshot() {
 
         screenshot_framebuffer.Release();
         glDeleteRenderbuffers(1, &renderbuffer);
-        VideoCore::g_screenshot_complete_callback(layout.width, layout.height, pixels);
-        VideoCore::g_screenshot_complete_callback = nullptr;
+#ifdef __ANDROID__
+        if (capture) {
+            const auto path = FileUtil::GetUserPath(FileUtil::UserPath::CacheDir) +
+                              "vertex-pixels-" + std::to_string(guest_refresh) + "-" +
+                              std::to_string(layout.width) + "x" + std::to_string(layout.height) +
+                              ".rgba";
+            std::ofstream image(path, std::ios::binary);
+            image.write(reinterpret_cast<const char*>(pixels.data()), pixels.size() * sizeof(u32));
+        }
+#endif
+        if (VideoCore::g_screenshot_complete_callback) {
+            VideoCore::g_screenshot_complete_callback(layout.width, layout.height, pixels);
+            VideoCore::g_screenshot_complete_callback = nullptr;
+        }
     }
 }
 

@@ -251,7 +251,8 @@ std::string GenerateVertexShader(const Pica::Shader::ShaderSetup& setup, const P
                                  bool native_isolated_dispatch = false,
                                  bool native_suffix_sharing = false,
                                  const PackedVertexLayout* known_packed_layout = nullptr,
-                                 bool omit_triangle_quaternion = false);
+                                 bool omit_triangle_quaternion = false,
+                                 bool single_vertex_call = false);
 
 bool FragmentUsesLightingQuaternion(const Pica::Regs& regs);
 

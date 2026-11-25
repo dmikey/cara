@@ -250,6 +250,9 @@ void BootGame(const std::string& path) {
     select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
     select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
+    select_probe("atlas_exact_vertex_fallback", "CARA_ANDROID_EXACT_VERTEX_FALLBACK");
+    const Config::ConfigInfo<std::string> pixel_trace{{"Debug", "vertex_pixel_trace_frames"}, ""};
+    setenv("CARA_VERTEX_PIXEL_TRACE_FRAMES", Config::Get(pixel_trace).c_str(), 1);
     select_probe("adreno_separable_programs", "CARA_ADRENO_SEPARABLE_PROGRAMS");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
     select_probe("atlas_quaternion_slice", "CARA_GPU_QUATERNION_SLICE");
