@@ -181,3 +181,46 @@ with matching file hashes. These tests compared render progress
 and timings. They did not compare pixels at identical guest ticks.
 
 [Verified automatic-selector Android build](https://github.com/dmikey/cara/actions/runs/45513683248)
+
+## Exact p95 replay
+
+Android now logs the nearest-rank p95 of each 120-refresh window
+and includes the 114th sample in the phase trace. The earlier trace
+started at rank 115. The same signed build (`5cbbf688`) ran two normal
+boots on the Slide with Dynarmic, separable GLES Atlas, CLK 100,
+Performance Mode and frame skip off. Both profiles began with
+empty Cara archives, the same ROM hints and the existing driver
+cache. Automatic fog ran first. The control forced fog isolation
+off. The title and settled rows match by draw count. Lab entry
+animation timing varied, so those rows compare adjacent scene
+windows. The test verified all 50 p95 summary values against their
+rank-114 samples and restored the player profile after each run.
+
+| Scene | Fog off p95 / p99 / worst (ms) | Fog on p95 / p99 / worst (ms) |
+| --- | ---: | ---: |
+| Smoky title, 25,561 draws | 190.84 / 2,233.43 / 2,337.38 | 177.56 / 2,211.67 / 2,390.43 |
+| Lab entry, window ending 2521 | 131.87 / 148.70 / 1,155.69 | 134.33 / 242.10 / 1,142.54 |
+| Following lab window, ending 2641 | 40.67 / 89.39 / 794.14 | 31.37 / 59.91 / 795.21 |
+| Settled lab, 41,880 draws | 34.06 / 35.57 / 38.42 | 31.22 / 32.53 / 61.52 |
+
+Both title p95 refreshes ran software vertices on 238 of 285
+draws, with zero foreground shader compile time. The p95 refresh
+with fog on used 164.49 ms of graphics-command CPU time and
+8.12 ms of guest execution. The title had zero PICA fog draws,
+so its timing difference cannot be attributed to the fog LUT.
+
+Lab-entry p95 had software vertices on 72–108 of 351 draws and
+121.90–124.48 ms of graphics-command CPU time across the two runs.
+Neither p95 refresh recorded foreground compilation. In the next
+lab window, the p95 frame spent 5.93 ms in LUT uploads with fog
+isolation off and 0.14 ms with it on. The two lab-entry windows
+accumulated 451.52 vs 8.85 ms of fog upload time. In the same later
+window the worst refresh stayed around 795 ms, of which 747–755 ms
+was foreground compile and link time.
+
+The matched settled p95 with fog on had zero software vertex draws
+and zero compile time. Graphics-command CPU still took 20.44 ms,
+with another 6.39 ms in guest execution. Neither settled window had
+fog uploads, so this pair does not establish a warm fog speedup.
+
+[Android CI](https://github.com/dmikey/cara/actions/runs/45515359560)
