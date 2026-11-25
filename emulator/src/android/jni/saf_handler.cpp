@@ -84,7 +84,7 @@ public:
     }
 
     bool Seek(s64 offset, int whence) override {
-        return 0 != fseeko(m_file, offset, whence);
+        return 0 == fseeko(m_file, offset, whence);
     }
 
     u64 Tell() override {
