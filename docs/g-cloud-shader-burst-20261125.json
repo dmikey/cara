@@ -1,0 +1,147 @@
+{
+  "scope": "Source-backed physical census only; no new production renderer algorithm or default",
+  "tested_main": "f92bf4e0fa961f05a6d1651d5c3333bb475f9852",
+  "APK_SHA256": "058f062f1a585fa18d170aaf9e5f8fc911862207a457b9e29e57746729b32000",
+  "source_archive": {
+    "status": "PASS",
+    "same_run_archive_sha256": "6e1de155dac09ff2a808bce51a941a68f1da662be1230d2fb69ed1b94e3ec3b1",
+    "archive_entries": 47,
+    "hot515_vertex_count": 16,
+    "every_hot_vertex_SHA256_matches": true,
+    "CRC_binding": "Each parsed source reproduces emitted Android CRC64 ID; no hash collision among archive sources",
+    "prior_archive_used_only_for_early_analysis": true
+  },
+  "hot_vertices": [
+    {
+      "hash64": "4a2f85c1737fcf15",
+      "sha256": "621ebf2368e092026d6258f1f5bdd0f564351e8fe562e818b7287f53dcccb0e8",
+      "bytes": 75746
+    },
+    {
+      "hash64": "4d30a54875fec2a2",
+      "sha256": "e71955b9989f08f7ed2a11981ce7397e8a18ebd14c88455665aaccba0a18aeb0",
+      "bytes": 75804
+    },
+    {
+      "hash64": "734c3d69fcc06efb",
+      "sha256": "4f4e641a5ed0f773a03f4fe8ee96ba281c15f24a2de58ccab18e74210b38d303",
+      "bytes": 75717
+    },
+    {
+      "hash64": "79cbf450e6d730e7",
+      "sha256": "5f3295ea7919adf1f4f83d49cb4d9fb552bd5e9a6b55fea7f88f7993189d0ea9",
+      "bytes": 75746
+    },
+    {
+      "hash64": "043c304f6262673f",
+      "sha256": "7642d27bf070061d664eed3e5c91152f62eaa3f6b57371595b4a1b7094aaed1a",
+      "bytes": 75979
+    },
+    {
+      "hash64": "1aa5d7d510a8387d",
+      "sha256": "00f8a37663169ad1bcfa12482c2f1d457dd6eb5010be1444a753134f872fd7c5",
+      "bytes": 75804
+    },
+    {
+      "hash64": "9cdd4e7fdb6487b1",
+      "sha256": "20307f174972597817ab299f247c4346dc71fdb5966261212003ac94deb1a0e6",
+      "bytes": 75804
+    },
+    {
+      "hash64": "2808e2f12aa3a68f",
+      "sha256": "0f53ca69867b61ccf5ea8a6b24f4816e29ac2c057c36183cfc3e6129737aef97",
+      "bytes": 75804
+    },
+    {
+      "hash64": "a9c16f5eb7539a02",
+      "sha256": "7b2e992a63118cad630bbe051d8f1b3c89f41f8ed636a8152476d9c8866de1fb",
+      "bytes": 75804
+    },
+    {
+      "hash64": "00341733554656ac",
+      "sha256": "5876a8709c01dd8dda77f2597f91bbcba8165f3747c0885a8b6c42f36c5ddea2",
+      "bytes": 75804
+    },
+    {
+      "hash64": "0fc985d5d5ff37d4",
+      "sha256": "a27220d29145581f7b42d7ae76a77e5d18223877c7dcdc3e684c89ed6fa05487",
+      "bytes": 75775
+    },
+    {
+      "hash64": "2655eecb9df23cc3",
+      "sha256": "2df09ae8e3b4b5d4f70eb969ae7fe80bb42e7b6e65a8632b08bd3e6c3008f07a",
+      "bytes": 75804
+    },
+    {
+      "hash64": "6a9f20500255cc04",
+      "sha256": "eb9f9b5ee76f7b3385258e5870a6bf014fdb9f1bb7215396052d17ff01ca3e06",
+      "bytes": 14637
+    },
+    {
+      "hash64": "8cf9f9a43b2c5192",
+      "sha256": "9279342ebf1ad899e3d6e7856cd6a998f869ea04b77c9b380025dc24e9e2b3da",
+      "bytes": 75986
+    },
+    {
+      "hash64": "387c9743d586eee2",
+      "sha256": "f3be32a30fe376511c13bdfd3bfc11450ebe07808f04d4cb7fd036fb6c20890a",
+      "bytes": 75746
+    },
+    {
+      "hash64": "a8e2ab8b7c723753",
+      "sha256": "258ebf15e995c1b10cb78f9fe5a98c224d6fd330963d4055bbe1c8b3f320e6c0",
+      "bytes": 75833
+    }
+  ],
+  "window601": {
+    "scope": "Direct chronological same-thread window481\u2192601 closure, no individual missing API refresh field inferred",
+    "window_log_monotonic_bounds": [
+      2760.53,
+      2898.137
+    ],
+    "wall_window_seconds": 137.60699999999997,
+    "TIDs": {
+      "19482": 248
+    },
+    "compiles": {
+      "fragment": 36,
+      "vertex": 16
+    },
+    "compile_us_by_stage": {
+      "fragment": 1113325,
+      "vertex": 37291487
+    },
+    "links": 46,
+    "link_us": 84528409,
+    "first_draws": 46,
+    "first_draw_us_total": 11888,
+    "first_draw_max_us": 2810,
+    "unique_link_source_pairs": 46,
+    "same_source_compile_duplicates": [],
+    "links_by_vertex_source": {
+      "4a2f85c1737fcf15": 3,
+      "4d30a54875fec2a2": 6,
+      "734c3d69fcc06efb": 1,
+      "79cbf450e6d730e7": 1,
+      "043c304f6262673f": 4,
+      "1aa5d7d510a8387d": 2,
+      "9cdd4e7fdb6487b1": 4,
+      "2808e2f12aa3a68f": 8,
+      "a9c16f5eb7539a02": 2,
+      "00341733554656ac": 2,
+      "0fc985d5d5ff37d4": 2,
+      "2655eecb9df23cc3": 1,
+      "6a9f20500255cc04": 5,
+      "8cf9f9a43b2c5192": 1,
+      "387c9743d586eee2": 2,
+      "a8e2ab8b7c723753": 2
+    },
+    "fragment_generation_total_us": 3269
+  },
+  "report_sha256": "c452d957a776398b9a8f4853498a30b64236244c56cdf6ad3317257852bcb087",
+  "raw_outputs_retained_locally": "/Users/derekanderson/Documents/Codex/2026-11-02/can-you-get-the-latest-citra-3/outputs/cara-gcloud-shader-census-20261125",
+  "normal_exit": "FAILED deadline; full source export completed before forced owned cleanup",
+  "preflight_cleanup": "premature private-root rename restored exactly; corrected profile ownership guard",
+  "final_main_and_user_private_data": "restored; full receipts local",
+  "driver_security": "perf_harden1 unchanged"
+}
