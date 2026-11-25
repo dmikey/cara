@@ -16,8 +16,15 @@ namespace OpenGL {
 
 OpenGLState OpenGLState::cur_state;
 static bool raster_state_valid = false;
+static bool raster_reuse_policy_valid = false;
+static bool raster_reuse_policy = false;
 void OpenGLState::InvalidateRasterState() {
     raster_state_valid = false;
+}
+
+void OpenGLState::ResetReusePolicy() {
+    raster_reuse_policy_valid = false;
+    InvalidateRasterState();
 }
 
 #ifdef CARA_ANDROID_GLES_ATLAS
@@ -61,11 +68,14 @@ void OpenGLState::ResetBindingsForStateLoad() {
 #endif
 
 static bool ReuseRasterState() {
-    static const bool enabled = [] {
+    // A new renderer explicitly resets this policy as well as cached GL
+    // state. Android reapplies per-game settings before renderer construction.
+    if (!raster_reuse_policy_valid) {
         const char* value = std::getenv("CARA_GL_STATE_REUSE");
-        return value && std::strcmp(value, "1") == 0;
-    }();
-    return enabled;
+        raster_reuse_policy = value && std::strcmp(value, "1") == 0;
+        raster_reuse_policy_valid = true;
+    }
+    return raster_reuse_policy;
 }
 
 OpenGLState::OpenGLState() {

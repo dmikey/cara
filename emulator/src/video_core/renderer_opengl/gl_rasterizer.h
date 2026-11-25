@@ -348,6 +348,7 @@ private:
         bool initialized = false;
         std::array<std::array<GLint,4>,16> values{};
     };
+    bool ios_reuse_layout_uniforms = false;
     std::unordered_map<GLuint,IOSLayoutUniform> ios_layout_uniforms;
     std::array<std::array<GLint,4>,16> ios_packed_layout{};
     bool PrepareIOSPackedVertices(const IOSVertexInputLayout& layout);

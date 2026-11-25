@@ -25,4 +25,24 @@ constexpr bool ResolvePersistentUniformsPreference(std::optional<bool> configure
     return configured.value_or(!present && automatic_default);
 }
 
+struct ValidatedReuse {
+    bool layout;
+    bool state;
+    bool packed_fetch;
+};
+
+constexpr ValidatedReuse ResolveValidatedReuse(
+    bool validated_hardware, bool persistent_uniforms,
+    std::optional<bool> layout, bool layout_present,
+    std::optional<bool> state, bool state_present,
+    std::optional<bool> packed_fetch, bool packed_fetch_present) {
+    const bool auto_base = validated_hardware && persistent_uniforms;
+    const bool use_layout = ResolvePersistentUniformsPreference(layout, layout_present, auto_base);
+    const bool use_state = ResolvePersistentUniformsPreference(state, state_present,
+                                                              auto_base && use_layout);
+    const bool use_fetch = ResolvePersistentUniformsPreference(packed_fetch, packed_fetch_present,
+                                                              auto_base && use_layout && use_state);
+    return {use_layout, use_state, use_fetch};
+}
+
 } // namespace Cara::AndroidAtlas

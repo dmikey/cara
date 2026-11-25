@@ -1,0 +1,208 @@
+diff --git a/emulator/src/android/jni/main_android.cpp b/emulator/src/android/jni/main_android.cpp
+index 0d11b76c..057f551a 100644
+--- a/emulator/src/android/jni/main_android.cpp
++++ b/emulator/src/android/jni/main_android.cpp
+@@ -268,6 +268,10 @@ void BootGame(const std::string& path) {
+     const Config::ConfigInfo<bool> resident_uploads{{"Debug", "resident_vertex_uploads"}, true};
+     const Config::ConfigInfo<bool> prepared_indices{{"Debug", "prepared_vertex_indices"}, true};
+     const Config::ConfigInfo<bool> index_identity{{"Debug", "vertex_index_identity_reuse"}, false};
++    const Config::ConfigInfo<bool> zero_tail_compare{{"Debug", "packed_zero_tail_compare"}, false};
++    setenv("CARA_PACKED_ZERO_TAIL_COMPARE", Config::Get(zero_tail_compare) ? "1" : "0", 1);
++    const Config::ConfigInfo<bool> zero_tail_verify{{"Debug", "packed_zero_tail_verify"}, false};
++    setenv("CARA_PACKED_ZERO_TAIL_VERIFY", Config::Get(zero_tail_verify) ? "1" : "0", 1);
+     const Config::ConfigInfo<bool> clear_padding_only{{"Debug", "packed_vertex_padding_only"}, false};
+     const Config::ConfigInfo<bool> indexed_draws{{"Debug", "atlas_indexed_draws"}, false};
+     const Config::ConfigInfo<bool> async_indexed{{"Debug", "atlas_async_indexed_shaders"}, true};
+diff --git a/emulator/src/video_core/renderer_opengl/gl_rasterizer.cpp b/emulator/src/video_core/renderer_opengl/gl_rasterizer.cpp
+index 06064ddd..b31ce980 100644
+--- a/emulator/src/video_core/renderer_opengl/gl_rasterizer.cpp
++++ b/emulator/src/video_core/renderer_opengl/gl_rasterizer.cpp
+@@ -1,3 +1,6 @@
++#if defined(__ANDROID__)
++#include <android/log.h>
++#endif
+ #include "video_core/renderer_opengl/gl_backlog_profile.h"
+ #include "cara/quad_uv_plan.h"
+ #include "cara/guest_gpu_trace.h"
+@@ -887,7 +890,7 @@ bool RasterizerOpenGL::AccelerateDrawBatch(bool is_indexed) {
+     if (regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No) return reject("geometry shader");
+ #ifdef CARA_IOS_GLES
+     if (PackedPoolObserver::Enabled()) packed_pool_observation = {};
+-    SCOPE_EXIT({ packed_staging_bytes = 0; ios_packed_snapshot_lease.reset(); if (PackedPoolObserver::Enabled()) FinishPackedPoolObservation(); });
++    SCOPE_EXIT({ packed_staging_bytes = 0; packed_zero_tail_begin = 0; ios_packed_snapshot_lease.reset(); if (PackedPoolObserver::Enabled()) FinishPackedPoolObservation(); });
+     if (!PrepareIOSVertices(is_indexed)) return reject("vertex input preparation");
+     static const bool direct_reuse=[] { const char* v=std::getenv("CARA_GPU_VERTEX_REUSE"); return v && std::strcmp(v,"1")==0; }();
+     // Quaternion orientation is irrelevant only when fragment lighting is disabled.
+@@ -1015,6 +1018,7 @@ void RasterizerOpenGL::FinishPackedPoolObservation() {
+ }
+ 
+ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layout) {
++    packed_zero_tail_begin = 0;
+     const auto& pipeline = Pica::g_state.regs.pipeline;
+     const auto& triangles = IOSTriangles();
+     u32 first, last;
+@@ -1279,6 +1283,7 @@ bool RasterizerOpenGL::PrepareIOSPackedVertices(const IOSVertexInputLayout& layo
+         for (size_t i=0;i<triangles.size();++i) ios_vertex_input_indices[i]=u16(triangles[i]-first);
+         std::fill(ios_vertex_input_indices.begin()+triangles.size(),ios_vertex_input_indices.end(),0);
+     }
++    packed_zero_tail_begin = bytes;
+     ios_vertex_input_records=static_cast<u32>(unique);
+     ios_vertex_input_span=last-first+1;
+     static const bool verify=std::getenv("CARA_PACKED_VERIFY")!=nullptr;
+@@ -1546,6 +1551,12 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+         if (!SetupVertexShader()) return false;
+     }
+ #endif
++    static const bool zero_tail_compare = [] {
++        const auto* setting = std::getenv("CARA_PACKED_ZERO_TAIL_COMPARE");
++        return setting && std::strcmp(setting, "1") == 0;
++    }();
++    const size_t current_zero_tail = zero_tail_compare && !CommandQueue::Enabled()
++        ? packed_zero_tail_begin : 0;
+     const auto* input_data=IOSVertexInputData();
+     const size_t input_bytes=IOSVertexInputBytes();
+     const bool native_elements = ios_direct_vertex_reuse && ios_cached_index_data &&
+@@ -1701,7 +1712,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+                     IOSVertexUploadOrderReuse::FindWithInputSelfEquality(pool, ordinal, 32, input_data,
+                         input_bytes, input_indices.data(), input_indices.size() * sizeof(u16), eligible) :
+                     IOSVertexUploadOrderReuse::Find(pool, ordinal, 32, input_data,
+-                        input_bytes, input_indices.data(), input_indices.size() * sizeof(u16), eligible);
++                        input_bytes, input_indices.data(), input_indices.size() * sizeof(u16), eligible, current_zero_tail);
+                 order_reuse_checked = true;
+                 order_reuse_input = match.input_equal;
+                 order_reuse_index = match.index_equal;
+@@ -1716,8 +1727,18 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+                 totals.full += match.full_comparisons; totals.swaps += match.selected != ordinal;
+                 if (totals.logs < 24 && totals.frame != frame && frame % 120 == 0) {
+                     totals.frame = frame; ++totals.logs;
+-                    LOG_INFO(Render_OpenGL, "Vertex order reuse frame={} checks={} candidates={} full_comparisons={} swaps={}",
+-                             frame, totals.checks, totals.candidates, totals.full, totals.swaps);
++                    LOG_INFO(Render_OpenGL, "Vertex order reuse frame={} checks={} candidates={} full_comparisons={} swaps={} zero_tail_comparisons={} zero_tail_bytes_avoided={} zero_tail_verified={}",
++                             frame, totals.checks, totals.candidates, totals.full, totals.swaps,
++                             IOSVertexUploadOrderReuse::zero_tail_comparisons,
++                             IOSVertexUploadOrderReuse::zero_tail_bytes_avoided,
++                             IOSVertexUploadOrderReuse::zero_tail_verified);
++#if defined(__ANDROID__)
++                    __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
++                        "zero_tail frame=%u comparisons=%zu avoided_bytes=%zu verified=%zu",
++                        frame, IOSVertexUploadOrderReuse::zero_tail_comparisons,
++                        IOSVertexUploadOrderReuse::zero_tail_bytes_avoided,
++                        IOSVertexUploadOrderReuse::zero_tail_verified);
++#endif
+                 }
+             }
+             auto& upload = pool[bank.used[size_class]++];
+@@ -1784,7 +1805,8 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+         reuse_input=order_reuse_checked ? order_reuse_input : input_self_equal ?
+             IOSVertexUploadOrderReuse::EqualInputSelf(selected_upload->input_shadow,input_data,input_bytes,
+                                                      input_full_comparisons,false) :
+-            matches(selected_upload->input_shadow,input_data,input_bytes);
++            IOSVertexUploadOrderReuse::EqualInput(*selected_upload,input_data,input_bytes,
++                input_full_comparisons,false,current_zero_tail);
+         reuse_index=order_reuse_checked ? order_reuse_index : IndexPayloadReuse::Enabled() ?
+             IOSVertexUploadOrderReuse::EqualIndexIdentity(selected_upload->index_shadow,
+                 input_indices.data(),index_bytes,current_index_identity,input_full_comparisons,false) :
+@@ -1822,6 +1844,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+     // so the driver can discard its old contents once earlier draws finish.
+     // Exact cache hits keep sampling the resident image.
+     if (!reuse_input) {
++        if (selected_upload) selected_upload->input_zero_tail_begin = 0;
+         Common::FrameTiming::Scope timing(Common::FrameTiming::Phase::VertexUpload);
+         if (orphan_upload || replace_vertex_images) {
+             Common::FrameTiming::Scope orphan_timing(Common::FrameTiming::Phase::VertexOrphanUpload);
+@@ -1890,6 +1913,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+         if (!reuse_input && !published_input_shadow) {
+             const auto* data=reinterpret_cast<const u8*>(input_data);
+             selected_upload->input_shadow.assign(data,data+input_bytes);
++            selected_upload->input_zero_tail_begin = current_zero_tail;
+         }
+         if (!reuse_index) {
+             const auto* data=reinterpret_cast<const u8*>(input_indices.data());
+diff --git a/emulator/src/video_core/renderer_opengl/gl_rasterizer.h b/emulator/src/video_core/renderer_opengl/gl_rasterizer.h
+index 3584225c..d268958e 100644
+--- a/emulator/src/video_core/renderer_opengl/gl_rasterizer.h
++++ b/emulator/src/video_core/renderer_opengl/gl_rasterizer.h
+@@ -362,6 +362,7 @@ private:
+         // Exact CPU shadows permit skipping writes without relying on RAM dirty
+         // tracking or hash collision assumptions. Released with the pool entry.
+         SharedVertexShadow input_shadow;
++        size_t input_zero_tail_begin = 0;
+         IndexPayloadReuse::Shadow index_shadow;
+         IndexPayloadReuse::Shadow elements_shadow;
+         unsigned rows = 0;
+@@ -388,6 +389,7 @@ private:
+     std::unique_ptr<u8[]> packed_staging;
+     size_t packed_staging_capacity = 0;
+     size_t packed_staging_bytes = 0;
++    size_t packed_zero_tail_begin = 0;
+     // Immutable CPU snapshot only; never reserves a GPU upload-pool owner.
+     std::shared_ptr<const std::vector<u8>> ios_packed_snapshot_lease;
+     const u8* IOSVertexInputData() const {
+diff --git a/emulator/src/video_core/renderer_opengl/gl_vertex_upload_order_reuse.h b/emulator/src/video_core/renderer_opengl/gl_vertex_upload_order_reuse.h
+index ed9a0c5b..307f5ef3 100644
+--- a/emulator/src/video_core/renderer_opengl/gl_vertex_upload_order_reuse.h
++++ b/emulator/src/video_core/renderer_opengl/gl_vertex_upload_order_reuse.h
+@@ -5,6 +5,7 @@
+ #include <cstdint>
+ #include <cstring>
+ #include <vector>
++#include <stdexcept>
+ #include "gl_index_payload_reuse.h"
+ 
+ namespace OpenGL::IOSVertexUploadOrderReuse {
+@@ -37,13 +38,43 @@ inline bool EqualInputSelf(const Shadow& shadow, const void* bytes, std::size_t
+     if (shadow.data() == bytes) return true;
+     return Equal(shadow, bytes, size, full_comparisons, filter_edges);
+ }
++// Both byte spans retain their complete logical size. A nonzero certified
++// suffix starts only after the last payload byte written during materialization.
++// Unknown proofs take the original full comparison.
++inline std::size_t zero_tail_comparisons = 0, zero_tail_bytes_avoided = 0, zero_tail_verified = 0;
++template <typename Entry>
++inline bool EqualInput(const Entry& entry, const void* input, std::size_t size,
++                       std::size_t& full, bool filter_edges, std::size_t current_tail) {
++    if constexpr (requires { entry.input_zero_tail_begin; }) {
++        const auto previous_tail = entry.input_zero_tail_begin;
++        if (current_tail && previous_tail && current_tail <= size && previous_tail <= size &&
++            entry.input_shadow.size() == size) {
++            const auto prefix = std::max(current_tail, previous_tail);
++            ++full;
++            ++zero_tail_comparisons;
++            zero_tail_bytes_avoided += size - prefix;
++            const bool equal = std::memcmp(entry.input_shadow.data(), input, prefix) == 0;
++            static const bool verify = [] {
++                const auto* value = std::getenv("CARA_PACKED_ZERO_TAIL_VERIFY");
++                return value && std::strcmp(value,"1") == 0;
++            }();
++            if (verify) {
++                ++zero_tail_verified;
++                if (equal != (std::memcmp(entry.input_shadow.data(),input,size) == 0))
++                    throw std::runtime_error("Packed zero-tail comparison disagreed with original bytes");
++            }
++            return equal;
++        }
++    }
++    return Equal(entry.input_shadow, input, size, full, filter_edges);
++}
+ // Read-only bounded search. Caller owns class/format partitioning and supplies
+ // eligibility (matching extent and live resources). Prefix [0, first) is never
+ // inspected or selected. A successful alternate requires BOTH exact payloads.
+ template <typename Entry, typename Eligible>
+ Result Find(const std::vector<Entry>& pool, std::size_t first, std::size_t lookahead,
+             const void* input, std::size_t input_size, const void* index,
+-            std::size_t index_size, Eligible eligible) {
++            std::size_t index_size, Eligible eligible, std::size_t current_zero_tail = 0) {
+     Result result; result.selected = first;
+     if (first >= pool.size()) return result;
+     const auto compare = [&](std::size_t position, bool both) {
+@@ -52,8 +83,8 @@ Result Find(const std::vector<Entry>& pool, std::size_t first, std::size_t looka
+         // The ordinal entry is usually an exact hit. Compare it directly as the
+         // original upload-reuse path did; edge filters only help the search of
+         // alternates, where mismatches are expected.
+-        const bool a = Equal(pool[position].input_shadow, input, input_size,
+-                             result.full_comparisons, both);
++        const bool a = EqualInput(pool[position], input, input_size,
++                                  result.full_comparisons, both, current_zero_tail);
+         // The initial entry needs both booleans even if input differs, because
+         // unchanged indices must still skip their original upload on a miss.
+         const bool b = (!both || a) && Equal(pool[position].index_shadow, index, index_size,

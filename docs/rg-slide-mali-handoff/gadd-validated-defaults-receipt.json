@@ -1,0 +1,18 @@
+{
+  "scope": "mainline existing safe reuse defaults only; raw source experiments retained without compiling them",
+  "baseline_main": "b436a15",
+  "reports": {
+    "gadd-layout-reuse.md": "55f01a9d194dba6979c8e774416c07ed0f7ee2962db4005d57bd9efade99cd7b",
+    "gadd-raster-state-reuse.md": "4173dc4e11fa0683bd3b7e10d2ad6e01ffc0afa5e48446cd0a4866b9479de1d7",
+    "gadd-late-costs.md": "8970f0fd52177dcec33967477b29c7aaec4e1afbaffaa5e4dd2b22cdd64b2877",
+    "gadd-packed-fetch-composition.md": "47763d0eb96a8ab34e3fdfb36c4090151c360b50a3e2d25053cf73828de798e0",
+    "gadd-native-geometry-rejected.md": "af333a3704c1a0ef2b92cfc4de58331702355116d3595a0a4f2c0d854d674616",
+    "gadd-exact-zero-tail-private.md": "bdec4941ff64773022ffd0f9a49a27c81a5746c4dd40f4e2ef0c837e184091fe",
+    "gadd-transfer-ownership-trace.md": "b8a539e040f5e68af7b9f967a11f6258a577ee196be45aa49ba1bb06bb27877b",
+    "gadd-whole-fill-materialization.md": "d05224ff3ce53eebdbc253607c4aa81816d1bd6502015054cff42423a31222fe",
+    "gadd-validated-defaults.md": "8d8164c209ba042af93e22894801fb07dc9cafb0917891550ae180f0e16d35ea",
+    "rejected-investigations/whole-fill-source.patch": "4e708d60e1abcf50b17dacfe3a608055d30012881e96fe61c25614217daa5d67",
+    "rejected-investigations/zero-tail-source.patch": "454dc241f1f3c0679f7b4f27c03060b86c3711d910f72c5c1875d902b59257fc"
+  },
+  "test": "C++20 strict android_atlas_uniform_policy_test PASS; new linked Android compile/runtime pending"
+}

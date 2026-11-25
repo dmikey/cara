@@ -1,0 +1,154 @@
+diff --git a/emulator/src/android/jni/main_android.cpp b/emulator/src/android/jni/main_android.cpp
+index 8642ee1b..8a4c0559 100644
+--- a/emulator/src/android/jni/main_android.cpp
++++ b/emulator/src/android/jni/main_android.cpp
+@@ -1,5 +1,6 @@
+ #include "video_core/renderer_opengl/gl_backlog_profile.h"
+ #include "video_core/renderer_opengl/gl_remap_origin_profile.h"
++#include "video_core/renderer_opengl/gl_whole_fill_validation.h"
+ #include "cara/guest_gpu_trace.h"
+ // Modified for Cara on 2026-11-12; see NOTICE for attribution.
+ 
+@@ -237,6 +238,7 @@ void BootGame(const std::string& path) {
+     select_probe("trace_gles_gpu_lists", "CARA_TRACE_GLES_GPU_LISTS");
+     select_probe("trace_gles_swap_timing", "CARA_TRACE_GLES_SWAP_TIMING");
+     select_probe("remap_origin_profile", "CARA_REMAP_ORIGIN_PROFILE");
++    select_probe("whole_fill_validation", "CARA_GLES_WHOLE_FILL_VALIDATION");
+     // Private diagnostic bridge only: existing bounded core observers, no renderer policy.
+     select_probe("surface_validation_copy_trace", "CARA_SURFACE_VALIDATION_COPY_TRACE");
+     select_probe("surface_validation_copy_join", "CARA_SURFACE_VALIDATION_COPY_JOIN");
+@@ -253,6 +255,7 @@ void BootGame(const std::string& path) {
+     trace_number("guest_gpu_trace_duration", "CARA_GPU_TRACE_DURATION_VBLANKS", 2, 16);
+     const bool guest_gpu_trace = std::strcmp(std::getenv("CARA_GPU_TRACE"), "1") == 0;
+     const auto arm_guest_gpu_trace = [&] {
++        OpenGL::WholeFillValidation::Reset();
+         if (guest_gpu_trace)
+             Cara::GuestGPUTrace::Arm(FileUtil::GetUserPath(FileUtil::UserPath::UserDir) + "android-gpu-trace.csv");
+     };
+@@ -719,6 +722,15 @@ void BootGame(const std::string& path) {
+                                     rows.clear();
+                                 }
+ #endif
++                            const auto& whole_fill=OpenGL::WholeFillValidation::counters;
++                            __android_log_print(ANDROID_LOG_INFO,"CaraPerf",
++                                "whole_fill end=%u enabled=%d candidates=%llu expansions=%llu selected_bytes=%llu materialized_bytes=%llu saturated=%d",
++                                static_cast<unsigned>(frame),int(OpenGL::WholeFillValidation::Enabled()),
++                                static_cast<unsigned long long>(whole_fill.candidates),
++                                static_cast<unsigned long long>(whole_fill.expansions),
++                                static_cast<unsigned long long>(whole_fill.selected_bytes),
++                                static_cast<unsigned long long>(whole_fill.materialized_bytes),int(whole_fill.saturated));
++                            OpenGL::WholeFillValidation::Reset();
+                             const auto reuse = fmt::format(
+                                 "reuse end={} prep_ms={:.2f} draw_ms={:.2f} "
+                                 "index_hits={} index_misses={} index_bytes={} "
+diff --git a/emulator/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp b/emulator/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp
+index ff80fafe..35850917 100644
+--- a/emulator/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp
++++ b/emulator/src/video_core/renderer_opengl/gl_rasterizer_cache.cpp
+@@ -1,4 +1,5 @@
+ #include "video_core/renderer_opengl/gl_driver_transactions.h"
++#include "video_core/renderer_opengl/gl_whole_fill_validation.h"
+ #include "cara/guest_gpu_trace.h"
+ #include "cara/texture_copy_trace.h"
+ // Copyright 2015 Citra Emulator Project
+@@ -3693,6 +3694,47 @@ void RasterizerCacheOpenGL::ValidateSurface(const Surface& surface, PAddr addr,
+         Surface copy_surface = FindMatch<MatchFlags::Copy>(surface_cache, params, ScaleMatch::Ignore,
+                                                          interval, nullptr, false, &copy_interval);
+         if (copy_surface != nullptr) {
++#ifdef CARA_ANDROID_GLES_ATLAS
++            if (WholeFillValidation::Enabled() && copy_surface->type == SurfaceType::Fill &&
++                surface->type == SurfaceType::Color && surface->pixel_format == PixelFormat::RGBA8) {
++                auto& witness = WholeFillValidation::counters;
++                WholeFillValidation::Add(witness.candidates, 1);
++                const auto full = surface->GetInterval();
++                // The same Fill remains strongly owned throughout proof and CopySurface.
++                // No guest command or cache invalidation can execute between them.
++                if (copy_surface->GetInterval() == full && surface->IsSurfaceFullyInvalid() &&
++                    copy_surface->IsRegionValid(full) && copy_surface->CanFill(*surface, full)) {
++                    const auto selected = surface->FromInterval(copy_interval);
++                    const auto rect = surface->GetScaledSubRect(selected);
++                    const auto full_rect = surface->GetScaledSubRect(*surface);
++                    WholeFillValidation::Proof proof;
++                    proof.source_begin = copy_surface->addr; proof.source_end = copy_surface->end;
++                    proof.destination_begin = surface->addr; proof.destination_end = surface->end;
++                    proof.selected_begin = boost::icl::first(copy_interval);
++                    proof.selected_end = boost::icl::last_next(copy_interval);
++                    proof.width=surface->width; proof.height=surface->height; proof.stride=surface->stride;
++                    proof.rect_left=rect.left; proof.rect_bottom=rect.bottom;
++                    proof.rect_right=rect.right; proof.rect_top=rect.top;
++                    proof.source_is_fill=proof.source_full_valid=proof.source_can_fill_full=true;
++                    proof.destination_fully_invalid=proof.destination_color_rgba8=true;
++                    proof.registered=surface->registered;
++                    proof.custom=surface->custom_tex_info!=nullptr;
++                    proof.mip_zero=surface->max_level==0; proof.scale_one=surface->res_scale==1;
++                    proof.tiled=surface->is_tiled;
++                    const auto plan=WholeFillValidation::MakePlan(proof);
++                    if(plan.expand && full_rect.left==0 && full_rect.bottom==0 &&
++                       full_rect.right==surface->GetScaledWidth() &&
++                       full_rect.top==surface->GetScaledHeight()) {
++                        WholeFillValidation::Add(witness.expansions,1);
++                        WholeFillValidation::Add(witness.selected_bytes,proof.selected_end-proof.selected_begin);
++                        WholeFillValidation::Add(witness.materialized_bytes,plan.end-plan.begin);
++                        // The ordinary real clear now initializes every authoritative byte.
++                        // notify_validated below publishes exactly the interval we cleared.
++                        copy_interval=SurfaceInterval(static_cast<PAddr>(plan.begin),static_cast<PAddr>(plan.end));
++                    }
++                }
++            }
++#endif
+             // params was normalized with FromInterval(interval); reuse the exact
+             // winning interval without recomputing its valid-region intersection.
+             if (validation_copy_trace && validation_copy_trace->InWindow()) {
+diff --git a/emulator/src/video_core/renderer_opengl/gl_whole_fill_validation.h b/emulator/src/video_core/renderer_opengl/gl_whole_fill_validation.h
+new file mode 100644
+index 00000000..498e97d3
+--- /dev/null
++++ b/emulator/src/video_core/renderer_opengl/gl_whole_fill_validation.h
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++#include <cstdint>
++namespace OpenGL::WholeFillValidation {
++struct Proof {
++    std::uint64_t source_begin{}, source_end{}, destination_begin{}, destination_end{};
++    std::uint64_t selected_begin{}, selected_end{};
++    std::uint32_t width{}, height{}, stride{}, rect_left{}, rect_bottom{}, rect_right{}, rect_top{};
++    bool source_is_fill{}, source_full_valid{}, source_can_fill_full{}, destination_fully_invalid{};
++    bool destination_color_rgba8{}, registered{}, custom{}, mip_zero{}, scale_one{}, tiled{};
++};
++struct Plan { bool expand{}; std::uint64_t begin{}, end{}; };
++inline Plan MakePlan(const Proof& p) {
++    const Plan ordinary{false,p.selected_begin,p.selected_end};
++    if (!p.source_is_fill || !p.source_full_valid || !p.source_can_fill_full ||
++        !p.destination_fully_invalid || !p.destination_color_rgba8 || !p.registered ||
++        p.custom || !p.mip_zero || !p.scale_one || !p.width || !p.height || p.stride != p.width)
++        return ordinary;
++    if (p.source_begin != p.destination_begin || p.source_end != p.destination_end ||
++        p.destination_begin >= p.destination_end || p.selected_begin < p.destination_begin ||
++        p.selected_begin >= p.selected_end || p.selected_end > p.destination_end ||
++        p.selected_end-p.selected_begin == p.destination_end-p.destination_begin)
++        return ordinary;
++    const auto pixels=std::uint64_t(p.width)*p.height;
++    if (pixels > 0xffffffffULL/4 || pixels*4 != p.destination_end-p.destination_begin ||
++        (p.tiled && ((p.width|p.height)&7)) || p.rect_left || p.rect_bottom ||
++        p.rect_right != p.width || !p.rect_top || p.rect_top >= p.height)
++        return ordinary;
++    return {true,p.destination_begin,p.destination_end};
++}
++} // namespace OpenGL::WholeFillValidation
++
++#include <cstdlib>
++#include <cstring>
++#include <limits>
++namespace OpenGL::WholeFillValidation {
++inline bool Enabled() {
++    static const bool enabled=[] {const char* v=std::getenv("CARA_GLES_WHOLE_FILL_VALIDATION");return v&&std::strcmp(v,"1")==0;}();
++    return enabled;
++}
++struct Counters {std::uint64_t candidates{},expansions{},selected_bytes{},materialized_bytes{};bool saturated{};};
++inline thread_local Counters counters;
++inline void Add(std::uint64_t& value,std::uint64_t amount) {
++    if(amount>std::numeric_limits<std::uint64_t>::max()-value){value=std::numeric_limits<std::uint64_t>::max();counters.saturated=true;}else value+=amount;
++}
++inline void Reset(){counters={};}
++} // namespace OpenGL::WholeFillValidation

@@ -369,9 +369,13 @@ RasterizerOpenGL::RasterizerOpenGL()
     SetPicaWriteHooksActive(SoftwareBatching::Active());
     DrawCostProfile::Reset();
     IndexPayloadReuse::ResetStats();
-    OpenGLState::InvalidateRasterState();
+    OpenGLState::ResetReusePolicy();
 
 #ifdef CARA_IOS_GLES
+    const char* state_reuse = std::getenv("CARA_GL_STATE_REUSE");
+    const char* layout_reuse = std::getenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE");
+    ios_reuse_layout_uniforms = (state_reuse && std::strcmp(state_reuse, "1") == 0) ||
+                               (layout_reuse && std::strcmp(layout_reuse, "1") == 0);
     glGetIntegerv(GL_MAX_TEXTURE_SIZE,&ios_vertex_max_texture_size);
     LOG_INFO(Render_OpenGL,"GLES vertex atlas: width={} max_texture={} max_vertices={}",
              IOS_VERTEX_INPUT_WIDTH,ios_vertex_max_texture_size,IOS_MAX_EXPANDED_VERTICES);
@@ -1591,7 +1595,6 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
     const GLenum input_format = raw_inputs ? GL_RGBA_INTEGER : GL_RGBA;
     const GLenum input_type = raw_inputs ? GL_UNSIGNED_INT : GL_FLOAT;
     if (raw_inputs) {
-        static const bool reuse_layout=[] { const char* v=std::getenv("CARA_GL_STATE_REUSE"); const char* layout=std::getenv("CARA_PACKED_LAYOUT_UNIFORM_REUSE"); return (v && std::strcmp(v,"1")==0) || (layout && std::strcmp(layout,"1")==0); }();
         const auto vertex_program = state.draw.program_pipeline ?
             shader_program_manager->GetSeparableVertexProgram() : state.draw.shader_program;
         const auto update_layout = [&](GLint location) {
@@ -1600,7 +1603,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
             else
                 glUniform4iv(location, 16, ios_packed_layout[0].data());
         };
-        if (reuse_layout) {
+        if (ios_reuse_layout_uniforms) {
             auto& cached = ios_layout_uniforms[vertex_program];
             if (!cached.initialized)
                 cached.location = glGetUniformLocation(vertex_program, "cara_vertex_layout[0]");
