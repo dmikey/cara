@@ -156,3 +156,12 @@ control confirms that the 42-second stall is reproducible and that
 the fog lifetime change does not control that stall.
 
 [Arm guidance on updates to resources used by queued draws](https://developer.arm.com/community/arm-community-blogs/b/mobile-graphics-and-gaming-blog/posts/mali-performance-6-efficiently-updating-dynamic-resources)
+
+The shipping linked-program route was also tested on the fog-only
+APK with the same hint file present. Its 25,561-draw title window
+recorded 31,256.05 ms p99 and 49,864.90 ms worst, with 81,717.95 ms
+of measured shader compile and link work. This confirms that the
+hinted separable comparison cannot be used as the timing for the
+shipping linked backend. A production cold fix needs matched
+linked-program coverage, especially when an exact fragment program
+has no already-linked software-vertex fallback.
