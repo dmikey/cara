@@ -56,8 +56,6 @@ jobs:
               const detail=await get('/v1/builds/'+b.id+'/buildBetaDetail',true);
               if(detail)console.log(JSON.stringify({kind:'betaDetail',build:b.attributes.version,internal:detail.data?.attributes?.internalBuildState,external:detail.data?.attributes?.externalBuildState}));
             }
-            const phone=await get('/v1/devices?'+new URLSearchParams({'filter[udid]':'00008150-000E1D6E2640C01C',limit:'5'}),true);
-            if(phone) console.log(JSON.stringify({kind:'requestedPhoneRegistration',count:phone.data.length,rows:phone.data.map(({id,attributes:a})=>({id,status:a.status,platform:a.platform,deviceClass:a.deviceClass}))}));
           }
           main().catch(()=>{console.error('Apple inspection failed');process.exitCode=1;});
           JS
