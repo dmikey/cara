@@ -873,7 +873,6 @@ void RendererOpenGL::CaptureDiagnosticLCDs() {
     auto capture = previous;
     capture.draw.read_framebuffer = framebuffer.handle;
     capture.draw.draw_framebuffer = framebuffer.handle;
-    capture.renderbuffer = color.handle;
     capture.viewport = {0, 0, 400, 480};
     capture.scissor.enabled = false;
     capture.blend.enabled = false;
@@ -882,6 +881,8 @@ void RendererOpenGL::CaptureDiagnosticLCDs() {
     capture.cull.enabled = false;
     capture.color_mask = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
     capture.Apply();
+    // Apply restores raster/buffer state, but renderbuffer binding is explicit.
+    OpenGLState::BindRenderbuffer(color.handle);
     glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 400, 480);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color.handle);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
@@ -908,6 +909,7 @@ void RendererOpenGL::CaptureDiagnosticLCDs() {
     glPixelStorei(GL_PACK_ROW_LENGTH, row);
     glPixelStorei(GL_PACK_SKIP_ROWS, skip_rows);
     glPixelStorei(GL_PACK_SKIP_PIXELS, skip_pixels);
+    OpenGLState::BindRenderbuffer(previous.renderbuffer);
     previous.Apply();
     if (glGetError() != GL_NO_ERROR)
         throw std::runtime_error("LCD proof capture GL error");
