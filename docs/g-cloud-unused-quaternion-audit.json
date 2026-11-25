@@ -1,0 +1,559 @@
+{
+  "scope": "Offline exact generated FS lexical consumer census; NOT actual regs/TEV eligibility or newly generated candidate correctness",
+  "pairs": [
+    {
+      "VS": "4a2f85c1737fcf15",
+      "FS": "a1507018acd82378",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 1007166
+    },
+    {
+      "VS": "4d30a54875fec2a2",
+      "FS": "b04f0baf9c4dbcd2",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2814202
+    },
+    {
+      "VS": "734c3d69fcc06efb",
+      "FS": "c2170334d7b4a4d1",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 769991
+    },
+    {
+      "VS": "79cbf450e6d730e7",
+      "FS": "12b1d51ec8a4fd4c",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 693580
+    },
+    {
+      "VS": "4a2f85c1737fcf15",
+      "FS": "e638888b5cec5584",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 892010
+    },
+    {
+      "VS": "043c304f6262673f",
+      "FS": "4abdc9965ee9998d",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 3710048
+    },
+    {
+      "VS": "1aa5d7d510a8387d",
+      "FS": "b57f62b44cb43d43",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1655017
+    },
+    {
+      "VS": "9cdd4e7fdb6487b1",
+      "FS": "4abdc9965ee9998d",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1628782
+    },
+    {
+      "VS": "4d30a54875fec2a2",
+      "FS": "340458249a225cb1",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2538522
+    },
+    {
+      "VS": "4d30a54875fec2a2",
+      "FS": "f2ad24931e63eede",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2679152
+    },
+    {
+      "VS": "2808e2f12aa3a68f",
+      "FS": "c4c1dd0b7c63ff58",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2508666
+    },
+    {
+      "VS": "2808e2f12aa3a68f",
+      "FS": "340458249a225cb1",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2488361
+    },
+    {
+      "VS": "2808e2f12aa3a68f",
+      "FS": "6baeced6f459fb04",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2543751
+    },
+    {
+      "VS": "2808e2f12aa3a68f",
+      "FS": "8756ef9f029cbf80",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2562587
+    },
+    {
+      "VS": "a9c16f5eb7539a02",
+      "FS": "a77dea0fff1d0f40",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 1107028
+    },
+    {
+      "VS": "a9c16f5eb7539a02",
+      "FS": "adf4521e291c37cb",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 1122698
+    },
+    {
+      "VS": "00341733554656ac",
+      "FS": "adf4521e291c37cb",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 874084
+    },
+    {
+      "VS": "0fc985d5d5ff37d4",
+      "FS": "557b76b47c6a7b77",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1396368
+    },
+    {
+      "VS": "2655eecb9df23cc3",
+      "FS": "219cd6a679637d85",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 999825
+    },
+    {
+      "VS": "6a9f20500255cc04",
+      "FS": "98b7333f4e1b9f92",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 218575
+    },
+    {
+      "VS": "8cf9f9a43b2c5192",
+      "FS": "219cd6a679637d85",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 977926
+    },
+    {
+      "VS": "00341733554656ac",
+      "FS": "1972d385210c9a47",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 864019
+    },
+    {
+      "VS": "387c9743d586eee2",
+      "FS": "98b7333f4e1b9f92",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1603060
+    },
+    {
+      "VS": "043c304f6262673f",
+      "FS": "be167554b62bf41b",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 3666700
+    },
+    {
+      "VS": "9cdd4e7fdb6487b1",
+      "FS": "be167554b62bf41b",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1614152
+    },
+    {
+      "VS": "a8e2ab8b7c723753",
+      "FS": "e99e13313f2787bd",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 3125560
+    },
+    {
+      "VS": "6a9f20500255cc04",
+      "FS": "0ddd844947dd7cc2",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 211221
+    },
+    {
+      "VS": "4a2f85c1737fcf15",
+      "FS": "93c27678d622f8b0",
+      "normquat_occurrences": 1,
+      "declaration_found": true,
+      "no_read_lexical_proof": true,
+      "link_us": 878723
+    },
+    {
+      "VS": "4d30a54875fec2a2",
+      "FS": "2c74be75d5ef2ea8",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2580766
+    },
+    {
+      "VS": "043c304f6262673f",
+      "FS": "7887084e73c153b9",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 3668940
+    },
+    {
+      "VS": "1aa5d7d510a8387d",
+      "FS": "4ea08bdf6ecd0510",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1721885
+    },
+    {
+      "VS": "9cdd4e7fdb6487b1",
+      "FS": "7887084e73c153b9",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1620719
+    },
+    {
+      "VS": "4d30a54875fec2a2",
+      "FS": "600651bc8ab37d0f",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2799227
+    },
+    {
+      "VS": "4d30a54875fec2a2",
+      "FS": "84fdd49120fe0ab5",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2647641
+    },
+    {
+      "VS": "2808e2f12aa3a68f",
+      "FS": "9a5ebb498011c96d",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2468973
+    },
+    {
+      "VS": "2808e2f12aa3a68f",
+      "FS": "600651bc8ab37d0f",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2559044
+    },
+    {
+      "VS": "2808e2f12aa3a68f",
+      "FS": "54c8b340ec82cab1",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2591877
+    },
+    {
+      "VS": "2808e2f12aa3a68f",
+      "FS": "15ade0bddfdf0efa",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 2515879
+    },
+    {
+      "VS": "0fc985d5d5ff37d4",
+      "FS": "3c68b3cf1c45ee10",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1374406
+    },
+    {
+      "VS": "6a9f20500255cc04",
+      "FS": "15f197fdecea9e91",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 214994
+    },
+    {
+      "VS": "387c9743d586eee2",
+      "FS": "15f197fdecea9e91",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1567107
+    },
+    {
+      "VS": "043c304f6262673f",
+      "FS": "91e55d550df28df1",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 3792978
+    },
+    {
+      "VS": "9cdd4e7fdb6487b1",
+      "FS": "91e55d550df28df1",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 1637965
+    },
+    {
+      "VS": "a8e2ab8b7c723753",
+      "FS": "97dbaecef6b9fe88",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 3180316
+    },
+    {
+      "VS": "6a9f20500255cc04",
+      "FS": "be079a13fb30c0c3",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 215545
+    },
+    {
+      "VS": "6a9f20500255cc04",
+      "FS": "b21dbc2eaad4656e",
+      "normquat_occurrences": 2,
+      "declaration_found": true,
+      "no_read_lexical_proof": false,
+      "link_us": 218373
+    }
+  ],
+  "no_read_pairs": 11,
+  "retained_read_pairs": 35,
+  "no_read_link_us": 10187050,
+  "VS_uses": {
+    "4a2f85c1737fcf15": [
+      "no_read"
+    ],
+    "4d30a54875fec2a2": [
+      "read_or_unknown"
+    ],
+    "734c3d69fcc06efb": [
+      "no_read"
+    ],
+    "79cbf450e6d730e7": [
+      "no_read"
+    ],
+    "043c304f6262673f": [
+      "read_or_unknown"
+    ],
+    "1aa5d7d510a8387d": [
+      "read_or_unknown"
+    ],
+    "9cdd4e7fdb6487b1": [
+      "read_or_unknown"
+    ],
+    "2808e2f12aa3a68f": [
+      "read_or_unknown"
+    ],
+    "a9c16f5eb7539a02": [
+      "no_read"
+    ],
+    "00341733554656ac": [
+      "no_read"
+    ],
+    "0fc985d5d5ff37d4": [
+      "read_or_unknown"
+    ],
+    "2655eecb9df23cc3": [
+      "no_read"
+    ],
+    "6a9f20500255cc04": [
+      "read_or_unknown"
+    ],
+    "8cf9f9a43b2c5192": [
+      "no_read"
+    ],
+    "387c9743d586eee2": [
+      "read_or_unknown"
+    ],
+    "a8e2ab8b7c723753": [
+      "read_or_unknown"
+    ]
+  },
+  "no_read_only_VS_count": 7,
+  "no_read_only_VS_compile_us": 16803959,
+  "performance_interpretation": "Observed time currently spent in candidate-addressable source groups, not recoverable gain; driver may already DCE varyings and cold specialization may cost more.",
+  "actual_vertex_mutable_reset_check": [
+    {
+      "source": "4a2f85c1737fcf15",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "4d30a54875fec2a2",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "734c3d69fcc06efb",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "79cbf450e6d730e7",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "043c304f6262673f",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "1aa5d7d510a8387d",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "9cdd4e7fdb6487b1",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "2808e2f12aa3a68f",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "a9c16f5eb7539a02",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "00341733554656ac",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "0fc985d5d5ff37d4",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "2655eecb9df23cc3",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "6a9f20500255cc04",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "8cf9f9a43b2c5192",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "387c9743d586eee2",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    },
+    {
+      "source": "a8e2ab8b7c723753",
+      "declared_mutable": 6,
+      "reset_mutable": 22,
+      "missing_resets": [],
+      "condition_reset": true,
+      "address_reset": true
+    }
+  ]
+}

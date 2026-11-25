@@ -49,3 +49,7 @@ A preflight rejected two live Cara processes before any census launch. Its prema
 The actual census completed endpoints121/481/601/1201 and exported its complete source archive. Normal Exit Game was not confirmed before its90-second deadline while analysis continued, so the owned private app was force-stopped. This remains a failed cleanup receipt, not a clean native-exit claim and not a reason to repeat the successful capture. Three late scroll gestures based on an old menu image landed on the launcher after timeout; no tap, launch, deletion or main-app action followed. Future UI actions must recheck the current owned PID and foreground.
 
 RESTORE-RECEIPT.json verifies the exact user private folder was restored; the player APK3a4d42e9af128a1e32a5f3916b563090ea8c18bbdc7acebb93902126cdc96f98 and config/state/sdmc/nand inventory are unchanged. Both Cara PIDs are absent. Stock `security.perf_harden` remains1, with no root/security changes. All failed receipts, corrective restoration, full logs, source bindings and hypotheses remain preserved under `outputs/cara-gcloud-shader-census-20261125`.
+
+## Source-only follow-up candidate
+
+The exact fragment-consumer audit identifies11 no-quaternion-read pairs, associated with seven of the16 vertex sources. A single private Adreno618/V@0502.0-gated specialization is proposed, with explicit source/cache separation and correctness gates; it has not been implemented or run. Mali defaults remain untouched. [Candidate design and test gates](g-cloud-unused-quaternion-candidate.md).
