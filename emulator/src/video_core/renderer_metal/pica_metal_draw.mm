@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "common/cpu_category_timing.h"
 #include "pica_metal_pair_indices.h"
 #include "pica_metal_draw.h"
 #include "pica_metal_simd_token.h"
@@ -573,6 +574,7 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
 
 bool EncodeDraw(id<MTLCommandBuffer> command, PicaMetalUploadArena& arena,
                 const TexturedMetalDraw& draw, bool grouped) {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalEncode);
     NativeMetalCost::Scope cost(NativeMetalCost::Encode);
     const auto data = UploadDraw(command, arena, draw, grouped);
     return data && EncodeUploadedDraw(command, arena, draw, *data, grouped, true);

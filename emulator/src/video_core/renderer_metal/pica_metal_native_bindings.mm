@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "common/cpu_category_timing.h"
 #include "video_core/renderer_metal/pica_metal_native_bindings.h"
 #include "simd_vertex_source.h"
 #include "video_core/renderer_metal/pica_metal_cube_build.hh"
@@ -927,6 +928,7 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
     PicaMetalNativeDrawLane& lane, const Pica::State& state, bool indexed,
     const MetalGuestAuthority::GuestReader& ram, std::span<const PicaMetalStageVertex> stage_in,
     bool* interpret_vertices) {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalBind);
     const ScopedNativeHostPhase total(0);
     const auto& r = state.regs;
     const auto& fb = r.framebuffer.framebuffer;

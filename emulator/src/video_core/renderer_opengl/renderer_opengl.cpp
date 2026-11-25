@@ -791,7 +791,18 @@ void RendererOpenGL::RenderScreenshot() {
         OpenGLState::BindReadFramebuffer(screenshot_framebuffer.handle);
         OpenGLState::BindDrawFramebuffer(screenshot_framebuffer.handle);
 
-        const auto& layout = render_window.GetFramebufferLayout();
+        bool native_capture = false;
+#if defined(CARA_MAC_CPU_JIT)
+        const auto* capture = std::getenv("CARA_NATIVE_REPLAY_NATIVE_LCD_CAPTURE");
+        const auto* diag = std::getenv("CARA_NATIVE_DIAGNOSTICS");
+        const auto* ledger = std::getenv("CARA_NATIVE_REPLAY_LEDGER");
+        native_capture = capture && diag && ledger && std::strcmp(capture,"1")==0 &&
+            std::strcmp(diag,"1")==0 && std::strcmp(ledger,"1")==0;
+#endif
+        const auto layout = native_capture
+            ? Layout::DefaultFrameLayout(Core::kScreenTopWidth, Core::kScreenTopHeight +
+                Core::kScreenBottomHeight, false)
+            : render_window.GetFramebufferLayout();
         GLuint renderbuffer;
         glGenRenderbuffers(1, &renderbuffer);
         glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
@@ -799,7 +810,7 @@ void RendererOpenGL::RenderScreenshot() {
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
                                   renderbuffer);
 
-        DrawScreens(layout);
+        DrawScreens(layout, native_capture);
 
         std::vector<u32> pixels(layout.width * layout.height);
         glReadPixels(0, 0, layout.width, layout.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());

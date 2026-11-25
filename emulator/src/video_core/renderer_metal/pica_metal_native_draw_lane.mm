@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "common/cpu_category_timing.h"
 #include "video_core/renderer_metal/pica_metal_native_draw_lane.h"
 #include "video_core/renderer_metal/pica_metal_striped_source.hh"
 #include "video_core/renderer_metal/exporter-adapter/pica_metal_queued_color_export.hh"
@@ -339,6 +340,7 @@ void PicaMetalNativeDrawLane::Abort() noexcept {
 void PicaMetalNativeDrawLane::Record(const TexturedMetalDraw& draw, const PicaMetalDrawViews& views,
                                     const PicaMetalNativeAttachment& color,
                                     const PicaMetalNativeAttachment& depth) {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalRecord);
     NativeMetalCost::Scope cost(NativeMetalCost::Record);
     submissions.CheckThread();
     if (HasTextureCopyBatch(this))
@@ -906,6 +908,7 @@ id<MTLTexture> PicaMetalNativeDrawLane::ResolveRgba8(const MetalRgba8Layout& lay
 #if defined(CARA_PRIVATE_METAL_TRANSFERS)
 void PicaMetalNativeDrawLane::Fill(MetalTransfer::FillRegisters registers,
                                   const MetalTransfer::Pipelines& pipelines) {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
     NativeMetalCost::Scope kind(NativeMetalCost::FillHost);
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Fill);
@@ -1011,6 +1014,7 @@ void PicaMetalNativeDrawLane::Fill(MetalTransfer::FillRegisters registers,
 void PicaMetalNativeDrawLane::CopyTexture(
     MetalTransfer::TextureCopyRegisters registers, const MetalTransfer::Pipelines& pipelines,
     const MetalGuestAuthority::GuestReader& ram) {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
     NativeMetalCost::Scope kind(NativeMetalCost::TextureCopyHost);
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Copy);
@@ -1102,6 +1106,7 @@ void PicaMetalNativeDrawLane::CopyTexture(
 void PicaMetalNativeDrawLane::TransferDisplay(
     MetalTransfer::DisplayTransferRegisters registers, const MetalTransfer::Pipelines& pipelines,
     const PicaMetalTextureDecoder& decoder, const MetalGuestAuthority::GuestReader& ram) {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
     NativeMetalCost::Scope kind(NativeMetalCost::DisplayHost);
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Display);
@@ -1857,6 +1862,7 @@ MetalLCD::Receipt PicaMetalNativeDrawLane::Present(
     CAMetalLayer* layer, const Layout::FramebufferLayout& layout, const MetalLCD::Pipelines& pipelines,
     MetalLCD::Filter filter, MetalLCD::EdgeMode edge, const MetalGuestAuthority::GuestReader& ram,
     bool capture, unsigned upscale, bool present_drawable) {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalPresent);
     NativeMetalCost::Scope cost(NativeMetalCost::Present);
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Present);
     PublishPending();
@@ -2191,6 +2197,7 @@ PicaMetalNativeAttachment PicaMetalNativeDrawLane::AcquireTiledDepthStencil(
 }
 
 void PicaMetalNativeDrawLane::PublishPending() {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalPublish);
     NativeMetalCost::Scope cost(NativeMetalCost::Publish);
     submissions.CheckThread();
     submissions.Retire(false);

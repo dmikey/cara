@@ -10,10 +10,14 @@ namespace Common::CPUCategoryTiming {
 // CPUExecution includes emulated RAM/MMIO accesses and backend/cache/decode work.
 // It is not a measurement of pure dispatch. HLE and GPUCommand subtract nested
 // work from their parents; GPUCommand includes host renderer calls it invokes.
-enum class Category : std::size_t { Others, CPUExecution, HLE, GPUCommand, DSPHLETick, Count, Inactive = Count };
+enum class Category : std::size_t {
+    Others, CPUExecution, HLE, GPUCommand, DSPHLETick, MetalBind, MetalRecord,
+    MetalEncode, MetalTransfer, MetalPublish, MetalPresent, Count, Inactive = Count
+};
 inline constexpr std::size_t CategoryCount = static_cast<std::size_t>(Category::Count);
 inline constexpr std::array<const char*, CategoryCount> Names = {
-    "others", "cpu_execution_including_memory", "hle_svc", "gpu_command", "dsp_hle_tick"};
+    "others", "cpu_execution_including_memory", "hle_svc", "gpu_command", "dsp_hle_tick",
+    "metal_bind", "metal_record", "metal_encode", "metal_transfer", "metal_publish", "metal_present"};
 
 struct Counters {
     std::array<std::uint64_t, CategoryCount> cpu_ns{};

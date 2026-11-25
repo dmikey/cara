@@ -40,11 +40,14 @@ inline Tracker& ThreadTracker() noexcept {
 inline Counters Snapshot() noexcept { return ThreadTracker().Snapshot(); }
 inline bool Reset() noexcept { return ThreadTracker().Reset(); }
 
+// Explicit diagnostic window without enabling other frame counters.
+inline thread_local bool explicit_window = false;
+
 class Scope {
 public:
     explicit Scope(Category category) noexcept {
         // No clocks, TLS tracker access or allocation in the disabled path.
-        if (!DiagnosticEnabled() || !FrameTiming::counters.enabled) return;
+        if (!DiagnosticEnabled() || (!FrameTiming::counters.enabled && !explicit_window)) return;
         // Others is the RunLoop root. Child entrypoints can also run on audio
         // or setup threads; outside a live root they do not read the clock.
         Tracker& tracker = ThreadTracker();

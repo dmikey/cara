@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "common/guest_replay_counts.h"
+#include "common/cpu_category_timing.h"
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/arm/arm_interface.h"
@@ -90,6 +91,7 @@ class Ledger {
         std::array<std::uint64_t, Common::GuestReplayCounts::Count> work;
         std::array<std::uint32_t, 4> pcs;
     };
+    struct CategorySample { std::uint32_t frame; Common::CPUCategoryTiming::Counters counters; };
     static std::uint64_t CPU(clockid_t clock) {
         timespec t{};
         if (clock_gettime(clock, &t) != 0 || t.tv_sec < 0 || t.tv_nsec < 0 ||
@@ -110,6 +112,13 @@ public:
 #else
         throw std::runtime_error("Replay ledger compiled without CPU JIT");
 #endif
+        breakdown = Flag("CARA_NATIVE_REPLAY_CPU_BREAKDOWN");
+        if (breakdown) {
+            if (!Common::CPUCategoryTiming::DiagnosticEnabled() ||
+                Common::FrameTiming::counters.enabled)
+                throw std::runtime_error("CPU category window requires its exact flag and other timing counters off");
+            categories.reserve(3);
+        }
         rows.reserve(4096);
         last = Clock::now();
         Observe(core, frame);
@@ -128,6 +137,15 @@ public:
             row.pcs[i] = core.GetCore(i).GetPC();
         rows.push_back(row);
         last = now;
+        if (breakdown && (frame==2400 || frame==2600 || frame==2800)) {
+            namespace CPUProfile=Common::CPUCategoryTiming;
+            if (CPUProfile::ThreadTracker().Active())
+                throw std::runtime_error("Open CPU category at replay boundary");
+            if (frame==2400 && !CPUProfile::Reset())
+                throw std::runtime_error("Could not reset inactive CPU category tracker");
+            categories.push_back({frame,CPUProfile::Snapshot()});
+            CPUProfile::explicit_window = frame!=2800;
+        }
     }
     void Write(const std::string& directory) const {
         if (!enabled)
@@ -146,10 +164,26 @@ public:
         out.close();
         if (!out)
             throw std::runtime_error("Could not retain native replay ledger");
+        if (breakdown) {
+            if (categories.size()!=3 || Common::CPUCategoryTiming::explicit_window)
+                throw std::runtime_error("Incomplete private CPU category window");
+            std::ofstream profile(directory+"native-replay-cpu-breakdown.csv");
+            profile<<"refresh,category,cpu_ns,entries,clock_failures,overflows\n";
+            for (const auto& sample:categories) {
+                for (std::size_t i=0;i<Common::CPUCategoryTiming::Names.size();++i)
+                    profile<<sample.frame<<','<<Common::CPUCategoryTiming::Names[i]<<','
+                           <<sample.counters.cpu_ns[i]<<','<<sample.counters.entries[i]<<','
+                           <<sample.counters.clock_failures<<','<<sample.counters.counter_overflows<<'\n';
+            }
+            profile.close();
+            if(!profile)throw std::runtime_error("Could not retain replay CPU breakdown");
+        }
     }
 private:
     bool enabled = false;
     Clock::time_point last{};
     std::vector<Row> rows;
+    bool breakdown=false;
+    std::vector<CategorySample> categories;
 };
 }
