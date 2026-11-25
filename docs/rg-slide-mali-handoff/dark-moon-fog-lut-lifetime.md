@@ -224,3 +224,93 @@ with another 6.39 ms in guest execution. Neither settled window had
 fog uploads, so this pair does not establish a warm fog speedup.
 
 [Android CI](https://github.com/dmikey/cara/actions/runs/45515359560)
+
+## Temporary GPU vertex stage
+
+An opt-in separable GLES experiment built the same decompiled PICA
+vertex program with one GLSL call site for the triangle reference and
+actual vertex evaluations. The draw still evaluates the same inputs,
+preserves the quaternion sign rule, and uses the existing fragment
+stage. The same EGL worker publishes this temporary program, then
+builds the specialized stage. The CPU vertex path continues to draw
+while both programs are pending. This branch excludes the priority
+queue change.
+
+The RG Slide ran two timing boots on signed APK `3586abfa` with JIT,
+separable GLES Atlas, CLK 100, Performance Mode, native 1×, empty
+Cara archives, identical ROM hints, and the existing system driver
+cache. Draw skipping and adaptive frame skip were disabled. The
+temporary program ran first. The two title windows match draw counts.
+The lab windows compare the same scene progression, with different
+input and animation timing.
+
+| Window | Original FIFO p95 / p99 / worst (ms) | Temporary GPU p95 / p99 / worst (ms) |
+| --- | ---: | ---: |
+| First smoky title | 181.45 / 2,130.09 / 2,191.22 | 186.54 / 2,167.97 / 2,401.98 |
+| Following smoky title | 82.35 / 85.40 / 86.57 | 83.18 / 87.15 / 96.26 |
+| Gadd entry, through refresh 2521 | 124.12 / 243.00 / 1,169.07 | 125.69 / 148.59 / 1,176.16 |
+| Following lab window, through refresh 2641 | 34.64 / 60.96 / 823.20 | 34.26 / 81.77 / 830.64 |
+
+At the title, source `a929c69f4d7ad36a` first ran through the
+temporary GPU stage at refresh 525. Its specialized stage replaced
+it at refresh 573, compared with refresh 538 with FIFO. The driver
+spent 2.02 s linking the temporary stage and 3.41 s linking the
+specialized stage. The FIFO exact link took 3.23 s. The temporary
+stage reduced software draws in the first title window by 70,
+from 15,005 to 14,935. The following window added 1,550 software
+draws while other stages waited longer. A smaller on-demand shader
+still competes for driver compiler time.
+
+Separate boots captured raw RGBA at named guest refreshes. All 18
+matched title samples were byte-identical outside the FPS overlay.
+This includes the eight samples at refreshes 525–560 during the
+temporary-stage interval. Every difference was within x=74–213,
+y=7–19, where the FPS and speed text is drawn. The player reported
+flicker during the test. The control pixel run was stopped before
+the lab, so Gadd pixel parity and the cause of the observed flicker
+are unresolved. The previous signed build (`62bf2a8a`) was restored
+and relaunched at the library. The player profile matched its
+pre-test hashes. The temporary GPU experiment stays off.
+
+[Android CI](https://github.com/dmikey/cara/actions/runs/45520829077)
+
+### Upstream approaches to the first draw
+
+- Dolphin's hybrid renderer uses an already compiled general shader
+  for the first draw, then switches to a specialization. Its measured
+  architecture avoids building two programs at first encounter.
+  [Dolphin hybrid ubershaders](https://dolphin-emu.org/blog/2017/07/30/ubershaders/)
+- RPCS3 preloads its shader interpreter and uses guest instructions
+  from separate buffers. It also has explicit eligibility checks
+  where interpreter coverage is incomplete. This is closer to PICA's
+  programmable vertex stage than a fixed-function combiner
+  ubershader. Cara can use the pattern with its own PICA semantics
+  and GLES resources. [RPCS3 OpenGL implementation](https://github.com/RPCS3/rpcs3/blob/master/rpcs3/Emu/RSX/GL/GLGSRender.cpp)
+- Azahar's programmable GLES path looks up a generated vertex shader
+  and returns failure when it has no handle. Its Android configuration
+  exposes parallel compilation for Vulkan. This provides a useful
+  specialized shader and CPU software baseline for comparison.
+  [Azahar GLES shader manager](https://github.com/azahar-emu/azahar/blob/master/src/video_core/renderer_opengl/gl_shader_manager.cpp) ·
+  [Azahar Android configuration](https://github.com/azahar-emu/azahar/blob/master/src/android/app/src/main/jni/default_ini.h)
+- PPSSPP measures render-thread wait separately from total worker
+  time. Those figures are for MoltenVK, but the method applies to
+  Cara's EGL worker: log time from first draw request to first use,
+  alongside actual foreground wait and driver compile and link.
+  Arm's offline compiler can estimate G57 spills and occupancy for
+  the eventual reusable shader. Link latency still needs measurement
+  on the Slide's stock driver.
+  [PPSSPP compiler measurements](https://raw.githubusercontent.com/hrydgard/ppsspp/master/docs/shader-compilation.md) ·
+  [Arm Mali Offline Compiler](https://developer.arm.com/Tools%20and%20Software/Mali%20Offline%20Compiler)
+
+A reusable PICA vertex fallback should compile on-device before
+gameplay, accept validated instruction and swizzle data, and retain
+the existing packed vertex inputs and draw order. Program and
+swizzle identities are already tracked by `Pica::Shader::ShaderSetup`.
+A first fixture can upload an immutable instruction record once per
+identity and bind current uniforms and input layout for each draw.
+Keep the supported control flow explicit. Compare vertex outputs,
+triangle quaternion signs, color and depth against Cara's software
+path on the G57 before admitting an opcode or input route. Retain
+the existing exact path for unsupported state. Separate opaque,
+translucent and depth-dependent cases so title parity alone cannot
+qualify the implementation.
