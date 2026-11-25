@@ -136,6 +136,13 @@ public final class SettingsFragment extends Fragment {
         SettingSection rendererSection = mSettings.getSection(Settings.SECTION_INI_RENDERER);
         Setting layoutOption = rendererSection.getSetting(SettingsFile.KEY_LAYOUT_OPTION);
         Setting landscapeLayout = rendererSection.getSetting(SettingsFile.KEY_LANDSCAPE_LAYOUT_OPTION);
+        if (mGameID.isEmpty()) {
+            sl.add(new SingleChoiceSetting(SettingsFile.KEY_EXTERNAL_DISPLAY,
+                Settings.SECTION_INI_RENDERER, R.string.external_display_title,
+                R.string.external_display_description, R.array.externalDisplayEntries,
+                R.array.externalDisplayValues, 0,
+                rendererSection.getSetting(SettingsFile.KEY_EXTERNAL_DISPLAY)));
+        }
         Setting showFPS = rendererSection.getSetting(SettingsFile.KEY_SHOW_FPS);
         Setting resolution = rendererSection.getSetting(SettingsFile.KEY_RESOLUTION_FACTOR);
 

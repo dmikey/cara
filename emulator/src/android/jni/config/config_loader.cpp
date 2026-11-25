@@ -46,6 +46,10 @@ public:
         ini.Load(ini_path);
         for (const auto& config : layer->GetLayerMap()) {
             const auto& location = config.first;
+            // External display preference belongs to the Java settings/controller.
+            // A stale running native Layer must not overwrite a mid-session edit.
+            if (location.section=="Renderer" && location.key=="external_display")
+                continue;
             const auto& value = config.second;
             if (value) {
                 IniFile::Section* ini_section = ini.GetOrCreateSection(location.section);

@@ -211,4 +211,12 @@
         <item>@string/region_global</item>
     </string-array>
 
+    <string-array name="externalDisplayEntries">
+        <item>Both screens on handheld</item>
+        <item>Top screen on external display</item>
+        <item>Touch screen on external display</item>
+    </string-array>
+    <integer-array name="externalDisplayValues">
+        <item>0</item><item>1</item><item>2</item>
+    </integer-array>
 </resources>

@@ -36,7 +36,7 @@ static constexpr std::array<EGLint, 15> egl_attribs{EGL_SURFACE_TYPE,
 static constexpr std::array<EGLint, 5> egl_empty_attribs{EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
 static constexpr std::array<EGLint, 4> egl_context_attribs{EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
 
-static void SwapWithTiming(EGLDisplay display, EGLSurface surface, const char* route) {
+static EGLBoolean SwapWithTiming(EGLDisplay display, EGLSurface surface, const char* route) {
     static const bool enabled = [] {
         for (const char* flag : {"CARA_TRACE_GLES_GPU_TIMING", "CARA_TRACE_GLES_SWAP_TIMING"}) {
             const char* value = std::getenv(flag);
@@ -46,8 +46,7 @@ static void SwapWithTiming(EGLDisplay display, EGLSurface surface, const char* r
         return false;
     }();
     if (!enabled) {
-        eglSwapBuffers(display, surface);
-        return;
+        return eglSwapBuffers(display, surface);
     }
     using Clock = std::chrono::steady_clock;
     const auto start = Clock::now();
@@ -56,6 +55,7 @@ static void SwapWithTiming(EGLDisplay display, EGLSurface surface, const char* r
         std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count();
     __android_log_print(ANDROID_LOG_INFO, "CaraGPU", "swap route=%s us=%lld ok=%d", route,
                         static_cast<long long>(elapsed), static_cast<int>(result));
+    return result;
 }
 
 class SharedContext_Android {
@@ -180,7 +180,16 @@ void EGLAndroid::RefreshWindowLayout() {
 }
 
 void EGLAndroid::UpdateLayout() {
-    UpdateFramebufferLayout(window_width, window_height);
+    std::lock_guard lock(external_layout_mutex);
+    UpdateFramebufferLayout(std::max(1,window_width),std::max(1,window_height));
+    primary_combined=GetFramebufferLayout();
+    primary_insets={safe_inset_left,safe_inset_top,safe_inset_right,safe_inset_bottom};
+    const int mode=ExternalDisplayMode();
+    primary_snapshot=PrimaryLayoutForMode(mode);
+    primary_snapshot_mode=mode;
+    // Keep the core framebuffer layout combined: its top rectangle also drives
+    // automatic internal resolution and screenshot dimensions. Only the native
+    // presentation packet and touch route use the split physical layout.
 }
 
 void EGLAndroid::CreateWindowSurface() {
@@ -286,11 +295,12 @@ EGLAndroid::~EGLAndroid() {
 #ifdef CARA_GL_CONTEXT_DISPATCH
     StopSubmissionWorker();
 #endif
+    DestroyExternalSurface();
     core_context.reset();
     DestroyWindowSurface();
     if (inline_pbuffer != EGL_NO_SURFACE) {
         if (eglGetCurrentSurface(EGL_DRAW) == inline_pbuffer)
-            UnbindCoreContext();
+            eglMakeCurrent(egl_display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
         eglDestroySurface(egl_display, inline_pbuffer);
     }
     DestroyContext();
@@ -323,13 +333,16 @@ void EGLAndroid::TryPresenting() {
             return;
         }
     }
+    ApplyExternalRequest();
+    if (presenting_state != PresentingState::Running || eglGetCurrentContext() != egl_context)
+        return;
     if (VideoCore::Renderer()->TryPresent()) {
         SwapWithTiming(egl_display, egl_surface, "mailbox");
     }
 }
 
 void EGLAndroid::StopPresenting() {
-    if (presenting_state == PresentingState::Running) {
+    if (eglGetCurrentContext()==egl_context) {
         eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
     presenting_state = PresentingState::Stopped;
@@ -381,13 +394,288 @@ void EGLAndroid::PollEvents() {
         active_window = std::move(*replacement);
         presentation_guard.Reset();
     }
-    if (replacement || layout_dirty)
+    if (!use_shared_context) {
+        bool has_request;
+        { std::lock_guard lock(external_request_mutex);has_request=pending_external.has_value(); }
+        if(has_request){
+#ifdef CARA_GL_CONTEXT_DISPATCH
+            if(submission){
+                OpenGL::CommandQueue::Flush();
+                submission->Call([this]{ApplyExternalRequest();});
+            } else
+#endif
+                ApplyExternalRequest();
+        }
+    }
+    if (replacement || layout_dirty || pending_layout.exchange(false,std::memory_order_acq_rel))
         RefreshWindowLayout();
     if (replacement && use_shared_context) {
         VideoCore::Renderer()->ResetPresent();
         presenting_state = egl_surface == EGL_NO_SURFACE ? PresentingState::Stopped
                                                         : PresentingState::Initial;
     }
+}
+
+
+namespace {
+using Cara::AndroidDualDisplay::Rect;
+using Cara::AndroidDualDisplay::Fit;
+Common::Rectangle<u32> ToCommon(Rect r){return {r.left,r.top,r.right,r.bottom};}
+Layout::FramebufferLayout SinglePanel(unsigned width,unsigned height,bool bottom,
+                                      Cara::AndroidDualDisplay::Insets insets={}) {
+    Layout::FramebufferLayout layout{width,height,!bottom,bottom,{},{}};
+    auto rect=ToCommon(Fit(width,height,bottom,insets));
+    if(bottom)layout.bottom_screen=rect;else layout.top_screen=rect;
+    return layout;
+}
+
+// GLAD can be wrapped by the sole producer's render queue; the EGL owner must
+// call real driver entrypoints for this serialized host presentation packet.
+// No guest command is dispatched here. Preserve all touched GL state and check
+// the driver error result rather than dropping any error.
+struct DualAtlasGL {
+    PFNGLGETINTEGERVPROC get_int{};
+    PFNGLGETBOOLEANVPROC get_bool{};
+    PFNGLISENABLEDPROC is_enabled{};
+    PFNGLENABLEPROC enable{};
+    PFNGLDISABLEPROC disable{};
+    PFNGLCOLORMASKPROC mask{};
+    PFNGLBINDFRAMEBUFFERPROC bind{};
+    PFNGLCLEARBUFFERFVPROC clear{};
+    PFNGLBLITFRAMEBUFFERPROC blit{};
+    PFNGLGETERRORPROC error{};
+    template<class T> static T Load(const char* name){return reinterpret_cast<T>(eglGetProcAddress(name));}
+    DualAtlasGL():
+      get_int(Load<PFNGLGETINTEGERVPROC>("glGetIntegerv")),
+      get_bool(Load<PFNGLGETBOOLEANVPROC>("glGetBooleanv")),
+      is_enabled(Load<PFNGLISENABLEDPROC>("glIsEnabled")),
+      enable(Load<PFNGLENABLEPROC>("glEnable")),disable(Load<PFNGLDISABLEPROC>("glDisable")),
+      mask(Load<PFNGLCOLORMASKPROC>("glColorMask")),bind(Load<PFNGLBINDFRAMEBUFFERPROC>("glBindFramebuffer")),
+      clear(Load<PFNGLCLEARBUFFERFVPROC>("glClearBufferfv")),blit(Load<PFNGLBLITFRAMEBUFFERPROC>("glBlitFramebuffer")),
+      error(Load<PFNGLGETERRORPROC>("glGetError")){}
+    bool Valid() const {return get_int&&get_bool&&is_enabled&&enable&&disable&&mask&&bind&&clear&&blit&&error;}
+};
+}
+
+void EGLAndroid::UpdateExternalDisplay(ANativeWindow* surface,int mode) {
+    if(!surface || Cara::AndroidDualDisplay::Decode(mode)==Cara::AndroidDualDisplay::Mode::Off){
+        surface=nullptr;mode=0;
+    }
+    auto window=RetainWindow(surface);
+    {
+        std::lock_guard lock(external_request_mutex);
+        pending_external=ExternalRequest{std::move(window),mode};
+    }
+    external_requested_touch.store(mode==2,std::memory_order_release);
+    {
+        std::lock_guard lock(external_layout_mutex);
+        external_touch_down=primary_touch_down=false;
+        TouchReleased();
+    }
+}
+
+void EGLAndroid::DestroyExternalSurface() {
+    if(external_surface!=EGL_NO_SURFACE){
+        // Every presentation packet restores its original EGL surface.
+        if(eglGetCurrentSurface(EGL_DRAW)==external_surface)
+            eglMakeCurrent(egl_display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
+        eglDestroySurface(egl_display,external_surface);
+        external_surface=EGL_NO_SURFACE;
+    }
+    external_window.reset();
+    {
+        std::lock_guard lock(external_layout_mutex);
+        external_width=external_height=0;external_touch_down=primary_touch_down=false;
+        TouchReleased();
+        external_mode.store(0,std::memory_order_release);
+    }
+    pending_layout.store(true,std::memory_order_release);
+}
+
+void EGLAndroid::ApplyExternalRequest() {
+    std::optional<ExternalRequest> request;
+    {
+        std::lock_guard lock(external_request_mutex);
+        request.swap(pending_external);
+    }
+    if(!request)return;
+    if(!request->window || !request->mode){DestroyExternalSurface();return;}
+    if(external_window.get()!=request->window.get() || external_surface==EGL_NO_SURFACE){
+        DestroyExternalSurface();
+        EGLint format=0;
+        if(!eglGetConfigAttrib(egl_display,egl_config,EGL_NATIVE_VISUAL_ID,&format) ||
+           ANativeWindow_setBuffersGeometry(request->window.get(),0,0,format)!=0){
+            __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Could not configure external display window");return;
+        }
+        external_surface=eglCreateWindowSurface(egl_display,egl_config,request->window.get(),nullptr);
+        if(external_surface==EGL_NO_SURFACE){
+            __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Could not create external EGL surface: 0x%x",eglGetError());return;
+        }
+        external_window=request->window;
+        eglSurfaceAttrib(egl_display,external_surface,EGL_SWAP_BEHAVIOR,EGL_BUFFER_DESTROYED);
+    }
+    EGLint width=0,height=0;
+    // Prove the surface is usable on this context before splitting the primary.
+    const auto previous_draw=eglGetCurrentSurface(EGL_DRAW);
+    const auto previous_read=eglGetCurrentSurface(EGL_READ);
+    const auto context=eglGetCurrentContext();
+    if(context!=egl_context || !eglQuerySurface(egl_display,external_surface,EGL_WIDTH,&width) ||
+       !eglQuerySurface(egl_display,external_surface,EGL_HEIGHT,&height) || width<=0 || height<=0 ||
+       !eglMakeCurrent(egl_display,external_surface,external_surface,egl_context)){
+        __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","External display not ready; preserving combined handheld layout");
+        DestroyExternalSurface();return;
+    }
+    if(!eglMakeCurrent(egl_display,previous_draw,previous_read,context)){
+        __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Could not restore primary EGL surface following attach");
+        DestroyExternalSurface();
+        if(!RecoverPresentationContext() && !use_shared_context)
+            throw std::runtime_error("Could not restore EGL owner after external display attach");
+        return;
+    }
+    {
+        std::lock_guard lock(external_layout_mutex);
+        external_width=static_cast<unsigned>(width);external_height=static_cast<unsigned>(height);
+        external_touch_down=primary_touch_down=false;TouchReleased();
+        external_mode.store(request->mode,std::memory_order_release);
+    }
+    pending_layout.store(true,std::memory_order_release);
+}
+
+Layout::FramebufferLayout EGLAndroid::PrimaryLayoutForMode(int mode) {
+    if(mode==0)return primary_combined;
+    return SinglePanel(primary_combined.width,primary_combined.height,mode==1,primary_insets);
+}
+
+void EGLAndroid::PrimaryTouch(int x,int y,int action) {
+    std::lock_guard lock(external_layout_mutex);
+    const int mode=ExternalDisplayMode();
+    if(mode==2)return;
+    if(mode==0){
+        if(action&1)TouchPressed(x,y);
+        else if(action&2)TouchMoved(x,y);
+        else if(action&4)TouchReleased();
+        return;
+    }
+    if(action&4){primary_touch_down=false;TouchReleased();return;}
+    if(!(action&1)&&(!(action&2)||!primary_touch_down))return;
+    const auto layout=PrimaryLayoutForMode(mode);
+    if(!layout.width||!layout.height)return;
+    const auto r=layout.bottom_screen;
+    const auto mapped=Cara::AndroidDualDisplay::Touch({r.left,r.top,r.right,r.bottom},
+        layout.width,layout.height,float(x)/layout.width,float(y)/layout.height,(action&2)!=0);
+    if(mapped){TouchNormalized(mapped->first,mapped->second);primary_touch_down=true;}
+}
+
+void EGLAndroid::ExternalTouch(float x,float y,int action) {
+    std::lock_guard lock(external_layout_mutex);
+    if(action==1 || action==3){
+        if(external_touch_down){TouchReleased();external_touch_down=false;}
+        return;
+    }
+    if(ExternalDisplayMode()!=2 || !external_requested_touch.load(std::memory_order_acquire))return;
+    if(action!=0 && (action!=2 || !external_touch_down))return;
+    const auto rect=Fit(external_width,external_height,true);
+    const auto mapped=Cara::AndroidDualDisplay::Touch(rect,external_width,external_height,x,y,action==2);
+    if(mapped){TouchNormalized(mapped->first,mapped->second);external_touch_down=true;}
+}
+
+bool EGLAndroid::PresentDualFrame(unsigned framebuffer,unsigned width,unsigned height) {
+    // The source is always a canonical combined atlas. Even a queued atlas
+    // from before detach can be presented into the restored combined layout.
+    const int mode=ExternalDisplayMode();
+    Layout::FramebufferLayout primary;
+    {
+        std::lock_guard lock(external_layout_mutex);
+        primary=primary_snapshot_mode==mode?primary_snapshot:PrimaryLayoutForMode(mode);
+    }
+    const auto present=[this,framebuffer,width,height,primary,mode]{
+        PresentAtlasOnOwner(framebuffer,width,height,primary,mode);
+    };
+#ifdef CARA_GL_CONTEXT_DISPATCH
+    if(submission && !use_shared_context){
+        OpenGL::CommandQueue::SubmitHost(present);
+        return true;
+    }
+#endif
+    present();
+    return true;
+}
+
+bool EGLAndroid::PresentAtlasOnOwner(unsigned framebuffer,unsigned width,unsigned height,
+                                     Layout::FramebufferLayout primary,int mode) {
+    if(!framebuffer || !width || !height || eglGetCurrentContext()!=egl_context)return false;
+    const auto previous_draw=eglGetCurrentSurface(EGL_DRAW),previous_read=eglGetCurrentSurface(EGL_READ);
+    static const DualAtlasGL gl;
+    if(!gl.Valid()){__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Missing external display GL entrypoints");DestroyExternalSurface();return false;}
+    GLint read=0,draw=0;GLboolean mask[4]{};
+    gl.get_int(GL_READ_FRAMEBUFFER_BINDING,&read);gl.get_int(GL_DRAW_FRAMEBUFFER_BINDING,&draw);
+    gl.get_bool(GL_COLOR_WRITEMASK,mask);
+    const bool scissor=gl.is_enabled(GL_SCISSOR_TEST)==GL_TRUE;
+    const auto old_error=gl.error();
+    if(old_error!=GL_NO_ERROR)
+        __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Preexisting GL error before dual presentation: 0x%x",old_error);
+    const auto source=Layout::DefaultFrameLayout(width,height,false);
+    auto blit=[&](const Common::Rectangle<u32>& from,const Common::Rectangle<u32>& to,unsigned dst_h){
+        if(!from.GetWidth()||!from.GetHeight()||!to.GetWidth()||!to.GetHeight())return;
+        const bool integer=to.GetWidth()%from.GetWidth()==0 && to.GetHeight()%from.GetHeight()==0;
+        gl.blit(from.left,height-from.bottom,from.right,height-from.top,
+                to.left,dst_h-to.bottom,to.right,dst_h-to.top,GL_COLOR_BUFFER_BIT,integer?GL_NEAREST:GL_LINEAR);
+    };
+    const auto output=[&](EGLSurface surface,const Layout::FramebufferLayout& layout,const char* route){
+        if(surface==EGL_NO_SURFACE || !layout.width || !layout.height)return false;
+        if(eglGetCurrentSurface(EGL_DRAW)!=surface||eglGetCurrentSurface(EGL_READ)!=surface)
+            if(!eglMakeCurrent(egl_display,surface,surface,egl_context))return false;
+        gl.bind(GL_READ_FRAMEBUFFER,framebuffer);
+        gl.bind(GL_DRAW_FRAMEBUFFER,0);
+        gl.disable(GL_SCISSOR_TEST);
+        gl.mask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+        const GLfloat black[4]{0,0,0,1};
+        gl.clear(GL_COLOR,0,black);
+        if(layout.top_screen_enabled)blit(source.top_screen,layout.top_screen,layout.height);
+        if(layout.bottom_screen_enabled)blit(source.bottom_screen,layout.bottom_screen,layout.height);
+        const GLenum error=gl.error();
+        if(error!=GL_NO_ERROR){__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Dual presentation GL error 0x%x route=%s",error,route);return false;}
+        return SwapWithTiming(egl_display,surface,route)==EGL_TRUE;
+    };
+    const bool main_ok=output(egl_surface,primary,"dual-handheld");
+    bool external_ok=true;
+    if(mode && ExternalDisplayMode()==mode){
+        unsigned ew,eh;
+        {std::lock_guard lock(external_layout_mutex);ew=external_width;eh=external_height;}
+        external_ok=output(external_surface,SinglePanel(ew,eh,mode==2),"dual-external");
+    }
+    const bool restored=eglGetCurrentSurface(EGL_DRAW)==previous_draw&&eglGetCurrentSurface(EGL_READ)==previous_read
+        ? true:eglMakeCurrent(egl_display,previous_draw,previous_read,egl_context)==EGL_TRUE;
+    if(!restored){
+        __android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Dual presentation could not restore original EGL surface");
+        DestroyExternalSurface();
+        if(!RecoverPresentationContext()){
+            if(!use_shared_context)throw std::runtime_error("Dual presentation lost EGL owner");
+            return false;
+        }
+    }
+    gl.bind(GL_READ_FRAMEBUFFER,static_cast<GLuint>(read));
+    gl.bind(GL_DRAW_FRAMEBUFFER,static_cast<GLuint>(draw));
+    gl.mask(mask[0],mask[1],mask[2],mask[3]);
+    if(scissor)gl.enable(GL_SCISSOR_TEST);else gl.disable(GL_SCISSOR_TEST);
+    const auto restore_error=gl.error();
+    if(restore_error!=GL_NO_ERROR)__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","Dual presentation GL state restore error 0x%x",restore_error);
+    if(!external_ok){__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","External display lost; preserving handheld layout");DestroyExternalSurface();}
+    return main_ok&&external_ok&&restored&&restore_error==GL_NO_ERROR&&old_error==GL_NO_ERROR;
+}
+
+// Surface loss is not context loss: recover onto a tiny same-context pbuffer
+// so the existing mailbox fence can still retire its source reads safely.
+bool EGLAndroid::RecoverPresentationContext() {
+    if(egl_surface!=EGL_NO_SURFACE && eglMakeCurrent(egl_display,egl_surface,egl_surface,egl_context))
+        return true;
+    if(use_shared_context)presenting_state=PresentingState::Initial;
+    if(inline_pbuffer==EGL_NO_SURFACE)
+        inline_pbuffer=eglCreatePbufferSurface(egl_display,egl_config,egl_empty_attribs.data());
+    const bool recovered=inline_pbuffer!=EGL_NO_SURFACE &&
+        eglMakeCurrent(egl_display,inline_pbuffer,inline_pbuffer,egl_context)==EGL_TRUE;
+    if(!recovered)__android_log_print(ANDROID_LOG_ERROR,"CaraDisplay","External display recovery could not rebind presentation context");
+    return recovered;
 }
 
 bool EGLAndroid::BindCoreContext() {

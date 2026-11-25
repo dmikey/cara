@@ -10,6 +10,7 @@
 #include <EGL/eglext.h>
 
 #include "cara/presentation_guard.h"
+#include "cara/android_dual_display_plan.h"
 #include "core/frontend/emu_window.h"
 
 struct ANativeWindow;
@@ -30,6 +31,13 @@ public:
     bool HasCoreContext() const;
 #endif
     void UpdateSurface(ANativeWindow* surface);
+    void UpdateExternalDisplay(ANativeWindow* surface,int mode);
+    void PrimaryTouch(int x,int y,int action);
+    void ExternalTouch(float x,float y,int action);
+    int ExternalDisplayMode() const override { return external_mode.load(std::memory_order_acquire); }
+    void DisableExternalDisplay() override { UpdateExternalDisplay(nullptr,0); }
+    bool PresentDualFrame(unsigned framebuffer,unsigned width,unsigned height) override;
+    bool IsPresentationContextCurrent() const override { return eglGetCurrentContext()==egl_context; }
     void UpdateWindow();
     void UpdateLayout();
 
@@ -48,9 +56,30 @@ private:
     void CreateEGLWindowSurface();
     void RefreshWindowLayout();
     bool BindCoreContext();
+    bool RecoverPresentationContext();
     bool UnbindCoreContext();
     void DestroyWindowSurface();
     void DestroyContext();
+    void ApplyExternalRequest();
+    void DestroyExternalSurface();
+    Layout::FramebufferLayout PrimaryLayoutForMode(int mode);
+    bool PresentAtlasOnOwner(unsigned framebuffer,unsigned width,unsigned height,
+                             Layout::FramebufferLayout primary,int mode);
+    struct ExternalRequest {std::shared_ptr<ANativeWindow> window;int mode;};
+    // EGL surface creation, use and deletion are restricted to the same
+    // owner as the primary presentation context. Producers retain requests.
+    std::mutex external_request_mutex;
+    std::optional<ExternalRequest> pending_external;
+    std::shared_ptr<ANativeWindow> external_window;
+    EGLSurface external_surface=EGL_NO_SURFACE;
+    std::atomic<int> external_mode{0};
+    std::mutex external_layout_mutex;
+    Layout::FramebufferLayout primary_snapshot{},primary_combined{};
+    Cara::AndroidDualDisplay::Insets primary_insets{};
+    int primary_snapshot_mode=0;
+    unsigned external_width=0,external_height=0;
+    bool external_touch_down=false,primary_touch_down=false;
+    std::atomic<bool> external_requested_touch{false};
 
     ANativeWindow* host_window = nullptr;
     // The EGL owner keeps the old window alive until its queued swaps have retired.
