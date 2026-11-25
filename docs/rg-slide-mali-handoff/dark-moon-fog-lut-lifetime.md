@@ -368,3 +368,51 @@ were restored before setting the device's `use_present_thread` to
 `False`. The previous settings directory was saved on the device,
 and the other settings files matched during staging. The workaround
 does not change shader policy or enable either experiment.
+
+## Post-flicker performance round
+
+The screenshot state fix was tested on the Slide with both threaded
+presentation and shader hints enabled. The eight-second compositor
+sample went from 50 black samples out of 613 to zero out of 636 with
+the same alternating capture schedule. All 65 sampled bottom-LCD
+crops matched at the same refresh. The moving top-LCD sequence could
+not be aligned for an exact pixel comparison. This test did not
+read or compare guest depth. [Screenshot fix](https://github.com/dmikey/cara/pull/129)
+
+Separate normal boots used Dynarmic, separable GLES Atlas, fixed
+CLK 100, native resolution, draw skipping off, and no screenshot
+readbacks. The cold run started with an empty Cara archive. The
+warm run copied its archive into a fresh profile. System driver
+caches persisted across both runs.
+
+| 120-refresh window | Cold p95 / p99 / worst (ms) | Warm p95 / p99 / worst (ms) |
+| --- | ---: | ---: |
+| Smoky title through 601 | 181.04 / 2171.71 / 2442.70 | 48.59 / 133.74 / 483.41 |
+| Gadd entry through 2521 | 141.08 / 190.39 / 1122.97 | 31.99 / 45.49 / 134.82 |
+| Settled lab, windows ending 2761–3001 | 31.48–31.95 / 32.95–54.66 / 54.67 | 31.85–32.34 / 33.09–52.70 / 71.25 |
+
+The cold title's worst refresh included 2233.34 ms of foreground
+shader compile and link time. Settled warm graphics commands took
+20.50–21.02 ms per refresh versus 5.52–5.61 ms in guest JIT.
+Graphics-command wall time can include driver waits. These windows
+had no shader compilation or software vertex draws.
+
+A scratch-buffer trial eliminated about 960 MB of resize zeroing
+and clearing in a matched warm lab window. It retained 599 MB of
+guest vertex copies. Median time moved from 29.20 to 31.17 ms,
+p99 from 52.70 to 55.94 ms, and worst from 52.94 to 57.41 ms.
+The trial leaves the existing staging policy in place.
+
+The exact fragment binary prototype reused the same shader archive
+for separable vertex and fragment stages. A warm boot restored 74
+fragment binaries and issued zero fragment source links. Warm
+title p99 moved from 133.74 to 133.42 ms. The worst warm title
+refresh still took 477.71 ms with zero compile time, of which
+255.16 ms was guest execution and 214.79 ms was graphics commands.
+Warm settled medians stayed at 29.35–29.79 ms, and the cold title
+p99 increased in this sample. The prototype stays on its test
+branch. The Slide was restored to the screenshot-fix build with
+the player's profile and original threaded presentation setting.
+
+[Flicker-fix APK](https://github.com/dmikey/cara/actions/runs/45527665654) ·
+[Fragment-cache prototype APK](https://github.com/dmikey/cara/actions/runs/45528887768)
