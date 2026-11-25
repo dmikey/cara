@@ -9,6 +9,7 @@ namespace FileUtil {
 class IOHandler;
 // Validates the archive layout and reads its TMD title ID without extracting content.
 std::optional<u64> GetCiaTitleId(const std::string& path);
+bool IsEncryptedCia(const std::string& path);
 // Read-only view of the main executable in an ordinary 3DS application CIA.
 std::unique_ptr<IOHandler> OpenCiaRom(std::unique_ptr<IOHandler> source);
 } // namespace FileUtil

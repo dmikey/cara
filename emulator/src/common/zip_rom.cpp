@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "common/zip_rom.h"
+#include "common/encrypted_title_zip.h"
 
 #include <algorithm>
 #include <array>
@@ -410,6 +411,10 @@ private:
 };
 
 } // namespace
+
+bool IsEncryptedTitleZip(const std::string& path) {
+    return HasEncryptedTitleZip(path);
+}
 
 bool IsZipRomPath(const std::string& path) {
     return EndsWith(path, ".zip");

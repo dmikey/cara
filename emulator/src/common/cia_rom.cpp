@@ -220,19 +220,26 @@ private:
 };
 } // namespace
 
-std::optional<u64> GetCiaTitleId(const std::string& path) {
+static std::optional<Package> InspectPackage(const std::string& path) {
     IOFile file(path, "rb");
     if (!file.IsOpen())
         return {};
     const auto physical = file.GetSize();
-    const auto package = ReadPackage(physical, [&](u64 offset, auto& buffer) {
+    return ReadPackage(physical, [&](u64 offset, auto& buffer) {
         return offset <= physical && buffer.size() <= physical - offset &&
                file.Seek(static_cast<s64>(offset), SEEK_SET) &&
                file.ReadBytes(buffer.data(), buffer.size()) == buffer.size();
     });
-    if (!package)
-        return {};
-    return package->title;
+}
+
+std::optional<u64> GetCiaTitleId(const std::string& path) {
+    const auto package = InspectPackage(path);
+    return package ? std::optional<u64>{package->title} : std::nullopt;
+}
+
+bool IsEncryptedCia(const std::string& path) {
+    const auto package = InspectPackage(path);
+    return package && package->encrypted;
 }
 
 std::unique_ptr<IOHandler> OpenCiaRom(std::unique_ptr<IOHandler> source) {

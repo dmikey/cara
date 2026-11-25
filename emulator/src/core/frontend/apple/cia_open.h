@@ -23,7 +23,9 @@ inline CiaSelection InspectCia(const std::string& path) {
     case 0x00040000: {
         FileUtil::IOFile file;
         if (file.OpenRom(path)) return {CiaKind::Game, *id, nullptr};
-        return {CiaKind::Unsupported, *id, "This CIA needs a decrypted, executable base-game content. Open a decrypted dump of the base game."};
+        if (FileUtil::IsEncryptedCia(path))
+            return {CiaKind::Unsupported, *id, "ENCRYPTED DUMP NOT PLAYABLE"};
+        return {CiaKind::Unsupported, *id, "This CIA has invalid or unsupported executable base-game content."};
     }
     case 0x0004000e: return {CiaKind::Update, *id, nullptr};
     case 0x0004008c: return {CiaKind::Unsupported, *id, "This package contains DLC. Choose the base game or its game update."};
@@ -34,7 +36,7 @@ inline const char* InstallUpdate(const std::string& path, u64 title) {
     switch (Service::AM::InstallGameUpdate(path, title)) {
     case Service::AM::InstallStatus::Success: return nullptr;
     case Service::AM::InstallStatus::ErrorEncrypted:
-        return "Cara could not decrypt the update. Open a decrypted copy of the update.";
+        return "ENCRYPTED DUMP NOT PLAYABLE";
     case Service::AM::InstallStatus::ErrorInvalid:
         return "The update has invalid or unsupported game content. Check the original package.";
     default:
