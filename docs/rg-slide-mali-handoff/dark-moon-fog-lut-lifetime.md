@@ -224,3 +224,64 @@ with another 6.39 ms in guest execution. Neither settled window had
 fog uploads, so this pair does not establish a warm fog speedup.
 
 [Android CI](https://github.com/dmikey/cara/actions/runs/45515359560)
+
+## Vertex compiler queue experiment
+
+The first p95 trace left 14 distinct title variants behind the
+one-request-per-refresh budget for live, unmatched vertex shaders.
+Their draws ran through the software vertex path while Mali compiled
+the exact stages on the shared EGL worker.
+
+This experiment raised the live admission budget from one to four
+and ordered pending stages by accumulated guest vertex count on
+requests that would use the software path. It retained one worker,
+the existing eight-job queue, the same shader source and software
+fallback, and disabled slow-draw skipping. ARM's GLES guidance
+distinguishes compilation and linkage costs from draw execution.
+The stock Slide driver reported no `GL_KHR_parallel_shader_compile`
+support, so pending work was reordered inside Cara's EGL worker.
+[Arm GPU Best Practices, section 4.1](https://documentation-service.arm.com/static/67a62b17091bfc3e0a947695?token=)
+
+The same signed APK (`62bf2a8a`) ran from normal boot on the Slide at
+JIT + separable GLES Atlas, CLK 100, Performance Mode, native 1×,
+and frame skip off. Each arm began with empty Cara archives, an
+identical ROM hint file and the existing system driver cache.
+Priority ran first. Both reached Gadd's lab and restored the original
+player profile with matching file hashes.
+
+| 120-refresh window | FIFO p95 / p99 / worst (ms) | Priority p95 / p99 / worst (ms) |
+| --- | ---: | ---: |
+| First smoky title, 25,561 draws | 179.27 / 2,270.32 / 2,377.14 | 180.97 / 2,149.91 / 2,365.85 |
+| Following smoky title, 45,932 draws | 80.61 / 85.66 / 86.64 | 64.47 / 68.16 / 74.66 |
+| Gadd entry, through refresh 2521 | 138.16 / 200.56 / 1,193.33 | 134.89 / 145.47 / 1,164.37 |
+| Following lab window, through refresh 2641 | 33.33 / 61.30 / 834.57 | 33.33 / 80.63 / 812.81 |
+| Settled lab, 42,230 draws | 32.03 / 34.41 / 55.77 | 31.52 / 33.23 / 56.13 |
+
+Both arms requested 275,933 draws through the six title windows
+ending 601 through 1201. Priority brought one exact stage
+(`a929c69f4d7ad36a`) to Mali at refresh 523 instead of 538.
+The title's first-window graphics CPU average fell from 97.28 to
+81.46 ms per refresh. However software vertex draws across those six
+windows rose from 42,399 to 58,555. In the following title window
+alone they rose from 9,591 to 18,058, while the p95 improved. The
+count treats a small draw and a large draw equally. This experiment
+does not establish a reduction in total software vertex work.
+
+Lab entry draw counts differ slightly due to scene timing. Both
+paths reported 72 software vertex draws on the lab-entry p95
+refresh, and zero by the following lab window. The worst post-entry
+refresh still spent 772–792 ms in foreground shader compilation and
+linkage. The queue probe stays opt-in. These timing runs did not
+compare pixels at identical guest ticks.
+
+[Android CI](https://github.com/dmikey/cara/actions/runs/45518367991)
+
+A third boot enabled the existing unused-quaternion shader probe
+with FIFO. It produced identical vertex source sets for the
+16 traced PICA fingerprint groups in the first title window.
+That window measured 178.62 / 2,283.68 / 2,325.38 ms p95 / p99 /
+worst. The following title window measured 79.62 / 87.01 / 87.01 ms.
+The compile burst after lab entry shifted one window later and
+still produced an 821.28 ms refresh. The probe stays off. This
+test isolated the existing shader transformation from the queue
+experiment and restored the player profile after the run.
