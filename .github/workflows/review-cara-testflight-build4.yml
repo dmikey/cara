@@ -66,10 +66,32 @@ jobs:
             const version=await get('/v1/builds/'+id+'/preReleaseVersion');
             need(version.data.attributes.version===VERSION&&version.data.attributes.platform==='IOS','Wrong prerelease version/platform');
             journal('Apple build 4 processed and VALID.');
-            if(build.attributes.usesNonExemptEncryption===null||build.attributes.usesNonExemptEncryption===undefined){
-              journal('STOP: Apple requires the build-specific export compliance answer before review; no legal classification was changed.');
-              process.exitCode=2;return;
+            // Owner explicitly instructed reuse of build 3's existing declaration:
+            // no non-exempt encryption, no expansion to French distribution.
+            const previous=await get('/v1/builds?'+new URLSearchParams({'filter[app]':APP,'filter[version]':'3',limit:'10'}));
+            need(previous.data.length===1&&!previous.links?.next&&previous.data[0].attributes.usesNonExemptEncryption===false,
+                 'Previous build 3 declaration no longer matches the owner-authorized answer');
+            const priorDeclaration=await api('GET','/v1/builds/'+previous.data[0].id+'/appEncryptionDeclaration',[200],undefined,true);
+            if(priorDeclaration?.data){
+              need(priorDeclaration.data.attributes.availableOnFrenchStore===false,
+                   'Existing declaration is not explicitly France-excluded; no change made');
             }
+            if(build.attributes.usesNonExemptEncryption===null||build.attributes.usesNonExemptEncryption===undefined){
+              const data={type:'builds',id,attributes:{usesNonExemptEncryption:false}};
+              if(priorDeclaration?.data)data.relationships={appEncryptionDeclaration:{data:{type:'appEncryptionDeclarations',id:priorDeclaration.data.id}}};
+              const updated=await api('PATCH','/v1/builds/'+id,[200],{data});
+              need(updated.data.id===id&&updated.data.attributes.usesNonExemptEncryption===false,
+                   'Apple did not confirm the exact build 4 declaration');
+              journal('Apple accepted the owner-authorized build 4 non-exempt encryption answer=false.');
+            } else need(build.attributes.usesNonExemptEncryption===false,'Build 4 has an unexpected stored encryption answer');
+            const confirmed=await get('/v1/builds/'+id);
+            need(confirmed.data.attributes.usesNonExemptEncryption===false,'Build 4 encryption answer not persisted');
+            if(priorDeclaration?.data){
+              const current=await get('/v1/builds/'+id+'/appEncryptionDeclaration');
+              need(current.data.id===priorDeclaration.data.id&&current.data.attributes.availableOnFrenchStore===false,
+                   'French distribution exclusion was not retained; stop before review');
+            }
+            journal('Previous build 3 answer matched; no new territory or beta-group policy was broadened.');
             const groups=await get('/v1/apps/'+APP+'/betaGroups?limit=50');
             const external=groups.data.filter(g=>g.attributes.name==='Cara Public Beta'&&g.attributes.isInternalGroup===false&&g.attributes.publicLinkEnabled===true);
             need(external.length===1,'Expected exactly one existing enabled Cara Public Beta group');
