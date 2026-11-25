@@ -165,3 +165,19 @@ hinted separable comparison cannot be used as the timing for the
 shipping linked backend. A production cold fix needs matched
 linked-program coverage, especially when an exact fragment program
 has no already-linked software-vertex fallback.
+
+The automatic-selector build `f463f764` passed Android production
+and ordered-GLES probe CI. It was signed and installed on the same
+Slide, whose stock driver reports `Mali-G57`. The normal boot used
+the same separable comparison profile without a `separate_fog_lut`
+override. The first two lab-entry windows recorded 180 1 KiB fog
+uploads, zero mixed light/fog uploads, and 9.13 ms total fog upload
+time. The app reached the settled lab. The matched 41,880-draw
+window showed 29.64 ms median, 33.01 ms p99 and 52.89 ms worst.
+The title recorded 2,319.82 ms p99 and 2,348.64 ms worst in the
+same 25,561-draw window. There was no logged shader build failure.
+The test profile was isolated and the player profile was restored
+with matching file hashes. These tests compared render progress
+and timings. They did not compare pixels at identical guest ticks.
+
+[Verified automatic-selector Android build](https://github.com/dmikey/cara/actions/runs/45513683248)
