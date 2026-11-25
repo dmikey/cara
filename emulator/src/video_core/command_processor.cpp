@@ -25,6 +25,7 @@
 #include "common/assert.h"
 #include "common/scope_exit.h"
 #include "common/frame_timing.h"
+#include "common/guest_replay_counts.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
 #include "common/vector_math.h"
@@ -439,6 +440,7 @@ __declspec(noinline)
 __attribute__((noinline))
 #endif
 static void ExecuteSoftwareDraw(bool is_indexed, [[maybe_unused]] bool accelerate_draw) {
+    Common::GuestReplayCounts::Observe(Common::GuestReplayCounts::SoftwareVertex);
     auto& regs = g_state.regs;
     [[maybe_unused]] auto& primitive_assembler = g_state.primitive_assembler;
 #ifdef CARA_IOS_GLES
@@ -877,6 +879,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInter
         if (Cara::ExperimentalP3DCompletionEnabled())
             g_state.experimental_p3d_work.Draw(regs.pipeline.num_vertices,
                                              static_cast<unsigned>(regs.pipeline.triangle_topology.Value()));
+        Common::GuestReplayCounts::Observe(Common::GuestReplayCounts::Draw);
         if (Common::FrameTiming::counters.enabled)
             ++Common::FrameTiming::counters.pica_draw_requests;
         MICROPROFILE_SCOPE(GPU_Drawing);
@@ -930,6 +933,7 @@ static void WritePicaReg(u32 id, u32 value, u32 mask, VideoCore::RasterizerInter
         if (rendered) {
             break;
         } else if (Settings::values.skip_slow_draw) {
+            Common::GuestReplayCounts::Observe(Common::GuestReplayCounts::SkipDraw);
             break;
         }
 
@@ -1179,6 +1183,7 @@ void ProcessCommandList(PAddr list, u32 size) {
     Cara::NativeMetalCost::PicaListScope shader_lead_time;
 #endif
     if (PostIRQProfileEnabled()) post_irq_submission = {};
+    Common::GuestReplayCounts::Observe(Common::GuestReplayCounts::CommandList);
     if (Common::FrameTiming::counters.enabled)
         ++Common::FrameTiming::counters.pica_command_lists;
     static const bool reported_options = [] {

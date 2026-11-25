@@ -5,6 +5,8 @@
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "video_core/renderer_metal/pica_metal_depth_clear_encoding.hh"
 
+#include "pica_metal_raw_retile_pair.h"
+
 #include <algorithm>
 #include <array>
 #include <TargetConditionals.h>
@@ -1316,6 +1318,92 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                     publish_display(command, output, *dst, image, registers.output_width,
                                     registers.output_height, 2);
                     return;
+                }
+            }
+        }
+        static const bool direct_retile = [] {
+            const auto* flag = std::getenv("CARA_METAL_FUSED_RETILE_RESTORE");
+            return flag && std::string_view(flag) == "1";
+        }();
+        if (direct_retile && linear_to_tiles && !rgb8_retile && !scaled_crop && command && output &&
+            command.commandQueue == queue && command.retainedReferences &&
+            command.status == MTLCommandBufferStatusNotEnqueued) {
+            const auto segments = authority.NativeSegments(src->begin, src->end);
+            const auto width = registers.input_width;
+            const auto height = registers.input_height;
+            if (segments.size() == 2u * u64{height} && segments.front().begin == src->begin) {
+                const auto raw = [&](const MetalGuestWrite& span) -> const MetalSurfaceWriter* {
+                    const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(span.writer.get());
+                    if (!writer || writer->Queue() != queue || !writer->RawGuestBuffer() ||
+                        writer->RawGuestBuffer().device != command.device ||
+                        writer->RawGuestBuffer().hazardTrackingMode != MTLHazardTrackingModeTracked ||
+                        span.begin < writer->RawGuestBegin() ||
+                        span.end - writer->RawGuestBegin() > writer->RawGuestBuffer().length)
+                        return nullptr;
+                    const auto status = writer->Status();
+                    if (status != MetalGuestWriteStatus::Complete &&
+                        (status != MetalGuestWriteStatus::Pending ||
+                         !submissions.IsTrackedProducer(writer->Command())))
+                        return nullptr;
+                    return writer;
+                };
+                const auto* left = raw(segments[0]);
+                const auto* right = raw(segments[1]);
+                if (left && right && left->RawGuestBuffer() != right->RawGuestBuffer()) {
+                    const MetalTransfer::RawRetilePairLayout layout{src->begin, 4u * width,
+                        height, segments[0].end - segments[0].begin,
+                        {segments[0].begin - left->RawGuestBegin(),
+                         segments[1].begin - right->RawGuestBegin()}};
+                    const std::array writers{left, right};
+                    bool valid = layout.Valid();
+                    for (std::size_t i = 2; valid && i < segments.size(); ++i) {
+                        const auto& span = segments[i];
+                        const auto* writer = raw(span);
+                        valid = writer == writers[i % 2] &&
+                            layout.Matches(i, span.begin, span.end, span.begin - writer->RawGuestBegin());
+                    }
+                    // Validate the first pair's positions as well as its ownership.
+                    if (valid && layout.Matches(0, segments[0].begin, segments[0].end, layout.source_offsets[0]) &&
+                        layout.Matches(1, segments[1].begin, segments[1].end, layout.source_offsets[1])) {
+                        struct RetilePipeline {
+                            id<MTLDevice> device = nil;
+                            id<MTLComputePipelineState> pipeline = nil;
+                        };
+                        static thread_local RetilePipeline fused;
+                        if (fused.device != command.device) {
+                            fused = {command.device, nil};
+                            const auto url = [NSBundle.mainBundle URLForResource:@"cara-pica" withExtension:@"metallib"];
+                            const auto library = url ? [command.device newLibraryWithURL:url error:nullptr] : nil;
+                            const auto kernel = [library newFunctionWithName:@"cara_pica_display_retile_raw_pair"];
+                            if (kernel)
+                                fused.pipeline = [command.device newComputePipelineStateWithFunction:kernel error:nullptr];
+                        }
+                        if (fused.pipeline && fused.pipeline.maxTotalThreadsPerThreadgroup >= 64) {
+                            const auto encoder = [command computeCommandEncoder];
+                            if (!encoder)
+                                submissions.Fail("Could not encode direct two-buffer Metal retile");
+                            const std::array<u32, 6> args{width, height, layout.split_bytes / 4u,
+                                layout.source_offsets[0], layout.source_offsets[1], registers.flags & 1u};
+                            [encoder setComputePipelineState:fused.pipeline];
+                            [encoder setBuffer:left->RawGuestBuffer() offset:0 atIndex:0];
+                            [encoder setBuffer:right->RawGuestBuffer() offset:0 atIndex:1];
+                            [encoder setBuffer:output offset:0 atIndex:2];
+                            [encoder setBytes:args.data() length:sizeof(args) atIndex:3];
+                            [encoder dispatchThreadgroups:MTLSizeMake(width / 8u, height / 8u, 1)
+                                    threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                            [encoder endEncoding];
+                            if (NativeMetalCost::Enabled()) {
+                                static thread_local u64 transfers = 0, spans = 0, bytes = 0;
+                                spans += segments.size();
+                                bytes += src->Size();
+                                if (++transfers == 1 || transfers % 256 == 0)
+                                    LOG_INFO(Render_OpenGL, "CARA_REGULAR_STAGING runs={} rows={} bytes={}",
+                                             transfers, spans, bytes);
+                            }
+                            PublishBytes(command, output, DenseRows(*dst));
+                            return;
+                        }
+                    }
                 }
             }
         }

@@ -3,6 +3,7 @@
 #include "cara/console_activity.h"
 #include <SDL.h>
 #include "cara/native_mac/native_command_policy.h"
+#include "cara/native_mac/native_replay_ledger.h"
 #include "cara/native_mac/game_menu.h"
 #include "cara/adaptive_clock.h"
 #include "cara/p3d_completion.h"
@@ -610,7 +611,10 @@ static int RunNativeMain(int argc, char** argv) {
         if (const char* benchmark = std::getenv("CARA_NATIVE_BENCHMARK");
             diagnostics && benchmark && std::string(benchmark) == "1")
             window.BeginBenchmark();
+        Cara::NativeReplay::Ledger replay_ledger(system, VideoCore::GetCurrentFrame());
+        Cara::NativeReplay::GLScript matched_input(directory);
         while (window.IsOpen() && !stop_requested) {
+            matched_input.Apply(VideoCore::GetCurrentFrame());
             if (relay) {
                 const auto frame=VideoCore::GetCurrentFrame();
                 if (frame!=relay_status_frame) {
@@ -636,6 +640,7 @@ static int RunNativeMain(int argc, char** argv) {
                 flush_gpu_trace(true);
                 return 4;
             }
+            replay_ledger.Observe(system, VideoCore::GetCurrentFrame());
             if (!diagnostics) {
                 if (const auto saved = Cara::MacUI::TakeSavedPlaySettings();
                     saved && *saved != play_settings) {
@@ -733,6 +738,8 @@ static int RunNativeMain(int argc, char** argv) {
             if (window.TakeBenchmarkStop())
                 break;
         }
+        matched_input.Finish();
+        replay_ledger.Write(directory);
         // Explicit test boundary, after the measured run and before GL teardown.
         // Normal play performs no additional queries. Nonzero errors fail closed.
         if (diagnostics && std::getenv("CARA_NATIVE_END_GL_ERROR_CHECK") &&

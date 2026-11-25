@@ -92,6 +92,24 @@ static uint pica_tiled_word(uint x, uint y, uint width) {
     return (y & ~7u) * width + (x & ~7u) * 8u + morton;
 }
 
+kernel void cara_pica_display_retile_raw_pair(
+    const device uchar* left [[buffer(0)]], const device uchar* right [[buffer(1)]],
+    device uchar* destination [[buffer(2)]], constant uint* args [[buffer(3)]],
+    uint2 xy [[thread_position_in_grid]]) {
+    const uint width = args[0];
+    const uint height = args[1];
+    if (xy.x >= width || xy.y >= height)
+        return;
+    const bool second = xy.x >= args[2];
+    const uint source_x = second ? xy.x - args[2] : xy.x;
+    const uint from = (second ? args[4] : args[3]) + 4u * (xy.y * width + source_x);
+    const uint y = args[5] ? height - 1u - xy.y : xy.y;
+    const uint to = 4u * pica_tiled_word(xy.x, y, width);
+    const device uchar* source = second ? right : left;
+    for (uint byte = 0; byte < 4u; ++byte)
+        destination[to + byte] = source[from + byte];
+}
+
 static uint3 read_rgb565(const device uchar* source, uint offset) {
     const uint packed = uint(source[offset]) | (uint(source[offset + 1u]) << 8u);
     const uint3 channels = uint3(packed >> 11u, (packed >> 5u) & 63u, packed & 31u);

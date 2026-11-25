@@ -28,6 +28,7 @@
 #include <string_view>
 #include <stdexcept>
 #include "cara/adaptive_clock.h"
+#include "cara/native_mac/native_replay_ledger.h"
 #include "cara/config.h"
 #include "cara/native_mac/mac_preferences.h"
 #include "cara/p3d_completion.h"
@@ -174,6 +175,7 @@ public:
     void PollEvents() override {
         // The core reaches this on its owner thread at a refresh boundary.
         // SDL's event pump runs independently on the AppKit main thread.
+        if (Common::GuestReplayCounts::Enabled()) { (void)events.TakeInput(); return; }
         for (const auto& event : events.TakeInput()) {
             switch (event.kind) {
             case LiveInputKind::PressKey:
@@ -412,6 +414,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         std::vector<std::pair<unsigned, std::int64_t>> timing;
         size_t next_input = 0;
         unsigned previous_frame = VideoCore::GetCurrentFrame();
+        Cara::NativeReplay::Ledger replay_ledger(core, previous_frame);
         Uint32 title_updated_at = SDL_GetTicks();
         bool discard_clock_sample = false;
         while (!events.stop.load() && VideoCore::GetCurrentFrame() < limit) {
@@ -447,6 +450,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                 discard_clock_sample = true;
                 std::cout << "CAPTURE frame=" << frame << std::endl;
             }
+            replay_ledger.Observe(core, frame);
             if (frame != previous_frame) {
                 events.refresh.store(frame);
                 if (record_refresh_timing) {
@@ -469,6 +473,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         }
         const auto frames = VideoCore::GetCurrentFrame();
         const bool captured = frames >= limit && Cara::WriteNativeMetalCapture(output);
+        replay_ledger.Write(output);
         if (record_refresh_timing) {
             std::ofstream report(output + "refresh-timing.csv");
             report << "refresh,elapsed_ns\n";

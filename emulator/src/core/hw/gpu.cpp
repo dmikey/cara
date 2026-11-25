@@ -11,6 +11,7 @@
 #include "common/alignment.h"
 #include "common/color.h"
 #include "common/common_types.h"
+#include "common/guest_replay_counts.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
 #include "common/vector_math.h"
@@ -438,6 +439,7 @@ inline void Write(u32 addr, const T data) {
         auto& config = g_regs.memory_fill_config[is_second_filler];
 
         if (config.trigger) {
+            Common::GuestReplayCounts::Observe(Common::GuestReplayCounts::Fill);
             MemoryFill(config);
             LOG_TRACE(HW_GPU, "MemoryFill from {:#010X} to {:#010X}", config.GetStartAddress(),
                       config.GetEndAddress());
@@ -466,6 +468,7 @@ inline void Write(u32 addr, const T data) {
         const auto& config = g_regs.display_transfer_config;
         if (config.trigger & 1) {
             if (config.is_texture_copy) {
+                Common::GuestReplayCounts::Observe(Common::GuestReplayCounts::Copy);
                 TextureCopy(config);
                 LOG_TRACE(HW_GPU,
                           "TextureCopy: {:#X} bytes from {:#010X}({}+{})-> "
@@ -475,6 +478,7 @@ inline void Write(u32 addr, const T data) {
                           config.GetPhysicalOutputAddress(), config.texture_copy.output_width * 16,
                           config.texture_copy.output_gap * 16, config.flags);
             } else {
+                Common::GuestReplayCounts::Observe(Common::GuestReplayCounts::Transfer);
                 DisplayTransfer(config);
                 LOG_TRACE(HW_GPU,
                           "DisplayTransfer: {:#010X}({}x{})-> "
