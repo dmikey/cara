@@ -514,7 +514,8 @@ public:
         }
 #if defined(__ANDROID__) && defined(CARA_ANDROID_GLES_ATLAS)
         if (result && current_shaders.vs->HintedVertexPending() &&
-            !ResolveHintedVertex(*current_shaders.vs, !regs.framebuffer.IsShadowRendering() &&
+            !ResolveHintedVertex(*current_shaders.vs, regs.pipeline.num_vertices,
+                                 !regs.framebuffer.IsShadowRendering() &&
                                                         !Settings::values.skip_slow_draw)) {
             if (current_shaders.vs->HintedVertexPending())
                 return false; // Execute the same draw with Cara's existing CPU vertex path.
@@ -1099,7 +1100,11 @@ public:
         return shader_hints.Enabled();
     }
 
-    bool ResolveHintedVertex(OGLShaderStage& stage, bool allow_software) {
+    bool ResolveHintedVertex(OGLShaderStage& stage, u32 num_vertices, bool allow_software) {
+        static const bool prioritize = [] {
+            const char* flag = std::getenv("CARA_ANDROID_VERTEX_STAGE_PRIORITY");
+            return flag && std::strcmp(flag, "1") == 0;
+        }();
         const u32 frame = VideoCore::GetCurrentFrame();
         const auto fallback = [&](const char* reason) {
             if (shader_census && stage.FirstHintedVertexFallback())
@@ -1109,13 +1114,14 @@ public:
             return false;
         };
         if (!stage.HintedVertexQueued() && allow_software &&
-            !shader_hints.Admit(frame, stage.HintedVertexRomMatch()))
+            !shader_hints.Admit(frame, stage.HintedVertexRomMatch(), prioritize ? 4 : 1))
             return fallback("refresh_budget");
 
         const auto start = ShaderCensus::Clock::now();
         OGLProgram ready;
         if (allow_software) {
-            auto build = GetShaderWorker(hint_vertex_worker).Request(stage.GetHash(), stage.GetSource(), {}, false);
+            auto build = GetShaderWorker(hint_vertex_worker).Request(
+                stage.GetHash(), stage.GetSource(), {}, false, prioritize ? num_vertices : 0);
             using Status = AndroidShaderWorker::Status;
             if (build.status == Status::Pending && !stage.HintedVertexQueued()) {
                 stage.MarkHintedVertexQueued();

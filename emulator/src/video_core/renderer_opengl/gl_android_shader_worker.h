@@ -72,14 +72,22 @@ public:
         OGLProgram program;
     };
 
-    Result Request(u64 key, const std::string& vertex, const std::string& fragment, bool reuse_stages) {
+    Result Request(u64 key, const std::string& vertex, const std::string& fragment, bool reuse_stages,
+                   u32 vertex_work = 0) {
         std::lock_guard lock(mutex);
         if (!thread.joinable() || unavailable) {
             return {};
         }
         if (auto result = results.find(key); result != results.end()) {
-            if (result->second.status != Status::Ready)
+            if (result->second.status != Status::Ready) {
+                if (vertex_work && result->second.status == Status::Pending) {
+                    auto queued = std::find_if(jobs.begin(), jobs.end(),
+                                               [key](const Job& job) { return job.key == key; });
+                    if (queued != jobs.end())
+                        queued->vertex_work += vertex_work;
+                }
                 return {result->second.status, {}};
+            }
             auto ready = std::move(result->second);
             results.erase(result);
             return ready;
@@ -98,7 +106,7 @@ public:
             }
         }
         results.emplace(key, Result{Status::Pending, {}});
-        jobs.push_back({key, vertex, fragment, reuse_stages});
+        jobs.push_back({key, vertex, fragment, reuse_stages, vertex_work});
         wake.notify_one();
         return {Status::Pending, {}};
     }
@@ -133,6 +141,7 @@ private:
         std::string vertex;
         std::string fragment;
         bool reuse_stages;
+        u64 vertex_work;
     };
     static constexpr std::size_t MaxQueued = 8;
     static constexpr std::size_t MaxTracked = 64;
@@ -169,8 +178,12 @@ private:
                     results.clear();
                     break;
                 }
-                job = std::move(jobs.front());
-                jobs.pop_front();
+                // FIFO breaks ties. Linked-program workers submit zero weight.
+                auto next = std::max_element(jobs.begin(), jobs.end(), [](const Job& a, const Job& b) {
+                    return a.vertex_work < b.vertex_work;
+                });
+                job = std::move(*next);
+                jobs.erase(next);
             }
             OGLProgram program;
             if (job.fragment.empty()) {

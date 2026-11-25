@@ -74,14 +74,14 @@ public:
         return hash && fingerprints.contains(*hash);
     }
 
-    bool Admit(u32 refresh, bool rom_match) {
+    bool Admit(u32 refresh, bool rom_match, unsigned live_budget = 1) {
         if (refresh != last_refresh) {
             last_refresh = refresh;
             live_requests = 0;
             rom_requests = 0;
         }
         auto& requests = rom_match ? rom_requests : live_requests;
-        const unsigned budget = rom_match ? 4 : 1;
+        const unsigned budget = rom_match ? 4 : live_budget;
         if (requests == budget)
             return false;
         ++requests;

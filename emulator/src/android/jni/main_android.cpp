@@ -250,6 +250,7 @@ void BootGame(const std::string& path) {
     select_probe("surface_subrect_prefilter", "CARA_SURFACE_SUBRECT_PREFILTER");
     select_probe("trace_gles_debug", "CARA_GLES_DEBUG");
     select_probe("atlas_separable_programs", "CARA_MALI_SEPARABLE_PROGRAMS");
+    select_probe("atlas_vertex_stage_priority", "CARA_ANDROID_VERTEX_STAGE_PRIORITY");
     select_probe("adreno_separable_programs", "CARA_ADRENO_SEPARABLE_PROGRAMS");
     select_probe("atlas_prune_unused_quaternion", "CARA_GLES_PRUNE_UNUSED_QUATERNION");
     select_probe("atlas_quaternion_slice", "CARA_GPU_QUATERNION_SLICE");
