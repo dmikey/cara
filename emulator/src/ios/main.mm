@@ -2738,12 +2738,12 @@ static std::filesystem::path PedometerHistoryPath() {
                 }
             }
             gameLoaded=result==Core::System::ResultStatus::Success;
+            const char* open_error = gameLoaded ? nullptr : Frontend::Apple::GameOpenError(result, rom);
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (self->sessionGeneration!=session) return;
                 self->onlineGameIdentity=roomIdentity;
-                if (result != Core::System::ResultStatus::Success)
-                    self->sessionFailure = [NSString stringWithUTF8String:
-                        Frontend::Apple::GameOpenError(result, rom)];
+                if (open_error)
+                    self->sessionFailure = [NSString stringWithUTF8String:open_error];
                 [self updateSessionPresentation];
                 if (showOnlineRooms && !self.presentedViewController)
                     [self showOnlineRoomsInNavigation:nil];

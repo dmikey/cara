@@ -8,6 +8,7 @@ namespace FileUtil {
 class IOHandler;
 
 bool IsZipRomPath(const std::string& path);
+bool IsEncryptedTitleZip(const std::string& path);
 std::unique_ptr<IOHandler> OpenIndexedZipRom(const std::string& path,
                                              std::unique_ptr<IOHandler> source);
 } // namespace FileUtil
