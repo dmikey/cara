@@ -300,6 +300,8 @@ jobs:
           work/build-mac/bin/cara-texture-lookup-self-test
           clang++ -std=c++17 -Wall -Wextra -Werror -UNDEBUG -I emulator/src tests/frame_timing_texture_test.cpp -o work/frame-timing-texture-test
           work/frame-timing-texture-test
+          clang++ -std=c++17 -O1 -Wall -Wextra -Werror -UNDEBUG -I emulator/src tests/android_unused_quaternion_policy_test.cpp -o work/android-unused-quaternion-test
+          work/android-unused-quaternion-test
           clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -I emulator/src tests/pica_shader_packet_profile_test.cpp -o work/pica-shader-packet-profile-test
           work/pica-shader-packet-profile-test
           clang++ -std=c++17 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -I emulator/src tests/native_cpu_category_profile_test.cpp -o work/native-cpu-category-profile-test

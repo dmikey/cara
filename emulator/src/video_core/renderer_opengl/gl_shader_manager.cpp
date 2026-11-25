@@ -294,8 +294,8 @@ public:
 #endif
     }
 
-    explicit Impl(bool separable, AdrenoUnusedQuaternion::Policy adreno_policy)
-        : separable(separable), adreno_policy(adreno_policy), trivial_vertex_shader(separable),
+    explicit Impl(bool separable, UnusedQuaternion::Policy unused_quaternion_policy)
+        : separable(separable), unused_quaternion_policy(unused_quaternion_policy), trivial_vertex_shader(separable),
           trivial_geometry_shader(separable), native_geometry_shader(separable) {
         ConfigureNativeShaderDispatch();
 #ifdef CARA_MAC_ATLAS_PIPELINE
@@ -409,7 +409,7 @@ public:
     bool UseProgrammableVertexShader(const Pica::Regs& regs, Pica::Shader::ShaderSetup& setup,
                                      unsigned ios_indexed_inputs, u16 selected_input_mask,
                                      bool omit_triangle_quaternion) {
-        adreno_selected = adreno_policy.enabled && omit_triangle_quaternion;
+        unused_quaternion_selected = unused_quaternion_policy.enabled && omit_triangle_quaternion;
         bool result = false;
         const bool native_geometry = NativeQuaternionGeometry::Selected(native_geometry_enabled,ios_indexed_inputs) &&
             regs.pipeline.use_gs == Pica::PipelineRegs::UseGS::No;
@@ -446,12 +446,12 @@ public:
 #endif
             );
 #ifdef CARA_IOS_GLES
-            if (adreno_policy.enabled && omit_triangle_quaternion) {
+            if (unused_quaternion_policy.enabled && omit_triangle_quaternion) {
                 const auto original = GenerateVertexShader(setup, key, separable, &ios_output,
                     ios_input_mask, ios_indexed_inputs, true, native_geometry, native_dispatch,
                     native_suffix_sharing, nullptr, false);
-                const bool proof = AdrenoUnusedQuaternion::VertexDelta(original, vs_code);
-                ShaderCensus::Record("adreno_uq_vertex refresh={} original={:016x} selected={:016x} proof={}",
+                const bool proof = UnusedQuaternion::VertexDelta(original, vs_code);
+                ShaderCensus::Record("unused_quaternion_vertex refresh={} original={:016x} selected={:016x} proof={}",
                     VideoCore::GetCurrentFrame()+1, Common::ComputeHash64(original.data(),original.size()),
                     Common::ComputeHash64(vs_code.data(),vs_code.size()), int(proof));
                 if (!proof) return UseProgrammableVertexShader(regs, setup, ios_indexed_inputs,
@@ -598,17 +598,17 @@ public:
     }
 #endif
 
-    bool CanOmitAdrenoQuaternion(const Pica::Regs& regs) {
-        if (!adreno_policy.enabled || separable || regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No ||
+    bool CanOmitUnusedQuaternion(const Pica::Regs& regs) {
+        if (!unused_quaternion_policy.enabled || separable || regs.pipeline.use_gs != Pica::PipelineRegs::UseGS::No ||
             FragmentLightingAblationEnabled() || FragmentUsesLightingQuaternion(regs)) return false;
         const auto key = PicaFSConfig::BuildFromRegs(regs, false);
         const u64 hash = Common::ComputeHash64(&key, sizeof(key));
-        const auto found = adreno_consumers.find(hash);
-        if (found != adreno_consumers.end())
+        const auto found = unused_quaternion_consumers.find(hash);
+        if (found != unused_quaternion_consumers.end())
             return std::memcmp(&found->second.first, &key, sizeof(key)) == 0 && found->second.second;
         const auto source = GenerateFragmentShader(key, false);
-        const bool no_read = AdrenoUnusedQuaternion::NoRead(source);
-        if (adreno_consumers.size() < 128) adreno_consumers.emplace(hash, std::make_pair(key, no_read));
+        const bool no_read = UnusedQuaternion::NoRead(source);
+        if (unused_quaternion_consumers.size() < 128) unused_quaternion_consumers.emplace(hash, std::make_pair(key, no_read));
         else return false;
         std::string snapshot;
         for (const auto& stage : regs.texturing.GetTevStages()) {
@@ -616,7 +616,7 @@ public:
             for (std::size_t i=0; i<sizeof(stage); ++i)
                 fmt::format_to(std::back_inserter(snapshot), "{:02x}", bytes[i]);
         }
-        ShaderCensus::Record("adreno_uq_consumer refresh={} key={:016x} source={:016x} lighting_disable={} no_read={} tev_snapshot={}",
+        ShaderCensus::Record("unused_quaternion_consumer refresh={} key={:016x} source={:016x} lighting_disable={} no_read={} tev_snapshot={}",
             VideoCore::GetCurrentFrame()+1, hash, Common::ComputeHash64(source.data(),source.size()),
             int(regs.lighting.disable != 0), int(no_read), snapshot);
         return no_read;
@@ -847,9 +847,9 @@ public:
         // Explicit key/UBO schema identity, independent of a possibly empty prototype SCM string.
         std::string identity = std::string(CARA_SHADER_CACHE_SIGNATURE) +
                                "\nnative-nearest-borrow-tex0-key1-common-ubo2";
-        if (adreno_policy.target)
-            identity += adreno_policy.enabled ? "\nadreno618-unused-quaternion-v1=1" :
-                                               "\nadreno618-unused-quaternion-v1=0";
+        if (unused_quaternion_policy.target)
+            identity += fmt::format("\nandroid-unused-quaternion-v1:{}={}",
+                UnusedQuaternion::CacheTarget(unused_quaternion_policy), int(unused_quaternion_policy.enabled));
         // Reject a different generator route before compiling any saved source.
         identity += "\ntwo-stage-store-v2";
 #ifdef CARA_MAC_ATLAS_PIPELINE
@@ -924,7 +924,9 @@ public:
             suffix += ".mali-extended";
         }
 #endif
-        if (adreno_policy.target) suffix += adreno_policy.enabled ? ".adreno618-uq-v1-on" : ".adreno618-uq-v1-off";
+        if (unused_quaternion_policy.target)
+            suffix += fmt::format(".android-uq-v1-{}-{}", UnusedQuaternion::CacheTarget(unused_quaternion_policy),
+                                  unused_quaternion_policy.enabled ? "on" : "off");
         ios_cache_path = GetCacheFile() + suffix + ".cara-pso1";
         LOG_INFO(Render_OpenGL, "Cara iOS local pipeline cache enabled; {} binary formats",
                  ios_formats.size());
@@ -1227,10 +1229,10 @@ public:
     void ApplyIOSPipeline(OpenGLState& state, [[maybe_unused]] bool allow_software_vertices) {
         const auto& vs_source = current_shaders.vs->GetSource();
         const auto& fs_source = current_shaders.fs->GetSource();
-        if (adreno_policy.enabled && adreno_selected && !adreno_verified_fs.count(current_shaders.fs)) {
-            if (!AdrenoUnusedQuaternion::NoRead(fs_source))
+        if (unused_quaternion_policy.enabled && unused_quaternion_selected && !unused_quaternion_verified_fs.count(current_shaders.fs)) {
+            if (!UnusedQuaternion::NoRead(fs_source))
                 throw std::runtime_error("Adreno unused-quaternion consumer proof changed before draw");
-            adreno_verified_fs.insert(current_shaders.fs);
+            unused_quaternion_verified_fs.insert(current_shaders.fs);
         }
         const auto& pair = ios_stage_pairs.Get(current_shaders.vs, current_shaders.fs, [&] {
             const auto key = IOSPipelineCache::KeyFromDigests(current_shaders.vs->GetSourceDigest(),
@@ -1477,10 +1479,10 @@ private:
     std::unordered_map<u64, std::string> vertex_cache;
     std::unordered_map<u64, std::string> fragment_cache;
 
-    const AdrenoUnusedQuaternion::Policy adreno_policy;
-    bool adreno_selected = false;
-    std::unordered_set<const OGLShaderStage*> adreno_verified_fs;
-    std::unordered_map<u64, std::pair<PicaFSConfig, bool>> adreno_consumers;
+    const UnusedQuaternion::Policy unused_quaternion_policy;
+    bool unused_quaternion_selected = false;
+    std::unordered_set<const OGLShaderStage*> unused_quaternion_verified_fs;
+    std::unordered_map<u64, std::pair<PicaFSConfig, bool>> unused_quaternion_consumers;
     OGLShaderStage trivial_vertex_shader;
     OGLShaderStage trivial_geometry_shader;
     OGLShaderStage native_geometry_shader;
@@ -1521,11 +1523,11 @@ private:
     std::unordered_map<u64, OGLProgram> program_cache;
 };
 
-ShaderProgramManager::ShaderProgramManager(bool separable, AdrenoUnusedQuaternion::Policy adreno_policy)
-    : impl(std::make_unique<Impl>(separable, adreno_policy)) {}
+ShaderProgramManager::ShaderProgramManager(bool separable, UnusedQuaternion::Policy unused_quaternion_policy)
+    : impl(std::make_unique<Impl>(separable, unused_quaternion_policy)) {}
 
-bool ShaderProgramManager::CanOmitAdrenoQuaternion(const Pica::Regs& regs) {
-    return impl->CanOmitAdrenoQuaternion(regs);
+bool ShaderProgramManager::CanOmitUnusedQuaternion(const Pica::Regs& regs) {
+    return impl->CanOmitUnusedQuaternion(regs);
 }
 
 ShaderProgramManager::~ShaderProgramManager() = default;

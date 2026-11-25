@@ -4,17 +4,33 @@
 #include <string_view>
 #include <regex>
 
-namespace OpenGL::AdrenoUnusedQuaternion {
-struct Policy { bool target = false; bool enabled = false; };
-inline constexpr std::string_view Driver =
+namespace OpenGL::UnusedQuaternion {
+enum class Device { None, GCloud, RGSlide };
+struct Policy {
+    bool target = false;
+    bool enabled = false;
+    Device device = Device::None;
+};
+inline constexpr std::string_view GCloudDriver =
     "OpenGL ES 3.2 V@0502.0 (GIT@46d1463393, I43876eb25d, 1638292465) (Date:11/30/21)";
+inline constexpr std::string_view SlideDriver =
+    "OpenGL ES 3.2 v1.r40p0-01eac0.b0251c048237dcd59e6be15fba11a31a";
+constexpr bool ResolveRequest(bool performance, bool preference) { return performance && preference; }
+constexpr bool RequestedByDefault(std::string_view model) { return model == "GR0006"; }
 constexpr Policy Resolve(bool requested, bool monolithic, std::string_view model,
-                         std::string_view vendor, std::string_view renderer,
-                         std::string_view version, std::string_view language) {
-    const bool target = monolithic && model == "GR0006" && vendor == "Qualcomm" &&
-        renderer == "Adreno (TM) 618" && version == Driver &&
-        language == "OpenGL ES GLSL ES 3.20";
-    return {target, target && requested};
+                         std::string_view product, std::string_view vendor,
+                         std::string_view renderer, std::string_view version,
+                         std::string_view language) {
+    if (!monolithic || language != "OpenGL ES GLSL ES 3.20") return {};
+    const auto device = model == "GR0006" && vendor == "Qualcomm" &&
+        renderer == "Adreno (TM) 618" && version == GCloudDriver ? Device::GCloud :
+        model == "RG Slide" && product == "ums9620_2h10_native" && vendor == "ARM" &&
+        renderer == "Mali-G57" && version == SlideDriver ? Device::RGSlide : Device::None;
+    return {device != Device::None, device != Device::None && requested, device};
+}
+constexpr std::string_view CacheTarget(const Policy& policy) {
+    return policy.device == Device::GCloud ? "gcloud-adreno618" :
+           policy.device == Device::RGSlide ? "rgslide-malig57" : "unsupported";
 }
 inline bool NoRead(std::string_view source) {
     // Closed generator form: one exact varying declaration, no other mention,
@@ -86,4 +102,4 @@ inline bool VertexDelta(std::string_view original, std::string_view specialized)
     if (!erase_once("if (gl_VertexID % 3 != 0 && dot(first_quat, normquat) < 0.0) normquat = -normquat;\n")) return false;
     return expected == specialized;
 }
-} // namespace OpenGL::AdrenoUnusedQuaternion
+} // namespace OpenGL::UnusedQuaternion
