@@ -1,8 +1,11 @@
 name: Inspect Cara TestFlight upload
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   inspect:
     if: github.repository == 'dmikey/cara' && github.ref == 'refs/heads/main'
@@ -10,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Read the existing upload records from Apple
+      - name: Read Cara's current Apple build and beta review records
         env:
           ASC_KEY: ${{ secrets.CARA_ASC_UPLOAD_KEY_BASE64 }}
           ASC_ID: ${{ secrets.CARA_ASC_UPLOAD_KEY_ID }}
@@ -25,20 +28,36 @@ jobs:
           const payload = b64({ alg:'ES256', kid:process.env.ASC_ID, typ:'JWT' }) + '.' +
             b64({ iss:process.env.ASC_ISSUER, iat:now, exp:now+300, aud:'appstoreconnect-v1' })
           const token = payload + '.' + sign('sha256', Buffer.from(payload), { key, dsaEncoding:'ieee-p1363' }).toString('base64url')
-          async function inspect() {
-            const paths = [
-              '/v1/buildUploads/c998bb6c-4083-43fc-8357-7b5145fed292?fields%5BbuildUploads%5D=state,cfBundleVersion,cfBundleShortVersionString,platform',
-              '/v1/buildUploadFiles/f3b2d2a6-acb5-411b-9a21-6522ab259b3d?fields%5BbuildUploadFiles%5D=fileName,fileSize,assetType,assetDeliveryState,sourceFileChecksums'
-            ]
-            for (const path of paths) {
-              const res = await fetch('https://api.appstoreconnect.apple.com' + path, {
-                headers: {Authorization:'Bearer ' + token}, redirect:'error', signal:AbortSignal.timeout(30000)
-              })
-              const record = await res.json()
-              const errors = record.errors?.map(({code, title, detail}) => ({code,title,detail})) ?? []
-              console.log(JSON.stringify({status:res.status,attributes:record.data?.attributes,errors}))
-              if (!res.ok) process.exitCode = 1
+          const APP='6838367217';
+          async function get(path, optional=false) {
+            const res=await fetch('https://api.appstoreconnect.apple.com'+path,{
+              headers:{Authorization:'Bearer '+token},redirect:'error',signal:AbortSignal.timeout(30000)
+            });
+            const data=await res.json();
+            if (!res.ok) {
+              console.log(JSON.stringify({path:path.split('?')[0],status:res.status,errors:data.errors?.map(({code,title})=>({code,title}))}));
+              if (!optional) throw new Error('Apple read request failed');
+              return null;
             }
+            return data;
           }
-          inspect().catch(() => { console.error('Apple upload status request failed'); process.exitCode = 1 })
+          async function main() {
+            const app=await get('/v1/apps/'+APP);
+            if(app.data.attributes.bundleId!=='com.dmikey.cara') throw new Error('Unexpected Cara app identity');
+            const builds=await get('/v1/builds?'+new URLSearchParams({'filter[app]':APP,limit:'30',sort:'-uploadedDate'}));
+            console.log(JSON.stringify({kind:'builds',next:!!builds.links?.next,rows:builds.data.map(({id,attributes:a})=>({id,build:a.version,processing:a.processingState,uploaded:a.uploadedDate,expired:a.expired,encryption:a.usesNonExemptEncryption}))}));
+            const uploads=await get('/v1/apps/'+APP+'/buildUploads?limit=30',true);
+            if(uploads)console.log(JSON.stringify({kind:'uploads',next:!!uploads.links?.next,rows:uploads.data.map(({id,attributes:a})=>({id,build:a.cfBundleVersion,version:a.cfBundleShortVersionString,state:a.state,platform:a.platform}))}));
+            const groups=await get('/v1/apps/'+APP+'/betaGroups?limit=50',true);
+            if(groups)console.log(JSON.stringify({kind:'betaGroups',rows:groups.data.map(({id,attributes:a})=>({id,name:a.name,internal:a.isInternalGroup,publicLinkEnabled:a.publicLinkEnabled}))}));
+            for(const b of builds.data.slice(0,3)) {
+              const review=await get('/v1/builds/'+b.id+'/betaAppReviewSubmission',true);
+              if(review)console.log(JSON.stringify({kind:'review',build:b.attributes.version,id:review.data?.id,state:review.data?.attributes?.betaReviewState}));
+              const detail=await get('/v1/builds/'+b.id+'/buildBetaDetail',true);
+              if(detail)console.log(JSON.stringify({kind:'betaDetail',build:b.attributes.version,internal:detail.data?.attributes?.internalBuildState,external:detail.data?.attributes?.externalBuildState}));
+            }
+            const phone=await get('/v1/devices?'+new URLSearchParams({'filter[udid]':'00008150-000E1D6E2640C01C',limit:'5'}),true);
+            if(phone) console.log(JSON.stringify({kind:'requestedPhoneRegistration',count:phone.data.length,rows:phone.data.map(({id,attributes:a})=>({id,status:a.status,platform:a.platform,deviceClass:a.deviceClass}))}));
+          }
+          main().catch(()=>{console.error('Apple inspection failed');process.exitCode=1;});
           JS
