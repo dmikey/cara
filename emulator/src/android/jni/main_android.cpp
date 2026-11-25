@@ -110,19 +110,31 @@ static bool DefaultAtlasPersistentUniforms() {
         __system_property_get(key, value);
         return std::string(value);
     };
-    const auto gl_string = [](GLenum key) -> std::string_view {
+    const auto gl_string = [](GLenum key) {
         const auto* value = glGetString(key);
-        return value ? std::string_view(reinterpret_cast<const char*>(value)) : std::string_view{};
+        return value ? std::string(reinterpret_cast<const char*>(value)) : std::string{};
     };
     if (eglGetCurrentContext() == EGL_NO_CONTEXT)
         return false;
     const Config::ConfigInfo<bool> ordered_worker{{"Debug", "ordered_gles_worker"}, false};
-    return Cara::AndroidAtlas::DefaultPersistentUniforms(
-        ReadPlayMode() == Cara::PlayMode::Performance, Config::Get(ordered_worker),
-        property("ro.product.model"), property("ro.product.name"), property("ro.product.device"),
-        gl_string(GL_VENDOR), gl_string(GL_RENDERER),
+    const auto model = property("ro.product.model");
+    const auto product = property("ro.product.name");
+    const auto device = property("ro.product.device");
+    const auto vendor = gl_string(GL_VENDOR);
+    const auto renderer = gl_string(GL_RENDERER);
+    const bool buffer_storage =
         GLAD_GL_EXT_buffer_storage && glBufferStorageEXT && glMapBufferRange && glFenceSync &&
-            glClientWaitSync && glDeleteSync);
+        glClientWaitSync && glDeleteSync;
+    const bool performance = ReadPlayMode() == Cara::PlayMode::Performance;
+    const bool worker = Config::Get(ordered_worker);
+    const bool automatic = Cara::AndroidAtlas::DefaultPersistentUniforms(
+        performance, worker, model, product, device, vendor, renderer, buffer_storage);
+    __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                        "atlas_ubo_default_probe model=%s product=%s device=%s vendor=%s renderer=%s "
+                        "buffer_storage=%d performance=%d worker=%d automatic=%d",
+                        model.c_str(), product.c_str(), device.c_str(), vendor.c_str(),
+                        renderer.c_str(), buffer_storage, performance, worker, automatic);
+    return automatic;
 }
 #endif
 
@@ -340,8 +352,9 @@ void BootGame(const std::string& path) {
     setenv("CARA_GL_STATE_REUSE", Config::Get(reuse_raster_state) ? "1" : "0", 1);
     setenv("CARA_GLES_DEFER_UNUSED_LUTS", Config::Get(defer_unused_luts) ? "1" : "0", 1);
     setenv("CARA_GLES_PERSISTENT_UNIFORMS", persistent_uniforms ? "1" : "0", 1);
-    LOG_INFO(Frontend, "Android Atlas persistent uniform buffers requested={} automatic={}",
-             persistent_uniforms, persistent_uniforms_auto);
+    __android_log_print(ANDROID_LOG_INFO, "CaraPerf",
+                        "atlas_persistent_uniforms requested=%d automatic=%d configured=%d",
+                        persistent_uniforms, persistent_uniforms_auto, persistent_uniforms_present);
     setenv("CARA_GLES_DRAW_FRAMEBUFFER_CACHE", Config::Get(draw_fbos) ? "1" : "0", 1);
     setenv("CARA_GPU_LIT_LISTS", Config::Get(lit_lists) ? "1" : "0", 1);
     setenv("CARA_ANDROID_SHADER_STAGE_REUSE", Config::Get(async_stage_reuse) ? "1" : "0", 1);
