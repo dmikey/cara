@@ -239,6 +239,7 @@ public:
     void Close() {
         m_file.reset();
         m_good = false;
+        m_open_error = 0;
     }
 
     void ReadAllLines(std::vector<std::string>& lines);
@@ -303,24 +304,27 @@ public:
         return IsGood();
     }
 
+    /// Host errno captured immediately after a failed acquisition; 0 if unknown.
+    int GetOpenError() const { return m_open_error; }
+
     bool Seek(s64 offset, int whence) {
-        return m_file->Seek(offset, whence);
+        return IsOpen() && m_file->Seek(offset, whence);
     }
 
     u64 Tell() const {
-        return m_file->Tell();
+        return IsOpen() ? m_file->Tell() : 0;
     }
 
     u64 GetSize() const {
-        return m_file->GetSize();
+        return IsOpen() ? m_file->GetSize() : 0;
     }
 
     bool Resize(u64 size) {
-        return m_file->Resize(size);
+        return IsOpen() && m_file->Resize(size);
     }
 
     bool Flush() {
-        return m_file->Flush();
+        return IsOpen() && m_file->Flush();
     }
 
 private:
@@ -346,6 +350,7 @@ private:
     friend class boost::serialization::access;
     std::unique_ptr<FileUtil::IOHandler> m_file;
     bool m_good = false;
+    int m_open_error = 0;
 };
 
 } // namespace FileUtil

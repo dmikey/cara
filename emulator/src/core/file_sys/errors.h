@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cerrno>
 #include "core/hle/result.h"
 
 namespace FileSys {
@@ -77,6 +78,47 @@ constexpr ResultCode ERROR_EXEFS_SECTION_NOT_FOUND(ErrCodes::ExeFSSectionNotFoun
                                                    ErrorSummary::NotFound, ErrorLevel::Status);
 constexpr ResultCode ERROR_INSUFFICIENT_SPACE(ErrCodes::InsufficientSpace, ErrorModule::FS,
                                               ErrorSummary::OutOfResource, ErrorLevel::Status);
+
+/// Host creation errors are not measured CTR hardware codes. Use well-known FS
+/// descriptions and keep them distinct from a successful create or excessive size.
+inline ResultCode HostCreateOpenError(int error, ResultCode missing_path) {
+    switch (error) {
+    case EACCES:
+    case EPERM:
+    case EROFS:
+        return ResultCode(ErrorDescription::NotAuthorized, ErrorModule::FS,
+                          ErrorSummary::NotSupported, ErrorLevel::Permanent);
+    case ENOSPC:
+#ifdef EDQUOT
+    case EDQUOT:
+#endif
+        return ERROR_INSUFFICIENT_SPACE;
+    case ENOENT:
+    case ENOTDIR:
+        return missing_path;
+    default:
+        return ResultCode(ErrorDescription::NoData, ErrorModule::FS,
+                          ErrorSummary::Canceled, ErrorLevel::Status);
+    }
+}
+
+/// Preserve the existing excessive-size result when the backend cannot resize;
+/// do not misclassify an explicit host authorization or capacity error as size.
+inline ResultCode HostCreateResizeError(int error) {
+    switch (error) {
+    case EACCES:
+    case EPERM:
+    case EROFS:
+    case ENOSPC:
+#ifdef EDQUOT
+    case EDQUOT:
+#endif
+        return HostCreateOpenError(error, ERROR_PATH_NOT_FOUND);
+    default:
+        return ResultCode(ErrorDescription::TooLarge, ErrorModule::FS,
+                          ErrorSummary::OutOfResource, ErrorLevel::Info);
+    }
+}
 
 /// Returned when a function is passed an invalid archive handle.
 constexpr ResultCode ERR_INVALID_ARCHIVE_HANDLE(ErrCodes::ArchiveNotMounted, ErrorModule::FS,
