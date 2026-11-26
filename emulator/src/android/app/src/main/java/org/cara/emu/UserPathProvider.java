@@ -78,11 +78,15 @@ public final class UserPathProvider extends DocumentsProvider {
     }
 
     @Override
-    public boolean isChildDocument(String parentDocumentId, String documentId)
-            throws FileNotFoundException {
-        File parent = getFile(parentDocumentId);
-        File child = getFile(documentId);
-        return parent.isDirectory() && child.getPath().startsWith(parent.getPath() + File.separator);
+    public boolean isChildDocument(String parentDocumentId, String documentId) {
+        try {
+            File parent = getFile(parentDocumentId);
+            File child = getFile(documentId);
+            return parent.isDirectory() &&
+                    child.getPath().startsWith(parent.getPath() + File.separator);
+        } catch (FileNotFoundException error) {
+            return false;
+        }
     }
 
     @Override
