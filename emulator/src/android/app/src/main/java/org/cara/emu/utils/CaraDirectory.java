@@ -218,7 +218,7 @@ public final class CaraDirectory {
      * changes permissions or removes existing user files. */
     public static String validateWritableGameData() {
         if (mUserPath == null) return "Cara's data folder is unavailable.";
-        for (String name : new String[]{"", "config", "nand", "sdmc", "states", "cache"}) {
+        for (String name : new String[]{"nand", "sdmc"}) {
             File directory = new File(mUserPath, name);
             File probe = null;
             try {
