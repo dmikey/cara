@@ -606,6 +606,7 @@ IOFile::~IOFile() {
 IOFile::IOFile(IOFile&& other) noexcept {
     std::swap(m_file, other.m_file);
     std::swap(m_good, other.m_good);
+    std::swap(m_open_error, other.m_open_error);
     std::swap(state_filename, other.state_filename);
     std::swap(state_mode, other.state_mode);
 }
@@ -641,11 +642,13 @@ bool IOFile::Open(const std::string& filename, const char openmode[]) {
     std::unique_ptr<IOHandler> source;
     if (!zip_rom && !seven_zip && !s_io_factory)
         m_file.reset();
+    errno = 0;
     if (s_io_factory) {
         source = s_io_factory->Open(filename, native_mode);
     } else if (auto* handle = std::fopen(filename.c_str(), native_mode)) {
         source = std::make_unique<NativeIOHandler>(handle);
     }
+    const int open_error = source ? 0 : errno;
     // Keep the previous handle alive until we open the successor. It can
     // already own the shared ZIP index when a loader reopens the same path.
     if (seven_zip && source)
@@ -658,6 +661,7 @@ bool IOFile::Open(const std::string& filename, const char openmode[]) {
         source = OpenIndexedZipRom(filename, std::move(source));
     m_file = std::move(source);
     m_good = m_file != nullptr;
+    m_open_error = m_good ? 0 : open_error;
     return m_good;
 }
 

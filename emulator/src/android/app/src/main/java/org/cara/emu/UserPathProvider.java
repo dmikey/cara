@@ -13,6 +13,7 @@ import androidx.annotation.Nullable;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.Collections;
 import java.util.LinkedList;
 
@@ -41,34 +42,82 @@ public final class UserPathProvider extends DocumentsProvider {
     private String ROOT_ID;
     private File BASE_DIR;
 
-    private String getRelativePath(File file) {
-        if (file == BASE_DIR) {
-            return "";
-        }
-        return file.getAbsolutePath().substring(BASE_DIR.getAbsolutePath().length() + 1);
-    }
-
-    /**
-     * Get the document id given a file (The reverse of @{link #getDocumentId}).
-     */
-    private File getFile(String documentId) throws FileNotFoundException {
-        if (documentId.startsWith(ROOT_ID)) {
-            File file = new File(BASE_DIR, documentId.substring(ROOT_ID.length() + 1));
-            if (!file.exists()) {
-                throw new FileNotFoundException("document not found");
-            }
+    private File checkedFile(String documentId) throws FileNotFoundException {
+        if (BASE_DIR == null) throw new FileNotFoundException("Cara storage is unavailable");
+        if (documentId == null || !(documentId.equals(ROOT_ID) || documentId.startsWith(ROOT_ID + "/")))
+            throw new FileNotFoundException("Document is not in Cara storage");
+        try {
+            File base = BASE_DIR.getCanonicalFile();
+            String relative = documentId.equals(ROOT_ID) ? "" : documentId.substring(ROOT_ID.length() + 1);
+            File file = new File(base, relative).getCanonicalFile();
+            if (!file.equals(base) && !file.getPath().startsWith(base.getPath() + File.separator))
+                throw new FileNotFoundException("Document is outside Cara storage");
             return file;
-        } else {
-            throw new FileNotFoundException("document is not in any known root");
+        } catch (IOException error) {
+            throw new FileNotFoundException("Cannot resolve Cara storage: " + error.getMessage());
         }
     }
 
-    /**
-     * Get the file given a document id (the reverse of {@link #getFile}).
-     */
-    private String getDocumentId(File file) {
-        String path = getRelativePath(file);
-        return ROOT_ID + "/" + path;
+    private File getFile(String documentId) throws FileNotFoundException {
+        File file = checkedFile(documentId);
+        if (!file.exists()) throw new FileNotFoundException("Document not found");
+        return file;
+    }
+
+    private String getDocumentId(File file) throws FileNotFoundException {
+        try {
+            File base = BASE_DIR.getCanonicalFile();
+            File resolved = file.getCanonicalFile();
+            if (resolved.equals(base)) return ROOT_ID + "/";
+            if (!resolved.getPath().startsWith(base.getPath() + File.separator))
+                throw new FileNotFoundException("Document is outside Cara storage");
+            return ROOT_ID + "/" + resolved.getPath().substring(base.getPath().length() + 1);
+        } catch (IOException error) {
+            throw new FileNotFoundException("Cannot resolve Cara document: " + error.getMessage());
+        }
+    }
+
+    @Override
+    public boolean isChildDocument(String parentDocumentId, String documentId) {
+        try {
+            File parent = getFile(parentDocumentId);
+            File child = getFile(documentId);
+            return parent.isDirectory() &&
+                    child.getPath().startsWith(parent.getPath() + File.separator);
+        } catch (FileNotFoundException error) {
+            return false;
+        }
+    }
+
+    @Override
+    public String createDocument(String parentDocumentId, String mimeType, String displayName)
+            throws FileNotFoundException {
+        File parent = getFile(parentDocumentId);
+        if (!parent.isDirectory() || !parent.canWrite())
+            throw new FileNotFoundException("Cara folder is not writable");
+        if (displayName == null || displayName.isEmpty() || displayName.equals(".")
+                || displayName.equals("..") || displayName.contains("/") || displayName.contains("\\")
+                || displayName.indexOf(0) >= 0)
+            throw new FileNotFoundException("Invalid document name");
+        try {
+            File child = new File(parent, displayName);
+            boolean directory = DocumentsContract.Document.MIME_TYPE_DIR.equals(mimeType);
+            String stem = displayName;
+            String extension = "";
+            if (!directory) {
+                int dot = displayName.lastIndexOf('.');
+                if (dot > 0) { stem = displayName.substring(0, dot); extension = displayName.substring(dot); }
+            }
+            for (int number = 0; number < 1000; number++) {
+                if (number > 0) child = new File(parent, stem + " (" + number + ")" + extension);
+                boolean created = directory ? child.mkdir() : child.createNewFile();
+                if (created) return getDocumentId(child);
+                if (!child.exists()) throw new IOException("Cannot create Cara document");
+            }
+            throw new IOException("Too many documents with this name");
+        } catch (IOException error) {
+            throw new FileNotFoundException(error.getMessage());
+        }
     }
 
     @Override
@@ -101,7 +150,9 @@ public final class UserPathProvider extends DocumentsProvider {
     public Cursor queryChildDocuments(String parentDocumentId, String[] projection, String sortOrder) throws FileNotFoundException {
         MatrixCursor cursor = new MatrixCursor(projection != null ? projection : DEFAULT_DOCUMENT_PROJECTION);
         File parent = getFile(parentDocumentId);
-        for (File file : parent.listFiles()) {
+        File[] children = parent.listFiles();
+        if (children == null) throw new FileNotFoundException("Cara folder cannot be read");
+        for (File file : children) {
             includeFile(cursor, null, file);
         }
         return cursor;
@@ -144,7 +195,8 @@ public final class UserPathProvider extends DocumentsProvider {
         while (!pending.isEmpty() && cursor.getCount() < MAX_SEARCH_RESULTS) {
             final File file = pending.removeFirst();
             if (file.isDirectory()) {
-                Collections.addAll(pending, file.listFiles());
+                File[] children = file.listFiles();
+                if (children != null) Collections.addAll(pending, children);
             } else {
                 if (file.getName().toLowerCase().contains(query)) {
                     includeFile(cursor, null, file);
@@ -159,7 +211,7 @@ public final class UserPathProvider extends DocumentsProvider {
     public boolean onCreate() {
         ROOT_ID = "root";
         BASE_DIR = getContext().getExternalFilesDir(null);
-        return true;
+        return BASE_DIR != null;
     }
 
     /**
@@ -186,13 +238,6 @@ public final class UserPathProvider extends DocumentsProvider {
         } else if (file.canWrite()) {
             flags = DocumentsContract.Document.FLAG_SUPPORTS_WRITE;
             flags = flags | DocumentsContract.Document.FLAG_SUPPORTS_DELETE;
-            flags = flags | DocumentsContract.Document.FLAG_SUPPORTS_REMOVE;
-            flags = flags | DocumentsContract.Document.FLAG_SUPPORTS_MOVE;
-            flags = flags | DocumentsContract.Document.FLAG_SUPPORTS_COPY;
-            flags = flags | DocumentsContract.Document.FLAG_SUPPORTS_RENAME;
-            if (mimeType.startsWith("image/")) {
-                flags |= DocumentsContract.Document.FLAG_SUPPORTS_THUMBNAIL;
-            }
         }
 
         MatrixCursor.RowBuilder row = cursor.newRow();
@@ -203,7 +248,7 @@ public final class UserPathProvider extends DocumentsProvider {
         row.add(DocumentsContract.Document.COLUMN_FLAGS, flags);
         row.add(DocumentsContract.Root.COLUMN_ICON, R.mipmap.ic_cara);
 
-        if (file == BASE_DIR) {
+        if (file.equals(BASE_DIR)) {
             String title = getContext().getString(R.string.app_name);
             row.add(DocumentsContract.Document.COLUMN_DISPLAY_NAME, title);
         } else {

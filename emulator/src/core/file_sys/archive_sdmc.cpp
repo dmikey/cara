@@ -96,8 +96,15 @@ ResultVal<std::unique_ptr<FileBackend>> SDMCArchive::OpenFileBase(const Path& pa
                       full_path);
             return ERROR_NOT_FOUND;
         } else {
-            // Create the file
-            FileUtil::CreateEmptyFile(full_path);
+            // Keep host permission and acquisition failures distinct from
+            // a missing guest file; never continue after failed creation.
+            FileUtil::IOFile created(full_path, "wb");
+            if (!created.IsOpen()) {
+                const int host_error = created.GetOpenError();
+                LOG_ERROR(Service_FS, "Could not create file {} (host errno={})", full_path,
+                          host_error);
+                return HostCreateOpenError(host_error, ERROR_NOT_FOUND);
+            }
         }
         break;
     case PathParser::FileFound:
@@ -106,8 +113,9 @@ ResultVal<std::unique_ptr<FileBackend>> SDMCArchive::OpenFileBase(const Path& pa
 
     FileUtil::IOFile file(full_path, mode.write_flag ? "r+b" : "rb");
     if (!file.IsOpen()) {
-        LOG_CRITICAL(Service_FS, "(unreachable) Unknown error opening {}", full_path);
-        return ERROR_NOT_FOUND;
+        const int host_error = file.GetOpenError();
+        LOG_ERROR(Service_FS, "Could not open file {} (host errno={})", full_path, host_error);
+        return HostCreateOpenError(host_error, ERROR_NOT_FOUND);
     }
 
     std::unique_ptr<DelayGenerator> delay_generator = std::make_unique<SDMCDelayGenerator>();
@@ -254,21 +262,26 @@ ResultCode SDMCArchive::CreateFile(const FileSys::Path& path, u64 size) const {
         break; // Expected 'success' case
     }
 
+    // A failed host open (permission, storage, missing parent, etc.) must not
+    // call through a null handler or report success for an empty guest file.
+    FileUtil::IOFile file(full_path, "wb");
+    if (!file.IsOpen()) {
+        const int host_error = file.GetOpenError();
+        LOG_ERROR(Service_FS, "SDMCArchive could not create file {} (host errno={})",
+                  full_path, host_error);
+        return HostCreateOpenError(host_error, ERROR_NOT_FOUND);
+    }
     if (size == 0) {
-        FileUtil::CreateEmptyFile(full_path);
         return RESULT_SUCCESS;
     }
-
-    FileUtil::IOFile file(full_path, "wb");
-    // Creates a sparse file (or a normal file on filesystems without the concept of sparse files)
-    // We do this by seeking to the right size, then writing a single null byte.
+    errno = 0;
     if (file.Resize(size)) {
         return RESULT_SUCCESS;
     }
-
-    LOG_ERROR(Service_FS, "SDMCArchive Too large file: {:x}", size);
-    return ResultCode(ErrorDescription::TooLarge, ErrorModule::FS, ErrorSummary::OutOfResource,
-                      ErrorLevel::Info);
+    const int host_error = errno;
+    LOG_ERROR(Service_FS, "SDMCArchive could not resize file to {:x} (host errno={})",
+              size, host_error);
+    return HostCreateResizeError(host_error);
 }
 
 ResultCode SDMCArchive::CreateDirectory(const Path& path) const {

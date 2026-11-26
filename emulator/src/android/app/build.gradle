@@ -4,6 +4,22 @@ apply plugin: 'com.android.application'
 def caraPreview = (project.findProperty('caraPreview') ?: 'false').toBoolean()
 def caraCpuJit = (project.findProperty('caraCpuJit') ?: 'true').toBoolean()
 
+// Shipping versionCode derives from first-parent history. A shallow checkout
+// can silently produce a lower value that existing users cannot install.
+gradle.taskGraph.whenReady { graph ->
+    def packagesRelease = graph.allTasks.any { task ->
+        task.project == project && task.name in ['packageRelease', 'bundleRelease', 'assembleRelease']
+    }
+    if (packagesRelease) {
+        def history = ['git', 'rev-parse', '--is-shallow-repository'].execute([], project.rootDir)
+        def shallow = history.text.trim()
+        if (history.waitFor() != 0 || shallow != 'false' || android.defaultConfig.versionCode <= 0) {
+            throw new GradleException('Cara release packaging requires complete Git history for an update-safe Android versionCode. Fetch full history before building.')
+        }
+    }
+}
+
+
 android {
     compileSdkVersion 35
     buildFeatures { buildConfig true }
