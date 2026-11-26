@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Cara is a new, open-source Nintendo 3DS emulator and portable core for iPhone, iPad, Mac, and Android.">
+  <meta name="description" content="Cara is a new, open-source Nintendo 3DS emulator and portable core for Android, iOS, macOS, and Linux.">
   <link rel="icon" type="image/png" href="assets/cara-citrus.png">
   <title>Cara | Nintendo 3DS emulator</title>
   <style>
@@ -344,7 +344,7 @@
       <section class="hero" aria-labelledby="intro">
         <div class="hero-copy">
           <h1 id="intro">Nintendo&nbsp;3DS emulator</h1>
-          <p class="intro">Cara is a new, open-source Nintendo 3DS emulator and portable core for iPhone, iPad, Mac, and Android.</p>
+          <p class="intro">Cara is a new, open-source Nintendo 3DS emulator and portable core for Android, iOS, macOS, and Linux.</p>
           <ul class="actions">
             <li><a class="release-link" href="#get-cara">Downloads</a></li>
             <li><a class="source-link" href="https://github.com/dmikey/cara">View source</a></li>
@@ -411,19 +411,19 @@
 
       <section class="project" id="project" aria-labelledby="project-heading">
         <h2 id="project-heading">What we built</h2>
-        <p class="project-lead">Cara started as a portable Nintendo 3DS core that other apps could use. Today, the same core powers a standalone emulator with its own graphics pipeline and controls.</p>
+        <p class="project-lead">One portable core powers Cara’s standalone apps. We work on rendering accuracy, shader reuse, and CPU efficiency together, then test changes on real phones, handhelds, and computers.</p>
         <div class="project-features">
           <div>
-            <h3>Play on iPhone and iPad without JIT</h3>
-            <p>FastInterp runs 3DS game code using precompiled instructions in the app. You can launch a game without a separate JIT setup.</p>
+            <h3>Rendering accuracy</h3>
+            <p>Lighting, fog, transparency, and both screens matter. We compare rendered output and game behavior while improving the graphics pipeline.</p>
           </div>
           <div>
-            <h3>More rendering stays on the GPU</h3>
-            <p>Cara processes 3DS vertices on the GPU and reuses textures and shaders so the emulator can spend less time moving and rebuilding graphics data.</p>
+            <h3>Rendering tuned for real hardware</h3>
+            <p>OpenGL and OpenGL ES reuse textures, shaders, and graphics state to reduce repeated work. Adreno, Mali, and Apple GPU tuning is tested separately.</p>
           </div>
           <div>
-            <h3>Make the controls your own</h3>
-            <p>On iPhone and iPad, play with touch or a controller, pick a skin, and use save states to pick up where you left off.</p>
+            <h3>FastInterp and optional JIT</h3>
+            <p>FastInterp runs games without JIT. Optional JIT is available on Mac and supported Android builds. Both use the same graphics core.</p>
           </div>
         </div>
         <p>Cara builds on Citra and Citra MMJ and adapts Azahar’s FastInterp. The core and app are open source under GPL-2.0-or-later.</p>
@@ -435,7 +435,7 @@
           <li><a href="https://github.com/dmikey/cara/blob/main/NOTICE">Credits</a></li>
           <li><a href="https://github.com/dmikey/cara/blob/main/LICENSE">License</a></li>
         </ul>
-        <p class="hardware-note">Android compatibility varies by device. <a href="https://github.com/dmikey/cara/blob/main/docs/rg-slide-rendering.md">Android hardware notes</a></p>
+        <p class="hardware-note">Linux remains a development target. Compatibility and features vary by platform, and shader compilation can still cause pauses. <a href="https://github.com/dmikey/cara/blob/main/docs/rg-slide-rendering.md">Android hardware notes</a></p>
         <p class="credit">Made with Codex and heavily engineered by AI.<br>Human Guided Discovery.</p>
       </section>
 
