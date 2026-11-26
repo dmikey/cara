@@ -23,6 +23,7 @@ import android.view.Surface;
 import android.view.View;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AlertDialog;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -68,6 +69,10 @@ public final class EmulationActivity extends AppCompatActivity {
             updateBackgroundImage();
         }
     }
+
+    private boolean mGameDataReady;
+
+    boolean gameDataReady() { return mGameDataReady; }
 
     private String mGameId;
     private String mGameName;
@@ -117,6 +122,18 @@ public final class EmulationActivity extends AppCompatActivity {
             CaraDirectory.start(this);
         }
 
+        String dataError = CaraDirectory.validateWritableGameData();
+        if (dataError != null) {
+            new AlertDialog.Builder(this)
+                    .setTitle(R.string.cara_data_unavailable)
+                    .setMessage(dataError)
+                    .setCancelable(false)
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> finish())
+                    .show();
+            return;
+        }
+
+        mGameDataReady = true;
         if (mGameId == null || mGameId.isEmpty()) {
             mGameId = NativeLibrary.GetAppId(mGamePath);
             mGameName = NativeLibrary.GetAppTitle(mGamePath);
@@ -147,6 +164,7 @@ public final class EmulationActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
+        if (!mGameDataReady) { finish(); return; }
         if (mMenuVisible) {
             mEmulationFragment.stopEmulation();
             finish();
@@ -211,6 +229,7 @@ public final class EmulationActivity extends AppCompatActivity {
     // Gets button presses
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (!mGameDataReady) return super.dispatchKeyEvent(event);
         if (mMenuVisible) {
             return super.dispatchKeyEvent(event);
         }
@@ -237,6 +256,7 @@ public final class EmulationActivity extends AppCompatActivity {
 
     @Override
     public boolean dispatchGenericMotionEvent(MotionEvent event) {
+        if (!mGameDataReady) return super.dispatchGenericMotionEvent(event);
         if (mMenuVisible) {
             return false;
         }

@@ -214,6 +214,32 @@ public final class CaraDirectory {
         }
     }
 
+    /** Exercise actual app-UID writes before native emulation starts. Never
+     * changes permissions or removes existing user files. */
+    public static String validateWritableGameData() {
+        if (mUserPath == null) return "Cara's data folder is unavailable.";
+        for (String name : new String[]{"", "config", "nand", "sdmc", "states", "cache"}) {
+            File directory = new File(mUserPath, name);
+            File probe = null;
+            try {
+                if (!directory.isDirectory() && !directory.mkdirs() && !directory.isDirectory())
+                    throw new IOException("Cannot create folder");
+                probe = File.createTempFile(".cara-write-check-", ".tmp", directory);
+                try (FileOutputStream output = new FileOutputStream(probe)) {
+                    output.write(0);
+                    output.getFD().sync();
+                }
+            } catch (IOException | SecurityException error) {
+                return "Cara cannot write to this data folder:\n" + directory.getAbsolutePath()
+                        + "\n\nCheck that storage is connected, has free space, and that Cara can access this folder. Your existing files have not been deleted.";
+            } finally {
+                if (probe != null && probe.exists() && !probe.delete())
+                    Log.w("cara", "Could not remove data-folder write probe: " + probe.getName());
+            }
+        }
+        return null;
+    }
+
     public static String getUserDirectory() {
         return mUserPath;
     }

@@ -408,6 +408,8 @@ public final class EmulationFragment extends Fragment implements SurfaceHolder.C
     }
 
     private void runWithValidSurface() {
+        if (!(getActivity() instanceof EmulationActivity)
+                || !((EmulationActivity) getActivity()).gameDataReady()) return;
         mRunWhenSurfaceIsValid = false;
         if (mState == EmulationState.STOPPED) {
             NativeLibrary.SurfaceChanged(mSurface);

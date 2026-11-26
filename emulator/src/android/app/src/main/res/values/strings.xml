@@ -323,4 +323,5 @@
     <string name="setting_guest_clock_percent">Guest CPU clock</string>
     <string name="external_display_title">External display</string>
     <string name="external_display_description">Put one 3DS screen on a connected display. The handheld keeps the other screen and controls. Disconnect to return both screens to the handheld.</string>
+    <string name="cara_data_unavailable">Cara cannot access game data</string>
 </resources>
