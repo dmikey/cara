@@ -1,0 +1,69 @@
+{
+  "parent": "cde0aa06fd1081290f43551820ace838fd1960af",
+  "files": {
+    "emulator/src/common/cpu_category_tracker.h": {
+      "before": "cd4342f328d5e21caa34e205d2bdd1d24fa694ac236acc5214b1132d74a8fe13",
+      "after": "74110547d63947ca2628f7f357279740d84511739e64e4c458e1ef4d10306a02"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_native_bindings.mm": {
+      "before": "296833e5c1ac10a6e915995fd61d5720162a743790909c3decd5f2345958db26",
+      "after": "b0b2a65f1c379273163ff1d0371ce1f620248d7b23b4e418d50da0458bb5227b"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm": {
+      "before": "5bd74214debe3845e79bad0f3e4f4a7885f5fd39c8f3d16efb9eab1e91fbc5e8",
+      "after": "b92acb438e4132c8fcd42a62b18b8cdac69cc2834a19a2b39b417af6324670bc"
+    }
+  },
+  "extra_categories": [
+    [
+      "MetalBindFS",
+      "metal_bind_fragment_source"
+    ],
+    [
+      "MetalBindVS",
+      "metal_bind_vertex_source"
+    ],
+    [
+      "MetalBindVertex",
+      "metal_bind_vertex_capture"
+    ],
+    [
+      "MetalBindSelect",
+      "metal_bind_pipeline_select"
+    ],
+    [
+      "MetalBindSurface",
+      "metal_bind_surface_lut"
+    ],
+    [
+      "MetalBindTexture",
+      "metal_bind_texture_decode"
+    ],
+    [
+      "MetalBindUniform",
+      "metal_bind_uniforms"
+    ],
+    [
+      "MetalFill",
+      "metal_fill"
+    ],
+    [
+      "MetalCopy",
+      "metal_copy"
+    ],
+    [
+      "MetalDisplay",
+      "metal_display_transfer"
+    ],
+    [
+      "MetalResolve",
+      "metal_resolve_bytes"
+    ],
+    [
+      "MetalPublishBytes",
+      "metal_publish_bytes"
+    ]
+  ],
+  "status": "SOURCE_ONLY_NOT_COMPILED_NOT_RUN",
+  "scope": "Exclusive host owner CPU category split only. No scheduling, GPU work, clocks for guest timing, or renderer policy changes. Must run separately from quiet timing."
+}

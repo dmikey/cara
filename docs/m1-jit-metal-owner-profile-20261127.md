@@ -105,3 +105,34 @@ This proves selected correctness on this replay, not a performance win, full VRA
 Local full receipts: `/private/tmp/cara-m1-metal-20261127/scan-status-build-1/RESULT.json`, `scan-status-correctness-1/RESULT.json`, and `HOST-ADMISSION.json`. The scored runner `outputs/cara-m1-jit-metal-current-20261125/scan_status_quartet_20261127.py` now applies the added background-service gate before and throughout every owned replay. It must use a fresh output directory; do not overwrite these closed correctness receipts. Its thresholds are an admission policy for this investigation, not a hardware claim about CPU frequency, GPU utilization or player performance.
 
 Exact private native source is preserved on [`archive/m1-metal-profile-20261127`](https://github.com/dmikey/cara/tree/archive/m1-metal-profile-20261127) at `cde0aa06fd1081290f43551820ace838fd1960af`. It contains generic observation overlays and rejected default-off experiments, not a release or a replacement for main. No ROM bytes, guest saves or captured game images are included.
+
+## Follow-up quiet admission: still blocked
+
+The requested follow-up first revalidated the physical M1, all three installed
+Cara manifests/gameplay locks, no foreign renderer/compiler, and unchanged
+private source/binaries. Two separate read-only waits observed the host for
+182.13 and 303.91 seconds (about eight minutes total). Neither obtained three
+consecutive quiet samples. The second wait kept observations in memory rather
+than rewriting its receipt during polling. Its final background-service sample
+was 188.7% CPU. The load was concentrated in `apfsd`; ordinary cloud sync had
+mostly quieted. A momentary low sample is not sustained admission.
+
+No scored native run or component-fixture rerun started, and no user/system
+service was stopped. Read-only stack inspection of the root-owned filesystem
+service requires administrator access, which was unavailable; its cause is not
+established. Do not reinterpret steady heavy background load as a quiet host or
+claim a renderer win from the earlier noisy trials.
+
+[Admission summary](evidence/m1-metal-quiet-admission-20261127.json).
+The fresh scored sequence is now OpenGL / Metal OFF / Metal ON / Metal ON /
+Metal OFF / OpenGL. Repeated OpenGL images/state/work/files must match exactly;
+Metal arms retain their strict same-renderer checks. The prepared local runner
+is `outputs/cara-m1-jit-metal-current-20261125/matched_scan_status_20261127.py`.
+It remains unexecuted and uses a fresh artifact directory outside Documents.
+
+[Finer CPU observer source](experiments/m1-metal-fine-cpu-20261127/README.md)
+is staged separately to resolve binding and transfer subcategories once a valid
+baseline is available. It has not been compiled, applied to the runtime source,
+or executed. No additional optimization was enabled without a quiet measured
+benefit. The validated scan-status candidate remains default OFF, and public
+OpenGL/GLES defaults remain unchanged.

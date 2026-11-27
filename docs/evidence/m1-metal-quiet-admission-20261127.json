@@ -1,0 +1,33 @@
+{
+  "scope": "Read-only proper-host M1 admission; CPU percentages are ps rolling samples, not hardware active-cycle counters. No scored emulator run began.",
+  "waits": [
+    {
+      "receipt": "quiet-wait-next-1.json",
+      "passed": false,
+      "elapsed_seconds": 182.13,
+      "checks": 18,
+      "minimum_cpu_percent": 1.2,
+      "maximum_cpu_percent": 188.0,
+      "last_cpu_percent": 175.1,
+      "checks_above_threshold": 17,
+      "required_consecutive_quiet_checks": 3,
+      "threshold_percent_of_one_logical_cpu": 50,
+      "native_started": false
+    },
+    {
+      "receipt": "quiet-wait-next-2.json",
+      "passed": false,
+      "elapsed_seconds": 303.91,
+      "checks": 30,
+      "minimum_cpu_percent": 92.4,
+      "maximum_cpu_percent": 283.1,
+      "last_cpu_percent": 188.7,
+      "checks_above_threshold": 30,
+      "required_consecutive_quiet_checks": 3,
+      "threshold_percent_of_one_logical_cpu": 50,
+      "native_started": false
+    }
+  ],
+  "total_wait_seconds": 486.04,
+  "runtime_source_unchanged": "cde0aa06fd1081290f43551820ace838fd1960af"
+}

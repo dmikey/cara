@@ -1,0 +1,102 @@
+--- a/emulator/src/common/cpu_category_tracker.h
++++ b/emulator/src/common/cpu_category_tracker.h
+@@ -12,12 +12,19 @@
+ // work from their parents; GPUCommand includes host renderer calls it invokes.
+ enum class Category : std::size_t {
+     Others, CPUExecution, HLE, GPUCommand, DSPHLETick, MetalBind, MetalRecord,
+-    MetalEncode, MetalTransfer, MetalPublish, MetalPresent, Count, Inactive = Count
++    MetalEncode, MetalTransfer, MetalPublish, MetalPresent,
++    MetalBindFS, MetalBindVS, MetalBindVertex, MetalBindSelect,
++    MetalBindSurface, MetalBindTexture, MetalBindUniform, MetalFill,
++    MetalCopy, MetalDisplay, MetalResolve, MetalPublishBytes, Count, Inactive = Count
+ };
+ inline constexpr std::size_t CategoryCount = static_cast<std::size_t>(Category::Count);
+ inline constexpr std::array<const char*, CategoryCount> Names = {
+     "others", "cpu_execution_including_memory", "hle_svc", "gpu_command", "dsp_hle_tick",
+-    "metal_bind", "metal_record", "metal_encode", "metal_transfer", "metal_publish", "metal_present"};
++    "metal_bind", "metal_record", "metal_encode", "metal_transfer", "metal_publish", "metal_present",
++    "metal_bind_fragment_source", "metal_bind_vertex_source", "metal_bind_vertex_capture",
++    "metal_bind_pipeline_select", "metal_bind_surface_lut", "metal_bind_texture_decode",
++    "metal_bind_uniforms", "metal_fill", "metal_copy",
++    "metal_display_transfer", "metal_resolve_bytes", "metal_publish_bytes"};
+ 
+ struct Counters {
+     std::array<std::uint64_t, CategoryCount> cpu_ns{};
+--- a/emulator/src/video_core/renderer_metal/pica_metal_native_bindings.mm
++++ b/emulator/src/video_core/renderer_metal/pica_metal_native_bindings.mm
+@@ -84,8 +84,22 @@
+     HostClock::time_point start;
+ };
+ 
++constexpr Common::CPUCategoryTiming::Category BindingCategory(std::size_t phase) {
++    using C = Common::CPUCategoryTiming::Category;
++    switch (phase) {
++    case 1: return C::MetalBindFS;
++    case 2: return C::MetalBindVS;
++    case 3: return C::MetalBindVertex;
++    case 4: return C::MetalBindSelect;
++    case 5: return C::MetalBindSurface;
++    case 6: return C::MetalBindTexture;
++    case 7: return C::MetalBindUniform;
++    default: return C::MetalBind;
++    }
++}
+ template<typename Work>
+ auto Measure(std::size_t phase, Work&& work) {
++    Common::CPUCategoryTiming::Scope cpu_category(BindingCategory(phase));
+     ScopedNativeHostPhase timer(phase);
+     return work();
+ }
+--- a/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm
++++ b/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm
+@@ -523,6 +523,7 @@
+ 
+ void PicaMetalNativeDrawLane::PublishBytes(id<MTLCommandBuffer> command, id<MTLBuffer> buffer,
+                                           const MetalTransfer::Rows& rows) {
++    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalPublishBytes);
+     NativeMetalCost::Scope cost(NativeMetalCost::PublishBytesHost);
+     if (NativeMetalCost::OverlapTransfers()) {
+         NativeMetalCost::Scope reserve(NativeMetalCost::LateTransferReserve);
+@@ -613,6 +614,7 @@
+     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
+     const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
+     const bool display_transfer = use == ByteUse::DisplayTransfer;
++    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalResolve);
+     NativeMetalCost::Scope cost(NativeMetalCost::ResolveBytesHost);
+     const auto bytes = rows.footprint;
+     if (!command || command.commandQueue != queue || !command.retainedReferences ||
+@@ -908,7 +910,7 @@
+ #if defined(CARA_PRIVATE_METAL_TRANSFERS)
+ void PicaMetalNativeDrawLane::Fill(MetalTransfer::FillRegisters registers,
+                                   const MetalTransfer::Pipelines& pipelines) {
+-    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
++    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalFill);
+     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
+     NativeMetalCost::Scope kind(NativeMetalCost::FillHost);
+     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Fill);
+@@ -1014,7 +1016,7 @@
+ void PicaMetalNativeDrawLane::CopyTexture(
+     MetalTransfer::TextureCopyRegisters registers, const MetalTransfer::Pipelines& pipelines,
+     const MetalGuestAuthority::GuestReader& ram) {
+-    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
++    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalCopy);
+     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
+     NativeMetalCost::Scope kind(NativeMetalCost::TextureCopyHost);
+     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Copy);
+@@ -1106,7 +1108,7 @@
+ void PicaMetalNativeDrawLane::TransferDisplay(
+     MetalTransfer::DisplayTransferRegisters registers, const MetalTransfer::Pipelines& pipelines,
+     const PicaMetalTextureDecoder& decoder, const MetalGuestAuthority::GuestReader& ram) {
+-    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
++    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalDisplay);
+     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
+     NativeMetalCost::Scope kind(NativeMetalCost::DisplayHost);
+     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Display);
+@@ -2234,6 +2236,7 @@
+             submissions.Fail("Native Metal draw group and texture copy batch both pending");
+         NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Copy);
+         NativeMetalCost::Scope publish(NativeMetalCost::CopyPublish);
++        Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalPublishBytes);
+         NativeMetalCost::Scope cost(NativeMetalCost::PublishBytesHost);
+         {
+             NativeMetalCost::Scope reserve(NativeMetalCost::LateTransferReserve);
