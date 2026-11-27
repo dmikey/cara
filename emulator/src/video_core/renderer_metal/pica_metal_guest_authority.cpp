@@ -2,6 +2,8 @@
 #include "video_core/renderer_metal/pica_metal_guest_authority.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <string_view>
 #include <iterator>
@@ -123,6 +125,16 @@ std::vector<MetalGuestWrite> MetalGuestAuthority::NativeSegments(PAddr begin, PA
     if (begin == end)
         return result;
 
+    static const bool reuse_scan_status = [] {
+        const auto* value = std::getenv("CARA_METAL_REUSE_SCAN_STATUS");
+        return value && std::string_view(value) == "1";
+    }();
+    // Only this immutable lane-local map snapshot may reuse observations.
+    // Covers still validates every clipped interval. Recheck both remembered
+    // producers before returning, including those that were Pending initially:
+    // a failed command must never be hidden by a cached Pending observation.
+    std::array<const MetalGuestWriter*, 2> checked{};
+    std::size_t checked_count = 0;
     auto it = regions.lower_bound(begin);
     if (it != regions.begin() && std::prev(it)->second.end > begin)
         --it;
@@ -130,9 +142,28 @@ std::vector<MetalGuestWrite> MetalGuestAuthority::NativeSegments(PAddr begin, PA
         const auto first = std::max(begin, it->first);
         const auto last = std::min(end, it->second.end);
         const auto& writer = it->second.writer;
-        if (!writer->Covers(first, last) || writer->Status() == MetalGuestWriteStatus::Failed)
+        const bool known = reuse_scan_status &&
+            ((checked_count > 0 && checked[0] == writer.get()) ||
+             (checked_count > 1 && checked[1] == writer.get()));
+        if (!writer->Covers(first, last) ||
+            (!known && writer->Status() == MetalGuestWriteStatus::Failed))
             throw std::runtime_error("Guest read depends on an invalid Metal write");
+        if (reuse_scan_status && !known && checked_count < checked.size())
+            checked[checked_count++] = writer.get();
+        if (known) {
+            static thread_local bool reported = false;
+            if (!reported) {
+                const auto* diagnostics = std::getenv("CARA_NATIVE_DIAGNOSTICS");
+                if (diagnostics && std::string_view(diagnostics) == "1")
+                    std::fputs("CARA_METAL_SCAN_STATUS_REUSE active=1\n", stderr);
+                reported = true;
+            }
+        }
         result.push_back({first, last, writer});
+    }
+    for (std::size_t i = 0; i < checked_count; ++i) {
+        if (checked[i]->Status() == MetalGuestWriteStatus::Failed)
+            throw std::runtime_error("Guest read depends on an invalid Metal write");
     }
     return result;
 }
