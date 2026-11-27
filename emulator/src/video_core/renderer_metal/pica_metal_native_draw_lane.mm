@@ -1360,13 +1360,34 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                         {segments[0].begin - left->RawGuestBegin(),
                          segments[1].begin - right->RawGuestBegin()}};
                     const std::array writers{left, right};
+                    static const bool reuse_owner_proof = [] {
+                        const auto* value = std::getenv("CARA_METAL_REUSE_RETILE_OWNER_PROOF");
+                        return value && std::string_view(value) == "1";
+                    }();
+                    // The snapshot retains both immutable writer objects and raw buffers.
+                    // Validate their device/queue/tracking once, then check every span's
+                    // exact producer identity, offsets and bounds without repeating Metal
+                    // property queries for each row. Completion is checked again below;
+                    // queued consumers retain the original predecessor/validation checks.
+                    const std::array raw_begin{left->RawGuestBegin(), right->RawGuestBegin()};
+                    const std::array raw_size{left->RawGuestBuffer().length, right->RawGuestBuffer().length};
                     bool valid = layout.Valid();
                     for (std::size_t i = 2; valid && i < segments.size(); ++i) {
                         const auto& span = segments[i];
-                        const auto* writer = raw(span);
-                        valid = writer == writers[i % 2] &&
-                            layout.Matches(i, span.begin, span.end, span.begin - writer->RawGuestBegin());
+                        const auto slot = i % 2;
+                        if (reuse_owner_proof) {
+                            valid = span.writer.get() == writers[slot] &&
+                                span.begin >= raw_begin[slot] &&
+                                span.end - raw_begin[slot] <= raw_size[slot] &&
+                                layout.Matches(i, span.begin, span.end, span.begin - raw_begin[slot]);
+                        } else {
+                            const auto* writer = raw(span);
+                            valid = writer == writers[slot] &&
+                                layout.Matches(i, span.begin, span.end, span.begin - writer->RawGuestBegin());
+                        }
                     }
+                    if (valid && reuse_owner_proof)
+                        valid = raw(segments[0]) == left && raw(segments[1]) == right;
                     // Validate the first pair's positions as well as its ownership.
                     if (valid && layout.Matches(0, segments[0].begin, segments[0].end, layout.source_offsets[0]) &&
                         layout.Matches(1, segments[1].begin, segments[1].end, layout.source_offsets[1])) {
@@ -1404,6 +1425,13 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                                 if (++transfers == 1 || transfers % 256 == 0)
                                     LOG_INFO(Render_OpenGL, "CARA_REGULAR_STAGING runs={} rows={} bytes={}",
                                              transfers, spans, bytes);
+                            }
+                            if (reuse_owner_proof) {
+                                static thread_local bool reported = false;
+                                if (!reported) {
+                                    LOG_INFO(Render_OpenGL, "Metal reused two raw retile owner proofs spans={}", segments.size());
+                                    reported = true;
+                                }
                             }
                             PublishBytes(command, output, DenseRows(*dst));
                             return;
