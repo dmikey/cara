@@ -84,8 +84,22 @@ private:
     HostClock::time_point start;
 };
 
+constexpr Common::CPUCategoryTiming::Category BindingCategory(std::size_t phase) {
+    using C = Common::CPUCategoryTiming::Category;
+    switch (phase) {
+    case 1: return C::MetalBindFS;
+    case 2: return C::MetalBindVS;
+    case 3: return C::MetalBindVertex;
+    case 4: return C::MetalBindSelect;
+    case 5: return C::MetalBindSurface;
+    case 6: return C::MetalBindTexture;
+    case 7: return C::MetalBindUniform;
+    default: return C::MetalBind;
+    }
+}
 template<typename Work>
 auto Measure(std::size_t phase, Work&& work) {
+    Common::CPUCategoryTiming::Scope cpu_category(BindingCategory(phase));
     ScopedNativeHostPhase timer(phase);
     return work();
 }

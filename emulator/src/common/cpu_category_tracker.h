@@ -12,12 +12,19 @@ namespace Common::CPUCategoryTiming {
 // work from their parents; GPUCommand includes host renderer calls it invokes.
 enum class Category : std::size_t {
     Others, CPUExecution, HLE, GPUCommand, DSPHLETick, MetalBind, MetalRecord,
-    MetalEncode, MetalTransfer, MetalPublish, MetalPresent, Count, Inactive = Count
+    MetalEncode, MetalTransfer, MetalPublish, MetalPresent,
+    MetalBindFS, MetalBindVS, MetalBindVertex, MetalBindSelect,
+    MetalBindSurface, MetalBindTexture, MetalBindUniform, MetalFill,
+    MetalCopy, MetalDisplay, MetalResolve, MetalPublishBytes, Count, Inactive = Count
 };
 inline constexpr std::size_t CategoryCount = static_cast<std::size_t>(Category::Count);
 inline constexpr std::array<const char*, CategoryCount> Names = {
     "others", "cpu_execution_including_memory", "hle_svc", "gpu_command", "dsp_hle_tick",
-    "metal_bind", "metal_record", "metal_encode", "metal_transfer", "metal_publish", "metal_present"};
+    "metal_bind", "metal_record", "metal_encode", "metal_transfer", "metal_publish", "metal_present",
+    "metal_bind_fragment_source", "metal_bind_vertex_source", "metal_bind_vertex_capture",
+    "metal_bind_pipeline_select", "metal_bind_surface_lut", "metal_bind_texture_decode",
+    "metal_bind_uniforms", "metal_fill", "metal_copy",
+    "metal_display_transfer", "metal_resolve_bytes", "metal_publish_bytes"};
 
 struct Counters {
     std::array<std::uint64_t, CategoryCount> cpu_ns{};

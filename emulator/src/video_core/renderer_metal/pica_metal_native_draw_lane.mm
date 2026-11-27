@@ -523,6 +523,7 @@ void PicaMetalNativeDrawLane::SubmitSampledTextureBuild(id<MTLCommandBuffer> com
 
 void PicaMetalNativeDrawLane::PublishBytes(id<MTLCommandBuffer> command, id<MTLBuffer> buffer,
                                           const MetalTransfer::Rows& rows) {
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalPublishBytes);
     NativeMetalCost::Scope cost(NativeMetalCost::PublishBytesHost);
     if (NativeMetalCost::OverlapTransfers()) {
         NativeMetalCost::Scope reserve(NativeMetalCost::LateTransferReserve);
@@ -613,6 +614,7 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
     const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
     const bool display_transfer = use == ByteUse::DisplayTransfer;
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalResolve);
     NativeMetalCost::Scope cost(NativeMetalCost::ResolveBytesHost);
     const auto bytes = rows.footprint;
     if (!command || command.commandQueue != queue || !command.retainedReferences ||
@@ -908,7 +910,7 @@ id<MTLTexture> PicaMetalNativeDrawLane::ResolveRgba8(const MetalRgba8Layout& lay
 #if defined(CARA_PRIVATE_METAL_TRANSFERS)
 void PicaMetalNativeDrawLane::Fill(MetalTransfer::FillRegisters registers,
                                   const MetalTransfer::Pipelines& pipelines) {
-    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalFill);
     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
     NativeMetalCost::Scope kind(NativeMetalCost::FillHost);
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Fill);
@@ -1014,7 +1016,7 @@ void PicaMetalNativeDrawLane::Fill(MetalTransfer::FillRegisters registers,
 void PicaMetalNativeDrawLane::CopyTexture(
     MetalTransfer::TextureCopyRegisters registers, const MetalTransfer::Pipelines& pipelines,
     const MetalGuestAuthority::GuestReader& ram) {
-    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalCopy);
     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
     NativeMetalCost::Scope kind(NativeMetalCost::TextureCopyHost);
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Copy);
@@ -1106,7 +1108,7 @@ void PicaMetalNativeDrawLane::CopyTexture(
 void PicaMetalNativeDrawLane::TransferDisplay(
     MetalTransfer::DisplayTransferRegisters registers, const MetalTransfer::Pipelines& pipelines,
     const PicaMetalTextureDecoder& decoder, const MetalGuestAuthority::GuestReader& ram) {
-    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalTransfer);
+    Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalDisplay);
     NativeMetalCost::Scope cost(NativeMetalCost::Transfer);
     NativeMetalCost::Scope kind(NativeMetalCost::DisplayHost);
     NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Display);
@@ -2234,6 +2236,7 @@ void PicaMetalNativeDrawLane::PublishPending() {
             submissions.Fail("Native Metal draw group and texture copy batch both pending");
         NativeMetalCost::ScopeQueueWork work(NativeMetalCost::QueueWork::Copy);
         NativeMetalCost::Scope publish(NativeMetalCost::CopyPublish);
+        Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalPublishBytes);
         NativeMetalCost::Scope cost(NativeMetalCost::PublishBytesHost);
         {
             NativeMetalCost::Scope reserve(NativeMetalCost::LateTransferReserve);
