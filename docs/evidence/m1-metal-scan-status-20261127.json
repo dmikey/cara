@@ -1,0 +1,324 @@
+{
+  "source_revision": "cde0aa06fd1081290f43551820ace838fd1960af",
+  "binary_sha256": "d54cb6658e23bbffa36b3426976b26dba3f98e3784b976b7f7ef0940309660d0",
+  "architecture": "arm64",
+  "cpu_jit_enabled": true,
+  "synthetic_cpu_contract": {
+    "off": "PASS 8 cases",
+    "on": "PASS 8 cases",
+    "source_sha256": "dc2292f63b8ff181f1db61d78e322b3e48ac758c63c62c3368d5864439c691fd"
+  },
+  "native_correctness_passed": true,
+  "performance_claim": false,
+  "scored_run_not_started_reason": "Background filesystem/cloud host admission failed; timings retained only as unscored diagnostic data.",
+  "cases": {
+    "off-1": {
+      "exit": 0,
+      "group_empty": true,
+      "cleanup": [],
+      "quiet_checks": 117,
+      "passed": true,
+      "panels": {
+        "800": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "d3438cdea6d4ffad09a615a4d6c11e1b007a4e4fea6a35998893c79fdbadf72c",
+          "top": "15f6b2fd0e2ab463e3bd9a810177d5b0a6248254c724645b0214472aac97d770",
+          "bottom": "1de2bbb370ffbf710189ff2e68ab701fc82b1e2bf0c6fd11090497ccf4cb642c",
+          "nonblack_top": 54760,
+          "nonblack_bottom": 76800
+        },
+        "1600": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "a7aaa6dcaad7942eef5fbcd0b621d17d1c37980703fa8d04c261ebd132ca19d3",
+          "top": "bfcf68222b537d136d545aad54b9a0257d207a4a96302ace6e8367c5eec6c557",
+          "bottom": "021bb5eb70049c3e3d47e5ab03750d387273a702cc5bcc8b3ca426a19634b83f",
+          "nonblack_top": 96000,
+          "nonblack_bottom": 76800
+        },
+        "2400": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "f1b5b6728a0aa438edfd1306f20dc24ef168c244163195224a0d01c7106c8d00",
+          "top": "cac9f01f62fd7ccf064e4e0ac0a760ff45fd569fb9557a418e34517c4e64e3b8",
+          "bottom": "021bb5eb70049c3e3d47e5ab03750d387273a702cc5bcc8b3ca426a19634b83f",
+          "nonblack_top": 90022,
+          "nonblack_bottom": 76800
+        },
+        "3000": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "4283784e2ce8372a0ddd9e080739a1f7ad63e108692ca5ce00e3a7c5a9401dac",
+          "top": "3299d2c3b66536aae9c2822eae76b8554a45becaaf4ff93d4b2fa21601ecfaf8",
+          "bottom": "021bb5eb70049c3e3d47e5ab03750d387273a702cc5bcc8b3ca426a19634b83f",
+          "nonblack_top": 94396,
+          "nonblack_bottom": 76800
+        }
+      },
+      "work": {
+        "draw_requests": 278153,
+        "command_lists": 4782,
+        "display_transfers": 4782,
+        "texture_copies": 3985,
+        "fills": 6376,
+        "software_vertex_draws": 0,
+        "skipped_draws": 0
+      },
+      "scan_status_reuse_activated": false
+    },
+    "on-1": {
+      "exit": 0,
+      "group_empty": true,
+      "cleanup": [],
+      "quiet_checks": 104,
+      "passed": true,
+      "panels": {
+        "800": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "d3438cdea6d4ffad09a615a4d6c11e1b007a4e4fea6a35998893c79fdbadf72c",
+          "top": "15f6b2fd0e2ab463e3bd9a810177d5b0a6248254c724645b0214472aac97d770",
+          "bottom": "1de2bbb370ffbf710189ff2e68ab701fc82b1e2bf0c6fd11090497ccf4cb642c",
+          "nonblack_top": 54760,
+          "nonblack_bottom": 76800
+        },
+        "1600": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "a7aaa6dcaad7942eef5fbcd0b621d17d1c37980703fa8d04c261ebd132ca19d3",
+          "top": "bfcf68222b537d136d545aad54b9a0257d207a4a96302ace6e8367c5eec6c557",
+          "bottom": "021bb5eb70049c3e3d47e5ab03750d387273a702cc5bcc8b3ca426a19634b83f",
+          "nonblack_top": 96000,
+          "nonblack_bottom": 76800
+        },
+        "2400": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "f1b5b6728a0aa438edfd1306f20dc24ef168c244163195224a0d01c7106c8d00",
+          "top": "cac9f01f62fd7ccf064e4e0ac0a760ff45fd569fb9557a418e34517c4e64e3b8",
+          "bottom": "021bb5eb70049c3e3d47e5ab03750d387273a702cc5bcc8b3ca426a19634b83f",
+          "nonblack_top": 90022,
+          "nonblack_bottom": 76800
+        },
+        "3000": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "4283784e2ce8372a0ddd9e080739a1f7ad63e108692ca5ce00e3a7c5a9401dac",
+          "top": "3299d2c3b66536aae9c2822eae76b8554a45becaaf4ff93d4b2fa21601ecfaf8",
+          "bottom": "021bb5eb70049c3e3d47e5ab03750d387273a702cc5bcc8b3ca426a19634b83f",
+          "nonblack_top": 94396,
+          "nonblack_bottom": 76800
+        }
+      },
+      "work": {
+        "draw_requests": 278153,
+        "command_lists": 4782,
+        "display_transfers": 4782,
+        "texture_copies": 3985,
+        "fills": 6376,
+        "software_vertex_draws": 0,
+        "skipped_draws": 0
+      },
+      "scan_status_reuse_activated": true
+    },
+    "gl-final": {
+      "exit": 0,
+      "group_empty": true,
+      "cleanup": [],
+      "quiet_checks": 107,
+      "passed": true,
+      "panels": {
+        "800": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "875f4faf9d9757556f40b1d29fd08d38a46a7550aaddf4bc0456bd437fed1d5e",
+          "top": "e337871c4111a3ca58f5227484b78656e63a96cd28f8dd3c8cd056685a174e3f",
+          "bottom": "855ee97904702a2e78daa26e5af6e6181552cb72ec945a0dd1a21c4503d0bdff",
+          "nonblack_top": 76800,
+          "nonblack_bottom": 67200
+        },
+        "1600": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "6d57f8f5ce9386aca16e39239084f960606a9bd9138f2c2b6555a8330b1e7fc4",
+          "top": "416c913d56f2d996fda7fd6de193017a12372fcb356e3f123202bdb2502782e4",
+          "bottom": "03db45e3fc18a61595b0bb01991ec2e79dc7431ca2ed2886d98839949c1ab9d2",
+          "nonblack_top": 76800,
+          "nonblack_bottom": 67200
+        },
+        "2400": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "6d57f8f5ce9386aca16e39239084f960606a9bd9138f2c2b6555a8330b1e7fc4",
+          "top": "416c913d56f2d996fda7fd6de193017a12372fcb356e3f123202bdb2502782e4",
+          "bottom": "03db45e3fc18a61595b0bb01991ec2e79dc7431ca2ed2886d98839949c1ab9d2",
+          "nonblack_top": 76800,
+          "nonblack_bottom": 67200
+        },
+        "3000": {
+          "width": 400,
+          "height": 480,
+          "scale": 1,
+          "source_sha256": "6d57f8f5ce9386aca16e39239084f960606a9bd9138f2c2b6555a8330b1e7fc4",
+          "top": "416c913d56f2d996fda7fd6de193017a12372fcb356e3f123202bdb2502782e4",
+          "bottom": "03db45e3fc18a61595b0bb01991ec2e79dc7431ca2ed2886d98839949c1ab9d2",
+          "nonblack_top": 76800,
+          "nonblack_bottom": 67200
+        }
+      },
+      "work": {
+        "draw_requests": 278153,
+        "command_lists": 4782,
+        "display_transfers": 4782,
+        "texture_copies": 3985,
+        "fills": 6376,
+        "software_vertex_draws": 0,
+        "skipped_draws": 0
+      }
+    }
+  },
+  "comparisons": {
+    "on-1": {
+      "state_mismatch_refreshes": 0,
+      "first_state_mismatch": null,
+      "work_count_mismatches": 0,
+      "pixels": {
+        "800": {
+          "top": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          },
+          "bottom": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          }
+        },
+        "1600": {
+          "top": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          },
+          "bottom": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          }
+        },
+        "2400": {
+          "top": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          },
+          "bottom": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          }
+        },
+        "3000": {
+          "top": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          },
+          "bottom": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          }
+        }
+      },
+      "guest_sdmc_match": true,
+      "exact_both_lcds_and_work": true
+    },
+    "gl-final": {
+      "state_mismatch_refreshes": 0,
+      "first_state_mismatch": null,
+      "work_count_mismatches": 0,
+      "pixels": {
+        "800": {
+          "top": {
+            "exact": false,
+            "rgb_mae": 48.75598611111111,
+            "rgb_max_error": 255,
+            "different_channels": 237370
+          },
+          "bottom": {
+            "exact": false,
+            "rgb_mae": 14.304991319444444,
+            "rgb_max_error": 215,
+            "different_channels": 86530
+          }
+        },
+        "1600": {
+          "top": {
+            "exact": false,
+            "rgb_mae": 40.393711805555554,
+            "rgb_max_error": 215,
+            "different_channels": 285333
+          },
+          "bottom": {
+            "exact": false,
+            "rgb_mae": 6.458333333333333,
+            "rgb_max_error": 66,
+            "different_channels": 28800
+          }
+        },
+        "2400": {
+          "top": {
+            "exact": false,
+            "rgb_mae": 36.50160416666667,
+            "rgb_max_error": 255,
+            "different_channels": 280915
+          },
+          "bottom": {
+            "exact": false,
+            "rgb_mae": 6.458333333333333,
+            "rgb_max_error": 66,
+            "different_channels": 28800
+          }
+        },
+        "3000": {
+          "top": {
+            "exact": false,
+            "rgb_mae": 46.17257638888889,
+            "rgb_max_error": 255,
+            "different_channels": 285854
+          },
+          "bottom": {
+            "exact": false,
+            "rgb_mae": 6.458333333333333,
+            "rgb_max_error": 66,
+            "different_channels": 28800
+          }
+        }
+      },
+      "guest_sdmc_match": true,
+      "exact_both_lcds_and_work": false
+    }
+  }
+}
