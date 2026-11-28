@@ -94,6 +94,10 @@ Time Machine was not running; internal storage had 36 GiB available and Fast
 cause and must not be relabeled as proof of this external-disk maintenance.
 
 The bounded 121.8-second quiet admission failed without starting any benchmark.
+A separate final all-candidates-OFF OpenGL/Metal/Metal/OpenGL baseline also
+failed its first quiet admission, without starting a native process. Its exact
+source/binary-hash preflight is frozen in `BASELINE-JIT-SOURCE-READY.json`; it
+will need fresh sustained quiet before any replay.
 The background-service gate remains 50% of one logical CPU. It was not weakened
 to obtain a result. Existing upper-screen precision/edge differences between
 Metal and OpenGL remain unresolved; same-renderer selected parity cannot imply
@@ -113,7 +117,7 @@ witness and OFF did not. Combined vertex/fragment binding CPU changed only
 while process CPU changed 22.52944 to 22.48949 ms. Mean wall time was
 18.70132 versus 18.70755 ms. This single ordered pair under background load
 establishes no overall benefit or statistical regression. Keep it OFF.
-All three candidates remain private experiments; none is promoted into the
+All three candidates remain private-build experiments; none is promoted into the
 production renderer by this investigation.
 
 ## Remaining larger opportunity
