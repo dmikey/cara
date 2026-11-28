@@ -310,8 +310,9 @@ void ReportNativeMetalTextureResidency(const std::string& path) {
 PicaMetalNativeDrawLane::PicaMetalNativeDrawLane(id<MTLCommandQueue> owner_queue,
                                                NSUInteger upload_page_bytes,
                                                GuestWriteNotice notice, GuestRamView ram_view_,
-                                               id<MTLLibrary> scale_library, unsigned internal_scale)
-    : queue(owner_queue), write_notice(std::move(notice)), ram_view(std::move(ram_view_)),
+                                               id<MTLLibrary> scale_library, unsigned internal_scale,
+                                               id<MTLComputePipelineState> copy_rows)
+    : queue(owner_queue), shared_copy_rows(copy_rows), write_notice(std::move(notice)), ram_view(std::move(ram_view_)),
       submissions(queue, [this] { authority.RejectSubmittedWrites(); }),
       group(queue, upload_page_bytes, scale_library, internal_scale) {}
 
@@ -954,6 +955,13 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         const auto* value = std::getenv("CARA_METAL_GATHER_RESOLVED_ROWS");
         return value && std::string_view(value) == "1";
     }();
+    static const bool gather_shared_rows = [] {
+        const auto* value = std::getenv("CARA_METAL_GATHER_SHARED_RESOLVED_ROWS");
+        return value && std::string_view(value) == "1";
+    }();
+    const bool using_shared_copy_rows = gather_rows && gather_shared_rows && !copy_rows;
+    if (using_shared_copy_rows)
+        copy_rows = shared_copy_rows;
     if (gather_rows && copy_rows && copy_rows.device == queue.device) {
         const auto plan = MetalTransfer::PlanTwoSourceCopyRows<id<MTLBuffer>>(
             std::span<const Copy>{copies});
@@ -982,6 +990,14 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherPlans, 1);
             NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherCopies, copies.size());
             NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherDispatches, plan->count);
+            if (using_shared_copy_rows) {
+                NativeMetalCost::Count(NativeMetalCost::ResolveSharedRowGatherPlans, 1);
+                static thread_local bool reported_shared = false;
+                if (!reported_shared) {
+                    LOG_INFO(Render_OpenGL, "Metal gathered checked rows using shared copy pipeline");
+                    reported_shared = true;
+                }
+            }
             static thread_local bool reported = false;
             if (!reported) {
                 LOG_INFO(Render_OpenGL, "Metal gathered checked resolved rows with original word-copy kernel");

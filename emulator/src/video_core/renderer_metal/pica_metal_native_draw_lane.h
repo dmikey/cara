@@ -32,7 +32,8 @@ public:
     using GuestRamView = std::function<std::span<const u8>(PAddr, std::size_t)>;
     PicaMetalNativeDrawLane(id<MTLCommandQueue> queue, NSUInteger upload_page_bytes,
                           GuestWriteNotice notice = {}, GuestRamView ram_view = {},
-                          id<MTLLibrary> scale_library = nil, unsigned internal_scale = 1);
+                          id<MTLLibrary> scale_library = nil, unsigned internal_scale = 1,
+                          id<MTLComputePipelineState> copy_rows = nil);
     ~PicaMetalNativeDrawLane();
     void Abort() noexcept;
     void FlushGuest(PAddr begin, PAddr end,
@@ -107,6 +108,7 @@ private:
                std::shared_ptr<const PicaMetalValidationReceipt> validation = {});
     void InvalidateAttachments(PicaGuestRange bytes, const PicaMetalSurfaceView* same_view = nullptr);
     const id<MTLCommandQueue> queue;
+    const id<MTLComputePipelineState> shared_copy_rows;
     const GuestWriteNotice write_notice;
     const GuestRamView ram_view;
     u64 byte_generation = 0;
