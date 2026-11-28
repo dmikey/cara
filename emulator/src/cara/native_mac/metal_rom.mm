@@ -429,7 +429,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
             if (!cost_first || cost_last < cost_first || cost_last - cost_first >= 512 || cost_last > limit)
                 throw std::runtime_error("Invalid bounded frame-cost observation range");
         }
-        constexpr std::array cost_phases{
+        static constexpr std::array cost_phases{
             Cost::ReserveWait, Cost::ArenaWait, Cost::ResolveBytesHost, Cost::ExportSpanHost,
             Cost::PublishBytesHost, Cost::DisplayHost, Cost::FillHost, Cost::TextureCopyHost,
             Cost::Encode, Cost::Publish, Cost::Present, Cost::Transfer, Cost::Depth, Cost::Color,
