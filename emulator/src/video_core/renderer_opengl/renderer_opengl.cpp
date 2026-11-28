@@ -810,10 +810,21 @@ void RendererOpenGL::RenderScreenshot() {
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
                                   renderbuffer);
 
+        // The screenshot FBO may be native-sized while the live drawable is
+        // 2x. A native projection with the old viewport crops out the top LCD.
+        const auto screenshot_state = OpenGLState::GetCurState();
+        if (native_capture) {
+            auto native_state = screenshot_state;
+            native_state.viewport = {0, 0, static_cast<GLsizei>(layout.width),
+                                           static_cast<GLsizei>(layout.height)};
+            native_state.Apply();
+        }
         DrawScreens(layout, native_capture);
 
         std::vector<u32> pixels(layout.width * layout.height);
         glReadPixels(0, 0, layout.width, layout.height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        if (native_capture)
+            screenshot_state.Apply();
         if (!Common::ImageRows::FlipCanonicalRGBA(pixels, layout.width, layout.height))
             throw std::runtime_error("Invalid canonical screenshot image dimensions");
 
