@@ -1,0 +1,178 @@
+{
+  "private_revision": "686b7ca07402d169312990037667ca345aa9d1b2",
+  "private_metal_binary_sha256": "33dcecafdc0e8b84da150b3844d1dc5c13b177fddae871587db33f0e3a225e71",
+  "private_gl_binary_sha256": "9cbb6f8607f0ac1ef9e31f900bcc797da9a7f41d9d94c80340c3f2a8663ace94",
+  "native_diagnostic_passed": true,
+  "performance_claim": false,
+  "comparison": {
+    "state_mismatch_refreshes": 0,
+    "first_state_mismatch": null,
+    "work_count_mismatches": 0,
+    "pixels": {
+      "800": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "1600": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "2400": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "3000": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      }
+    },
+    "guest_sdmc_match": true,
+    "exact_both_lcds_and_work": true
+  },
+  "cases": {
+    "off": {
+      "exit": 0,
+      "group_empty": true,
+      "cleanup": [],
+      "quiet_checks": 109,
+      "raw_proof_activation": false,
+      "stats": {
+        "mean": 19.00402875,
+        "p50": 18.9125215,
+        "p99": 21.899375,
+        "max": 33.864125,
+        "worst_refresh": 2551,
+        "worst_rolling_120": 19.12391875,
+        "worst_rolling_end": 2667,
+        "owner_cpu_ms_per_refresh": 18.131476664999997,
+        "process_cpu_ms_per_refresh": 22.58444,
+        "work": {
+          "draw_requests": 278153,
+          "command_lists": 4782,
+          "display_transfers": 4782,
+          "texture_copies": 3985,
+          "fills": 6376,
+          "software_vertex_draws": 0,
+          "skipped_draws": 0
+        }
+      },
+      "cpu_categories": {
+        "others": 0.1441181725,
+        "cpu_execution_including_memory": 4.204593665,
+        "hle_svc": 0.1298452625,
+        "gpu_command": 1.160418775,
+        "dsp_hle_tick": 0.0332916725,
+        "metal_bind": 1.56658177,
+        "metal_record": 0.5680964975,
+        "metal_encode": 2.058165795,
+        "metal_transfer": 0.0,
+        "metal_publish": 0.5292434425,
+        "metal_present": 0.1024181325,
+        "metal_bind_fragment_source": 0.2085836475,
+        "metal_bind_vertex_source": 0.1660609625,
+        "metal_bind_vertex_capture": 1.081905795,
+        "metal_bind_pipeline_select": 0.3592757775,
+        "metal_bind_surface_lut": 0.8481607725,
+        "metal_bind_texture_decode": 0.466077795,
+        "metal_bind_mip_decode": 0.60564665,
+        "metal_fill": 0.10257325,
+        "metal_copy": 0.20003637,
+        "metal_display_transfer": 0.3108701075,
+        "metal_resolve_bytes": 2.1541956575,
+        "metal_publish_bytes": 1.0447087375
+      }
+    },
+    "on": {
+      "exit": 0,
+      "group_empty": true,
+      "cleanup": [],
+      "quiet_checks": 104,
+      "raw_proof_activation": true,
+      "stats": {
+        "mean": 19.464064165,
+        "p50": 18.765333499999997,
+        "p99": 35.110584,
+        "max": 97.233042,
+        "worst_refresh": 2406,
+        "worst_rolling_120": 20.801866666666665,
+        "worst_rolling_end": 2525,
+        "owner_cpu_ms_per_refresh": 18.06832302,
+        "process_cpu_ms_per_refresh": 22.89322,
+        "work": {
+          "draw_requests": 278153,
+          "command_lists": 4782,
+          "display_transfers": 4782,
+          "texture_copies": 3985,
+          "fills": 6376,
+          "software_vertex_draws": 0,
+          "skipped_draws": 0
+        }
+      },
+      "cpu_categories": {
+        "others": 0.1468985875,
+        "cpu_execution_including_memory": 4.267698285,
+        "hle_svc": 0.13581288,
+        "gpu_command": 1.182682645,
+        "dsp_hle_tick": 0.0343306975,
+        "metal_bind": 1.5905716825,
+        "metal_record": 0.586301075,
+        "metal_encode": 2.113139725,
+        "metal_transfer": 0.0,
+        "metal_publish": 0.541358105,
+        "metal_present": 0.1032518875,
+        "metal_bind_fragment_source": 0.2145823725,
+        "metal_bind_vertex_source": 0.168565415,
+        "metal_bind_vertex_capture": 1.11101217,
+        "metal_bind_pipeline_select": 0.36510796,
+        "metal_bind_surface_lut": 0.877317405,
+        "metal_bind_texture_decode": 0.472337925,
+        "metal_bind_mip_decode": 0.6090725025,
+        "metal_fill": 0.1038595725,
+        "metal_copy": 0.2085714725,
+        "metal_display_transfer": 0.3334260925,
+        "metal_resolve_bytes": 1.7624448525,
+        "metal_publish_bytes": 1.051717705
+      }
+    }
+  }
+}
