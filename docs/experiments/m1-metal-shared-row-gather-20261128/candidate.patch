@@ -1,0 +1,94 @@
+--- a/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.h
++++ b/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.h
+@@ -32,7 +32,8 @@
+     using GuestRamView = std::function<std::span<const u8>(PAddr, std::size_t)>;
+     PicaMetalNativeDrawLane(id<MTLCommandQueue> queue, NSUInteger upload_page_bytes,
+                           GuestWriteNotice notice = {}, GuestRamView ram_view = {},
+-                          id<MTLLibrary> scale_library = nil, unsigned internal_scale = 1);
++                          id<MTLLibrary> scale_library = nil, unsigned internal_scale = 1,
++                          id<MTLComputePipelineState> copy_rows = nil);
+     ~PicaMetalNativeDrawLane();
+     void Abort() noexcept;
+     void FlushGuest(PAddr begin, PAddr end,
+@@ -107,6 +108,7 @@
+                std::shared_ptr<const PicaMetalValidationReceipt> validation = {});
+     void InvalidateAttachments(PicaGuestRange bytes, const PicaMetalSurfaceView* same_view = nullptr);
+     const id<MTLCommandQueue> queue;
++    const id<MTLComputePipelineState> shared_copy_rows;
+     const GuestWriteNotice write_notice;
+     const GuestRamView ram_view;
+     u64 byte_generation = 0;
+--- a/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm
++++ b/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm
+@@ -310,8 +310,9 @@
+ PicaMetalNativeDrawLane::PicaMetalNativeDrawLane(id<MTLCommandQueue> owner_queue,
+                                                NSUInteger upload_page_bytes,
+                                                GuestWriteNotice notice, GuestRamView ram_view_,
+-                                               id<MTLLibrary> scale_library, unsigned internal_scale)
+-    : queue(owner_queue), write_notice(std::move(notice)), ram_view(std::move(ram_view_)),
++                                               id<MTLLibrary> scale_library, unsigned internal_scale,
++                                               id<MTLComputePipelineState> copy_rows)
++    : queue(owner_queue), shared_copy_rows(copy_rows), write_notice(std::move(notice)), ram_view(std::move(ram_view_)),
+       submissions(queue, [this] { authority.RejectSubmittedWrites(); }),
+       group(queue, upload_page_bytes, scale_library, internal_scale) {}
+ 
+@@ -954,6 +955,13 @@
+         const auto* value = std::getenv("CARA_METAL_GATHER_RESOLVED_ROWS");
+         return value && std::string_view(value) == "1";
+     }();
++    static const bool gather_shared_rows = [] {
++        const auto* value = std::getenv("CARA_METAL_GATHER_SHARED_RESOLVED_ROWS");
++        return value && std::string_view(value) == "1";
++    }();
++    const bool using_shared_copy_rows = gather_rows && gather_shared_rows && !copy_rows;
++    if (using_shared_copy_rows)
++        copy_rows = shared_copy_rows;
+     if (gather_rows && copy_rows && copy_rows.device == queue.device) {
+         const auto plan = MetalTransfer::PlanTwoSourceCopyRows<id<MTLBuffer>>(
+             std::span<const Copy>{copies});
+@@ -982,6 +990,14 @@
+             NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherPlans, 1);
+             NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherCopies, copies.size());
+             NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherDispatches, plan->count);
++            if (using_shared_copy_rows) {
++                NativeMetalCost::Count(NativeMetalCost::ResolveSharedRowGatherPlans, 1);
++                static thread_local bool reported_shared = false;
++                if (!reported_shared) {
++                    LOG_INFO(Render_OpenGL, "Metal gathered checked rows using shared copy pipeline");
++                    reported_shared = true;
++                }
++            }
+             static thread_local bool reported = false;
+             if (!reported) {
+                 LOG_INFO(Render_OpenGL, "Metal gathered checked resolved rows with original word-copy kernel");
+--- a/emulator/src/video_core/renderer_metal/pica_metal_native_renderer.mm
++++ b/emulator/src/video_core/renderer_metal/pica_metal_native_renderer.mm
+@@ -59,7 +59,7 @@
+               if (!ref || !ref.GetPtr() || size > ref.GetSize())
+                   return {};
+               return {ref.GetPtr(), size};
+-          }, resources.resolution_library, resources.internal_scale),
++          }, resources.resolution_library, resources.internal_scale, resources.transfer.copy_rows),
+           bindings(resources),
+           read([this](PAddr address, std::span<u8> bytes) {
+               const auto ref = memory.GetPhysicalRef(address);
+--- a/emulator/src/video_core/renderer_metal/pica_metal_frame_cost.hh
++++ b/emulator/src/video_core/renderer_metal/pica_metal_frame_cost.hh
+@@ -57,7 +57,7 @@
+     SimdReferenceRequests, SimdReferenceCompiled, SimdReferenceRejected, SimdReferenceFallbacks, SimdReferenceDraws, DisplayCropRgb8Candidates, DisplayCrop565Candidates, DisplayCropOwnerHits, DisplayCropOwnerMisses, DisplayCropFused, DisplayCropSourceBytesAvoided, DisplayRgb8RetileCandidates, DisplayRgb8RetileOwnerHits, DisplayLinearBufferOnly, DisplayLinearTextureBytesAvoided, LinearTextureAlignmentQueries, LinearTextureAlignmentHits, ShaderIdentityFullChecks, ShaderIdentityComparedBytes, ShaderIdentityFastHits, ShaderIdentityValidationFailures, AsyncDepthImports, AsyncDepthChecksPassed, AsyncDepthChecksFailed, QueuedPendingDepthExports,
+     PicaListToFirstShaderTranslation, PicaFirstShaderWithin100us, PicaFirstShaderWithin1ms,
+     PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
+-    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, IndexSnapshotProofHits, IndexSnapshotProofBytes, ResolveCopyPlans, ResolveCopyCommands, ResolveCopyPayloadBytes, ResolveAdjacentCopyPairs, ResolveSameBufferPairs, ResolveSingleSourcePlans, ResolveTwoSourcePlans, ResolveManySourcePlans, ResolveTwoSourceCopies, ResolveRowGatherPlans, ResolveRowGatherCopies, ResolveRowGatherDispatches, PhaseCount
++    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, IndexSnapshotProofHits, IndexSnapshotProofBytes, ResolveCopyPlans, ResolveCopyCommands, ResolveCopyPayloadBytes, ResolveAdjacentCopyPairs, ResolveSameBufferPairs, ResolveSingleSourcePlans, ResolveTwoSourcePlans, ResolveManySourcePlans, ResolveTwoSourceCopies, ResolveRowGatherPlans, ResolveRowGatherCopies, ResolveRowGatherDispatches, ResolveSharedRowGatherPlans, PhaseCount
+ };
+ inline constexpr std::array<const char*, PhaseCount> names{
+     "color_acquire", "depth_acquire", "lut_refresh", "record_total", "encode_total",
+@@ -120,7 +120,7 @@
+     "pica_list_to_first_shader_translation", "pica_first_shader_within_100us",
+     "pica_first_shader_within_1ms", "pica_first_shader_within_5ms", "pica_first_shader_after_5ms",
+     "runtime_vertex_spirv_msl_hit", "general_fragment_draws",
+-    "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws", "runtime_linked_vertex_hit", "index_snapshot_proof_hits", "index_snapshot_proof_bytes", "resolve_copy_plans", "resolve_copy_commands", "resolve_copy_payload_bytes", "resolve_adjacent_copy_pairs", "resolve_same_buffer_pairs", "resolve_single_source_plans", "resolve_two_source_plans", "resolve_many_source_plans", "resolve_two_source_copies", "resolve_row_gather_plans", "resolve_row_gather_copies", "resolve_row_gather_dispatches"};
++    "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws", "runtime_linked_vertex_hit", "index_snapshot_proof_hits", "index_snapshot_proof_bytes", "resolve_copy_plans", "resolve_copy_commands", "resolve_copy_payload_bytes", "resolve_adjacent_copy_pairs", "resolve_same_buffer_pairs", "resolve_single_source_plans", "resolve_two_source_plans", "resolve_many_source_plans", "resolve_two_source_copies", "resolve_row_gather_plans", "resolve_row_gather_copies", "resolve_row_gather_dispatches", "resolve_shared_row_gather_plans"};
+ struct Span { std::uint64_t calls{}, ns{}; };
+ inline thread_local std::array<Span, PhaseCount> spans{};
+ inline bool Enabled() {

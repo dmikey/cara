@@ -1,0 +1,19 @@
+{
+  "runner": "matched_row_gather_renderers.py",
+  "status": "SOURCE_REVIEWED_NOT_RELEASED",
+  "scope": "GL/Metal/Metal/GL, normalboot Luigi lab3000refs, ROI2401..2800. Not mansion gate traversal or coldstartup timing.",
+  "review": [
+    "Fresh outputfolder/exact release bound to source-ready digest, no retry",
+    "Row gatherON every Metal case; shared flag fixed by exact acceptance gates",
+    "Original properhost installed-app/locks/compiler/job checks; 3quiet preflight samples; <=50%backgroundCPU from2400 through exit",
+    "Exact source/binary/harness/gate/ROM hashes; beforecase ROM metadata; end ROM hash",
+    "Compare each case to frozen same-renderer selected LCDs/state/work/files, explicit reference key path handles sampler receipt nested case",
+    "Cross-renderer state/work/files exact; pixel differences recorded without top-panel exactness claim",
+    "Repeated controls and tails/processCPU reported; no automatic universal performance decision",
+    "Original owned process-group cleanup and stop-first-failure behavior retained",
+    "Wrapper now verifies all identity gates before creating release, with2Hz app-guard pulses while hashing the local ROM",
+    "Append-only numbered admission receipts allow a later fresh quiet check without retrying a consumed runtime release or changing source-ready",
+    "No automatic retry after blocked admission; wrapper returns immediately without native launch"
+  ],
+  "staging_review": "Initial outer writer omitted import json after successfully writing and AST-checking runner. No source-ready/release/case/native job existed. Corrected writer import and explicit nested reference path before freeze."
+}

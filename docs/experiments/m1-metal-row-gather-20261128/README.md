@@ -63,7 +63,7 @@ A further one OFF/ON pair used the same private binary and inputs, with detailed
 
 The resolve category fell 0.66364 ms; other graphics categories rose 0.04572 ms, for about 0.61792 ms less attributed graphics CPU. Guest execution varied by -0.04304 ms. Owner and process CPU fell about 0.657 and 0.660 ms respectively, supporting a real CPU-cost target rather than only moving a wait between graphics categories. This remains a single ordered diagnostic pair under filesystem/indexing load, with added category-clock overhead. Do not compare its absolute timings to the detailed-counter pair, to uninstrumented GL controls, or claim statistical certainty, GPU-time reduction, all-game correctness, or a Metal-over-GL result.
 
-The candidate stays private and default OFF until a newly reviewed quiet renderer comparison. The consumed index-snapshot release is not reused. There are still 2,407,538 original blits outside accepted row-gather plans in the whole process. Next work should distinguish consumers lacking the shared pipeline from layouts rejected by the regular-row proof; neither may be assumed eligible or silently widened.
+Core source stays default OFF. At the user's request, the verified fix is ON in the private performance preset; public/installed defaults are unchanged. A newly reviewed quiet renderer comparison remains required. The consumed index-snapshot release is not reused. There are still 2,407,538 original blits outside accepted row-gather plans in the whole process. Next work should distinguish consumers lacking the shared pipeline from layouts rejected by the regular-row proof; neither may be assumed eligible or silently widened.
 
 ## Capture correction and previous comparison limits
 
@@ -88,3 +88,5 @@ Local evidence root: `/Volumes/Fast/CaraBuild/cara-m1-metal-results-20261127.noi
 - `native-viewport-correctness-1` and `gl-worker-sample-20261128-1`: corrected captures and GL worker sample.
 
 Do not rerun closed diagnostics unchanged. A later cost comparison must keep diagnostic clocks separate from quiet controls, assess total CPU and frame tails, and retain all original work and checks. Grouping proven independent data movements is also a portable renderer design lesson for future Vulkan work; merely pushing the same per-span calls onto another thread would not remove them.
+
+The [shared-pipeline follow-up](../m1-metal-shared-row-gather-20261128/README.md) covered another 2.39M blits with the same checked kernel and reduced resolution CPU in a separate pair. Both verified fixes are now ON in the private preset; do not add savings across independent ordered pairs.

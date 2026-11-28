@@ -1,0 +1,32 @@
+{
+  "parent": "e6f6c86bd5436ba9005a82a7afb8a5337f05e032",
+  "files": {
+    "emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.h": {
+      "before": "60fe16ae2834c186ad7330899f0cdaa0e4223448234043e417447615752255f6",
+      "after": "17f0df22b308b698c2cdcaff1a0c4733f9d7685aa7a5b93320c4d7fa867d9300"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm": {
+      "before": "4fbe47b00c75adbb1e9090b604b450df20a7441b62d081e4ff29d1283c2e1cc7",
+      "after": "db899ef6dda4014320ca96c3638477acec57b2cccbaa31d744782240b9389ff3"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_native_renderer.mm": {
+      "before": "b9780c12f5b27ba9882fa47e5e584d8c84b5d90b0faff2883239cabd53feefbf",
+      "after": "9c46af16e6d7859fc9d2a8678b07f19d80b56f2bf0cfcfb0d7573ef9071fa077"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_frame_cost.hh": {
+      "before": "353998a27f53d1bd3232257d98ccefe5dd66d95a511ee6484a1c6184ddd0b5fd",
+      "after": "ab4f25d231b16b6b379b9eda7e72e53e151edba71b1587563eb4e22ae8c24721"
+    }
+  },
+  "baseline": "CARA_METAL_GATHER_RESOLVED_ROWS=1 remains ON",
+  "candidate": "CARA_METAL_GATHER_SHARED_RESOLVED_ROWS=1, defaultOFF",
+  "scope": "Provide the existing exact device-owned copy_rows pipeline to byte consumers without an explicit transfer pipeline. Retain it for renderer-lane lifetime. Same already-tested row planner, existing kernel, all source/ownership/command/bounds/failed-producer checks, and unchanged fallback. No clocks/queue changes or new shader/library creation.",
+  "review": [
+    "Resource member initializes before lane, pipeline retained in lane",
+    "Explicit transfer pipeline still takes precedence",
+    "New path requires BOTH baseline gather and new exact1 flags",
+    "Nil/wrong-device pipeline declines original path; same row/resource checks retained",
+    "All existing consumer waits and publication/failure receipts untouched",
+    "No changes to tested planner/header or GPU kernel/ABI; do not rerun closed planner checks"
+  ]
+}
