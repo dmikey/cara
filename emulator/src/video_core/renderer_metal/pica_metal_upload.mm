@@ -92,7 +92,8 @@ NSUInteger LinearTextureAlignment(id<MTLDevice> device, MTLPixelFormat format) {
 // Equality covers every consumed source byte before a texture can be reused.
 id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std::byte> source,
                                     MTLPixelFormat format, NSUInteger width, NSUInteger height,
-                                    NSUInteger source_pitch, NSUInteger pitch) {
+                                    NSUInteger source_pitch, NSUInteger pitch,
+                                    const MetalIndexUploadProof* proof) {
     struct Entry {
         id<MTLTexture> texture;
         std::vector<std::byte> data;
@@ -103,6 +104,7 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
         std::uint64_t identity;
         Entry* older = nullptr;
         Entry* newer = nullptr;
+        std::optional<MetalIndexImageKey> index_image_key{};
     };
     struct Cache {
         struct Hint { std::size_t hash{}; std::uint64_t identity{}; };
@@ -188,10 +190,30 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
         return entry.format == format && entry.width == width && entry.height == height &&
                entry.source_pitch == source_pitch && entry.data.size() == source.size();
     };
-    const auto matches_bytes = [&](const Entry& entry) {
+    const auto image_key = format == MTLPixelFormatR16Uint && proof ?
+        proof->KeyFor(source) : std::nullopt;
+    const auto matches_bytes = [&](Entry& entry) {
+        if (image_key && entry.index_image_key && *image_key == *entry.index_image_key) {
+            static const bool verify = [] {
+                const auto* value = std::getenv("CARA_METAL_VERIFY_INDEX_SNAPSHOT_PROOF");
+                return value && std::string_view(value) == "1";
+            }();
+            if (verify && std::memcmp(entry.data.data(),source.data(),source.size()) != 0)
+                throw std::runtime_error("Metal index snapshot ownership proof mismatch");
+            NativeMetalCost::Count(NativeMetalCost::IndexSnapshotProofHits, 1);
+            NativeMetalCost::Count(NativeMetalCost::IndexSnapshotProofBytes, source.size_bytes());
+            static thread_local bool reported = false;
+            if (!reported) {
+                LOG_INFO(Render_OpenGL, "Metal reused verified index snapshot proof shadow={}", verify);
+                reported = true;
+            }
+            return true;
+        }
         NativeMetalCost::Scope cost(NativeMetalCost::VertexCacheCompare);
         NativeMetalCost::Count(NativeMetalCost::VertexCacheCompareBytes, source.size_bytes());
-        return std::memcmp(entry.data.data(), source.data(), source.size()) == 0;
+        const bool equal = std::memcmp(entry.data.data(), source.data(), source.size()) == 0;
+        if (equal && image_key) entry.index_image_key = *image_key;
+        return equal;
     };
     const auto remember_ordinal = [&](const Entry& entry) {
         if (ordinal_hint)
@@ -335,6 +357,7 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
     }
     const auto inserted = cache->entries.emplace(hash, Entry{texture, {source.begin(), source.end()}, format,
         width, height, source_pitch, cost, ++cache->time, hash, ++cache->next_identity});
+    inserted->second.index_image_key = image_key;
     touch(inserted->second);
     remember_ordinal(inserted->second);
     if (reuse_recent)
@@ -430,7 +453,7 @@ std::optional<PicaMetalUploadArena::Range> PicaMetalUploadArena::Copy(
 
 id<MTLTexture> PicaMetalUploadArena::Copy2D(std::span<const std::byte> source, MTLPixelFormat format,
                                            NSUInteger width, NSUInteger height,
-                                           NSUInteger source_row_bytes) {
+                                           NSUInteger source_row_bytes, const MetalIndexUploadProof* proof) {
     if (!active || !width || !height) {
         return nil;
     }
@@ -450,7 +473,7 @@ id<MTLTexture> PicaMetalUploadArena::Copy2D(std::span<const std::byte> source, M
     }
     if (NativeMetalCost::ReuseDrawInputs() && active->command.retainedReferences) {
         if (const auto resident = ImmutableVertexTexture(device, source, format, width, height,
-                                                        source_row_bytes, *row_bytes))
+                                                        source_row_bytes, *row_bytes, proof))
             return resident;
     }
     const auto previous = active->next;

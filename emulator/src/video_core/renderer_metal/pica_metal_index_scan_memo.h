@@ -9,11 +9,13 @@
 #include <optional>
 #include <span>
 #include <unordered_map>
+#include "pica_metal_index_snapshot_lease.h"
 
 namespace Cara {
 
-// Host-only scan results. This never owns guest authority or authorizes reuse
-// of an uploaded payload: callers must read all current guest index bytes first.
+// Host-only scan results. Callers still read every current guest byte first.
+// An optional revision lease identifies only bytes just checked by Lookup;
+// image/header/owner validation remains the upload caller's responsibility.
 class ExactMetalIndexScanMemo {
 public:
     struct Key {
@@ -53,9 +55,13 @@ public:
             key.address <= std::numeric_limits<std::uint32_t>::max() - size;
     }
 
-    std::optional<Result> Lookup(const Key& key, std::span<const std::uint8_t> input) {
+    std::optional<Result> Lookup(const Key& key, std::span<const std::uint8_t> input,
+                                 MetalIndexSnapshotLease* proof = nullptr,
+                                 MetalVerifiedIndexRead* binding = nullptr) {
+        if (proof) proof->reset();
+        if (binding) binding->reset();
         if (!Admits(key,input)) return std::nullopt;
-        return input.size() <= SmallBytes ? small.Lookup(key,input) : large.Lookup(key,input);
+        return input.size() <= SmallBytes ? small.Lookup(key,input,proof,binding) : large.Lookup(key,input,proof,binding);
     }
     void Store(const Key& key, std::span<const std::uint8_t> input, Result result) {
         if (!Admits(key,input)) return;
@@ -66,23 +72,37 @@ public:
     Stats LargeStats() const noexcept { return large.stats; }
 
 private:
+    static MetalIndexSnapshotLease MakeLease(std::size_t bytes) {
+        return MetalIndexSnapshotLease(new MetalIndexSnapshotIdentity(bytes));
+    }
+    static MetalVerifiedIndexRead MakeVerified(MetalIndexSnapshotLease id,
+                                                std::span<const std::uint8_t> input) {
+        return MetalVerifiedIndexRead(std::move(id),input.data(),input.size());
+    }
     template<std::size_t Capacity> struct Tier {
         struct Entry {
             std::unique_ptr<std::uint8_t[]> input;
             std::size_t size;
             Result result;
             std::list<Key>::iterator recent;
+            MetalIndexSnapshotLease proof{};
         };
         std::unordered_map<Key,Entry,Hash> entries;
         std::list<Key> recent;
         Stats stats;
         Tier() { entries.reserve(Capacity); }
-        std::optional<Result> Lookup(const Key& key, std::span<const std::uint8_t> input) {
+        std::optional<Result> Lookup(const Key& key, std::span<const std::uint8_t> input,
+                                     MetalIndexSnapshotLease* proof, MetalVerifiedIndexRead* binding) {
             const auto found = entries.find(key);
             if (found == entries.end() || found->second.size != input.size() ||
                 std::memcmp(found->second.input.get(),input.data(),input.size()) != 0) {
                 ++stats.misses;
                 return std::nullopt;
+            }
+            if (proof || binding) {
+                if (!found->second.proof) found->second.proof = MakeLease(input.size());
+                if (proof) *proof = found->second.proof;
+                if (binding) *binding = MakeVerified(found->second.proof,input);
             }
             ++stats.hits;
             recent.splice(recent.begin(),recent,found->second.recent);
@@ -98,6 +118,9 @@ private:
             if (const auto old = entries.find(key); old != entries.end()) {
                 // A full key fixes the byte length. Changed current payloads
                 // can replace that snapshot without allocating another image.
+                // Retired GPU keys may retain the old immutable identity.
+                // Invalidate before overwriting; never recycle it for new bytes.
+                old->second.proof.reset();
                 std::memcpy(old->second.input.get(),input.data(),input.size());
                 old->second.result = result;
                 recent.splice(recent.begin(),recent,old->second.recent);

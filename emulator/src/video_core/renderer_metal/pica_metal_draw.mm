@@ -414,7 +414,8 @@ std::optional<DrawUploads> UploadDraw(id<MTLCommandBuffer> commands, PicaMetalUp
         const auto index_bytes = index_width * sizeof(std::uint16_t);
         indices = paired ? d.pair_indices->pair_texture :
             arena.Copy2D(d.expanded_indices, MTLPixelFormatR16Uint, index_width,
-                         d.expanded_indices.size() / index_bytes, index_bytes);
+                         d.expanded_indices.size() / index_bytes, index_bytes,
+                         raw_indices && d.raw_index_proof ? &*d.raw_index_proof : nullptr);
     }
     if (!common || !light || (stage_in && !stream) ||
         (!stage_in && (!vertices || !indices || !vs)) || (packed && !layout)) {
@@ -1056,6 +1057,7 @@ bool EncodeGroupedMetalDraw(id<MTLCommandBuffer> command, PicaMetalUploadArena& 
         auto snapshot = draw;
         snapshot.packed_vertices = {};
         snapshot.expanded_indices = {};
+        snapshot.raw_index_proof.reset(); // Uploaded inputs own their textures now.
         snapshot.layout_uniform = {};
         snapshot.vs_uniform = {};
         snapshot.common_uniform = {};

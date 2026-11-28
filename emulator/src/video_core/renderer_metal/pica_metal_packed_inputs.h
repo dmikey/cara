@@ -4,6 +4,7 @@
 #include <array>
 #include <optional>
 #include <vector>
+#include "pica_metal_index_snapshot_lease.h"
 #include "video_core/renderer_metal/pica_metal_guest_authority.h"
 
 namespace Pica {
@@ -18,6 +19,7 @@ struct PicaMetalPackedInputs {
     std::array<std::array<s32, 4>, 16> layout{};
     u32 vertex_count = 0;
     u32 unique_dense_vertices = 0;
+    MetalVerifiedIndexRead verified_index_snapshot{};
 };
 
 // Use the same register mapping and triangle order as the packed iOS path.

@@ -87,6 +87,7 @@ struct TexturedMetalDraw {
     std::uint32_t unique_source_vertices = 0;
     bool simd_reference = false;
     std::shared_ptr<const MetalPairIndexPayload> pair_indices;
+    std::optional<MetalIndexUploadProof> raw_index_proof{};
 };
 
 // Requires an uncommitted command and an acquired upload lease. The caller

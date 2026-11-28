@@ -8,6 +8,7 @@
 #include <utility>
 #include <optional>
 #include <span>
+#include "pica_metal_index_snapshot_proof.h"
 
 namespace Cara {
 
@@ -29,7 +30,8 @@ public:
     bool Begin(id<MTLCommandBuffer> command);
     std::optional<Range> Copy(std::span<const std::byte> source, NSUInteger alignment);
     id<MTLTexture> Copy2D(std::span<const std::byte> source, MTLPixelFormat format,
-                         NSUInteger width, NSUInteger height, NSUInteger source_row_bytes);
+                         NSUInteger width, NSUInteger height, NSUInteger source_row_bytes,
+                         const MetalIndexUploadProof* proof = nullptr);
     bool Submit();
     void Cancel();
     bool Failed() const { return failed; }

@@ -1468,6 +1468,10 @@ std::optional<NativePicaDrawBindings> PicaMetalNativeBindings::Prepare(
         out.draw.pair_indices = std::move(pair_indices);
         if (raw_indices) {
             out.draw.vertex_mode = MetalRawIndexMode;
+            if (vertices.verified_index_snapshot)
+                out.draw.raw_index_proof = MetalIndexUploadProof::Bind(
+                    vertices.verified_index_snapshot,
+                    std::shared_ptr<const std::vector<u16>>(storage,&vertices.indices));
             if (NativeHostProfileEnabled()) {
                 ++raw_index_draws;
                 raw_index_vertices += vertices.vertex_count;

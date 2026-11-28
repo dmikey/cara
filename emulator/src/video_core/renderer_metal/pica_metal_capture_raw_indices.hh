@@ -105,7 +105,12 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
             if (!cache) cache = std::make_unique<ExactMetalIndexScanMemo>();
             if (ExactMetalIndexScanMemo::Admits(exact_key,{bytes,active_bytes})) {
                 exact_memo = cache.get();
-                exact_result = exact_memo->Lookup(exact_key,{bytes,active_bytes});
+                static const bool prove_snapshot = [] {
+                    const auto* value = std::getenv("CARA_METAL_INDEX_SNAPSHOT_PROOF");
+                    return value && std::string_view(value) == "1";
+                }();
+                exact_result = exact_memo->Lookup(exact_key,{bytes,active_bytes},nullptr,
+                    prove_snapshot && active_count == count ? &result.verified_index_snapshot : nullptr);
                 reused = exact_result.has_value();
                 NativeMetalCost::Count(reused ? NativeMetalCost::IndexMemoHits
                                               : NativeMetalCost::IndexMemoMisses,1);
@@ -390,6 +395,7 @@ inline std::optional<PicaMetalPackedInputs> CaptureMetalRawIndices(
 // An unavailable alternate Metal function can consume the exact same snapshot
 // through the original index ABI without a second authoritative guest read.
 inline void ExpandCapturedMetalRawIndices(PicaMetalPackedInputs& packed) {
+    packed.verified_index_snapshot.reset(); // This changes the captured index image.
     const auto topology = static_cast<Pica::PipelineRegs::TriangleTopology>(packed.indices[0] & 3);
     const unsigned width = packed.indices[0] >> 2;
     const u16 first = packed.indices[1];
