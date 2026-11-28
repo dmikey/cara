@@ -46,6 +46,7 @@
 #include "core/frontend/applets/default_applets.h"
 #include "core/frontend/emu_window.h"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
+#include <pthread/qos.h>
 #include "core/loader/loader.h"
 #include "core/settings.h"
 #include "input_common/main.h"
@@ -328,6 +329,12 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                  const Cara::MacPreferences::Ini& ini, unsigned scale) {
     using Cara::MacPreferences::PlaySettings;
     const auto* performance = std::getenv("CARA_MAC_METAL_PERFORMANCE_MODE");
+    if (std::getenv("CARA_NATIVE_DIAGNOSTICS")) {
+        int relative = 0;
+        const auto requested = pthread_get_qos_class_np(pthread_self(), &relative);
+        std::cout << "HOST_QOS thread=emulation effective=" << static_cast<unsigned>(qos_class_self())
+                  << " requested=" << static_cast<unsigned>(requested) << " relative=" << relative << std::endl;
+    }
     const auto play_settings = PlaySettings::Read(ini);
     const bool saved_play_mode = PlaySettings::HasSavedPlayMode(ini);
     Cara::ConfigureMetalGeneralFragment(
@@ -432,6 +439,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         struct CostFrame {
             unsigned frame;
             std::array<Cost::Span, Cost::PhaseCount> totals;
+            std::int64_t previous_frame_sleep_ns;
         };
         std::vector<CostFrame> cost_frames;
         if (trace_cost)
@@ -473,7 +481,13 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
             }
             replay_ledger.Observe(core, frame);
             if (trace_cost && frame != previous_frame && frame >= cost_first - 1 && frame <= cost_last) {
-                cost_frames.push_back(CostFrame{frame, Cost::spans});
+                // FrameUpdate ends the old interval, then begins/paces the
+                // new one before incrementing the observed frame. This saved
+                // timing contains the limiter sleep of ledger frame(frame-1).
+                const auto saved = core.perf_stats->GetLastFrameTiming();
+                const auto sleep = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    saved.elapsed - saved.work).count();
+                cost_frames.push_back(CostFrame{frame, Cost::spans, sleep});
             }
             if (frame != previous_frame) {
                 events.refresh.store(frame);
@@ -519,6 +533,16 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
             }
             if (!report)
                 throw std::runtime_error("Could not retain per-refresh Metal costs");
+            std::ofstream pacing(output + "metal-pacing-observation.csv");
+            pacing << "sample_frame,sleep_ledger_refresh,previous_frame_sleep_ns\n";
+            for (const auto& sample : cost_frames) {
+                if (sample.previous_frame_sleep_ns < 0)
+                    throw std::runtime_error("Negative saved frame limiter sleep");
+                pacing << sample.frame << ',' << sample.frame - 1 << ','
+                       << sample.previous_frame_sleep_ns << '\n';
+            }
+            if (!pacing)
+                throw std::runtime_error("Could not retain saved frame pacing observation");
         }
         if (record_refresh_timing) {
             std::ofstream report(output + "refresh-timing.csv");
@@ -665,6 +689,12 @@ int main(int argc, char** argv) {
             Frontend::RegisterDefaultApplets();
             HostEvents events;
             int result = 6;
+            if (std::getenv("CARA_NATIVE_DIAGNOSTICS")) {
+                int relative = 0;
+                const auto requested = pthread_get_qos_class_np(pthread_self(), &relative);
+                std::cout << "HOST_QOS thread=ui effective=" << static_cast<unsigned>(qos_class_self())
+                          << " requested=" << static_cast<unsigned>(requested) << " relative=" << relative << std::endl;
+            }
             std::thread emulation([&] {
                 @autoreleasepool {
                     try {
