@@ -2,6 +2,8 @@
 #include "pica_metal_upload.h"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "common/common_types.h"
+#include "common/cpu_category_timing.h"
+#include <stdexcept>
 #include "common/logging/log.h"
 #include "video_core/video_core.h"
 
@@ -99,6 +101,8 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
         std::uint64_t use;
         std::size_t hash;
         std::uint64_t identity;
+        Entry* older = nullptr;
+        Entry* newer = nullptr;
     };
     struct Cache {
         struct Hint { std::size_t hash{}; std::uint64_t identity{}; };
@@ -115,6 +119,8 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
         std::uint64_t cancel_epoch = 0, next_identity = 0;
         NSUInteger used = 0;
         std::uint64_t time = 0;
+        Entry* oldest = nullptr;
+        Entry* newest = nullptr;
     };
     constexpr NSUInteger budget = 24 * 1024 * 1024;
     const NSUInteger allocation = height * pitch;
@@ -156,6 +162,28 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
         if (next < cache->ordinal[recent_slot].size())
             ordinal_hint = &cache->ordinal[recent_slot][next++];
     }
+    static const bool ordered_eviction = [] {
+        const auto* value = std::getenv("CARA_METAL_VERTEX_CACHE_ORDERED_EVICTION");
+        return value && std::string_view(value) == "1";
+    }();
+    // unordered_multimap retains references across rehash. Only eviction erases
+    // a node, after unlinking it and clearing all recent hints. No extra nodes,
+    // GPU resources, source identity assumptions or equality shortcuts.
+    const auto unlink = [&](Entry& entry) {
+        if (entry.older) entry.older->newer = entry.newer;
+        else if (cache->oldest == &entry) cache->oldest = entry.newer;
+        if (entry.newer) entry.newer->older = entry.older;
+        else if (cache->newest == &entry) cache->newest = entry.older;
+        entry.older = entry.newer = nullptr;
+    };
+    const auto touch = [&](Entry& entry) {
+        if (!ordered_eviction || cache->newest == &entry) return;
+        unlink(entry);
+        entry.older = cache->newest;
+        if (cache->newest) cache->newest->newer = &entry;
+        else cache->oldest = &entry;
+        cache->newest = &entry;
+    };
     const auto matches_shape = [&](const Entry& entry) {
         return entry.format == format && entry.width == width && entry.height == height &&
                entry.source_pitch == source_pitch && entry.data.size() == source.size();
@@ -189,6 +217,7 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
             ordinal_candidate = &entry;
             if (matches_shape(entry) && matches_bytes(entry)) {
                 entry.use = ++cache->time;
+                touch(entry);
                 if (reuse_recent)
                     cache->recent[recent_slot] = &entry;
                 NativeMetalCost::Count(NativeMetalCost::VertexUploadHits, 1);
@@ -204,6 +233,7 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
             // source-row padding, must match before bypassing the hash lookup.
             if (candidate != ordinal_candidate && matches_shape(*candidate) && matches_bytes(*candidate)) {
                 candidate->use = ++cache->time;
+                touch(*candidate);
                 remember_ordinal(*candidate);
                 NativeMetalCost::Count(NativeMetalCost::VertexCacheRecentHits, 1);
                 NativeMetalCost::Count(NativeMetalCost::VertexUploadHits, 1);
@@ -233,6 +263,7 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
             if (!matches_bytes(entry))
                 continue;
             entry.use = ++cache->time;
+                touch(entry);
             remember_ordinal(entry);
             if (reuse_recent)
                 cache->recent[recent_slot] = &entry;
@@ -263,16 +294,35 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
     }
 
     constexpr std::size_t entry_limit = 384;
+    {
+    Common::CPUCategoryTiming::Scope eviction_cpu(Common::CPUCategoryTiming::Category::DrawVertexEviction);
     while (cache->entries.size() >= entry_limit || cost > budget - cache->used) {
-        const auto victim = std::min_element(cache->entries.begin(), cache->entries.end(),
-            [](const auto& a, const auto& b) { return a.second.use < b.second.use; });
+        auto victim = cache->entries.end();
+        if (ordered_eviction) {
+            if (!cache->oldest) throw std::runtime_error("Metal vertex LRU missing oldest");
+            const auto bucket = cache->entries.equal_range(cache->oldest->hash);
+            for (auto it = bucket.first; it != bucket.second; ++it)
+                if (&it->second == cache->oldest) { victim = it; break; }
+            if (victim == cache->entries.end())
+                throw std::runtime_error("Metal vertex LRU lost live entry");
+            static thread_local bool reported = false;
+            if (!reported) {
+                LOG_INFO(Render_OpenGL, "Metal ordered vertex cache eviction active");
+                reported = true;
+            }
+        } else {
+            victim = std::min_element(cache->entries.begin(), cache->entries.end(),
+                [](const auto& a, const auto& b) { return a.second.use < b.second.use; });
+        }
         NativeMetalCost::Count(NativeMetalCost::VertexCacheEvictions, 1);
         NativeMetalCost::Count(NativeMetalCost::VertexCacheEvictedBytes, victim->second.allocation);
         cache->used -= victim->second.allocation;
         for (auto*& hint : cache->recent)
             if (hint == &victim->second)
                 hint = nullptr;
+        if (ordered_eviction) unlink(victim->second);
         cache->entries.erase(victim);
+    }
     }
     if (cache->next_identity == std::numeric_limits<std::uint64_t>::max()) {
         // Invalidate all hints before recycling IDs; existing entries cannot
@@ -285,6 +335,7 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
     }
     const auto inserted = cache->entries.emplace(hash, Entry{texture, {source.begin(), source.end()}, format,
         width, height, source_pitch, cost, ++cache->time, hash, ++cache->next_identity});
+    touch(inserted->second);
     remember_ordinal(inserted->second);
     if (reuse_recent)
         cache->recent[recent_slot] = &inserted->second;
