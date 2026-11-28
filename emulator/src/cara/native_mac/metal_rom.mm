@@ -429,20 +429,9 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
             if (!cost_first || cost_last < cost_first || cost_last - cost_first >= 512 || cost_last > limit)
                 throw std::runtime_error("Invalid bounded frame-cost observation range");
         }
-        static constexpr std::array cost_phases{
-            Cost::ReserveWait, Cost::ArenaWait, Cost::ResolveBytesHost, Cost::ExportSpanHost,
-            Cost::PublishBytesHost, Cost::DisplayHost, Cost::FillHost, Cost::TextureCopyHost,
-            Cost::Encode, Cost::Publish, Cost::Present, Cost::Transfer, Cost::Depth, Cost::Color,
-            Cost::Lut, Cost::EncoderSetup, Cost::RawDetileHost, Cost::QueuedColorExportHost,
-            Cost::NativeColorHost, Cost::RetileHost, Cost::QueueDrain,
-            Cost::QueueWaitSiteDraw, Cost::QueueWaitSiteCopy, Cost::QueueWaitSiteFill,
-            Cost::QueueWaitSiteDisplay, Cost::QueueWaitSiteSample, Cost::QueueWaitSitePresent,
-            Cost::QueueWaitSiteDrain, Cost::QueueWaitOldestDraw, Cost::QueueWaitOldestCopy,
-            Cost::QueueWaitOldestFill, Cost::QueueWaitOldestDisplay, Cost::QueueWaitOldestSample,
-            Cost::QueueWaitOldestPresent};
         struct CostFrame {
             unsigned frame;
-            std::array<Cost::Span, cost_phases.size()> totals;
+            std::array<Cost::Span, Cost::PhaseCount> totals;
         };
         std::vector<CostFrame> cost_frames;
         if (trace_cost)
@@ -484,10 +473,7 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
             }
             replay_ledger.Observe(core, frame);
             if (trace_cost && frame != previous_frame && frame >= cost_first - 1 && frame <= cost_last) {
-                CostFrame sample{frame, {}};
-                for (std::size_t i = 0; i < cost_phases.size(); ++i)
-                    sample.totals[i] = Cost::spans[cost_phases[i]];
-                cost_frames.push_back(sample);
+                cost_frames.push_back(CostFrame{frame, Cost::spans});
             }
             if (frame != previous_frame) {
                 events.refresh.store(frame);
@@ -522,11 +508,11 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                 const auto& current = cost_frames[n];
                 if (current.frame != previous.frame + 1 || current.frame != cost_first + n - 1)
                     throw std::runtime_error("Frame-cost observation frame order invalid");
-                for (std::size_t i = 0; i < cost_phases.size(); ++i) {
+                for (std::size_t i = 0; i < Cost::PhaseCount; ++i) {
                     if (current.totals[i].calls < previous.totals[i].calls ||
                         current.totals[i].ns < previous.totals[i].ns)
                         throw std::runtime_error("Frame-cost observation counter moved backward");
-                    report << current.frame << ',' << Cost::names[cost_phases[i]] << ','
+                    report << current.frame << ',' << Cost::names[i] << ','
                            << current.totals[i].calls - previous.totals[i].calls << ','
                            << current.totals[i].ns - previous.totals[i].ns << '\n';
                 }
