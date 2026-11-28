@@ -2,6 +2,7 @@
 #include "pica_metal_upload.h"
 #include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "common/common_types.h"
+#include "common/logging/log.h"
 #include "video_core/video_core.h"
 
 #include <algorithm>
@@ -168,6 +169,14 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
         if (ordinal_hint)
             *ordinal_hint = {entry.hash, entry.identity};
     };
+    // source is the caller's captured immutable input for this synchronous lookup.
+    // Entry data and references remain stable: no mutation/rehash/erase occurs
+    // before the hash-probe loop. A rejected hint need not compare again there.
+    static const bool reuse_rejected = [] {
+        const auto* value = std::getenv("CARA_METAL_REUSE_REJECTED_VERTEX_PROBES");
+        return value && std::string_view(value) == "1";
+    }();
+    Entry* rejected_recent = nullptr;
     Entry* ordinal_candidate = nullptr;
     if (ordinal_hint && ordinal_hint->identity) {
         // The saved hash only selects an existing bucket. A live node identity,
@@ -200,6 +209,7 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
                 NativeMetalCost::Count(NativeMetalCost::VertexUploadHits, 1);
                 return candidate->texture;
             }
+            rejected_recent = candidate;
         }
     }
     const auto hash = [&] {
@@ -211,6 +221,14 @@ id<MTLTexture> ImmutableVertexTexture(id<MTLDevice> device, std::span<const std:
     const auto candidates = cache->entries.equal_range(hash);
     for (auto it = candidates.first; it != candidates.second; ++it) {
         auto& entry = it->second;
+        if (reuse_rejected && (&entry == ordinal_candidate || &entry == rejected_recent)) {
+            static thread_local bool reported = false;
+            if (!reported) {
+                LOG_INFO(Render_OpenGL, "Metal reused rejected vertex byte probe");
+                reported = true;
+            }
+            continue;
+        }
         if (matches_shape(entry)) {
             if (!matches_bytes(entry))
                 continue;
