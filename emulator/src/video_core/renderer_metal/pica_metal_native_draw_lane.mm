@@ -917,9 +917,18 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     if (NativeMetalCost::Enabled() && !copies.empty()) {
         NativeMetalCost::Count(NativeMetalCost::ResolveCopyPlans, 1);
         NativeMetalCost::Count(NativeMetalCost::ResolveCopyCommands, copies.size());
+        const auto first_source = copies.front().source;
+        id<MTLBuffer> second_source = nil;
+        bool many_sources = false;
         for (std::size_t i = 0; i < copies.size(); ++i) {
             const auto& copy = copies[i];
             NativeMetalCost::Count(NativeMetalCost::ResolveCopyPayloadBytes, copy.size);
+            if (copy.source != first_source && copy.source != second_source) {
+                if (!second_source)
+                    second_source = copy.source;
+                else
+                    many_sources = true;
+            }
             if (i == 0)
                 continue;
             const auto& previous = copies[i - 1];
@@ -933,6 +942,11 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
                 copy.to - previous.to == previous.size)
                 NativeMetalCost::Count(NativeMetalCost::ResolveAdjacentCopyPairs, 1);
         }
+        NativeMetalCost::Count(many_sources ? NativeMetalCost::ResolveManySourcePlans :
+                              second_source ? NativeMetalCost::ResolveTwoSourcePlans :
+                                              NativeMetalCost::ResolveSingleSourcePlans, 1);
+        if (second_source && !many_sources)
+            NativeMetalCost::Count(NativeMetalCost::ResolveTwoSourceCopies, copies.size());
     }
     if (!copies.empty()) {
         const auto blit = [command blitCommandEncoder];
