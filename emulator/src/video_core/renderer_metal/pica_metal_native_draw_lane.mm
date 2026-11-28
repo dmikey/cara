@@ -528,6 +528,7 @@ void PicaMetalNativeDrawLane::PublishBytes(id<MTLCommandBuffer> command, id<MTLB
     Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalPublishBytes);
     NativeMetalCost::Scope cost(NativeMetalCost::PublishBytesHost);
     if (NativeMetalCost::OverlapTransfers()) {
+        Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationReserve);
         NativeMetalCost::Scope reserve(NativeMetalCost::LateTransferReserve);
         // Command creation and encoding need no submitted slot. Keep the
         // original bounded queue and reserve before publishing any ownership.
@@ -540,18 +541,31 @@ void PicaMetalNativeDrawLane::PublishBytes(id<MTLCommandBuffer> command, id<MTLB
     if (submissions.Full())
         submissions.Fail("Native Metal transfer lacks a reserved submission slot");
     const auto bytes = rows.footprint;
-    const auto published = PrepareBytePublications(command, buffer, rows, ++byte_generation,
-                                                    submissions.Predecessors());
+    const auto published = [&] {
+        Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationPrepare);
+        return PrepareBytePublications(command, buffer, rows, ++byte_generation,
+                                       submissions.Predecessors());
+    }();
     const auto writes = published.Writes();
 
     try {
-        [command commit];
-        Track(command);
-        authority.Publish(writes);
-        InvalidateAttachments({bytes.begin, bytes.end});
-        for (const auto& write : writes)
-            InvalidateDecodedTextures(queue, write.begin, write.end);
+        {
+            Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationCommit);
+            [command commit];
+            Track(command);
+        }
+        {
+            Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationAuthority);
+            authority.Publish(writes);
+        }
+        {
+            Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationInvalidate);
+            InvalidateAttachments({bytes.begin, bytes.end});
+            for (const auto& write : writes)
+                InvalidateDecodedTextures(queue, write.begin, write.end);
+        }
         if (write_notice) {
+            Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationNotice);
             for (const auto& write : writes)
                 write_notice(write.begin, write.end);
         }
@@ -2390,6 +2404,7 @@ void PicaMetalNativeDrawLane::PublishPending() {
         Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalPublishBytes);
         NativeMetalCost::Scope cost(NativeMetalCost::PublishBytesHost);
         {
+            Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationReserve);
             NativeMetalCost::Scope reserve(NativeMetalCost::LateTransferReserve);
             submissions.Reserve();
         }
@@ -2399,22 +2414,35 @@ void PicaMetalNativeDrawLane::PublishPending() {
         try {
             if (submissions.Full())
                 submissions.Fail("Native Metal copy batch lacks a reserved submission slot");
-            const auto predecessors = submissions.Predecessors();
-            std::array<BytePublications, 2> published;
-            for (std::size_t i = 0; i < batch.count; ++i) {
-                const auto& copy = batch.copies[i];
-                published[i] = PrepareBytePublications(batch.command, copy.buffer, copy.destination,
+            const auto published = [&] {
+                Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationPrepare);
+                const auto predecessors = submissions.Predecessors();
+                std::array<BytePublications, 2> result;
+                for (std::size_t i = 0; i < batch.count; ++i) {
+                    const auto& copy = batch.copies[i];
+                    result[i] = PrepareBytePublications(batch.command, copy.buffer, copy.destination,
                                                        ++byte_generation, predecessors);
+                }
+                return result;
+            }();
+            {
+                Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationCommit);
+                [batch.command commit];
+                Track(batch.command);
             }
-            [batch.command commit];
-            Track(batch.command);
             for (std::size_t i = 0; i < batch.count; ++i) {
                 const auto bytes = batch.copies[i].destination.footprint;
                 const auto writes = published[i].Writes();
-                authority.Publish(writes);
-                InvalidateAttachments({bytes.begin, bytes.end});
-                for (const auto& write : writes)
-                    InvalidateDecodedTextures(queue, write.begin, write.end);
+                {
+                    Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationAuthority);
+                    authority.Publish(writes);
+                }
+                {
+                    Common::CPUCategoryTiming::Scope cpu(Common::CPUCategoryTiming::Category::PublicationInvalidate);
+                    InvalidateAttachments({bytes.begin, bytes.end});
+                    for (const auto& write : writes)
+                        InvalidateDecodedTextures(queue, write.begin, write.end);
+                }
             }
         } catch (...) {
             submissions.RejectWrites();

@@ -45,6 +45,7 @@
 #endif
 #include "core/frontend/applets/default_applets.h"
 #include "core/frontend/emu_window.h"
+#include "video_core/renderer_metal/pica_metal_frame_cost.hh"
 #include "core/loader/loader.h"
 #include "core/settings.h"
 #include "input_common/main.h"
@@ -415,6 +416,37 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         size_t next_input = 0;
         unsigned previous_frame = VideoCore::GetCurrentFrame();
         Cara::NativeReplay::Ledger replay_ledger(core, previous_frame);
+        namespace Cost = Cara::NativeMetalCost;
+        const char* cost_first_text = std::getenv("CARA_NATIVE_METAL_COST_FRAME_START");
+        const char* cost_last_text = std::getenv("CARA_NATIVE_METAL_COST_FRAME_END");
+        const bool trace_cost = cost_first_text || cost_last_text;
+        unsigned cost_first = 0, cost_last = 0;
+        if (trace_cost) {
+            if (!cost_first_text || !cost_last_text || !Cost::Enabled())
+                throw std::runtime_error("Frame-cost trace requires both bounds and FRAME_COST");
+            cost_first = ParseUnsigned(cost_first_text);
+            cost_last = ParseUnsigned(cost_last_text);
+            if (!cost_first || cost_last < cost_first || cost_last - cost_first >= 512 || cost_last > limit)
+                throw std::runtime_error("Invalid bounded frame-cost observation range");
+        }
+        constexpr std::array cost_phases{
+            Cost::ReserveWait, Cost::ArenaWait, Cost::ResolveBytesHost, Cost::ExportSpanHost,
+            Cost::PublishBytesHost, Cost::DisplayHost, Cost::FillHost, Cost::TextureCopyHost,
+            Cost::Encode, Cost::Publish, Cost::Present, Cost::Transfer, Cost::Depth, Cost::Color,
+            Cost::Lut, Cost::EncoderSetup, Cost::RawDetileHost, Cost::QueuedColorExportHost,
+            Cost::NativeColorHost, Cost::RetileHost, Cost::QueueDrain,
+            Cost::QueueWaitSiteDraw, Cost::QueueWaitSiteCopy, Cost::QueueWaitSiteFill,
+            Cost::QueueWaitSiteDisplay, Cost::QueueWaitSiteSample, Cost::QueueWaitSitePresent,
+            Cost::QueueWaitSiteDrain, Cost::QueueWaitOldestDraw, Cost::QueueWaitOldestCopy,
+            Cost::QueueWaitOldestFill, Cost::QueueWaitOldestDisplay, Cost::QueueWaitOldestSample,
+            Cost::QueueWaitOldestPresent};
+        struct CostFrame {
+            unsigned frame;
+            std::array<Cost::Span, cost_phases.size()> totals;
+        };
+        std::vector<CostFrame> cost_frames;
+        if (trace_cost)
+            cost_frames.reserve(cost_last - cost_first + 2);
         Uint32 title_updated_at = SDL_GetTicks();
         bool discard_clock_sample = false;
         while (!events.stop.load() && VideoCore::GetCurrentFrame() < limit) {
@@ -451,6 +483,12 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                 std::cout << "CAPTURE frame=" << frame << std::endl;
             }
             replay_ledger.Observe(core, frame);
+            if (trace_cost && frame != previous_frame && frame >= cost_first - 1 && frame <= cost_last) {
+                CostFrame sample{frame, {}};
+                for (std::size_t i = 0; i < cost_phases.size(); ++i)
+                    sample.totals[i] = Cost::spans[cost_phases[i]];
+                cost_frames.push_back(sample);
+            }
             if (frame != previous_frame) {
                 events.refresh.store(frame);
                 if (record_refresh_timing) {
@@ -474,6 +512,28 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         const auto frames = VideoCore::GetCurrentFrame();
         const bool captured = frames >= limit && Cara::WriteNativeMetalCapture(output);
         replay_ledger.Write(output);
+        if (trace_cost) {
+            if (cost_frames.size() != cost_last - cost_first + 2)
+                throw std::runtime_error("Frame-cost observation coverage incomplete");
+            std::ofstream report(output + "metal-cost-per-refresh.csv");
+            report << "refresh,phase,calls,elapsed_ns\n";
+            for (std::size_t n = 1; n < cost_frames.size(); ++n) {
+                const auto& previous = cost_frames[n - 1];
+                const auto& current = cost_frames[n];
+                if (current.frame != previous.frame + 1 || current.frame != cost_first + n - 1)
+                    throw std::runtime_error("Frame-cost observation frame order invalid");
+                for (std::size_t i = 0; i < cost_phases.size(); ++i) {
+                    if (current.totals[i].calls < previous.totals[i].calls ||
+                        current.totals[i].ns < previous.totals[i].ns)
+                        throw std::runtime_error("Frame-cost observation counter moved backward");
+                    report << current.frame << ',' << Cost::names[cost_phases[i]] << ','
+                           << current.totals[i].calls - previous.totals[i].calls << ','
+                           << current.totals[i].ns - previous.totals[i].ns << '\n';
+                }
+            }
+            if (!report)
+                throw std::runtime_error("Could not retain per-refresh Metal costs");
+        }
         if (record_refresh_timing) {
             std::ofstream report(output + "refresh-timing.csv");
             report << "refresh,elapsed_ns\n";
