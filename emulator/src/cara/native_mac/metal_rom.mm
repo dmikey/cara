@@ -337,6 +337,24 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         std::cout << "HOST_QOS thread=emulation effective=" << static_cast<unsigned>(qos_class_self())
                   << " requested=" << static_cast<unsigned>(requested) << " relative=" << relative << std::endl;
     }
+    const auto* latency_flag = std::getenv("CARA_NATIVE_METAL_LATENCY_ACTIVITY");
+    const bool latency_requested = latency_flag && std::string_view(latency_flag) == "1";
+    id<NSObject> latency_activity = nil;
+    if (latency_requested) {
+        latency_activity = [NSProcessInfo.processInfo
+            beginActivityWithOptions:(NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical)
+            reason:@"Cara active emulation frame deadlines"];
+        if (!latency_activity)
+            throw std::runtime_error("Could not begin native emulation timing activity");
+    }
+    SCOPE_EXIT({
+        if (latency_activity)
+            [NSProcessInfo.processInfo endActivity:latency_activity];
+        if (std::getenv("CARA_NATIVE_DIAGNOSTICS"))
+            std::cout << "HOST_LATENCY_ACTIVITY ended=" << latency_requested << std::endl;
+    });
+    if (std::getenv("CARA_NATIVE_DIAGNOSTICS"))
+        std::cout << "HOST_LATENCY_ACTIVITY enabled=" << latency_requested << std::endl;
     const auto play_settings = PlaySettings::Read(ini);
     const bool saved_play_mode = PlaySettings::HasSavedPlayMode(ini);
     Cara::ConfigureMetalGeneralFragment(
@@ -446,6 +464,11 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         std::vector<CostFrame> cost_frames;
         if (trace_cost)
             cost_frames.reserve(cost_last - cost_first + 2);
+        const char* pacing_flag = std::getenv("CARA_NATIVE_PACING_OBSERVATION");
+        const bool pacing_only = pacing_flag && std::string_view(pacing_flag) == "1";
+        std::vector<std::pair<unsigned, std::int64_t>> saved_pacing;
+        if (pacing_only)
+            saved_pacing.reserve(limit);
         Uint32 title_updated_at = SDL_GetTicks();
         bool discard_clock_sample = false;
         while (!events.stop.load() && VideoCore::GetCurrentFrame() < limit) {
@@ -482,6 +505,11 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
                 std::cout << "CAPTURE frame=" << frame << std::endl;
             }
             replay_ledger.Observe(core, frame);
+            if (pacing_only && frame != previous_frame) {
+                const auto saved = core.perf_stats->GetLastFrameTiming();
+                saved_pacing.emplace_back(frame - 1, std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    saved.elapsed - saved.work).count());
+            }
             if (trace_cost && frame != previous_frame && frame >= cost_first - 1 && frame <= cost_last) {
                 // FrameUpdate ends the old interval, then begins/paces the
                 // new one before incrementing the observed frame. This saved
@@ -514,6 +542,20 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
         const auto frames = VideoCore::GetCurrentFrame();
         const bool captured = frames >= limit && Cara::WriteNativeMetalCapture(output);
         replay_ledger.Write(output);
+        if (pacing_only) {
+            if (saved_pacing.size() != frames)
+                throw std::runtime_error("Saved pacing observation incomplete");
+            std::ofstream report(output + "native-pacing-only.csv");
+            report << "ledger_refresh,saved_sleep_ns\n";
+            unsigned expected = 0;
+            for (const auto& [refresh, sleep] : saved_pacing) {
+                if (refresh != expected++ || sleep < 0)
+                    throw std::runtime_error("Saved pacing observation order or duration invalid");
+                report << refresh << ',' << sleep << '\n';
+            }
+            if (!report)
+                throw std::runtime_error("Could not retain saved pacing observation");
+        }
         if (trace_cost) {
             if (cost_frames.size() != cost_last - cost_first + 2)
                 throw std::runtime_error("Frame-cost observation coverage incomplete");
