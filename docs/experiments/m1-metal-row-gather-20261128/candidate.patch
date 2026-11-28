@@ -1,0 +1,283 @@
+--- /dev/null
++++ b/emulator/src/video_core/renderer_metal/pica_metal_copy_row_runs.hh
+@@ -0,0 +1,84 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++#include <array>
++#include <cstdint>
++#include <limits>
++#include <optional>
++#include <span>
++
++namespace Cara::MetalTransfer {
++template<class Source> struct CopyRowRun {
++    Source source{};
++    std::uint64_t from{}, to{}, width{}, source_stride{}, destination_stride{}, count{};
++};
++template<class Source> struct CopyRowRuns {
++    std::array<CopyRowRun<Source>, 2> runs{};
++    std::size_t count{};
++};
++
++// A private staging destination is disjoint from all sources. Only strictly
++// increasing, nonoverlapping destination spans may be regrouped by source.
++// This proves the exact word mapping of the existing cara_pica_copy_rows
++// kernel; source status/ownership, allocation and queue proofs stay outside.
++template<class Source, class Copy>
++std::optional<CopyRowRuns<Source>> PlanTwoSourceCopyRows(std::span<const Copy> copies) {
++    if (copies.size() < 4)
++        return std::nullopt;
++    constexpr auto max = std::numeric_limits<std::uint64_t>::max();
++    constexpr auto max32 = std::numeric_limits<std::uint32_t>::max();
++    CopyRowRuns<Source> result;
++    std::array<std::uint64_t, 2> last_from{}, last_to{};
++    std::uint64_t previous_end = 0;
++    bool first = true;
++    for (const auto& copy : copies) {
++        if (!copy.size || ((copy.from | copy.to | copy.size) & 3u) ||
++            copy.size > max32 || copy.from > max - copy.size ||
++            copy.to > max - copy.size || (!first && copy.to < previous_end))
++            return std::nullopt;
++        first = false;
++        previous_end = copy.to + copy.size;
++        std::size_t k = 0;
++        while (k < result.count && result.runs[k].source != copy.source)
++            ++k;
++        if (k == result.count) {
++            if (k == result.runs.size())
++                return std::nullopt;
++            ++result.count;
++            result.runs[k].source = copy.source;
++            result.runs[k].from = copy.from;
++            result.runs[k].to = copy.to;
++            result.runs[k].width = copy.size;
++        }
++        auto& run = result.runs[k];
++        if (run.width != copy.size || run.count == max32)
++            return std::nullopt;
++        if (run.count) {
++            if (copy.from < last_from[k] || copy.to < last_to[k])
++                return std::nullopt;
++            const auto source_step = copy.from - last_from[k];
++            const auto destination_step = copy.to - last_to[k];
++            if (source_step < run.width || destination_step < run.width ||
++                source_step > max32 || destination_step > max32)
++                return std::nullopt;
++            if (run.count == 1) {
++                run.source_stride = source_step;
++                run.destination_stride = destination_step;
++            } else if (source_step != run.source_stride ||
++                       destination_step != run.destination_stride) {
++                return std::nullopt;
++            }
++        }
++        ++run.count;
++        last_from[k] = copy.from;
++        last_to[k] = copy.to;
++    }
++    for (std::size_t k = 0; k < result.count; ++k) {
++        const auto& run = result.runs[k];
++        if (run.count < 2 || run.count * (run.width / 4) > max32 ||
++            last_from[k] - run.from + run.width > max32 ||
++            last_to[k] - run.to + run.width > max32)
++            return std::nullopt;
++    }
++    return result;
++}
++} // namespace Cara::MetalTransfer
+--- a/emulator/src/video_core/renderer_metal/pica_metal_transfers.h
++++ b/emulator/src/video_core/renderer_metal/pica_metal_transfers.h
+@@ -21,6 +21,14 @@
+     id<MTLComputePipelineState> linear_color = nil;
+ };
+ 
++// Checked copies between disjoint device-owned allocations using the existing
++// word-copy kernel. Callers retain all producer, source-byte and queue proofs.
++bool EncodeResolvedByteRows(id<MTLCommandBuffer> command, id<MTLComputePipelineState> pipeline,
++                            id<MTLBuffer> source, NSUInteger from,
++                            id<MTLBuffer> destination, NSUInteger to,
++                            std::uint32_t width, std::uint32_t source_stride,
++                            std::uint32_t destination_stride, std::uint32_t rows);
++
+ // The command buffer must retain resources and come from the same queue used by the writer cache.
+ // Success means encoded only. Publish the returned stripe intervals after submission through the
+ // cache, retaining the resource and command buffer until consumers read or supersede them.
+--- a/emulator/src/video_core/renderer_metal/pica_metal_transfers.mm
++++ b/emulator/src/video_core/renderer_metal/pica_metal_transfers.mm
+@@ -106,6 +106,41 @@
+ }
+ 
+ } // namespace
++
++bool EncodeResolvedByteRows(id<MTLCommandBuffer> command, id<MTLComputePipelineState> pipeline,
++                            id<MTLBuffer> source, NSUInteger from,
++                            id<MTLBuffer> destination, NSUInteger to,
++                            std::uint32_t width, std::uint32_t source_stride,
++                            std::uint32_t destination_stride, std::uint32_t rows) {
++    if (!CanEncode(command) || !pipeline || pipeline.device != command.device ||
++        !source || !destination || source == destination ||
++        source.device != command.device || destination.device != command.device ||
++        source.heap || destination.heap ||
++        source.hazardTrackingMode != MTLHazardTrackingModeTracked ||
++        destination.hazardTrackingMode != MTLHazardTrackingModeTracked ||
++        !width || rows < 2 || source_stride < width || destination_stride < width ||
++        ((from | to | width | source_stride | destination_stride) & 3u))
++        return false;
++    const std::uint64_t source_bytes = std::uint64_t{rows - 1} * source_stride + width;
++    const std::uint64_t destination_bytes = std::uint64_t{rows - 1} * destination_stride + width;
++    const std::uint64_t words = std::uint64_t{rows} * (width / 4);
++    if (from > source.length || source_bytes > source.length - from ||
++        to > destination.length || destination_bytes > destination.length - to ||
++        words > std::numeric_limits<std::uint32_t>::max())
++        return false;
++    const auto encoder = [command computeCommandEncoder];
++    if (!encoder)
++        return false;
++    const CopyArguments args{static_cast<std::uint32_t>(words), width / 4, source_stride / 4,
++                             width / 4, destination_stride / 4, 0};
++    [encoder setComputePipelineState:pipeline];
++    [encoder setBuffer:source offset:from atIndex:0];
++    [encoder setBuffer:destination offset:to atIndex:1];
++    [encoder setBytes:&args length:sizeof(args) atIndex:2];
++    DispatchWords(encoder, pipeline, args.count);
++    [encoder endEncoding];
++    return true;
++}
+ 
+ std::optional<TextureCopyPlan> EncodeTextureCopy(id<MTLCommandBuffer> command,
+                                               const Pipelines& pipelines,
+--- a/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.h
++++ b/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.h
+@@ -97,7 +97,8 @@
+     enum class ByteUse { General, DisplayTransfer, TextureCopy };
+     std::optional<MetalTransfer::ByteView> ResolveBytes(
+         id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
+-        const MetalGuestAuthority::GuestReader& ram, ByteUse use = ByteUse::General);
++        const MetalGuestAuthority::GuestReader& ram, ByteUse use = ByteUse::General,
++        id<MTLComputePipelineState> copy_rows = nil);
+     id<MTLBuffer> AllocateBytes(MetalTransfer::GuestInterval bytes);
+     void PublishBytes(id<MTLCommandBuffer> command, id<MTLBuffer> buffer,
+                       const MetalTransfer::Rows& rows);
+--- a/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm
++++ b/emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm
+@@ -7,6 +7,7 @@
+ #include "video_core/renderer_metal/pica_metal_depth_clear_encoding.hh"
+ 
+ #include "pica_metal_raw_retile_pair.h"
++#include "pica_metal_copy_row_runs.hh"
+ 
+ #include <algorithm>
+ #include <array>
+@@ -612,7 +613,8 @@
+ 
+ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
+     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
+-    const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
++    const MetalGuestAuthority::GuestReader& ram, ByteUse use,
++    id<MTLComputePipelineState> copy_rows) {
+     const bool display_transfer = use == ByteUse::DisplayTransfer;
+     Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalResolve);
+     NativeMetalCost::Scope cost(NativeMetalCost::ResolveBytesHost);
+@@ -948,6 +950,46 @@
+         if (second_source && !many_sources)
+             NativeMetalCost::Count(NativeMetalCost::ResolveTwoSourceCopies, copies.size());
+     }
++    static const bool gather_rows = [] {
++        const auto* value = std::getenv("CARA_METAL_GATHER_RESOLVED_ROWS");
++        return value && std::string_view(value) == "1";
++    }();
++    if (gather_rows && copy_rows && copy_rows.device == queue.device) {
++        const auto plan = MetalTransfer::PlanTwoSourceCopyRows<id<MTLBuffer>>(
++            std::span<const Copy>{copies});
++        bool usable = plan.has_value();
++        if (plan) {
++            for (std::size_t k = 0; k < plan->count; ++k) {
++                const auto& run = plan->runs[k];
++                const auto source_bytes = (run.count - 1) * run.source_stride + run.width;
++                const auto destination_bytes = (run.count - 1) * run.destination_stride + run.width;
++                usable = usable && run.source && run.source != buffer && !run.source.heap &&
++                    run.source.device == queue.device &&
++                    run.source.hazardTrackingMode == MTLHazardTrackingModeTracked &&
++                    run.from <= run.source.length && source_bytes <= run.source.length - run.from &&
++                    run.to <= buffer.length && destination_bytes <= buffer.length - run.to;
++            }
++        }
++        if (usable) {
++            for (std::size_t k = 0; k < plan->count; ++k) {
++                const auto& run = plan->runs[k];
++                if (!MetalTransfer::EncodeResolvedByteRows(command, copy_rows, run.source, run.from,
++                        buffer, run.to, static_cast<u32>(run.width),
++                        static_cast<u32>(run.source_stride),
++                        static_cast<u32>(run.destination_stride), static_cast<u32>(run.count)))
++                    submissions.Fail("Could not encode checked Metal row gather");
++            }
++            NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherPlans, 1);
++            NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherCopies, copies.size());
++            NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherDispatches, plan->count);
++            static thread_local bool reported = false;
++            if (!reported) {
++                LOG_INFO(Render_OpenGL, "Metal gathered checked resolved rows with original word-copy kernel");
++                reported = true;
++            }
++            return MetalTransfer::ByteView{buffer, bytes, 0};
++        }
++    }
+     if (!copies.empty()) {
+         const auto blit = [command blitCommandEncoder];
+         if (!blit)
+@@ -1160,7 +1202,7 @@
+     const auto buffer = AllocateBytes(destination);
+     allocate.Stop();
+     NativeMetalCost::Scope resolve(NativeMetalCost::CopyResolve);
+-    const auto source = ResolveBytes(command, plan->source, 4, ram, ByteUse::TextureCopy);
++    const auto source = ResolveBytes(command, plan->source, 4, ram, ByteUse::TextureCopy, pipelines.copy_rows);
+     resolve.Stop();
+     NativeMetalCost::Scope encode(NativeMetalCost::CopyEncode);
+     if (!buffer || !source ||
+@@ -1535,7 +1577,7 @@
+                 }
+             }
+         }
+-        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer);
++        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer, pipelines.copy_rows);
+         if (command && !source) {
+             // A linear view can reinterpret bytes just written in a tiled
+             // render target. Materialize that exact byte range before tiling.
+@@ -1596,7 +1638,7 @@
+                 // The blit kernel wants logical RGBA8 texels. Resolve the
+                 // exact packed source, including native-writer intervals,
+                 // and detile on the same command before the color blit.
+-                const auto source = ResolveBytes(command, DenseRows(color->source), 256, ram);
++                const auto source = ResolveBytes(command, DenseRows(color->source), 256, ram, ByteUse::General, pipelines.copy_rows);
+                 src = make_texture(color->width);
+                 constexpr u32 rgba8_format = 0;
+                 if (!source ||
+@@ -1659,7 +1701,7 @@
+     }
+     const auto command = [queue commandBuffer];
+     const auto buffer = AllocateBytes(plan->copy.destination.footprint);
+-    const auto source = ResolveBytes(command, plan->copy.source, 4, ram);
++    const auto source = ResolveBytes(command, plan->copy.source, 4, ram, ByteUse::General, pipelines.copy_rows);
+     if (!buffer || !source ||
+         !MetalTransfer::EncodeDisplayTransfer(command, pipelines, registers, *source,
+                                               {buffer, plan->copy.destination.footprint, 0}))
+--- a/emulator/src/video_core/renderer_metal/pica_metal_frame_cost.hh
++++ b/emulator/src/video_core/renderer_metal/pica_metal_frame_cost.hh
+@@ -57,7 +57,7 @@
+     SimdReferenceRequests, SimdReferenceCompiled, SimdReferenceRejected, SimdReferenceFallbacks, SimdReferenceDraws, DisplayCropRgb8Candidates, DisplayCrop565Candidates, DisplayCropOwnerHits, DisplayCropOwnerMisses, DisplayCropFused, DisplayCropSourceBytesAvoided, DisplayRgb8RetileCandidates, DisplayRgb8RetileOwnerHits, DisplayLinearBufferOnly, DisplayLinearTextureBytesAvoided, LinearTextureAlignmentQueries, LinearTextureAlignmentHits, ShaderIdentityFullChecks, ShaderIdentityComparedBytes, ShaderIdentityFastHits, ShaderIdentityValidationFailures, AsyncDepthImports, AsyncDepthChecksPassed, AsyncDepthChecksFailed, QueuedPendingDepthExports,
+     PicaListToFirstShaderTranslation, PicaFirstShaderWithin100us, PicaFirstShaderWithin1ms,
+     PicaFirstShaderWithin5ms, PicaFirstShaderAfter5ms,
+-    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, IndexSnapshotProofHits, IndexSnapshotProofBytes, ResolveCopyPlans, ResolveCopyCommands, ResolveCopyPayloadBytes, ResolveAdjacentCopyPairs, ResolveSameBufferPairs, ResolveSingleSourcePlans, ResolveTwoSourcePlans, ResolveManySourcePlans, ResolveTwoSourceCopies, PhaseCount
++    RuntimeVertexSpirvMslHit, GeneralFragmentDraws, VertexUploadToDraw, VertexAnyUploadToDraw, VertexUploadUnobserved, VertexFallbackDraws, RuntimeLinkedVertexHit, IndexSnapshotProofHits, IndexSnapshotProofBytes, ResolveCopyPlans, ResolveCopyCommands, ResolveCopyPayloadBytes, ResolveAdjacentCopyPairs, ResolveSameBufferPairs, ResolveSingleSourcePlans, ResolveTwoSourcePlans, ResolveManySourcePlans, ResolveTwoSourceCopies, ResolveRowGatherPlans, ResolveRowGatherCopies, ResolveRowGatherDispatches, PhaseCount
+ };
+ inline constexpr std::array<const char*, PhaseCount> names{
+     "color_acquire", "depth_acquire", "lut_refresh", "record_total", "encode_total",
+@@ -120,7 +120,7 @@
+     "pica_list_to_first_shader_translation", "pica_first_shader_within_100us",
+     "pica_first_shader_within_1ms", "pica_first_shader_within_5ms", "pica_first_shader_after_5ms",
+     "runtime_vertex_spirv_msl_hit", "general_fragment_draws",
+-    "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws", "runtime_linked_vertex_hit", "index_snapshot_proof_hits", "index_snapshot_proof_bytes", "resolve_copy_plans", "resolve_copy_commands", "resolve_copy_payload_bytes", "resolve_adjacent_copy_pairs", "resolve_same_buffer_pairs", "resolve_single_source_plans", "resolve_two_source_plans", "resolve_many_source_plans", "resolve_two_source_copies"};
++    "vertex_upload_to_draw", "vertex_any_upload_to_draw", "vertex_upload_unobserved", "vertex_fallback_draws", "runtime_linked_vertex_hit", "index_snapshot_proof_hits", "index_snapshot_proof_bytes", "resolve_copy_plans", "resolve_copy_commands", "resolve_copy_payload_bytes", "resolve_adjacent_copy_pairs", "resolve_same_buffer_pairs", "resolve_single_source_plans", "resolve_two_source_plans", "resolve_many_source_plans", "resolve_two_source_copies", "resolve_row_gather_plans", "resolve_row_gather_copies", "resolve_row_gather_dispatches"};
+ struct Span { std::uint64_t calls{}, ns{}; };
+ inline thread_local std::array<Span, PhaseCount> spans{};
+ inline bool Enabled() {

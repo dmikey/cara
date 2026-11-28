@@ -1,0 +1,44 @@
+{
+  "parent": "c81835f308796a30f6ac7560a907c0bf43c90cb1",
+  "files": {
+    "emulator/src/video_core/renderer_metal/pica_metal_copy_row_runs.hh": {
+      "before": null,
+      "after": "424cb47b9dfae23d670ccd5b61ce49942c9a64ed110c007d77eaecc226e96b29"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_transfers.h": {
+      "before": "4f1e4446542a399398c52317aee2ccd7affd7129dce10ac855aaba743aaa0f1a",
+      "after": "9273100d3f0e7a2f7f8c396af965735cf24455b5f76a63a9c7f3b274fed4523b"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_transfers.mm": {
+      "before": "bd2f4b103fa58515ad40d368cd96711cc38872d53a5fb46db172b363078a7ece",
+      "after": "f854c51a5db201c93dd4971e72563ffd28931d3d354e6091f33a127695564da3"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.h": {
+      "before": "badee392c2dc87a089b26d33bb837999e0c6ff008a694840eb8b43f0574b3bc5",
+      "after": "60fe16ae2834c186ad7330899f0cdaa0e4223448234043e417447615752255f6"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_native_draw_lane.mm": {
+      "before": "b37c6d0b4f3adbad9cb89f0eb5c5b599aa7bd797721fd77176f2637c6cf5d44d",
+      "after": "4fbe47b00c75adbb1e9090b604b450df20a7441b62d081e4ff29d1283c2e1cc7"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_frame_cost.hh": {
+      "before": "cda4b826265ea279ed6bc1edc211c2771152d61f18694ec97c08616d7a7b63cc",
+      "after": "353998a27f53d1bd3232257d98ccefe5dd66d95a511ee6484a1c6184ddd0b5fd"
+    }
+  },
+  "component_gate": "copy-row-gather-component-1/RESULT.json",
+  "component_header_sha256": "424cb47b9dfae23d670ccd5b61ce49942c9a64ed110c007d77eaecc226e96b29",
+  "flag": "CARA_METAL_GATHER_RESOLVED_ROWS=1",
+  "default": "OFF",
+  "scope": "Group validated rows from at most two sources using unchanged existing word-copy kernel; no GLSL/MSL/shader ABI or guest CPU/timer change. Resolve keeps all authority and post-plan producer validation, checked RAM gap reads and fresh disjoint destination. Preserve exact stripe bytes, gap bytes and queued ownership publication. Irregular, unaligned, overlapping, many-source, overflow or uncertain resource layouts retain original blits. Encoding failure rejects uncommitted command, never falls through after partial encoding.",
+  "review": [
+    "CPU planner accepts strictly monotone nonoverlapping destination spans; reordering only changes independent writes into the fresh private buffer",
+    "At most two buffer identities; every source run must have identical row width and exact repeated source/destination strides; no prefix/suffix or gap merging",
+    "Offsets and widths are four-byte aligned; bounds checked against actual resources; overflow and too-large shader argument layouts decline before encoding",
+    "Existing tracked resources, command queue, retained references, read_gap and raw producer revalidation remain intact",
+    "Only transfer callers pass their already-loaded exact copy_rows pipeline; all other consumers retain original path",
+    "All resource checks complete before dispatch; any later encoding failure rejects the command",
+    "No change to existing copy_rows MSL or 24-byte CopyArguments ABI",
+    "CPU component passed2517 full-destination comparisons/negative checks, including untouched gap canaries"
+  ]
+}

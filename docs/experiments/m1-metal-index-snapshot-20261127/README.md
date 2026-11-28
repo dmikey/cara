@@ -100,23 +100,11 @@ Public Metal/OpenGL defaults and installed apps are unchanged. All unrelated
 private scan-status, completed-writer, raw-resolution, rejected-probe, ordered-
 eviction and sampler-binding candidates were explicitly OFF.
 
-## Pending clean comparison
+## Closed interrupted comparison
 
-Frozen plan: OpenGL / Metal OFF / Metal ON / Metal ON / Metal OFF / OpenGL,
-with this exact binary and the same inputs. Diagnostic clocks/counters are OFF.
-The host must pass proper M1/app/lock/compiler checks and three quiet samples;
-background service CPU must remain <=50% of one logical CPU from capture2400
-through clean exit. Both ON measurements must be assessed against both OFF
-controls and their drift, including total CPU and frame tails. Stop on failure;
-no automatic case retry or policy relaxation. Preserve existing upper-screen
-cross-renderer precision/edge differences rather than declaring pixel parity.
+The reviewed GL/OFF/ON/ON/OFF/GL bracket ran once and stopped at the first ON case after Spotlight updater exceeded the background CPU gate. Its source-ready and release are closed; do not reuse them or retry cases automatically. The two completed controls are provisional, not a complete candidate or renderer comparison. The current source also corrects a private native screenshot viewport bug, verified against authoritative LCD bytes. Files and Backups are mounted; no unmount or remount was needed. The earlier pending-unmount question no longer applies.
 
-The blocking service was identified in live macOS logs as APFS defragmentation
-on Files and Backups, two volumes of the same external disk. A private 1GiB
-byte-identical ROM copy is prepared on Fast so a clean test can be independent
-of that disk. No ROM/save/image payload is committed. Temporary normal unmount
-of the external volumes requires the user's decision because their files would
-be unavailable; no service or user app will be killed to force it.
+See [the November28 follow-up](../m1-metal-row-gather-20261128/README.md) for exact limitations, corrected capture evidence and the distinct measured copy-encoding target. The index proof remains default OFF.
 
 ## Artifacts and reproduction
 
@@ -134,7 +122,6 @@ CPU pair: `index-snapshot-diagnostic-1/RESULT.json`.
 `INDEX-SNAPSHOT-SOURCE-READY.json` binds the future runner, harness, binaries,
 shadow/CPU gates and verified local ROM. Source-only runner review corrected
 stale prior-experiment paths before any timing case; the original staged source
-and source-ready receipt are retained. No reviewed comparison has run yet.
+and source-ready receipt are retained. The one reviewed comparison was interrupted and closed; its original failure is preserved.
 
-Do not rerun the closed component or diagnostic cases. The next runtime action
-is one admitted `matched_index_snapshot.py` bracket after fresh host checks.
+Do not rerun the closed component or diagnostic cases. Do not reuse the consumed release or run another bracket without a new reviewed plan.
