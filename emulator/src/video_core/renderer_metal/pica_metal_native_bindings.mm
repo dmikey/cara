@@ -93,7 +93,7 @@ constexpr Common::CPUCategoryTiming::Category BindingCategory(std::size_t phase)
     case 4: return C::MetalBindSelect;
     case 5: return C::MetalBindSurface;
     case 6: return C::MetalBindTexture;
-    case 7: return C::MetalBindUniform;
+    case 7: return C::MetalBindMipDecode;
     default: return C::MetalBind;
     }
 }

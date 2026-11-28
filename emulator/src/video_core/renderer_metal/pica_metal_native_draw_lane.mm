@@ -625,7 +625,12 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         return std::nullopt;
 
     const auto current = authority.NativeSegments(bytes.begin, bytes.end);
-    const auto raw = [&](const MetalGuestWrite& segment) -> const MetalSurfaceWriter* {
+    static const bool reuse_raw_proof_requested = [] {
+        const auto* value = std::getenv("CARA_METAL_REUSE_RAW_RESOLVE_PROOF");
+        return value && std::string_view(value) == "1";
+    }();
+    const bool reuse_raw_proof = reuse_raw_proof_requested && current.size() > 2;
+    const auto validate_raw = [&](const MetalGuestWrite& segment) -> const MetalSurfaceWriter* {
         const auto* writer = dynamic_cast<const MetalSurfaceWriter*>(segment.writer.get());
         if (!writer || writer->Queue() != queue || !writer->RawGuestBuffer() ||
             writer->RawGuestBuffer().device != queue.device ||
@@ -636,6 +641,39 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         if (writer->Status() != MetalGuestWriteStatus::Complete &&
             !submissions.IsTrackedProducer(writer->Command()))
             return nullptr;
+        return writer;
+    };
+    struct RawProof {
+        MetalGuestWrite first_span;
+        const MetalSurfaceWriter* writer;
+        id<MTLBuffer> buffer;
+        PAddr begin;
+        NSUInteger size;
+    };
+    std::array<std::optional<RawProof>, 2> raw_proofs;
+    std::size_t raw_proof_count = 0;
+    bool raw_proof_hit = false;
+    const auto raw = [&](const MetalGuestWrite& segment) -> const MetalSurfaceWriter* {
+        if (!reuse_raw_proof)
+            return validate_raw(segment);
+        for (std::size_t i = 0; i < raw_proof_count; ++i) {
+            const auto& proof = *raw_proofs[i];
+            if (segment.writer == proof.first_span.writer) {
+                // Resource, queue, device, tracked storage and backing generation
+                // are immutable for this retained writer. Check every clipped
+                // span literally; no producer state survives this function call.
+                if (segment.begin < proof.begin || segment.end - proof.begin > proof.size)
+                    return nullptr;
+                raw_proof_hit = true;
+                return proof.writer;
+            }
+        }
+        const auto* writer = validate_raw(segment);
+        if (writer && raw_proof_count < raw_proofs.size()) {
+            const auto buffer = writer->RawGuestBuffer();
+            raw_proofs[raw_proof_count++].emplace(
+                RawProof{segment, writer, buffer, writer->RawGuestBegin(), buffer.length});
+        }
         return writer;
     };
     const auto queue_texture_export = [&](const MetalGuestWrite& segment, PAddr first, PAddr last)
@@ -863,6 +901,17 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         if (!read_gap(cursor, row.end))
             return std::nullopt;
     }
+    // A Pending producer may have failed while the private copy plan was
+    // assembled. Recheck all remembered producers before exposing the plan.
+    // The command remains uncommitted, and normal predecessor/receipt checks
+    // continue to protect every later queued consumer.
+    for (std::size_t i = 0; i < raw_proof_count; ++i) {
+        const auto& proof = *raw_proofs[i];
+        if (validate_raw(proof.first_span) != proof.writer ||
+            proof.writer->RawGuestBuffer() != proof.buffer ||
+            proof.writer->Status() == MetalGuestWriteStatus::Failed)
+            submissions.Fail("Native raw source failed during byte resolution");
+    }
     if (!copies.empty()) {
         const auto blit = [command blitCommandEncoder];
         if (!blit)
@@ -871,6 +920,14 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             [blit copyFromBuffer:copy.source sourceOffset:copy.from
                        toBuffer:buffer destinationOffset:copy.to size:copy.size];
         [blit endEncoding];
+    }
+    if (raw_proof_hit) {
+        static thread_local bool reported = false;
+        if (!reported) {
+            LOG_INFO(Render_OpenGL, "Metal reused raw resolution proofs spans={} producers={}",
+                     current.size(), raw_proof_count);
+            reported = true;
+        }
     }
     return MetalTransfer::ByteView{buffer, bytes, 0};
 }
