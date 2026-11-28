@@ -1,0 +1,51 @@
+{
+  "parent": "6b2bd51cc6a34fa79dbd18df2d5bf98025d237de",
+  "files": {
+    "emulator/src/video_core/renderer_metal/pica_metal_index_snapshot_lease.h": {
+      "before": null,
+      "after": "a646a057737b7358e4f119f98875211bc5d856ba62badb13b5bf2567478f3f33"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_index_snapshot_proof.h": {
+      "before": null,
+      "after": "4d1d6827ac7610ebb9b47f8f815e33de35814c4a0951a26a04efa5dc8e39e662"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_index_scan_memo.h": {
+      "before": "65e7881a163f70df18284eb8fa787a93447aa2336e5b0eb54fc189ff11badefe",
+      "after": "3f75b3521e11fea872f8c4152e1175d3a903282b874c12868d94fd317f4bd77a"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_packed_inputs.h": {
+      "before": "38d7027affc0db98bfc6f0b8de1c92a23d60f12c28a7383b86cb0844d16fe6de",
+      "after": "948483a9d4a48c2bfcd358e0e496e1a69e3195d93b4611b5f0f54609475b3da4"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_capture_raw_indices.hh": {
+      "before": "2787f263f0e9a77bb9f79c6f2cae6ab1866d65ea901ece532cb944febfdf887c",
+      "after": "016e9fadc0ed04c1702a8740216b28a3c1352d4dc42e16d1fcd8e14eb496c9fe"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_upload.h": {
+      "before": "18557daaa8a152feda904eb3899d9441cd1f33f895b4c67294a2d55857b19249",
+      "after": "4a99521ec5f7fa3912e7f22246d42d0fa99bcb5167b29aef85157acd068e96ea"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_draw.h": {
+      "before": "3e604e0b8333dbc727e7dedfd342a36d8f7f2f684d34d1859afb094f127a83d5",
+      "after": "2dfcd2f328f732fe12264fe094322b065eb8e4a1ac20271c2f1de189c31ffc1e"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_native_bindings.mm": {
+      "before": "76f3b58e39569b86ea8bed6f40bf1abcc8cfd656ab2deb3c1dc2190bca1ec34d",
+      "after": "42f1c88a1ceacf576488f3adc637451d1d598f75ff476443e022864a5c00ee41"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_draw.mm": {
+      "before": "a2f7a84818d7c9020b15f161b939ff4777d57f341ab7398f6f734ab9a04a2b60",
+      "after": "369a3d643e62c16b34bd7807ea39dcc99dc4967a2a4ff527874c88bfd9d77011"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_frame_cost.hh": {
+      "before": "41968c24d6d932763e607e2c579f8155db6b9645728aecb991224a7ff43e1690",
+      "after": "3f72f4d0a789d713ac45564c361b47172979cc92abfac2500d029aac598a1acc"
+    },
+    "emulator/src/video_core/renderer_metal/pica_metal_upload.mm": {
+      "before": "2a5ec3a8fc44992b433ba3512eaeb9cd74e5588b4bbe580e61269f7391225e8b",
+      "after": "4001b27cac0931a8de3d5b83e17f185424dc28e5d38ba64c082486893f1f6f2f"
+    }
+  },
+  "scope": "Default OFF exact checked index-snapshot revision leases. Fresh authoritative guest reads and full scan-memo byte comparisons remain mandatory. Captured binding-storage owner pins immutable Prepared->Upload image; literal header and zero padding complete proof. Replaced memo snapshots retire identities before overwrite. Vertex payload, uncertain/miss cases retain original full comparisons. No new RAM watches, CPU timing, GPU work, queue, sampler or eviction policy changes. Shadow mode repeats the original full comparison on every proof hit.",
+  "review": "Final source review additionally binds proof provenance to the exact payload pointer+size checked by the memo, then to the typed retained captured index-vector owner. Unrelated byte-equal buffers cannot inherit the proof. Version2/3 host components passed their earlier API revisions; final gate must bind this revision."
+}

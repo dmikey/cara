@@ -1,0 +1,202 @@
+{
+  "status": "SHADOW_AND_SELECTED_CORRECTNESS_PASS_QUIET_PERFORMANCE_PENDING",
+  "private_revision": "db208d1c70cde08779a523f836d19a75dd5521b3",
+  "component_checks": 38,
+  "shadow": {
+    "proof_hits": 1238970,
+    "proof_image_bytes": 2806618112,
+    "index_memo_hits": 1528036,
+    "exact_selected_state_and_work": true,
+    "exact_selected_both_lcds": true,
+    "exact_guest_files": true
+  },
+  "diagnostic": {
+    "off": {
+      "stats": {
+        "mean": 18.8324298975,
+        "p50": 18.6827705,
+        "p99": 21.313125,
+        "max": 21.910916,
+        "worst_refresh": 2490,
+        "worst_rolling_120": 19.063502783333334,
+        "worst_rolling_end": 2525,
+        "owner_cpu_ms_per_refresh": 18.7822839575,
+        "process_cpu_ms_per_refresh": 22.64869,
+        "work": {
+          "draw_requests": 278153,
+          "command_lists": 4782,
+          "display_transfers": 4782,
+          "texture_copies": 3985,
+          "fills": 6376,
+          "software_vertex_draws": 0,
+          "skipped_draws": 0
+        }
+      },
+      "cpu": {
+        "others": 0.1353195575,
+        "cpu_execution_including_memory": 3.8549522125,
+        "hle_svc": 0.1108487675,
+        "gpu_command": 1.1657990875,
+        "dsp_hle_tick": 0.0283481675,
+        "metal_bind": 1.5553992025,
+        "metal_record": 0.5441320575,
+        "metal_encode": 1.104916795,
+        "metal_transfer": 0.0,
+        "metal_publish": 0.4652959925,
+        "metal_present": 0.0759294325,
+        "metal_bind_fragment_source": 0.206575095,
+        "metal_bind_vertex_source": 0.157739915,
+        "metal_bind_vertex_capture": 0.98055873,
+        "metal_bind_pipeline_select": 0.3460081425,
+        "metal_bind_surface_lut": 0.8016311025,
+        "metal_bind_texture_decode": 0.4555995575,
+        "metal_bind_mip_decode": 0.5638495125,
+        "metal_fill": 0.0849385475,
+        "metal_copy": 0.1839496875,
+        "metal_display_transfer": 0.26442356,
+        "metal_resolve_bytes": 1.957688785,
+        "metal_publish_bytes": 0.93276052,
+        "metal_draw_validation": 0.2302011275,
+        "metal_draw_uniform_upload": 0.2793921775,
+        "metal_draw_vertex_upload": 0.7876083225,
+        "metal_draw_encoder_setup": 0.29237301,
+        "metal_draw_raster_state": 0.24848926,
+        "metal_draw_vertex_bindings": 0.259009845,
+        "metal_draw_fragment_bindings": 0.2267365575,
+        "metal_draw_dispatch": 0.3562712075,
+        "metal_draw_vertex_eviction": 0.044219675
+      },
+      "actual_proof_activation": false
+    },
+    "on": {
+      "stats": {
+        "mean": 18.73825427,
+        "p50": 18.666104,
+        "p99": 20.05625,
+        "max": 20.164459,
+        "worst_refresh": 2444,
+        "worst_rolling_120": 18.828708683333332,
+        "worst_rolling_end": 2680,
+        "owner_cpu_ms_per_refresh": 18.6717159375,
+        "process_cpu_ms_per_refresh": 22.4675025,
+        "work": {
+          "draw_requests": 278153,
+          "command_lists": 4782,
+          "display_transfers": 4782,
+          "texture_copies": 3985,
+          "fills": 6376,
+          "software_vertex_draws": 0,
+          "skipped_draws": 0
+        }
+      },
+      "cpu": {
+        "others": 0.1345575425,
+        "cpu_execution_including_memory": 3.8046943325,
+        "hle_svc": 0.11179548,
+        "gpu_command": 1.15283273,
+        "dsp_hle_tick": 0.027034095,
+        "metal_bind": 1.605577705,
+        "metal_record": 0.54401226,
+        "metal_encode": 1.10405992,
+        "metal_transfer": 0.0,
+        "metal_publish": 0.4619433575,
+        "metal_present": 0.07590703,
+        "metal_bind_fragment_source": 0.203061715,
+        "metal_bind_vertex_source": 0.164593135,
+        "metal_bind_vertex_capture": 0.9726087625,
+        "metal_bind_pipeline_select": 0.3467333975,
+        "metal_bind_surface_lut": 0.792032705,
+        "metal_bind_texture_decode": 0.4544855425,
+        "metal_bind_mip_decode": 0.5620491825,
+        "metal_fill": 0.0842175125,
+        "metal_copy": 0.1826137875,
+        "metal_display_transfer": 0.26117389,
+        "metal_resolve_bytes": 1.9551990325,
+        "metal_publish_bytes": 0.9416290525,
+        "metal_draw_validation": 0.230220635,
+        "metal_draw_uniform_upload": 0.2759684975,
+        "metal_draw_vertex_upload": 0.722313795,
+        "metal_draw_encoder_setup": 0.28627152,
+        "metal_draw_raster_state": 0.2434329575,
+        "metal_draw_vertex_bindings": 0.26046734,
+        "metal_draw_fragment_bindings": 0.2341682725,
+        "metal_draw_dispatch": 0.348758375,
+        "metal_draw_vertex_eviction": 0.044146385
+      },
+      "actual_proof_activation": true
+    }
+  },
+  "comparison": {
+    "state_mismatch_refreshes": 0,
+    "first_state_mismatch": null,
+    "work_count_mismatches": 0,
+    "pixels": {
+      "800": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "1600": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "2400": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "3000": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      }
+    },
+    "guest_sdmc_match": true,
+    "exact_both_lcds_and_work": true
+  },
+  "scope": "Index portion of vertex inputs only. Every current guest read and exact scan comparison retained. Full vertex payload still checked. Selected physical M1 JIT replay, not whole-VRAM/all-title/FastInterp/iOS proof. No clean end-to-end advantage claimed.",
+  "receipt_hashes": {
+    "index-snapshot-component-4/RESULT.json": "f81f34dde2f01369ba015ec9fa5272115445c034a44ff10f11007e407047f372",
+    "index-snapshot-build-1/RESULT.json": "402670c7bd1b3243a9695310d02ba6cb146eefac27573cc9aeba8a2f69ebc1a1",
+    "index-snapshot-shadow-1/RESULT.json": "ba01dc86a4e51ae1e41cbcc837990729ce8ac0c96f1d959b21c5f721fcb80311",
+    "index-snapshot-diagnostic-1/RESULT.json": "3717dc098fa000eb0f1b1233bd7216d862693ac349c7d5b4625f34a26eb7c5e3",
+    "INDEX-SNAPSHOT-SOURCE-READY.json": "f09fc3719953926ebe2a8791db3cd58d10f56870a54958a3f749ebb38d6a9ef0"
+  }
+}
