@@ -1,0 +1,142 @@
+{
+  "scope": "Loaded M1 private JIT100 selectedreplay; no public defaults or installed apps changed",
+  "local_evidence_root": "/Volumes/Fast/CaraBuild/cara-m1-metal-results-20261127.noindex",
+  "receipts": {
+    "row-gather-load-matched-1/RESULT.json": {
+      "sha256": "90965b7a08726642966ff07d66c064ad54c16dccd7285dc715cda6c9a9cbda48",
+      "revision": "36c38a17f01bd40f069ede008b1a874417d6bfc3",
+      "passed": true
+    },
+    "row-gather-queue-wait-1/RESULT.json": {
+      "sha256": "151ffdb443f7d8c1d75cbb632af68b481b42ddaeaedde2c13a1f6f857ab24cca",
+      "revision": "36c38a17f01bd40f069ede008b1a874417d6bfc3",
+      "passed": true
+    },
+    "publication-wall-diagnostic-1/RESULT.json": {
+      "sha256": "c0f325610004433b7ba79bc7b4fd29ad4d5f8fe986c51a7059e455c102b1c093",
+      "revision": "a35f415e9991e700dba071d99d140a022b77779d",
+      "passed": true
+    },
+    "publication-cpu-diagnostic-1/RESULT.json": {
+      "sha256": "7b822e2c2e808eb3e950d71b3674a498fbe25000fde254b6b9562f3aae41d958",
+      "revision": "a35f415e9991e700dba071d99d140a022b77779d",
+      "passed": true
+    },
+    "authority-wall-diagnostic-1/RESULT.json": {
+      "sha256": "fa6b75e90483e6119bd0cfd691b648f8f1669d77650d3d9b1a3af27655088b22",
+      "revision": "c37cd8cb821076d1d8526847fa328990ab8ab760",
+      "passed": true
+    },
+    "authority-cpu-diagnostic-1/RESULT.json": {
+      "sha256": "51fd1347a24d8b12b1b621faed06d303aae9bdf46144870e573b0dc3d1178501",
+      "revision": "c37cd8cb821076d1d8526847fa328990ab8ab760",
+      "passed": true
+    },
+    "ui-qos-matched-1/RESULT.json": {
+      "sha256": "0808203087b94d027103f0ab3aba87b628c608b0eba231b0eb24d27b5bc68e31",
+      "revision": "4626230136c2bb1781f441c85b65389c4a6c05f3",
+      "passed": true
+    },
+    "latency-activity-build-1/RESULT.json": {
+      "sha256": "43e3285fccaa476ae87263799bc385cd9760ad74478ed9f2779ae3f227430601",
+      "revision": "3a25a40dd525608a11a88c1797d59c76af5834cd",
+      "passed": true
+    },
+    "latency-activity-pair-1/RESULT.json": {
+      "sha256": "ee6c54f5aa5a747216a88da735dfa94208bc185c2cd2f709cfcd5941029818b7",
+      "revision": "3a25a40dd525608a11a88c1797d59c76af5834cd",
+      "passed": true
+    },
+    "latency-renderer-matched-1/RESULT.json": {
+      "sha256": "836baa4213f4cca1c2a5a4166e75fd07b729a7c291728e3edf132eb779b6e251",
+      "revision": "3a25a40dd525608a11a88c1797d59c76af5834cd",
+      "passed": true
+    },
+    "LATENCY-RENDERER-CLOSED.json": {
+      "sha256": "ce6bb329145d50bfd1482614940fdc220fb3eccf1f69009bd8bdf7edb7861bf7",
+      "revision": "3a25a40dd525608a11a88c1797d59c76af5834cd",
+      "passed": true
+    }
+  },
+  "final_metrics": {
+    "mean": {
+      "gl": [
+        16.60755125,
+        16.607721875
+      ],
+      "metal": [
+        16.66557479,
+        16.6655461475
+      ],
+      "max_within_renderer_drift": 0.00017062499999909164,
+      "metal_margin": -0.05802354000000065,
+      "metal_below_both_gl_beyond_drift": false
+    },
+    "p99": {
+      "gl": [
+        17.630041,
+        17.105833
+      ],
+      "metal": [
+        16.953959,
+        16.973083
+      ],
+      "max_within_renderer_drift": 0.524207999999998,
+      "metal_margin": 0.13275000000000148,
+      "metal_below_both_gl_beyond_drift": false
+    },
+    "max": {
+      "gl": [
+        20.907291,
+        17.648375
+      ],
+      "metal": [
+        20.563083,
+        20.343792
+      ],
+      "max_within_renderer_drift": 3.2589159999999993,
+      "metal_margin": -2.9147079999999974,
+      "metal_below_both_gl_beyond_drift": false
+    },
+    "worst_rolling_120": {
+      "gl": [
+        16.703226383333334,
+        16.677129858333334
+      ],
+      "metal": [
+        16.699841666666668,
+        16.698082991666666
+      ],
+      "max_within_renderer_drift": 0.026096524999999815,
+      "metal_margin": -0.02271180833333375,
+      "metal_below_both_gl_beyond_drift": false
+    },
+    "owner_cpu_ms_per_refresh": {
+      "gl": [
+        8.979239165,
+        8.9443470825
+      ],
+      "metal": [
+        13.6828320825,
+        13.6199109375
+      ],
+      "max_within_renderer_drift": 0.0629211449999989,
+      "metal_margin": -4.738484999999999,
+      "metal_below_both_gl_beyond_drift": false
+    },
+    "process_cpu_ms_per_refresh": {
+      "gl": [
+        16.014955,
+        15.946545
+      ],
+      "metal": [
+        17.856885,
+        17.781595
+      ],
+      "max_within_renderer_drift": 0.07528999999999897,
+      "metal_margin": -1.910339999999998,
+      "metal_below_both_gl_beyond_drift": false
+    }
+  },
+  "decision": "Keep scoped latency activity ON in private M1 baseline; QoS inheritanceOFF. Capped loadedmean still0.058ms behindGL, processCPUgap1.77..1.91ms. Betterobservedp99 notbeyondGLdrift, no Metal>GLclaim."
+}

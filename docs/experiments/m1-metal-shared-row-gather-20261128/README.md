@@ -1,6 +1,6 @@
 # M1 Metal: share the checked row-copy pipeline
 
-Status: selected-output and separate exclusive-CPU gates PASS. Both row-gather fixes remain ON in the private test preset. Public/installed defaults are unchanged. A new exact-hash GL/Metal/Metal/GL comparison is source-ready but was blocked before release by background filesystem CPU. No timing cases started.
+Status: selected-output and separate exclusive-CPU gates PASS. Both row-gather fixes remain ON in the private test preset. Public/installed defaults are unchanged. The original quiet plan was blocked before release. The user then authorized a separately reviewed loaded comparison, now complete; see ../m1-metal-pacing-20261128/README.md for its actual result and subsequent pacing investigation.
 
 ## Choosing the next target
 
@@ -72,6 +72,6 @@ Local evidence root: `/Volumes/Fast/CaraBuild/cara-m1-metal-results-20261127.noi
 - `ROW-GATHER-RENDERER-SOURCE-READY.json`: frozen future renderer plan.
 - `ROW-GATHER-RENDERER-ADMISSION-1.json`: blocked before release; native_started=false.
 
-Do not repeat closed fixtures, counting or CPU gates unchanged. The next runtime work is the admitted renderer bracket when the host is actually quiet. Future renderer work should retain this distinction: fewer API commands, less CPU, less GPU time and better frame tails are separate claims.
+Do not repeat closed fixtures, counting or CPU gates unchanged. The separate loaded renderer bracket has now completed; the old quiet admission plan is historical and must not be reused against changed binaries. Future renderer work should retain this distinction: fewer API commands, less CPU, less GPU time and better frame tails are separate claims.
 
 The accompanying quiet-runner/admission scripts preserve the reviewed orchestration for inspection. Their authoritative local copies are in the evidence root above and require its frozen source-ready manifest and retained inputs. This folder contains no ROMs, saves, screen payloads or release permission.
