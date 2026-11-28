@@ -18,6 +18,7 @@
 #include "video_core/renderer_opengl/gl_command_queue.h"
 #include "cara/native_mac/diagnostic_clock.h"
 #include <atomic>
+#include <pthread/qos.h>
 #include <chrono>
 #include "video_core/renderer_opengl/gl_rasterizer.h"
 #include "video_core/video_core.h"
@@ -196,6 +197,14 @@ static void StopNative(int) {
 }
 static int RunNativeMain(int argc, char** argv) {
     try {
+        if (std::getenv("CARA_NATIVE_DIAGNOSTICS")) {
+            qos_class_t requested = QOS_CLASS_UNSPECIFIED;
+            int relative = 0;
+            if (pthread_get_qos_class_np(pthread_self(), &requested, &relative) != 0)
+                throw std::runtime_error("Could not read OpenGL emulation thread QoS");
+            std::cout << "HOST_QOS thread=gl effective=" << static_cast<unsigned>(qos_class_self())
+                      << " requested=" << static_cast<unsigned>(requested) << " relative=" << relative << std::endl;
+        }
         if (argc < 2 || std::string(argv[1]) == "--help") {
             std::cout << "Cara Mac host\nUsage: cara [ROM] [--fullscreen] [--relay-stdin]\nSet "
                          "CARA_USER_DIR to a fresh absolute data directory.\n";

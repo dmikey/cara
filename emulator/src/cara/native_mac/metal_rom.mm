@@ -691,17 +691,30 @@ int main(int argc, char** argv) {
             Frontend::RegisterDefaultApplets();
             HostEvents events;
             int result = 6;
-            if (std::getenv("CARA_NATIVE_DIAGNOSTICS")) {
-                int relative = 0;
-                qos_class_t requested = QOS_CLASS_UNSPECIFIED;
-        if (pthread_get_qos_class_np(pthread_self(), &requested, &relative) != 0)
-            throw std::runtime_error("Could not read host thread QoS");
-                std::cout << "HOST_QOS thread=ui effective=" << static_cast<unsigned>(qos_class_self())
-                          << " requested=" << static_cast<unsigned>(requested) << " relative=" << relative << std::endl;
+            const auto* qos_flag = std::getenv("CARA_NATIVE_METAL_INHERIT_UI_QOS");
+            const bool inherit_ui_qos = qos_flag && std::string_view(qos_flag) == "1";
+            qos_class_t ui_qos = QOS_CLASS_UNSPECIFIED;
+            int ui_relative = 0;
+            if (inherit_ui_qos || std::getenv("CARA_NATIVE_DIAGNOSTICS")) {
+                if (pthread_get_qos_class_np(pthread_self(), &ui_qos, &ui_relative) != 0)
+                    throw std::runtime_error("Could not read UI thread QoS");
+                if (std::getenv("CARA_NATIVE_DIAGNOSTICS"))
+                    std::cout << "HOST_QOS thread=ui effective=" << static_cast<unsigned>(qos_class_self())
+                              << " requested=" << static_cast<unsigned>(ui_qos) << " relative=" << ui_relative << std::endl;
+                if (ui_qos == QOS_CLASS_UNSPECIFIED) {
+                    ui_qos = qos_class_self();
+                    ui_relative = 0;
+                }
             }
-            std::thread emulation([&] {
+            std::thread emulation([&, ui_qos, ui_relative, inherit_ui_qos] {
                 @autoreleasepool {
                     try {
+                        if (inherit_ui_qos && pthread_set_qos_class_self_np(ui_qos, ui_relative) != 0)
+                            throw std::runtime_error("Could not inherit UI QoS on native emulation worker");
+                        if (std::getenv("CARA_NATIVE_DIAGNOSTICS"))
+                            std::cout << "HOST_QOS_INHERIT enabled=" << inherit_ui_qos
+                                      << " target=" << static_cast<unsigned>(ui_qos)
+                                      << " relative=" << ui_relative << std::endl;
                         result = RunEmulation(argv[1], limit, interval, output, inputs, jit,
                                               layer, device, library, events, ini, scale);
                     } catch (const std::exception& ex) {
