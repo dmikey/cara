@@ -15,7 +15,7 @@ enum class Category : std::size_t {
     MetalEncode, MetalTransfer, MetalPublish, MetalPresent,
     MetalBindFS, MetalBindVS, MetalBindVertex, MetalBindSelect,
     MetalBindSurface, MetalBindTexture, MetalBindMipDecode, MetalFill,
-    MetalCopy, MetalDisplay, MetalResolve, MetalPublishBytes, Count, Inactive = Count
+    MetalCopy, MetalDisplay, MetalResolve, MetalPublishBytes, DrawValidation, DrawUniformUpload, DrawVertexUpload, DrawEncoderSetup, DrawRasterState, DrawVertexBindings, DrawFragmentBindings, DrawDispatch, Count, Inactive = Count
 };
 inline constexpr std::size_t CategoryCount = static_cast<std::size_t>(Category::Count);
 inline constexpr std::array<const char*, CategoryCount> Names = {
@@ -24,7 +24,7 @@ inline constexpr std::array<const char*, CategoryCount> Names = {
     "metal_bind_fragment_source", "metal_bind_vertex_source", "metal_bind_vertex_capture",
     "metal_bind_pipeline_select", "metal_bind_surface_lut", "metal_bind_texture_decode",
     "metal_bind_mip_decode", "metal_fill", "metal_copy",
-    "metal_display_transfer", "metal_resolve_bytes", "metal_publish_bytes"};
+    "metal_display_transfer", "metal_resolve_bytes", "metal_publish_bytes", "metal_draw_validation", "metal_draw_uniform_upload", "metal_draw_vertex_upload", "metal_draw_encoder_setup", "metal_draw_raster_state", "metal_draw_vertex_bindings", "metal_draw_fragment_bindings", "metal_draw_dispatch"};
 
 struct Counters {
     std::array<std::uint64_t, CategoryCount> cpu_ns{};

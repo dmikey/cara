@@ -349,6 +349,7 @@ struct DrawUploads {
 std::optional<DrawUploads> UploadDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& arena,
                                      const TexturedMetalDraw& d, bool grouped,
                                      UniformUploads* deferred_uniforms = nullptr) {
+    std::optional<Common::CPUCategoryTiming::Scope> draw_cpu(std::in_place, Common::CPUCategoryTiming::Category::DrawValidation);
     if (!commands || commands.status!=MTLCommandBufferStatusNotEnqueued || !Valid(d) ||
         (d.vertex_mode == PicaMetalVertexMode::PairIndexed &&
          (!commands.retainedReferences || commands.device != d.pair_indices->element_buffer.device))) {
@@ -372,6 +373,7 @@ std::optional<DrawUploads> UploadDraw(id<MTLCommandBuffer> commands, PicaMetalUp
     auto* cached = deferred_uniforms ? deferred_uniforms :
         reuse_uniforms && open_pass && open_pass->uniform_owner == &arena ?
             &open_pass->uniforms : nullptr;
+    draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawUniformUpload);
     const auto common = CopyDrawUniform(arena, d.common_uniform, cached ? &cached->common : nullptr,
                                         common_upload_metrics);
     const auto light = CopyDrawUniform(arena, d.light_uniform, cached ? &cached->light : nullptr,
@@ -381,6 +383,7 @@ std::optional<DrawUploads> UploadDraw(id<MTLCommandBuffer> commands, PicaMetalUp
     const auto vs = !stage_in ?
         CopyDrawUniform(arena, d.vs_uniform, cached ? &cached->vs : nullptr, vs_upload_metrics) :
         std::nullopt;
+    draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawVertexUpload);
     id<MTLTexture> vertices = nil, indices = nil;
     if (!stage_in) {
         const auto format = packed ? MTLPixelFormatRGBA32Uint : MTLPixelFormatRGBA32Float;
@@ -407,6 +410,7 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
                         const TexturedMetalDraw& d, const DrawUploads& data, bool grouped,
                         bool allow_fused_clear, id<MTLBuffer> computed = nil,
                         NSUInteger output_offset = 0) {
+    std::optional<Common::CPUCategoryTiming::Scope> draw_cpu(std::in_place, Common::CPUCategoryTiming::Category::DrawEncoderSetup);
     const auto& [common, light, stream, layout, vs, vertices, indices] = data;
     const auto stage_in = d.vertex_mode == PicaMetalVertexMode::StageIn;
     const auto packed = d.vertex_mode == PicaMetalVertexMode::Packed ||
@@ -468,6 +472,7 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
     const EndEncoderOnExit end_ungrouped{grouped ? nil : encoder};
     open.Stop();
     NativeMetalCost::Scope encode(NativeMetalCost::EncoderDraw);
+    draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawRasterState);
     const bool reuse_raster=grouped && ReuseRasterState();
     const auto* previous=reuse_raster && open_pass->raster ? &*open_pass->raster : nullptr;
     const bool profile=NativeMetalCost::Enabled();
@@ -499,6 +504,7 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
     if (reuse_raster)
         open_pass->raster.emplace(RasterStateSnapshot{d.pipeline,d.depth_stencil_state,
             d.stencil_reference,d.blend_color,d.viewport,d.scissor,d.cull,d.winding});
+    draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawVertexBindings);
     if (d.simd_reference) {
         const auto token=simd_draw_tokens.Next();
         if (!token) throw std::runtime_error("Metal SIMD draw token exhausted");
@@ -524,6 +530,7 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         [encoder setVertexSamplerState:d.texel_fetch_sampler atIndex:0];
         [encoder setVertexSamplerState:d.texel_fetch_sampler atIndex:1];
     }
+    draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawFragmentBindings);
     auto* fragment_buffers = grouped && open_pass->fragment_buffers ?
         &*open_pass->fragment_buffers : nullptr;
     const auto bind_fragment = [&](NSUInteger slot, const PicaMetalUploadArena::Range& range) {
@@ -559,6 +566,7 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         [encoder setFragmentTexture:third->texture atIndex:third->texture_slot];
         [encoder setFragmentSamplerState:third->sampler atIndex:third->sampler_slot];
     }
+    draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawDispatch);
     if (d.vertex_mode == PicaMetalVertexMode::PairIndexed) {
         // Mode6's invocation ID names an immutable (source,triangle-first)
         // pair. Hardware indices preserve triangle corner and provoking order.
