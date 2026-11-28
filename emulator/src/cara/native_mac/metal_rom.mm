@@ -331,7 +331,9 @@ int RunEmulation(const char* path, unsigned limit, unsigned interval, const std:
     const auto* performance = std::getenv("CARA_MAC_METAL_PERFORMANCE_MODE");
     if (std::getenv("CARA_NATIVE_DIAGNOSTICS")) {
         int relative = 0;
-        const auto requested = pthread_get_qos_class_np(pthread_self(), &relative);
+        qos_class_t requested = QOS_CLASS_UNSPECIFIED;
+        if (pthread_get_qos_class_np(pthread_self(), &requested, &relative) != 0)
+            throw std::runtime_error("Could not read host thread QoS");
         std::cout << "HOST_QOS thread=emulation effective=" << static_cast<unsigned>(qos_class_self())
                   << " requested=" << static_cast<unsigned>(requested) << " relative=" << relative << std::endl;
     }
@@ -691,7 +693,9 @@ int main(int argc, char** argv) {
             int result = 6;
             if (std::getenv("CARA_NATIVE_DIAGNOSTICS")) {
                 int relative = 0;
-                const auto requested = pthread_get_qos_class_np(pthread_self(), &relative);
+                qos_class_t requested = QOS_CLASS_UNSPECIFIED;
+        if (pthread_get_qos_class_np(pthread_self(), &requested, &relative) != 0)
+            throw std::runtime_error("Could not read host thread QoS");
                 std::cout << "HOST_QOS thread=ui effective=" << static_cast<unsigned>(qos_class_self())
                           << " requested=" << static_cast<unsigned>(requested) << " relative=" << relative << std::endl;
             }
