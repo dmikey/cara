@@ -221,6 +221,20 @@ bool ReuseFragmentBufferBindings() {
     return enabled;
 }
 
+bool ReuseSamplerBindings() {
+    static const bool enabled = [] {
+        const auto* value = std::getenv("CARA_METAL_REUSE_SAMPLER_BINDINGS");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
+struct SamplerBindings {
+    // Strong references prevent identity reuse. This state belongs to one
+    // encoder only and is discarded when its open pass ends or aborts.
+    std::array<id<MTLSamplerState>, 16> vertex{}, fragment{};
+};
+
 struct FragmentBufferBinding {
     // Enabled only for commands that retain their encoded resources.
     __unsafe_unretained id<MTLBuffer> buffer = nil;
@@ -236,6 +250,7 @@ struct OpenDrawPass {
     UniformUploads uniforms{};
     std::optional<RasterStateSnapshot> raster;
     std::optional<std::array<FragmentBufferBinding, 16>> fragment_buffers;
+    std::optional<SamplerBindings> samplers;
 };
 
 // A Metal command admits one contiguous native draw group on its owning lane.
@@ -328,7 +343,10 @@ void ClearStaleBindings(OpenDrawPass& pass, const TexturedMetalDraw& d,
     clear(pass.bound.vertex_textures, current.vertex_textures,
           [&](unsigned i) { [encoder setVertexTexture:nil atIndex:i]; });
     clear(pass.bound.vertex_samplers, current.vertex_samplers,
-          [&](unsigned i) { [encoder setVertexSamplerState:nil atIndex:i]; });
+          [&](unsigned i) {
+              [encoder setVertexSamplerState:nil atIndex:i];
+              if (pass.samplers) pass.samplers->vertex[i] = nil;
+          });
     clear(pass.bound.fragment_buffers, current.fragment_buffers, [&](unsigned i) {
         [encoder setFragmentBuffer:nil offset:0 atIndex:i];
         if (pass.fragment_buffers)
@@ -337,7 +355,10 @@ void ClearStaleBindings(OpenDrawPass& pass, const TexturedMetalDraw& d,
     clear(pass.bound.fragment_textures, current.fragment_textures,
           [&](unsigned i) { [encoder setFragmentTexture:nil atIndex:i]; });
     clear(pass.bound.fragment_samplers, current.fragment_samplers,
-          [&](unsigned i) { [encoder setFragmentSamplerState:nil atIndex:i]; });
+          [&](unsigned i) {
+              [encoder setFragmentSamplerState:nil atIndex:i];
+              if (pass.samplers) pass.samplers->fragment[i] = nil;
+          });
     pass.bound = current;
 }
 
@@ -459,6 +480,8 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         NativeMetalCost::Count(NativeMetalCost::EncoderStarts, 1);
         if (grouped) {
             open_pass.emplace(OpenDrawPass{commands, encoder, d.color, d.depth_stencil, {}});
+            if (ReuseSamplerBindings() && commands.retainedReferences)
+                open_pass->samplers.emplace();
             if (ReuseFragmentBufferBindings() && commands.retainedReferences)
                 open_pass->fragment_buffers.emplace();
             if (reuse_uniforms) {
@@ -505,6 +528,23 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         open_pass->raster.emplace(RasterStateSnapshot{d.pipeline,d.depth_stencil_state,
             d.stencil_reference,d.blend_color,d.viewport,d.scissor,d.cull,d.winding});
     draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawVertexBindings);
+    auto* samplers = grouped && open_pass->samplers ? &*open_pass->samplers : nullptr;
+    const auto bind_sampler = [&](bool vertex, NSUInteger slot, id<MTLSamplerState> sampler) {
+        if (samplers) {
+            auto& bound = vertex ? samplers->vertex[slot] : samplers->fragment[slot];
+            if (bound == sampler) {
+                static thread_local bool reported = false;
+                if (!reported) {
+                    LOG_INFO(Render_OpenGL, "Metal reused encoder-local sampler binding");
+                    reported = true;
+                }
+                return;
+            }
+            bound = sampler;
+        }
+        if (vertex) [encoder setVertexSamplerState:sampler atIndex:slot];
+        else [encoder setFragmentSamplerState:sampler atIndex:slot];
+    };
     if (d.simd_reference) {
         const auto token=simd_draw_tokens.Next();
         if (!token) throw std::runtime_error("Metal SIMD draw token exhausted");
@@ -527,8 +567,8 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
         [encoder setVertexBuffer:common->buffer offset:common->offset atIndex:packed ? 2 : 1];
         [encoder setVertexTexture:vertices atIndex:packed ? 0 : 1];
         [encoder setVertexTexture:indices atIndex:packed ? 1 : 0];
-        [encoder setVertexSamplerState:d.texel_fetch_sampler atIndex:0];
-        [encoder setVertexSamplerState:d.texel_fetch_sampler atIndex:1];
+        bind_sampler(true, 0, d.texel_fetch_sampler);
+        bind_sampler(true, 1, d.texel_fetch_sampler);
     }
     draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawFragmentBindings);
     auto* fragment_buffers = grouped && open_pass->fragment_buffers ?
@@ -552,19 +592,19 @@ bool EncodeUploadedDraw(id<MTLCommandBuffer> commands, PicaMetalUploadArena& are
     bind_fragment(d.fragment_common_slot, *common);
     if (d.lighting_lut) {
         [encoder setFragmentTexture:d.lighting_lut atIndex:d.lut_texture_slot];
-        [encoder setFragmentSamplerState:d.texel_fetch_sampler atIndex:d.lut_sampler_slot];
+        bind_sampler(false, d.lut_sampler_slot, d.texel_fetch_sampler);
     }
     if (d.texture0) {
         [encoder setFragmentTexture:d.texture0 atIndex:d.texture0_slot];
-        [encoder setFragmentSamplerState:d.texture0_sampler atIndex:d.texture0_sampler_slot];
+        bind_sampler(false, d.texture0_sampler_slot, d.texture0_sampler);
     }
     if (const auto& s=d.secondary_material) {
         [encoder setFragmentTexture:s->texture atIndex:s->texture_slot];
-        [encoder setFragmentSamplerState:s->sampler atIndex:s->sampler_slot];
+        bind_sampler(false, s->sampler_slot, s->sampler);
     }
     if (const auto& third = d.tertiary_material) {
         [encoder setFragmentTexture:third->texture atIndex:third->texture_slot];
-        [encoder setFragmentSamplerState:third->sampler atIndex:third->sampler_slot];
+        bind_sampler(false, third->sampler_slot, third->sampler);
     }
     draw_cpu.emplace(Common::CPUCategoryTiming::Category::DrawDispatch);
     if (d.vertex_mode == PicaMetalVertexMode::PairIndexed) {
