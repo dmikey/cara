@@ -1,0 +1,4085 @@
+{
+  "scope": "M1 actual JIT normal-boot Dark Moon selected lab window; diagnostic-only, no overall performance claim",
+  "profile_revision": "ac299877230566bdef9bd1ce3c8d2998d1b78770",
+  "pair_revision": "3b0d8910bc18b3d73a5682363167a76fb9046ba5",
+  "cpu_profile": {
+    "others": 0.1367598,
+    "cpu_execution_including_memory": 3.8708035675,
+    "hle_svc": 0.1152901625,
+    "gpu_command": 1.152471235,
+    "dsp_hle_tick": 0.0294527225,
+    "metal_bind": 1.546809395,
+    "metal_record": 0.55414671,
+    "metal_encode": 1.108809205,
+    "metal_transfer": 0.0,
+    "metal_publish": 0.48257557,
+    "metal_present": 0.0842715675,
+    "metal_bind_fragment_source": 0.205359265,
+    "metal_bind_vertex_source": 0.15797746,
+    "metal_bind_vertex_capture": 0.9856365625,
+    "metal_bind_pipeline_select": 0.35160106,
+    "metal_bind_surface_lut": 0.8105213175,
+    "metal_bind_texture_decode": 0.455182445,
+    "metal_bind_mip_decode": 0.558237835,
+    "metal_fill": 0.09675145,
+    "metal_copy": 0.191478785,
+    "metal_display_transfer": 0.285331975,
+    "metal_resolve_bytes": 2.0037034225,
+    "metal_publish_bytes": 0.9641141475,
+    "metal_draw_validation": 0.2334043925,
+    "metal_draw_uniform_upload": 0.2817527675,
+    "metal_draw_vertex_upload": 0.8306229,
+    "metal_draw_encoder_setup": 0.29586948,
+    "metal_draw_raster_state": 0.2433955475,
+    "metal_draw_vertex_bindings": 0.2502817575,
+    "metal_draw_fragment_bindings": 0.2157111225,
+    "metal_draw_dispatch": 0.36760225
+  },
+  "pair": {
+    "off": {
+      "stats": {
+        "mean": 18.67918948,
+        "p50": 18.595229,
+        "p99": 20.051875,
+        "max": 20.483625,
+        "worst_refresh": 2705,
+        "worst_rolling_120": 18.784884025,
+        "worst_rolling_end": 2705,
+        "owner_cpu_ms_per_refresh": 18.5946202075,
+        "process_cpu_ms_per_refresh": 22.486265,
+        "work": {
+          "draw_requests": 278153,
+          "command_lists": 4782,
+          "display_transfers": 4782,
+          "texture_copies": 3985,
+          "fills": 6376,
+          "software_vertex_draws": 0,
+          "skipped_draws": 0
+        }
+      },
+      "cpu": {
+        "others": 0.133901435,
+        "cpu_execution_including_memory": 3.7772813925,
+        "hle_svc": 0.1133514925,
+        "gpu_command": 1.14631422,
+        "dsp_hle_tick": 0.02726665,
+        "metal_bind": 1.54485762,
+        "metal_record": 0.5413554975,
+        "metal_encode": 1.10842253,
+        "metal_transfer": 0.0,
+        "metal_publish": 0.4567237425,
+        "metal_present": 0.0771322075,
+        "metal_bind_fragment_source": 0.2052384125,
+        "metal_bind_vertex_source": 0.1534695275,
+        "metal_bind_vertex_capture": 0.9673860725,
+        "metal_bind_pipeline_select": 0.35116712,
+        "metal_bind_surface_lut": 0.7871806725,
+        "metal_bind_texture_decode": 0.4552631475,
+        "metal_bind_mip_decode": 0.5572111375,
+        "metal_fill": 0.0821817475,
+        "metal_copy": 0.180623005,
+        "metal_display_transfer": 0.258330435,
+        "metal_resolve_bytes": 1.95492417,
+        "metal_publish_bytes": 0.9242718675,
+        "metal_draw_validation": 0.23488499,
+        "metal_draw_uniform_upload": 0.2803805,
+        "metal_draw_vertex_upload": 0.7790558925,
+        "metal_draw_encoder_setup": 0.2884225675,
+        "metal_draw_raster_state": 0.2427813475,
+        "metal_draw_vertex_bindings": 0.2456905575,
+        "metal_draw_fragment_bindings": 0.216966915,
+        "metal_draw_dispatch": 0.3802586325,
+        "metal_draw_vertex_eviction": 0.038777775
+      },
+      "ordered_eviction_activation": false
+    },
+    "on": {
+      "stats": {
+        "mean": 18.713426355,
+        "p50": 18.6428955,
+        "p99": 20.158291,
+        "max": 21.055208,
+        "worst_refresh": 2705,
+        "worst_rolling_120": 18.83609166666667,
+        "worst_rolling_end": 2705,
+        "owner_cpu_ms_per_refresh": 18.64008177,
+        "process_cpu_ms_per_refresh": 22.5256625,
+        "work": {
+          "draw_requests": 278153,
+          "command_lists": 4782,
+          "display_transfers": 4782,
+          "texture_copies": 3985,
+          "fills": 6376,
+          "software_vertex_draws": 0,
+          "skipped_draws": 0
+        }
+      },
+      "cpu": {
+        "others": 0.1330130975,
+        "cpu_execution_including_memory": 3.793314355,
+        "hle_svc": 0.11343959,
+        "gpu_command": 1.1409175625,
+        "dsp_hle_tick": 0.02704331,
+        "metal_bind": 1.5521374225,
+        "metal_record": 0.540212015,
+        "metal_encode": 1.1093194225,
+        "metal_transfer": 0.0,
+        "metal_publish": 0.4603148125,
+        "metal_present": 0.0769873775,
+        "metal_bind_fragment_source": 0.205151315,
+        "metal_bind_vertex_source": 0.15526347,
+        "metal_bind_vertex_capture": 0.975440705,
+        "metal_bind_pipeline_select": 0.35208081,
+        "metal_bind_surface_lut": 0.795581725,
+        "metal_bind_texture_decode": 0.4566647625,
+        "metal_bind_mip_decode": 0.562575655,
+        "metal_fill": 0.084652145,
+        "metal_copy": 0.181361615,
+        "metal_display_transfer": 0.2607418225,
+        "metal_resolve_bytes": 1.958084445,
+        "metal_publish_bytes": 0.926269405,
+        "metal_draw_validation": 0.23495619,
+        "metal_draw_uniform_upload": 0.2829011225,
+        "metal_draw_vertex_upload": 0.79626573,
+        "metal_draw_encoder_setup": 0.29059405,
+        "metal_draw_raster_state": 0.2415520475,
+        "metal_draw_vertex_bindings": 0.24708034,
+        "metal_draw_fragment_bindings": 0.21297273,
+        "metal_draw_dispatch": 0.3711154825,
+        "metal_draw_vertex_eviction": 0.01916803
+      },
+      "ordered_eviction_activation": true
+    }
+  },
+  "comparison": {
+    "state_mismatch_refreshes": 0,
+    "first_state_mismatch": null,
+    "work_count_mismatches": 0,
+    "pixels": {
+      "800": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "1600": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "2400": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      },
+      "3000": {
+        "top": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        },
+        "bottom": {
+          "exact": true,
+          "rgb_mae": 0,
+          "rgb_max_error": 0,
+          "different_channels": 0
+        }
+      }
+    },
+    "guest_sdmc_match": true,
+    "exact_both_lcds_and_work": true
+  },
+  "receipt_hashes": {
+    "draw-cpu-diagnostic-1/RESULT.json": "26c3881826353a30ad432570b978754bc2be876831c7a7b07342f0226379d5d3",
+    "vertex-upload-diagnostic-1/RESULT.json": "02614c499351e293ff143884182f5a6927e0911bdfb0c375bb93ad443362e1cc",
+    "vertex-lru-diagnostic-1/RESULT.json": "b7aec61ad81966f278b5c1af0479ce964ab031928bafe7cc42ee99f459bf3d94",
+    "rejected-probe-diagnostic-1/CLOSED-NO-ACTIVATION.json": "f5980bf5c45555a4e13312d868e30ec7e7244a201150866f376b9c797d2f4b36",
+    "HOST-DEFRAG-DIAGNOSIS.json": "fdc986fc2d7eff790bc27b4415d624410549b6f3f31fae7900689a0d316ef1e8",
+    "sampler-reuse-diagnostic-1/RESULT.json": "060ed1058207b2d4b7b4307c433d87ecf688d779b91e207c4ee775b63ff7fd78"
+  },
+  "rejected_probe": "CLOSED no activation/no gain claim/no repeat",
+  "source_note": "Docs-only review branch. Full private tested source preserved separately; all candidates default OFF.",
+  "sampler_pair": {
+    "revision": "6b2bd51cc6a34fa79dbd18df2d5bf98025d237de",
+    "cases": {
+      "off": {
+        "stats": {
+          "mean": 18.7013203125,
+          "p50": 18.6014795,
+          "p99": 20.157375,
+          "max": 20.499833,
+          "worst_refresh": 2592,
+          "worst_rolling_120": 18.806015975,
+          "worst_rolling_end": 2705,
+          "owner_cpu_ms_per_refresh": 18.6284348975,
+          "process_cpu_ms_per_refresh": 22.5294375,
+          "work": {
+            "draw_requests": 278153,
+            "command_lists": 4782,
+            "display_transfers": 4782,
+            "texture_copies": 3985,
+            "fills": 6376,
+            "software_vertex_draws": 0,
+            "skipped_draws": 0
+          }
+        },
+        "cpu": {
+          "others": 0.1335148925,
+          "cpu_execution_including_memory": 3.8149720225,
+          "hle_svc": 0.11212099,
+          "gpu_command": 1.1532082275,
+          "dsp_hle_tick": 0.027130295,
+          "metal_bind": 1.5431627725,
+          "metal_record": 0.53745857,
+          "metal_encode": 1.1028639675,
+          "metal_transfer": 0.0,
+          "metal_publish": 0.4597018275,
+          "metal_present": 0.0771377775,
+          "metal_bind_fragment_source": 0.2013702375,
+          "metal_bind_vertex_source": 0.1562408425,
+          "metal_bind_vertex_capture": 0.97257904,
+          "metal_bind_pipeline_select": 0.3482005325,
+          "metal_bind_surface_lut": 0.8018373175,
+          "metal_bind_texture_decode": 0.452414485,
+          "metal_bind_mip_decode": 0.5606468675,
+          "metal_fill": 0.08175967,
+          "metal_copy": 0.18164792,
+          "metal_display_transfer": 0.25689421,
+          "metal_resolve_bytes": 1.9592792175,
+          "metal_publish_bytes": 0.91936603,
+          "metal_draw_validation": 0.22960506,
+          "metal_draw_uniform_upload": 0.2777782375,
+          "metal_draw_vertex_upload": 0.7742036125,
+          "metal_draw_encoder_setup": 0.2886490225,
+          "metal_draw_raster_state": 0.24650727,
+          "metal_draw_vertex_bindings": 0.255805515,
+          "metal_draw_fragment_bindings": 0.2260945475,
+          "metal_draw_dispatch": 0.3548883175,
+          "metal_draw_vertex_eviction": 0.0399726975
+        },
+        "actual_activation": false
+      },
+      "on": {
+        "stats": {
+          "mean": 18.70754573,
+          "p50": 18.63475,
+          "p99": 20.265958,
+          "max": 22.275791,
+          "worst_refresh": 2705,
+          "worst_rolling_120": 18.857892358333334,
+          "worst_rolling_end": 2705,
+          "owner_cpu_ms_per_refresh": 18.648320835,
+          "process_cpu_ms_per_refresh": 22.4894925,
+          "work": {
+            "draw_requests": 278153,
+            "command_lists": 4782,
+            "display_transfers": 4782,
+            "texture_copies": 3985,
+            "fills": 6376,
+            "software_vertex_draws": 0,
+            "skipped_draws": 0
+          }
+        },
+        "cpu": {
+          "others": 0.1346788675,
+          "cpu_execution_including_memory": 3.8212312025,
+          "hle_svc": 0.11389428,
+          "gpu_command": 1.148803285,
+          "dsp_hle_tick": 0.0284140275,
+          "metal_bind": 1.5554042225,
+          "metal_record": 0.542069175,
+          "metal_encode": 1.101233855,
+          "metal_transfer": 0.0,
+          "metal_publish": 0.458342665,
+          "metal_present": 0.0765879325,
+          "metal_bind_fragment_source": 0.201812075,
+          "metal_bind_vertex_source": 0.155225725,
+          "metal_bind_vertex_capture": 0.97697839,
+          "metal_bind_pipeline_select": 0.3480496825,
+          "metal_bind_surface_lut": 0.7875152175,
+          "metal_bind_texture_decode": 0.454777395,
+          "metal_bind_mip_decode": 0.5552717,
+          "metal_fill": 0.08138488,
+          "metal_copy": 0.1796937525,
+          "metal_display_transfer": 0.2525084825,
+          "metal_resolve_bytes": 1.9564696025,
+          "metal_publish_bytes": 0.9222818225,
+          "metal_draw_validation": 0.2278417075,
+          "metal_draw_uniform_upload": 0.27990478,
+          "metal_draw_vertex_upload": 0.788477625,
+          "metal_draw_encoder_setup": 0.289618025,
+          "metal_draw_raster_state": 0.24035483,
+          "metal_draw_vertex_bindings": 0.25323306,
+          "metal_draw_fragment_bindings": 0.22368034,
+          "metal_draw_dispatch": 0.3690194925,
+          "metal_draw_vertex_eviction": 0.04112379
+        },
+        "actual_activation": true
+      }
+    },
+    "comparison": {
+      "state_mismatch_refreshes": 0,
+      "first_state_mismatch": null,
+      "work_count_mismatches": 0,
+      "pixels": {
+        "800": {
+          "top": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          },
+          "bottom": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          }
+        },
+        "1600": {
+          "top": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          },
+          "bottom": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          }
+        },
+        "2400": {
+          "top": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          },
+          "bottom": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          }
+        },
+        "3000": {
+          "top": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          },
+          "bottom": {
+            "exact": true,
+            "rgb_mae": 0,
+            "rgb_max_error": 0,
+            "different_channels": 0
+          }
+        }
+      },
+      "guest_sdmc_match": true,
+      "exact_both_lcds_and_work": true
+    },
+    "outcome": "CORRECT_SELECTED_OUTPUT_NO_MEANINGFUL_PERFORMANCE_GAIN_KEEP_OFF"
+  },
+  "quiet_admission": {
+    "passed": false,
+    "native_started": false,
+    "purpose": "bounded quiet admission and then reviewed exact GL/Metal OFF/ON sequence",
+    "runner": "/Volumes/Fast/CaraBuild/cara-m1-metal-results-20261127.noindex/matched_vertex_lru.py",
+    "error": "RuntimeError('No sustained quiet preflight')",
+    "elapsed_s": 121.82839458400001,
+    "background_checks": [
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.4,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.70000000000002,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 197.1,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 197.1,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.3,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.3,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 198.7,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 198.7,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 197.3,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 197.3,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 198.1,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 198.1,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 198.2,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 198.2,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 1.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.7,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 198.7,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.9,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 201.29999999999998,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 197.8,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 198.1,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 157.4,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 157.6,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.4,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.4,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.7,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21225,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.7,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 181.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 111.3,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 292.3,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 188.9,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 188.9,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 198.6,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 198.6,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.5,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.4,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.2,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.4,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.5,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.1,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.3,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.3,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.8,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.8,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 194.6,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 194.6,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.6,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.6,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.8,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 198.7,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.5,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.1,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.2,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.4,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.4,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 189.6,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 189.6,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21435,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.4,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.4,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 185.2,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 185.2,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 114.6,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 114.6,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 198.4,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 198.4,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 199.7,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 199.7,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21583,
+            "cpu_percent": 0.9,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.9,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      },
+      {
+        "scope": "ps rolling CPU percentage, 100 per logical CPU; not a hardware frequency/utilization counter",
+        "services": [
+          {
+            "pid": 413,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds"
+          },
+          {
+            "pid": 524,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/CoreServices/TimeMachine/backupd"
+          },
+          {
+            "pid": 586,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 621,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 703,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird"
+          },
+          {
+            "pid": 714,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd"
+          },
+          {
+            "pid": 719,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd"
+          },
+          {
+            "pid": 745,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd"
+          },
+          {
+            "pid": 828,
+            "cpu_percent": 0.0,
+            "command": "/usr/libexec/duetexpertd"
+          },
+          {
+            "pid": 1005,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1020,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores"
+          },
+          {
+            "pid": 1865,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 2538,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/PrivateFrameworks/FileProviderDaemon.framework/XPCServices/FPCKService.xpc/Contents/MacOS/FPCKService"
+          },
+          {
+            "pid": 2853,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker"
+          },
+          {
+            "pid": 17159,
+            "cpu_percent": 200.0,
+            "command": "/usr/libexec/apfsd"
+          },
+          {
+            "pid": 21507,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          },
+          {
+            "pid": 21583,
+            "cpu_percent": 0.0,
+            "command": "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared"
+          }
+        ],
+        "total_cpu_percent": 200.0,
+        "threshold_cpu_percent": 50,
+        "phase": "preflight"
+      }
+    ]
+  },
+  "outcome": "NO_PRODUCTION_OPTIMIZATION_PROMOTED"
+}
