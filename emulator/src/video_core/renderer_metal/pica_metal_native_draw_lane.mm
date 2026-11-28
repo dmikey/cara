@@ -912,6 +912,28 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
             proof.writer->Status() == MetalGuestWriteStatus::Failed)
             submissions.Fail("Native raw source failed during byte resolution");
     }
+    // Diagnostic incidence only: preserve the original validated plan and every
+    // encoded copy. Count merge opportunities before changing any submission.
+    if (NativeMetalCost::Enabled() && !copies.empty()) {
+        NativeMetalCost::Count(NativeMetalCost::ResolveCopyPlans, 1);
+        NativeMetalCost::Count(NativeMetalCost::ResolveCopyCommands, copies.size());
+        for (std::size_t i = 0; i < copies.size(); ++i) {
+            const auto& copy = copies[i];
+            NativeMetalCost::Count(NativeMetalCost::ResolveCopyPayloadBytes, copy.size);
+            if (i == 0)
+                continue;
+            const auto& previous = copies[i - 1];
+            if (previous.source != copy.source)
+                continue;
+            NativeMetalCost::Count(NativeMetalCost::ResolveSameBufferPairs, 1);
+            // Subtraction checks avoid overflow and require adjacency in BOTH
+            // resources; padding or a guest-RAM gap is never counted as copied.
+            if (copy.from >= previous.from && copy.to >= previous.to &&
+                copy.from - previous.from == previous.size &&
+                copy.to - previous.to == previous.size)
+                NativeMetalCost::Count(NativeMetalCost::ResolveAdjacentCopyPairs, 1);
+        }
+    }
     if (!copies.empty()) {
         const auto blit = [command blitCommandEncoder];
         if (!blit)
