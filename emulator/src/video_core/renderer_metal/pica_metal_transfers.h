@@ -21,6 +21,14 @@ struct Pipelines {
     id<MTLComputePipelineState> linear_color = nil;
 };
 
+// Checked copies between disjoint device-owned allocations using the existing
+// word-copy kernel. Callers retain all producer, source-byte and queue proofs.
+bool EncodeResolvedByteRows(id<MTLCommandBuffer> command, id<MTLComputePipelineState> pipeline,
+                            id<MTLBuffer> source, NSUInteger from,
+                            id<MTLBuffer> destination, NSUInteger to,
+                            std::uint32_t width, std::uint32_t source_stride,
+                            std::uint32_t destination_stride, std::uint32_t rows);
+
 // The command buffer must retain resources and come from the same queue used by the writer cache.
 // Success means encoded only. Publish the returned stripe intervals after submission through the
 // cache, retaining the resource and command buffer until consumers read or supersede them.

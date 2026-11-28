@@ -107,6 +107,41 @@ bool EncodeCopy(id<MTLCommandBuffer> command, const Pipelines& pipelines,
 
 } // namespace
 
+bool EncodeResolvedByteRows(id<MTLCommandBuffer> command, id<MTLComputePipelineState> pipeline,
+                            id<MTLBuffer> source, NSUInteger from,
+                            id<MTLBuffer> destination, NSUInteger to,
+                            std::uint32_t width, std::uint32_t source_stride,
+                            std::uint32_t destination_stride, std::uint32_t rows) {
+    if (!CanEncode(command) || !pipeline || pipeline.device != command.device ||
+        !source || !destination || source == destination ||
+        source.device != command.device || destination.device != command.device ||
+        source.heap || destination.heap ||
+        source.hazardTrackingMode != MTLHazardTrackingModeTracked ||
+        destination.hazardTrackingMode != MTLHazardTrackingModeTracked ||
+        !width || rows < 2 || source_stride < width || destination_stride < width ||
+        ((from | to | width | source_stride | destination_stride) & 3u))
+        return false;
+    const std::uint64_t source_bytes = std::uint64_t{rows - 1} * source_stride + width;
+    const std::uint64_t destination_bytes = std::uint64_t{rows - 1} * destination_stride + width;
+    const std::uint64_t words = std::uint64_t{rows} * (width / 4);
+    if (from > source.length || source_bytes > source.length - from ||
+        to > destination.length || destination_bytes > destination.length - to ||
+        words > std::numeric_limits<std::uint32_t>::max())
+        return false;
+    const auto encoder = [command computeCommandEncoder];
+    if (!encoder)
+        return false;
+    const CopyArguments args{static_cast<std::uint32_t>(words), width / 4, source_stride / 4,
+                             width / 4, destination_stride / 4, 0};
+    [encoder setComputePipelineState:pipeline];
+    [encoder setBuffer:source offset:from atIndex:0];
+    [encoder setBuffer:destination offset:to atIndex:1];
+    [encoder setBytes:&args length:sizeof(args) atIndex:2];
+    DispatchWords(encoder, pipeline, args.count);
+    [encoder endEncoding];
+    return true;
+}
+
 std::optional<TextureCopyPlan> EncodeTextureCopy(id<MTLCommandBuffer> command,
                                               const Pipelines& pipelines,
                                               TextureCopyRegisters regs,

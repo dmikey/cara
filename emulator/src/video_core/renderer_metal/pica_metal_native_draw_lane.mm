@@ -7,6 +7,7 @@
 #include "video_core/renderer_metal/pica_metal_depth_clear_encoding.hh"
 
 #include "pica_metal_raw_retile_pair.h"
+#include "pica_metal_copy_row_runs.hh"
 
 #include <algorithm>
 #include <array>
@@ -612,7 +613,8 @@ struct ScopedJoinedDepthCheck {
 
 std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
     id<MTLCommandBuffer> command, const MetalTransfer::Rows& rows, NSUInteger alignment,
-    const MetalGuestAuthority::GuestReader& ram, ByteUse use) {
+    const MetalGuestAuthority::GuestReader& ram, ByteUse use,
+    id<MTLComputePipelineState> copy_rows) {
     const bool display_transfer = use == ByteUse::DisplayTransfer;
     Common::CPUCategoryTiming::Scope cpu_category(Common::CPUCategoryTiming::Category::MetalResolve);
     NativeMetalCost::Scope cost(NativeMetalCost::ResolveBytesHost);
@@ -948,6 +950,46 @@ std::optional<MetalTransfer::ByteView> PicaMetalNativeDrawLane::ResolveBytes(
         if (second_source && !many_sources)
             NativeMetalCost::Count(NativeMetalCost::ResolveTwoSourceCopies, copies.size());
     }
+    static const bool gather_rows = [] {
+        const auto* value = std::getenv("CARA_METAL_GATHER_RESOLVED_ROWS");
+        return value && std::string_view(value) == "1";
+    }();
+    if (gather_rows && copy_rows && copy_rows.device == queue.device) {
+        const auto plan = MetalTransfer::PlanTwoSourceCopyRows<id<MTLBuffer>>(
+            std::span<const Copy>{copies});
+        bool usable = plan.has_value();
+        if (plan) {
+            for (std::size_t k = 0; k < plan->count; ++k) {
+                const auto& run = plan->runs[k];
+                const auto source_bytes = (run.count - 1) * run.source_stride + run.width;
+                const auto destination_bytes = (run.count - 1) * run.destination_stride + run.width;
+                usable = usable && run.source && run.source != buffer && !run.source.heap &&
+                    run.source.device == queue.device &&
+                    run.source.hazardTrackingMode == MTLHazardTrackingModeTracked &&
+                    run.from <= run.source.length && source_bytes <= run.source.length - run.from &&
+                    run.to <= buffer.length && destination_bytes <= buffer.length - run.to;
+            }
+        }
+        if (usable) {
+            for (std::size_t k = 0; k < plan->count; ++k) {
+                const auto& run = plan->runs[k];
+                if (!MetalTransfer::EncodeResolvedByteRows(command, copy_rows, run.source, run.from,
+                        buffer, run.to, static_cast<u32>(run.width),
+                        static_cast<u32>(run.source_stride),
+                        static_cast<u32>(run.destination_stride), static_cast<u32>(run.count)))
+                    submissions.Fail("Could not encode checked Metal row gather");
+            }
+            NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherPlans, 1);
+            NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherCopies, copies.size());
+            NativeMetalCost::Count(NativeMetalCost::ResolveRowGatherDispatches, plan->count);
+            static thread_local bool reported = false;
+            if (!reported) {
+                LOG_INFO(Render_OpenGL, "Metal gathered checked resolved rows with original word-copy kernel");
+                reported = true;
+            }
+            return MetalTransfer::ByteView{buffer, bytes, 0};
+        }
+    }
     if (!copies.empty()) {
         const auto blit = [command blitCommandEncoder];
         if (!blit)
@@ -1160,7 +1202,7 @@ void PicaMetalNativeDrawLane::CopyTexture(
     const auto buffer = AllocateBytes(destination);
     allocate.Stop();
     NativeMetalCost::Scope resolve(NativeMetalCost::CopyResolve);
-    const auto source = ResolveBytes(command, plan->source, 4, ram, ByteUse::TextureCopy);
+    const auto source = ResolveBytes(command, plan->source, 4, ram, ByteUse::TextureCopy, pipelines.copy_rows);
     resolve.Stop();
     NativeMetalCost::Scope encode(NativeMetalCost::CopyEncode);
     if (!buffer || !source ||
@@ -1535,7 +1577,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                 }
             }
         }
-        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer);
+        auto source = ResolveBytes(command, DenseRows(*src), 4, ram, ByteUse::DisplayTransfer, pipelines.copy_rows);
         if (command && !source) {
             // A linear view can reinterpret bytes just written in a tiled
             // render target. Materialize that exact byte range before tiling.
@@ -1596,7 +1638,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
                 // The blit kernel wants logical RGBA8 texels. Resolve the
                 // exact packed source, including native-writer intervals,
                 // and detile on the same command before the color blit.
-                const auto source = ResolveBytes(command, DenseRows(color->source), 256, ram);
+                const auto source = ResolveBytes(command, DenseRows(color->source), 256, ram, ByteUse::General, pipelines.copy_rows);
                 src = make_texture(color->width);
                 constexpr u32 rgba8_format = 0;
                 if (!source ||
@@ -1659,7 +1701,7 @@ void PicaMetalNativeDrawLane::TransferDisplay(
     }
     const auto command = [queue commandBuffer];
     const auto buffer = AllocateBytes(plan->copy.destination.footprint);
-    const auto source = ResolveBytes(command, plan->copy.source, 4, ram);
+    const auto source = ResolveBytes(command, plan->copy.source, 4, ram, ByteUse::General, pipelines.copy_rows);
     if (!buffer || !source ||
         !MetalTransfer::EncodeDisplayTransfer(command, pipelines, registers, *source,
                                               {buffer, plan->copy.destination.footprint, 0}))
